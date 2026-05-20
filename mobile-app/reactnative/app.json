@@ -1,0 +1,9 @@
+{
+  "expo": {
+    "name": "Paymax React Native",
+    "slug": "paymax-react-native-app",
+    "scheme": "paymaxrn",
+    "plugins": ["expo-router", "expo-secure-store"],
+    "experiments": { "typedRoutes": false }
+  }
+}
