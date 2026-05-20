@@ -1,0 +1,13 @@
+/.DS_Store
+/.env.local
+/.env.*.local
+!.env.example
+
+/.next/
+/.npm-cache/
+/node_modules/
+/dist/
+/out/
+/coverage/
+/tsconfig.tsbuildinfo
+
