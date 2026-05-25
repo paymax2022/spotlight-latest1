@@ -15,6 +15,8 @@ export default function SpotlightFooter() {
           <div className="mt-3 flex flex-col gap-2 text-sm text-foreground/70">
             <Link href="/services">Services</Link>
             <Link href="/programs">Programs</Link>
+            <Link href="/stem/contests">STEM Contests</Link>
+            <Link href="/stem/schools/register">School Registration</Link>
             <Link href="/sponsors-partners">Sponsors & Partners</Link>
             <Link href="/impact">Impact</Link>
           </div>
@@ -24,8 +26,11 @@ export default function SpotlightFooter() {
           <div className="mt-3 flex flex-col gap-2 text-sm text-foreground/70">
             <Link href="/services/government-youth-empowerment-programs">Request Institutional Proposal</Link>
             <Link href="/services/corporate-sponsorship-activation">Sponsor a Program</Link>
-            <Link href="/apply">Apply / Register</Link>
+            <Link href="/apply/reality-tv-show">Apply / Register</Link>
             <Link href="/contact">Book a Partnership Meeting</Link>
+            <Link href="/admin" className="text-foreground/45 hover:text-foreground transition-colors">
+              Admin Portal
+            </Link>
           </div>
         </div>
       </div>

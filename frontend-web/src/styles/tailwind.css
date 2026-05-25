@@ -1,18 +1,167 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #0d0d0d;
-  --bg-card: #161616;
-  --bg-card-hover: #1e1e1e;
-  --accent-gold: #d4a843;
-  --accent-gold-light: #e8c46a;
-  --accent-gold-dim: rgba(212, 168, 67, 0.15);
+  --font-kumbh-fallback: 'Kumbh Sans', sans-serif;
+  --font-sans: var(--font-kumbh), var(--font-kumbh-fallback);
+  --font-serif: var(--font-kumbh), var(--font-kumbh-fallback);
+  --bs-font-sans-serif: var(--font-kumbh), var(--font-kumbh-fallback);
+  --bs-body-font-family: var(--font-kumbh), var(--font-kumbh-fallback);
+  --body: #fff;
+  --black: #000;
+  --white: #fff;
+  --theme: #384bff;
+  --theme2: #384bff;
+  --header: #0f0d1d;
+  --text: #585858;
+  --text-2: #ffffffcc;
+  --border: #e3e3e3;
+  --border2: #242449;
+  --border3: #5262ff;
+  --bg: #f3f7fb;
+  --bg2: #18185e;
+  --bg3: #ffffff33;
+  --box-shadow: 0px 4px 25px rgba(0, 0, 0, 0.06);
+  --box-shadow-2: 0px 4px 25px rgba(56, 75, 255, 0.1);
+  --heading-font: var(--font-kumbh), var(--font-kumbh-fallback);
+  --body-font: var(--font-kumbh), var(--font-kumbh-fallback);
+
+  /* Back-compat aliases used by existing Spotlight classes */
+  --bg-card: var(--white);
+  --bg-card-hover: var(--bg);
+  --accent-gold: var(--theme);
+  --accent-gold-light: #5262ff;
+  --accent-gold-dim: rgba(56, 75, 255, 0.15);
   --accent-red: #c8102e;
-  --foreground: #f5f0e8;
-  --foreground-muted: rgba(245, 240, 232, 0.5);
-  --foreground-dim: rgba(245, 240, 232, 0.25);
-  --border: rgba(245, 240, 232, 0.08);
-  --border-gold: rgba(212, 168, 67, 0.3);
+  --foreground: var(--header);
+  --foreground-muted: rgba(15, 13, 29, 0.6);
+  --foreground-dim: rgba(15, 13, 29, 0.35);
+  --border-gold: rgba(56, 75, 255, 0.3);
+}
+
+/* Strictly admin-only theme overrides */
+.admin-theme {
+  --body: #000000;
+  --bg: #050505;
+  --bg2: #050505;
+  --bg-card: #0b0b0b;
+  --bg-card-hover: #101010;
+  --foreground: #f5f5f5;
+  --foreground-muted: rgba(245, 245, 245, 0.72);
+  --foreground-dim: rgba(245, 245, 245, 0.44);
+  --text: rgba(245, 245, 245, 0.86);
+  --border: #1f1f1f;
+  --border2: #1f1f1f;
+  --border3: #2a2a2a;
+  --box-shadow: 0 6px 30px rgba(0, 0, 0, 0.5);
+  --accent-gold-dim: rgba(212, 168, 67, 0.16);
+  --border-gold: rgba(212, 168, 67, 0.35);
+}
+
+.admin-theme {
+  background:
+    radial-gradient(1200px 600px at 120% -10%, rgba(212, 168, 67, 0.08), transparent 40%),
+    radial-gradient(900px 500px at -10% 110%, rgba(212, 168, 67, 0.05), transparent 42%),
+    #050505;
+}
+
+.admin-theme main {
+  color: var(--foreground);
+}
+
+.admin-theme h1,
+.admin-theme h2,
+.admin-theme h3,
+.admin-theme h4,
+.admin-theme h5,
+.admin-theme h6 {
+  color: var(--foreground);
+}
+
+.admin-theme .glass-card {
+  background: #0b0b0b;
+  border-color: var(--border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
+}
+
+.admin-theme .glass-card:hover {
+  background: #111111;
+  border-color: var(--border-gold);
+}
+
+.admin-theme .btn-primary {
+  background: var(--accent-gold);
+  color: #0a0a0a;
+  border: 1px solid rgba(212, 168, 67, 0.5);
+  box-shadow: 0 8px 20px rgba(212, 168, 67, 0.2);
+}
+
+.admin-theme .btn-primary:hover {
+  background: #e2b95f;
+  color: #050505;
+}
+
+.admin-theme .btn-outline {
+  border-color: #2a2a2a;
+  color: var(--foreground);
+  background: #0d0d0d;
+}
+
+.admin-theme .btn-outline:hover {
+  border-color: var(--accent-gold);
+  color: var(--accent-gold);
+  background: #101010;
+}
+
+.admin-theme .form-input {
+  background: #0a0a0a;
+  border-color: rgba(255, 255, 255, 0.78);
+  color: var(--foreground);
+}
+
+.admin-theme .form-input:focus {
+  border-color: var(--accent-gold);
+  box-shadow: 0 0 0 2px rgba(212, 168, 67, 0.2);
+}
+
+.admin-theme .form-shell {
+  border-color: rgba(255, 255, 255, 0.55);
+}
+
+.admin-theme table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.admin-theme thead tr {
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.admin-theme thead th {
+  color: var(--foreground-dim);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+
+.admin-theme tbody td {
+  color: var(--foreground);
+  font-size: 0.9rem;
+  border-top: 1px solid #1f1f1f;
+}
+
+.admin-theme tbody tr:hover td {
+  background: rgba(212, 168, 67, 0.05);
+}
+
+.admin-theme a:not(.btn-primary):not(.btn-outline):not(.theme-btn):not(.theme-btn-2) {
+  color: #d8b15a;
+}
+
+.admin-theme a:not(.btn-primary):not(.btn-outline):not(.theme-btn):not(.theme-btn-2):hover {
+  color: #ebc978;
 }
 
 html {
@@ -26,12 +175,12 @@ html {
 }
 
 body {
-  font-family: 'Kumbh Sans', sans-serif;
+  font-family: var(--font-kumbh), var(--font-kumbh-fallback);
   font-size: 16px;
   line-height: 1.75;
   font-weight: 400;
-  background-color: var(--bg);
-  color: var(--foreground);
+  background-color: var(--body);
+  color: var(--text);
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
 }
@@ -40,7 +189,7 @@ h1,
 h2,
 h3,
 .font-display {
-  font-family: 'Kumbh Sans', sans-serif;
+  font-family: var(--font-kumbh), var(--font-kumbh-fallback);
 }
 
 h1 {
@@ -236,7 +385,7 @@ h3 {
   border: 1px solid var(--border);
   color: var(--foreground);
   padding: 0.875rem 1.25rem;
-  font-family: 'DM Sans', sans-serif;
+  font-family: 'Kumbh Sans', sans-serif;
   font-size: 0.9rem;
   transition:
     border-color 0.2s ease,
@@ -260,6 +409,47 @@ h3 {
   text-transform: uppercase;
   color: var(--foreground-muted);
   margin-bottom: 0.5rem;
+}
+
+.form-shell {
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  border-radius: 4px;
+  padding: 1rem;
+}
+
+.form-section-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--foreground-dim);
+  margin-bottom: 0.7rem;
+}
+
+.form-help {
+  font-size: 0.78rem;
+  color: var(--foreground-muted);
+  margin-top: 0.35rem;
+}
+
+.form-error {
+  font-size: 0.78rem;
+  color: #f87171;
+  margin-top: 0.35rem;
+}
+
+.form-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  font-size: 0.88rem;
+  color: color-mix(in srgb, var(--foreground) 88%, transparent);
+}
+
+.form-check-row input[type='checkbox'] {
+  margin-top: 0.2rem;
+  accent-color: var(--accent-gold);
 }
 
 select.form-input option {
@@ -461,4 +651,56 @@ section.border-b.border-border {
     0 8px,
     8px -8px,
     -8px 0px;
+}
+
+/* Shared page banner (used by Breadcrumb across routes) */
+.banner-wrapper {
+  position: relative;
+  overflow: hidden;
+  background: transparent !important;
+}
+
+.banner-wrapper::before {
+  content: none !important;
+}
+
+.banner-wrapper::after {
+  content: none !important;
+}
+
+.banner-wrapper .page-heading {
+  padding: 0 !important;
+  width: 100vw;
+  height: 60vh;
+}
+
+.banner-wrapper .page-heading img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+/* Force Infotek typography globally */
+html,
+body,
+button,
+input,
+select,
+textarea,
+p,
+span,
+a,
+li,
+div,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.font-display,
+.font-sans,
+.font-serif {
+  font-family: var(--font-kumbh), var(--font-kumbh-fallback) !important;
 }

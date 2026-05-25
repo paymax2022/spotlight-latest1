@@ -57,7 +57,7 @@ export default function SpotlightHomePage() {
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link href="/sponsors-partners" className="btn-primary text-xs py-3 px-6">Partner With Spotlight</Link>
-            <Link href="/apply" className="btn-outline text-xs py-3 px-6">Apply / Register Now</Link>
+            <Link href="/apply/reality-tv-show" className="btn-outline text-xs py-3 px-6">Apply / Register Now</Link>
             <Link href="/services" className="btn-outline text-xs py-3 px-6">Explore Our Services</Link>
             <Link href="/services/corporate-sponsorship-activation" className="btn-outline text-xs py-3 px-6">Sponsor a Program</Link>
           </div>
@@ -186,7 +186,7 @@ export default function SpotlightHomePage() {
           </h2>
           <div className="mt-7 flex flex-wrap justify-center gap-3">
             <Link href="/sponsors-partners" className="btn-primary text-xs py-3 px-6">Partner With Us</Link>
-            <Link href="/apply" className="btn-outline text-xs py-3 px-6">Apply Now</Link>
+            <Link href="/apply/reality-tv-show" className="btn-outline text-xs py-3 px-6">Apply Now</Link>
             <Link href="/services/corporate-sponsorship-activation" className="btn-outline text-xs py-3 px-6">Sponsor a Program</Link>
             <Link href="/contact" className="btn-outline text-xs py-3 px-6">Contact Spotlight</Link>
           </div>

@@ -1,0 +1,51 @@
+import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
+import { createApplication, getContestBySlug } from '@/src/server/openmic/persistence';
+
+export async function POST(request: Request, context: { params: { slug: string } }) {
+  try {
+    const body = (await request.json()) as any;
+    const contest = await getContestBySlug(context.params.slug);
+    if (!contest) return errorResponse('Contest not found', 404);
+
+    const requiredFields = ['fullName', 'stageName', 'email', 'phone'];
+    for (const key of requiredFields) {
+      if (!String(body?.[key] || '').trim()) return errorResponse(`${key} is required`, 400);
+    }
+    if (!body.hasAgreedToRules || !body.hasAgreedToBeatTerms || !body.hasAgreedToVotingTerms) {
+      return errorResponse('Rules, beat terms, and voting terms must be accepted.', 400);
+    }
+
+    const result = await createApplication({
+      contestSlug: context.params.slug,
+      userId: body.userId,
+      fullName: body.fullName,
+      stageName: body.stageName,
+      email: body.email,
+      phone: body.phone,
+      gender: body.gender || 'prefer_not_to_say',
+      ageRange: body.ageRange || '18_24',
+      city: body.city || 'Lagos',
+      state: body.state || 'Lagos',
+      instagramHandle: body.instagramHandle,
+      tiktokHandle: body.tiktokHandle,
+      musicGenre: body.musicGenre || 'Afrobeats',
+      artistBio: body.artistBio,
+      profilePhotoUrl: body.profilePhotoUrl,
+      hasAgreedToRules: true,
+      hasAgreedToBeatTerms: true,
+      hasAgreedToVotingTerms: true,
+      paymentStatus: contest.entryFeeRequired ? 'pending' : 'not_required',
+    });
+
+    if (!result.success) return successResponse(result, 400);
+    return successResponse(result, 201);
+  } catch (error) {
+    const message =
+      (error instanceof Error ? error.message : undefined) ||
+      (typeof error === 'object' && error && 'message' in error && typeof (error as any).message === 'string'
+        ? (error as any).message
+        : undefined) ||
+      'Failed to apply for open mic contest';
+    return handleApiError(new Error(message), message);
+  }
+}

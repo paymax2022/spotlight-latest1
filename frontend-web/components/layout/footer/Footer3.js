@@ -138,7 +138,7 @@ export default function Footer3() {
                         <div className="footer-wrapper d-flex align-items-center justify-content-between">
                             <div className="footer-logo wow fadeInLeft" data-wow-delay=".3s">
                                 <Link href="/">
-                                    <img src="/assets/img/logo/white-logo.svg" alt="logo-img" />
+                                    <img src="/assets/img/logo/logo.png" alt="logo-img" />
                                 </Link>
                             </div>
                             <p className="wow fadeInRight color-2" data-wow-delay=".5s">

@@ -15,7 +15,7 @@ export default function Offcanvas({
                             <div className="offcanvas__top mb-5 d-flex justify-content-between align-items-center">
                                 <div className="offcanvas__logo">
                                     <Link href="/">
-                                        <img src="/assets/img/logo/black-logo.svg" alt="logo-img" />
+                                        <img src="/assets/img/logo/logo.png" alt="logo-img" />
                                     </Link>
                                 </div>
                                 <div className="offcanvas__close" onClick={handleOffCanvas}>
@@ -47,7 +47,7 @@ export default function Offcanvas({
                                             <i className="fal fa-envelope" />
                                         </div>
                                         <div className="offcanvas__contact-text">
-                                            <Link href="/mailto:info@azent.com"><span className="mailto:info@example.com">info@example.com</span></Link>
+                                            <a href="mailto:info@azent.com"><span className="mailto:info@example.com">info@example.com</span></a>
                                         </div>
                                     </li>
                                     <li className="d-flex align-items-center">
@@ -63,7 +63,7 @@ export default function Offcanvas({
                                             <i className="far fa-phone" />
                                         </div>
                                         <div className="offcanvas__contact-text">
-                                            <Link href="/tel:+11002345909">+11002345909</Link>
+                                            <a href="tel:+11002345909">+11002345909</a>
                                         </div>
                                     </li>
                                 </ul>

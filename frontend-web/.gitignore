@@ -1,7 +1,10 @@
+# >>> AUTO-MANAGED: update-gitignore >>>
 /.DS_Store
-/.env.local
-/.env.*.local
+
+/.env
+/.env.*
 !.env.example
+!.env.*.example
 
 /.next/
 /.npm-cache/
@@ -11,3 +14,9 @@
 /coverage/
 /tsconfig.tsbuildinfo
 
+/*.pem
+/*.key
+/*.p12
+/*.pfx
+/*.jks
+# <<< AUTO-MANAGED: update-gitignore <<<

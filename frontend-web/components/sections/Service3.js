@@ -131,7 +131,7 @@ export default function Service3() {
                                 <div className="content">
                                     <span>Call Us Now</span>
                                     <h4>
-                                        <Link href="/tel:+2085550112">+208-555-0112</Link>
+                                        <a href="tel:+2085550112">+208-555-0112</a>
                                     </h4>
                                 </div>
                             </div>

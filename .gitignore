@@ -1,3 +1,4 @@
+# >>> AUTO-MANAGED: update-gitignore >>>
 # OS/editor artifacts
 .DS_Store
 Thumbs.db
@@ -7,11 +8,14 @@ Thumbs.db
 *.swo
 
 # Env files (keep examples)
-.env.local
-.env.*.local
-frontend-web/.env.local
-frontend-web/.env.*.local
+.env
+.env.*
+!.env.example
+!.env.*.example
+frontend-web/.env
+frontend-web/.env.*
 !frontend-web/.env.example
+!frontend-web/.env.*.example
 
 # Node and package manager artifacts
 node_modules/
@@ -30,9 +34,18 @@ out/
 coverage/
 *.tsbuildinfo
 
+# Sensitive keys/certs (keep out of git by default)
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+id_rsa
+id_dsa
+
 # Logs and temp
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
+# <<< AUTO-MANAGED: update-gitignore <<<

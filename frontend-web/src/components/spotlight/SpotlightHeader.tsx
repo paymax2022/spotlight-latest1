@@ -12,7 +12,8 @@ const topNav = [
   { label: 'Sponsors & Partners', href: '/sponsors-partners' },
   { label: 'Media', href: '/media' },
   { label: 'Impact', href: '/impact' },
-  { label: 'Apply / Register', href: '/apply' },
+  { label: 'STEM Contests', href: '/stem/contests' },
+  { label: 'Apply / Register', href: '/apply/reality-tv-show' },
   { label: 'Contact', href: '/contact' },
 ];
 
@@ -69,7 +70,7 @@ export default function SpotlightHeader() {
             <Link href="/services/corporate-sponsorship-activation" className="btn-outline text-xs py-2.5 px-4">
               Sponsor a Program
             </Link>
-            <Link href="/apply" className="btn-primary text-xs py-2.5 px-4">
+            <Link href="/apply/reality-tv-show" className="btn-primary text-xs py-2.5 px-4">
               Apply Now
             </Link>
           </div>

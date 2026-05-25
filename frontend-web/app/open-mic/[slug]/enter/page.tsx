@@ -1,0 +1,34 @@
+import { notFound } from 'next/navigation';
+import OpenMicEntryForm from '@/components/openmic/OpenMicEntryForm';
+import { getContestBySlug } from '@/src/server/openmic/persistence';
+import OpenMicProgressTracker from '@/components/openmic/OpenMicProgressTracker';
+
+export const dynamic = 'force-dynamic';
+
+export default async function OpenMicContestEntryPage({ params }: { params: { slug: string } }) {
+  const contest = await getContestBySlug(params.slug);
+  if (!contest) notFound();
+
+  return (
+    <main className="container py-5">
+      <div className="mb-4">
+        <h1>Enter {contest.title}</h1>
+        <p>
+          Download/access the official beat, record your finished song, and submit before the deadline.
+        </p>
+        <div className="mt-3">
+          <OpenMicProgressTracker currentStep={4} />
+        </div>
+      </div>
+
+      <section className="p-4 border rounded bg-white">
+        <OpenMicEntryForm
+          contestSlug={contest.slug}
+          contestTitle={contest.title}
+          beatAvailable={Boolean(contest.beat)}
+          beatRequiresPaidEntry={contest.beat?.requiresPaidEntryForDownload === true}
+        />
+      </section>
+    </main>
+  );
+}

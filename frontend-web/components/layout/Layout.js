@@ -15,7 +15,15 @@ import Header2 from './header/Header2'
 import Header3 from "./header/Header3"
 import Header4 from "./header/Header4"
 
-export default function Layout({ headerStyle, footerStyle, onePageNav, breadcrumbTitle, children }) {
+export default function Layout({
+    headerStyle,
+    footerStyle,
+    onePageNav,
+    breadcrumbTitle,
+    breadcrumbClassName,
+    breadcrumbPadding,
+    children
+}) {
     const [scroll, setScroll] = useState(0)
 
     const [isOffCanvas, setOffCanvas] = useState(false)
@@ -51,7 +59,13 @@ export default function Layout({ headerStyle, footerStyle, onePageNav, breadcrum
             <Search isSearch={isSearch} handleSearch={handleSearch} />
 
 
-            {breadcrumbTitle && <Breadcrumb breadcrumbTitle={breadcrumbTitle} />}
+            {breadcrumbTitle && (
+                <Breadcrumb
+                    breadcrumbTitle={breadcrumbTitle}
+                    className={breadcrumbClassName}
+                    headingPadding={breadcrumbPadding}
+                />
+            )}
 
             {children}
 

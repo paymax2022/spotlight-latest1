@@ -24,8 +24,8 @@ Version: 1.0.0
   --bg3: #ffffff33;
   --box-shadow: 0px 4px 25px rgba(0, 0, 0, 0.06);
   --box-shadow-2: 0px 4px 25px rgba(56, 75, 255, 0.1);
-  --heading-font: $heading-font ;
-  --body-font: $body-font ;
+  --heading-font: "Kumbh Sans", sans-serif;
+  --body-font: "Kumbh Sans", sans-serif;
 }
 
 .theme-btn {
@@ -140,7 +140,7 @@ Version: 1.0.0
     Template Default Fonts & Fonts Styles
  ---------------------------------------------- */
 body {
-  font-family: var(--body-font);
+  font-family: "Kumbh Sans", sans-serif;
   font-size: 16px;
   font-weight: normal;
   line-height: 28px;
@@ -178,7 +178,7 @@ h3,
 h4,
 h5,
 h6 {
-  font-family: var(--heading-font);
+  font-family: "Kumbh Sans", sans-serif;
   margin: 0px;
   padding: 0;
   color: var(--header);

@@ -20,11 +20,11 @@ export default function Header1({
                             <ul className="contact-list">
                                 <li>
                                     <i className="far fa-envelope" />
-                                    <Link href="/mailto:info@example.com" className="link">info@example.com</Link>
+                                    <a href="mailto:info@example.com" className="link">info@example.com</a>
                                 </li>
                                 <li>
                                     <i className="fa-solid fa-phone-volume" />
-                                    <Link href="/tel:2086660112">+208-666-0112</Link>
+                                    <a href="tel:2086660112">+208-666-0112</a>
                                 </li>
                             </ul>
                             <div className="top-right">
@@ -46,7 +46,7 @@ export default function Header1({
                                 <div className="header-left">
                                     <div className="logo">
                                         <Link href="/" className="header-logo">
-                                            <img src="/assets/img/logo/black-logo.svg" alt="logo-img" />
+                                            <img src="/assets/img/logo/logo.png" alt="logo-img" />
                                         </Link>
                                     </div>
                                 </div>

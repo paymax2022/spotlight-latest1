@@ -17,7 +17,7 @@ export default function Footer2() {
                             <div className="content">
                                 <p>Call Us 7/24</p>
                                 <h3>
-                                    <Link href="/tel:+2085550112">+208-555-0112</Link>
+                                    <a href="tel:+2085550112">+208-555-0112</a>
                                 </h3>
                             </div>
                         </div>
@@ -32,7 +32,7 @@ export default function Footer2() {
                             <div className="content">
                                 <p>Make a Quote</p>
                                 <h3>
-                                    <Link href="/mailto:infotech@gmail.com">Infotech@gmail.com</Link>
+                                    <a href="mailto:infotech@gmail.com">Infotech@gmail.com</a>
                                 </h3>
                             </div>
                         </div>
@@ -62,7 +62,7 @@ export default function Footer2() {
                                 <div className="single-footer-widget">
                                     <div className="widget-head">
                                         <Link href="/">
-                                            <img src="/assets/img/logo/white-logo.svg" alt="logo-img" />
+                                            <img src="/assets/img/logo/logo.png" alt="logo-img" />
                                         </Link>
                                     </div>
                                     <div className="footer-content">

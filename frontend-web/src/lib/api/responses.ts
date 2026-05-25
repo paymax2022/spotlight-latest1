@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import type { AdminListMeta } from '@/src/server/admin/query';
 
 export class ApiError extends Error {
   status: number;
@@ -12,6 +13,24 @@ export class ApiError extends Error {
 
 export function successResponse<T extends Record<string, unknown>>(payload: T, status = 200) {
   return NextResponse.json(payload, { status });
+}
+
+export function listResponse<T>(
+  key: string,
+  items: T[],
+  meta: AdminListMeta,
+  extra: Record<string, unknown> = {},
+  status = 200,
+) {
+  return NextResponse.json(
+    {
+      success: true,
+      [key]: items,
+      meta,
+      ...extra,
+    },
+    { status },
+  );
 }
 
 export function errorResponse(message: string, status = 500) {

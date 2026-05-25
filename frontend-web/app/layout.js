@@ -9,6 +9,7 @@ import "/public/assets/css/meanmenu.css"
 import "/public/assets/css/swiper-bundle.min.css"
 import "/public/assets/css/nice-select.css"
 import "/public/assets/css/main.css"
+import "@/src/styles/tailwind.css"
 
 import { Kumbh_Sans } from 'next/font/google'
 
@@ -16,6 +17,7 @@ const kumbh = Kumbh_Sans({
     weight: ['300', '400', '500', '600', '700','800','900'],
     subsets: ['latin'],
     display: 'swap',
+    variable: '--font-kumbh',
 })
 
 export const metadata = {
@@ -25,8 +27,8 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
-      <body className={`${kumbh.className}`}>{children}</body>
+    <html lang="en" className={`${kumbh.className} ${kumbh.variable}`}>
+      <body className={`${kumbh.className} ${kumbh.variable}`}>{children}</body>
     </html>
   )
 }

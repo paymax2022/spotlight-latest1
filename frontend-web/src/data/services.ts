@@ -436,11 +436,33 @@ export const services: ServiceItem[] = [
 
 export const serviceBySlug = Object.fromEntries(services.map((s) => [s.slug, s]));
 
-export const serviceMenu = services.map((service) => ({
-  title: service.title,
-  href: `/services/${service.slug}`,
-  description: service.summary,
-}));
+export const serviceMenu = [
+  {
+    title: 'Reality TV show',
+    href: '/service-details/reality-tv-show',
+    description: 'A structured talent reality format with mentorship, episodes, audience engagement, and sponsor activation.',
+  },
+  {
+    title: 'STEM contest',
+    href: '/service-details/stem-contest',
+    description: 'A practical innovation challenge connecting student ideas and prototypes to visibility and mentorship.',
+  },
+  {
+    title: 'SME Pitch Contest',
+    href: '/service-details/sme-pitch-contest',
+    description: 'A growth-focused founder platform for pitch readiness, ecosystem visibility, and partnership pathways.',
+  },
+  {
+    title: 'Open Mic Competition',
+    href: '/service-details/open-mic-competition',
+    description: 'A recurring discovery stage for singers, rappers, spoken-word artists, and emerging performers.',
+  },
+  {
+    title: 'Film Academy',
+    href: '/service-details/film-academy',
+    description: 'A practical training and production pathway for actors, filmmakers, and creative media professionals.',
+  },
+];
 
 export const spotlightStats = [
   { label: 'Program Pillars', value: '06+' },

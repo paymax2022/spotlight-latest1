@@ -18,7 +18,7 @@ export default function Footer1() {
                                 <div className="single-footer-widget">
                                     <div className="widget-head">
                                         <Link href="/">
-                                            <img src="/assets/img/logo/white-logo.svg" alt="logo-img" />
+                                            <img src="/assets/img/logo/logo.png" alt="logo-img" />
                                         </Link>
                                     </div>
                                     <div className="footer-content">
@@ -135,11 +135,11 @@ export default function Footer1() {
                                             </li>
                                             <li>
                                                 <i className="fa-solid fa-phone-volume" />
-                                                <Link href="/tel:2086660112">+208-666-0112</Link>
+                                                <a href="tel:2086660112">+208-666-0112</a>
                                             </li>
                                             <li>
                                                 <i className="fa-regular fa-envelope" />
-                                                <Link href="/mailto:infotech@gmail.com">Infotech@gmail.com</Link>
+                                                <a href="mailto:infotech@gmail.com">Infotech@gmail.com</a>
                                             </li>
                                         </ul>
                                         <Link href="/contact" className="theme-btn hover-white mt-4">

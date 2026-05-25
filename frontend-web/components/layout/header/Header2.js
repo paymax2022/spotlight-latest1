@@ -22,11 +22,11 @@ export default function Header2({
                             <ul className="contact-list">
                                 <li>
                                     <i className="far fa-envelope" />
-                                    <Link href="/mailto:info@example.com" className="link">info@example.com</Link>
+                                    <a href="mailto:info@example.com" className="link">info@example.com</a>
                                 </li>
                                 <li>
                                     <i className="fa-solid fa-phone-volume" />
-                                    <Link href="/tel:2086660112">+208-666-0112</Link>
+                                    <a href="tel:2086660112">+208-666-0112</a>
                                 </li>
                             </ul>
                             <div className="top-right">
@@ -44,7 +44,7 @@ export default function Header2({
                 <div id="header-sticky" className={`header-2 ${scroll ? "sticky" : ""}`}>
                     <div className="main-logo">
                         <Link href="/">
-                            <img src="/assets/img/logo/white-logo-2.svg" alt="logo-image" />
+                            <img src="/assets/img/logo/logo.png" alt="logo-image" />
                         </Link>
                     </div>
                     <div className="container-fluid">
@@ -52,7 +52,7 @@ export default function Header2({
                             <div className="header-main">
                                 <div className="logo d-none">
                                     <Link href="/" className="header-logo">
-                                        <img src="/assets/img/logo/black-logo.svg" alt="logo-img" />
+                                        <img src="/assets/img/logo/logo.png" alt="logo-img" />
                                     </Link>
                                 </div>
                                 <div className="header-left">

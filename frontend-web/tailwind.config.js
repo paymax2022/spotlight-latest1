@@ -1,6 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
+    './app/**/*.{js,ts,jsx,tsx,mdx}',
+    './components/**/*.{js,ts,jsx,tsx,mdx}',
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
@@ -21,8 +23,8 @@ module.exports = {
         'border-gold': 'rgba(212,168,67,0.3)',
       },
       fontFamily: {
-        display: ['Fraunces', 'serif'],
-        sans: ['DM Sans', 'sans-serif'],
+        display: ['"Kumbh Sans"', 'sans-serif'],
+        sans: ['"Kumbh Sans"', 'sans-serif'],
       },
       fontSize: {
         'hero': 'clamp(3.5rem, 12vw, 9rem)',

@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if ! bash scripts/update-gitignore.sh --check >/dev/null 2>&1; then
+  echo "pre-push check failed: managed .gitignore files are out of date."
+  echo "Run: bash scripts/update-gitignore.sh --write"
+  echo "Then commit the .gitignore updates and push again."
+  exit 1
+fi
+
 max_size_mb="${MAX_PUSH_FILE_MB:-50}"
 max_size_bytes=$((max_size_mb * 1024 * 1024))
 
 # Block generated/cached files and local-only artifacts.
-blocked_pattern='(^|/)\.next/|(^|/)\.npm-cache/|(^|/)node_modules/|(^|/)\.DS_Store$|(^|/)\.env\.local$|\.tsbuildinfo$'
+blocked_pattern='(^|/)\.next/|(^|/)\.npm-cache/|(^|/)node_modules/|(^|/)\.DS_Store$|\.tsbuildinfo$|(^|/).*\.pem$|(^|/).*\.key$|(^|/).*\.p12$|(^|/).*\.pfx$|(^|/).*\.jks$|(^|/)id_rsa$|(^|/)id_dsa$'
 
 tmp_refs="$(mktemp)"
 cat >"$tmp_refs"
@@ -42,6 +52,12 @@ declare -a messages=()
 while read -r oid path; do
   [[ -z "${path:-}" ]] && continue
 
+  if [[ "$path" =~ (^|/)\.env($|\.) ]] && [[ ! "$path" =~ \.env(\..*)?\.example$ ]]; then
+    messages+=("blocked secret-like env file: $path")
+    violations=1
+    continue
+  fi
+
   if [[ "$path" =~ $blocked_pattern ]]; then
     messages+=("blocked path: $path")
     violations=1
@@ -74,4 +90,3 @@ if (( violations )); then
   echo "  MAX_PUSH_FILE_MB=75 git push"
   exit 1
 fi
-
