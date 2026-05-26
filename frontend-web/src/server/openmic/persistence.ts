@@ -992,6 +992,7 @@ export async function createApplication(input: Parameters<typeof createApplicati
 
 export async function listApplications(input?: {
   contestId?: string;
+  userId?: string;
   applicationStatus?: OpenMicApplicationStatus;
   paymentStatus?: OpenMicPaymentStatus;
 }) {
@@ -1000,6 +1001,7 @@ export async function listApplications(input?: {
     const supabase = createAdminClient();
     let query = supabase.from('competition_enrollments').select('*').order('created_at', { ascending: false });
     if (input?.contestId) query = query.eq('competition_id', input.contestId);
+    if (input?.userId) query = query.eq('user_id', input.userId);
     if (input?.applicationStatus) query = query.eq('status', input.applicationStatus);
     if (input?.paymentStatus) query = query.eq('payment_status', input.paymentStatus);
     const { data, error } = await query;
@@ -1295,12 +1297,13 @@ export async function createSubmission(input: Parameters<typeof createSubmission
   }
 }
 
-export async function listSubmissions(input?: { contestId?: string; status?: OpenMicSubmission['status'] }) {
+export async function listSubmissions(input?: { contestId?: string; userId?: string; status?: OpenMicSubmission['status'] }) {
   if (!shouldUseDb()) return [];
   try {
     const supabase = createAdminClient();
     let query = supabase.from('competition_entries').select('*').order('created_at', { ascending: false });
     if (input?.contestId) query = query.eq('competition_id', input.contestId);
+    if (input?.userId) query = query.eq('user_id', input.userId);
     if (input?.status) query = query.eq('status', input.status);
     const { data, error } = await query;
     if (error) throw error;

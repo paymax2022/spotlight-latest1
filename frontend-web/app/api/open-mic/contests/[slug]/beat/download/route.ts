@@ -1,10 +1,11 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { getContestBySlug, logBeatDownload } from '@/src/server/openmic/persistence';
+import { requireRequestUser } from '@/src/lib/auth/request';
 
 export async function POST(request: Request, context: { params: { slug: string } }) {
   try {
+    const user = await requireRequestUser(request);
     const body = (await request.json()) as {
-      userId?: string;
       artistName?: string;
       artistEmail?: string;
       termsAccepted?: boolean;
@@ -19,7 +20,7 @@ export async function POST(request: Request, context: { params: { slug: string }
 
     const log = await logBeatDownload({
       contestSlug: context.params.slug,
-      userId: body.userId,
+      userId: user.id,
       artistName: body.artistName,
       artistEmail: body.artistEmail,
       termsAccepted: body.termsAccepted,
@@ -41,7 +42,9 @@ export async function POST(request: Request, context: { params: { slug: string }
       201
     );
   } catch (error) {
+    if (error instanceof Error && error.message === 'UNAUTHORIZED') {
+      return errorResponse('Authentication required', 401);
+    }
     return handleApiError(error, 'Failed to log beat download');
   }
 }
-

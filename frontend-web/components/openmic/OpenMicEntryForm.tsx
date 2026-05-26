@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { createClient } from '@/lib/supabase/client';
 
 type Props = {
   contestSlug: string;
@@ -15,6 +16,7 @@ export default function OpenMicEntryForm({
   beatAvailable,
   beatRequiresPaidEntry,
 }: Props) {
+  const supabase = createClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -45,9 +47,14 @@ export default function OpenMicEntryForm({
     setDownloadMessage('');
     setDownloadUrl('');
     try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error('Please sign in to download beat.');
       const res = await fetch(`/api/open-mic/contests/${contestSlug}/beat/download`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           artistName: form.artistName,
           artistEmail: form.email,
@@ -74,9 +81,14 @@ export default function OpenMicEntryForm({
     setError('');
     setMessage('');
     try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error('Please sign in to submit your song.');
       const res = await fetch('/api/open-mic/submissions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           contestSlug,
           stageName: form.artistName,

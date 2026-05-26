@@ -40,6 +40,12 @@ export default async function OpenMicContestDetailsPage({ params }: { params: { 
 
       <section className="my-4 p-4 border rounded bg-white">
         <h3>Contest Rules Snapshot</h3>
+        <p>
+          Registration Window: {contest.registrationStartAt ? new Date(contest.registrationStartAt).toLocaleString() : 'TBA'} - {contest.registrationEndAt ? new Date(contest.registrationEndAt).toLocaleString() : 'TBA'}
+        </p>
+        <p>
+          Submission Window: {contest.submissionStartAt ? new Date(contest.submissionStartAt).toLocaleString() : 'TBA'} - {contest.submissionEndAt ? new Date(contest.submissionEndAt).toLocaleString() : 'TBA'}
+        </p>
         <p>Selection model: {contest.selectionModel.replace(/_/g, ' ')}</p>
         <p>Finalists target: Top {contest.finalistsTarget}</p>
         <p>Voting weight: {contest.publicVoteWeight}% public / {contest.judgeWeight}% judges</p>

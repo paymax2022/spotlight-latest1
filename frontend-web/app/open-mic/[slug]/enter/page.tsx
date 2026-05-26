@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import OpenMicEntryForm from '@/components/openmic/OpenMicEntryForm';
 import { getContestBySlug } from '@/src/server/openmic/persistence';
 import OpenMicProgressTracker from '@/components/openmic/OpenMicProgressTracker';
+import OpenMicAuthGate from '@/components/openmic/OpenMicAuthGate';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,12 +23,14 @@ export default async function OpenMicContestEntryPage({ params }: { params: { sl
       </div>
 
       <section className="p-4 border rounded bg-white">
-        <OpenMicEntryForm
-          contestSlug={contest.slug}
-          contestTitle={contest.title}
-          beatAvailable={Boolean(contest.beat)}
-          beatRequiresPaidEntry={contest.beat?.requiresPaidEntryForDownload === true}
-        />
+        <OpenMicAuthGate nextPath={`/open-mic/${contest.slug}/enter`}>
+          <OpenMicEntryForm
+            contestSlug={contest.slug}
+            contestTitle={contest.title}
+            beatAvailable={Boolean(contest.beat)}
+            beatRequiresPaidEntry={contest.beat?.requiresPaidEntryForDownload === true}
+          />
+        </OpenMicAuthGate>
       </section>
     </main>
   );

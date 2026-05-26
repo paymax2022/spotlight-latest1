@@ -1,20 +1,26 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { createSubmission, listSubmissions } from '@/src/server/openmic/persistence';
+import { requireRequestUser } from '@/src/lib/auth/request';
 
 export async function GET(request: Request) {
   try {
+    const user = await requireRequestUser(request);
     const { searchParams } = new URL(request.url);
     const contestId = searchParams.get('contestId') || undefined;
     const status = (searchParams.get('status') as any) || undefined;
-    const submissions = await listSubmissions({ contestId, status });
+    const submissions = await listSubmissions({ contestId, status, userId: user.id });
     return successResponse({ success: true, submissions });
   } catch (error) {
+    if (error instanceof Error && error.message === 'UNAUTHORIZED') {
+      return errorResponse('Authentication required', 401);
+    }
     return handleApiError(error, 'Failed to list open mic submissions');
   }
 }
 
 export async function POST(request: Request) {
   try {
+    const user = await requireRequestUser(request);
     const body = (await request.json()) as any;
     if (!body.contestSlug) return errorResponse('contestSlug is required', 400);
     if (!body.stageName) return errorResponse('stageName is required', 400);
@@ -24,7 +30,7 @@ export async function POST(request: Request) {
 
     const result = await createSubmission({
       contestSlug: body.contestSlug,
-      artistUserId: body.artistUserId,
+      artistUserId: user.id,
       stageName: body.stageName,
       realName: body.realName,
       email: body.email,
@@ -51,6 +57,9 @@ export async function POST(request: Request) {
     if (!result.success) return successResponse(result, 400);
     return successResponse(result, 201);
   } catch (error) {
+    if (error instanceof Error && error.message === 'UNAUTHORIZED') {
+      return errorResponse('Authentication required', 401);
+    }
     const message =
       (error instanceof Error ? error.message : undefined) ||
       (typeof error === 'object' && error && 'message' in error && typeof (error as any).message === 'string'

@@ -136,6 +136,12 @@ export default async function OpenMicLandingPage() {
                               <p className="mb-2">
                                 Registration: {contest.entryFeeRequired ? `Paid (NGN ${Number(contest.registrationFeeNgn || 0).toLocaleString('en-NG')})` : 'Free'}
                               </p>
+                              <p className="mb-2">
+                                Registration Window: {contest.registrationStartAt ? new Date(contest.registrationStartAt).toLocaleString() : 'TBA'} - {contest.registrationEndAt ? new Date(contest.registrationEndAt).toLocaleString() : 'TBA'}
+                              </p>
+                              <p className="mb-2">
+                                Submission Window: {contest.submissionStartAt ? new Date(contest.submissionStartAt).toLocaleString() : 'TBA'} - {contest.submissionEndAt ? new Date(contest.submissionEndAt).toLocaleString() : 'TBA'}
+                              </p>
                               <p className="mb-3">Finale Venue: {contest.finale.venueName}</p>
                               <div className="d-flex flex-wrap gap-2">
                                 <Link href={`/open-mic/${contest.slug}/apply`} className="theme-btn">
@@ -146,6 +152,12 @@ export default async function OpenMicLandingPage() {
                                   Submit Song
                                   <i className="fa-solid fa-arrow-right-long" />
                                 </Link>
+                                {contest.beat?.downloadUrl ? (
+                                  <Link href={`/open-mic/${contest.slug}/enter`} className="theme-btn style-2">
+                                    Download Beat
+                                    <i className="fa-solid fa-arrow-right-long" />
+                                  </Link>
+                                ) : null}
                                 <Link href={`/open-mic/${contest.slug}`} className="theme-btn style-border">
                                   View Details
                                   <i className="fa-solid fa-arrow-right-long" />
@@ -160,6 +172,10 @@ export default async function OpenMicLandingPage() {
                     <div className="mt-4 d-flex flex-wrap gap-2">
                       <Link href="/open-mic/dashboard" className="theme-btn">
                         Open Artist Dashboard
+                        <i className="fa-solid fa-arrow-right-long" />
+                      </Link>
+                      <Link href="/open-mic/profile" className="theme-btn style-2">
+                        My Open Mic Profile
                         <i className="fa-solid fa-arrow-right-long" />
                       </Link>
                       <Link href="/contact" className="theme-btn">

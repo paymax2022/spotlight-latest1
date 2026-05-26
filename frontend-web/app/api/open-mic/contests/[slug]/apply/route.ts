@@ -1,8 +1,10 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { createApplication, getContestBySlug } from '@/src/server/openmic/persistence';
+import { requireRequestUser } from '@/src/lib/auth/request';
 
 export async function POST(request: Request, context: { params: { slug: string } }) {
   try {
+    const user = await requireRequestUser(request);
     const body = (await request.json()) as any;
     const contest = await getContestBySlug(context.params.slug);
     if (!contest) return errorResponse('Contest not found', 404);
@@ -17,7 +19,7 @@ export async function POST(request: Request, context: { params: { slug: string }
 
     const result = await createApplication({
       contestSlug: context.params.slug,
-      userId: body.userId,
+      userId: user.id,
       fullName: body.fullName,
       stageName: body.stageName,
       email: body.email,
@@ -40,6 +42,9 @@ export async function POST(request: Request, context: { params: { slug: string }
     if (!result.success) return successResponse(result, 400);
     return successResponse(result, 201);
   } catch (error) {
+    if (error instanceof Error && error.message === 'UNAUTHORIZED') {
+      return errorResponse('Authentication required', 401);
+    }
     const message =
       (error instanceof Error ? error.message : undefined) ||
       (typeof error === 'object' && error && 'message' in error && typeof (error as any).message === 'string'

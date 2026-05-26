@@ -2,6 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 import { getContestBySlug, listContests } from '@/src/server/openmic/persistence';
 import OpenMicApplicationForm from '@/components/openmic/OpenMicApplicationForm';
 import OpenMicProgressTracker from '@/components/openmic/OpenMicProgressTracker';
+import OpenMicAuthGate from '@/components/openmic/OpenMicAuthGate';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,7 +30,9 @@ export default async function OpenMicApplyPage({ params }: { params: { slug: str
         <OpenMicProgressTracker currentStep={1} />
       </div>
       <section className="glass-card rounded-md p-4 mt-4">
-        <OpenMicApplicationForm contestSlug={contest.slug} requiresPayment={contest.entryFeeRequired} />
+        <OpenMicAuthGate nextPath={`/open-mic/${contest.slug}/apply`}>
+          <OpenMicApplicationForm contestSlug={contest.slug} requiresPayment={contest.entryFeeRequired} />
+        </OpenMicAuthGate>
       </section>
     </main>
   );
