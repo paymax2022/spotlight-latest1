@@ -2,13 +2,16 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import type { StemContest, StemSchool } from '@/src/features/stem/types';
+import { authFetch, isUnauthorized, redirectToLogin } from '@/src/lib/auth/flow';
 
 type WizardProps = {
   contestSlug: string;
 };
 
 export default function StemContestApplicationWizard({ contestSlug }: WizardProps) {
+  const pathname = usePathname();
   const [loading, setLoading] = useState(true);
   const [contest, setContest] = useState<StemContest | null>(null);
   const [schools, setSchools] = useState<StemSchool[]>([]);
@@ -94,7 +97,9 @@ export default function StemContestApplicationWizard({ contestSlug }: WizardProp
   }
 
   async function refreshTimeline(appId: string) {
-    const res = await fetch(`/api/stem/applications/${appId}/status`, { cache: 'no-store' });
+    const res = await authFetch(`/api/stem/applications/${appId}/status`, {
+      cache: 'no-store',
+    });
     const payload = await res.json().catch(() => ({}));
     if (res.ok && payload?.success && Array.isArray(payload?.timeline)) {
       setTimeline(payload.timeline);
@@ -109,9 +114,8 @@ export default function StemContestApplicationWizard({ contestSlug }: WizardProp
     setMessage('');
 
     try {
-      const res = await fetch('/api/stem/applications', {
+      const res = await authFetch('/api/stem/applications', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contestSlug: contest.slug,
           track: startData.track,
@@ -121,9 +125,13 @@ export default function StemContestApplicationWizard({ contestSlug }: WizardProp
           applicantEmail: startData.applicantEmail,
           applicantPhone: startData.applicantPhone,
         }),
-      });
+      }, { json: true });
 
       const payload = await res.json().catch(() => ({}));
+      if (isUnauthorized(res)) {
+        redirectToLogin(pathname || '/apply/stem-contest');
+        return;
+      }
       if (!res.ok || !payload?.success || !payload?.application?.id) {
         const reason = payload?.errors
           ? Object.values(payload.errors as Record<string, string>).join(' ')
@@ -152,17 +160,20 @@ export default function StemContestApplicationWizard({ contestSlug }: WizardProp
     setMessage('');
 
     try {
-      const res = await fetch(`/api/stem/applications/${applicationId}`, {
+      const res = await authFetch(`/api/stem/applications/${applicationId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           status: applicationStatus || 'draft',
           formData,
           projectData,
         }),
-      });
+      }, { json: true });
 
       const payload = await res.json().catch(() => ({}));
+      if (isUnauthorized(res)) {
+        redirectToLogin(pathname || '/apply/stem-contest');
+        return;
+      }
       if (!res.ok || !payload?.success || !payload?.application) {
         throw new Error(payload?.error || 'Unable to save draft.');
       }
@@ -186,8 +197,14 @@ export default function StemContestApplicationWizard({ contestSlug }: WizardProp
 
     try {
       await saveDraft();
-      const res = await fetch(`/api/stem/applications/${applicationId}/submit`, { method: 'POST' });
+      const res = await authFetch(`/api/stem/applications/${applicationId}/submit`, {
+        method: 'POST',
+      });
       const payload = await res.json().catch(() => ({}));
+      if (isUnauthorized(res)) {
+        redirectToLogin(pathname || '/apply/stem-contest');
+        return;
+      }
 
       if (!res.ok || !payload?.success || !payload?.application) {
         const reason = payload?.errors

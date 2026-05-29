@@ -2,11 +2,14 @@ import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/re
 import { buildRegistrationSteps } from '@/src/features/registration/config';
 import { getRegistrationDraft, saveRegistrationStep } from '@/src/server/registration/store';
 import type { RegistrationStepKey } from '@/src/features/registration/types';
+import { requireUser } from '@/src/lib/auth/server';
 
-export async function GET(_request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, { params }: { params: { id: string } }) {
   try {
+    const { user } = await requireUser(request);
     const draft = getRegistrationDraft(params.id);
     if (!draft) return errorResponse('Application not found', 404);
+    if (draft.userId !== user.id) return errorResponse('Forbidden', 403);
 
     const steps = buildRegistrationSteps(draft);
     return successResponse({ success: true, draft, steps });
@@ -17,6 +20,11 @@ export async function GET(_request: Request, { params }: { params: { id: string 
 
 export async function PATCH(request: Request, { params }: { params: { id: string } }) {
   try {
+    const { user } = await requireUser(request);
+    const current = getRegistrationDraft(params.id);
+    if (!current) return errorResponse('Application not found', 404);
+    if (current.userId !== user.id) return errorResponse('Forbidden', 403);
+
     const body = (await request.json()) as {
       stepKey?: RegistrationStepKey;
       values?: Record<string, unknown>;

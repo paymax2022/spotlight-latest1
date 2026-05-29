@@ -376,6 +376,7 @@ export type StemStatusEvent = {
 export type StemApplicationFilter = {
   contestId?: string;
   contestSlug?: string;
+  applicantUserId?: string;
   status?: StemApplicationStatus;
   applicantType?: StemApplicantType;
   track?: StemParticipationTrack;

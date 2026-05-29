@@ -1,9 +1,11 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { listApplications, startApplication } from '@/src/server/stem/persistence';
 import type { StemApplicationFilter, StemApplicantType, StemParticipationTrack } from '@/src/features/stem/types';
+import { requireUser } from '@/src/lib/auth/server';
 
 export async function GET(request: Request) {
   try {
+    const { user } = await requireUser(request);
     const { searchParams } = new URL(request.url);
     const filter: StemApplicationFilter = {
       contestId: searchParams.get('contestId') || undefined,
@@ -15,6 +17,7 @@ export async function GET(request: Request) {
       paymentStatus: (searchParams.get('paymentStatus') as StemApplicationFilter['paymentStatus']) || undefined,
       state: searchParams.get('state') || undefined,
       query: searchParams.get('query') || undefined,
+      applicantUserId: user.id,
     };
 
     const applications = await listApplications(filter);
@@ -26,6 +29,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const { user } = await requireUser(request);
     const body = (await request.json()) as {
       contestSlug?: string;
       track?: StemParticipationTrack;
@@ -48,7 +52,7 @@ export async function POST(request: Request) {
       applicantType: body.applicantType,
       schoolId: body.schoolId,
       schoolJoinRequestId: body.schoolJoinRequestId,
-      applicantUserId: body.applicantUserId,
+      applicantUserId: user.id,
       applicantName: body.applicantName,
       applicantEmail: body.applicantEmail,
       applicantPhone: body.applicantPhone,

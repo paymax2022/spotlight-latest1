@@ -14,11 +14,13 @@ export interface JudgeRequestContext extends AuthenticatedRequestContext {
   role: string;
 }
 
-export async function requireUser(): Promise<AuthenticatedRequestContext> {
+export async function requireUser(request?: Request): Promise<AuthenticatedRequestContext> {
   const supabase = await createClient();
+  const authHeader = request?.headers.get('authorization') || request?.headers.get('Authorization') || '';
+  const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = bearer ? await supabase.auth.getUser(bearer) : await supabase.auth.getUser();
 
   if (!user) {
     throw new Error('UNAUTHORIZED');

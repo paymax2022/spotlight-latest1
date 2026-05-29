@@ -88,6 +88,25 @@ export const TALENT_SKILL_OPTIONS = [
   'Spoken Word',
 ];
 
+const CONTEST_CATEGORY_SKILL_MAP: Record<string, string[]> = {
+  music: ['Singing', 'Rapping', 'Songwriting', 'Music Production', 'Instrumentalist'],
+  acting: ['Acting', 'Presenting', 'Public Speaking', 'Content Creation'],
+  comedy_content: ['Comedy', 'Content Creation', 'Public Speaking', 'Presenting'],
+  dance: ['Dance', 'Content Creation'],
+  film_production: ['Film Production', 'Acting', 'Content Creation'],
+  stem_innovation: ['STEM / Innovation', 'Public Speaking'],
+  sme_pitch: ['SME Pitch', 'Public Speaking', 'Presenting'],
+  school_campus: ['STEM / Innovation', 'Content Creation', 'Public Speaking', 'Presenting'],
+  open_mic: ['Singing', 'Rapping', 'Spoken Word', 'Comedy', 'Instrumentalist'],
+  general_reality_show: ['Singing', 'Acting', 'Comedy', 'Dance', 'Content Creation', 'Public Speaking'],
+  other: [...TALENT_SKILL_OPTIONS],
+};
+
+export function getTalentSkillsForContestCategory(categoryKey: string) {
+  const allowed = CONTEST_CATEGORY_SKILL_MAP[categoryKey] || CONTEST_CATEGORY_SKILL_MAP.other;
+  return TALENT_SKILL_OPTIONS.filter((option) => allowed.includes(option));
+}
+
 export const MEDICAL_CONDITION_OPTIONS = [
   'Asthma',
   'Hypertension',
@@ -243,14 +262,8 @@ const accountGateFields: RegistrationField[] = [
 
 const contestSelectionFields: RegistrationField[] = [
   { key: 'contest.title', label: 'Contest title', type: 'select', required: true },
-  { key: 'contest.category', label: 'Contest category', type: 'select', required: true, options: ['music', 'acting', 'comedy_content', 'dance', 'film_production', 'stem_innovation', 'sme_pitch', 'school_campus', 'open_mic', 'general_reality_show', 'other'] },
-  { key: 'contest.type', label: 'Contest type', type: 'select', required: true, options: ['online_contest', 'physical_audition', 'hybrid_contest', 'public_voting_contest', 'bootcamp_reality_show', 'housemate_reality_show', 'pitch_competition', 'school_vs_school_contest', 'regional_contest', 'national_contest', 'international_entry'] },
-  { key: 'contest.region', label: 'Region / audition state', type: 'select', required: true },
-  { key: 'contest.auditionPreference', label: 'Online or physical audition preference', type: 'select', options: ['Online', 'Physical', 'Hybrid'], required: true },
   { key: 'contest.entryMode', label: 'Individual or group entry', type: 'select', options: ['Individual', 'Group'], required: true },
   { key: 'contest.schoolEntry', label: 'School / institution entry', type: 'checkbox' },
-  { key: 'contest.preferredAuditionCity', label: 'Preferred audition city', type: 'select', options: [] },
-  { key: 'contest.applicantCategory', label: 'Applicant category', type: 'select', required: true, options: [...DEFAULT_APPLICANT_CATEGORIES] },
 ];
 
 const personalInformationFields: RegistrationField[] = [
@@ -266,14 +279,7 @@ const personalInformationFields: RegistrationField[] = [
   { key: 'personal.city', label: 'City / town', type: 'select', required: true, options: [] },
   { key: 'personal.address', label: 'Residential address', type: 'textarea', required: true },
   { key: 'personal.primaryPhone', label: 'Primary phone number', type: 'tel', required: true },
-  { key: 'personal.alternativePhone', label: 'Alternative phone number', type: 'tel' },
-  { key: 'personal.email', label: 'Email address', type: 'email', required: true },
   { key: 'personal.whatsapp', label: 'WhatsApp number', type: 'tel' },
-  { key: 'personal.occupation', label: 'Occupation', type: 'text' },
-  { key: 'personal.educationLevel', label: 'Education level', type: 'text' },
-  { key: 'personal.currentSchool', label: 'Current school/institution', type: 'text' },
-  { key: 'personal.preferredLanguage', label: 'Preferred language', type: 'text' },
-  { key: 'personal.languagesSpoken', label: 'Languages spoken', type: 'text' },
 ];
 
 const guardianConsentFields: RegistrationField[] = [
@@ -293,25 +299,19 @@ const identityFields: RegistrationField[] = [
   { key: 'identity.idUpload', label: 'ID upload', type: 'file', required: true, accept: '.jpg,.jpeg,.png,.pdf' },
   { key: 'identity.passportPhoto', label: 'Passport photograph', type: 'file', required: true, accept: '.jpg,.jpeg,.png' },
   { key: 'identity.nameOnId', label: 'Name on ID', type: 'text', required: true },
-  { key: 'identity.addressProof', label: 'Address verification document', type: 'file', accept: '.jpg,.jpeg,.png,.pdf' },
   { key: 'identity.schoolId', label: 'School ID (student category)', type: 'file', accept: '.jpg,.jpeg,.png,.pdf' },
   { key: 'identity.cacDocument', label: 'CAC/business registration (SME category)', type: 'file', accept: '.jpg,.jpeg,.png,.pdf' },
 ];
 
 const talentProfileFields: RegistrationField[] = [
   { key: 'talent.primarySkill', label: 'Primary talent / skill', type: 'multi_select', required: true, options: [...TALENT_SKILL_OPTIONS] },
-  { key: 'talent.secondarySkill', label: 'Secondary talent / skill', type: 'multi_select', options: [] },
   { key: 'talent.experienceYears', label: 'Years of experience', type: 'number', required: true },
   { key: 'talent.skillLevel', label: 'Skill level', type: 'select', options: ['Beginner', 'Emerging', 'Intermediate', 'Advanced', 'Professional', 'Self-taught', 'Student', 'Freelancer', 'Entrepreneur'], required: true },
-  { key: 'talent.trainingBackground', label: 'Training background', type: 'textarea' },
   { key: 'talent.previousCompetitions', label: 'Previous competitions', type: 'textarea' },
   { key: 'talent.awards', label: 'Awards or recognitions', type: 'textarea' },
   { key: 'talent.publicPerformanceExperience', label: 'Public performance experience', type: 'textarea' },
-  { key: 'talent.mediaAppearanceExperience', label: 'Media appearance experience', type: 'textarea' },
   { key: 'talent.strengths', label: 'Strengths', type: 'textarea', required: true },
-  { key: 'talent.areasToImprove', label: 'Areas needing improvement', type: 'textarea' },
   { key: 'talent.careerGoal', label: 'Career goal', type: 'textarea', required: true },
-  { key: 'talent.whySelectMe', label: 'Why should Spotlight select you?', type: 'textarea', required: true },
   { key: 'talent.uniqueStory', label: 'What makes your story unique?', type: 'textarea', required: true },
 ];
 
@@ -384,7 +384,6 @@ const categorySpecificFields: Record<string, RegistrationField[]> = {
     { key: 'category.performanceType', label: 'Performance type', type: 'select', options: ['Singing', 'Rap', 'Spoken Word', 'Comedy', 'Instrumental', 'Other'], required: true },
     { key: 'category.genre', label: 'Genre/style', type: 'text', required: true },
     { key: 'category.sampleLink', label: 'Performance sample link', type: 'url' },
-    { key: 'category.sampleVideo', label: 'Upload sample video', type: 'file', accept: '.mp4,.mov' },
   ],
   general_reality_show: [
     { key: 'category.housemateReadiness', label: 'Comfortable living with other contestants?', type: 'checkbox', required: true },
@@ -398,10 +397,7 @@ const categorySpecificFields: Record<string, RegistrationField[]> = {
 
 const mediaFields: RegistrationField[] = [
   { key: 'media.profilePhoto', label: 'Profile photo', type: 'file', required: true, accept: '.jpg,.jpeg,.png,.webp' },
-  { key: 'media.fullBodyPhoto', label: 'Full-body photo', type: 'file', accept: '.jpg,.jpeg,.png,.webp' },
   { key: 'media.performanceVideo', label: 'Performance video', type: 'file', accept: '.mp4,.mov' },
-  { key: 'media.introductionVideo', label: 'Introduction video', type: 'file', accept: '.mp4,.mov' },
-  { key: 'media.portfolioLink', label: 'Portfolio link', type: 'url' },
   { key: 'media.audioFile', label: 'Audio file', type: 'file', accept: '.mp3,.wav,.m4a' },
   { key: 'media.pitchDeck', label: 'Pitch deck', type: 'file', accept: '.pdf,.ppt,.pptx' },
   { key: 'media.businessDocument', label: 'Business document', type: 'file', accept: '.pdf,.doc,.docx' },
@@ -471,30 +467,17 @@ const complianceFields: RegistrationField[] = [
 const paymentFields: RegistrationField[] = [
   { key: 'payment.feeAmount', label: 'Registration fee amount', type: 'number', required: true, readOnly: true, helpText: 'This amount is configured by admin and cannot be edited.' },
   { key: 'payment.method', label: 'Payment method', type: 'select', options: ['Card', 'Bank Transfer', 'USSD', 'Wallet', 'Waiver'], required: true },
-  { key: 'payment.couponCode', label: 'Coupon/referral code', type: 'text' },
-  { key: 'payment.sponsorWaiverCode', label: 'Sponsor waiver code', type: 'text' },
   { key: 'payment.transactionReference', label: 'Transaction reference', type: 'text' },
 ];
 
 const auditionFields: RegistrationField[] = [
   { key: 'audition.format', label: 'Preferred audition format', type: 'select', options: ['Online video submission', 'Live virtual audition', 'Physical audition', 'Campus audition', 'Regional audition', 'Invite-only audition', 'Callback audition'], required: true },
-  { key: 'audition.state', label: 'Preferred audition state', type: 'select', required: true },
-  { key: 'audition.city', label: 'Preferred audition city', type: 'select', options: [] },
-  { key: 'audition.venue', label: 'Preferred audition venue', type: 'text' },
-  { key: 'audition.date', label: 'Preferred audition date', type: 'date' },
-  { key: 'audition.timeSlot', label: 'Preferred audition time slot', type: 'text' },
   { key: 'audition.onlineLink', label: 'Online audition link', type: 'url' },
-  { key: 'audition.specialNeeds', label: 'Special audition needs', type: 'textarea' },
 ];
 
 const publicProfileFields: RegistrationField[] = [
-  { key: 'publicProfile.displayName', label: 'Public display name', type: 'text', required: true },
-  { key: 'publicProfile.shortBio', label: 'Short public bio', type: 'textarea', required: true },
   { key: 'publicProfile.profilePhoto', label: 'Profile photo', type: 'file', accept: '.jpg,.jpeg,.png,.webp' },
-  { key: 'publicProfile.introVideo', label: 'Intro video', type: 'file', accept: '.mp4,.mov' },
   { key: 'publicProfile.talentSummary', label: 'Talent summary', type: 'textarea' },
-  { key: 'publicProfile.campaignSlogan', label: 'Voting campaign slogan', type: 'text' },
-  { key: 'publicProfile.fanMessage', label: 'Fan message', type: 'textarea' },
   { key: 'publicProfile.publicVotingConsent', label: 'I consent to public voting profile visibility', type: 'checkbox', required: true },
 ];
 
@@ -518,46 +501,9 @@ const reviewFields: RegistrationField[] = [
 const baseSteps: RegistrationStep[] = [
   { key: 'account_gate', title: 'Account Login / Registration', description: 'Create account or login before applying.', fields: accountGateFields },
   { key: 'contest_selection', title: 'Contest Selection', description: 'Select active contest and applicant route.', fields: contestSelectionFields },
-  { key: 'personal_information', title: 'Profile Information', description: 'Provide core identity, contact, and background details.', fields: [...personalInformationFields, ...talentProfileFields] },
-  {
-    key: 'guardian_consent',
-    title: 'Parent / Guardian Consent',
-    description: 'Required if applicant is below configured legal age threshold.',
-    fields: guardianConsentFields,
-    conditional: (draft) => {
-      const age = Number(draft.formData['derived.age'] || 0);
-      const threshold = Number(draft.formData['derived.legalAdultAge'] || 18);
-      return age > 0 && age < threshold;
-    },
-  },
-  { key: 'identity_verification', title: 'Identity and Documents', description: 'Upload your ID and required verification documents.', fields: [...identityFields, ...mediaFields] },
-  { key: 'category_specific', title: 'Talent Category and Media', description: 'Complete contest-specific questions and social visibility details.', fields: [...socialFields] },
-  {
-    key: 'bootcamp_housemate_readiness',
-    title: 'Readiness, Health and Emergency',
-    description: 'Provide readiness, welfare and emergency information where required.',
-    fields: [...bootcampFields, ...medicalFields, ...emergencyFields],
-    conditional: (draft) => Boolean(draft.formData['derived.requiresBootcampReadiness']),
-  },
-  { key: 'medical_welfare_safety', title: 'Medical, Welfare and Safety', description: 'Confidential health and safety information.', fields: [...medicalFields, ...emergencyFields], conditional: (draft) => Boolean(draft.formData['derived.requiresMedical']) && !Boolean(draft.formData['derived.requiresBootcampReadiness']) },
-  { key: 'character_compliance', title: 'Character, Background and Compliance', description: 'Compliance and code-of-conduct declarations.', fields: complianceFields },
-  {
-    key: 'payment',
-    title: 'Payment',
-    description: 'Registration fee payment details where applicable.',
-    fields: paymentFields,
-    conditional: (draft) => Boolean(draft.formData['derived.isPaidContest']),
-  },
-  {
-    key: 'audition_scheduling',
-    title: 'Audition Scheduling',
-    description: 'Choose audition format, city, date, and slot where available.',
-    fields: [...auditionFields, ...publicProfileFields],
-    conditional: (draft) => Boolean(draft.formData['derived.supportsAuditionScheduling']),
-  },
-  { key: 'public_profile_setup', title: 'Public Profile and Voting Setup', description: 'Set up public profile details for voting-enabled contests.', fields: publicProfileFields, conditional: (draft) => Boolean(draft.formData['derived.supportsVoting']) && !Boolean(draft.formData['derived.supportsAuditionScheduling']) },
-  { key: 'legal_consents', title: 'Legal Consent and Agreements', description: 'Mandatory legal declarations.', fields: legalFields },
-  { key: 'review_submit', title: 'Review and Submit', description: 'Review all sections and submit your application.', fields: reviewFields },
+  { key: 'personal_information', title: 'Profile Information', description: 'Provide core identity and talent details.', fields: [] },
+  { key: 'category_specific', title: 'Contest Requirements', description: 'Complete requirements that apply to your selected contest.', fields: [] },
+  { key: 'review_submit', title: 'Consent and Submit', description: 'Confirm legal declarations and submit your application.', fields: [] },
 ];
 
 export function resolveContestRegistration(slug: string) {
@@ -570,20 +516,79 @@ export function resolveCategorySpecificFields(categoryKey: string): Registration
 
 export function buildRegistrationSteps(draft: RegistrationDraft): RegistrationStep[] {
   const categoryKey = String(draft.formData['contest.categoryKey'] || 'other');
+  const contestCategory = String(draft.formData['contest.category'] || categoryKey || 'other');
+  const isStemContest = contestCategory === 'stem_innovation';
+  const isSmeContest = contestCategory === 'sme_pitch';
+  const isUnderAge =
+    Number(draft.formData['derived.age'] || 0) > 0 &&
+    Number(draft.formData['derived.age'] || 0) < Number(draft.formData['derived.legalAdultAge'] || 18);
+  const requiresMedical = Boolean(draft.formData['derived.requiresMedical']);
+  const requiresBootcamp = Boolean(draft.formData['derived.requiresBootcampReadiness']);
+  const isPaidContest = Boolean(draft.formData['derived.isPaidContest']);
+  const supportsAudition = Boolean(draft.formData['derived.supportsAuditionScheduling']);
+  const supportsVoting = Boolean(draft.formData['derived.supportsVoting']);
 
-  return baseSteps
-    .map((step) => {
-      if (step.key !== 'category_specific') return step;
-      return {
-        ...step,
-        fields: resolveCategorySpecificFields(categoryKey),
-      };
-    })
-    .filter((step) => (step.conditional ? step.conditional(draft) : true));
+  const filteredIdentityFields = identityFields.filter((field) => {
+    if (field.key === 'identity.schoolId') return isStemContest;
+    if (field.key === 'identity.cacDocument') return isSmeContest;
+    return true;
+  });
+
+  const filteredMediaFields = mediaFields.filter((field) => {
+    if (field.key === 'media.audioFile') return contestCategory === 'music' || contestCategory === 'open_mic';
+    if (field.key === 'media.pitchDeck' || field.key === 'media.businessDocument') return isSmeContest || isStemContest;
+    return true;
+  });
+
+  const personalStepFields = [
+    ...personalInformationFields,
+    ...talentProfileFields,
+    ...(isUnderAge ? guardianConsentFields : []),
+  ];
+
+  const contestRequirementFields = [
+    ...filteredIdentityFields,
+    ...filteredMediaFields,
+    ...resolveCategorySpecificFields(categoryKey),
+    ...socialFields,
+    ...complianceFields,
+    ...(requiresBootcamp ? [...bootcampFields, ...medicalFields, ...emergencyFields] : []),
+    ...(!requiresBootcamp && requiresMedical ? [...medicalFields, ...emergencyFields] : []),
+    ...(isPaidContest ? paymentFields : []),
+    ...(supportsAudition ? auditionFields : []),
+    ...(supportsVoting ? publicProfileFields : []),
+  ];
+
+  const finalStepFields = [...legalFields, ...reviewFields];
+
+  return baseSteps.map((step) => {
+    if (step.key === 'personal_information') {
+      return { ...step, fields: personalStepFields };
+    }
+    if (step.key === 'category_specific') {
+      return { ...step, fields: contestRequirementFields };
+    }
+    if (step.key === 'review_submit') {
+      return { ...step, fields: finalStepFields };
+    }
+    return step;
+  });
 }
 
 export function getStepIndex(steps: RegistrationStep[], stepKey?: RegistrationStepKey) {
   if (!stepKey) return 0;
-  const index = steps.findIndex((step) => step.key === stepKey);
+  const legacyStepMap: Partial<Record<RegistrationStepKey, RegistrationStepKey>> = {
+    guardian_consent: 'personal_information',
+    identity_verification: 'category_specific',
+    bootcamp_housemate_readiness: 'category_specific',
+    medical_welfare_safety: 'category_specific',
+    character_compliance: 'category_specific',
+    payment: 'category_specific',
+    audition_scheduling: 'category_specific',
+    public_profile_setup: 'category_specific',
+    legal_consents: 'review_submit',
+  };
+  const normalizedStepKey = legacyStepMap[stepKey] || stepKey;
+  const index = steps.findIndex((step) => step.key === normalizedStepKey);
   return index < 0 ? 0 : index;
 }

@@ -86,9 +86,11 @@ export default function ProgramApplicationPage({ params }) {
 
               <div className="col-12 col-lg-8">
                 <div className="service-details-items">
-                  <div className="details-image">
-                    <img src={program.heroImage} alt={program.title} />
-                  </div>
+                  {program.slug !== 'reality-tv-show' ? (
+                    <div className="details-image">
+                      <img src={program.heroImage} alt={program.title} />
+                    </div>
+                  ) : null}
                   <div className="details-content">
                     {program.slug === 'stem-contest' ? (
                       <StemContestApplicationWizard contestSlug={program.slug} />

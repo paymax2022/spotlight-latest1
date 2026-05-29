@@ -215,7 +215,7 @@ export function runBasicFraudChecks(draft: RegistrationDraft) {
 
   const idNumber = getString(formData['identity.idNumber']);
   const phone = getString(formData['personal.primaryPhone']);
-  const email = getString(formData['personal.email']);
+  const email = getString(formData['personal.email'] || formData['account.email']);
 
   if (!email) flags.push('missing_email');
   if (!phone) flags.push('missing_phone');

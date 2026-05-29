@@ -12,3 +12,6 @@ Target standalone backend service.
 
 ## Current transition
 Business logic still partially resides in monolith under `src/app/api`, `src/server/services`, `src/lib`.
+
+## Auth and RBAC
+Phase 1 implementation docs: `backend/docs_auth_rbac.md`

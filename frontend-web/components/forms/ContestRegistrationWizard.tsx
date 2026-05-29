@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import {
   buildRegistrationSteps,
   getStepIndex,
   contestRegistrationCatalog,
-  TALENT_SKILL_OPTIONS,
   NIGERIA_CITIES_BY_STATE,
   resolveContestRegistration,
 } from '@/src/features/registration/config';
@@ -17,6 +17,25 @@ import type {
 } from '@/src/features/registration/types';
 import { getOptionalEnv } from '@/src/lib/config/env';
 import { loadPaystackClient } from '@/src/lib/payments/paystack-client';
+import { createClient } from '@/src/lib/supabase/client';
+import { authFetch, isUnauthorized, redirectToLogin } from '@/src/lib/auth/flow';
+
+const HIDDEN_AUTH_FIELDS = new Set([
+  'account.fullName',
+  'account.email',
+  'account.password',
+  'account.confirmPassword',
+]);
+const FRONTEND_LOCKED_CONTEST_FIELDS = new Set([
+  'contest.category',
+  'contest.applicantCategory',
+  'contest.type',
+  'contest.auditionPreference',
+  'contest.preferredAuditionCity',
+  'audition.state',
+  'audition.city',
+  'audition.venue',
+]);
 
 function getFieldValue(formData: Record<string, unknown>, key: string) {
   return formData[key];
@@ -42,6 +61,8 @@ function formatOptionLabel(option: string) {
 }
 
 export default function ContestRegistrationWizard({ contestSlug }: { contestSlug: string }) {
+  const supabase = useMemo(() => createClient(), []);
+  const pathname = usePathname();
   const formTextColor = '#000000';
   const ui = {
     pageBg: '#F5F7FA',
@@ -70,13 +91,32 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
   const [availableContestTitles, setAvailableContestTitles] = useState<string[]>(
     contestRegistrationCatalog.map((item) => item.title)
   );
+  const [loggedInUserLabel, setLoggedInUserLabel] = useState<string>('');
+  const [loggedInUserAvatar, setLoggedInUserAvatar] = useState<string>('');
 
   const contest = useMemo(() => resolveContestRegistration(contestSlug), [contestSlug]);
   const currentStep = steps[stepIndex];
   const isFinalStep = stepIndex === steps.length - 1;
+  const isLoggedInUser = Boolean(loggedInUserLabel);
+  const visibleCurrentFields = useMemo(() => {
+    if (!currentStep) return [];
+    let fields = currentStep.fields;
+
+    if (currentStep.key === 'account_gate' && isLoggedInUser) {
+      fields = fields.filter((field) => !HIDDEN_AUTH_FIELDS.has(field.key));
+    }
+
+    fields = fields.filter((field) => !FRONTEND_LOCKED_CONTEST_FIELDS.has(field.key));
+
+    if (currentStep.key === 'contest_selection' && String(formData['contest.category'] || '') !== 'stem_innovation') {
+      fields = fields.filter((field) => field.key !== 'contest.schoolEntry');
+    }
+
+    return fields;
+  }, [currentStep, isLoggedInUser, formData]);
 
   async function fetchTimeline(applicationId: string) {
-    const response = await fetch(`/api/registration/applications/${applicationId}/status`, {
+    const response = await authFetch(`/api/registration/applications/${applicationId}/status`, {
       cache: 'no-store',
     });
     const payload = await response.json().catch(() => ({}));
@@ -112,20 +152,48 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
       setErrorMessage('');
 
       try {
-        const createRes = await fetch('/api/registration/applications', {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (!sessionData?.session?.access_token) {
+          redirectToLogin(pathname || `/apply/${contestSlug}`);
+          return;
+        }
+        const authUser = sessionData.session.user;
+        const authMeta = (authUser.user_metadata || {}) as Record<string, unknown>;
+        const userName =
+          String(authMeta.full_name || authMeta.name || '').trim() ||
+          String(authUser.email || '').split('@')[0] ||
+          'User';
+        const avatarUrl =
+          String(authMeta.avatar_url || authMeta.avatarUrl || '').trim() ||
+          '';
+        if (isMounted) {
+          setLoggedInUserLabel(userName);
+          setLoggedInUserAvatar(avatarUrl);
+        }
+
+        const createRes = await authFetch('/api/registration/applications', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contestSlug: contest.slug }),
-        });
+        }, { json: true });
 
         const createPayload = await createRes.json().catch(() => ({}));
+        if (isUnauthorized(createRes)) {
+          redirectToLogin(pathname || `/apply/${contestSlug}`);
+          return;
+        }
         if (!createRes.ok || !createPayload?.success || !createPayload?.draft?.id) {
           throw new Error(createPayload?.error || 'Unable to start application.');
         }
 
         const appId = createPayload.draft.id as string;
-        const readRes = await fetch(`/api/registration/applications/${appId}`, { cache: 'no-store' });
+        const readRes = await authFetch(`/api/registration/applications/${appId}`, {
+          cache: 'no-store',
+        });
         const readPayload = await readRes.json().catch(() => ({}));
+        if (isUnauthorized(readRes)) {
+          redirectToLogin(pathname || `/apply/${contestSlug}`);
+          return;
+        }
         if (!readRes.ok || !readPayload?.success || !readPayload?.draft) {
           throw new Error(readPayload?.error || 'Unable to load application.');
         }
@@ -134,9 +202,16 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
 
         const loadedDraft = readPayload.draft as RegistrationDraft;
         const loadedSteps = (readPayload.steps || buildRegistrationSteps(loadedDraft)) as RegistrationStep[];
+        const hydratedFormData: Record<string, unknown> = {
+          ...(loadedDraft.formData || {}),
+          'account.fullName': String(loadedDraft.formData?.['account.fullName'] || userName),
+          'account.email': String(loadedDraft.formData?.['account.email'] || authUser.email || ''),
+        };
+        if (!hydratedFormData['account.password']) hydratedFormData['account.password'] = '__authenticated__';
+        if (!hydratedFormData['account.confirmPassword']) hydratedFormData['account.confirmPassword'] = '__authenticated__';
 
         setDraft(loadedDraft);
-        setFormData(loadedDraft.formData || {});
+        setFormData(hydratedFormData);
         setSteps(loadedSteps);
         setStepIndex(getStepIndex(loadedSteps, loadedDraft.currentStep));
         setMessage(registrationMicrocopy.startApplication);
@@ -188,10 +263,11 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
       const state = String(formData['audition.state'] || formData['contest.region'] || '');
       return NIGERIA_CITIES_BY_STATE[state] || [];
     }
-    if (fieldKey === 'talent.secondarySkill') {
-      const primary = arrayFieldValue(formData['talent.primarySkill']);
-      if (primary.length === 0) return [];
-      return TALENT_SKILL_OPTIONS.filter((option) => !primary.includes(option));
+    if (fieldKey === 'talent.primarySkill') {
+      const allowedSkills = formData['derived.allowedTalentSkills'];
+      if (Array.isArray(allowedSkills) && allowedSkills.length > 0) {
+        return allowedSkills.map((item) => String(item));
+      }
     }
     return fallback;
   }
@@ -204,15 +280,18 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
     setMessage('');
 
     try {
-      const res = await fetch(`/api/registration/applications/${draft.id}`, {
+      const res = await authFetch(`/api/registration/applications/${draft.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           stepKey: currentStep.key,
           values: formData,
         }),
-      });
+      }, { json: true });
       const payload = await res.json().catch(() => ({}));
+      if (isUnauthorized(res)) {
+        redirectToLogin(pathname || `/apply/${contestSlug}`);
+        return false;
+      }
 
       if (!res.ok || !payload?.success) {
         throw new Error(payload?.error || 'Failed to save application step.');
@@ -280,11 +359,6 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
         next['audition.city'] = '';
       }
       if (fieldKey === 'audition.state') next['audition.city'] = '';
-      if (fieldKey === 'talent.primarySkill') {
-        const selected = Array.isArray(value) ? value.map((item) => String(item)) : [];
-        const existingSecondary = arrayFieldValue(next['talent.secondarySkill']);
-        next['talent.secondarySkill'] = existingSecondary.filter((item) => !selected.includes(item));
-      }
       return next;
     });
     setErrors((prev) => {
@@ -347,9 +421,8 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
             onSuccess: (tx) => {
               void (async () => {
                 try {
-                  await fetch(`/api/registration/applications/${draft.id}`, {
+                  await authFetch(`/api/registration/applications/${draft.id}`, {
                     method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                       stepKey: currentStep.key,
                       values: {
@@ -358,7 +431,7 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
                         'payment.paymentStatus': 'paid',
                       },
                     }),
-                  });
+                  }, { json: true });
                   setFormData((prev) => ({
                     ...prev,
                     'payment.transactionReference': tx?.reference || reference,
@@ -376,10 +449,14 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
         });
       }
 
-      const res = await fetch(`/api/registration/applications/${draft.id}/submit`, {
+      const res = await authFetch(`/api/registration/applications/${draft.id}/submit`, {
         method: 'POST',
       });
       const payload = await res.json().catch(() => ({}));
+      if (isUnauthorized(res)) {
+        redirectToLogin(pathname || `/apply/${contestSlug}`);
+        return;
+      }
 
       if (!res.ok || !payload?.success) {
         throw new Error(payload?.error || 'Submission failed.');
@@ -400,12 +477,15 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
     if (!draft) return;
     setErrorMessage('');
 
-    const res = await fetch(`/api/registration/applications/${draft.id}/withdraw`, {
+    const res = await authFetch(`/api/registration/applications/${draft.id}/withdraw`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ note: 'Applicant withdrew from wizard page' }),
-    });
+    }, { json: true });
     const payload = await res.json().catch(() => ({}));
+    if (isUnauthorized(res)) {
+      redirectToLogin(pathname || `/apply/${contestSlug}`);
+      return;
+    }
 
     if (!res.ok || !payload?.success) {
       setErrorMessage(payload?.error || 'Unable to withdraw application.');
@@ -430,6 +510,7 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
   }
 
   const progress = draft.completionPercent || 0;
+  const avatarInitial = loggedInUserLabel ? loggedInUserLabel.charAt(0).toUpperCase() : 'U';
 
   return (
     <div
@@ -442,7 +523,45 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
       }}
     >
       <div className="section-title" style={{ color: formTextColor, marginBottom: 0 }}>
-        <span style={{ color: ui.primary, fontWeight: 700, letterSpacing: '0.06em' }}>CONTEST REGISTRATION ENGINE</span>
+        <div className="d-flex align-items-center gap-2">
+          {loggedInUserLabel ? (
+            loggedInUserAvatar ? (
+              <img
+                src={loggedInUserAvatar}
+                alt={`${loggedInUserLabel} avatar`}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: '50%',
+                  objectFit: 'cover',
+                  border: `1px solid ${ui.border}`,
+                }}
+              />
+            ) : (
+              <span
+                aria-label={`${loggedInUserLabel} avatar`}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: '50%',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: ui.primary,
+                  color: '#FFFFFF',
+                  fontWeight: 700,
+                  fontSize: 14,
+                  border: `1px solid ${ui.primary}`,
+                }}
+              >
+                {avatarInitial}
+              </span>
+            )
+          ) : null}
+          <span style={{ color: ui.primary, fontWeight: 700, letterSpacing: '0.06em' }}>
+            CONTEST REGISTRATION ENGINE{loggedInUserLabel ? ` - ${loggedInUserLabel}` : ''}
+          </span>
+        </div>
         <h2>{contest.title}</h2>
       </div>
       <p className="mt-3" style={{ color: ui.mutedText }}>{registrationMicrocopy.startApplication}</p>
@@ -497,7 +616,7 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
         }}
       >
         <div className="row g-4">
-          {currentStep.fields.map((field) => {
+          {visibleCurrentFields.map((field) => {
             const value = getFieldValue(formData, field.key);
             const error = errors[field.key];
             const colClass = field.type === 'textarea' || field.type === 'file' || field.type === 'multi_select' ? 'col-lg-12' : 'col-lg-6';

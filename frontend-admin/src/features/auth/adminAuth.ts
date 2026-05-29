@@ -31,5 +31,19 @@ export async function signInAdmin(username: string, password: string) {
     throw new Error('Access denied. Admin privileges required.');
   }
 
+  if (typeof window !== 'undefined') {
+    const accessToken = data.session?.access_token ?? '';
+    if (accessToken) localStorage.setItem('spotlight_admin_access_token', accessToken);
+    localStorage.setItem(
+      'spotlight_admin_user',
+      JSON.stringify({
+        id: data.user.id,
+        email: data.user.email,
+        roles: [role],
+        permissions: [],
+      }),
+    );
+  }
+
   return data.user;
 }

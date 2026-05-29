@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import type { AdminMenuCounts } from '@/types/admin';
 import { getAdminMenuCounts } from '@/services/adminApiClient';
 import { canManageStem, canReadStem, getCurrentStemRole } from '@/config/stemAccess';
+import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 
 type NavItem = {
   label: string;
@@ -13,21 +14,30 @@ type NavItem = {
   section: string;
   countKey?: keyof AdminMenuCounts;
   stemAccess?: 'read' | 'manage';
+  permissions?: string[];
 };
 
 const navItemsBase: NavItem[] = [
   { label: 'Dashboard', href: '/admin', section: 'Overview' },
   { label: 'Analytics', href: '/admin/analytics', section: 'Overview' },
-  { label: 'Competitions', href: '/admin/competitions', section: 'Contests', countKey: 'open_mic' },
+  { label: 'Competitions', href: '/admin/competitions', section: 'Contests', countKey: 'open_mic', permissions: ['contest.create', 'contest.update', 'contest.publish'] },
   { label: 'Open Mic Editions', href: '/admin/competitions/open-mic', section: 'Contests' },
   { label: 'Chat Sessions', href: '/admin/chatbot', section: 'Support' },
   { label: 'Leads Queue', href: '/admin/leads', section: 'Support' },
   { label: 'Handoff Queue', href: '/admin/handoffs', section: 'Support' },
+  { label: 'Users', href: '/admin/users', section: 'Support', permissions: ['users.view'] },
+  { label: 'Roles', href: '/admin/roles', section: 'Support', permissions: ['roles.view'] },
+  { label: 'RBAC Settings', href: '/admin/rbac-settings', section: 'Support', permissions: ['roles.view'] },
+  { label: 'Permission Matrix', href: '/admin/permissions-matrix', section: 'Support', permissions: ['permissions.view'] },
+  { label: 'Permissions', href: '/admin/permissions', section: 'Support', permissions: ['permissions.view'] },
+  { label: 'Audit Logs', href: '/admin/audit-logs', section: 'Support', permissions: ['audit.logs.view'] },
+  { label: 'Login Activity', href: '/admin/login-activity', section: 'Support', permissions: ['audit.logs.view'] },
+  { label: 'Security Events', href: '/admin/security-events', section: 'Support', permissions: ['audit.logs.view'] },
   { label: 'Reality TV', href: '/admin/reality-tv/dashboard', section: 'Programs' },
   { label: 'Film Academy', href: '/admin/film-academy', section: 'Programs' },
   { label: 'Bootcamp', href: '/admin/bootcamp', section: 'Programs' },
-  { label: 'STEM Overview', href: '/admin/stem/overview', section: 'Programs', stemAccess: 'read' },
-  { label: 'STEM Contests', href: '/admin/stem/contests', section: 'Programs', stemAccess: 'manage' },
+  { label: 'STEM Overview', href: '/admin/stem/overview', section: 'Programs', stemAccess: 'read', permissions: ['contestant.view'] },
+  { label: 'STEM Contests', href: '/admin/stem/contests', section: 'Programs', stemAccess: 'manage', permissions: ['contest.create', 'contest.update'] },
   { label: 'STEM Leaderboard', href: '/admin/stem/leaderboard', section: 'Programs', stemAccess: 'read' },
   { label: 'STEM Voting', href: '/admin/stem/voting', section: 'Programs', stemAccess: 'manage' },
   { label: 'STEM Bootcamp', href: '/admin/stem/bootcamp', section: 'Programs', stemAccess: 'manage' },
@@ -52,12 +62,17 @@ const sections = ['Overview', 'Contests', 'Support', 'Programs'];
 export function AdminSidebar() {
   const pathname = usePathname() ?? '';
   const [counts, setCounts] = useState<AdminMenuCounts | null>(null);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const role = getCurrentStemRole();
   const allowRead = canReadStem(role);
   const allowManage = canManageStem(role);
 
   useEffect(() => {
     void getAdminMenuCounts().then(setCounts);
+    try {
+      const raw = localStorage.getItem('spotlight_admin_user');
+      if (raw) setAuthUser(JSON.parse(raw) as AuthUser);
+    } catch {}
   }, []);
 
   const isActive = (href: string) => (href === '/admin' ? pathname === '/admin' : pathname === href || pathname.startsWith(`${href}/`));
@@ -70,6 +85,7 @@ export function AdminSidebar() {
           if (item.section !== section) return false;
           if (item.stemAccess === 'read' && !allowRead) return false;
           if (item.stemAccess === 'manage' && !allowManage) return false;
+          if (item.permissions?.length && !hasAnyPermission(authUser, item.permissions)) return false;
           return true;
         });
         if (!items.length) return null;

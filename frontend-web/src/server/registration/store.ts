@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import {
   buildRegistrationSteps,
+  getTalentSkillsForContestCategory,
   resolveContestRegistration,
   contestRegistrationCatalog,
 } from '@/src/features/registration/config';
@@ -160,6 +161,7 @@ export function startRegistrationDraft(params: {
       'derived.supportsVoting': contest.supportsVoting,
       'derived.supportsAuditionScheduling': contest.supportsAuditionScheduling,
       'derived.isPaidContest': contest.isPaid,
+      'derived.allowedTalentSkills': getTalentSkillsForContestCategory(contest.contestCategory),
       'payment.feeAmount': contest.registrationFeeNgn || 0,
       'payment.paymentStatus': contest.isPaid ? 'pending' : 'waived',
     },
@@ -216,7 +218,16 @@ export function saveRegistrationStep(params: {
       mergedData['derived.supportsVoting'] = selectedContest.supportsVoting;
       mergedData['derived.supportsAuditionScheduling'] = selectedContest.supportsAuditionScheduling;
       mergedData['derived.isPaidContest'] = selectedContest.isPaid;
+      mergedData['derived.allowedTalentSkills'] = getTalentSkillsForContestCategory(selectedContest.contestCategory);
       mergedData['payment.feeAmount'] = selectedContest.registrationFeeNgn || 0;
+      mergedData['contest.auditionPreference'] = '';
+      mergedData['contest.preferredAuditionCity'] = '';
+      mergedData['audition.state'] = '';
+      mergedData['audition.city'] = '';
+      mergedData['audition.venue'] = '';
+      if (selectedContest.contestCategory !== 'stem_innovation') {
+        mergedData['contest.schoolEntry'] = false;
+      }
       if (!selectedContest.isPaid) {
         mergedData['payment.paymentStatus'] = 'waived';
       } else if (!String(mergedData['payment.paymentStatus'] || '')) {
