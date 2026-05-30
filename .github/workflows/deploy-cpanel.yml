@@ -17,17 +17,22 @@ jobs:
     steps:
       - name: Deploy over SSH (pull + build)
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO_SLUG: ${{ github.repository }}
         with:
           host: ${{ secrets.CPANEL_SSH_HOST }}
           username: ${{ secrets.CPANEL_SSH_USER }}
           key: ${{ secrets.CPANEL_SSH_KEY }}
           port: ${{ secrets.CPANEL_SSH_PORT }}
+          command_timeout: 30m
+          envs: GITHUB_TOKEN,REPO_SLUG
           script_stop: true
           script: |
             set -euo pipefail
 
             DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
-            REPO_URL="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+            REPO_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO_SLUG}.git"
 
             echo "Deploy path: ${DEPLOY_PATH}"
             mkdir -p "${DEPLOY_PATH}"
@@ -35,23 +40,26 @@ jobs:
             if [ ! -d "${DEPLOY_PATH}/.git" ]; then
               echo "Cloning repo..."
               rm -rf "${DEPLOY_PATH:?}/"*
-              git clone --depth 1 "${REPO_URL}" "${DEPLOY_PATH}"
+              git clone --depth 1 --branch main "${REPO_URL}" "${DEPLOY_PATH}"
             else
               echo "Updating repo..."
               git -C "${DEPLOY_PATH}" remote set-url origin "${REPO_URL}"
-              git -C "${DEPLOY_PATH}" fetch --prune origin main
-              git -C "${DEPLOY_PATH}" reset --hard origin/main
+              git -C "${DEPLOY_PATH}" fetch --depth 1 origin main
+              git -C "${DEPLOY_PATH}" reset --hard FETCH_HEAD
             fi
 
             cd "${DEPLOY_PATH}/frontend-web"
 
             # Activate cPanel Node.js virtual environment (Setup Node.js App).
-            VENV_BASE="${HOME}/nodevenv${DEPLOY_PATH#"${HOME}"}/frontend-web"
+            APP_SUFFIX="${DEPLOY_PATH#${HOME}}"
+            VENV_BASE="${HOME}/nodevenv${APP_SUFFIX}/frontend-web"
+            echo "Node venv base: ${VENV_BASE}"
             if [ -d "${VENV_BASE}" ]; then
               for ver in 20 18 16 14; do
                 if [ -f "${VENV_BASE}/${ver}/bin/activate" ]; then
                   # shellcheck disable=SC1090
                   source "${VENV_BASE}/${ver}/bin/activate"
+                  echo "Activated Node venv version ${ver}"
                   break
                 fi
               done
