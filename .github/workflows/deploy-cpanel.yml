@@ -15,75 +15,50 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy over SSH (pull + build)
-        uses: appleboy/ssh-action@v1.2.0
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          REPO_SLUG: ${{ github.repository }}
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend-web/package-lock.json
+
+      - name: Build frontend on GitHub
+        working-directory: frontend-web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload built frontend to cPanel
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.CPANEL_SSH_HOST }}
           username: ${{ secrets.CPANEL_SSH_USER }}
           key: ${{ secrets.CPANEL_SSH_KEY }}
           port: ${{ secrets.CPANEL_SSH_PORT }}
-          command_timeout: 30m
-          envs: GITHUB_TOKEN,REPO_SLUG
+          source: frontend-web
+          target: ${{ secrets.DEPLOY_PATH }}
+          strip_components: 0
+          overwrite: true
+          rm: false
+
+      - name: Finalize on server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.CPANEL_SSH_HOST }}
+          username: ${{ secrets.CPANEL_SSH_USER }}
+          key: ${{ secrets.CPANEL_SSH_KEY }}
+          port: ${{ secrets.CPANEL_SSH_PORT }}
           script_stop: true
           script: |
-            set -euo pipefail
+            set -eo pipefail
 
             DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
-            REPO_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO_SLUG}.git"
+            APP_DIR="${DEPLOY_PATH}/frontend-web"
 
-            echo "Deploy path: ${DEPLOY_PATH}"
-            mkdir -p "${DEPLOY_PATH}"
-
-            if [ ! -d "${DEPLOY_PATH}/.git" ]; then
-              echo "Cloning repo..."
-              rm -rf "${DEPLOY_PATH:?}/"*
-              git clone --depth 1 --branch main "${REPO_URL}" "${DEPLOY_PATH}"
-            else
-              echo "Updating repo..."
-              git -C "${DEPLOY_PATH}" remote set-url origin "${REPO_URL}"
-              git -C "${DEPLOY_PATH}" fetch --depth 1 origin main
-              git -C "${DEPLOY_PATH}" reset --hard FETCH_HEAD
-            fi
-
-            cd "${DEPLOY_PATH}/frontend-web"
-
-            # Activate cPanel Node.js virtual environment (Setup Node.js App).
-            APP_SUFFIX="${DEPLOY_PATH#${HOME}}"
-            VENV_BASE="${HOME}/nodevenv${APP_SUFFIX}/frontend-web"
-            echo "Node venv base: ${VENV_BASE}"
-            if [ -d "${VENV_BASE}" ]; then
-              for ver in 20 18 16 14; do
-                if [ -f "${VENV_BASE}/${ver}/bin/activate" ]; then
-                  # shellcheck disable=SC1090
-                  source "${VENV_BASE}/${ver}/bin/activate"
-                  echo "Activated Node venv version ${ver}"
-                  break
-                fi
-              done
-            fi
-
-            # Fallback: common cPanel ea-nodejs paths if venv is missing.
-            if ! command -v npm >/dev/null 2>&1; then
-              for p in \
-                /opt/cpanel/ea-nodejs20/bin \
-                /opt/cpanel/ea-nodejs18/bin \
-                /opt/cpanel/ea-nodejs16/bin; do
-                if [ -x "${p}/npm" ]; then
-                  export PATH="${p}:$PATH"
-                  break
-                fi
-              done
-            fi
-
-            echo "node: $(node -v || true)"
-            echo "npm:  $(npm -v || true)"
-
-            npm ci
-            npm run build
-
+            echo "Deployed to: ${APP_DIR}"
+            echo "Build was completed on GitHub Actions (cPanel shared hosting cannot run next build)."
             echo ""
-            echo "Deployed and built successfully."
             echo "Next: restart the Node.js app in cPanel (Setup Node.js App -> Restart)."
