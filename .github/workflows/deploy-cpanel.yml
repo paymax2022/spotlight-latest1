@@ -1,0 +1,66 @@
+name: Deploy to Namecheap cPanel (SSH)
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-cpanel-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH (pull + build)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.CPANEL_SSH_HOST }}
+          username: ${{ secrets.CPANEL_SSH_USER }}
+          key: ${{ secrets.CPANEL_SSH_KEY }}
+          port: ${{ secrets.CPANEL_SSH_PORT }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+            REPO_URL="https://github.com/${{ github.repository }}.git"
+
+            echo "Deploy path: ${DEPLOY_PATH}"
+            mkdir -p "${DEPLOY_PATH}"
+
+            if [ ! -d "${DEPLOY_PATH}/.git" ]; then
+              echo "Cloning repo..."
+              rm -rf "${DEPLOY_PATH:?}/"*
+              git clone --depth 1 "${REPO_URL}" "${DEPLOY_PATH}"
+            else
+              echo "Updating repo..."
+              git -C "${DEPLOY_PATH}" fetch --prune origin main
+              git -C "${DEPLOY_PATH}" reset --hard origin/main
+            fi
+
+            cd "${DEPLOY_PATH}/frontend-web"
+
+            # cPanel/CloudLinux sometimes doesn't expose node/npm on non-login shells.
+            # Try common cPanel paths if npm isn't found.
+            if ! command -v npm >/dev/null 2>&1; then
+              for p in \
+                /opt/cpanel/ea-nodejs20/bin \
+                /opt/cpanel/ea-nodejs18/bin \
+                /opt/cpanel/ea-nodejs16/bin; do
+                if [ -x "${p}/npm" ]; then
+                  export PATH="${p}:$PATH"
+                  break
+                fi
+              done
+            fi
+
+            echo "node: $(node -v || true)"
+            echo "npm:  $(npm -v || true)"
+
+            npm ci
+            npm run build
+
+            echo ""
+            echo "Deployed and built successfully."
+            echo "Next: restart the Node.js app in cPanel (Setup Node.js App -> Restart)."
