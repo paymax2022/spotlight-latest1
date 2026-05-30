@@ -45,8 +45,19 @@ jobs:
 
             cd "${DEPLOY_PATH}/frontend-web"
 
-            # cPanel/CloudLinux sometimes doesn't expose node/npm on non-login shells.
-            # Try common cPanel paths if npm isn't found.
+            # Activate cPanel Node.js virtual environment (Setup Node.js App).
+            VENV_BASE="${HOME}/nodevenv${DEPLOY_PATH#"${HOME}"}/frontend-web"
+            if [ -d "${VENV_BASE}" ]; then
+              for ver in 20 18 16 14; do
+                if [ -f "${VENV_BASE}/${ver}/bin/activate" ]; then
+                  # shellcheck disable=SC1090
+                  source "${VENV_BASE}/${ver}/bin/activate"
+                  break
+                fi
+              done
+            fi
+
+            # Fallback: common cPanel ea-nodejs paths if venv is missing.
             if ! command -v npm >/dev/null 2>&1; then
               for p in \
                 /opt/cpanel/ea-nodejs20/bin \
