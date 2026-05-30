@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: deploy-cpanel-main
   cancel-in-progress: true
@@ -24,7 +27,7 @@ jobs:
             set -euo pipefail
 
             DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
-            REPO_URL="https://github.com/${{ github.repository }}.git"
+            REPO_URL="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
 
             echo "Deploy path: ${DEPLOY_PATH}"
             mkdir -p "${DEPLOY_PATH}"
@@ -35,6 +38,7 @@ jobs:
               git clone --depth 1 "${REPO_URL}" "${DEPLOY_PATH}"
             else
               echo "Updating repo..."
+              git -C "${DEPLOY_PATH}" remote set-url origin "${REPO_URL}"
               git -C "${DEPLOY_PATH}" fetch --prune origin main
               git -C "${DEPLOY_PATH}" reset --hard origin/main
             fi
