@@ -58,7 +58,18 @@ jobs:
             DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
             APP_DIR="${DEPLOY_PATH}/frontend-web"
 
+            printf '%s\n' \
+              '# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION BEGIN' \
+              'PassengerAppRoot "/home/specenpo/public_html/spotlightng_v2/frontend-web"' \
+              'PassengerBaseURI "/"' \
+              'PassengerNodejs "/home/specenpo/nodevenv/public_html/spotlightng_v2/frontend-web/20/bin/node"' \
+              'PassengerAppType node' \
+              'PassengerStartupFile server.js' \
+              '# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END' \
+              > "${APP_DIR}/.htaccess"
+
+            mkdir -p "${APP_DIR}/tmp"
+            touch "${APP_DIR}/tmp/restart.txt"
+
             echo "Deployed to: ${APP_DIR}"
-            echo "Build was completed on GitHub Actions (cPanel shared hosting cannot run next build)."
-            echo ""
-            echo "Next: restart the Node.js app in cPanel (Setup Node.js App -> Restart)."
+            echo "Passenger .htaccess written and app restart triggered."
