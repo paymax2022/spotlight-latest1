@@ -17,7 +17,7 @@ Provide a single operational checklist for shipping the One-Beat One-Verse compe
 3. Required environment variables are present in target environment:
    - Supabase keys
    - Paystack keys
-   - Mailgun keys (`MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, `MAILGUN_REGION`, `EMAIL_FROM`, `EMAIL_REPLY_TO`)
+   - Resend keys (`RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO`)
 4. At least one competition is configured with:
    - `contest_type = one_beat_one_verse`
    - registration and submission windows
@@ -47,7 +47,7 @@ Provide a single operational checklist for shipping the One-Beat One-Verse compe
 - sustained `5xx` on music submission/moderation routes
 - severe fraud false positives blocking legitimate voting
 - payment verification failures on paid votes
-- persistent Mailgun failures above agreed threshold
+- persistent Resend failures above agreed threshold
 
 ## Post-Launch Monitoring (first 24h)
 1. Error rates for:
@@ -56,6 +56,6 @@ Provide a single operational checklist for shipping the One-Beat One-Verse compe
    - `/api/moderation/entries/[id]/action`
    - `/api/vote/free`
    - `/api/vote/paid`
-2. Mailgun delivery outcomes for music lifecycle emails.
+2. Resend delivery outcomes for music lifecycle emails.
 3. Fraud flag volume and admin review turnaround.
 4. Leaderboard consistency between votes and computed scores.

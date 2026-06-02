@@ -22,7 +22,7 @@ const roles: Array<{ role: AdminRole; users: number; description: string }> = [
 
 export async function GET(request: Request) {
   try {
-    const identity = assertAdminPermission(request, 'roles:manage');
+    const identity = await assertAdminPermission(request, 'roles:manage');
 
     addAuditEvent({
       adminUser: identity.actorId || 'admin',

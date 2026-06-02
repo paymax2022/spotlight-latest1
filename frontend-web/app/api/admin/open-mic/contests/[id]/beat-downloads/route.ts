@@ -4,7 +4,7 @@ import { listBeatDownloads } from '@/src/server/openmic/persistence';
 
 export async function GET(request: Request, context: { params: { id: string } }) {
   try {
-    assertOpenMicReadAdmin(request);
+    await assertOpenMicReadAdmin(request);
     const downloads = await listBeatDownloads(context.params.id);
     return successResponse({ success: true, downloads });
   } catch (error) {

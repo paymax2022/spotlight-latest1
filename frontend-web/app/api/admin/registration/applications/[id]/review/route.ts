@@ -6,7 +6,7 @@ import { addAuditEvent } from '@/src/server/admin/audit';
 
 export async function POST(request: Request, { params }: { params: { id: string } }) {
   try {
-    const identity = assertAdminPermission(request, 'applications:review');
+    const identity = await assertAdminPermission(request, 'applications:review');
     const body = (await request.json()) as RegistrationReviewInput;
     if (!body?.status) {
       return errorResponse('status is required', 400);

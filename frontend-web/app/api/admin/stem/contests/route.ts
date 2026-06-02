@@ -25,7 +25,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const identity = assertStemAdmin(request);
+    const identity = await assertStemAdmin(request);
     const body = (await request.json()) as Partial<StemContest>;
 
     const created = await createContest(body, identity.actorId);

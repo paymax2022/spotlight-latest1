@@ -8,7 +8,7 @@ import {
 
 export async function POST(request: Request, context: { params: { id: string } }) {
   try {
-    assertOpenMicAdmin(request);
+    await assertOpenMicAdmin(request);
     const body = await request.json().catch(() => ({}));
     const action = String(body?.action || '');
     const ids = Array.isArray(body?.ids) ? body.ids.map((id: unknown) => String(id)).filter(Boolean) : [];

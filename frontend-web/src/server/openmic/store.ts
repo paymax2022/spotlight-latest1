@@ -453,10 +453,15 @@ export function createApplication(
     phone: payload.phone,
     gender: payload.gender,
     ageRange: payload.ageRange,
+    country: payload.country,
     city: payload.city,
     state: payload.state,
+    lga: payload.lga,
     instagramHandle: payload.instagramHandle,
     tiktokHandle: payload.tiktokHandle,
+    youtubeHandle: payload.youtubeHandle,
+    facebookHandle: payload.facebookHandle,
+    xHandle: payload.xHandle,
     musicGenre: payload.musicGenre,
     artistBio: payload.artistBio,
     profilePhotoUrl: payload.profilePhotoUrl,
@@ -615,7 +620,7 @@ export function createSubmission(
     | 'isWinner'
     | 'createdAt'
     | 'updatedAt'
-  > & { contestSlug: string }
+  > & { contestSlug: string; submissionId?: string }
 ) {
   ensureSeeded();
   const contest = getContestBySlug(payload.contestSlug);
@@ -626,13 +631,10 @@ export function createSubmission(
     return { success: false as const, errors: { beat: 'Official beat not yet available.' } };
   }
   const linkedApplication = findApplicationForContest(contest.id, payload.email, payload.stageName);
-  if (!linkedApplication) {
-    return { success: false as const, errors: { application: 'Please apply for this contest before submitting a song.' } };
-  }
-  if (linkedApplication.applicationStatus !== 'approved') {
+  if (linkedApplication && linkedApplication.applicationStatus !== 'approved') {
     return { success: false as const, errors: { application: 'Your application has not been approved yet.' } };
   }
-  if (contest.entryFeeRequired && !['paid', 'waived'].includes(linkedApplication.paymentStatus)) {
+  if (contest.entryFeeRequired && linkedApplication && !['paid', 'waived'].includes(linkedApplication.paymentStatus)) {
     return { success: false as const, errors: { payment: 'Entry fee payment is required before song submission.' } };
   }
   const nowMs = Date.now();
@@ -648,7 +650,9 @@ export function createSubmission(
 
   const stageNameKey = String(payload.stageName || '').trim().toLowerCase();
   const emailKey = String(payload.email || '').trim().toLowerCase();
+  const submissionId = payload.submissionId || randomUUID();
   const duplicate = [...store.submissions.values()].find((item) => {
+    if (item.id === submissionId) return false;
     if (item.contestId !== contest.id) return false;
     if (['rejected', 'disqualified'].includes(item.status)) return false;
     const existingStage = String(item.stageName || '').trim().toLowerCase();
@@ -672,8 +676,13 @@ export function createSubmission(
   }
 
   const now = nowIso();
+  const normalizedGenre = String(payload.genre || contest.beat?.genre || 'Unspecified').trim() || 'Unspecified';
+  const normalizedSongTitle =
+    String(payload.songTitle || '').trim() ||
+    String(payload.songFileName || '').replace(/\.mp3$/i, '').trim() ||
+    `${payload.stageName} submission`;
   const submission: OpenMicSubmission = {
-    id: randomUUID(),
+    id: submissionId,
     contestId: contest.id,
     contestSlug: contest.slug,
     artistUserId: payload.artistUserId,
@@ -681,11 +690,21 @@ export function createSubmission(
     realName: payload.realName,
     email: payload.email,
     phone: payload.phone,
-    genre: payload.genre,
-    songTitle: payload.songTitle,
+    country: payload.country,
+    state: payload.state,
+    lga: payload.lga,
+    instagramHandle: payload.instagramHandle,
+    tiktokHandle: payload.tiktokHandle,
+    youtubeHandle: payload.youtubeHandle,
+    facebookHandle: payload.facebookHandle,
+    xHandle: payload.xHandle,
+    genre: normalizedGenre,
+    songTitle: normalizedSongTitle,
     songMood: payload.songMood,
     language: payload.language,
     songUrl: payload.songUrl,
+    songObjectKey: payload.songObjectKey,
+    songFileName: payload.songFileName,
     videoUrl: payload.videoUrl,
     lyricsUrl: payload.lyricsUrl,
     artworkUrl: payload.artworkUrl,

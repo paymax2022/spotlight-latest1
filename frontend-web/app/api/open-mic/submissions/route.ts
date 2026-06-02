@@ -24,9 +24,19 @@ export async function POST(request: Request) {
     const body = (await request.json()) as any;
     if (!body.contestSlug) return errorResponse('contestSlug is required', 400);
     if (!body.stageName) return errorResponse('stageName is required', 400);
-    if (!body.genre) return errorResponse('genre is required', 400);
-    if (!body.songTitle) return errorResponse('songTitle is required', 400);
-    if (!body.songUrl) return errorResponse('songUrl is required', 400);
+    for (const key of ['country', 'state', 'lga']) {
+      if (!String(body?.[key] || '').trim()) return errorResponse(`${key} is required`, 400);
+    }
+    const hasSocialHandle = [
+      body.instagramHandle,
+      body.tiktokHandle,
+      body.youtubeHandle,
+      body.facebookHandle,
+      body.xHandle,
+    ].some((value) => String(value || '').trim());
+    if (!hasSocialHandle) return errorResponse('At least one social media handle is required', 400);
+    if (!body.songUrl && !body.songObjectKey) return errorResponse('song upload is required', 400);
+    if (body.songObjectKey && !body.submissionId) return errorResponse('submissionId is required for uploaded songs', 400);
 
     const result = await createSubmission({
       contestSlug: body.contestSlug,
@@ -35,11 +45,22 @@ export async function POST(request: Request) {
       realName: body.realName,
       email: body.email,
       phone: body.phone,
-      genre: body.genre,
-      songTitle: body.songTitle,
+      country: String(body.country || '').trim(),
+      state: String(body.state || '').trim(),
+      lga: String(body.lga || '').trim(),
+      instagramHandle: String(body.instagramHandle || '').trim() || undefined,
+      tiktokHandle: String(body.tiktokHandle || '').trim() || undefined,
+      youtubeHandle: String(body.youtubeHandle || '').trim() || undefined,
+      facebookHandle: String(body.facebookHandle || '').trim() || undefined,
+      xHandle: String(body.xHandle || '').trim() || undefined,
+      genre: typeof body.genre === 'string' ? body.genre.trim() : '',
+      songTitle: typeof body.songTitle === 'string' ? body.songTitle.trim() : '',
       songMood: body.songMood,
       language: body.language,
-      songUrl: body.songUrl,
+      songUrl: body.songUrl || '',
+      submissionId: body.submissionId,
+      songObjectKey: body.songObjectKey,
+      songFileName: body.songFileName,
       videoUrl: body.videoUrl,
       lyricsUrl: body.lyricsUrl,
       artworkUrl: body.artworkUrl,

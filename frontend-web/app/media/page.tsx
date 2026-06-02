@@ -1,4 +1,4 @@
-import SpotlightShell from '@/src/components/spotlight/SpotlightShell';
+import Layout from "@/components/layout/Layout"
 
 export const metadata = {
   title: 'Media | Spotlight',
@@ -18,7 +18,7 @@ export default function MediaPage() {
   ];
 
   return (
-    <SpotlightShell>
+    <Layout headerStyle={1} footerStyle={1} onePageNav={false} breadcrumbTitle={null} breadcrumbClassName={undefined} breadcrumbPadding={undefined}>
       <section className="max-w-6xl mx-auto px-4 md:px-8 py-16">
         <h1 className="font-display text-4xl md:text-6xl text-foreground">Media, Broadcast & Content Strength</h1>
         <p className="text-foreground/70 mt-4 max-w-3xl">
@@ -30,6 +30,6 @@ export default function MediaPage() {
           ))}
         </div>
       </section>
-    </SpotlightShell>
+    </Layout>
   );
 }

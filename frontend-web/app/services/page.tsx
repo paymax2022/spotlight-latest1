@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import SpotlightShell from '@/src/components/spotlight/SpotlightShell';
+import Layout from "@/components/layout/Layout"
 import { services } from '@/src/data/services';
 
 export const metadata = {
@@ -9,7 +9,7 @@ export const metadata = {
 
 export default function ServicesPage() {
   return (
-    <SpotlightShell>
+    <Layout headerStyle={1} footerStyle={1} onePageNav={false} breadcrumbTitle={null} breadcrumbClassName={undefined} breadcrumbPadding={undefined}>
       <section className="max-w-7xl mx-auto px-4 md:px-8 py-16">
         <p className="section-label">Service Architecture</p>
         <h1 className="font-display text-4xl md:text-6xl text-foreground mt-4">Spotlight Service Portfolio</h1>
@@ -26,6 +26,6 @@ export default function ServicesPage() {
           ))}
         </div>
       </section>
-    </SpotlightShell>
+    </Layout>
   );
 }

@@ -7,7 +7,7 @@ import { paginateItems, parseAdminListQuery, sortItems } from '@/src/server/admi
 
 export async function GET(request: Request) {
   try {
-    const identity = assertAdminPermission(request, 'applications:review');
+    const identity = await assertAdminPermission(request, 'applications:review');
     const { searchParams } = new URL(request.url);
     const filter: RegistrationListFilter = {
       contestSlug: searchParams.get('contestSlug') || undefined,

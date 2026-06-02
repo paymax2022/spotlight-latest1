@@ -6,7 +6,7 @@ import { addAuditEvent } from '@/src/server/admin/audit';
 
 export async function POST(request: Request, context: { params: { id: string } }) {
   try {
-    const identity = assertOpenMicScoreAdmin(request);
+    const identity = await assertOpenMicScoreAdmin(request);
     const body = (await request.json()) as OpenMicSubmissionReviewInput;
     if (!body.status) return errorResponse('status is required', 400);
     const submission = await reviewSubmission(context.params.id, body, identity.actorId);

@@ -5,7 +5,7 @@ import { paginateItems, parseAdminListQuery, sortItems } from '@/src/server/admi
 
 export async function GET(request: Request) {
   try {
-    assertOpenMicReadAdmin(request);
+    await assertOpenMicReadAdmin(request);
     const { searchParams } = new URL(request.url);
     const contestId = searchParams.get('contestId') || undefined;
     const status = (searchParams.get('status') as any) || undefined;

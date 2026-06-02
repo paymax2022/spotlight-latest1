@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import SpotlightShell from '@/src/components/spotlight/SpotlightShell';
+import Layout from "@/components/layout/Layout"
 
 export const metadata = {
   title: 'Sponsors & Partners | Spotlight',
@@ -8,7 +8,7 @@ export const metadata = {
 
 export default function SponsorsPartnersPage() {
   return (
-    <SpotlightShell>
+    <Layout headerStyle={1} footerStyle={1} onePageNav={false} breadcrumbTitle={null} breadcrumbClassName={undefined} breadcrumbPadding={undefined}>
       <section className="max-w-6xl mx-auto px-4 md:px-8 py-16">
         <h1 className="font-display text-4xl md:text-6xl text-foreground">Sponsors & Partners</h1>
         <p className="text-foreground/70 mt-5 text-lg max-w-4xl">
@@ -20,6 +20,6 @@ export default function SponsorsPartnersPage() {
           <Link href="/contact" className="btn-outline text-xs py-3 px-6">Book Partnership Meeting</Link>
         </div>
       </section>
-    </SpotlightShell>
+    </Layout>
   );
 }

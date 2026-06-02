@@ -48,7 +48,7 @@ function mapStemStatus(action: BulkActionPayload['action']) {
 
 export async function POST(request: Request) {
   try {
-    const identity = assertAdminPermission(request, 'applications:review');
+    const identity = await assertAdminPermission(request, 'applications:review');
     const body = (await request.json()) as BulkActionPayload;
 
     if (!Array.isArray(body?.applicationIds) || body.applicationIds.length === 0) {

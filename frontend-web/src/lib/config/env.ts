@@ -44,7 +44,6 @@ export function validateEnv() {
     'PAYSTACK_SECRET_KEY',
     'MAILGUN_API_KEY',
     'MAILGUN_DOMAIN',
-    'MAILGUN_REGION',
     'EMAIL_FROM',
     'NEXT_PUBLIC_SITE_URL',
   ];

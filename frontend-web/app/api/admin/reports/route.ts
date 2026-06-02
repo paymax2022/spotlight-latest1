@@ -6,7 +6,7 @@ import { listStemApplications, listStemAdminContests } from '@/src/server/stem/s
 
 export async function GET(request: Request) {
   try {
-    assertAdminPermission(request, 'reports:export');
+    await assertAdminPermission(request, 'reports:export');
 
     const registrations = listRegistrationApplications();
     const openMicSubmissions = listSubmissions();

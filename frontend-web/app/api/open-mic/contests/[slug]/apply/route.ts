@@ -9,10 +9,18 @@ export async function POST(request: Request, context: { params: { slug: string }
     const contest = await getContestBySlug(context.params.slug);
     if (!contest) return errorResponse('Contest not found', 404);
 
-    const requiredFields = ['fullName', 'stageName', 'email', 'phone'];
+    const requiredFields = ['fullName', 'stageName', 'email', 'phone', 'country', 'state', 'lga'];
     for (const key of requiredFields) {
       if (!String(body?.[key] || '').trim()) return errorResponse(`${key} is required`, 400);
     }
+    const hasSocialHandle = [
+      body.instagramHandle,
+      body.tiktokHandle,
+      body.youtubeHandle,
+      body.facebookHandle,
+      body.xHandle,
+    ].some((value) => String(value || '').trim());
+    if (!hasSocialHandle) return errorResponse('At least one social media handle is required', 400);
     if (!body.hasAgreedToRules || !body.hasAgreedToBeatTerms || !body.hasAgreedToVotingTerms) {
       return errorResponse('Rules, beat terms, and voting terms must be accepted.', 400);
     }
@@ -20,17 +28,22 @@ export async function POST(request: Request, context: { params: { slug: string }
     const result = await createApplication({
       contestSlug: context.params.slug,
       userId: user.id,
-      fullName: body.fullName,
-      stageName: body.stageName,
-      email: body.email,
-      phone: body.phone,
+      fullName: String(body.fullName || '').trim(),
+      stageName: String(body.stageName || '').trim(),
+      email: String(body.email || '').trim(),
+      phone: String(body.phone || '').trim(),
       gender: body.gender || 'prefer_not_to_say',
       ageRange: body.ageRange || '18_24',
-      city: body.city || 'Lagos',
-      state: body.state || 'Lagos',
-      instagramHandle: body.instagramHandle,
-      tiktokHandle: body.tiktokHandle,
-      musicGenre: body.musicGenre || 'Afrobeats',
+      country: String(body.country || '').trim(),
+      city: String(body.city || '').trim(),
+      state: String(body.state || '').trim(),
+      lga: String(body.lga || '').trim(),
+      instagramHandle: String(body.instagramHandle || '').trim() || undefined,
+      tiktokHandle: String(body.tiktokHandle || '').trim() || undefined,
+      youtubeHandle: String(body.youtubeHandle || '').trim() || undefined,
+      facebookHandle: String(body.facebookHandle || '').trim() || undefined,
+      xHandle: String(body.xHandle || '').trim() || undefined,
+      musicGenre: '',
       artistBio: body.artistBio,
       profilePhotoUrl: body.profilePhotoUrl,
       hasAgreedToRules: true,

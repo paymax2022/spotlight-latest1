@@ -5,7 +5,7 @@ import { getAdminSettings, updateAdminSettings } from '@/src/server/admin/settin
 
 export async function GET(request: Request) {
   try {
-    assertAdminPermission(request, 'dashboard:view');
+    await assertAdminPermission(request, 'dashboard:view');
     return successResponse({ success: true, settings: getAdminSettings() });
   } catch (error) {
     return handleApiError(error, 'Failed to load admin settings');
@@ -14,7 +14,7 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const identity = assertAdminPermission(request, 'roles:manage');
+    const identity = await assertAdminPermission(request, 'roles:manage');
     const body = await request.json();
     const oldSettings = getAdminSettings();
     const settings = updateAdminSettings(body || {});

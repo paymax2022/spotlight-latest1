@@ -13,7 +13,7 @@ function toCsv(rows: Array<Record<string, unknown>>) {
 
 export async function GET(request: Request, context: { params: { id: string } }) {
   try {
-    assertOpenMicReadAdmin(request);
+    await assertOpenMicReadAdmin(request);
     const { searchParams } = new URL(request.url);
     const format = (searchParams.get('format') || '').toLowerCase();
     const events = await listPaymentEvents(context.params.id);

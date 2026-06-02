@@ -1,13 +1,14 @@
 
 import Link from 'next/link'
 import VideoPopup from '../elements/VideoPopup'
+import HeroImageSlider from '../slider/HeroImageSlider'
 
 export default function Hero1() {
     return (
         <>
             <section className="hero-section fix hero-1 bg-cover" style={{ backgroundImage: 'url("assets/img/hero/hero-bg.jpg")' }}>
                 <div className="text-transparent">
-                    <h2>Technology</h2>
+                    <h2>SPOTLIGHT</h2>
                 </div>
                 {/* <div className="line-shape">
                     <img src="/assets/img/hero/line-shape.png" alt="shape-img" />
@@ -25,7 +26,7 @@ export default function Hero1() {
                     <div className="row g-4 align-items-center">
                         <div className="col-lg-8">
                             <div className="hero-content">
-                                <h6 className="wow fadeInUp" data-wow-delay=".2s">Best it SOULTION Provider</h6>
+                               
                                 <h1 className="wow fadeInUp" data-wow-delay=".4s">
                                    Empowering Africa’s Next Generation 
                                 </h1>
@@ -44,7 +45,7 @@ export default function Hero1() {
                         </div>
                         <div className="col-lg-4">
                             <div className="hero-image wow fadeInUp" data-wow-delay=".4s">
-                                <img src="/assets/img/shape/flyer3.png" alt="hero-img" />
+                                <HeroImageSlider />
                             </div>
                         </div>
                     </div>

@@ -5,7 +5,7 @@ import { listEvents, updateEvent } from '@/src/server/admin/events';
 
 export async function GET(request: Request, { params }: { params: { id: string } }) {
   try {
-    assertAdminPermission(request, 'programs:manage');
+    await assertAdminPermission(request, 'programs:manage');
     const event = listEvents().find((e) => e.id === params.id);
     if (!event) return errorResponse('Event not found', 404);
     return successResponse({ success: true, event });
@@ -16,7 +16,7 @@ export async function GET(request: Request, { params }: { params: { id: string }
 
 export async function PATCH(request: Request, { params }: { params: { id: string } }) {
   try {
-    const identity = assertAdminPermission(request, 'programs:manage');
+    const identity = await assertAdminPermission(request, 'programs:manage');
     const body = await request.json();
     const current = listEvents().find((e) => e.id === params.id);
     if (!current) return errorResponse('Event not found', 404);

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import SpotlightShell from '@/src/components/spotlight/SpotlightShell';
+import Layout from "@/components/layout/Layout"
 import { services, spotlightStats } from '@/src/data/services';
 import { featuredPrograms, partnershipPathways } from '@/src/data/programs';
 
@@ -44,7 +44,7 @@ const corePillars = [
 
 export default function SpotlightHomePage() {
   return (
-    <SpotlightShell>
+    <Layout headerStyle={1} footerStyle={1} onePageNav={false} breadcrumbTitle={null} breadcrumbClassName={undefined} breadcrumbPadding={undefined}>
       <section className="relative overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(212,168,67,0.2),transparent_45%)]" />
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-20 md:py-28 relative">
@@ -192,6 +192,6 @@ export default function SpotlightHomePage() {
           </div>
         </div>
       </section>
-    </SpotlightShell>
+    </Layout>
   );
 }

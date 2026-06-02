@@ -1045,6 +1045,7 @@ export async function listApplications(filter: StemApplicationFilter = {}) {
     let query = supabase.from('stem_contest_applications').select('*').order('created_at', { ascending: false });
 
     if (filter.contestId) query = query.eq('contest_id', filter.contestId);
+    if (filter.applicantUserId) query = query.eq('applicant_user_id', filter.applicantUserId);
     if (filter.status) query = query.eq('application_status', String(filter.status).toUpperCase());
     if (filter.applicantType) query = query.eq('applicant_type', filter.applicantType);
     if (filter.track) query = query.eq('participation_track', filter.track);

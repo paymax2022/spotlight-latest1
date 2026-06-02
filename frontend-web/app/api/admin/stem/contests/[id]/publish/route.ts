@@ -7,7 +7,7 @@ export async function POST(
   context: { params: { id: string } }
 ) {
   try {
-    const { actorId } = assertStemAdmin(request);
+    const { actorId } = await assertStemAdmin(request);
     const contest = await publishContest(context.params.id, actorId);
     return successResponse({ success: true, contest });
   } catch (error) {

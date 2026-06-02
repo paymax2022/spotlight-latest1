@@ -11,3 +11,11 @@ export function assertStemReadAdmin(request: Request) {
 export function assertStemScoreAdmin(request: Request) {
   return assertAdminPermission(request, 'scores:manage');
 }
+
+export function assertVotingAdmin(request: Request) {
+  return assertAdminPermission(request, 'votes:manage');
+}
+
+export function assertFinanceAdmin(request: Request) {
+  return assertAdminPermission(request, 'finance:view');
+}

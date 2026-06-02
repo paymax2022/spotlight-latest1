@@ -7,7 +7,7 @@ import { assertAdminPermission } from '@/src/server/admin/auth';
 
 export async function GET(req: Request) {
   try {
-    const identity = assertAdminPermission(req, 'dashboard:view');
+    const identity = await assertAdminPermission(req, 'dashboard:view');
 
     const registrations = listRegistrationApplications();
     const openMicContests = listContests({ includeNonPublic: true });

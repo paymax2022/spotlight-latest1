@@ -5,7 +5,7 @@ import { paginateItems, parseAdminListQuery, sortItems } from '@/src/server/admi
 
 export async function GET(request: Request) {
   try {
-    const identity = assertAdminPermission(request, 'audit:view');
+    const identity = await assertAdminPermission(request, 'audit:view');
     const { searchParams } = new URL(request.url);
     const query = parseAdminListQuery(searchParams, {
       defaultPageSize: 50,

@@ -3,6 +3,7 @@ import OpenMicEntryForm from '@/components/openmic/OpenMicEntryForm';
 import { getContestBySlug } from '@/src/server/openmic/persistence';
 import OpenMicProgressTracker from '@/components/openmic/OpenMicProgressTracker';
 import OpenMicAuthGate from '@/components/openmic/OpenMicAuthGate';
+import Layout from '@/components/layout/Layout';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,27 +12,38 @@ export default async function OpenMicContestEntryPage({ params }: { params: { sl
   if (!contest) notFound();
 
   return (
-    <main className="container py-5">
-      <div className="mb-4">
-        <h1>Enter {contest.title}</h1>
-        <p>
-          Download/access the official beat, record your finished song, and submit before the deadline.
-        </p>
-        <div className="mt-3">
-          <OpenMicProgressTracker currentStep={4} />
-        </div>
-      </div>
+    <Layout
+      headerStyle={1}
+      footerStyle={2}
+      onePageNav={null}
+      breadcrumbTitle={`Enter ${contest.title}`}
+      breadcrumbClassName=""
+      breadcrumbPadding={undefined}
+    >
+      <section className="about-section section-padding fix bg-cover" style={{ backgroundImage: 'url("/assets/img/service/service-bg-2.jpg")' }}>
+        <div className="container">
+          <div className="mb-4">
+            <h1>Enter {contest.title}</h1>
+            <p>
+              Download/access the official beat, record your finished song, and submit before the deadline.
+            </p>
+            <div className="mt-3">
+              <OpenMicProgressTracker currentStep={4} />
+            </div>
+          </div>
 
-      <section className="p-4 border rounded bg-white">
-        <OpenMicAuthGate nextPath={`/open-mic/${contest.slug}/enter`}>
-          <OpenMicEntryForm
-            contestSlug={contest.slug}
-            contestTitle={contest.title}
-            beatAvailable={Boolean(contest.beat)}
-            beatRequiresPaidEntry={contest.beat?.requiresPaidEntryForDownload === true}
-          />
-        </OpenMicAuthGate>
+          <section className="glass-card rounded-md p-4">
+            <OpenMicAuthGate nextPath={`/open-mic/${contest.slug}/enter`}>
+              <OpenMicEntryForm
+                contestSlug={contest.slug}
+                contestTitle={contest.title}
+                beatAvailable={Boolean(contest.beat)}
+                beatRequiresPaidEntry={contest.beat?.requiresPaidEntryForDownload === true}
+              />
+            </OpenMicAuthGate>
+          </section>
+        </div>
       </section>
-    </main>
+    </Layout>
   );
 }

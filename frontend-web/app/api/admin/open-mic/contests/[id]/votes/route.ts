@@ -4,7 +4,7 @@ import { getContestById, getLeaderboard } from '@/src/server/openmic/persistence
 
 export async function GET(request: Request, context: { params: { id: string } }) {
   try {
-    assertOpenMicReadAdmin(request);
+    await assertOpenMicReadAdmin(request);
     const contest = await getContestById(context.params.id);
     const leaderboard = await getLeaderboard(context.params.id);
     const totalVotes = leaderboard.reduce((sum, row) => sum + row.voteCount, 0);

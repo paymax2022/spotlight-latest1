@@ -6,7 +6,7 @@ import { paginateItems, parseAdminListQuery, sortItems } from '@/src/server/admi
 
 export async function GET(request: Request) {
   try {
-    assertAdminPermission(request, 'content:manage');
+    await assertAdminPermission(request, 'content:manage');
     const { searchParams } = new URL(request.url);
     const query = parseAdminListQuery(searchParams, {
       defaultPageSize: 25,
@@ -24,7 +24,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const identity = assertAdminPermission(request, 'content:manage');
+    const identity = await assertAdminPermission(request, 'content:manage');
     const body = await request.json();
     if (!body?.title || !body?.message || !body?.channel || !body?.audience) {
       return successResponse({ success: false, error: 'title, message, channel and audience are required.' }, 400);

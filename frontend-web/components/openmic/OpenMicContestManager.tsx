@@ -176,6 +176,9 @@ export default function OpenMicContestManager() {
                     >
                       {savingId === contest.id ? 'Saving...' : 'Save'}
                     </button>
+                    <Link href={`/admin/open-mic/${contest.id}/edit`} className="btn-primary py-1.5 px-2 text-[10px]">
+                      Edit
+                    </Link>
                     <Link href={`/admin/open-mic/${contest.id}/applications`} className="btn-outline py-1.5 px-2 text-[10px]">
                       Applicants
                     </Link>

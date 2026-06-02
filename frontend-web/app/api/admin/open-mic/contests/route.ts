@@ -7,7 +7,7 @@ import { paginateItems, parseAdminListQuery, sortItems } from '@/src/server/admi
 
 export async function GET(request: Request) {
   try {
-    assertOpenMicReadAdmin(request);
+    await assertOpenMicReadAdmin(request);
     const { searchParams } = new URL(request.url);
     const query = parseAdminListQuery(searchParams, {
       defaultPageSize: 20,
@@ -25,7 +25,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const identity = assertOpenMicAdmin(request);
+    const identity = await assertOpenMicAdmin(request);
     const body = (await request.json()) as Partial<OpenMicContest>;
     const result = await createContest(body, identity.actorId);
     if (!result.success) return successResponse(result, 400);

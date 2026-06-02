@@ -4,7 +4,7 @@ import { setFinalePlaylistLocked } from '@/src/server/openmic/persistence';
 
 export async function POST(request: Request, context: { params: { id: string } }) {
   try {
-    assertOpenMicAdmin(request);
+    await assertOpenMicAdmin(request);
     const body = (await request.json()) as { locked?: boolean };
     if (typeof body.locked !== 'boolean') return errorResponse('locked boolean is required', 400);
     const contest = await setFinalePlaylistLocked(context.params.id, body.locked);

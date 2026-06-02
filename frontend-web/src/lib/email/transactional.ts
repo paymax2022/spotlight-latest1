@@ -33,10 +33,9 @@ export async function sendTransactionalEmail(
   input: TransactionalEmailInput
 ): Promise<TransactionalEmailResult> {
   const mailgunApiKey = getOptionalEnv('MAILGUN_API_KEY');
-  const mailgunDomain = getOptionalEnv('MAILGUN_DOMAIN');
+  const mailgunDomain = getOptionalEnv('MAILGUN_DOMAIN') || getOptionalEnv('MAILGUN_URL');
   const emailFrom = getOptionalEnv('EMAIL_FROM');
   const emailReplyTo = getOptionalEnv('EMAIL_REPLY_TO');
-
   if (!mailgunApiKey || !mailgunDomain || !emailFrom) {
     return {
       sent: false,
@@ -51,10 +50,7 @@ export async function sendTransactionalEmail(
   form.set('subject', input.subject);
   form.set('text', input.text);
   form.set('html', input.html);
-
-  if (emailReplyTo) {
-    form.set('h:Reply-To', emailReplyTo);
-  }
+  if (emailReplyTo) form.set('h:Reply-To', emailReplyTo);
 
   const response = await fetch(`${getMailgunBaseUrl()}/v3/${mailgunDomain}/messages`, {
     method: 'POST',
@@ -66,13 +62,24 @@ export async function sendTransactionalEmail(
     cache: 'no-store',
   });
 
-  const payload = (await response.json().catch(() => null)) as MailgunResponse | null;
+  const rawBody = await response.text().catch(() => '');
+  let payload: MailgunResponse | null = null;
+  if (rawBody) {
+    try {
+      payload = JSON.parse(rawBody) as MailgunResponse;
+    } catch {
+      payload = null;
+    }
+  }
 
   if (!response.ok) {
     return {
       sent: false,
       provider: 'mailgun',
-      reason: payload?.message || 'Failed to send transactional email via Mailgun.',
+      reason:
+        payload?.message ||
+        rawBody ||
+        `Failed to send transactional email via Mailgun (HTTP ${response.status}).`,
     };
   }
 

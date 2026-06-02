@@ -4,7 +4,7 @@ import { reviewApplication } from '@/src/server/openmic/persistence';
 
 export async function PATCH(request: Request, context: { params: { id: string } }) {
   try {
-    assertOpenMicAdmin(request);
+    await assertOpenMicAdmin(request);
     const body = (await request.json()) as {
       applicationStatus?: 'pending' | 'approved' | 'rejected';
       paymentStatus?: 'not_required' | 'pending' | 'paid' | 'failed' | 'waived';

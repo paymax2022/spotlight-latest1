@@ -22,11 +22,11 @@ export default function Header3({
                             <ul className="contact-list">
                                 <li>
                                     <i className="far fa-envelope" />
-                                    <a href="mailto:info@example.com" className="link">info@example.com</a>
+                                    <a href="mailto:info@spotlightng.com" className="link">info@spotlightng.com</a>
                                 </li>
                                 <li>
                                     <i className="fa-solid fa-phone-volume" />
-                                    <a href="tel:2086660112">+208-666-0112</a>
+                                    <a href="tel:+2348063437144">+234 806 343 7144</a>
                                 </li>
                             </ul>
                             <div className="top-right">
@@ -92,7 +92,7 @@ export default function Header3({
                                     <div className="header-button">
                                         <Link href="/contact" className="theme-btn bg-white">
                                             <span>
-                                                get A Quote
+                                                Apply Now
                                                 <i className="fa-solid fa-arrow-right-long" />
                                             </span>
                                         </Link>

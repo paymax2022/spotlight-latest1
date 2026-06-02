@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type {
   OpenMicApplication,
   OpenMicApplicationStatus,
+  OpenMicBeatDownloadLog,
   OpenMicBeatDownloadStatus,
   OpenMicContest,
   OpenMicFraudAlert,
@@ -273,11 +274,21 @@ function mapSubmissionRow(row: any): OpenMicSubmission {
     realName: meta.realName || undefined,
     email: meta.email || undefined,
     phone: meta.phone || undefined,
+    country: meta.country || undefined,
+    state: meta.state || undefined,
+    lga: meta.lga || undefined,
+    instagramHandle: meta.instagramHandle || undefined,
+    tiktokHandle: meta.tiktokHandle || undefined,
+    youtubeHandle: meta.youtubeHandle || undefined,
+    facebookHandle: meta.facebookHandle || undefined,
+    xHandle: meta.xHandle || undefined,
     genre: row.category || '',
     songTitle: row.entry_title || '',
     songMood: meta.songMood || undefined,
     language: meta.language || undefined,
     songUrl: meta.songUrl || '',
+    songObjectKey: meta.songObjectKey || meta.r2ObjectKey || undefined,
+    songFileName: meta.songFileName || undefined,
     videoUrl: row.video_link || undefined,
     lyricsUrl: meta.lyricsUrl || undefined,
     artworkUrl: meta.artworkUrl || undefined,
@@ -313,6 +324,8 @@ function mapApplicationRow(row: any): OpenMicApplication {
   const applicationStatus = String(row.status || meta.applicationStatus || 'pending').toLowerCase() as OpenMicApplicationStatus;
   const paymentStatus = String(meta.paymentStatus || (row.payment_status || 'pending')).toLowerCase() as OpenMicPaymentStatus;
   const beatDownloadStatus = String(meta.beatDownloadStatus || 'not_available').toLowerCase() as OpenMicBeatDownloadStatus;
+  const createdAt = row.created_at || row.applied_at || row.enrolled_at || meta.appliedAt || meta.createdAt || new Date(0).toISOString();
+  const updatedAt = row.updated_at || meta.updatedAt || createdAt;
   return {
     id: row.id,
     contestId: row.competition_id,
@@ -324,10 +337,15 @@ function mapApplicationRow(row: any): OpenMicApplication {
     phone: String(meta.phone || ''),
     gender: String(meta.gender || 'prefer_not_to_say') as OpenMicApplication['gender'],
     ageRange: String(meta.ageRange || '18_24') as OpenMicApplication['ageRange'],
+    country: String(meta.country || 'Nigeria'),
     city: String(meta.city || ''),
     state: String(meta.state || ''),
+    lga: String(meta.lga || ''),
     instagramHandle: meta.instagramHandle || undefined,
     tiktokHandle: meta.tiktokHandle || undefined,
+    youtubeHandle: meta.youtubeHandle || undefined,
+    facebookHandle: meta.facebookHandle || undefined,
+    xHandle: meta.xHandle || undefined,
     musicGenre: String(meta.musicGenre || ''),
     artistBio: meta.artistBio || undefined,
     profilePhotoUrl: meta.profilePhotoUrl || undefined,
@@ -337,12 +355,12 @@ function mapApplicationRow(row: any): OpenMicApplication {
     hasAgreedToRules: meta.hasAgreedToRules === true,
     hasAgreedToBeatTerms: meta.hasAgreedToBeatTerms === true,
     hasAgreedToVotingTerms: meta.hasAgreedToVotingTerms === true,
-    appliedAt: row.created_at,
+    appliedAt: createdAt,
     approvedAt: meta.approvedAt || undefined,
     rejectedAt: meta.rejectedAt || undefined,
     rejectionReason: meta.rejectionReason || undefined,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at || row.created_at,
+    createdAt,
+    updatedAt,
   };
 }
 
@@ -567,7 +585,7 @@ export async function bulkUpdatePaymentEventStatus(
 export async function getContestBySlug(slug: string) {
   if (!hasUsableSupabaseReadConfig()) return null;
   try {
-    const supabase = await createClient();
+    const supabase = createAdminClient();
     const { data, error } = await supabase
       .from('contests')
       .select('*, competition_beats(*)')
@@ -585,7 +603,7 @@ export async function getContestBySlug(slug: string) {
 export async function getContestById(contestId: string) {
   if (!hasUsableSupabaseReadConfig()) return null;
   try {
-    const supabase = await createClient();
+    const supabase = createAdminClient();
     const { data, error } = await supabase
       .from('contests')
       .select('*, competition_beats(*)')
@@ -780,7 +798,43 @@ export async function updateContest(contestId: string, patch: Partial<OpenMicCon
 export async function upsertBeat(contestId: string, payload: any) {
   if (!shouldUseDb()) throw new Error('Open Mic DB is not configured.');
   try {
-    const beat = upsertBeatMemory(contestId, payload);
+    const contest = await getContestById(contestId);
+    if (!contest) throw new Error('Contest not found.');
+    const now = new Date().toISOString();
+    const beat = {
+      id: contest.beat?.id || randomUUID(),
+      contestId,
+      beatTitle: payload?.beatTitle || contest.beat?.beatTitle || 'Official Beat',
+      producerName: payload?.producerName || contest.beat?.producerName || 'Spotlight Producer',
+      producerCredit:
+        payload?.producerCredit ||
+        contest.beat?.producerCredit ||
+        payload?.producerName ||
+        contest.beat?.producerName ||
+        'Spotlight Producer',
+      previewUrl: payload?.previewUrl || contest.beat?.previewUrl,
+      downloadUrl: payload?.downloadUrl || contest.beat?.downloadUrl,
+      bpm: payload?.bpm ?? contest.beat?.bpm,
+      musicalKey: payload?.musicalKey || contest.beat?.musicalKey,
+      genre: payload?.genre || contest.beat?.genre,
+      mood: payload?.mood || contest.beat?.mood,
+      durationSeconds: payload?.durationSeconds ?? contest.beat?.durationSeconds,
+      usageRules:
+        payload?.usageRules ||
+        contest.beat?.usageRules ||
+        'Beat is provided for this Spotlight Open Mic contest only.',
+      allowDownload: payload?.allowDownload ?? contest.beat?.allowDownload ?? true,
+      previewOnly: payload?.previewOnly ?? contest.beat?.previewOnly ?? false,
+      requiresPaidEntryForDownload:
+        payload?.requiresPaidEntryForDownload ??
+        contest.beat?.requiresPaidEntryForDownload ??
+        contest.entryFeeRequired,
+      explicitLyricsAllowed: payload?.explicitLyricsAllowed ?? contest.beat?.explicitLyricsAllowed ?? false,
+      cleanVersionRequired: payload?.cleanVersionRequired ?? contest.beat?.cleanVersionRequired ?? true,
+      maxSongDurationSeconds: payload?.maxSongDurationSeconds ?? contest.beat?.maxSongDurationSeconds ?? 180,
+      createdAt: contest.beat?.createdAt || now,
+      updatedAt: now,
+    };
     const supabase = createAdminClient();
     const { error } = await supabase.from('competition_beats').upsert({
       id: beat.id,
@@ -804,22 +858,45 @@ export async function upsertBeat(contestId: string, payload: any) {
 
 export async function logBeatDownload(input: Parameters<typeof logBeatDownloadMemory>[0]) {
   if (!shouldUseDb()) throw new Error('Open Mic DB is not configured.');
+  const contest = await getContestBySlug(input.contestSlug);
+  if (!contest) throw new Error('Contest not found.');
+  if (!contest.beat) throw new Error('Beat not available.');
+  if (!input.termsAccepted) throw new Error('Beat usage agreement must be accepted.');
+  if (contest.beat.allowDownload === false || contest.beat.previewOnly === true) {
+    throw new Error('Beat download is locked for this contest.');
+  }
+  if (contest.beat.requiresPaidEntryForDownload && !input.paidAccessConfirmed) {
+    throw new Error('Paid entry is required before beat download.');
+  }
+
+  const logged: OpenMicBeatDownloadLog = {
+    id: randomUUID(),
+    beatId: contest.beat.id,
+    contestId: contest.id,
+    userId: input.userId,
+    artistName: input.artistName,
+    artistEmail: input.artistEmail,
+    termsAccepted: input.termsAccepted,
+    paidAccessConfirmed: Boolean(input.paidAccessConfirmed),
+    downloadedAt: new Date().toISOString(),
+  };
+
   try {
-    const logged = logBeatDownloadMemory(input);
     const supabase = createAdminClient();
-    const { error } = await supabase.from('beat_download_logs').insert({
+    await supabase.from('beat_download_logs').insert({
+      id: logged.id,
       beat_id: logged.beatId,
       competition_id: logged.contestId,
       user_id: logged.userId || null,
       ip_hash: '',
       user_agent_hash: '',
+      downloaded_at: logged.downloadedAt,
     });
-    if (error) throw error;
-    return logged;
-  } catch (error) {
-    if (!shouldFallback(error)) throw error;
-    return logBeatDownloadMemory(input);
+  } catch {
+    // Beat access should not fail because the analytics/logging table is unavailable or has a different shape.
   }
+
+  return logged;
 }
 
 export async function listBeatDownloads(contestId?: string) {
@@ -904,10 +981,15 @@ export async function createApplication(input: Parameters<typeof createApplicati
       phone: input.phone,
       gender: input.gender,
       ageRange: input.ageRange,
+      country: input.country,
       city: input.city,
       state: input.state,
+      lga: input.lga,
       instagramHandle: input.instagramHandle,
       tiktokHandle: input.tiktokHandle,
+      youtubeHandle: input.youtubeHandle,
+      facebookHandle: input.facebookHandle,
+      xHandle: input.xHandle,
       musicGenre: input.musicGenre,
       artistBio: input.artistBio,
       profilePhotoUrl: input.profilePhotoUrl,
@@ -949,10 +1031,15 @@ export async function createApplication(input: Parameters<typeof createApplicati
         phone: app.phone,
         gender: app.gender,
         ageRange: app.ageRange,
+        country: app.country,
         city: app.city,
         state: app.state,
+        lga: app.lga,
         instagramHandle: app.instagramHandle,
         tiktokHandle: app.tiktokHandle,
+        youtubeHandle: app.youtubeHandle,
+        facebookHandle: app.facebookHandle,
+        xHandle: app.xHandle,
         musicGenre: app.musicGenre,
         artistBio: app.artistBio,
         profilePhotoUrl: app.profilePhotoUrl,
@@ -999,14 +1086,16 @@ export async function listApplications(input?: {
   if (!shouldUseDb()) return [];
   try {
     const supabase = createAdminClient();
-    let query = supabase.from('competition_enrollments').select('*').order('created_at', { ascending: false });
+    let query = supabase.from('competition_enrollments').select('*');
     if (input?.contestId) query = query.eq('competition_id', input.contestId);
     if (input?.userId) query = query.eq('user_id', input.userId);
     if (input?.applicationStatus) query = query.eq('status', input.applicationStatus);
     if (input?.paymentStatus) query = query.eq('payment_status', input.paymentStatus);
     const { data, error } = await query;
     if (error) throw error;
-    return safeArray<any>(data).map(mapApplicationRow);
+    return safeArray<any>(data)
+      .map(mapApplicationRow)
+      .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
   } catch (error) {
     if (!shouldFallback(error)) throw error;
     return listApplicationsMemory(input);
@@ -1076,10 +1165,15 @@ export async function reviewApplication(
           phone: updated.phone,
           gender: updated.gender,
           ageRange: updated.ageRange,
+          country: updated.country,
           city: updated.city,
           state: updated.state,
+          lga: updated.lga,
           instagramHandle: updated.instagramHandle,
           tiktokHandle: updated.tiktokHandle,
+          youtubeHandle: updated.youtubeHandle,
+          facebookHandle: updated.facebookHandle,
+          xHandle: updated.xHandle,
           musicGenre: updated.musicGenre,
           artistBio: updated.artistBio,
           profilePhotoUrl: updated.profilePhotoUrl,
@@ -1161,13 +1255,10 @@ export async function createSubmission(input: Parameters<typeof createSubmission
     }
 
     const linkedApplication = await findApplicationForContest(contest.id, input.email, input.stageName);
-    if (!linkedApplication) {
-      return { success: false as const, errors: { application: 'Please apply for this contest before submitting a song.' } };
-    }
-    if (linkedApplication.applicationStatus !== 'approved') {
+    if (linkedApplication && linkedApplication.applicationStatus !== 'approved') {
       return { success: false as const, errors: { application: 'Your application has not been approved yet.' } };
     }
-    if (contest.entryFeeRequired && !['paid', 'waived'].includes(linkedApplication.paymentStatus)) {
+    if (contest.entryFeeRequired && linkedApplication && !['paid', 'waived'].includes(linkedApplication.paymentStatus)) {
       return { success: false as const, errors: { payment: 'Entry fee payment is required before song submission.' } };
     }
 
@@ -1187,6 +1278,7 @@ export async function createSubmission(input: Parameters<typeof createSubmission
     }
 
     const supabase = createAdminClient();
+    const submissionId = input.submissionId || randomUUID();
     const stageNameKey = String(input.stageName || '').trim().toLowerCase();
     const emailKey = String(input.email || '').trim().toLowerCase();
     const existingRows = await supabase
@@ -1195,6 +1287,7 @@ export async function createSubmission(input: Parameters<typeof createSubmission
       .eq('competition_id', contest.id);
     if (existingRows.error) throw existingRows.error;
     const duplicate = safeArray<any>(existingRows.data).find((row) => {
+      if (String(row.id) === submissionId) return false;
       const rowStatus = String(row.status || '').toLowerCase();
       if (['rejected', 'disqualified'].includes(rowStatus)) return false;
       let summary: Record<string, unknown> = {};
@@ -1213,15 +1306,30 @@ export async function createSubmission(input: Parameters<typeof createSubmission
 
     const submissionUserId =
       input.artistUserId ||
-      linkedApplication.userId ||
+      linkedApplication?.userId ||
       (await resolveApplicantUserId(supabase, input.email || '', input.realName || input.stageName));
     if (!submissionUserId) {
       return { success: false as const, errors: { user: 'Unable to resolve applicant account for submission.' } };
     }
 
     const now = new Date().toISOString();
+    const expectedObjectKey = input.songObjectKey
+      ? `openmic/${contest.slug || contest.id}/${submissionUserId}/${submissionId}.mp3`
+      : '';
+    if (input.songObjectKey && input.songObjectKey !== expectedObjectKey) {
+      return { success: false as const, errors: { songObjectKey: 'Uploaded song object key is invalid.' } };
+    }
+    const submissionSongUrl = input.songObjectKey
+      ? `/api/admin/open-mic/submissions/${submissionId}/song`
+      : input.songUrl;
+    const normalizedGenre = String(input.genre || contest.beat?.genre || 'Unspecified').trim() || 'Unspecified';
+    const normalizedSongTitle =
+      String(input.songTitle || '').trim() ||
+      String(input.songFileName || '').replace(/\.mp3$/i, '').trim() ||
+      `${input.stageName} submission`;
+
     const submission: OpenMicSubmission = {
-      id: randomUUID(),
+      id: submissionId,
       contestId: contest.id,
       contestSlug: contest.slug,
       artistUserId: submissionUserId,
@@ -1229,11 +1337,21 @@ export async function createSubmission(input: Parameters<typeof createSubmission
       realName: input.realName,
       email: input.email,
       phone: input.phone,
-      genre: input.genre,
-      songTitle: input.songTitle,
+      country: input.country,
+      state: input.state,
+      lga: input.lga,
+      instagramHandle: input.instagramHandle,
+      tiktokHandle: input.tiktokHandle,
+      youtubeHandle: input.youtubeHandle,
+      facebookHandle: input.facebookHandle,
+      xHandle: input.xHandle,
+      genre: normalizedGenre,
+      songTitle: normalizedSongTitle,
       songMood: input.songMood,
       language: input.language,
-      songUrl: input.songUrl,
+      songUrl: submissionSongUrl,
+      songObjectKey: input.songObjectKey,
+      songFileName: input.songFileName,
       videoUrl: input.videoUrl,
       lyricsUrl: input.lyricsUrl,
       artworkUrl: input.artworkUrl,
@@ -1256,7 +1374,7 @@ export async function createSubmission(input: Parameters<typeof createSubmission
       updatedAt: now,
     };
 
-    const { error } = await supabase.from('competition_entries').insert({
+    const { error } = await supabase.from('competition_entries').upsert({
       id: submission.id,
       competition_id: submission.contestId,
       user_id: submission.artistUserId || null,
@@ -1269,9 +1387,22 @@ export async function createSubmission(input: Parameters<typeof createSubmission
         realName: submission.realName,
         email: submission.email,
         phone: submission.phone,
+        country: submission.country,
+        state: submission.state,
+        lga: submission.lga,
+        instagramHandle: submission.instagramHandle,
+        tiktokHandle: submission.tiktokHandle,
+        youtubeHandle: submission.youtubeHandle,
+        facebookHandle: submission.facebookHandle,
+        xHandle: submission.xHandle,
         songMood: submission.songMood,
         language: submission.language,
         songUrl: submission.songUrl,
+        songObjectKey: submission.songObjectKey,
+        r2ObjectKey: submission.songObjectKey,
+        songFileName: submission.songFileName,
+        mimeType: submission.songObjectKey ? 'audio/mp3' : undefined,
+        uploadStatus: submission.songObjectKey ? 'submitted' : undefined,
         videoUrl: submission.videoUrl,
         lyricsUrl: submission.lyricsUrl,
         artworkUrl: submission.artworkUrl,
@@ -1297,17 +1428,76 @@ export async function createSubmission(input: Parameters<typeof createSubmission
   }
 }
 
+export async function recordSubmissionUploadComplete(input: {
+  contestSlug: string;
+  artistUserId: string;
+  submissionId: string;
+  objectKey: string;
+  fileName?: string;
+  mimeType: string;
+}) {
+  if (!shouldUseDb()) throw new Error('Open Mic DB is not configured.');
+
+  const contest = await getContestBySlug(input.contestSlug);
+  if (!contest) throw new Error('Contest not found.');
+
+  const expectedObjectKey = `openmic/${contest.slug || contest.id}/${input.artistUserId}/${input.submissionId}.mp3`;
+  if (input.objectKey !== expectedObjectKey) {
+    throw new Error('Uploaded song object key is invalid.');
+  }
+
+  const now = new Date().toISOString();
+  const songUrl = `/api/admin/open-mic/submissions/${input.submissionId}/song`;
+  const supabase = createAdminClient();
+  const { error } = await supabase.from('competition_entries').upsert({
+    id: input.submissionId,
+    competition_id: contest.id,
+    user_id: input.artistUserId,
+    beat_id: contest.beat?.id || null,
+    entry_title: input.fileName || 'Uploaded Open Mic song',
+    entry_description: '',
+    lyrical_concept_summary: JSON.stringify({
+      contestSlug: contest.slug,
+      songUrl,
+      songObjectKey: input.objectKey,
+      r2ObjectKey: input.objectKey,
+      songFileName: input.fileName,
+      mimeType: input.mimeType,
+      uploadStatus: 'uploaded',
+      uploadedAt: now,
+    }),
+    category: 'Open Mic',
+    video_link: '',
+    explicit_content_declared: false,
+    originality_confirmed: false,
+    status: 'draft',
+    submitted_at: null,
+  });
+  if (error) throw error;
+
+  return {
+    submissionId: input.submissionId,
+    contestId: contest.slug || contest.id,
+    artistId: input.artistUserId,
+    r2ObjectKey: input.objectKey,
+    mimeType: input.mimeType,
+    status: 'uploaded',
+  };
+}
+
 export async function listSubmissions(input?: { contestId?: string; userId?: string; status?: OpenMicSubmission['status'] }) {
   if (!shouldUseDb()) return [];
   try {
     const supabase = createAdminClient();
-    let query = supabase.from('competition_entries').select('*').order('created_at', { ascending: false });
+    let query = supabase.from('competition_entries').select('*');
     if (input?.contestId) query = query.eq('competition_id', input.contestId);
     if (input?.userId) query = query.eq('user_id', input.userId);
     if (input?.status) query = query.eq('status', input.status);
     const { data, error } = await query;
     if (error) throw error;
-    return safeArray<any>(data).map(mapSubmissionRow);
+    return safeArray<any>(data)
+      .map(mapSubmissionRow)
+      .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
   } catch (error) {
     if (!shouldFallback(error)) throw error;
     return listSubmissionsMemory(input);

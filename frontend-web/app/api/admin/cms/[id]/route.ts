@@ -5,7 +5,7 @@ import { listCmsPages, updateCmsPage } from '@/src/server/admin/cms';
 
 export async function GET(request: Request, { params }: { params: { id: string } }) {
   try {
-    assertAdminPermission(request, 'content:manage');
+    await assertAdminPermission(request, 'content:manage');
     const page = listCmsPages().find((entry) => entry.id === params.id);
     if (!page) return errorResponse('Page not found', 404);
     return successResponse({ success: true, page });
@@ -16,7 +16,7 @@ export async function GET(request: Request, { params }: { params: { id: string }
 
 export async function PATCH(request: Request, { params }: { params: { id: string } }) {
   try {
-    const identity = assertAdminPermission(request, 'content:manage');
+    const identity = await assertAdminPermission(request, 'content:manage');
     const body = await request.json();
     const current = listCmsPages().find((entry) => entry.id === params.id);
     if (!current) return errorResponse('Page not found', 404);

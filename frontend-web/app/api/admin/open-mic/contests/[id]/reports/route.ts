@@ -11,7 +11,7 @@ import {
 
 export async function GET(request: Request, context: { params: { id: string } }) {
   try {
-    assertOpenMicReadAdmin(request);
+    await assertOpenMicReadAdmin(request);
     const [contest, applications, downloads, submissions, payments, fraudAlerts] = await Promise.all([
       getContestById(context.params.id),
       listApplications({ contestId: context.params.id }),

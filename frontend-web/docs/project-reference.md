@@ -185,7 +185,7 @@ Important payment files:
 - `src/app/api/vote/paid/route.ts`
 
 ## Email Notifications
-Transactional email support is now wired through Mailgun in:
+Transactional email support is now wired through Resend in:
 - `src/lib/email/transactional.ts`
 
 Current email-dependent flows:
@@ -197,10 +197,8 @@ Current email-dependent flows:
 - music entry submission confirmation
 - music moderation status updates
 
-Required env keys for Mailgun:
-- `MAILGUN_API_KEY`
-- `MAILGUN_DOMAIN`
-- `MAILGUN_REGION`
+Required env keys for Resend:
+- `RESEND_API_KEY`
 - `EMAIL_FROM`
 - `EMAIL_REPLY_TO`
 
@@ -249,7 +247,7 @@ Test-related docs:
 Core env categories used by the project:
 - Supabase: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ACCESS_TOKEN`
 - Payments: `NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY`, `PAYSTACK_SECRET_KEY`
-- Email: `MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, `MAILGUN_REGION`, `EMAIL_FROM`, `EMAIL_REPLY_TO`
+- Email: `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO`
 - Site config: `NEXT_PUBLIC_SITE_URL`
 - Media/storage: `STORAGE_*`, Cloudinary keys where applicable
 
@@ -268,7 +266,7 @@ At the time of this document:
 - academy LMS schema is applied in Supabase
 - academy seed duplication was cleaned and hardened
 - academy payment confirmation path was hardened
-- Mailgun transactional notifications are present across registration, academy, audition, contestant, and music lifecycle flows
+- Resend transactional notifications are present across registration, academy, audition, contestant, and music lifecycle flows
 - One-Beat One-Verse admin and public modules are integrated into the core Spotlight system
 - CI gates now include `type-check`, `lint`, `test`, and `build`
 - build, type-check, and lint were brought back to a green state during the stabilization work

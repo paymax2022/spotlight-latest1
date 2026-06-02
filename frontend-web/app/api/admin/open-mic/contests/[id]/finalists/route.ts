@@ -5,7 +5,7 @@ import { addAuditEvent } from '@/src/server/admin/audit';
 
 export async function GET(request: Request, context: { params: { id: string } }) {
   try {
-    assertOpenMicScoreAdmin(request);
+    await assertOpenMicScoreAdmin(request);
     const leaderboard = await getLeaderboard(context.params.id);
     const finalists = leaderboard.filter((entry) => entry.isFinalist).slice(0, 200);
     return successResponse({ success: true, finalists, leaderboard: leaderboard.slice(0, 50) });
@@ -16,7 +16,7 @@ export async function GET(request: Request, context: { params: { id: string } })
 
 export async function POST(request: Request, context: { params: { id: string } }) {
   try {
-    const identity = assertOpenMicScoreAdmin(request);
+    const identity = await assertOpenMicScoreAdmin(request);
     const finalists = await generateFinalists(context.params.id);
     addAuditEvent({
       adminUser: identity.actorId || 'admin',

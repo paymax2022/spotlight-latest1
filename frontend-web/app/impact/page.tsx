@@ -1,4 +1,4 @@
-import SpotlightShell from '@/src/components/spotlight/SpotlightShell';
+import Layout from "@/components/layout/Layout"
 import { spotlightStats } from '@/src/data/services';
 
 export const metadata = {
@@ -8,7 +8,7 @@ export const metadata = {
 
 export default function ImpactPage() {
   return (
-    <SpotlightShell>
+    <Layout headerStyle={1} footerStyle={1} onePageNav={false} breadcrumbTitle={null} breadcrumbClassName={undefined} breadcrumbPadding={undefined}>
       <section className="max-w-6xl mx-auto px-4 md:px-8 py-16">
         <h1 className="font-display text-4xl md:text-6xl text-foreground">Impact</h1>
         <p className="text-foreground/70 mt-4 max-w-3xl">
@@ -23,6 +23,6 @@ export default function ImpactPage() {
           ))}
         </div>
       </section>
-    </SpotlightShell>
+    </Layout>
   );
 }

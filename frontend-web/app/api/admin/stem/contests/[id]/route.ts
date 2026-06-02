@@ -23,7 +23,7 @@ export async function PATCH(
   context: { params: { id: string } }
 ) {
   try {
-    const identity = assertStemAdmin(request);
+    const identity = await assertStemAdmin(request);
     const body = (await request.json()) as Partial<StemContest>;
     const contest = await updateContest(context.params.id, body, identity.actorId);
     addAuditEvent({

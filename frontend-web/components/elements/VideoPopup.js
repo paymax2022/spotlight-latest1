@@ -27,7 +27,7 @@ export default function VideoPopup({ style }) {
                     <a onClick={() => setOpen(true)} className="video-btn ripple video-popup">
                         <i className="fa-solid fa-play" />
                     </a>
-                    <span className="ms-4 d-line">Watch IT Video</span>
+                    <span className="ms-4 d-line">Watch Video</span>
                 </span>
             }
             <ModalVideo channel='youtube' autoplay isOpen={isOpen} videoId="vfhzo499OeA" onClose={() => setOpen(false)} />

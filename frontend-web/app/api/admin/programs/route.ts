@@ -6,7 +6,7 @@ import { createProgram, listPrograms } from '@/src/server/admin/programs';
 
 export async function GET(request: Request) {
   try {
-    assertAdminPermission(request, 'programs:manage');
+    await assertAdminPermission(request, 'programs:manage');
     const { searchParams } = new URL(request.url);
     const query = parseAdminListQuery(searchParams, {
       defaultPageSize: 20,
@@ -24,7 +24,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const identity = assertAdminPermission(request, 'programs:manage');
+    const identity = await assertAdminPermission(request, 'programs:manage');
     const body = await request.json();
     const program = createProgram(body, identity.actorId);
     addAuditEvent({

@@ -8,7 +8,7 @@ export async function POST(
   context: { params: { id: string } }
 ) {
   try {
-    assertStemAdmin(request);
+    await assertStemAdmin(request);
     const body = (await request.json()) as Partial<StemContestCategory>;
     const category = await addContestCategory(context.params.id, body);
     return successResponse({ success: true, category }, 201);

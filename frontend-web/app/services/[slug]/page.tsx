@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import SpotlightShell from '@/src/components/spotlight/SpotlightShell';
+import Layout from "@/components/layout/Layout"
 import ServicePageTemplate from '@/src/components/spotlight/ServicePageTemplate';
 import { services, serviceBySlug } from '@/src/data/services';
 
@@ -29,8 +29,8 @@ export default function ServiceDetailPage({ params }: { params: { slug: string }
   if (!service) notFound();
 
   return (
-    <SpotlightShell>
+    <Layout headerStyle={1} footerStyle={1} onePageNav={false} breadcrumbTitle={null} breadcrumbClassName={undefined} breadcrumbPadding={undefined}>
       <ServicePageTemplate service={service} />
-    </SpotlightShell>
+    </Layout>
   );
 }

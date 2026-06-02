@@ -19,6 +19,8 @@ export default async function AdminOpenMicApplicationsPage({ params }: { params:
               <th className="py-2 pr-3">Artist</th>
               <th className="py-2 pr-3">Email</th>
               <th className="py-2 pr-3">Phone</th>
+              <th className="py-2 pr-3">Location</th>
+              <th className="py-2 pr-3">Socials</th>
               <th className="py-2 pr-3">Application Status</th>
               <th className="py-2 pr-3">Payment Status</th>
               <th className="py-2 pr-3">Beat Download</th>
@@ -30,6 +32,18 @@ export default async function AdminOpenMicApplicationsPage({ params }: { params:
                 <td className="py-2 pr-3">{row.stageName}</td>
                 <td className="py-2 pr-3">{row.email || '-'}</td>
                 <td className="py-2 pr-3">{row.phone || '-'}</td>
+                <td className="py-2 pr-3">
+                  {[row.lga, row.state, row.country].filter(Boolean).join(', ') || '-'}
+                </td>
+                <td className="py-2 pr-3">
+                  {[
+                    row.instagramHandle ? `IG: ${row.instagramHandle}` : '',
+                    row.tiktokHandle ? `TikTok: ${row.tiktokHandle}` : '',
+                    row.youtubeHandle ? `YouTube: ${row.youtubeHandle}` : '',
+                    row.facebookHandle ? `Facebook: ${row.facebookHandle}` : '',
+                    row.xHandle ? `X: ${row.xHandle}` : '',
+                  ].filter(Boolean).join(' | ') || '-'}
+                </td>
                 <td className="py-2 pr-3">{row.applicationStatus.replace(/_/g, ' ')}</td>
                 <td className="py-2 pr-3">{row.paymentStatus.replace(/_/g, ' ')}</td>
                 <td className="py-2 pr-3">{row.beatDownloadStatus.replace(/_/g, ' ')}</td>

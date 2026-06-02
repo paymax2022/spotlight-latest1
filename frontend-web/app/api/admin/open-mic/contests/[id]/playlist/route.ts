@@ -4,7 +4,7 @@ import { getFinalePlaylist, saveFinalePlaylist } from '@/src/server/openmic/pers
 
 export async function GET(request: Request, context: { params: { id: string } }) {
   try {
-    assertOpenMicReadAdmin(request);
+    await assertOpenMicReadAdmin(request);
     const playlist = await getFinalePlaylist(context.params.id);
     return successResponse({ success: true, playlist });
   } catch (error) {
@@ -14,7 +14,7 @@ export async function GET(request: Request, context: { params: { id: string } })
 
 export async function POST(request: Request, context: { params: { id: string } }) {
   try {
-    assertOpenMicAdmin(request);
+    await assertOpenMicAdmin(request);
     const body = (await request.json()) as { entries?: Array<{ submissionId?: string; order?: number }> };
     const entries = (body.entries || [])
       .filter((item) => item.submissionId)

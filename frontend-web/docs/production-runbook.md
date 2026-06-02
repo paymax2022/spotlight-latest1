@@ -12,9 +12,7 @@
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY`
 - `PAYSTACK_SECRET_KEY`
-- `MAILGUN_API_KEY`
-- `MAILGUN_DOMAIN`
-- `MAILGUN_REGION`
+- `RESEND_API_KEY`
 - `EMAIL_FROM`
 - `EMAIL_REPLY_TO`
 
@@ -41,7 +39,7 @@ Important:
    - music leaderboard and gallery visibility after moderation `mark_live`
    - winner publish path from `/admin/competitions/music/[id]/winners`
 7. Review logs for 5xx spikes, auth errors, and payment confirmation failures.
-8. Review email delivery logs for Mailgun failure ratio on the new music lifecycle notifications.
+8. Review email delivery logs for Resend failure ratio on the new music lifecycle notifications.
 
 ## Rollback Checklist
 1. Re-deploy the previous known-good application build.
@@ -54,4 +52,4 @@ Important:
 - Auth failure: verify Supabase env vars, cookie propagation, and middleware behavior.
 - Upload failure: verify storage bucket policies and academy application ownership checks.
 - Voting failure: verify fraud checks, vote pack availability, and payment verification.
-- Music competition lifecycle failure: verify competition windows, moderation state transitions, and Mailgun notification logs.
+- Music competition lifecycle failure: verify competition windows, moderation state transitions, and Resend notification logs.

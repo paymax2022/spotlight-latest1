@@ -12,12 +12,17 @@
         "sass": "sass --watch public/assets/scss/main.scss:public/assets/css/main.css"
     },
     "dependencies": {
+        "@aws-sdk/client-s3": "^3.1058.0",
+        "@aws-sdk/s3-request-presigner": "^3.1058.0",
         "@sentry/nextjs": "^10.53.1",
+        "@supabase/ssr": "^0.10.3",
         "@supabase/supabase-js": "^2.106.0",
+        "@types/qrcode": "^1.5.6",
         "class-variance-authority": "^0.7.1",
         "date-fns": "^4.2.1",
         "next": "^14.2.35",
         "pino": "^10.3.1",
+        "qrcode": "^1.5.4",
         "react": "18.2.0",
         "react-countup": "^6.5.3",
         "react-dom": "18.2.0",

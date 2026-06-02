@@ -246,6 +246,16 @@ h3 {
   background: rgba(212, 168, 67, 0.03);
 }
 
+/* When a glass-card wraps a form it must be fully opaque so labels and
+   helper text stay readable against the dark background images used on
+   open-mic/apply, user-dashboard, and similar pages. */
+.glass-card:has(.form-shell),
+.glass-card:has(form),
+.glass-card:has(.form-input) {
+  background: #ffffff;
+  backdrop-filter: none;
+}
+
 /* Gold gradient text */
 .gold-text {
   background: linear-gradient(135deg, #d4a843 0%, #f0d080 50%, #c8922a 100%);
@@ -381,9 +391,10 @@ h3 {
 /* Form inputs */
 .form-input {
   width: 100%;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border);
-  color: var(--foreground);
+  background: #ffffff;
+  border: 1px solid rgba(15, 13, 29, 0.2);
+  /* Explicit dark colour — never inherits from a dark container */
+  color: #111827;
   padding: 0.875rem 1.25rem;
   font-family: 'Kumbh Sans', sans-serif;
   font-size: 0.9rem;
@@ -395,10 +406,11 @@ h3 {
 }
 .form-input:focus {
   border-color: var(--accent-gold);
-  background: rgba(212, 168, 67, 0.04);
+  background: #ffffff;
 }
 .form-input::placeholder {
-  color: var(--foreground-dim);
+  color: #9ca3af;
+  opacity: 1;
 }
 
 .form-label {
@@ -407,15 +419,18 @@ h3 {
   font-weight: 700;
   letter-spacing: 0.15em;
   text-transform: uppercase;
-  color: var(--foreground-muted);
+  /* Always dark — readable on any light form background */
+  color: #374151;
   margin-bottom: 0.5rem;
 }
 
 .form-shell {
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  border-radius: 4px;
-  padding: 1rem;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 1.25rem;
+  /* Ensure all descendant text defaults to dark */
+  color: #111827;
 }
 
 .form-section-title {
@@ -423,19 +438,19 @@ h3 {
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--foreground-dim);
+  color: #6b7280;
   margin-bottom: 0.7rem;
 }
 
 .form-help {
   font-size: 0.78rem;
-  color: var(--foreground-muted);
+  color: #6b7280;
   margin-top: 0.35rem;
 }
 
 .form-error {
   font-size: 0.78rem;
-  color: #f87171;
+  color: #dc2626;
   margin-top: 0.35rem;
 }
 
@@ -444,7 +459,7 @@ h3 {
   align-items: flex-start;
   gap: 0.55rem;
   font-size: 0.88rem;
-  color: color-mix(in srgb, var(--foreground) 88%, transparent);
+  color: #374151;
 }
 
 .form-check-row input[type='checkbox'] {
@@ -453,8 +468,8 @@ h3 {
 }
 
 select.form-input option {
-  background: #1a1a1a;
-  color: var(--foreground);
+  background: #ffffff;
+  color: #111827;
 }
 
 /* Step connector */

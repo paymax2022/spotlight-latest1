@@ -9,7 +9,7 @@ export async function POST(
   context: { params: { id: string } }
 ) {
   try {
-    const identity = assertStemScoreAdmin(request);
+    const identity = await assertStemScoreAdmin(request);
     const body = (await request.json()) as StemAdminApplicationReviewInput;
 
     if (!body.status) {

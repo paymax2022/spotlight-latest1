@@ -11,3 +11,11 @@ export function assertOpenMicReadAdmin(request: Request) {
 export function assertOpenMicScoreAdmin(request: Request) {
   return assertAdminPermission(request, 'scores:manage');
 }
+
+export function assertVotingAdmin(request: Request) {
+  return assertAdminPermission(request, 'votes:manage');
+}
+
+export function assertFinanceAdmin(request: Request) {
+  return assertAdminPermission(request, 'finance:view');
+}

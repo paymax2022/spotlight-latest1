@@ -4,7 +4,7 @@ import { buildFinalePlaylistFromFinalists } from '@/src/server/openmic/persisten
 
 export async function POST(request: Request, context: { params: { id: string } }) {
   try {
-    assertOpenMicAdmin(request);
+    await assertOpenMicAdmin(request);
     const playlist = await buildFinalePlaylistFromFinalists(context.params.id);
     return successResponse({ success: true, playlist });
   } catch (error) {

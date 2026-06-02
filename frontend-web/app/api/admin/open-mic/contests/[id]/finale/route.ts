@@ -5,7 +5,7 @@ import type { OpenMicContest } from '@/src/features/openmic/types';
 
 export async function GET(request: Request, context: { params: { id: string } }) {
   try {
-    assertOpenMicReadAdmin(request);
+    await assertOpenMicReadAdmin(request);
     const [contest, playlist] = await Promise.all([
       getContestById(context.params.id),
       getFinalePlaylist(context.params.id),
@@ -18,7 +18,7 @@ export async function GET(request: Request, context: { params: { id: string } })
 
 export async function PATCH(request: Request, context: { params: { id: string } }) {
   try {
-    assertOpenMicReadAdmin(request);
+    await assertOpenMicReadAdmin(request);
     const body = (await request.json()) as { finale?: OpenMicContest['finale']; status?: OpenMicContest['status'] };
     const contest = await updateContest(context.params.id, {
       finale: body.finale,

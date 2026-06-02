@@ -1,8 +1,10 @@
 import { notFound, redirect } from 'next/navigation';
 import { getContestBySlug, listContests } from '@/src/server/openmic/persistence';
-import OpenMicApplicationForm from '@/components/openmic/OpenMicApplicationForm';
+import Layout from '@/components/layout/Layout';
+import OpenMicEntryForm from '@/components/openmic/OpenMicEntryForm';
 import OpenMicProgressTracker from '@/components/openmic/OpenMicProgressTracker';
 import OpenMicAuthGate from '@/components/openmic/OpenMicAuthGate';
+import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,19 +23,70 @@ export default async function OpenMicApplyPage({ params }: { params: { slug: str
   }
 
   return (
-    <main className="max-w-5xl mx-auto px-4 md:px-8 py-8">
-      <h1 className="font-display text-3xl text-foreground">Apply: {contest.title}</h1>
-      <p className="text-foreground/70 mt-1">
-        Complete this short application to unlock beat access and song submission.
-      </p>
-      <div className="mt-4">
-        <OpenMicProgressTracker currentStep={1} />
-      </div>
-      <section className="glass-card rounded-md p-4 mt-4">
-        <OpenMicAuthGate nextPath={`/open-mic/${contest.slug}/apply`}>
-          <OpenMicApplicationForm contestSlug={contest.slug} requiresPayment={contest.entryFeeRequired} />
-        </OpenMicAuthGate>
+    <Layout
+      headerStyle={1}
+      footerStyle={2}
+      onePageNav={null}
+      breadcrumbTitle={`${contest.title} Application`}
+      breadcrumbClassName=""
+      breadcrumbPadding={undefined}
+    >
+      <section
+        className="about-section section-padding fix bg-cover"
+        style={{ backgroundImage: 'url("/assets/img/service/service-bg-2.jpg")' }}
+      >
+        <div className="container">
+          <div className="service-details-wrapper">
+            <div className="row g-4">
+              <div className="col-12 col-lg-4 order-2 order-md-1">
+                <div className="single-sidebar-widget">
+                  <div className="wid-title">
+                    <h3>Application Journey</h3>
+                  </div>
+                  <div className="opening-category">
+                    <ul>
+                      <li><i className="fa-regular fa-circle-check" />Authenticate through central Open Mic login.</li>
+                      <li><i className="fa-regular fa-circle-check" />Access/download the official beat first.</li>
+                      <li><i className="fa-regular fa-circle-check" />Record your final song with your own lyrics/vocals.</li>
+                      <li><i className="fa-regular fa-circle-check" />Complete the wizard and submit song details.</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <div className="col-12 col-lg-8 order-1 order-md-2">
+                <div className="service-details-items">
+                  <div className="details-content">
+                    <h3>Apply: {contest.title}</h3>
+                    <p className="mt-3">
+                      This page follows the official flow: auth first, beat download second, and final song submission last.
+                    </p>
+                    <div className="mt-4 d-flex flex-wrap gap-2">
+                      <Link href={`/open-mic/${contest.slug}`} className="theme-btn style-2">
+                        View Contest Details
+                        <i className="fa-solid fa-arrow-right-long" />
+                      </Link>
+                    </div>
+                    <div className="mt-4">
+                      <OpenMicProgressTracker currentStep={2} />
+                    </div>
+                    <div className="glass-card rounded-md p-4 mt-4" id="beat-step">
+                      <OpenMicAuthGate nextPath={`/open-mic/${contest.slug}/apply`}>
+                        <OpenMicEntryForm
+                          contestSlug={contest.slug}
+                          contestTitle={contest.title}
+                          beatAvailable={Boolean(contest.beat)}
+                          beatRequiresPaidEntry={contest.beat?.requiresPaidEntryForDownload === true}
+                        />
+                      </OpenMicAuthGate>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
-    </main>
+    </Layout>
   );
 }

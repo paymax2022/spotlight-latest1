@@ -5,7 +5,7 @@ import { getProgram, updateProgram } from '@/src/server/admin/programs';
 
 export async function GET(request: Request, { params }: { params: { id: string } }) {
   try {
-    assertAdminPermission(request, 'programs:manage');
+    await assertAdminPermission(request, 'programs:manage');
     const program = getProgram(params.id);
     if (!program) return errorResponse('Program not found', 404);
     return successResponse({ success: true, program });
@@ -16,7 +16,7 @@ export async function GET(request: Request, { params }: { params: { id: string }
 
 export async function PATCH(request: Request, { params }: { params: { id: string } }) {
   try {
-    const identity = assertAdminPermission(request, 'programs:manage');
+    const identity = await assertAdminPermission(request, 'programs:manage');
     const body = await request.json();
     const current = getProgram(params.id);
     if (!current) return errorResponse('Program not found', 404);

@@ -6,7 +6,7 @@ import { addAuditEvent } from '@/src/server/admin/audit';
 
 export async function GET(request: Request, context: { params: { id: string } }) {
   try {
-    assertOpenMicReadAdmin(request);
+    await assertOpenMicReadAdmin(request);
     const contest = await getContestById(context.params.id);
     if (!contest) return errorResponse('Contest not found', 404);
     return successResponse({ success: true, contest });
@@ -17,7 +17,7 @@ export async function GET(request: Request, context: { params: { id: string } })
 
 export async function PATCH(request: Request, context: { params: { id: string } }) {
   try {
-    const identity = assertOpenMicAdmin(request);
+    const identity = await assertOpenMicAdmin(request);
     const body = (await request.json()) as Partial<OpenMicContest>;
     const contest = await updateContest(context.params.id, body, identity.actorId);
     addAuditEvent({

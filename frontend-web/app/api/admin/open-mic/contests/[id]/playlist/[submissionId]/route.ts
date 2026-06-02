@@ -8,7 +8,7 @@ export async function PATCH(
   context: { params: { id: string; submissionId: string } }
 ) {
   try {
-    const identity = assertOpenMicScoreAdmin(request);
+    const identity = await assertOpenMicScoreAdmin(request);
     const body = (await request.json()) as {
       played?: boolean;
       djCueNote?: string;

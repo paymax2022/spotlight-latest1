@@ -8,9 +8,18 @@ type Submission = {
   stageName: string;
   songTitle: string;
   genre: string;
+  country?: string;
+  state?: string;
+  lga?: string;
+  instagramHandle?: string;
+  tiktokHandle?: string;
+  youtubeHandle?: string;
+  facebookHandle?: string;
+  xHandle?: string;
   status: string;
   voteCount: number;
   songUrl: string;
+  songObjectKey?: string;
 };
 
 const reviewStatuses = [
@@ -88,6 +97,24 @@ export default function OpenMicAdminSubmissionReview() {
     }
   }
 
+  async function openSong(submissionId: string, download = false) {
+    setMessage('');
+    setError('');
+    try {
+      const res = await fetch(`/api/admin/open-mic/submissions/${submissionId}/song${download ? '?download=1' : ''}`, {
+        headers: { 'x-spotlight-role': 'admin' },
+        cache: 'no-store',
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload?.success || !payload?.signedUrl) {
+        throw new Error(payload?.error || 'Unable to create song access URL.');
+      }
+      window.open(String(payload.signedUrl), '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to open song.');
+    }
+  }
+
   const grouped = useMemo(() => {
     return submissions.reduce<Record<string, Submission[]>>((acc, item) => {
       const key = item.status;
@@ -116,13 +143,32 @@ export default function OpenMicAdminSubmissionReview() {
               <div key={item.id} className="border border-border rounded-sm p-3 bg-bg-card">
                 <h5 className="text-foreground font-semibold">{item.songTitle}</h5>
                 <p className="mb-1 text-sm text-foreground-muted">{item.stageName} • {item.genre}</p>
+                <p className="mb-1 text-sm text-foreground-muted">
+                  {[item.lga, item.state, item.country].filter(Boolean).join(', ') || 'Location not provided'}
+                </p>
+                <p className="mb-2 text-xs text-foreground-muted">
+                  {[
+                    item.instagramHandle ? `IG: ${item.instagramHandle}` : '',
+                    item.tiktokHandle ? `TikTok: ${item.tiktokHandle}` : '',
+                    item.youtubeHandle ? `YouTube: ${item.youtubeHandle}` : '',
+                    item.facebookHandle ? `Facebook: ${item.facebookHandle}` : '',
+                    item.xHandle ? `X: ${item.xHandle}` : '',
+                  ].filter(Boolean).join(' | ') || 'No social handle provided'}
+                </p>
                 <p className="mb-2 text-sm text-foreground-muted">
                   Votes: {item.voteCount} •{' '}
                   <span className={`inline-flex items-center px-2 py-0.5 rounded-sm text-[11px] font-semibold ${badgeClass(item.status)}`}>
                     {item.status.replaceAll('_', ' ')}
                   </span>
                 </p>
-                <p className="mb-3 text-sm"><a className="text-accent-gold" href={item.songUrl} target="_blank" rel="noreferrer">Open Song URL</a></p>
+                <div className="mb-3 d-flex flex-wrap gap-2">
+                  <button type="button" className="btn-outline py-2 px-3 text-[11px]" onClick={() => void openSong(item.id)}>
+                    Stream Song
+                  </button>
+                  <button type="button" className="btn-outline py-2 px-3 text-[11px]" onClick={() => void openSong(item.id, true)}>
+                    Download Song
+                  </button>
+                </div>
 
                 <label className="form-label">Review Decision</label>
                 <select

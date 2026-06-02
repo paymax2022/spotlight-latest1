@@ -7,7 +7,7 @@ export async function POST(
   context: { params: { id: string } }
 ) {
   try {
-    const { actorId } = assertStemAdmin(request);
+    const { actorId } = await assertStemAdmin(request);
     const body = (await request.json()) as {
       status?: 'approved' | 'rejected';
       note?: string;

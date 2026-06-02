@@ -4,7 +4,7 @@ import { listApplications } from '@/src/server/openmic/persistence';
 
 export async function GET(request: Request, context: { params: { id: string } }) {
   try {
-    assertOpenMicReadAdmin(request);
+    await assertOpenMicReadAdmin(request);
     const applications = await listApplications({ contestId: context.params.id });
     return successResponse({
       success: true,
