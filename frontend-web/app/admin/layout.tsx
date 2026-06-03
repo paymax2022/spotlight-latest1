@@ -1,8 +1,18 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import AdminSidebar from '@/src/components/AdminSidebar';
+import { requireAdmin } from '@/src/lib/auth/server';
 
-export default function AdminLayout({ children }: { children: ReactNode }) {
+export default async function AdminLayout({ children }: { children: ReactNode }) {
+  try {
+    await requireAdmin();
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : '';
+    if (msg === 'UNAUTHORIZED') redirect('/login?next=/admin');
+    if (msg === 'FORBIDDEN') redirect('/');
+    throw err;
+  }
   return (
     <div className="d-flex admin-theme" style={{ background: 'var(--bg)', color: 'var(--foreground)', minHeight: '100vh' }}>
       <AdminSidebar />

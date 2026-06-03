@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { NIGERIA_CITIES_BY_STATE, NIGERIA_STATES } from '@/src/features/registration/config';
+import { adminAuthHeaders } from '@/src/lib/auth/client';
 
 function slugify(input: string) {
   return input
@@ -129,10 +130,7 @@ export default function OpenMicAdminContestBuilder() {
     try {
       const res = await fetch('/api/admin/open-mic/contests', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-spotlight-role': 'admin',
-        },
+        headers: await adminAuthHeaders(true),
         body: JSON.stringify({
           title: form.title,
           slug: form.slug,

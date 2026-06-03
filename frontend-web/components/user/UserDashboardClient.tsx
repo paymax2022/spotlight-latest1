@@ -202,15 +202,31 @@ function ContestCard({
           </Link>
         )}
         {applied && !isDraft && !isRejected && (
-          <Link
-            href={userApp!.detailsHref}
-            style={{
-              background: '#3b82f6', color: '#fff', fontWeight: 700, fontSize: 12,
-              padding: '7px 16px', borderRadius: 8, textDecoration: 'none',
-            }}
-          >
-            Track Status →
-          </Link>
+          <>
+            {item.programType.toLowerCase().includes('open mic') ? (
+              <Link
+                href={`/open-mic/${item.slug}/entries`}
+                style={{
+                  background: 'linear-gradient(135deg,#f59e0b,#d97706)', color: '#000',
+                  fontWeight: 800, fontSize: 12, padding: '7px 18px', borderRadius: 8,
+                  textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4,
+                  boxShadow: '0 2px 8px rgba(245,158,11,0.35)',
+                }}
+              >
+                👍 Vote Now
+              </Link>
+            ) : (
+              <Link
+                href={userApp!.detailsHref}
+                style={{
+                  background: '#3b82f6', color: '#fff', fontWeight: 700, fontSize: 12,
+                  padding: '7px 16px', borderRadius: 8, textDecoration: 'none',
+                }}
+              >
+                Track Status →
+              </Link>
+            )}
+          </>
         )}
         {applied && isRejected && (
           <Link
@@ -237,7 +253,39 @@ function ContestCard({
   );
 }
 
+function ShareButton({ url, label }: { url: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  function handleShare() {
+    const fullUrl = typeof window !== 'undefined' ? `${window.location.origin}${url}` : url;
+    if (navigator.share) {
+      void navigator.share({ title: label || 'Spotlight Open Mic', url: fullUrl });
+    } else {
+      void navigator.clipboard.writeText(fullUrl).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+    }
+  }
+
+  return (
+    <button
+      onClick={handleShare}
+      style={{
+        background: 'transparent', border: '1px solid #d1d5db', color: '#374151',
+        fontSize: 11, padding: '6px 12px', borderRadius: 7, cursor: 'pointer',
+        fontWeight: 600, whiteSpace: 'nowrap',
+      }}
+    >
+      {copied ? '✓ Copied!' : '↗ Share'}
+    </button>
+  );
+}
+
 function ApplicationRow({ item }: { item: Application }) {
+  const isOpenMic = item.source.startsWith('open_mic');
+  const voteHref = `/open-mic/${item.programName}/entries`;
+
   return (
     <div
       style={{
@@ -263,7 +311,7 @@ function ApplicationRow({ item }: { item: Application }) {
           {item.submittedAt ? ` · ${new Date(item.submittedAt).toLocaleDateString()}` : ''}
         </p>
       </div>
-      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+      <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
         {item.editHref && (
           <Link
             href={item.editHref}
@@ -275,15 +323,30 @@ function ApplicationRow({ item }: { item: Application }) {
             Continue
           </Link>
         )}
-        <Link
-          href={item.detailsHref}
-          style={{
-            background: 'transparent', border: '1px solid #d1d5db', color: '#374151',
-            fontSize: 11, padding: '6px 12px', borderRadius: 7, textDecoration: 'none',
-          }}
-        >
-          {item.nextAction || 'View'}
-        </Link>
+        {isOpenMic ? (
+          <>
+            <Link
+              href={voteHref}
+              style={{
+                background: '#f59e0b', color: '#000', fontWeight: 700, fontSize: 11,
+                padding: '6px 14px', borderRadius: 7, textDecoration: 'none', whiteSpace: 'nowrap',
+              }}
+            >
+              Vote
+            </Link>
+            <ShareButton url={voteHref} label={item.programName} />
+          </>
+        ) : (
+          <Link
+            href={item.detailsHref}
+            style={{
+              background: 'transparent', border: '1px solid #d1d5db', color: '#374151',
+              fontSize: 11, padding: '6px 12px', borderRadius: 7, textDecoration: 'none',
+            }}
+          >
+            {item.nextAction || 'View'}
+          </Link>
+        )}
       </div>
     </div>
   );

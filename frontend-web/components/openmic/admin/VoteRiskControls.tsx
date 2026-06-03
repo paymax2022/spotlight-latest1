@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { adminAuthHeaders } from '@/src/lib/auth/client';
 
 export default function VoteRiskControls({
   contestId,
@@ -21,7 +22,7 @@ export default function VoteRiskControls({
     setMessage('');
     const res = await fetch(`/api/admin/open-mic/contests/${contestId}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'x-spotlight-role': 'admin' },
+      headers: await adminAuthHeaders(true),
       body: JSON.stringify({
         votingConfig: {
           suspiciousVoteThreshold: Number(low),

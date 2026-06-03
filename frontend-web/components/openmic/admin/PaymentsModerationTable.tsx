@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { adminAuthHeaders } from '@/src/lib/auth/client';
 
 type PaymentRow = {
   id: string;
@@ -30,7 +31,7 @@ export default function PaymentsModerationTable({
     setMessage('');
     const res = await fetch(`/api/admin/open-mic/contests/${contestId}/moderation-actions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-spotlight-role': 'admin' },
+      headers: await adminAuthHeaders(true),
       body: JSON.stringify({ action: 'update_payment_status', ids: selectedIds, paymentStatus: status }),
     });
     const payload = await res.json().catch(() => ({}));

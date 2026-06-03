@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { adminAuthHeaders } from '@/src/lib/auth/client';
 
 type NotificationRow = {
   id: string;
@@ -32,7 +33,7 @@ export default function NotificationsModerationTable({
     setMessage('');
     const res = await fetch(`/api/admin/open-mic/contests/${contestId}/moderation-actions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-spotlight-role': 'admin' },
+      headers: await adminAuthHeaders(true),
       body: JSON.stringify({ action: 'mark_notifications_sent', ids: selectedIds }),
     });
     const payload = await res.json().catch(() => ({}));

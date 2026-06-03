@@ -86,6 +86,7 @@ export type OpenMicPrizePackage = {
 export type OpenMicVotingConfig = {
   enabled: boolean;
   freeVoting: boolean;
+  freeVotesPerDay: number;
   paidVoting: boolean;
   votePrice: number;
   voteBundlePrice?: number;

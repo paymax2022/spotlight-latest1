@@ -3,6 +3,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 
 // Routes that require an authenticated Supabase session.
 const PROTECTED_PATTERNS: RegExp[] = [
+  /^\/admin(?:\/|$)/,
   /^\/apply(?:\/|$)/,
   /^\/open-mic\/[^/]+\/apply(?:\/|$)/,
   /^\/open-mic\/[^/]+\/enter(?:\/|$)/,

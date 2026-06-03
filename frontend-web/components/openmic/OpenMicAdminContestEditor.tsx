@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { OpenMicContest, OpenMicContestStatus } from '@/src/features/openmic/types';
+import { adminAuthHeaders } from '@/src/lib/auth/client';
 
 type Props = {
   contest: OpenMicContest;
@@ -85,7 +86,7 @@ export default function OpenMicAdminContestEditor({ contest }: Props) {
     try {
       const contestRes = await fetch(`/api/admin/open-mic/contests/${contest.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'x-spotlight-role': 'admin' },
+        headers: await adminAuthHeaders(true),
         body: JSON.stringify({
           title: form.title,
           description: form.description,
@@ -110,7 +111,7 @@ export default function OpenMicAdminContestEditor({ contest }: Props) {
       if (form.beatTitle.trim() && form.downloadUrl.trim()) {
         const beatRes = await fetch(`/api/admin/open-mic/contests/${contest.id}/beats`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-spotlight-role': 'admin' },
+          headers: await adminAuthHeaders(true),
           body: JSON.stringify({
             beatTitle: form.beatTitle,
             producerName: form.producerName || 'Spotlight Producer',

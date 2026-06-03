@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { adminAuthHeaders } from '@/src/lib/auth/client';
 
 type Submission = {
   id: string;
@@ -52,7 +53,7 @@ export default function OpenMicAdminSubmissionReview() {
     setError('');
     try {
       const res = await fetch('/api/admin/open-mic/submissions', {
-        headers: { 'x-spotlight-role': 'admin' },
+        headers: await adminAuthHeaders(),
         cache: 'no-store',
       });
       const payload = await res.json().catch(() => ({}));
@@ -82,7 +83,7 @@ export default function OpenMicAdminSubmissionReview() {
     try {
       const res = await fetch(`/api/admin/open-mic/submissions/${submissionId}/review`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-spotlight-role': 'admin' },
+        headers: await adminAuthHeaders(true),
         body: JSON.stringify({
           status: selectedStatus[submissionId],
           note: selectedNote[submissionId] || '',
@@ -102,7 +103,7 @@ export default function OpenMicAdminSubmissionReview() {
     setError('');
     try {
       const res = await fetch(`/api/admin/open-mic/submissions/${submissionId}/song${download ? '?download=1' : ''}`, {
-        headers: { 'x-spotlight-role': 'admin' },
+        headers: await adminAuthHeaders(),
         cache: 'no-store',
       });
       const payload = await res.json().catch(() => ({}));

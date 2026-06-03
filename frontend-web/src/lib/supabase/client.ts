@@ -1,9 +1,9 @@
 'use client';
 
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { createBrowserClient } from '@supabase/ssr';
 import { createFallbackSupabaseClient } from '@/lib/supabase/fallbackClient';
 
-let browserClient: ReturnType<typeof createSupabaseClient> | null = null;
+let browserClient: ReturnType<typeof createBrowserClient> | null = null;
 let fallbackClient: ReturnType<typeof createFallbackSupabaseClient> | null = null;
 
 export function createClient() {
@@ -17,7 +17,7 @@ export function createClient() {
 
   if (hasConfig) {
     if (!browserClient) {
-      browserClient = createSupabaseClient(url, anon);
+      browserClient = createBrowserClient(url, anon);
     }
     return browserClient;
   }

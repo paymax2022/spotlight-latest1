@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { adminAuthHeaders } from '@/src/lib/auth/client';
 
 type Contest = { id: string; title: string; month: number; year: number; finalistsTarget: number; finalePlaylistLocked?: boolean };
 type Submission = { id: string; songTitle: string; stageName: string; status: string; voteCount: number };
@@ -29,7 +30,7 @@ export default function OpenMicFinaleManager() {
   const [message, setMessage] = useState('');
 
   async function loadContests() {
-    const res = await fetch('/api/admin/open-mic/contests', { headers: { 'x-spotlight-role': 'admin' }, cache: 'no-store' });
+    const res = await fetch('/api/admin/open-mic/contests', { headers: await adminAuthHeaders(), cache: 'no-store' });
     const payload = await res.json().catch(() => ({}));
     if (!res.ok || !payload?.success) throw new Error(payload?.error || 'Failed to load contests');
     const rows = (payload.contests || []) as Contest[];
@@ -39,8 +40,8 @@ export default function OpenMicFinaleManager() {
 
   async function loadContestData(targetContestId: string) {
     const [subsRes, playlistRes] = await Promise.all([
-      fetch(`/api/admin/open-mic/submissions?contestId=${targetContestId}`, { headers: { 'x-spotlight-role': 'admin' }, cache: 'no-store' }),
-      fetch(`/api/admin/open-mic/contests/${targetContestId}/playlist`, { headers: { 'x-spotlight-role': 'admin' }, cache: 'no-store' }),
+      fetch(`/api/admin/open-mic/submissions?contestId=${targetContestId}`, { headers: await adminAuthHeaders(), cache: 'no-store' }),
+      fetch(`/api/admin/open-mic/contests/${targetContestId}/playlist`, { headers: await adminAuthHeaders(), cache: 'no-store' }),
     ]);
     const [subsPayload, playlistPayload] = await Promise.all([subsRes.json().catch(() => ({})), playlistRes.json().catch(() => ({}))]);
     if (!subsRes.ok || !subsPayload?.success) throw new Error(subsPayload?.error || 'Failed to load submissions');
@@ -67,13 +68,13 @@ export default function OpenMicFinaleManager() {
     setMessage('');
     try {
       if (action === 'finalists') {
-        const res = await fetch(`/api/admin/open-mic/contests/${contestId}/finalists`, { method: 'POST', headers: { 'x-spotlight-role': 'admin' } });
+        const res = await fetch(`/api/admin/open-mic/contests/${contestId}/finalists`, { method: 'POST', headers: await adminAuthHeaders() });
         const payload = await res.json().catch(() => ({}));
         if (!res.ok || !payload?.success) throw new Error(payload?.error || 'Failed to generate finalists');
         setMessage('Top finalists generated.');
       }
       if (action === 'autoplaylist') {
-        const res = await fetch(`/api/admin/open-mic/contests/${contestId}/playlist/autobuild`, { method: 'POST', headers: { 'x-spotlight-role': 'admin' } });
+        const res = await fetch(`/api/admin/open-mic/contests/${contestId}/playlist/autobuild`, { method: 'POST', headers: await adminAuthHeaders() });
         const payload = await res.json().catch(() => ({}));
         if (!res.ok || !payload?.success) throw new Error(payload?.error || 'Failed to auto build playlist');
         setMessage('Finale playlist auto-built from finalists.');
@@ -81,7 +82,7 @@ export default function OpenMicFinaleManager() {
       if (action === 'saveplaylist') {
         const res = await fetch(`/api/admin/open-mic/contests/${contestId}/playlist`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-spotlight-role': 'admin' },
+          headers: await adminAuthHeaders(true),
           body: JSON.stringify({ entries: playlist.map((item, idx) => ({ submissionId: item.submissionId, order: idx + 1 })) }),
         });
         const payload = await res.json().catch(() => ({}));
@@ -91,7 +92,7 @@ export default function OpenMicFinaleManager() {
       if (action === 'locktoggle') {
         const res = await fetch(`/api/admin/open-mic/contests/${contestId}/playlist/lock`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-spotlight-role': 'admin' },
+          headers: await adminAuthHeaders(true),
           body: JSON.stringify({ locked: !locked }),
         });
         const payload = await res.json().catch(() => ({}));
@@ -103,7 +104,7 @@ export default function OpenMicFinaleManager() {
         if (!winnerSubmissionId) throw new Error('Select a winner first.');
         const res = await fetch(`/api/admin/open-mic/contests/${contestId}/winner`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-spotlight-role': 'admin' },
+          headers: await adminAuthHeaders(true),
           body: JSON.stringify({ submissionId: winnerSubmissionId }),
         });
         const payload = await res.json().catch(() => ({}));
@@ -124,7 +125,7 @@ export default function OpenMicFinaleManager() {
     try {
       const res = await fetch(`/api/admin/open-mic/contests/${contestId}/playlist/${submissionId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'x-spotlight-role': 'admin' },
+        headers: await adminAuthHeaders(true),
         body: JSON.stringify({
           played: patch.played,
           djCueNote: patch.djCueNote,

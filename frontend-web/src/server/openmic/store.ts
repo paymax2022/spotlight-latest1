@@ -717,7 +717,7 @@ export function createSubmission(
     ownershipConfirmed: payload.ownershipConfirmed,
     noUnauthorizedSamplesConfirmed: payload.noUnauthorizedSamplesConfirmed,
     finaleAvailabilityConfirmed: payload.finaleAvailabilityConfirmed,
-    status: 'submitted',
+    status: 'published_for_voting',
     voteCount: 0,
     leaderboardScore: 0,
     isFinalist: false,

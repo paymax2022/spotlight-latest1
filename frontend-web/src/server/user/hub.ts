@@ -154,7 +154,7 @@ export async function listUserApplications(user: RequestUser): Promise<UnifiedAp
     submittedAt: item.appliedAt,
     status: item.applicationStatus,
     nextAction: nextAction(item.applicationStatus),
-    detailsHref: `/open-mic/${item.contestSlug}/apply`,
+    detailsHref: `/open-mic/${item.contestSlug}/entries`,
     editHref: undefined,
     source: 'open_mic_application',
   }));

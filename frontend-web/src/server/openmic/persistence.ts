@@ -148,6 +148,7 @@ function mapContestRow(row: any): OpenMicContest {
     votingConfig: {
       enabled: voting.enabled !== false,
       freeVoting: voting.freeVoting !== false,
+      freeVotesPerDay: Number(voting.freeVotesPerDay ?? 3),
       paidVoting: voting.paidVoting !== false,
       votePrice: Number(row.vote_price_ngn || voting.votePrice || 0),
       voteBundlePrice: voting.voteBundlePrice ?? undefined,
@@ -286,7 +287,9 @@ function mapSubmissionRow(row: any): OpenMicSubmission {
     songTitle: row.entry_title || '',
     songMood: meta.songMood || undefined,
     language: meta.language || undefined,
-    songUrl: meta.songUrl || '',
+    songUrl: (meta.songObjectKey || meta.r2ObjectKey)
+      ? `/api/open-mic/songs/${row.id}`
+      : (meta.songUrl || ''),
     songObjectKey: meta.songObjectKey || meta.r2ObjectKey || undefined,
     songFileName: meta.songFileName || undefined,
     videoUrl: row.video_link || undefined,
@@ -1364,12 +1367,13 @@ export async function createSubmission(input: Parameters<typeof createSubmission
       ownershipConfirmed: input.ownershipConfirmed,
       noUnauthorizedSamplesConfirmed: input.noUnauthorizedSamplesConfirmed,
       finaleAvailabilityConfirmed: input.finaleAvailabilityConfirmed,
-      status: 'submitted',
+      status: 'published_for_voting',
       voteCount: 0,
       leaderboardScore: 0,
       isFinalist: false,
       isWinner: false,
       submittedAt: now,
+      publishedAt: now,
       createdAt: now,
       updatedAt: now,
     };
@@ -1417,8 +1421,9 @@ export async function createSubmission(input: Parameters<typeof createSubmission
       video_link: submission.videoUrl || '',
       explicit_content_declared: submission.explicitVersion,
       originality_confirmed: submission.ownershipConfirmed,
-      status: 'submitted',
+      status: 'published_for_voting',
       submitted_at: submission.submittedAt || null,
+      live_at: submission.submittedAt || null,
     });
     if (error) throw error;
     return { success: true as const, submission };
@@ -1556,8 +1561,9 @@ export async function reviewSubmission(submissionId: string, review: OpenMicSubm
 export async function castVote(input: OpenMicVoteInput) {
   if (!shouldUseDb()) throw new Error('Open Mic DB is not configured.');
   try {
-    const updated = castVoteMemory(input);
     const supabase = createAdminClient();
+
+    // 1. Insert vote record
     const { error: voteError } = await supabase.from('competition_entry_votes').insert({
       entry_id: input.submissionId,
       competition_id: input.contestId,
@@ -1570,14 +1576,29 @@ export async function castVote(input: OpenMicVoteInput) {
       metadata: { voterName: input.voterName || '' },
     });
     if (voteError) throw voteError;
+
+    // 2. Recompute vote count from the source of truth (votes table)
+    //    This prevents drift from any out-of-band inserts or retries.
+    const { data: totals, error: fetchError } = await supabase
+      .from('competition_entry_votes')
+      .select('vote_count')
+      .eq('entry_id', input.submissionId);
+    if (fetchError) throw fetchError;
+
+    const newVoteCount = (totals ?? []).reduce((s: number, r: any) => s + (Number(r.vote_count) || 0), 0);
+    const newScore = newVoteCount;
+
     const { error: updateError } = await supabase
       .from('competition_entries')
       .update({
-        public_vote_count: updated.voteCount,
-        leaderboard_score: updated.leaderboardScore,
+        public_vote_count: newVoteCount,
+        leaderboard_score: newScore,
       })
       .eq('id', input.submissionId);
     if (updateError) throw updateError;
+
+    // Build a minimal updated object matching what callers expect
+    const updated = { voteCount: newVoteCount, leaderboardScore: newScore };
     if (input.source === 'paid') {
       const contest = await getContestById(input.contestId);
       await insertOpenMicAuditEvent({
@@ -1628,7 +1649,7 @@ export async function getLeaderboard(contestId: string) {
       .from('competition_entries')
       .select('*')
       .eq('competition_id', contestId)
-      .in('status', ['published_for_voting', 'finalist', 'winner', 'live_for_voting'])
+      .in('status', ['submitted', 'published_for_voting', 'finalist', 'winner', 'live_for_voting'])
       .order('leaderboard_score', { ascending: false })
       .order('public_vote_count', { ascending: false });
     if (error) throw error;

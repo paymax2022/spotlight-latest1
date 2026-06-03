@@ -15,3 +15,10 @@ export async function authHeaders(json = false): Promise<Record<string, string>>
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
 }
+
+export async function adminAuthHeaders(json = false): Promise<Record<string, string>> {
+  return {
+    ...(await authHeaders(json)),
+    'x-spotlight-role': 'admin',
+  };
+}

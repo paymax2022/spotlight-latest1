@@ -250,7 +250,7 @@ export default function OpenMicEntryForm({
         throw new Error(payload?.error || validationMessage || 'Song submission failed.');
       }
       setMessage(
-        `Your submission for ${contestTitle} is received and under review. Share link will be available after approval.`
+        `Your song is live! Head to the voting board to start collecting votes.`
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Submission failed.');

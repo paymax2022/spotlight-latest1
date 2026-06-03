@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { adminAuthHeaders } from '@/src/lib/auth/client';
 
 type OpenMicContest = {
   id: string;
@@ -54,7 +55,7 @@ export default function OpenMicContestManager() {
     setError('');
     try {
       const res = await fetch('/api/admin/open-mic/contests?page=1&pageSize=100', {
-        headers: { 'x-spotlight-role': 'admin' },
+        headers: await adminAuthHeaders(),
         cache: 'no-store',
       });
       const payload = await res.json().catch(() => ({}));
@@ -91,10 +92,7 @@ export default function OpenMicContestManager() {
       const nextStatus = selectedStatus[contestId];
       const res = await fetch(`/api/admin/open-mic/contests/${contestId}`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-spotlight-role': 'admin',
-        },
+        headers: await adminAuthHeaders(true),
         body: JSON.stringify({ status: nextStatus }),
       });
       const payload = await res.json().catch(() => ({}));
