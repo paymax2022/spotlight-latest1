@@ -1,0 +1,496 @@
+openapi: 3.1.0
+info:
+  title: Spotlight Fintech API
+  version: 1.0.0
+  description: >
+    Fintech super-app layer built on top of the Spotlight contest platform.
+    All monetary amounts are integers in minor units (kobo).
+    All mutation endpoints require an Idempotency-Key header.
+    Authentication: Bearer JWT issued by Supabase Auth.
+
+servers:
+  - url: /api/v1
+    description: Stable fintech API (Next.js route handlers)
+  - url: /api/v2
+    description: Bridge API (wraps protected legacy vote engine)
+
+# ── Shared components ──────────────────────────────────────────────────────────
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+      description: >
+        Client-generated unique key. Identical requests with the same key
+        within 24 hours return the cached response without side effects.
+
+  schemas:
+    Error:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+
+    KycTier:
+      type: integer
+      enum: [0, 1, 2, 3]
+      description: "0=Unverified, 1=Basic, 2=Standard, 3=Premium"
+
+    KycStatus:
+      type: string
+      enum: [unverified, pending, verified, failed, suspended]
+
+    WalletBalance:
+      type: object
+      required: [available_kobo, pending_kobo, currency]
+      properties:
+        available_kobo:
+          type: integer
+          format: int64
+          description: Spendable balance in kobo (projection of ledger)
+        pending_kobo:
+          type: integer
+          format: int64
+          description: Balance locked in pending topup intents
+        currency:
+          type: string
+          enum: [NGN]
+
+    LedgerEntry:
+      type: object
+      required: [id, type, amount_kobo, reference, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [CREDIT, DEBIT, REVERSAL_CREDIT, REVERSAL_DEBIT]
+        amount_kobo:
+          type: integer
+          format: int64
+        reference:
+          type: string
+          description: Human-readable reference (e.g. PAY_xxx, VOTE_xxx)
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    VirtualAccount:
+      type: object
+      required: [account_number, bank_name, bank_code, provisioned_at]
+      properties:
+        account_number:
+          type: string
+        bank_name:
+          type: string
+        bank_code:
+          type: string
+        provisioned_at:
+          type: string
+          format: date-time
+
+    ReferralSummary:
+      type: object
+      required: [code, total_referrals, total_earned_kobo]
+      properties:
+        code:
+          type: string
+          description: Unique share code (e.g. SPOT-A1B2C3)
+        total_referrals:
+          type: integer
+        total_earned_kobo:
+          type: integer
+          format: int64
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid Bearer token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Authenticated but not authorized (KYC tier or RBAC)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UnprocessableEntity:
+      description: Validation error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyRequests:
+      description: Rate or daily limit exceeded
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+security:
+  - bearerAuth: []
+
+# ── KYC endpoints ─────────────────────────────────────────────────────────────
+
+paths:
+  /kyc/me:
+    get:
+      operationId: getMyKyc
+      summary: Get current user's KYC status and tier
+      tags: [KYC]
+      responses:
+        '200':
+          description: KYC profile
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, kyc_tier, kyc_status]
+                properties:
+                  success: { type: boolean }
+                  kyc_tier: { $ref: '#/components/schemas/KycTier' }
+                  kyc_status: { $ref: '#/components/schemas/KycStatus' }
+                  phone_verified: { type: boolean }
+                  submitted_at: { type: string, format: date-time, nullable: true }
+                  verified_at: { type: string, format: date-time, nullable: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /kyc/initiate:
+    post:
+      operationId: initiateKyc
+      summary: Submit KYC documents to advance to a higher tier
+      tags: [KYC]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document_type, document_ref]
+              properties:
+                document_type:
+                  type: string
+                  enum: [BVN, NIN, PASSPORT, DRIVERS_LICENSE]
+                document_ref:
+                  type: string
+                  description: Provider reference or encrypted document ID
+                phone:
+                  type: string
+      responses:
+        '202':
+          description: KYC submission accepted; verification is asynchronous
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  kyc_status: { $ref: '#/components/schemas/KycStatus' }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+# ── Wallet endpoints ───────────────────────────────────────────────────────────
+
+  /wallet/balance:
+    get:
+      operationId: getWalletBalance
+      summary: Get real-time wallet balance (derived from ledger)
+      tags: [Wallet]
+      responses:
+        '200':
+          description: Current balance
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, balance]
+                properties:
+                  success: { type: boolean }
+                  balance: { $ref: '#/components/schemas/WalletBalance' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Wallet disabled — KYC tier 0
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /wallet/transactions:
+    get:
+      operationId: listWalletTransactions
+      summary: Paginated ledger transaction history
+      tags: [Wallet]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+          description: Opaque cursor for keyset pagination
+      responses:
+        '200':
+          description: Ledger entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, entries]
+                properties:
+                  success: { type: boolean }
+                  entries:
+                    type: array
+                    items: { $ref: '#/components/schemas/LedgerEntry' }
+                  next_cursor: { type: string, nullable: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /wallet/topup:
+    post:
+      operationId: initiateWalletTopup
+      summary: Initiate a Paystack payment to top up the wallet
+      tags: [Wallet]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount_kobo]
+              properties:
+                amount_kobo:
+                  type: integer
+                  format: int64
+                  minimum: 10000
+                  description: Amount to top up in kobo (min ₦100)
+      responses:
+        '200':
+          description: Paystack payment initialized
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, authorization_url, reference]
+                properties:
+                  success: { type: boolean }
+                  authorization_url: { type: string, format: uri }
+                  reference: { type: string }
+                  amount_kobo: { type: integer, format: int64 }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+# ── Virtual accounts ───────────────────────────────────────────────────────────
+
+  /virtual-accounts/me:
+    get:
+      operationId: getMyVirtualAccount
+      summary: Get the authenticated user's dedicated virtual bank account
+      tags: [VirtualAccounts]
+      responses:
+        '200':
+          description: Virtual account details
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, account]
+                properties:
+                  success: { type: boolean }
+                  account: { $ref: '#/components/schemas/VirtualAccount' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Not available — KYC tier below 1
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Not yet provisioned (auto-provisioning in progress)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+# ── Referrals ──────────────────────────────────────────────────────────────────
+
+  /referrals/me:
+    get:
+      operationId: getMyReferrals
+      summary: Get the authenticated user's referral code and earnings summary
+      tags: [Referrals]
+      responses:
+        '200':
+          description: Referral summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, referral]
+                properties:
+                  success: { type: boolean }
+                  referral: { $ref: '#/components/schemas/ReferralSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+# ── Vote bridge (v2) ───────────────────────────────────────────────────────────
+
+  /api/v2/votes/free:
+    post:
+      operationId: castFreeVoteBridged
+      summary: Cast a free vote through the bridge (idempotent, KYC-gated)
+      tags: [VoteBridge]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contestId, contestantId]
+              properties:
+                contestId: { type: string }
+                contestantId: { type: string }
+                shareCode: { type: string, description: Referrer's share code }
+      responses:
+        '200':
+          description: Vote cast
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  votesAdded: { type: integer }
+                  freeVotesRemaining: { type: integer }
+                  newTotalVotes: { type: integer }
+                  fraudStatus: { type: string }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/v2/votes/paid/verify:
+    post:
+      operationId: verifyPaidVoteBridged
+      summary: Verify and credit paid votes through the bridge (SELECT FOR UPDATE locked)
+      tags: [VoteBridge]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transactionId, paymentReference]
+              properties:
+                transactionId: { type: string, format: uuid }
+                paymentReference: { type: string }
+      responses:
+        '200':
+          description: Votes credited (or already credited — idempotent)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  alreadyProcessed: { type: boolean }
+                  votesCredited: { type: integer }
+                  newTotalVotes: { type: integer }
+                  receiptNumber: { type: string }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Payment not completed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+# ── Admin fintech ──────────────────────────────────────────────────────────────
+
+  /admin/adjustments:
+    post:
+      operationId: initiateAdjustment
+      summary: >
+        Finance maker: propose a manual wallet credit or debit.
+        Amounts ≥ ₦100,000 require checker approval before execution.
+      tags: [AdminFintech]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, type, amount_kobo, reason]
+              properties:
+                user_id: { type: string, format: uuid }
+                type: { type: string, enum: [CREDIT, DEBIT] }
+                amount_kobo: { type: integer, format: int64, minimum: 1 }
+                reason: { type: string, minLength: 10 }
+      responses:
+        '201':
+          description: Adjustment initiated (pending approval if ≥ ₦100,000)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  adjustment_id: { type: string, format: uuid }
+                  status: { type: string, enum: [pending_approval, executed] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/adjustments/{id}/approve:
+    post:
+      operationId: approveAdjustment
+      summary: Finance checker approves a pending adjustment (self-approval blocked)
+      tags: [AdminFintech]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200':
+          description: Adjustment approved and executed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  adjustment_id: { type: string, format: uuid }
+                  ledger_entry_id: { type: string, format: uuid }
+        '403':
+          description: Self-approval attempted or insufficient role
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Adjustment not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
