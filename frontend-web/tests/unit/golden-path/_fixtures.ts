@@ -127,6 +127,12 @@ export function makeSupabaseMock() {
     in:  updateEq,
   });
 
+  // listData: terminal for paginated queries that end with .range(offset, limit).
+  // range() calls listData() and returns a Promise — no thenable on the mock object
+  // (which would be consumed by Promise.resolve and break mockResolvedValue).
+  const listData = vi.fn().mockResolvedValue({ data: [], error: null });
+  const rangeFn = vi.fn().mockImplementation(() => listData());
+
   const mock = {
     from: vi.fn().mockReturnThis(),
     select: vi.fn().mockReturnThis(),
@@ -139,6 +145,7 @@ export function makeSupabaseMock() {
     in: vi.fn().mockReturnThis(),
     order: vi.fn().mockReturnThis(),
     limit: vi.fn().mockReturnThis(),
+    range: rangeFn,
     maybeSingle: maybySingle,
     single,
     insert: insertFn,
@@ -153,5 +160,5 @@ export function makeSupabaseMock() {
     },
   };
 
-  return { mock, maybySingle, single, insertFn, updateFn, updateEq };
+  return { mock, maybySingle, single, insertFn, updateFn, updateEq, listData, rangeFn };
 }
