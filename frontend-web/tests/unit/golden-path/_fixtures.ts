@@ -114,8 +114,18 @@ export function makeSupabaseMock() {
   const maybySingle = vi.fn().mockResolvedValue({ data: null, error: null });
   const single = vi.fn().mockResolvedValue({ data: null, error: null });
   const insertFn = vi.fn().mockResolvedValue({ error: null });
-  const updateFn = vi.fn().mockResolvedValue({ data: null, error: null });
   const upsertFn = vi.fn().mockReturnThis();
+
+  // Updates always chain: .update({}).eq('col', val) → Promise<{data,error}>
+  // The updateEq fn is the terminal awaitable; updateFn returns it.
+  const updateEq = vi.fn().mockResolvedValue({ data: null, error: null });
+  const updateFn = vi.fn().mockReturnValue({
+    eq:  updateEq,
+    neq: updateEq,
+    is:  updateEq,
+    not: updateEq,
+    in:  updateEq,
+  });
 
   const mock = {
     from: vi.fn().mockReturnThis(),
@@ -143,5 +153,5 @@ export function makeSupabaseMock() {
     },
   };
 
-  return { mock, maybySingle, single, insertFn, updateFn };
+  return { mock, maybySingle, single, insertFn, updateFn, updateEq };
 }
