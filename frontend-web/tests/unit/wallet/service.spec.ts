@@ -11,10 +11,16 @@ vi.mock('@/lib/supabase/server', () => ({
   createAdminClient: vi.fn(),
 }));
 
+// Stub the tier-limits service so debitWallet tests don't need KYC DB calls.
+vi.mock('@/src/server/tiers/service', () => ({
+  enforceWalletLimit: vi.fn().mockResolvedValue({ dailyLimitKobo: null }),
+}));
+
 import {
   getBalance,
   creditWallet,
   debitWallet,
+  reverseWalletDebit,
   listTransactions,
   createTopupIntent,
 } from '@/src/server/wallet/service';
@@ -56,7 +62,9 @@ describe('getBalance', () => {
     const { maybySingle } = setupMock();
     maybySingle
       .mockResolvedValueOnce({ data: existingAccount(), error: null }) // account lookup
-      .mockResolvedValueOnce({ data: null, error: null });             // wallet_balance (no row yet)
+      .mockResolvedValueOnce({ data: null, error: null })              // mobile_fintech (migrate)
+      .mockResolvedValueOnce({ data: null, error: null })              // wallet_balance (no row)
+      .mockResolvedValueOnce({ data: null, error: null });             // mobile_fintech (balance=0 path)
 
     const result = await getBalance(USER_ID);
     expect(result.available_kobo).toBe(0);
@@ -66,8 +74,9 @@ describe('getBalance', () => {
   it('returns the correct balance from the wallet_balance view', async () => {
     const { maybySingle } = setupMock();
     maybySingle
-      .mockResolvedValueOnce({ data: existingAccount(), error: null })
-      .mockResolvedValueOnce({ data: balanceRow(250_000), error: null });
+      .mockResolvedValueOnce({ data: existingAccount(), error: null }) // account lookup
+      .mockResolvedValueOnce({ data: null, error: null })              // mobile_fintech (migrate)
+      .mockResolvedValueOnce({ data: balanceRow(250_000), error: null }); // wallet_balance
 
     const result = await getBalance(USER_ID);
     expect(result.available_kobo).toBe(250_000);
@@ -77,7 +86,9 @@ describe('getBalance', () => {
     const { maybySingle, insertFn } = setupMock();
     maybySingle
       .mockResolvedValueOnce({ data: null, error: null })             // no existing account
-      .mockResolvedValueOnce({ data: balanceRow(0), error: null });   // wallet_balance after create
+      .mockResolvedValueOnce({ data: null, error: null })             // mobile_fintech (migrate)
+      .mockResolvedValueOnce({ data: null, error: null })             // wallet_balance (new acct)
+      .mockResolvedValueOnce({ data: null, error: null });            // mobile_fintech (balance=0)
     insertFn.mockResolvedValueOnce({ error: null });
 
     const result = await getBalance(USER_ID);
@@ -147,13 +158,14 @@ describe('creditWallet', () => {
 describe('debitWallet', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('inserts a DEBIT entry when balance is sufficient', async () => {
-    const { maybySingle, insertFn } = setupMock();
+  it('calls debit_wallet_atomic RPC when balance is sufficient', async () => {
+    const { mock, maybySingle } = setupMock();
     maybySingle
-      .mockResolvedValueOnce({ data: null, error: null })             // idempotency miss
+      .mockResolvedValueOnce({ data: null, error: null })              // idempotency miss
       .mockResolvedValueOnce({ data: existingAccount(), error: null }) // account
-      .mockResolvedValueOnce({ data: balanceRow(500_000), error: null }); // balance check
-    insertFn.mockResolvedValueOnce({ error: null });
+      .mockResolvedValueOnce({ data: null, error: null });             // mobile_fintech (migrate)
+    // rpc returns no error → success
+    vi.mocked(mock.rpc).mockResolvedValueOnce({ data: null, error: null });
 
     const result = await debitWallet(USER_ID, {
       amountKobo: 200_000,
@@ -163,41 +175,33 @@ describe('debitWallet', () => {
 
     expect(result.alreadyProcessed).toBe(false);
     expect(result.amountKobo).toBe(200_000);
-    expect(insertFn).toHaveBeenCalledOnce();
+    expect(mock.rpc).toHaveBeenCalledWith('debit_wallet_atomic', expect.objectContaining({
+      p_account_id: ACCOUNT_ID,
+      p_amount_kobo: 200_000,
+    }));
   });
 
-  it('throws 402 when balance is insufficient', async () => {
-    const { maybySingle } = setupMock();
+  it('throws 402 when RPC reports INSUFFICIENT_BALANCE', async () => {
+    const { mock, maybySingle } = setupMock();
     maybySingle
-      .mockResolvedValueOnce({ data: null, error: null })             // idempotency miss
+      .mockResolvedValueOnce({ data: null, error: null })              // idempotency miss
       .mockResolvedValueOnce({ data: existingAccount(), error: null }) // account
-      .mockResolvedValueOnce({ data: balanceRow(10_000), error: null }); // balance: only ₦100
+      .mockResolvedValueOnce({ data: null, error: null });             // mobile_fintech (migrate)
+    vi.mocked(mock.rpc).mockResolvedValueOnce({
+      data: null,
+      error: { message: 'INSUFFICIENT_BALANCE: available=10000 required=200000', code: 'P0001' },
+    });
 
     const { ApiError } = await import('@/src/lib/api/responses');
 
-    await expect(
-      debitWallet(USER_ID, {
-        amountKobo: 200_000,
-        reference: 'VOTE_ref_001',
-        idempotencyKey: 'vote:ref-001:DEBIT',
-      }),
-    ).rejects.toThrow(ApiError);
+    const err = await debitWallet(USER_ID, {
+      amountKobo: 200_000,
+      reference: 'VOTE_ref_001',
+      idempotencyKey: 'vote:ref-001:DEBIT',
+    }).catch(e => e);
 
-    try {
-      const { maybySingle: ms2 } = setupMock();
-      ms2
-        .mockResolvedValueOnce({ data: null, error: null })
-        .mockResolvedValueOnce({ data: existingAccount(), error: null })
-        .mockResolvedValueOnce({ data: balanceRow(10_000), error: null });
-
-      await debitWallet(USER_ID, {
-        amountKobo: 200_000,
-        reference: 'VOTE_ref_002',
-        idempotencyKey: 'vote:ref-002:DEBIT',
-      });
-    } catch (e) {
-      expect((e as InstanceType<typeof ApiError>).status).toBe(402);
-    }
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as InstanceType<typeof ApiError>).status).toBe(402);
   });
 
   it('returns alreadyProcessed=true when idempotency key already exists', async () => {
@@ -215,6 +219,32 @@ describe('debitWallet', () => {
 
     expect(result.alreadyProcessed).toBe(true);
     expect(insertFn).not.toHaveBeenCalled();
+  });
+});
+
+describe('reverseWalletDebit', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('inserts a REVERSAL_DEBIT entry for an idempotent refund', async () => {
+    const { maybySingle, insertFn } = setupMock();
+    maybySingle
+      .mockResolvedValueOnce({ data: null, error: null })
+      .mockResolvedValueOnce({ data: existingAccount(), error: null });
+    insertFn.mockResolvedValueOnce({ error: null });
+
+    const result = await reverseWalletDebit(USER_ID, {
+      amountKobo: 200_000,
+      reference: 'UTL-REFUND-001',
+      idempotencyKey: 'utility:tx-001:REVERSAL_DEBIT',
+    });
+
+    expect(result.alreadyProcessed).toBe(false);
+    expect(insertFn).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'REVERSAL_DEBIT',
+      amount_kobo: 200_000,
+      reference: 'UTL-REFUND-001',
+      idempotency_key: 'utility:tx-001:REVERSAL_DEBIT',
+    }));
   });
 });
 

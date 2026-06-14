@@ -3,6 +3,7 @@ import { ApiError } from '@/src/lib/api/responses';
 import { validateAmountKobo, buildIdempotencyKey } from './ledger';
 import type { LedgerEntryRow } from './ledger';
 import { checkIdempotencyKey, checkTopupIdempotencyKey } from './idempotency';
+import { enforceWalletLimit } from '@/src/server/tiers/service';
 
 const MIN_TOPUP_KOBO = 10_000; // ₦100 minimum
 
@@ -48,6 +49,40 @@ export async function getOrCreateAccount(userId: string): Promise<string> {
   return newId;
 }
 
+async function migrateLegacyMobileBalanceIfNeeded(userId: string, accountId: string) {
+  const supabase = createAdminClient();
+  const { count } = await supabase
+    .from('ledger_entries')
+    .select('id', { count: 'exact', head: true })
+    .eq('account_id', accountId);
+
+  if ((count ?? 0) > 0) return;
+
+  const { data: legacy } = await supabase
+    .from('mobile_fintech_accounts')
+    .select('available_balance, currency')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  const legacyBalance = Number(legacy?.available_balance ?? 0);
+  if (legacyBalance <= 0) return;
+
+  const amountKobo = Math.round(legacyBalance * 100);
+  const { error } = await supabase.from('ledger_entries').insert({
+    account_id: accountId,
+    type: 'CREDIT',
+    amount_kobo: amountKobo,
+    reference: `LEGACY-MOBILE-${userId}`,
+    idempotency_key: `legacy-mobile-fintech:${userId}:initial-credit`,
+    description: 'Migrated legacy mobile wallet balance',
+    metadata: { source: 'mobile_fintech_accounts', currency: legacy?.currency ?? 'NGN' },
+  });
+
+  if (error && error.code !== '23505') {
+    throw new ApiError(`Failed to migrate legacy wallet balance: ${error.message}`, 500);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Balance
 // ---------------------------------------------------------------------------
@@ -60,6 +95,7 @@ export interface WalletBalance {
 
 export async function getBalance(userId: string): Promise<WalletBalance> {
   const accountId = await getOrCreateAccount(userId);
+  await migrateLegacyMobileBalanceIfNeeded(userId, accountId);
   const supabase = createAdminClient();
 
   const { data } = await supabase
@@ -68,8 +104,31 @@ export async function getBalance(userId: string): Promise<WalletBalance> {
     .eq('account_id', accountId)
     .maybeSingle();
 
+  const availableKobo = (data?.available_kobo as number) ?? 0;
+  const { count: ledgerEntryCount } = await supabase
+    .from('ledger_entries')
+    .select('id', { count: 'exact', head: true })
+    .eq('account_id', accountId);
+
+  if (availableKobo === 0 && (ledgerEntryCount ?? 0) === 0) {
+    const { data: legacy } = await supabase
+      .from('mobile_fintech_accounts')
+      .select('available_balance, currency')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const legacyBalance = Number(legacy?.available_balance ?? 0);
+    if (legacyBalance > 0) {
+      return {
+        available_kobo: Math.round(legacyBalance * 100),
+        currency: (legacy?.currency as string) ?? 'NGN',
+        account_id: accountId,
+      };
+    }
+  }
+
   return {
-    available_kobo: (data?.available_kobo as number) ?? 0,
+    available_kobo: availableKobo,
     currency: (data?.currency as string) ?? 'NGN',
     account_id: accountId,
   };
@@ -138,29 +197,66 @@ export async function debitWallet(
     return { alreadyProcessed: true, amountKobo: hit.amountKobo };
   }
 
+  // Block 7: get the user's tier daily limit before touching the DB.
+  // enforceWalletLimit throws 403 for Tier 0 or exceeded daily cap.
+  const { dailyLimitKobo } = await enforceWalletLimit(userId, input.amountKobo);
+
+  const accountId = await getOrCreateAccount(userId);
+  await migrateLegacyMobileBalanceIfNeeded(userId, accountId);
+  const supabase = createAdminClient();
+
+  // Atomic debit via Postgres RPC — balance check + optional daily-limit check
+  // + INSERT happen under a row-level lock on ledger_accounts (fixes Block 4 TOCTOU).
+  const { error } = await supabase.rpc('debit_wallet_atomic', {
+    p_account_id:       accountId,
+    p_amount_kobo:      input.amountKobo,
+    p_reference:        input.reference,
+    p_idempotency_key:  input.idempotencyKey,
+    p_daily_limit_kobo: dailyLimitKobo,
+    p_description:      input.description ?? null,
+    p_metadata:         input.metadata ?? null,
+  });
+
+  if (error) {
+    if (error.code === '23505') {
+      return { alreadyProcessed: true, amountKobo: input.amountKobo };
+    }
+    // Map RPC-raised exceptions to appropriate HTTP status codes
+    if (error.message?.includes('INSUFFICIENT_BALANCE')) {
+      throw new ApiError(
+        `Insufficient wallet balance. Required: ${input.amountKobo} kobo.`,
+        402,
+      );
+    }
+    if (error.message?.includes('TIER_LIMIT_EXCEEDED')) {
+      throw new ApiError(
+        'Daily wallet limit for your KYC tier has been reached.',
+        403,
+      );
+    }
+    throw new ApiError(`Failed to debit wallet: ${error.message}`, 500);
+  }
+
+  return { alreadyProcessed: false, amountKobo: input.amountKobo };
+}
+
+export async function reverseWalletDebit(
+  userId: string,
+  input: WalletMutationInput,
+): Promise<WalletMutationResult> {
+  validateAmountKobo(input.amountKobo);
+
+  const hit = await checkIdempotencyKey(input.idempotencyKey);
+  if (hit.alreadyProcessed) {
+    return { alreadyProcessed: true, amountKobo: hit.amountKobo };
+  }
+
   const accountId = await getOrCreateAccount(userId);
   const supabase = createAdminClient();
 
-  // Check balance — fail closed if DB error
-  // NOTE: This check + insert is not atomic. A concurrent debit could overdraft.
-  // Atomic enforcement (RPC with advisory lock) is added in Block 7 (tier limits).
-  const { data: balanceRow } = await supabase
-    .from('wallet_balance')
-    .select('available_kobo')
-    .eq('account_id', accountId)
-    .maybeSingle();
-
-  const available = (balanceRow?.available_kobo as number) ?? 0;
-  if (available < input.amountKobo) {
-    throw new ApiError(
-      `Insufficient wallet balance. Available: ${available} kobo, required: ${input.amountKobo} kobo.`,
-      402,
-    );
-  }
-
   const { error } = await supabase.from('ledger_entries').insert({
     account_id: accountId,
-    type: 'DEBIT',
+    type: 'REVERSAL_DEBIT',
     amount_kobo: input.amountKobo,
     reference: input.reference,
     idempotency_key: input.idempotencyKey,
@@ -172,7 +268,7 @@ export async function debitWallet(
     if (error.code === '23505') {
       return { alreadyProcessed: true, amountKobo: input.amountKobo };
     }
-    throw new ApiError(`Failed to debit wallet: ${error.message}`, 500);
+    throw new ApiError(`Failed to reverse wallet debit: ${error.message}`, 500);
   }
 
   return { alreadyProcessed: false, amountKobo: input.amountKobo };
