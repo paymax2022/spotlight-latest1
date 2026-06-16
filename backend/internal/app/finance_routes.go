@@ -19,6 +19,7 @@ import (
 	"spotlight/backend/internal/estate"
 	"spotlight/backend/internal/restaurant"
 	"spotlight/backend/internal/telemedicine"
+	"spotlight/backend/internal/transport"
 	"spotlight/backend/internal/votebridge"
 	"spotlight/backend/internal/events"
 	"spotlight/backend/internal/finance/settlement"
@@ -229,6 +230,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config) {
 		teleGroup.POST("/appointments/:id/complete", telemedHandler.CompleteAppointment)
 		teleGroup.DELETE("/appointments/:id", telemedHandler.CancelAppointment)
 		teleGroup.POST("/appointments/:id/prescription", telemedHandler.IssuePrescription)
+	}
+
+	// --- Transport routes ---
+	if cfg.FeatureTransportEnabled {
+		settlementSvcTr := settlement.NewService(pool, ledgerSvc)
+		transportSvc := transport.NewService(pool, settlementSvcTr)
+		transportHandler := transport.NewHandler(transportSvc)
+		trGroup := finance.Group("/transport")
+		trGroup.POST("/drivers", transportHandler.RegisterDriver)
+		trGroup.PATCH("/drivers/status", transportHandler.SetStatus)
+		trGroup.POST("/trips", transportHandler.RequestTrip)
+		trGroup.POST("/trips/:id/accept", transportHandler.AcceptTrip)
+		trGroup.PATCH("/trips/:id/status", transportHandler.UpdateStatus)
 	}
 
 	// --- Vote bridge routes ---

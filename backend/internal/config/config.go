@@ -44,6 +44,7 @@ type Config struct {
 	FeatureRestaurantEnabled      bool
 	FeatureTelemedicineEnabled    bool
 	FeatureVoteBridgeEnabled      bool
+	FeatureTransportEnabled       bool
 }
 
 func getEnv(key, fallback string) string {
@@ -105,5 +106,6 @@ func Load() Config {
 		FeatureRestaurantEnabled:      getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
 		FeatureTelemedicineEnabled:    getEnvBool("FEATURE_TELEMEDICINE_ENABLED", false),
 		FeatureVoteBridgeEnabled:      getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
+		FeatureTransportEnabled:       getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
 	}
 }
