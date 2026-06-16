@@ -37,6 +37,9 @@ type Config struct {
 	FeatureReferralsEnabled       bool
 	FeatureTierLimitsEnabled      bool
 	FeatureFXEnabled              bool
+	FeatureGroupsEnabled          bool
+	FeatureEventsEnabled          bool
+	FeatureEstateEnabled          bool
 }
 
 func getEnv(key, fallback string) string {
@@ -91,5 +94,8 @@ func Load() Config {
 		FeatureReferralsEnabled:       getEnvBool("FEATURE_REFERRALS_ENABLED", false),
 		FeatureTierLimitsEnabled:      getEnvBool("FEATURE_TIER_LIMITS_ENABLED", false),
 		FeatureFXEnabled:              getEnvBool("FEATURE_FX_ENABLED", false),
+		FeatureGroupsEnabled:          getEnvBool("FEATURE_GROUPS_ENABLED", false),
+		FeatureEventsEnabled:          getEnvBool("FEATURE_EVENTS_ENABLED", false),
+		FeatureEstateEnabled:          getEnvBool("FEATURE_ESTATE_ENABLED", false),
 	}
 }

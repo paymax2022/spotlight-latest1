@@ -15,6 +15,10 @@ import (
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/va"
 	"spotlight/backend/internal/finance/wallet"
+	"spotlight/backend/internal/estate"
+	"spotlight/backend/internal/events"
+	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/groups"
 	platformDB "spotlight/backend/internal/platform/db"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	providerInterfaces "spotlight/backend/internal/provider"
@@ -143,6 +147,46 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config) {
 		r.POST("/api/webhooks/paystack/go", webhookHandler.Handle)
 	}
 
+	// --- Groups routes ---
+	if cfg.FeatureGroupsEnabled {
+		groupsSvc := groups.NewService(pool, ledgerSvc)
+		groupsHandler := groups.NewHandler(groupsSvc)
+		grp := finance.Group("/groups")
+		grp.POST("", groupsHandler.Create)
+		grp.GET("", groupsHandler.List)
+		grp.GET("/:id", groupsHandler.Get)
+		grp.POST("/:id/invite", groupsHandler.Invite)
+		grp.POST("/:id/dues", groupsHandler.PayDues)
+	}
+
+	// --- Events routes ---
+	if cfg.FeatureEventsEnabled {
+		settlementSvc := settlement.NewService(pool, ledgerSvc)
+		eventsSvc := events.NewService(pool, ledgerSvc, settlementSvc)
+		eventsHandler := events.NewHandler(eventsSvc)
+		evGroup := finance.Group("/events")
+		evGroup.POST("", eventsHandler.Create)
+		evGroup.GET("/:id", eventsHandler.Get)
+		evGroup.POST("/:id/publish", eventsHandler.Publish)
+		evGroup.POST("/:id/tickets", eventsHandler.PurchaseTicket)
+		evGroup.POST("/:id/scan", eventsHandler.ScanTicket)
+		evGroup.GET("/my/tickets", eventsHandler.MyTickets)
+	}
+
+	// --- Estate routes ---
+	if cfg.FeatureEstateEnabled {
+		estateSvc := estate.NewService(pool, redisClient)
+		estateHandler := estate.NewHandler(estateSvc)
+		estGroup := finance.Group("/estate")
+		estGroup.POST("", estateHandler.CreateEstate)
+		estGroup.POST("/:id/residents", estateHandler.AddResident)
+		estGroup.POST("/:id/passes", estateHandler.IssuePass)
+		estGroup.POST("/:id/passes/scan", estateHandler.ScanPass)
+		estGroup.POST("/:id/elections", estateHandler.CreateElection)
+		estGroup.POST("/:id/elections/:electionId/vote", estateHandler.CastVote)
+		estGroup.GET("/:id/elections/:electionId/results", estateHandler.GetResults)
+	}
+
 	// --- Admin finance routes ---
 	adminFinance := r.Group("/api/finance/admin")
 	adminFinance.Use(requireUserID())
@@ -150,9 +194,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config) {
 		adminFinance.POST("/kyc/users/:user_id/approve", kycHandler.Approve)
 	}
 
-	log.Printf("[finance] routes registered — wallet=%v kyc=%v va=%v referrals=%v fx=%v transfers=%v",
+	log.Printf("[finance] routes registered — wallet=%v kyc=%v va=%v referrals=%v fx=%v transfers=%v groups=%v events=%v estate=%v",
 		cfg.FeatureWalletEnabled, cfg.FeatureKYCEnabled, cfg.FeatureVirtualAccountsEnabled,
-		cfg.FeatureReferralsEnabled, cfg.FeatureFXEnabled, cfg.FeatureTransfersEnabled)
+		cfg.FeatureReferralsEnabled, cfg.FeatureFXEnabled, cfg.FeatureTransfersEnabled,
+		cfg.FeatureGroupsEnabled, cfg.FeatureEventsEnabled, cfg.FeatureEstateEnabled)
 }
 
 // requireUserID is a middleware that rejects requests without a user_id in context.
