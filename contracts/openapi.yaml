@@ -1013,6 +1013,444 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CurrencyWallet' }
 
+  # ── Groups ────────────────────────────────────────────────────────────────────
+  /groups:
+    post:
+      operationId: createGroup
+      summary: Create a community group
+      tags: [Groups]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 100 }
+                description: { type: string }
+                is_public: { type: boolean }
+                avatar_url: { type: string, nullable: true }
+      responses:
+        '201':
+          description: Group created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    get:
+      operationId: listMyGroups
+      summary: List groups the authenticated user belongs to
+      tags: [Groups]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Groups list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Group' } }
+
+  /groups/{id}/dues:
+    post:
+      operationId: payGroupDues
+      summary: Pay subscription dues for a group
+      tags: [Groups]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_id, idempotency_key]
+              properties:
+                plan_id: { type: string, format: uuid }
+                idempotency_key: { type: string }
+      responses:
+        '201':
+          description: Dues paid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionPayment' }
+
+  # ── Events ────────────────────────────────────────────────────────────────────
+  /events:
+    post:
+      operationId: createEvent
+      summary: Create a ticketed event
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, starts_at, ends_at]
+              properties:
+                title: { type: string, minLength: 2, maxLength: 200 }
+                description: { type: string }
+                venue_address: { type: string }
+                starts_at: { type: string, format: date-time }
+                ends_at: { type: string, format: date-time }
+                banner_url: { type: string, nullable: true }
+      responses:
+        '201':
+          description: Event created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Event' }
+
+  /events/{id}/tickets:
+    post:
+      operationId: purchaseTicket
+      summary: Purchase a ticket for an event (wallet payment)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticket_type_id, idempotency_key]
+              properties:
+                ticket_type_id: { type: string, format: uuid }
+                idempotency_key: { type: string }
+      responses:
+        '201':
+          description: Ticket issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+
+  # ── Crowdfunding ──────────────────────────────────────────────────────────────
+  /crowdfunding/campaigns:
+    post:
+      operationId: createCampaign
+      summary: Create a fundraising campaign
+      tags: [Crowdfunding]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, goal_kobo, deadline]
+              properties:
+                title: { type: string, minLength: 2, maxLength: 200 }
+                description: { type: string }
+                goal_kobo: { type: integer, format: int64, minimum: 100 }
+                deadline: { type: string, format: date-time }
+      responses:
+        '201':
+          description: Campaign created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Campaign' }
+
+  /crowdfunding/campaigns/{id}:
+    get:
+      operationId: getCampaign
+      summary: Get a campaign with live raised total
+      tags: [Crowdfunding]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Campaign
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Campaign' }
+
+  /crowdfunding/campaigns/{id}/contribute:
+    post:
+      operationId: contributeToСampaign
+      summary: Contribute to a campaign (escrows funds)
+      tags: [Crowdfunding]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount_kobo, idempotency_key]
+              properties:
+                amount_kobo: { type: integer, format: int64, minimum: 100 }
+                idempotency_key: { type: string }
+      responses:
+        '201':
+          description: Contribution escrowed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Contribution' }
+
+  # ── Telemedicine ──────────────────────────────────────────────────────────────
+  /telemedicine/doctors:
+    get:
+      operationId: listDoctors
+      summary: List available doctors, optionally filtered by specialty
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: specialty, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Doctors list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Doctor' } }
+    post:
+      operationId: registerDoctor
+      summary: Register as a healthcare provider
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, specialty, consult_fee_kobo]
+              properties:
+                name: { type: string }
+                specialty: { type: string }
+                bio: { type: string }
+                consult_fee_kobo: { type: integer, format: int64, minimum: 100 }
+      responses:
+        '201':
+          description: Doctor registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Doctor' }
+
+  /telemedicine/appointments:
+    post:
+      operationId: bookAppointment
+      summary: Book a consultation (escrows fee)
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [doctor_id, scheduled_at, idempotency_key]
+              properties:
+                doctor_id: { type: string, format: uuid }
+                scheduled_at: { type: string, format: date-time }
+                notes: { type: string }
+                idempotency_key: { type: string }
+      responses:
+        '201':
+          description: Appointment booked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+
+  /telemedicine/appointments/{id}/complete:
+    post:
+      operationId: completeAppointment
+      summary: Mark appointment completed and settle fee (doctor only)
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Appointment completed, fee settled
+
+  # ── Transport ─────────────────────────────────────────────────────────────────
+  /transport/trips:
+    post:
+      operationId: requestTrip
+      summary: Request a ride (escrows fare)
+      tags: [Transport]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pickup_address, dest_address, fare_kobo, idempotency_key]
+              properties:
+                pickup_address: { type: string }
+                dest_address: { type: string }
+                fare_kobo: { type: integer, format: int64, minimum: 150000 }
+                idempotency_key: { type: string }
+      responses:
+        '201':
+          description: Trip requested
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trip' }
+
+  /transport/trips/{id}/accept:
+    post:
+      operationId: acceptTrip
+      summary: Driver accepts a trip request
+      tags: [Transport]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Trip accepted }
+
+  /transport/trips/{id}/status:
+    patch:
+      operationId: updateTripStatus
+      summary: Advance trip status (driver/system)
+      tags: [Transport]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [accepted, picked_up, completed, cancelled]
+      responses:
+        '200': { description: Status updated }
+
+  # ── AI Customer Care ──────────────────────────────────────────────────────────
+  /support/sessions:
+    post:
+      operationId: createSupportSession
+      summary: Open a new AI support session
+      tags: [AIcare]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                topic: { type: string }
+      responses:
+        '201':
+          description: Session opened
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupportSession' }
+
+  /support/sessions/{id}/messages:
+    post:
+      operationId: sendSupportMessage
+      summary: Send a message and receive AI reply
+      tags: [AIcare]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string, minLength: 1, maxLength: 4000 }
+      responses:
+        '201':
+          description: Message sent and AI reply returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_message: { $ref: '#/components/schemas/SupportMessage' }
+                  ai_reply: { $ref: '#/components/schemas/SupportMessage' }
+    get:
+      operationId: getSupportHistory
+      summary: Get full message history for a session
+      tags: [AIcare]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Message history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/SupportMessage' } }
+
+  /support/sessions/{id}/escalate:
+    post:
+      operationId: escalateSupportSession
+      summary: Escalate session to human agent
+      tags: [AIcare]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '200': { description: Session escalated }
+
+  # ── Vote Bridge ───────────────────────────────────────────────────────────────
+  /vote-bridge/debit:
+    post:
+      operationId: voteWalletDebit
+      summary: Debit wallet for paid vote (called by Next.js bridge, not end users)
+      tags: [VoteBridge]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VoteDebitRequest' }
+      responses:
+        '200':
+          description: Debit successful
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VoteDebitResponse' }
+        '402':
+          description: Insufficient balance or tier limit exceeded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
 # ── New schemas ───────────────────────────────────────────────────────────────
 
 # (appended to components/schemas section — spec tooling merges by key)
@@ -1068,3 +1506,168 @@ paths:
         currency: { type: string, minLength: 3, maxLength: 3 }
         balance_minor: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
+
+    # ── Groups ──────────────────────────────────────────────────────────────────
+    Group:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        created_by: { type: string, format: uuid }
+        avatar_url: { type: string, nullable: true }
+        is_public: { type: boolean }
+        member_count: { type: integer }
+        created_at: { type: string, format: date-time }
+
+    SubscriptionPayment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        group_id: { type: string, format: uuid }
+        member_id: { type: string, format: uuid }
+        plan_id: { type: string, format: uuid }
+        amount_kobo: { type: integer, format: int64 }
+        status: { type: string, enum: [paid, pending, overdue, refunded] }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    # ── Events ──────────────────────────────────────────────────────────────────
+    Event:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organizer_id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        venue_address: { type: string, nullable: true }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        status: { type: string, enum: [draft, published, cancelled, completed] }
+        created_at: { type: string, format: date-time }
+
+    Ticket:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        event_id: { type: string, format: uuid }
+        ticket_type_id: { type: string, format: uuid }
+        owner_id: { type: string, format: uuid }
+        qr_code: { type: string, format: uuid }
+        status: { type: string, enum: [issued, used, refunded, cancelled] }
+        price_paid_kobo: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+
+    # ── Crowdfunding ─────────────────────────────────────────────────────────────
+    Campaign:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        creator_id: { type: string, format: uuid }
+        title: { type: string }
+        goal_kobo: { type: integer, format: int64 }
+        raised_kobo: { type: integer, format: int64 }
+        status: { type: string, enum: [draft, active, funded, failed, cancelled] }
+        deadline: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    Contribution:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        campaign_id: { type: string, format: uuid }
+        contributor_id: { type: string, format: uuid }
+        amount_kobo: { type: integer, format: int64 }
+        status: { type: string, enum: [escrowed, released, refunded] }
+        created_at: { type: string, format: date-time }
+
+    # ── Restaurant & Delivery ────────────────────────────────────────────────────
+    Order:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        restaurant_id: { type: string, format: uuid }
+        subtotal_kobo: { type: integer, format: int64 }
+        delivery_kobo: { type: integer, format: int64 }
+        total_kobo: { type: integer, format: int64 }
+        status:
+          type: string
+          enum: [pending, confirmed, preparing, ready, picked_up, delivered, cancelled]
+        created_at: { type: string, format: date-time }
+
+    # ── Telemedicine ─────────────────────────────────────────────────────────────
+    Doctor:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        specialty:
+          type: string
+          enum: [general, cardiology, dermatology, paediatrics, veterinary, pharmacy]
+        consult_fee_kobo: { type: integer, format: int64 }
+        is_available: { type: boolean }
+
+    Appointment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        patient_id: { type: string, format: uuid }
+        doctor_id: { type: string, format: uuid }
+        scheduled_at: { type: string, format: date-time }
+        status: { type: string, enum: [booked, confirmed, completed, cancelled] }
+        fee_kobo: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+
+    # ── Transport ────────────────────────────────────────────────────────────────
+    Trip:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        rider_id: { type: string, format: uuid }
+        driver_id: { type: string, format: uuid, nullable: true }
+        pickup_address: { type: string }
+        dest_address: { type: string }
+        fare_kobo: { type: integer, format: int64 }
+        status:
+          type: string
+          enum: [requested, accepted, picked_up, completed, cancelled]
+        created_at: { type: string, format: date-time }
+
+    # ── AI Customer Care ─────────────────────────────────────────────────────────
+    SupportSession:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        status: { type: string, enum: [open, escalated, resolved] }
+        topic: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    SupportMessage:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        role: { type: string, enum: [user, ai, agent] }
+        content: { type: string }
+        created_at: { type: string, format: date-time }
+
+    # ── Vote bridge ──────────────────────────────────────────────────────────────
+    VoteDebitRequest:
+      type: object
+      required: [contest_id, contestant_id, vote_count, cost_kobo, idempotency_key]
+      properties:
+        contest_id: { type: string, format: uuid }
+        contestant_id: { type: string, format: uuid }
+        vote_count: { type: integer, minimum: 1 }
+        cost_kobo: { type: integer, format: int64, minimum: 1 }
+        idempotency_key: { type: string }
+
+    VoteDebitResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        balance_kobo: { type: integer, format: int64 }
+        idempotency_key: { type: string }

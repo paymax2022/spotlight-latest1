@@ -43,6 +43,48 @@ export const featureFlags = {
 
   /** Block 7 — Per-tier daily wallet and vote limits (fail-closed enforcement) */
   tierLimits: () => envFlag('FEATURE_TIER_LIMITS_ENABLED'),
+
+  /** Utility bills engine — provider routing, wallet debit, receipts */
+  utilityPayments: () => envFlag('FEATURE_UTILITY_PAYMENTS_ENABLED'),
+
+  /** Block 10 — Paymax-to-Paymax instant wallet transfer */
+  walletTransfers: () => envFlag('FEATURE_WALLET_TRANSFERS_ENABLED'),
+
+  /** Block 11 — Wallet-to-bank account transfer via Paystack Transfers */
+  walletBankTransfers: () => envFlag('FEATURE_BANK_TRANSFERS_ENABLED'),
+
+  /** Block 12 — Saved beneficiaries for repeat bank transfers */
+  beneficiaries: () => envFlag('FEATURE_BENEFICIARIES_ENABLED'),
+
+  /** P3 Lane B — Community groups with wallet-backed dues payments */
+  groups: () => envFlag('FEATURE_GROUPS_ENABLED'),
+
+  /** P3 Lane C — Ticketed events with QR codes and escrow settlement */
+  events: () => envFlag('FEATURE_EVENTS_ENABLED'),
+
+  /** P3 Lane D — Estate access control and private elections */
+  estate: () => envFlag('FEATURE_ESTATE_ENABLED'),
+
+  /** P3 Lane E — Crowdfunding campaigns with escrow and goal tracking */
+  crowdfunding: () => envFlag('FEATURE_CROWDFUNDING_ENABLED'),
+
+  /** P3 Lane F — Restaurant and food delivery with rider dispatch */
+  restaurant: () => envFlag('FEATURE_RESTAURANT_ENABLED'),
+
+  /** P3 Lane G — Telemedicine: doctors, appointments, prescriptions */
+  telemedicine: () => envFlag('FEATURE_TELEMEDICINE_ENABLED'),
+
+  /** Transport — ride-hailing: drivers, trips, fare settlement */
+  transport: () => envFlag('FEATURE_TRANSPORT_ENABLED'),
+
+  /** AI Customer Care — chat sessions, AI reply, escalation to agent */
+  aiCare: () => envFlag('FEATURE_AICARE_ENABLED'),
+
+  /** P3 Lane H — Wallet-paid votes via Go vote-bridge debit endpoint */
+  voteBridge: () => envFlag('FEATURE_VOTE_BRIDGE_ENABLED'),
+
+  /** FX currency exchange via Maplerad */
+  fx: () => envFlag('FEATURE_FX_ENABLED'),
 } as const;
 
 export type FeatureName = keyof typeof featureFlags;
