@@ -116,6 +116,40 @@ func (s *Service) Approve(ctx context.Context, userID string, newTier int, actor
 	return s.GetProfile(ctx, userID)
 }
 
+// ListPending returns all profiles currently awaiting admin review (status=submitted).
+func (s *Service) ListPending(ctx context.Context, limit, offset int) ([]Profile, error) {
+	const q = `
+		SELECT id, COALESCE(kyc_tier, 0), COALESCE(kyc_status, 'none'),
+		       kyc_submitted_at, kyc_verified_at, COALESCE(phone_verified, false),
+		       document_type, kyc_requested_tier
+		FROM user_profiles
+		WHERE kyc_status = 'submitted'
+		ORDER BY kyc_submitted_at ASC
+		LIMIT $1 OFFSET $2`
+
+	rows, err := s.db.Query(ctx, q, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("kyc: list pending: %w", err)
+	}
+	defer rows.Close()
+
+	var profiles []Profile
+	for rows.Next() {
+		var p Profile
+		var tier int
+		if err := rows.Scan(
+			&p.UserID, &tier, &p.Status,
+			&p.SubmittedAt, &p.VerifiedAt, &p.PhoneVerified,
+			&p.DocumentType, &p.RequestedTier,
+		); err != nil {
+			return nil, fmt.Errorf("kyc: scan pending row: %w", err)
+		}
+		p.Tier = Tier(tier)
+		profiles = append(profiles, p)
+	}
+	return profiles, rows.Err()
+}
+
 // Fail marks a KYC attempt as failed.
 func (s *Service) Fail(ctx context.Context, userID string, actorID *string) error {
 	const update = `UPDATE user_profiles SET kyc_status='failed', updated_at=NOW() WHERE id=$1`

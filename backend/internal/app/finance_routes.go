@@ -271,7 +271,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config) {
 	adminFinance := r.Group("/api/finance/admin")
 	adminFinance.Use(requireUserID())
 	if cfg.FeatureKYCEnabled {
+		adminFinance.GET("/kyc/pending", kycHandler.ListPending)
 		adminFinance.POST("/kyc/users/:user_id/approve", kycHandler.Approve)
+		adminFinance.POST("/kyc/users/:user_id/reject", kycHandler.Reject)
+	}
+	if cfg.FeatureWalletEnabled {
+		adminFinance.GET("/wallets/:user_id/balance", walletHandler.AdminGetBalance)
+		adminFinance.GET("/wallets/:user_id/transactions", walletHandler.AdminListTransactions)
 	}
 
 	log.Printf("[finance] routes registered — wallet=%v kyc=%v va=%v referrals=%v fx=%v transfers=%v groups=%v events=%v estate=%v",

@@ -55,6 +55,10 @@ const navItemsBase: NavItem[] = [
   { label: 'STEM Applications', href: '/admin/stem/applications', section: 'Programs', countKey: 'stem' },
   { label: 'Template Manager', href: '/admin/template-manager', section: 'Programs' },
   { label: 'Users & Services', href: '/admin/users-services', section: 'Programs' },
+  { label: 'Finance Overview', href: '/admin/finance', section: 'Finance', permissions: ['audit.logs.view'] },
+  { label: 'KYC Queue', href: '/admin/finance/kyc', section: 'Finance', permissions: ['audit.logs.view'] },
+  { label: 'Wallet Lookup', href: '/admin/finance/wallets', section: 'Finance', permissions: ['audit.logs.view'] },
+  { label: 'Adjustments', href: '/admin/payments-finance', section: 'Finance', permissions: ['finance:adjust:initiate'] },
 ];
 
 const sections = ['Overview', 'Contests', 'Support', 'Programs'];
