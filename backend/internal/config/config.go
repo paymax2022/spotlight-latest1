@@ -13,6 +13,25 @@ type Config struct {
 	CORSAllowOrigins       string
 	MaxFailedLoginAttempts int
 	AccountLockMinutes     int
+
+	// Direct Postgres connection (pgx) for money-path operations.
+	// Format: postgres://user:pass@host:port/db?sslmode=require
+	DatabaseURL string
+
+	// Redis URL for cache, Redlock, asynq, and WS pub/sub.
+	RedisURL string
+
+	// Paystack credentials.
+	PaystackSecretKey  string
+	PaystackWebhookKey string
+
+	// Feature flags for financial modules.
+	FeatureWalletEnabled          bool
+	FeatureKYCEnabled             bool
+	FeatureVirtualAccountsEnabled bool
+	FeatureTransfersEnabled       bool
+	FeatureReferralsEnabled       bool
+	FeatureTierLimitsEnabled      bool
 }
 
 func getEnv(key, fallback string) string {
@@ -31,6 +50,17 @@ func getEnvInt(key string, fallback int) int {
 	return fallback
 }
 
+func getEnvBool(key string, fallback bool) bool {
+	v := os.Getenv(key)
+	if v == "true" || v == "1" || v == "yes" {
+		return true
+	}
+	if v == "false" || v == "0" || v == "no" {
+		return false
+	}
+	return fallback
+}
+
 func Load() Config {
 	return Config{
 		Port:                   getEnv("APP_PORT", "8080"),
@@ -40,5 +70,17 @@ func Load() Config {
 		CORSAllowOrigins:       getEnv("CORS_ALLOW_ORIGINS", "http://localhost:3000,http://localhost:4030"),
 		MaxFailedLoginAttempts: getEnvInt("AUTH_MAX_FAILED_LOGIN_ATTEMPTS", 5),
 		AccountLockMinutes:     getEnvInt("AUTH_ACCOUNT_LOCK_MINUTES", 30),
+
+		DatabaseURL:        getEnv("DATABASE_URL", ""),
+		RedisURL:           getEnv("REDIS_URL", "redis://localhost:6379"),
+		PaystackSecretKey:  getEnv("PAYSTACK_SECRET_KEY", ""),
+		PaystackWebhookKey: getEnv("PAYSTACK_WEBHOOK_SECRET", ""),
+
+		FeatureWalletEnabled:          getEnvBool("FEATURE_WALLET_ENABLED", false),
+		FeatureKYCEnabled:             getEnvBool("FEATURE_KYC_ENABLED", false),
+		FeatureVirtualAccountsEnabled: getEnvBool("FEATURE_VIRTUAL_ACCOUNTS_ENABLED", false),
+		FeatureTransfersEnabled:       getEnvBool("FEATURE_TRANSFERS_ENABLED", false),
+		FeatureReferralsEnabled:       getEnvBool("FEATURE_REFERRALS_ENABLED", false),
+		FeatureTierLimitsEnabled:      getEnvBool("FEATURE_TIER_LIMITS_ENABLED", false),
 	}
 }

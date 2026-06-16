@@ -1,9 +1,21 @@
-# CLAUDE.md — Spotlight Fintech Transformation
+# CLAUDE.md — Paymax × Spotlight Super App
 
 ## What this project is
-Spotlight is a live contest/voting platform being transformed into a fintech super app
-(wallet, virtual accounts, KYC, tiers, referrals, RBAC). Full spec: `docs/prd.md`.
-Build sequence: `docs/build-playbook.md`. API source of truth: `contracts/openapi.yaml`.
+Spotlight is a live contest/voting platform being transformed into a **fintech super app**
+(wallet, virtual accounts, KYC, tiers, referrals, RBAC, FX, groups, events, telemedicine,
+transport, estate, crowdfunding, restaurant delivery, AI care).
+
+Full playbook: `PAYMAX_BUILD_PLAYBOOK.md` (v2 — supersedes v1).  
+Architecture audit: `docs/architecture/audit.md`.  
+Build sequence (v1 blocks 0-12 done): `docs/build-playbook.md`.  
+API source of truth: `contracts/openapi.yaml`.
+
+### Key architecture decisions (from audit)
+- **Go backend router**: Gin v1.10 — NOT Chi. Playbook v2 references Chi but CLAUDE.md requires Gin. Keep Gin.
+- **Financial DB access**: pgx pool (`backend/internal/platform/db/`) for money-path; Supabase REST for Spotlight modules.
+- **Redis**: `backend/internal/platform/redis/` — idempotency cache, Redlock, asynq queue.
+- **Finance modules**: `backend/internal/finance/` — ledger, wallet, kyc, tiers, transfers, referrals, va.
+- **Provider adapters**: `backend/internal/provider/` — `PaymentProvider` interface, Paystack adapter.
 
 ## Iron rules — never violate, no exceptions
 

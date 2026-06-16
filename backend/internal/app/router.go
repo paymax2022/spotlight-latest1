@@ -283,5 +283,8 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		webhooks.GET("/health", health.GenericHealth)
 	}
 
+	// Finance modules — wired only when DATABASE_URL is present.
+	registerFinanceRoutes(r, cfg)
+
 	return r
 }
