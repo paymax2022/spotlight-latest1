@@ -56,6 +56,16 @@ func (s *Service) Debit(ctx context.Context, userID, reference, idempotencyKey, 
 	return s.ledger.Debit(ctx, userID, reference, idempotencyKey, creditAccountID, amountKobo)
 }
 
+// VoteDebit debits the user's wallet and credits the platform commission account.
+// Used by the vote bridge to charge for paid votes without an external payment provider.
+func (s *Service) VoteDebit(ctx context.Context, userID, reference, idempotencyKey string, amountKobo int64) error {
+	commissionAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountCommission)
+	if err != nil {
+		return fmt.Errorf("wallet: resolve commission account: %w", err)
+	}
+	return s.Debit(ctx, userID, reference, idempotencyKey, commissionAcc.ID, amountKobo)
+}
+
 // ListTransactions returns paginated ledger entries as user-facing transactions.
 func (s *Service) ListTransactions(ctx context.Context, userID string, limit, offset int) (*TransactionsResponse, error) {
 	if limit <= 0 || limit > 100 {

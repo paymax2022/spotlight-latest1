@@ -19,6 +19,7 @@ import (
 	"spotlight/backend/internal/estate"
 	"spotlight/backend/internal/restaurant"
 	"spotlight/backend/internal/telemedicine"
+	"spotlight/backend/internal/votebridge"
 	"spotlight/backend/internal/events"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/groups"
@@ -228,6 +229,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config) {
 		teleGroup.POST("/appointments/:id/complete", telemedHandler.CompleteAppointment)
 		teleGroup.DELETE("/appointments/:id", telemedHandler.CancelAppointment)
 		teleGroup.POST("/appointments/:id/prescription", telemedHandler.IssuePrescription)
+	}
+
+	// --- Vote bridge routes ---
+	// Provides a wallet-debit endpoint called by the Next.js bridge before crediting
+	// votes via the legacy Spotlight service. Never touches protected contest files.
+	if cfg.FeatureVoteBridgeEnabled && cfg.FeatureWalletEnabled {
+		vbHandler := votebridge.NewHandler(walletSvc)
+		r.POST("/api/finance/vote-bridge/debit", requireUserID(), vbHandler.DebitForVotes)
 	}
 
 	// --- Admin finance routes ---

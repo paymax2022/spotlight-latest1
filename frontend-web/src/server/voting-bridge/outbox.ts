@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 export type OutboxEventType =
   | 'votes.free.cast'
   | 'votes.paid.credited'
+  | 'votes.wallet.cast'
   | 'referral.triggered';
 
 /**
