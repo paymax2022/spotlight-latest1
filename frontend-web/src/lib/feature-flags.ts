@@ -85,6 +85,12 @@ export const featureFlags = {
 
   /** FX currency exchange via Maplerad */
   fx: () => envFlag('FEATURE_FX_ENABLED'),
+
+  /** Dispute management — users raise tickets; admin resolves */
+  disputes: () => envFlag('FEATURE_DISPUTES_ENABLED'),
+
+  /** Post-transaction ratings for doctors, riders, restaurants, etc. */
+  ratings: () => envFlag('FEATURE_RATINGS_ENABLED'),
 } as const;
 
 export type FeatureName = keyof typeof featureFlags;
