@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="author" content="George_Fx" />
+        <title>apitex Documentation</title>
+        <link rel="stylesheet" href="assets/css/bootstrap.min.css" />
+        <link
+            rel="stylesheet"
+            href="assets/css/components/main-components.css"
+        />
+        <link rel="stylesheet" href="assets/css/style.css" />
+    </head>
+
+    <body>
+        <!-- Navigation -->
+        <nav>
+            <div class="container">
+                <div class="nav-contain">
+                    <a class="brand" href="#">Apitex Documentation</a>
+                    <ul class="navbar-nav ml-auto">
+                        <li class="nav-item active">
+                            <a class="nav-link" href="#environment-setup"
+                                >Environment Setup</a
+                            >
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#run-app">Run App</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#deploy">Deploy</a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Description -->
+        <header>
+            <div class="container">
+                <h1>Apitex - Mobile Banking React Native App</h1>
+                <p>
+                    This documentation is to help you regarding each step of
+                    customization. Please go through the documentation carefully
+                    to understand how this script is made and how to edit this
+                    properly. Basic Javscript knowledge is required to customize
+                    this template. You may learn basics
+                    <a
+                        target="__blank"
+                        href="https://www.w3schools.com/"
+                        target="_blank"
+                        >here</a
+                    >
+                    and
+                    <a
+                        target="__blank"
+                        href="https://developer.mozilla.org/ru/"
+                        target="_blank"
+                        >here</a
+                    >.
+                </p>
+                <div class="button-contain">
+                    <a
+                        href="https://themeforest.net/user/George_Fx"
+                        target="_blank"
+                        >My Envato Account</a
+                    >
+                </div>
+            </div>
+        </header>
+
+        <!-- 01. Environment Setup -->
+        <div class="intro p-70 bg-2" id="environment-setup">
+            <div class="container">
+                <h3>01. Environment Setup</h3>
+
+                <div
+                    class="alert alert-success"
+                    role="alert"
+                    style="margin-bottom: 25px"
+                >
+                    This is
+                    <a
+                        target="__blank"
+                        href="https://facebook.github.io/react-native/"
+                        target="_blank"
+                        >React Native</a
+                    >
+                    app, solution for easy development and management of your
+                    React Native app.&nbsp;
+                </div>
+
+                <p>
+                    You will need to setup your computer to prepare for
+                    configuring the Apitex React Native App.
+                </p>
+
+                <ol>
+                    <li>
+                        <a target="__blank" href="https://nodejs.org/en/"
+                            >Install Node
+                        </a>
+                    </li>
+                    <li>
+                        <a
+                            target="__blank"
+                            href="https://code.visualstudio.com/"
+                            >Install Visual Studio Code
+                        </a>
+                        (Will use it for text editing and terminal - You can use
+                        any text editor and terminal/cmd)
+                    </li>
+                    <li>
+                        <a
+                            target="__blank"
+                            href="https://reactnative.dev/docs/environment-setup"
+                            >Install React Native
+                        </a>
+                        (Installation React Native CLI)
+                    </li>
+                </ol>
+
+                <p class="environment-description">
+                    To verify your installation run:
+                </p>
+
+                <ol class="linenums" style="margin-bottom: 50px">
+                    <li class="L1">node --version</li>
+                    <li class="L1">npm --version</li>
+                    <li class="L1">npm view react-native version</li>
+                </ol>
+
+                <h5 class="heading">Setting up the development environment IOS & Android</h5>
+                <div class="alert alert-success" role="alert">
+                    <a
+                        target="__blank"
+                        href="https://reactnative.dev/docs/environment-setup"
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        >https://reactnative.dev/docs/environment-setup</a
+                    >
+                </div>
+            </div>
+        </div>
+
+        <!-- 02. Run App -->
+        <div class="code-s p-70" id="run-app">
+            <div class="container">
+                <h3>02. Run App</h3>
+                <p class="environment-description">
+                    This is React Native project, and depends on node modules
+                    that need to be installed. Try using these commands to
+                    install modules.
+                </p>
+                <ol class="linenums">
+                    <li class="L1">$ npm install</li>
+                    <li class="L1">$ npm install --legacy-peer-deps</li>
+                </ol>
+                <br />
+                <div class="alert alert-success" role="alert">
+                    This will install all required node modules. It can take
+                    some time. If you see some warning this is not a big issue.
+                    Even if you see red error messages try to run the project.
+                </div>
+                <p>In your project run:</p>
+                <ol class="linenums">
+                    <li class="L1">cd ios</li>
+                    <li class="L1">pod install</li>
+                    <li class="L1">cd ..</li>
+                    <li class="L1">npx react-native-asset</li>
+                </ol>
+                <br />
+                <p>Once node modules are installed, you can run the app.</p>
+                <ol class="linenums">
+                    <li class="L1">$ npm react-native run-android</li>
+                    <li class="L1">$ npm react-native run-ios</li>
+                </ol>
+                <br />
+            </div>
+        </div>
+
+        <!-- 03. Deploy -->
+        <div class="code-s p-70" id="deploy">
+            <div class="container">
+                <h3>03. Deploy on Google Play and App Store</h3>
+                <p>
+                    The complete up to date
+                    documentation for publishing your project can be found here.
+                </p>
+                <div class="alert alert-success" role="alert">
+                    <a
+                        target="__blank"
+                        class="link"
+                        href="https://reactnative.dev/docs/signed-apk-android"
+                        >https://reactnative.dev/docs/signed-apk-android</a
+                    >
+                    <br />
+                    <a
+                        target="__blank"
+                        class="link"
+                        href="https://reactnative.dev/docs/publishing-to-app-store"
+                        >https://reactnative.dev/docs/publishing-to-app-store</a
+                    >
+                </div>
+                <h5 class="heading">To publish Android App.</h5>
+                <div class="alert alert-success" role="alert">
+                    You will need Google Play developer account. 25$/once.
+                    Register
+                    <a href="https://play.google.com/console/about/">Here.</a>
+                </div>
+                <h5>To publish in Apple App Store.</h5>
+                <div class="alert alert-success" role="alert">
+                    You will need Mac computer and Apple Developer account
+                    99$/year. Register
+                    <a href="https://developer.apple.com/">Here.</a> <br />
+                </div>
+            </div>
+        </div>
+
+        <!-- Start Scripts -->
+        <script
+            type="text/javascript"
+            src="assets/js/jquery-3.3.1.min.js"
+        ></script>
+        <script type="text/javascript" src="assets/js/popper.js"></script>
+        <script
+            type="text/javascript"
+            src="assets/js/bootstrap.min.js"
+        ></script>
+        <script type="text/javascript" src="assets/js/prettify.js"></script>
+        <script type="text/javascript" src="assets/js/javaScript.js"></script>
+        <!-- End Scripts -->
+    </body>
+</html>
