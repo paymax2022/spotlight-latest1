@@ -9,11 +9,14 @@ import { AppScreen } from '@/components/ui/AppScreen';
 import { AppText } from '@/components/ui/AppText';
 import { colors, spacing } from '@/theme';
 import { useAuthStore } from '@/store/authStore';
+import { StatusMessage } from '@/components/ui/StatusMessage';
+import { getFriendlyErrorMessage } from '@/utils/errorMapper';
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState('prince@paymax.africa');
-  const [password, setPassword] = useState('password');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const login = useAuthStore((s) => s.login);
   const router = useRouter();
 
@@ -31,12 +34,23 @@ export default function LoginScreen() {
         title="Login"
         loading={loading}
         onPress={async () => {
+          if (!email || !password) {
+            setError('Email and password are required.');
+            return;
+          }
           setLoading(true);
-          await login(email, password);
-          setLoading(false);
-          router.replace('/');
+          setError('');
+          try {
+            await login(email.trim(), password);
+            router.replace('/(protected)/(tabs)');
+          } catch (err) {
+            setError(getFriendlyErrorMessage(err, 'Unable to log in. Please check your details and try again.'));
+          } finally {
+            setLoading(false);
+          }
         }}
       />
+      <StatusMessage error={error} />
       <Link href="/forgot-password" asChild>
         <AppText color={colors.primary.blue}>Forgot password?</AppText>
       </Link>
