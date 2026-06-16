@@ -1427,6 +1427,80 @@ paths:
       responses:
         '200': { description: Session escalated }
 
+  # ── Disputes ─────────────────────────────────────────────────────────────────
+  /disputes:
+    post:
+      operationId: openDispute
+      summary: Open a new dispute ticket
+      tags: [Disputes]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OpenDisputeRequest' }
+      responses:
+        '201':
+          description: Dispute created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dispute' }
+        '400': { description: Validation error }
+    get:
+      operationId: listDisputes
+      summary: List the authenticated user's disputes
+      tags: [Disputes]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Disputes list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Dispute' } }
+                  count: { type: integer }
+
+  # ── Ratings ───────────────────────────────────────────────────────────────────
+  /ratings:
+    post:
+      operationId: submitRating
+      summary: Submit a post-transaction rating for an entity
+      tags: [Ratings]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRatingRequest' }
+      responses:
+        '201':
+          description: Rating submitted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Rating' }
+        '400': { description: Validation error }
+
+  /ratings/{entity_id}:
+    get:
+      operationId: getRatingSummary
+      summary: Get aggregated rating summary for an entity
+      tags: [Ratings]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: entity_id, in: path, required: true, schema: { type: string } }
+        - { name: type, in: query, required: true, schema: { type: string, enum: [doctor, pharmacy, restaurant, rider, driver, bus_operator, event_organiser, campaign, group_admin] } }
+      responses:
+        '200':
+          description: Rating summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RatingSummary' }
+
   # ── Vote Bridge ───────────────────────────────────────────────────────────────
   /vote-bridge/debit:
     post:
@@ -1671,3 +1745,63 @@ paths:
         ok: { type: boolean }
         balance_kobo: { type: integer, format: int64 }
         idempotency_key: { type: string }
+
+    # ── Disputes ─────────────────────────────────────────────────────────────────
+    OpenDisputeRequest:
+      type: object
+      required: [reference, module_type, type, description]
+      properties:
+        reference: { type: string, description: "Transaction reference being disputed" }
+        module_type: { type: string, description: "e.g. wallet, transport, restaurant" }
+        type:
+          type: string
+          enum: [transfer, topup, vote, order, ticket, ride, contribution]
+        description: { type: string, minLength: 20 }
+
+    Dispute:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        reference: { type: string }
+        module_type: { type: string }
+        type: { type: string }
+        description: { type: string }
+        status: { type: string, enum: [open, investigating, resolved, closed] }
+        resolution: { type: string, enum: [refund, partial_refund, no_action], nullable: true }
+        admin_note: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    # ── Ratings ───────────────────────────────────────────────────────────────────
+    CreateRatingRequest:
+      type: object
+      required: [entity_id, entity_type, transaction_ref, score]
+      properties:
+        entity_id: { type: string }
+        entity_type:
+          type: string
+          enum: [doctor, pharmacy, restaurant, rider, driver, bus_operator, event_organiser, campaign, group_admin]
+        transaction_ref: { type: string, description: "Prevents duplicate ratings per order/appointment/trip" }
+        score: { type: number, format: float, minimum: 1.0, maximum: 5.0 }
+        comment: { type: string, nullable: true }
+
+    Rating:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        rater_id: { type: string, format: uuid }
+        entity_id: { type: string }
+        entity_type: { type: string }
+        transaction_ref: { type: string }
+        score: { type: number, format: float }
+        comment: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    RatingSummary:
+      type: object
+      properties:
+        entity_id: { type: string }
+        entity_type: { type: string }
+        average: { type: number, format: float }
+        count: { type: integer }

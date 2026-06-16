@@ -23,6 +23,8 @@ import (
 	"spotlight/backend/internal/transport"
 	"spotlight/backend/internal/votebridge"
 	"spotlight/backend/internal/events"
+	"spotlight/backend/internal/finance/disputes"
+	"spotlight/backend/internal/finance/ratings"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/groups"
 	platformDB "spotlight/backend/internal/platform/db"
@@ -257,6 +259,27 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config) {
 		trGroup.POST("/trips", transportHandler.RequestTrip)
 		trGroup.POST("/trips/:id/accept", transportHandler.AcceptTrip)
 		trGroup.PATCH("/trips/:id/status", transportHandler.UpdateStatus)
+	}
+
+	// --- Disputes routes ---
+	if cfg.FeatureDisputesEnabled {
+		disputesSvc := disputes.NewService(pool)
+		disputesHandler := disputes.NewHandler(disputesSvc)
+		dpGroup := finance.Group("/disputes")
+		dpGroup.POST("", disputesHandler.Open)
+		dpGroup.GET("", disputesHandler.List)
+		adminFinanceDisputes := r.Group("/api/finance/admin/disputes")
+		adminFinanceDisputes.Use(requireUserID())
+		adminFinanceDisputes.POST("/:id/resolve", disputesHandler.AdminResolve)
+	}
+
+	// --- Ratings routes ---
+	if cfg.FeatureRatingsEnabled {
+		ratingsSvc := ratings.NewService(pool)
+		ratingsHandler := ratings.NewHandler(ratingsSvc)
+		rtGroup := finance.Group("/ratings")
+		rtGroup.POST("", ratingsHandler.Create)
+		rtGroup.GET("/:entity_id", ratingsHandler.GetSummary)
 	}
 
 	// --- Vote bridge routes ---

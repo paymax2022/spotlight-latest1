@@ -46,6 +46,8 @@ type Config struct {
 	FeatureVoteBridgeEnabled      bool
 	FeatureTransportEnabled       bool
 	FeatureAICareEnabled          bool
+	FeatureDisputesEnabled        bool
+	FeatureRatingsEnabled         bool
 }
 
 func getEnv(key, fallback string) string {
@@ -109,5 +111,7 @@ func Load() Config {
 		FeatureVoteBridgeEnabled:      getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
 		FeatureTransportEnabled:       getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
 		FeatureAICareEnabled:          getEnvBool("FEATURE_AICARE_ENABLED", false),
+		FeatureDisputesEnabled:        getEnvBool("FEATURE_DISPUTES_ENABLED", false),
+		FeatureRatingsEnabled:         getEnvBool("FEATURE_RATINGS_ENABLED", false),
 	}
 }
