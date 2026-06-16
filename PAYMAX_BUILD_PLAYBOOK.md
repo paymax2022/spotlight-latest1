@@ -48,8 +48,8 @@ All 27 packages pass `go test ./...`. `go vet ./...` and `go build ./...` are cl
 | Referrals | `finance/referrals` | ✅ |
 | Virtual accounts (DVA) | `finance/va` | ✅ |
 | FX / Maplerad | `finance/fx` | ✅ |
-| Dispute management | `finance/disputes` | ✅ |
-| Ratings | `finance/ratings` | ✅ |
+| Dispute management | `finance/disputes` | ✅ (handler + migration + routes) |
+| Ratings | `finance/ratings` | ✅ (handler + migration + routes) |
 | Vote bridge adapter | `votebridge` | ✅ |
 | Telemedicine | `telemedicine` | ✅ |
 | Transport | `transport` | ✅ |
@@ -210,22 +210,24 @@ Acceptance criteria:
 
 ---
 
-### Block 21 — Ratings
+### Block 21 — Ratings ✅ DONE
 **Flag:** `FEATURE_RATINGS_ENABLED`
 
-- Go service: `backend/internal/finance/ratings/service.go` — `SubmitRating()`, `GetSummary()`
-- UNIQUE(entity_id, rater_id, transaction_ref) — one rating per transaction
-- Score: float32, 1.0–5.0 (binding:min=1,max=5)
-- Summary: `AVG(score)` + `COUNT(*)` by entity
+- Go service: `backend/internal/finance/ratings/service.go` — `Create()`, `GetSummary()`
+- Handler: `Create` (POST), `GetSummary` (GET /:entity_id?type=) — wired into `/api/finance/ratings`
+- Migration: `ratings` table, UNIQUE(rater_id, transaction_ref), score CHECK 1.0–5.0, RLS
+- 9 entity types: doctor, pharmacy, restaurant, rider, driver, bus_operator, event_organiser, campaign, group_admin
 
 ---
 
-### Block 22 — Disputes
+### Block 22 — Disputes ✅ DONE
 **Flag:** `FEATURE_DISPUTES_ENABLED`
 
-- Go service: `backend/internal/finance/disputes/service.go` — `Open()`, `Escalate()`, `Resolve()`, `Close()`
+- Go service: `backend/internal/finance/disputes/service.go` — `Open()`, `List()`, `Resolve()`
+- Handler: `Open`, `List`, `AdminResolve` — wired into `/api/finance/disputes` + `/api/finance/admin/disputes/:id/resolve`
+- Migration: `disputes` table, RLS, status/resolution CHECK constraints
 - `DisputeType` covers: transfer, topup, vote, order, ticket, ride, contribution
-- Resolution: `refund` triggers `settlement.Service.Refund()`; `partial_refund` triggers partial reversal
+- Resolution: `refund` | `partial_refund` | `no_action` (refund settlement hook: next block)
 
 ---
 
