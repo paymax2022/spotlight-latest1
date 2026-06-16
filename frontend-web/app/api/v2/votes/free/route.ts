@@ -30,13 +30,6 @@ async function tryGetUserId(request: Request): Promise<string | undefined> {
 }
 
 export async function POST(request: Request) {
-  const ip = getIp(request);
-
-  const rateLimitResult = await checkRateLimit(ip);
-  if (!rateLimitResult.allowed) {
-    return errorResponse('Too many requests. Please slow down.', 429);
-  }
-
   const idempotencyKey = request.headers.get('X-Idempotency-Key') ?? undefined;
   const userAgent = request.headers.get('user-agent') ?? '';
 
@@ -53,6 +46,12 @@ export async function POST(request: Request) {
     return errorResponse('contestId and contestantId are required', 400);
   }
 
+  const ip = getIp(request);
+  const rateLimitResult = await checkRateLimit(`free-vote:${ip}:${contestId}:${contestantId}`, 30, 60_000);
+  if (!rateLimitResult.allowed) {
+    return errorResponse('Too many requests. Please slow down.', 429);
+  }
+
   try {
     const userId = await tryGetUserId(request);
     const device = getDevice(request);
@@ -66,7 +65,7 @@ export async function POST(request: Request) {
       idempotencyKey,
     );
 
-    return successResponse({ success: true, ...result });
+    return successResponse({ ...(result as unknown as Record<string, unknown>) });
   } catch (err) {
     return handleApiError(err);
   }

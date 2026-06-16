@@ -24,6 +24,7 @@ export async function POST(request: Request) {
       document_type?: string;
       document_number?: string;
       phone?: string;
+      requested_tier?: number;
     };
 
     if (!body.document_type || !ALLOWED_DOC_TYPES.includes(body.document_type as DocumentType)) {
@@ -41,6 +42,7 @@ export async function POST(request: Request) {
       document_type:   body.document_type as DocumentType,
       document_number: body.document_number.trim(),
       phone:           body.phone?.trim(),
+      requested_tier:  body.requested_tier === 1 || body.requested_tier === 2 || body.requested_tier === 3 ? body.requested_tier : 1,
     });
 
     // 200 if already pending (idempotent), 202 if newly submitted
@@ -50,6 +52,7 @@ export async function POST(request: Request) {
       {
         success:    true,
         kyc_status: profile.kyc_status,
+        kyc_requested_tier: profile.kyc_requested_tier,
         submitted_at: profile.kyc_submitted_at,
       },
       status,

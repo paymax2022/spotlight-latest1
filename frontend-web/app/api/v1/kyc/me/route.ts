@@ -18,6 +18,7 @@ export async function GET(request: Request) {
     return successResponse({
       success: true,
       kyc_tier:        profile.kyc_tier,
+      kyc_requested_tier: profile.kyc_requested_tier,
       kyc_status:      profile.kyc_status,
       phone_verified:  profile.phone_verified,
       submitted_at:    profile.kyc_submitted_at,

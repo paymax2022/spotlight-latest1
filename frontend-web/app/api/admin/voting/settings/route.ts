@@ -39,6 +39,8 @@ export async function POST(request: Request) {
           voting_type: body.votingType ?? 'free',
           free_voting_enabled: body.freeVotingEnabled ?? true,
           free_votes_per_day: body.freeVotesPerDay ?? 3,
+          daily_free_vote_cap_enabled: body.dailyFreeVoteCapEnabled ?? false,
+          daily_free_vote_cap: body.dailyFreeVoteCap ?? null,
           free_vote_limit_scope: body.freeVoteLimitScope ?? 'user',
           require_login_for_free_vote: body.requireLoginForFreeVote ?? true,
           require_captcha: body.requireCaptcha ?? false,

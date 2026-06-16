@@ -36,7 +36,7 @@ export async function POST(request: Request) {
       userAgent,
     );
 
-    return successResponse({ success: true, ...result });
+    return successResponse({ ...(result as unknown as Record<string, unknown>) });
   } catch (err) {
     return handleApiError(err);
   }
