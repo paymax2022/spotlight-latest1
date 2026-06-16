@@ -1,0 +1,20 @@
+# Expo
+.expo/
+dist/
+web-build/
+
+# Android native build
+android/
+ios/
+
+# Test artifacts
+playwright-report/
+test-results/
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
