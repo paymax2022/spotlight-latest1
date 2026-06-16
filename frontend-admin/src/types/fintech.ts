@@ -30,3 +30,20 @@ export interface TransactionsResponse {
   entries: LedgerEntry[];
   total: number;
 }
+
+export type DisputeStatus = 'open' | 'investigating' | 'resolved' | 'closed';
+export type DisputeResolution = 'refund' | 'partial_refund' | 'no_action';
+
+export interface Dispute {
+  id: string;
+  user_id: string;
+  reference: string;
+  module_type: string;
+  type: string;
+  description: string;
+  status: DisputeStatus;
+  resolution: DisputeResolution | null;
+  admin_note: string | null;
+  created_at: string;
+  updated_at: string;
+}

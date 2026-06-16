@@ -1,5 +1,5 @@
 import { env } from '@/config/env';
-import type { KycProfile, WalletBalance, TransactionsResponse } from '@/types/fintech';
+import type { KycProfile, WalletBalance, TransactionsResponse, Dispute, DisputeResolution } from '@/types/fintech';
 
 function financeAdminBase(): string {
   // Go backend finance admin routes live at /api/finance/admin/...
@@ -67,4 +67,33 @@ export async function getAdminWalletTransactions(
 
 export function formatKobo(kobo: number): string {
   return `₦${(kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
+}
+
+function financeBase(): string {
+  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance');
+}
+
+export async function listAdminDisputes(status?: string, limit = 50, offset = 0): Promise<Dispute[]> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (status) params.set('status', status);
+  const res = await fetch(`${financeBase()}/disputes?${params}`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Disputes list failed: ${res.status}`);
+  const data = await res.json();
+  return data.data ?? [];
+}
+
+export async function resolveDispute(
+  disputeId: string,
+  resolution: DisputeResolution,
+  adminNote: string,
+): Promise<void> {
+  const res = await fetch(`${financeAdminBase()}/disputes/${encodeURIComponent(disputeId)}/resolve`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ resolution, admin_note: adminNote }),
+  });
+  if (!res.ok) throw new Error(`Dispute resolve failed: ${res.status}`);
 }

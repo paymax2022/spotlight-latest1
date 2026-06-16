@@ -13,9 +13,16 @@ const cards = [
   {
     href: '/admin/finance/wallets',
     title: 'Wallet Lookup',
-    description: 'View any user's wallet balance and transaction history.',
+    description: "View any user's wallet balance and transaction history.",
     icon: '💳',
     accent: 'border-emerald-500',
+  },
+  {
+    href: '/admin/finance/disputes',
+    title: 'Disputes',
+    description: 'Review open dispute tickets and issue resolutions or refunds.',
+    icon: '🚩',
+    accent: 'border-red-500',
   },
   {
     href: '/admin/payments-finance',
@@ -45,8 +52,10 @@ export default function FinanceAdminPage() {
               display: 'block',
               padding: '1.5rem',
               border: `2px solid`,
-              borderColor: c.accent.split('-')[1] === 'amber' ? '#f59e0b'
-                : c.accent.split('-')[1] === 'emerald' ? '#10b981' : '#6366f1',
+              borderColor: c.accent.includes('amber') ? '#f59e0b'
+                : c.accent.includes('emerald') ? '#10b981'
+                : c.accent.includes('red') ? '#dc2626'
+                : '#6366f1',
               borderRadius: '0.75rem',
               textDecoration: 'none',
               color: 'inherit',

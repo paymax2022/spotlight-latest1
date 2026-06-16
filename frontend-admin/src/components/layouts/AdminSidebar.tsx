@@ -58,6 +58,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Finance Overview', href: '/admin/finance', section: 'Finance', permissions: ['audit.logs.view'] },
   { label: 'KYC Queue', href: '/admin/finance/kyc', section: 'Finance', permissions: ['audit.logs.view'] },
   { label: 'Wallet Lookup', href: '/admin/finance/wallets', section: 'Finance', permissions: ['audit.logs.view'] },
+  { label: 'Disputes', href: '/admin/finance/disputes', section: 'Finance', permissions: ['audit.logs.view'] },
   { label: 'Adjustments', href: '/admin/payments-finance', section: 'Finance', permissions: ['finance:adjust:initiate'] },
 ];
 
