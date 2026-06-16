@@ -18,6 +18,7 @@ import (
 	"spotlight/backend/internal/crowdfunding"
 	"spotlight/backend/internal/estate"
 	"spotlight/backend/internal/restaurant"
+	"spotlight/backend/internal/telemedicine"
 	"spotlight/backend/internal/events"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/groups"
@@ -213,6 +214,20 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config) {
 		restGroup.POST("/:id/orders", restaurantHandler.PlaceOrder)
 		restGroup.PATCH("/:id/orders/:orderId/status", restaurantHandler.UpdateStatus)
 		restGroup.DELETE("/:id/orders/:orderId", restaurantHandler.CancelOrder)
+	}
+
+	// --- Telemedicine routes ---
+	if cfg.FeatureTelemedicineEnabled {
+		settlementSvcT := settlement.NewService(pool, ledgerSvc)
+		telemedSvc := telemedicine.NewService(pool, settlementSvcT)
+		telemedHandler := telemedicine.NewHandler(telemedSvc)
+		teleGroup := finance.Group("/telemedicine")
+		teleGroup.GET("/doctors", telemedHandler.ListDoctors)
+		teleGroup.POST("/doctors", telemedHandler.RegisterDoctor)
+		teleGroup.POST("/appointments", telemedHandler.BookAppointment)
+		teleGroup.POST("/appointments/:id/complete", telemedHandler.CompleteAppointment)
+		teleGroup.DELETE("/appointments/:id", telemedHandler.CancelAppointment)
+		teleGroup.POST("/appointments/:id/prescription", telemedHandler.IssuePrescription)
 	}
 
 	// --- Admin finance routes ---
