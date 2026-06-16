@@ -261,7 +261,14 @@ const accountGateFields: RegistrationField[] = [
 ];
 
 const contestSelectionFields: RegistrationField[] = [
-  { key: 'contest.title', label: 'Contest title', type: 'select', required: true },
+  {
+    key: 'contest.title',
+    label: 'Contest title',
+    type: 'text',
+    required: true,
+    readOnly: true,
+    helpText: 'This contest is locked from the application route and cannot be changed here.',
+  },
   { key: 'contest.entryMode', label: 'Individual or group entry', type: 'select', options: ['Individual', 'Group'], required: true },
   { key: 'contest.schoolEntry', label: 'School / institution entry', type: 'checkbox' },
 ];
@@ -364,11 +371,33 @@ const categorySpecificFields: Record<string, RegistrationField[]> = {
   ],
   sme_pitch: [
     { key: 'category.businessName', label: 'Business name', type: 'text', required: true },
-    { key: 'category.businessSector', label: 'Business sector', type: 'text', required: true },
+    {
+      key: 'category.businessSector',
+      label: 'Business sector',
+      type: 'select',
+      options: [
+        'Agriculture / Agribusiness',
+        'Beauty / Personal Care',
+        'Creative / Media',
+        'Education / Training',
+        'Energy / Clean Tech',
+        'Fashion / Apparel',
+        'Financial Services / Fintech',
+        'Food / Beverage',
+        'Health / Wellness',
+        'Hospitality / Tourism',
+        'Logistics / Transportation',
+        'Manufacturing',
+        'Retail / E-commerce',
+        'Social Enterprise',
+        'Technology / SaaS',
+        'Other',
+      ],
+      required: true,
+    },
     { key: 'category.businessStage', label: 'Business stage', type: 'select', options: ['Idea stage', 'Startup', 'Early revenue', 'Growing business', 'Community business', 'Student business', 'Women-led business', 'Creative business', 'Social enterprise'], required: true },
     { key: 'category.productDescription', label: 'Product/service description', type: 'textarea', required: true },
     { key: 'category.revenueModel', label: 'Revenue model', type: 'textarea', required: true },
-    { key: 'category.pitchVideo', label: 'Pitch video upload', type: 'file', accept: '.mp4,.mov', required: true },
     { key: 'category.pitchDeck', label: 'Pitch deck upload', type: 'file', accept: '.pdf,.ppt,.pptx' },
     { key: 'category.cacDocument', label: 'CAC document upload', type: 'file', accept: '.pdf,.jpg,.png' },
   ],

@@ -16,6 +16,8 @@ export interface ServiceItem {
   summary: string;
   heroTitle: string;
   heroSubtitle: string;
+  bannerImage?: string;
+  bannerKicker?: string;
   audience: string[];
   deliverables: string[];
   benefits: string[];
@@ -57,6 +59,8 @@ export const services: ServiceItem[] = [
     summary: 'Create broadcast-ready reality show experiences with talent journeys, audience voting, and sponsor integration.',
     heroTitle: 'Reality TV Show Production',
     heroSubtitle: 'A premium production framework that combines entertainment value, youth empowerment storytelling, and commercial partnership outcomes.',
+    bannerImage: '/assets/img/service/top17.png',
+    bannerKicker: 'Reality TV Show',
     audience: ['TV stations', 'Corporate sponsors', 'Streaming platforms', 'Public institutions'],
     deliverables: ['Season concept design', 'Housemate format architecture', 'Weekly production workflow', 'Voting and engagement layers', 'Sponsor integration formats'],
     benefits: ['High-viewership content', 'Brand-safe storytelling', 'Scalable monetization opportunities'],
@@ -98,6 +102,8 @@ export const services: ServiceItem[] = [
     summary: 'Develop actors and filmmakers through practical training and real content production.',
     heroTitle: 'Film Academy & Film Production',
     heroSubtitle: 'From script to screen, Spotlight builds a practical ecosystem for film talent training and production delivery.',
+    bannerImage: '/assets/img/service/details-1.jpg',
+    bannerKicker: 'Film Academy',
     audience: ['Actors', 'Screenwriters', 'Directors', 'Cinematographers', 'Editors'],
     deliverables: ['Acting labs', 'Screenwriting workshops', 'Production mentorship', 'Set experience', 'Showreel development'],
     benefits: ['Practical portfolio building', 'Industry exposure', 'Production credits'],
@@ -118,6 +124,8 @@ export const services: ServiceItem[] = [
     summary: 'A competition platform for students and innovators to present practical solutions, prototypes, and ideas.',
     heroTitle: 'STEM Innovation Contest',
     heroSubtitle: 'A visible pipeline for youth innovation, mentorship, and partnership opportunities across schools and innovation communities.',
+    bannerImage: '/assets/img/shape/stem.png',
+    bannerKicker: 'STEM Contest',
     audience: ['Secondary schools', 'Universities', 'Innovation hubs', 'Young inventors'],
     deliverables: ['School and open categories', 'Prototype showcases', 'Mentorship clinics', 'Judging and public visibility'],
     benefits: ['Innovation visibility', 'Mentor access', 'Pathways to support and funding'],
@@ -138,6 +146,8 @@ export const services: ServiceItem[] = [
     summary: 'A media-powered pitch platform for founders seeking visibility, mentorship, and funding pathways.',
     heroTitle: 'SME Pitch Contest',
     heroSubtitle: 'Spotlight enables founders to pitch ideas, improve investor readiness, and unlock growth opportunities through structured exposure.',
+    bannerImage: '/assets/img/shape/sme.png',
+    bannerKicker: 'SME Pitch Contest',
     audience: ['Startups', 'SMEs', 'Student founders', 'Early-stage entrepreneurs'],
     deliverables: ['Pitch preparation', 'Business diagnostics', 'Investor-facing showcase', 'Mentorship and refinement'],
     benefits: ['Market visibility', 'Funding readiness', 'Partnership opportunities'],
@@ -158,6 +168,8 @@ export const services: ServiceItem[] = [
     summary: 'A recurring performance competition for singers, rappers, poets, and spoken-word talents.',
     heroTitle: 'Open Mic Competition',
     heroSubtitle: 'A consistent stage for emerging performers to gain visibility, audience traction, and growth opportunities.',
+    bannerImage: '/assets/img/shape/ring.png',
+    bannerKicker: 'Open Mic Contest',
     audience: ['Musicians', 'Rappers', 'Poets', 'Stage performers'],
     deliverables: ['Periodic competition windows', 'Submission review', 'Audience voting', 'Performance showcase'],
     benefits: ['Frequent exposure', 'Community growth', 'Artist pipeline entry'],

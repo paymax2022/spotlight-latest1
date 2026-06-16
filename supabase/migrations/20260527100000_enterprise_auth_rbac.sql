@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS public.user_roles (
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE(user_id, role_id, scope_type, COALESCE(scope_id,''))
+  UNIQUE(user_id, role_id, scope_type, scope_id)
 );
 
 CREATE TABLE IF NOT EXISTS public.user_permissions (
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS public.user_permissions (
   assigned_by uuid,
   expires_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE(user_id, permission_id, effect, scope_type, COALESCE(scope_id,''))
+  UNIQUE(user_id, permission_id, effect, scope_type, scope_id)
 );
 
 CREATE TABLE IF NOT EXISTS public.auth_sessions (

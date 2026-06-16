@@ -3,7 +3,7 @@
 import { authHeaders } from '@/src/lib/auth/client';
 
 export function buildLoginHref(nextPath: string): string {
-  return `/open-mic/login?next=${encodeURIComponent(nextPath)}`;
+  return `/login?next=${encodeURIComponent(nextPath)}`;
 }
 
 export function redirectToLogin(nextPath: string): void {

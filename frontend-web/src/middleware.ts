@@ -5,6 +5,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 const PROTECTED_PATTERNS: RegExp[] = [
   /^\/admin(?:\/|$)/,
   /^\/apply(?:\/|$)/,
+  /^\/film-academy(?:\/|$)/,
   /^\/open-mic\/[^/]+\/apply(?:\/|$)/,
   /^\/open-mic\/[^/]+\/enter(?:\/|$)/,
   /^\/stem\/contests(?:\/|$)/,
@@ -14,11 +15,22 @@ const PROTECTED_PATTERNS: RegExp[] = [
   /^\/my-applications(?:\/|$)/,
 ];
 
-// Login page to redirect to (universal — not open-mic-specific).
+// These paths are always public even if they match a protected pattern above.
+const PUBLIC_EXCEPTIONS: RegExp[] = [
+  /^\/admin\/login(?:\/|$)/,
+];
+
+// Login page to redirect to (universal — not service-specific).
 const LOGIN_PATH = '/login';
+const ADMIN_LOGIN_PATH = '/admin/login';
 
 function isProtected(pathname: string): boolean {
+  if (PUBLIC_EXCEPTIONS.some((p) => p.test(pathname))) return false;
   return PROTECTED_PATTERNS.some((p) => p.test(pathname));
+}
+
+function loginPathFor(pathname: string): string {
+  return /^\/admin(?:\/|$)/.test(pathname) ? ADMIN_LOGIN_PATH : LOGIN_PATH;
 }
 
 export async function middleware(request: NextRequest) {
@@ -60,7 +72,7 @@ export async function middleware(request: NextRequest) {
   if (isProtected(pathname) && !user) {
     const redirectUrl = request.nextUrl.clone();
     const next = `${pathname}${search || ''}`;
-    redirectUrl.pathname = LOGIN_PATH;
+    redirectUrl.pathname = loginPathFor(pathname);
     redirectUrl.search = `?next=${encodeURIComponent(next)}`;
     return NextResponse.redirect(redirectUrl);
   }

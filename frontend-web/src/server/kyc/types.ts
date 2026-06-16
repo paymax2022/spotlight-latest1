@@ -4,6 +4,7 @@ export type DocumentType = 'BVN' | 'NIN' | 'PASSPORT' | 'DRIVERS_LICENSE';
 
 export interface KycProfile {
   kyc_tier: KycTier;
+  kyc_requested_tier: 1 | 2 | 3 | null;
   kyc_status: KycStatus;
   phone_verified: boolean;
   kyc_submitted_at: string | null;
@@ -16,6 +17,7 @@ export interface InitiateKycInput {
   /** Raw document number — hashed before storage; never persisted as-is. */
   document_number: string;
   phone?: string;
+  requested_tier?: 1 | 2 | 3;
 }
 
 /** Daily wallet limit in kobo per tier (docs/prd.md § EPIC 2) */

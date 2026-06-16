@@ -23,6 +23,10 @@ const knownCollections: Record<string, Array<Record<string, string>>> = {
 export default function AdminModulePage({ params }: { params: { module: string } }) {
   const buildQuickActionHref = (moduleSlug: string, action: string) => {
     const normalized = action.toLowerCase();
+    if (moduleSlug === 'sme-pitch' && normalized.includes('create')) return '/admin/sme-pitch/contests/new';
+    if (moduleSlug === 'sme-pitch' && normalized.includes('judge')) return '/admin/sme-pitch';
+    if (moduleSlug === 'sme-pitch' && normalized.includes('finalist')) return '/admin/sme-pitch';
+    if (moduleSlug === 'sme-pitch' && normalized.includes('report')) return '/api/admin/reports';
     if (normalized.includes('create contest')) return '/admin/contests';
     if (normalized.includes('create stem contest')) return '/admin/stem';
     if (normalized.includes('review submissions')) return '/admin/open-mic/submissions';
@@ -43,6 +47,7 @@ export default function AdminModulePage({ params }: { params: { module: string }
 
   const createFirstRecordHref = (moduleSlug: string) => {
     if (moduleSlug === 'contests') return '/admin/contests';
+    if (moduleSlug === 'sme-pitch') return '/admin/sme-pitch/contests/new';
     if (moduleSlug === 'open-mic') return '/admin/open-mic/contests/new';
     if (moduleSlug === 'stem') return '/admin/stem';
     if (moduleSlug === 'programs') return '/admin/programs';

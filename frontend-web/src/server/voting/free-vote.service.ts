@@ -176,7 +176,29 @@ export async function castFreeVote(
     );
   }
 
-  const canAdd = Math.min(voteQuantity, limit - used);
+  let canAdd = Math.min(voteQuantity, limit - used);
+
+  // --- Global daily cap check (admin-set ceiling across all voters) ---
+  if (settings.dailyFreeVoteCapEnabled && settings.dailyFreeVoteCap !== null) {
+    const { data: capRows, error: capErr } = await supabase.rpc('try_claim_global_free_votes', {
+      p_contest_id: req.contestId,
+      p_vote_date: voteDate,
+      p_quantity: canAdd,
+      p_cap: settings.dailyFreeVoteCap,
+    });
+
+    if (capErr) throw new ApiError('Failed to check global vote cap', 500);
+
+    const cap = (capRows as { allowed: boolean; votes_claimed: number; cap_remaining: number }[])?.[0];
+    if (!cap?.allowed) {
+      throw new ApiError(
+        "Today's free votes for this contest have all been used. Come back tomorrow!",
+        429,
+      );
+    }
+    // Cap may grant fewer than requested if we're near the ceiling
+    canAdd = cap.votes_claimed;
+  }
 
   // --- Fraud check ---
   const fraudScore = await scoreFreeFraud({
@@ -332,6 +354,8 @@ function mapSettingsRow(row: Record<string, unknown>): VotingSettings {
     leaderboardScope: (row.leaderboard_scope as string) as VotingSettings['leaderboardScope'],
     leaderboardTieBreaker: (row.leaderboard_tie_breaker as string) as VotingSettings['leaderboardTieBreaker'],
     showTopN: row.show_top_n != null ? Number(row.show_top_n) : null,
+    dailyFreeVoteCapEnabled: Boolean(row.daily_free_vote_cap_enabled),
+    dailyFreeVoteCap: row.daily_free_vote_cap != null ? Number(row.daily_free_vote_cap) : null,
     fraudDetectionEnabled: Boolean(row.fraud_detection_enabled),
     suspiciousIpLimit: Number(row.suspicious_ip_limit ?? 20),
     botSpeedThresholdMs: Number(row.bot_speed_threshold_ms ?? 500),

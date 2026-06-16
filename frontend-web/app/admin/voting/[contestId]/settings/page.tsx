@@ -13,6 +13,8 @@ export default function VotingSettingsPage() {
     votingType: 'hybrid',
     freeVotingEnabled: true,
     freeVotesPerDay: 3,
+    dailyFreeVoteCapEnabled: false,
+    dailyFreeVoteCap: '',
     freeVoteLimitScope: 'user',
     requireLoginForFreeVote: true,
     requireCaptcha: false,
@@ -51,6 +53,8 @@ export default function VotingSettingsPage() {
             votingType: s.voting_type,
             freeVotingEnabled: s.free_voting_enabled,
             freeVotesPerDay: s.free_votes_per_day,
+            dailyFreeVoteCapEnabled: s.daily_free_vote_cap_enabled ?? false,
+            dailyFreeVoteCap: s.daily_free_vote_cap ?? '',
             freeVoteLimitScope: s.free_vote_limit_scope,
             requireLoginForFreeVote: s.require_login_for_free_vote,
             requireCaptcha: s.require_captcha,
@@ -82,10 +86,16 @@ export default function VotingSettingsPage() {
     setMessage('');
     try {
       const headers = await authHeaders(true);
+      const payload = {
+        ...form,
+        dailyFreeVoteCap: form.dailyFreeVoteCap !== '' && form.dailyFreeVoteCap !== null
+          ? Number(form.dailyFreeVoteCap)
+          : null,
+      };
       const res = await fetch('/api/admin/voting/settings', {
         method: 'POST',
         headers,
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
       const json = await res.json();
       setMessage(json.success ? '✅ Settings saved' : `❌ ${json.error}`);
@@ -144,7 +154,9 @@ export default function VotingSettingsPage() {
       <div className="bg-gray-900 rounded-2xl p-5 mb-4">
         <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">Free Voting</h2>
         {field('freeVotingEnabled', 'Enable Free Voting', 'checkbox')}
-        {field('freeVotesPerDay', 'Free Votes Per Day', 'number')}
+        {field('freeVotesPerDay', 'Free Votes Per Voter / Day', 'number')}
+        {field('dailyFreeVoteCapEnabled', 'Enable Global Daily Cap', 'checkbox')}
+        {field('dailyFreeVoteCap', 'Global Daily Cap (total across all voters)', 'number')}
         {field('freeVoteLimitScope', 'Limit By', 'select', ['user', 'email', 'phone', 'device', 'ip', 'session'])}
         {field('requireLoginForFreeVote', 'Require Login', 'checkbox')}
         {field('requireCaptcha', 'Require CAPTCHA', 'checkbox')}

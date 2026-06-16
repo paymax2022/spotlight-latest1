@@ -93,6 +93,9 @@ export interface VotingSettings {
   requireCaptcha: boolean;
   voteCooldownSeconds: number;
   maxFailedAttempts: number;
+  // Global daily cap (admin-set ceiling across all voters)
+  dailyFreeVoteCapEnabled: boolean;
+  dailyFreeVoteCap: number | null;
 
   // Paid voting
   paidVotingEnabled: boolean;

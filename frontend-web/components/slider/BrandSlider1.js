@@ -84,17 +84,17 @@ export default function BrandSlider1() {
                     </SwiperSlide>
                     <SwiperSlide>
                         <div className="brand-image">
-                            <img src="/assets/img/slider/brand.png" alt="brand-img" />
+                            <img src="/assets/img/slider/ravetv.png" alt="RaveTV" />
                         </div>
                     </SwiperSlide>
                     <SwiperSlide>
                         <div className="brand-image">
-                            <img src="/assets/img/brand.png" alt="brand-img" />
+                            <img src="/assets/img/slider/mitv.jpg" alt="MITV" />
                         </div>
                     </SwiperSlide>
                     <SwiperSlide>
                         <div className="brand-image">
-                            <img src="/assets/img/brand.png" alt="brand-img" />
+                            <img src="/assets/img/slider/tvc.jpeg" alt="TVC" />
                         </div>
                     </SwiperSlide>
             </Swiper>

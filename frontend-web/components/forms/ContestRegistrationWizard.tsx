@@ -36,6 +36,23 @@ const FRONTEND_LOCKED_CONTEST_FIELDS = new Set([
   'audition.city',
   'audition.venue',
 ]);
+const SUBMITTED_APPLICATION_STATUSES = new Set([
+  'submitted',
+  'awaiting_payment',
+  'under_review',
+  'more_information_requested',
+  'shortlisted',
+  'callback_invited',
+  'approved',
+  'rejected',
+  'waitlisted',
+  'disqualified',
+  'audition_scheduled',
+  'selected_for_bootcamp',
+  'selected_for_public_voting',
+  'eliminated',
+  'winner',
+]);
 
 function getFieldValue(formData: Record<string, unknown>, key: string) {
   return formData[key];
@@ -98,6 +115,7 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
   const currentStep = steps[stepIndex];
   const isFinalStep = stepIndex === steps.length - 1;
   const isLoggedInUser = Boolean(loggedInUserLabel);
+  const applicationSubmitted = draft ? SUBMITTED_APPLICATION_STATUSES.has(draft.status) : false;
   const visibleCurrentFields = useMemo(() => {
     if (!currentStep) return [];
     let fields = currentStep.fields;
@@ -371,6 +389,11 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
 
   async function handleSubmitFinal() {
     if (!draft) return;
+    if (SUBMITTED_APPLICATION_STATUSES.has(draft.status)) {
+      setErrorMessage('');
+      setMessage(`Application submitted successfully. Your application reference number is ${draft.reference}.`);
+      return;
+    }
 
     setSubmitting(true);
     setErrorMessage('');
@@ -464,7 +487,8 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
 
       const submittedDraft = payload.draft as RegistrationDraft;
       setDraft(submittedDraft);
-      setMessage(payload.message || 'Application submitted successfully.');
+      setErrorMessage('');
+      setMessage(payload.message || `Application submitted successfully. Your application reference number is ${submittedDraft.reference}.`);
       await fetchTimeline(submittedDraft.id);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Submission failed.');
@@ -780,9 +804,25 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
         </p>
       ) : null}
       {message ? (
-        <p className="mt-3" style={{ color: ui.success, fontWeight: 600, backgroundColor: ui.successBg, borderRadius: 10, padding: '10px 12px' }}>
+        <div
+          className="mt-3"
+          role="status"
+          aria-live="polite"
+          style={{
+            color: ui.success,
+            fontWeight: 700,
+            backgroundColor: ui.successBg,
+            border: `1px solid rgba(22,101,52,0.25)`,
+            borderRadius: 12,
+            padding: '12px 14px',
+            boxShadow: applicationSubmitted ? '0 12px 30px rgba(22,101,52,0.12)' : 'none',
+          }}
+        >
+          <span style={{ display: 'block', fontSize: 12, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 2 }}>
+            Success
+          </span>
           {message}
-        </p>
+        </div>
       ) : null}
 
       <div className="mt-4 d-flex flex-wrap gap-2">
@@ -823,9 +863,21 @@ export default function ContestRegistrationWizard({ contestSlug }: { contestSlug
             type="button"
             className="theme-btn"
             onClick={() => void handleSubmitFinal()}
-            disabled={saving || submitting}
+            disabled={saving || submitting || applicationSubmitted}
+            style={
+              applicationSubmitted
+                ? {
+                    backgroundColor: '#B42318',
+                    borderColor: '#B42318',
+                    color: '#FFFFFF',
+                    opacity: 0.85,
+                    cursor: 'not-allowed',
+                    pointerEvents: 'none',
+                  }
+                : undefined
+            }
           >
-            {submitting ? 'Submitting...' : 'Submit Application'}
+            {applicationSubmitted ? 'Application submitted' : submitting ? 'Submitting...' : 'Submit Application'}
             <i className="fa-solid fa-arrow-right-long" />
           </button>
         )}

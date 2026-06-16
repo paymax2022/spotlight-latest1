@@ -48,6 +48,7 @@ function authAsUser() {
 function unverifiedProfile() {
   return {
     kyc_tier: 0 as const,
+    kyc_requested_tier: null,
     kyc_status: 'unverified' as const,
     phone_verified: false,
     kyc_submitted_at: null,
@@ -75,6 +76,7 @@ describe('GET /api/v1/kyc/me', () => {
     expect(res.status).toBe(200);
     expect(body.success).toBe(true);
     expect(body.kyc_tier).toBe(0);
+    expect(body.kyc_requested_tier).toBeNull();
     expect(body.kyc_status).toBe('unverified');
     expect(body.phone_verified).toBe(false);
   });
@@ -108,13 +110,14 @@ describe('POST /api/v1/kyc/initiate', () => {
     vi.mocked(initiateKyc).mockResolvedValue({
       ...unverifiedProfile(),
       kyc_status: 'pending',
+      kyc_requested_tier: 2,
       kyc_submitted_at: '2026-06-13T10:00:00.000Z',
       document_type: 'BVN',
     });
 
     const res = await POST(
       makeRequest('/api/v1/kyc/initiate', {
-        body: { document_type: 'BVN', document_number: '12345678901' },
+        body: { document_type: 'BVN', document_number: '12345678901', requested_tier: 2 },
       }),
     );
     const body = await res.json();
@@ -122,7 +125,9 @@ describe('POST /api/v1/kyc/initiate', () => {
     expect(res.status).toBe(202);
     expect(body.success).toBe(true);
     expect(body.kyc_status).toBe('pending');
+    expect(body.kyc_requested_tier).toBe(2);
     expect(body.submitted_at).toBeTruthy();
+    expect(initiateKyc).toHaveBeenCalledWith(TEST_USER.id, expect.objectContaining({ requested_tier: 2 }));
   });
 
   it('returns 400 when document_type is missing', async () => {

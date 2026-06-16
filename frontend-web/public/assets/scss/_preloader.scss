@@ -70,6 +70,10 @@
                     animation-delay: 1.4s;
                 }
 
+                &:nth-child(9):before {
+                    animation-delay: 1.6s;
+                }
+
                 &::before {
                     animation: letters-loading 4s infinite;
                     color: $header-color;

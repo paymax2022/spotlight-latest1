@@ -5802,6 +5802,9 @@ span {
 .preloader .animation-preloader .txt-loading .letters-loading:nth-child(8):before {
   animation-delay: 1.4s;
 }
+.preloader .animation-preloader .txt-loading .letters-loading:nth-child(9):before {
+  animation-delay: 1.6s;
+}
 .preloader .animation-preloader .txt-loading .letters-loading::before {
   animation: letters-loading 4s infinite;
   color: var(--header);

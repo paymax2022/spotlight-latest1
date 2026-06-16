@@ -117,6 +117,58 @@ export function createRegistrationContest(input: ContestRegistrationDefinition) 
   return normalized;
 }
 
+export function updateRegistrationContest(slug: string, input: Partial<ContestRegistrationDefinition>) {
+  const store = ensureContestStore();
+  const current = store.contests.get(slug);
+  if (!current) {
+    throw new Error('Contest not found.');
+  }
+
+  const nextSlug = String(input.slug || current.slug).trim();
+  const nextTitle = String(input.title || current.title).trim();
+
+  if (!nextSlug) throw new Error('Contest slug is required.');
+  if (!nextTitle) throw new Error('Contest title is required.');
+
+  if (nextSlug !== slug && store.contests.has(nextSlug)) {
+    throw new Error('A contest with this slug already exists.');
+  }
+
+  const duplicateTitle = Array.from(store.contests.values()).some(
+    (contest) => contest.slug !== slug && contest.title.toLowerCase() === nextTitle.toLowerCase(),
+  );
+  if (duplicateTitle) {
+    throw new Error('A contest with this title already exists.');
+  }
+
+  const updated: ContestRegistrationDefinition = {
+    ...current,
+    ...input,
+    slug: nextSlug,
+    title: nextTitle,
+    registrationFeeNgn: input.isPaid === false ? 0 : Number(input.registrationFeeNgn ?? current.registrationFeeNgn ?? 0),
+    auditionStates: Array.isArray(input.auditionStates) ? input.auditionStates : current.auditionStates || [],
+    applicantCategories: Array.isArray(input.applicantCategories)
+      ? input.applicantCategories
+      : current.applicantCategories || [],
+  };
+
+  if (nextSlug !== slug) {
+    store.contests.delete(slug);
+  }
+  store.contests.set(updated.slug, updated);
+  return updated;
+}
+
+export function deleteRegistrationContest(slug: string) {
+  const store = ensureContestStore();
+  if (!store.contests.has(slug)) {
+    throw new Error('Contest not found.');
+  }
+
+  store.contests.delete(slug);
+}
+
 export function startRegistrationDraft(params: {
   contestSlug: string;
   userId?: string;
@@ -194,6 +246,28 @@ export function saveRegistrationStep(params: {
     ...draft.formData,
     ...params.values,
   };
+
+  // Contest identity is fixed when the draft is created from an /apply/:slug route.
+  // Do not allow clients to switch contests by modifying form payload values.
+  const lockedContest = getRegistrationContestBySlug(draft.contestSlug) || resolveContestRegistration(draft.contestSlug);
+  if (lockedContest) {
+    mergedData['contestSlug'] = lockedContest.slug;
+    mergedData['contest.title'] = lockedContest.title;
+    mergedData['contest.category'] = lockedContest.contestCategory;
+    mergedData['contest.type'] = lockedContest.contestType;
+    mergedData['contest.categoryKey'] = lockedContest.categoryQuestionSet;
+    mergedData['derived.availableContestTitles'] = [lockedContest.title];
+    mergedData['derived.auditionStates'] = lockedContest.auditionStates || [];
+    mergedData['derived.applicantCategories'] = lockedContest.applicantCategories || [];
+    mergedData['derived.legalAdultAge'] = lockedContest.legalAdultAge;
+    mergedData['derived.requiresMedical'] = lockedContest.requiresMedical;
+    mergedData['derived.requiresBootcampReadiness'] = lockedContest.requiresBootcampReadiness;
+    mergedData['derived.supportsVoting'] = lockedContest.supportsVoting;
+    mergedData['derived.supportsAuditionScheduling'] = lockedContest.supportsAuditionScheduling;
+    mergedData['derived.isPaidContest'] = lockedContest.isPaid;
+    mergedData['derived.allowedTalentSkills'] = getTalentSkillsForContestCategory(lockedContest.contestCategory);
+    mergedData['payment.feeAmount'] = lockedContest.registrationFeeNgn || 0;
+  }
 
   const selectedContestTitle = String(mergedData['contest.title'] || '').trim();
   if (selectedContestTitle) {
@@ -277,6 +351,32 @@ export function submitRegistrationApplication(applicationId: string) {
   const store = getStore();
   const draft = store.drafts.get(applicationId);
   if (!draft) throw new Error('Application not found.');
+
+  if (
+    [
+      'submitted',
+      'awaiting_payment',
+      'under_review',
+      'more_information_requested',
+      'shortlisted',
+      'callback_invited',
+      'approved',
+      'rejected',
+      'waitlisted',
+      'disqualified',
+      'audition_scheduled',
+      'selected_for_bootcamp',
+      'selected_for_public_voting',
+      'eliminated',
+      'winner',
+    ].includes(draft.status)
+  ) {
+    return {
+      success: true,
+      draft,
+      alreadySubmitted: true,
+    };
+  }
 
   const steps = buildRegistrationSteps(draft);
   const validationErrors: Record<string, string> = {};

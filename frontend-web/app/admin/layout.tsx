@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import AdminSidebar from '@/src/components/AdminSidebar';
+import AdminTableEnhancer from '@/src/components/admin/AdminTableEnhancer';
 import { requireAdmin } from '@/src/lib/auth/server';
 
 export default async function AdminLayout({ children }: { children: ReactNode }) {
@@ -9,31 +10,41 @@ export default async function AdminLayout({ children }: { children: ReactNode })
     await requireAdmin();
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : '';
-    if (msg === 'UNAUTHORIZED') redirect('/login?next=/admin');
-    if (msg === 'FORBIDDEN') redirect('/');
+    if (msg === 'UNAUTHORIZED') redirect('/admin/login?next=/admin');
+    if (msg === 'FORBIDDEN') redirect('/admin/login?error=forbidden');
     throw err;
   }
   return (
-    <div className="d-flex admin-theme" style={{ background: 'var(--bg)', color: 'var(--foreground)', minHeight: '100vh' }}>
+    <div className="admin-theme admin-shell">
       <AdminSidebar />
-      <div className="flex-grow-1" style={{ minWidth: 0 }}>
-        <header
-          className="d-flex justify-content-between align-items-center px-4 py-3"
-          style={{ background: 'var(--bg-card)', position: 'sticky', top: 0, zIndex: 20, borderBottom: '1px solid var(--border)' }}
-        >
-          <div>
-            <div className="text-uppercase" style={{ fontSize: 11, color: 'var(--foreground-muted)', letterSpacing: '0.08em' }}>
-              Spotlight Control Center
-            </div>
-            <div className="font-semibold" style={{ color: 'var(--foreground)' }}>Administrative Command Portal</div>
+      <div className="admin-content">
+        <header className="admin-topbar">
+          <div className="admin-search" aria-label="Admin search">
+            <i className="fa-solid fa-magnifying-glass" aria-hidden="true" />
+            <span>Search [CTRL + K]</span>
           </div>
-          <div className="d-flex gap-2 align-items-center">
-            <Link href="/admin" className="btn-outline text-xs py-2 px-3">Dashboard</Link>
-            <Link href="/homepage" className="btn-primary text-xs py-2 px-3">Public Site</Link>
+          <div className="admin-topbar-actions">
+            <Link href="/homepage" className="admin-icon-button" aria-label="Public site">
+              <i className="fa-solid fa-arrow-up-right-from-square" aria-hidden="true" />
+            </Link>
+            <button type="button" className="admin-icon-button" aria-label="Language">
+              <i className="fa-solid fa-language" aria-hidden="true" />
+            </button>
+            <button type="button" className="admin-icon-button" aria-label="Theme">
+              <i className="fa-regular fa-sun" aria-hidden="true" />
+            </button>
+            <button type="button" className="admin-icon-button admin-notification" aria-label="Notifications">
+              <i className="fa-regular fa-bell" aria-hidden="true" />
+            </button>
+            <div className="admin-avatar" aria-label="Admin profile">
+              <img src="/assets/img/about/author.png" alt="" />
+              <span />
+            </div>
           </div>
         </header>
-        <main className="p-4 p-lg-5" style={{ paddingTop: 72 }}>{children}</main>
+        <main className="admin-main">{children}</main>
       </div>
+      <AdminTableEnhancer />
     </div>
   );
 }
