@@ -15,7 +15,9 @@ import (
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/va"
 	"spotlight/backend/internal/finance/wallet"
+	"spotlight/backend/internal/crowdfunding"
 	"spotlight/backend/internal/estate"
+	"spotlight/backend/internal/restaurant"
 	"spotlight/backend/internal/events"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/groups"
@@ -185,6 +187,32 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config) {
 		estGroup.POST("/:id/elections", estateHandler.CreateElection)
 		estGroup.POST("/:id/elections/:electionId/vote", estateHandler.CastVote)
 		estGroup.GET("/:id/elections/:electionId/results", estateHandler.GetResults)
+	}
+
+	// --- Crowdfunding routes ---
+	if cfg.FeatureCrowdfundingEnabled {
+		settlementSvcCF := settlement.NewService(pool, ledgerSvc)
+		cfSvc := crowdfunding.NewService(pool, ledgerSvc, settlementSvcCF)
+		cfHandler := crowdfunding.NewHandler(cfSvc)
+		cfGroup := finance.Group("/crowdfunding")
+		cfGroup.POST("/campaigns", cfHandler.Create)
+		cfGroup.GET("/campaigns/:id", cfHandler.Get)
+		cfGroup.POST("/campaigns/:id/publish", cfHandler.Publish)
+		cfGroup.POST("/campaigns/:id/contribute", cfHandler.Contribute)
+		cfGroup.POST("/campaigns/:id/release", cfHandler.Release)
+		cfGroup.POST("/campaigns/:id/refund", cfHandler.Refund)
+	}
+
+	// --- Restaurant & Delivery routes ---
+	if cfg.FeatureRestaurantEnabled {
+		settlementSvcR := settlement.NewService(pool, ledgerSvc)
+		restaurantSvc := restaurant.NewService(pool, settlementSvcR)
+		restaurantHandler := restaurant.NewHandler(restaurantSvc)
+		restGroup := finance.Group("/restaurant")
+		restGroup.POST("", restaurantHandler.Create)
+		restGroup.POST("/:id/orders", restaurantHandler.PlaceOrder)
+		restGroup.PATCH("/:id/orders/:orderId/status", restaurantHandler.UpdateStatus)
+		restGroup.DELETE("/:id/orders/:orderId", restaurantHandler.CancelOrder)
 	}
 
 	// --- Admin finance routes ---

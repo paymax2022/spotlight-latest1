@@ -40,6 +40,8 @@ type Config struct {
 	FeatureGroupsEnabled          bool
 	FeatureEventsEnabled          bool
 	FeatureEstateEnabled          bool
+	FeatureCrowdfundingEnabled    bool
+	FeatureRestaurantEnabled      bool
 }
 
 func getEnv(key, fallback string) string {
@@ -97,5 +99,7 @@ func Load() Config {
 		FeatureGroupsEnabled:          getEnvBool("FEATURE_GROUPS_ENABLED", false),
 		FeatureEventsEnabled:          getEnvBool("FEATURE_EVENTS_ENABLED", false),
 		FeatureEstateEnabled:          getEnvBool("FEATURE_ESTATE_ENABLED", false),
+		FeatureCrowdfundingEnabled:    getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
+		FeatureRestaurantEnabled:      getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
 	}
 }
