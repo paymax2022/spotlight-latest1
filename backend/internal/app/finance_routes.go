@@ -19,6 +19,7 @@ import (
 	"spotlight/backend/internal/estate"
 	"spotlight/backend/internal/restaurant"
 	"spotlight/backend/internal/telemedicine"
+	"spotlight/backend/internal/aicare"
 	"spotlight/backend/internal/transport"
 	"spotlight/backend/internal/votebridge"
 	"spotlight/backend/internal/events"
@@ -230,6 +231,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config) {
 		teleGroup.POST("/appointments/:id/complete", telemedHandler.CompleteAppointment)
 		teleGroup.DELETE("/appointments/:id", telemedHandler.CancelAppointment)
 		teleGroup.POST("/appointments/:id/prescription", telemedHandler.IssuePrescription)
+	}
+
+	// --- AI Customer Care routes ---
+	if cfg.FeatureAICareEnabled {
+		// AI provider is nil (stub) — swap in an Anthropic/OpenAI client when ready.
+		aicSvc := aicare.NewService(pool, nil)
+		aicHandler := aicare.NewHandler(aicSvc)
+		aicGroup := finance.Group("/support")
+		aicGroup.POST("/sessions", aicHandler.CreateSession)
+		aicGroup.GET("/sessions/:id/messages", aicHandler.GetHistory)
+		aicGroup.POST("/sessions/:id/messages", aicHandler.SendMessage)
+		aicGroup.POST("/sessions/:id/escalate", aicHandler.Escalate)
+		aicGroup.POST("/sessions/:id/resolve", aicHandler.Resolve)
 	}
 
 	// --- Transport routes ---
