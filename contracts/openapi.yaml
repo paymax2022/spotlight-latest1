@@ -1,16 +1,20 @@
 openapi: 3.1.0
 info:
-  title: Spotlight Fintech API
-  version: 1.0.0
+  title: Paymax × Spotlight Super App API
+  version: 2.0.0
   description: >
-    Fintech super-app layer built on top of the Spotlight contest platform.
-    All monetary amounts are integers in minor units (kobo).
+    Fintech super-app layer — wallet, KYC, FX, transfers, referrals, VA, and vertical modules.
+    All monetary amounts are integers in minor units (kobo / currency-minor-unit).
     All mutation endpoints require an Idempotency-Key header.
     Authentication: Bearer JWT issued by Supabase Auth.
+    Go backend routes: /api/finance/* (feature-flagged, gated on DATABASE_URL).
+    Legacy Next.js routes: /api/v1/* (stable, unchanged).
 
 servers:
+  - url: /api/finance
+    description: Go backend — financial core (Paymax v2)
   - url: /api/v1
-    description: Stable fintech API (Next.js route handlers)
+    description: Stable fintech API (Next.js route handlers, v1 blocks 0-12)
   - url: /api/v2
     description: Bridge API (wraps protected legacy vote engine)
 
@@ -120,6 +124,101 @@ components:
         total_earned_kobo:
           type: integer
           format: int64
+
+    PaymaxTransferRecipient:
+      type: object
+      required: [user_id, display_name, masked_phone]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+          description: Recipient's full name
+        masked_phone:
+          type: string
+          description: Phone number with middle digits masked (e.g. 0801****678)
+        avatar_url:
+          type: string
+          nullable: true
+
+    WalletTransfer:
+      type: object
+      required: [id, reference, amount_kobo, fee_kobo, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        reference:
+          type: string
+        amount_kobo:
+          type: integer
+          format: int64
+        fee_kobo:
+          type: integer
+          format: int64
+        narration:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [successful, failed, reversed]
+        sender_display_name:
+          type: string
+          nullable: true
+        receiver_display_name:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    Bank:
+      type: object
+      required: [code, name]
+      properties:
+        code:
+          type: string
+          description: Paystack bank code (e.g. "058" for GTBank)
+        name:
+          type: string
+        slug:
+          type: string
+          nullable: true
+        type:
+          type: string
+          nullable: true
+
+    BankTransfer:
+      type: object
+      required: [id, reference, amount_kobo, fee_kobo, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        reference:
+          type: string
+        amount_kobo:
+          type: integer
+          format: int64
+        fee_kobo:
+          type: integer
+          format: int64
+        account_name:
+          type: string
+        account_number_last4:
+          type: string
+        bank_name:
+          type: string
+        narration:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [funds_reserved, provider_initiated, successful, failed, reversed]
+        created_at:
+          type: string
+          format: date-time
 
   responses:
     Unauthorized:
@@ -329,6 +428,210 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+# ── Bank Transfers ─────────────────────────────────────────────────────────────
+
+  /banks:
+    get:
+      operationId: listBanks
+      summary: List all Nigerian banks supported for outbound transfers
+      tags: [BankTransfers]
+      responses:
+        '200':
+          description: Bank list (cached up to 1 hour)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, banks]
+                properties:
+                  success: { type: boolean }
+                  banks:
+                    type: array
+                    items: { $ref: '#/components/schemas/Bank' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /banks/resolve:
+    post:
+      operationId: resolveBankAccount
+      summary: Resolve a bank account number to get the account holder name
+      tags: [BankTransfers]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bank_code, account_number]
+              properties:
+                bank_code: { type: string }
+                account_number: { type: string, minLength: 10, maxLength: 10 }
+      responses:
+        '200':
+          description: Resolved account name
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, account_name, account_number]
+                properties:
+                  success: { type: boolean }
+                  account_name: { type: string }
+                  account_number: { type: string }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: Account not found at the bank
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /transfers/bank:
+    post:
+      operationId: initiateWalletToBankTransfer
+      summary: >
+        Transfer funds from the authenticated user's wallet to any Nigerian
+        bank account. Funds are reserved atomically before calling Paystack.
+        Transfer result is delivered via webhook (transfer.success / transfer.failed).
+      tags: [BankTransfers]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bank_code, account_number, amount_kobo]
+              properties:
+                bank_code:
+                  type: string
+                account_number:
+                  type: string
+                  minLength: 10
+                  maxLength: 10
+                amount_kobo:
+                  type: integer
+                  format: int64
+                  minimum: 100000
+                  description: Minimum ₦1,000 (100,000 kobo)
+                narration:
+                  type: string
+                  maxLength: 100
+                save_beneficiary:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Transfer initiated — final status via webhook
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, transfer]
+                properties:
+                  success: { type: boolean }
+                  already_processed: { type: boolean }
+                  transfer: { $ref: '#/components/schemas/BankTransfer' }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Insufficient wallet balance
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+# ── Bank Transfer schemas ──────────────────────────────────────────────────────
+
+  /transfers/paymax/resolve:
+    get:
+      operationId: resolvePaymaxRecipient
+      summary: Resolve a Paymax user by phone, email, or username for transfer
+      tags: [Transfers]
+      parameters:
+        - name: identifier
+          in: query
+          required: true
+          schema: { type: string }
+          description: Phone number, email address, or Paymax username
+      responses:
+        '200':
+          description: Recipient preview (safe — no PII exposed)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, recipient]
+                properties:
+                  success: { type: boolean }
+                  recipient: { $ref: '#/components/schemas/PaymaxTransferRecipient' }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: No Paymax user found for this identifier
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /transfers/paymax:
+    post:
+      operationId: initiateWalletToWalletTransfer
+      summary: >
+        Instantly transfer funds from the authenticated user's wallet to another
+        Paymax user. Atomic — sender is debited and receiver is credited in a
+        single DB transaction. Idempotent on the provided key.
+      tags: [Transfers]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recipient_identifier, amount_kobo]
+              properties:
+                recipient_identifier:
+                  type: string
+                  description: Recipient's phone, email, or Paymax username
+                amount_kobo:
+                  type: integer
+                  format: int64
+                  minimum: 100
+                  description: Amount to transfer in kobo (min ₦1)
+                narration:
+                  type: string
+                  maxLength: 100
+      responses:
+        '200':
+          description: Transfer successful (or already processed — idempotent)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, transfer]
+                properties:
+                  success: { type: boolean }
+                  already_processed: { type: boolean }
+                  transfer: { $ref: '#/components/schemas/WalletTransfer' }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Insufficient wallet balance
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Recipient not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
 # ── Referrals ──────────────────────────────────────────────────────────────────
 
   /referrals/me:
@@ -494,3 +797,274 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+# ── Go Finance API (/api/finance) ─────────────────────────────────────────────
+# All routes require Bearer JWT. Feature-flagged server-side (FEATURE_*_ENABLED).
+
+  /wallet/balance:
+    get:
+      summary: Get wallet balance
+      operationId: getWalletBalance
+      tags: [Wallet]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current balance in kobo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id: { type: string, format: uuid }
+                  balance_kobo: { type: integer, format: int64 }
+                  balance_naira: { type: number, format: double }
+        '401': { description: Unauthenticated }
+
+  /wallet/transactions:
+    get:
+      summary: List wallet transactions (paginated)
+      operationId: listWalletTransactions
+      tags: [Wallet]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Paginated ledger entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transactions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        type: { type: string, enum: [credit, debit] }
+                        amount_kobo: { type: integer, format: int64 }
+                        reference: { type: string }
+                        created_at: { type: string, format: date-time }
+                  limit: { type: integer }
+                  offset: { type: integer }
+
+  /kyc/me:
+    get:
+      summary: Get current user's KYC profile
+      operationId: getKYCProfile
+      tags: [KYC]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: KYC profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KYCProfile' }
+
+  /kyc/initiate:
+    post:
+      summary: Initiate KYC verification
+      operationId: initiateKYC
+      tags: [KYC]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [requested_tier]
+              properties:
+                requested_tier: { type: integer, minimum: 1, maximum: 3 }
+                document_type: { type: string }
+                document_ref: { type: string }
+                bvn: { type: string }
+                nin: { type: string }
+      responses:
+        '200':
+          description: Updated KYC profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KYCProfile' }
+        '400': { description: Validation error }
+
+  /va/me:
+    get:
+      summary: Get or provision virtual account
+      operationId: getVirtualAccount
+      tags: [VirtualAccount]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Virtual account details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VirtualAccount' }
+        '403': { description: KYC tier 0 — provisioning not allowed }
+
+  /referrals/me:
+    get:
+      summary: Get referral code and earnings summary
+      operationId: getReferralSummary
+      tags: [Referrals]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Referral summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string }
+                  total_referrals: { type: integer }
+                  total_earned_kobo: { type: integer, format: int64 }
+
+  /fx/quote:
+    post:
+      summary: Get an FX rate quote (valid for 5 minutes)
+      operationId: getFXQuote
+      tags: [FX]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source_currency, target_currency, amount_kobo]
+              properties:
+                source_currency: { type: string, minLength: 3, maxLength: 3, example: NGN }
+                target_currency: { type: string, minLength: 3, maxLength: 3, example: USD }
+                amount_kobo: { type: integer, format: int64, minimum: 100 }
+      responses:
+        '200':
+          description: FX quote (expires in 5 min — quote_id required for convert)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FXQuote' }
+        '400': { description: Invalid currencies or amount }
+
+  /fx/convert:
+    post:
+      summary: Execute an FX conversion using a valid quote
+      operationId: convertFX
+      tags: [FX]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quote_id, idempotency_key]
+              properties:
+                quote_id: { type: string, format: uuid }
+                idempotency_key: { type: string, minLength: 8 }
+      responses:
+        '200':
+          description: Conversion result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FXConversion' }
+        '400': { description: Expired or invalid quote }
+        '402': { description: Insufficient balance }
+
+  /fx/history:
+    get:
+      summary: List FX conversion history
+      operationId: listFXHistory
+      tags: [FX]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Paginated conversion history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversions:
+                    type: array
+                    items: { $ref: '#/components/schemas/FXConversion' }
+
+  /fx/wallets/{currency}:
+    get:
+      summary: Get or create a foreign currency wallet
+      operationId: getFXWallet
+      tags: [FX]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: currency
+          in: path
+          required: true
+          schema: { type: string, minLength: 3, maxLength: 3 }
+      responses:
+        '200':
+          description: Currency wallet
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CurrencyWallet' }
+
+# ── New schemas ───────────────────────────────────────────────────────────────
+
+# (appended to components/schemas section — spec tooling merges by key)
+
+
+    KYCProfile:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        kyc_tier: { type: integer, minimum: 0, maximum: 3 }
+        kyc_status: { type: string, enum: [none, pending, submitted, verified, failed] }
+        kyc_submitted_at: { type: string, format: date-time, nullable: true }
+        kyc_verified_at: { type: string, format: date-time, nullable: true }
+        phone_verified: { type: boolean }
+        document_type: { type: string, nullable: true }
+        requested_tier: { type: integer, nullable: true }
+
+    FXQuote:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        source_currency: { type: string }
+        target_currency: { type: string }
+        source_amount_kobo: { type: integer, format: int64 }
+        target_amount_minor: { type: integer, format: int64 }
+        rate: { type: number, format: double }
+        fee_kobo: { type: integer, format: int64 }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    FXConversion:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        quote_id: { type: string, format: uuid }
+        source_currency: { type: string }
+        target_currency: { type: string }
+        source_amount_kobo: { type: integer, format: int64 }
+        target_amount_minor: { type: integer, format: int64 }
+        rate: { type: number, format: double }
+        fee_kobo: { type: integer, format: int64 }
+        status: { type: string, enum: [pending, completed, failed, reversed] }
+        reference: { type: string }
+        created_at: { type: string, format: date-time }
+
+    CurrencyWallet:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        currency: { type: string, minLength: 3, maxLength: 3 }
+        balance_minor: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }

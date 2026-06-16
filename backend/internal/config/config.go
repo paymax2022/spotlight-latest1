@@ -25,6 +25,10 @@ type Config struct {
 	PaystackSecretKey  string
 	PaystackWebhookKey string
 
+	// Maplerad credentials (FX + alternative VA provider).
+	MapleradSecretKey string
+	MapleradProd      bool // false = sandbox
+
 	// Feature flags for financial modules.
 	FeatureWalletEnabled          bool
 	FeatureKYCEnabled             bool
@@ -32,6 +36,7 @@ type Config struct {
 	FeatureTransfersEnabled       bool
 	FeatureReferralsEnabled       bool
 	FeatureTierLimitsEnabled      bool
+	FeatureFXEnabled              bool
 }
 
 func getEnv(key, fallback string) string {
@@ -76,11 +81,15 @@ func Load() Config {
 		PaystackSecretKey:  getEnv("PAYSTACK_SECRET_KEY", ""),
 		PaystackWebhookKey: getEnv("PAYSTACK_WEBHOOK_SECRET", ""),
 
+		MapleradSecretKey: getEnv("MAPLERAD_SECRET_KEY", ""),
+		MapleradProd:      getEnvBool("MAPLERAD_PROD", false),
+
 		FeatureWalletEnabled:          getEnvBool("FEATURE_WALLET_ENABLED", false),
 		FeatureKYCEnabled:             getEnvBool("FEATURE_KYC_ENABLED", false),
 		FeatureVirtualAccountsEnabled: getEnvBool("FEATURE_VIRTUAL_ACCOUNTS_ENABLED", false),
 		FeatureTransfersEnabled:       getEnvBool("FEATURE_TRANSFERS_ENABLED", false),
 		FeatureReferralsEnabled:       getEnvBool("FEATURE_REFERRALS_ENABLED", false),
 		FeatureTierLimitsEnabled:      getEnvBool("FEATURE_TIER_LIMITS_ENABLED", false),
+		FeatureFXEnabled:              getEnvBool("FEATURE_FX_ENABLED", false),
 	}
 }
