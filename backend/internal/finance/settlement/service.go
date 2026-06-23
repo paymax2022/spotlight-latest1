@@ -52,6 +52,12 @@ func (s *Service) Escrow(ctx context.Context, payerID, reference, idempotencyKey
 // Settle releases the escrowed funds, applying the split and deducting commission.
 // Called after service delivery is confirmed.
 func (s *Service) Settle(ctx context.Context, settlementID string, split Split) error {
+	// Fail-closed: the split must sum to exactly 1.0 before any money moves, so a
+	// malformed split can never silently mis-pay a provider (or drive their share
+	// negative via the remainder computation below).
+	if err := split.Validate(); err != nil {
+		return err
+	}
 	var sett Settlement
 	const q = `SELECT id, reference, payer_id, total_kobo, status FROM settlements WHERE id=$1 FOR UPDATE`
 	tx, err := s.db.Begin(ctx)

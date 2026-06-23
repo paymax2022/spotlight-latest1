@@ -1,0 +1,21 @@
+{
+  "session": "Crowdfunding super-app module — mobile (C–Q incl. L & M) + admin (B–J + D) + live backend slice",
+  "app_roots": ["mobile-app/reactnative", "frontend-admin", "frontend-web", "backend", "supabase"],
+  "last_updated": "2026-06-20",
+  "status": "All client scope complete. Real backend built for the core money-path + lifecycle + admin review, wired through the Next.js proxy with a mock/live switch. Remaining endpoints follow the same pattern.",
+  "note": "Root task-tracker.json is contended by multiple concurrent agent sessions. This is the authoritative durable copy of the CROWDFUNDING tracker.",
+  "completed_tasks": [
+    { "id": "mobile", "title": "Mobile C–Q incl. feature-flagged L (Investment) and M (CSR); real image + document uploads; settings destination forms", "verified": "tsc clean" },
+    { "id": "admin", "title": "Admin B–J + D incl. user/creator management + RBAC permission gates", "verified": "tsc clean" },
+    { "id": "be-migration", "title": "Additive migration 20260622000000_crowdfunding_full.sql — campaign metadata + review_status + crowdfunding_categories (seeded) + campaign_reviews audit", "verified": "valid SQL (additive, no drop/rename/narrowing)" },
+    { "id": "be-go", "title": "Go backend internal/crowdfunding — DTOs/mapper, discovery query builder, ListCampaigns/GetDetail/ListCategories/SubmitForReview, admin ListPending/Decide(guarded transition+audit)/Stats; routes under /api/finance/crowdfunding + /api/crowdfunding/admin", "verified": "reviewed for compile-correctness (no Go toolchain in sandbox); unit tests written for state machine + query builder" },
+    { "id": "be-proxy", "title": "frontend-web Next.js proxy routes /api/v1/crowdfunding/{campaigns,categories,campaigns/[id],contribute} → Go; feature-flag guarded", "verified": "mirrors existing P3 proxy pattern" },
+    { "id": "be-wiring", "title": "Client mock/live switch: EXPO_PUBLIC_CF_USE_MOCK / NEXT_PUBLIC_CF_USE_MOCK (default mock); live paths point at proxy; shapes match", "verified": "tsc clean (mobile + admin)" },
+    { "id": "be-runbook", "title": "GO_LIVE runbook (docs/CROWDFUNDING_GO_LIVE.md) + demo seed (docs/seed/crowdfunding_seed.sql)", "verified": "documented" }
+  ],
+  "pending_tasks": [
+    { "priority": 1, "blocked_on": "Go toolchain", "title": "Run `go build ./...` + `go test ./internal/crowdfunding/` on a machine with Go 1.25 (go.dev blocked + no root in this sandbox). Code reviewed for correctness." },
+    { "priority": 2, "blocked_on": "running stack", "title": "End-to-end verify live: apply migration, run Go + frontend-web, flip *_CF_USE_MOCK=false, exercise discovery/detail/contribute/admin-review." },
+    { "priority": 3, "title": "Implement remaining real endpoints (rewards, milestones, support, notifications, settings, wallet reads, investment L, CSR M, admin finance/KYC/compliance) following the same service→handler→route→proxy pattern; cut over each behind its feature-scoped USE_MOCK." }
+  ]
+}

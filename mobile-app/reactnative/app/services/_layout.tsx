@@ -13,6 +13,8 @@ export default function ServicesLayout() {
       <Stack.Screen name="transfer" />
       <Stack.Screen name="cards" />
       <Stack.Screen name="fx" />
+      <Stack.Screen name="food" />
+      <Stack.Screen name="telemedicine" />
       <Stack.Screen name="receipt/[id]" />
       <Stack.Screen name="transactions/index" />
       <Stack.Screen name="transactions/[id]" />

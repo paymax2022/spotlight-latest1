@@ -28,8 +28,11 @@ export default function ModuleGrid({ modules, columns = 4 }: Props) {
                 iconColor={mod.iconColor}
                 bgColor={mod.bgColor}
                 badge={mod.badge}
+                comingSoon={mod.comingSoon}
                 onPress={() => {
-                  try { router.push(mod.route as never); } catch { /* route not yet built */ }
+                  if (!mod.comingSoon) {
+                    router.push(mod.route as never);
+                  }
                 }}
               />
             </View>

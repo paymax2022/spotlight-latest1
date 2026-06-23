@@ -39,12 +39,16 @@ const (
 
 // Notification is the payload enqueued for delivery.
 type Notification struct {
-	UserID  string         `json:"user_id"`
-	Event   Event          `json:"event"`
-	Title   string         `json:"title"`
-	Body    string         `json:"body"`
-	Data    map[string]any `json:"data,omitempty"`
-	Channels []Channel     `json:"channels"`
+	UserID    string         `json:"user_id"`
+	Event     Event          `json:"event"`
+	Title     string         `json:"title"`
+	Body      string         `json:"body"`
+	Data      map[string]any `json:"data,omitempty"`
+	Channels  []Channel      `json:"channels"`
+	// Delivery addresses — populated by callers when known.
+	PushToken string `json:"push_token,omitempty"` // Expo push token
+	Email     string `json:"email,omitempty"`      // recipient email address
+	Phone     string `json:"phone,omitempty"`      // E.164 phone for SMS
 }
 
 // Service enqueues notifications via asynq.

@@ -104,6 +104,38 @@ func (s *Service) Debit(ctx context.Context, userID, reference, idempotencyKey, 
 	})
 }
 
+// PostJournal posts a balanced entry between two existing account IDs.
+// Use for non-wallet postings such as offline-payment approval
+// (DR provider_clearing → CR settlement) where no user wallet is involved.
+func (s *Service) PostJournal(ctx context.Context, j JournalEntry) error {
+	if s.redis != nil {
+		ok, _, err := redisPkg.AcquireLock(ctx, s.redis, "idem:"+j.IdempotencyKey, 0)
+		if err == nil && !ok {
+			return ErrDuplicate
+		}
+	}
+	return s.repo.PostJournal(ctx, j)
+}
+
+// PostReversal posts a balanced REVERSAL_DEBIT / REVERSAL_CREDIT correction.
+// restoreAccountID is credited back (REVERSAL_DEBIT, +balance); releaseAccountID
+// has its hold drained (REVERSAL_CREDIT). Use for failed/reversed payouts where
+// funds were parked in a suspense account and must return to the user wallet.
+// Idempotency is enforced by the ledger unique constraint (and Redis fast-path),
+// so a duplicate webhook is a safe no-op.
+func (s *Service) PostReversal(ctx context.Context, restoreAccountID, releaseAccountID string, amountKobo int64, reference, idempotencyKey string) error {
+	if amountKobo <= 0 {
+		return fmt.Errorf("ledger: reversal amount must be positive, got %d", amountKobo)
+	}
+	if s.redis != nil {
+		ok, _, err := redisPkg.AcquireLock(ctx, s.redis, "idem:"+idempotencyKey, 0)
+		if err == nil && !ok {
+			return ErrDuplicate
+		}
+	}
+	return s.repo.PostReversalPair(ctx, restoreAccountID, releaseAccountID, amountKobo, reference, idempotencyKey)
+}
+
 // ListTransactions returns paginated ledger entries for a user.
 func (s *Service) ListTransactions(ctx context.Context, userID string, limit, offset int) ([]Entry, error) {
 	acc, err := s.GetOrCreateUserWallet(ctx, userID)

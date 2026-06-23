@@ -171,6 +171,29 @@ func (h *RBACHandler) AssignPermissionToRole(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
+// BulkAssignPermissionsToRole assigns MANY permissions to ONE role in a single
+// call. Permission-gated upstream (permissions.assign); critical-permission and
+// super-admin checks are enforced per-item inside the service. Each successful
+// assignment is audited.
+func (h *RBACHandler) BulkAssignPermissionsToRole(c *gin.Context) {
+	roleID := c.Param("id")
+	actor, _ := middleware.GetAuthenticatedUser(c)
+	var in struct {
+		PermissionIDs []string `json:"permissionIds"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil || len(in.PermissionIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "permissionIds is required"})
+		return
+	}
+	results := h.svc.BulkAssignPermissionsToRole(actor.ID, roleID, in.PermissionIDs)
+	for _, res := range results {
+		if res.Success {
+			h.audit.LogAction(actor.ID, "", "role.permission.assign", "rbac", "role_permission", roleID, nil, map[string]any{"permissionId": res.ID, "bulk": true}, c.ClientIP(), c.Request.UserAgent(), "high")
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "results": results})
+}
+
 func (h *RBACHandler) AssignRoleToUser(c *gin.Context) {
 	userID := c.Param("id")
 	actor, _ := middleware.GetAuthenticatedUser(c)

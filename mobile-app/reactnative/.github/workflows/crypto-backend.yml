@@ -1,0 +1,75 @@
+name: crypto-backend
+
+# Build-once / gate-on-green for the Go crypto service. Path-filtered so it only
+# runs when the backend changes.
+on:
+  push:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/crypto-backend.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/crypto-backend.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: vet · test · build · vuln
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false # stdlib-only module: nothing to cache
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./... -count=1
+
+      - name: go build
+        run: go build ./cmd/server
+
+      - name: govulncheck (stdlib + deps)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
+  image:
+    name: docker build · scan
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # One immutable artifact, tagged by commit SHA, loaded locally for scanning.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: false
+          load: true
+          tags: paymax/crypto-service:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy image scan (fail on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: paymax/crypto-service:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true

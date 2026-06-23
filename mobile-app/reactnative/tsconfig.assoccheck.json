@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/features/association/**/*.ts",
+    "src/features/association/**/*.tsx",
+    "src/components/QrCodeView.tsx",
+    "app/association/**/*.tsx"
+  ]
+}

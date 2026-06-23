@@ -7,6 +7,7 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
+import ElectionHeaderBanner from '@/features/election/components/ElectionHeaderBanner';
 
 interface Notif {
   id: string; title: string; body: string;
@@ -52,6 +53,8 @@ export default function NotificationsScreen() {
         <Text style={styles.title}>Notifications</Text>
         <Text style={styles.unreadCount}>{NOTIFS.filter((n) => !n.read).length} unread</Text>
       </View>
+
+      <ElectionHeaderBanner />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: Platform.OS === 'ios' ? 100 : 80 }}>
         {[{ label: 'Today', items: todayNotifs }, { label: 'Earlier', items: earlierNotifs }].map(({ label, items }) => (

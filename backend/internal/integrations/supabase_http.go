@@ -65,6 +65,32 @@ func (c *SupabaseRestClient) REST(method, table string, query map[string]string,
 	return nil
 }
 
+// RESTReturn is like REST but asks PostgREST to return the affected rows
+// (Prefer: return=representation). Used for INSERT/UPDATE statements where the
+// caller needs the generated id or an affected-row count.
+func (c *SupabaseRestClient) RESTReturn(method, table string, query map[string]string, body any, out any) error {
+	req, err := c.buildRequest(method, "/rest/v1/"+table, query, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Prefer", "return=representation")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		buf, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("supabase RESTReturn %s %s failed: %d: %s", method, table, resp.StatusCode, strings.TrimSpace(string(buf)))
+	}
+	if out != nil {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil && err != io.EOF {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c *SupabaseRestClient) RPC(function string, payload map[string]any, out any) error {
 	req, err := c.buildRequest(http.MethodPost, "/rest/v1/rpc/"+function, nil, payload)
 	if err != nil {

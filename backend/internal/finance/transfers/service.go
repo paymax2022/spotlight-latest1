@@ -15,10 +15,10 @@ import (
 
 // Service handles wallet-to-wallet and wallet-to-bank transfers.
 type Service struct {
-	db       *pgxpool.Pool
-	ledger   *ledger.Service
-	tiers    *tiers.Service
-	payment  provider.PaymentProvider
+	db      *pgxpool.Pool
+	ledger  *ledger.Service
+	tiers   *tiers.Service
+	payment provider.PaymentProvider
 }
 
 func NewService(db *pgxpool.Pool, ledgerSvc *ledger.Service, tiersSvc *tiers.Service, payment provider.PaymentProvider) *Service {
@@ -26,32 +26,43 @@ func NewService(db *pgxpool.Pool, ledgerSvc *ledger.Service, tiersSvc *tiers.Ser
 }
 
 // ResolvePaymaxUser returns masked identity for a phone number (wallet-to-wallet recipient lookup).
+// Returns ErrRecipientNotFound (→404) when no Paymax user matches the phone.
 func (s *Service) ResolvePaymaxUser(ctx context.Context, phone string) (*WalletTransferResolveResponse, error) {
+	if strings.TrimSpace(phone) == "" {
+		return nil, ErrRecipientNotFound
+	}
 	const q = `SELECT id, full_name, phone FROM user_profiles WHERE phone = $1 LIMIT 1`
 	var id, fullName, rawPhone string
 	if err := s.db.QueryRow(ctx, q, phone).Scan(&id, &fullName, &rawPhone); err != nil {
-		return nil, fmt.Errorf("transfers: resolve user by phone: %w", err)
+		// No row (or any lookup failure) → recipient not found, fail closed.
+		return nil, ErrRecipientNotFound
 	}
 	return &WalletTransferResolveResponse{
 		UserID:      id,
 		FullName:    fullName,
-		MaskedPhone: maskPhone(rawPhone),
+		MaskedPhone: MaskPhone(rawPhone),
 	}, nil
 }
 
 // InitiateWalletToWallet executes a wallet-to-wallet transfer atomically via
 // the transfer_wallet_atomic() Supabase RPC (mirrors block-10 logic).
 func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, req WalletTransferRequest) (*WalletTransfer, error) {
-	// Resolve recipient.
-	recipient, err := s.ResolvePaymaxUser(ctx, req.RecipientPhone)
-	if err != nil {
-		return nil, fmt.Errorf("transfers: recipient not found: %w", err)
-	}
-	if recipient.UserID == senderID {
-		return nil, fmt.Errorf("transfers: self-transfer not allowed")
+	// DB-free pre-flight: Idempotency-Key required, positive kobo amount, phone present.
+	if err := ValidateWalletTransferRequest(req); err != nil {
+		return nil, err
 	}
 
-	// Tier guard.
+	// Resolve recipient (returns ErrRecipientNotFound → 404 on miss).
+	recipient, err := s.ResolvePaymaxUser(ctx, req.RecipientPhone)
+	if err != nil {
+		return nil, err
+	}
+	if recipient.UserID == senderID {
+		return nil, ErrSelfTransfer // → 422
+	}
+
+	// Tier guard (fail-closed): Tier 0 → ErrWalletDisabled (403),
+	// over daily cap → ErrDailyLimitExceeded (403).
 	if err := s.tiers.EnforceWalletDebitLimit(ctx, senderID, req.AmountKobo); err != nil {
 		return nil, err
 	}
@@ -59,12 +70,18 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 	fee := WalletTransferFee(req.AmountKobo)
 	reference := "ww-" + uuid.New().String()
 
-	// Duplicate check: idempotency key already used?
+	// Idempotency replay: same key already processed → return the prior result
+	// flagged AlreadyProcessed, no second debit/credit.
 	var existingID string
 	const checkDup = `SELECT id FROM wallet_transfers WHERE idempotency_key = $1 LIMIT 1`
 	_ = s.db.QueryRow(ctx, checkDup, req.IdempotencyKey).Scan(&existingID)
 	if existingID != "" {
-		return s.getWalletTransfer(ctx, existingID)
+		wt, err := s.getWalletTransfer(ctx, existingID)
+		if err != nil {
+			return nil, err
+		}
+		wt.AlreadyProcessed = true
+		return wt, nil
 	}
 
 	// Use pgx transaction + advisory lock (mirrors transfer_wallet_atomic RPC).
@@ -123,7 +140,7 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 	// Insert wallet_transfers row.
 	const insertTx = `
 		INSERT INTO wallet_transfers (sender_id, recipient_id, amount_kobo, fee_kobo, reference, status, idempotency_key)
-		VALUES ($1, $2, $3, $4, $5, 'completed', $6)
+		VALUES ($1, $2, $3, $4, $5, 'successful', $6)
 		RETURNING id, created_at`
 	wt := &WalletTransfer{
 		SenderID:       senderID,
@@ -131,7 +148,7 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 		AmountKobo:     req.AmountKobo,
 		FeeKobo:        fee,
 		Reference:      reference,
-		Status:         WalletTransferCompleted,
+		Status:         WalletTransferSuccessful,
 		IdempotencyKey: req.IdempotencyKey,
 	}
 	if err := tx.QueryRow(ctx, insertTx, senderID, recipient.UserID, req.AmountKobo, fee, reference, req.IdempotencyKey).
@@ -147,15 +164,26 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 
 // InitiateBankTransfer reserves funds and initiates a Paystack bank transfer.
 func (s *Service) InitiateBankTransfer(ctx context.Context, userID string, req BankTransferRequest) (*BankTransfer, error) {
-	// Duplicate check.
+	// DB-free pre-flight: Idempotency-Key required, positive amount, NUBAN shape.
+	if err := ValidateBankTransferRequest(req); err != nil {
+		return nil, err
+	}
+
+	// Idempotency replay: same key already processed → return prior result,
+	// no second debit. Prevents double-debit on retry.
 	var existingID string
 	const checkDup = `SELECT id FROM bank_transfers WHERE idempotency_key = $1 LIMIT 1`
 	_ = s.db.QueryRow(ctx, checkDup, req.IdempotencyKey).Scan(&existingID)
 	if existingID != "" {
-		return s.getBankTransfer(ctx, existingID)
+		bt, err := s.getBankTransfer(ctx, existingID)
+		if err != nil {
+			return nil, err
+		}
+		bt.AlreadyProcessed = true
+		return bt, nil
 	}
 
-	// Tier guard.
+	// Tier guard (fail-closed): Tier 0 → 403, over daily cap → 403.
 	if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, req.AmountKobo); err != nil {
 		return nil, err
 	}
@@ -249,9 +277,55 @@ func (s *Service) getBankTransfer(ctx context.Context, id string) (*BankTransfer
 	return bt, err
 }
 
-func maskPhone(phone string) string {
-	if len(phone) < 7 {
-		return "****"
+// HandleWebhook processes a Paystack transfer webhook (success / failed / reversed).
+// It updates bank_transfers.status and, on failure/reversal, posts a correcting
+// credit ledger entry to return funds from the suspense account to the user wallet.
+func (s *Service) HandleWebhook(ctx context.Context, reference, newStatus string, amountKobo int64) error {
+	const getQ = `SELECT id, user_id, amount_kobo, fee_kobo, status, idempotency_key FROM bank_transfers WHERE reference = $1 LIMIT 1`
+	bt := &BankTransfer{}
+	var curStatus string
+	err := s.db.QueryRow(ctx, getQ, reference).Scan(&bt.ID, &bt.UserID, &bt.AmountKobo, &bt.FeeKobo, &curStatus, &bt.IdempotencyKey)
+	if err != nil {
+		// Unknown reference — not our transfer; ignore idempotently.
+		return nil
 	}
-	return strings.Repeat("*", len(phone)-4) + phone[len(phone)-4:]
+
+	// Map provider status → internal enum + whether it releases reserved funds.
+	next, releasesFunds, known := ClassifyWebhookStatus(newStatus)
+	if !known {
+		return nil // status we don't act on; safe no-op
+	}
+	if BankTransferStatus(curStatus) == next {
+		return nil // duplicate webhook — already applied; idempotent no-op
+	}
+
+	const upQ = `UPDATE bank_transfers SET status = $1 WHERE id = $2`
+	if _, err := s.db.Exec(ctx, upQ, string(next), bt.ID); err != nil {
+		return fmt.Errorf("transfers webhook: update status: %w", err)
+	}
+
+	// On failure/reversal, restore the reserved amount to the user wallet via a
+	// REVERSAL_DEBIT correction (never a fresh CREDIT, never a balance UPDATE).
+	if releasesFunds {
+		userAcc, err := s.ledger.GetOrCreateUserWallet(ctx, bt.UserID)
+		if err != nil {
+			return fmt.Errorf("transfers webhook: get user wallet: %w", err)
+		}
+		suspenseAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountFailedTransferSusp)
+		if err != nil {
+			return fmt.Errorf("transfers webhook: get suspense: %w", err)
+		}
+		rev := BuildReversalEntry(reference, userAcc.ID, suspenseAcc.ID, bt.AmountKobo+bt.FeeKobo, bt.IdempotencyKey, next)
+		// restoreAccountID = user wallet (REVERSAL_DEBIT, +balance);
+		// releaseAccountID = suspense hold (REVERSAL_CREDIT).
+		if err := s.ledger.PostReversal(ctx, rev.UserAccountID, rev.SuspenseAccountID, rev.AmountKobo, rev.Reference, rev.IdempotencyKey); err != nil {
+			// A duplicate reversal (concurrent webhook) is benign — the ledger
+			// unique constraint already holds the funds-restored invariant.
+			if err == ledger.ErrDuplicate {
+				return nil
+			}
+			return fmt.Errorf("transfers webhook: post reversal ledger: %w", err)
+		}
+	}
+	return nil
 }

@@ -1,6 +1,9 @@
 package settlement
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Status tracks a settlement's lifecycle.
 type Status string
@@ -35,4 +38,26 @@ type Split struct {
 	PlatformPct float64 `json:"platform_pct"`  // e.g. 0.10 = 10%
 	RiderID     *string `json:"rider_id,omitempty"`
 	RiderPct    float64 `json:"rider_pct,omitempty"`
+}
+
+// splitEpsilon tolerates float rounding (configs store pct as floats like 0.80).
+const splitEpsilon = 1e-6
+
+// Validate enforces the money invariant that the percentage split sums to exactly
+// 1.0 (within float epsilon) at settlement time, and that no share is negative.
+// The rider share only counts when a rider is present. Provider share is computed
+// as the remainder in Settle (so kobo always balances), but a malformed split
+// could otherwise drive the provider's kobo negative — this catches that up front.
+func (s Split) Validate() error {
+	if s.ProviderPct < 0 || s.PlatformPct < 0 || s.RiderPct < 0 {
+		return fmt.Errorf("settlement: split percentages must be non-negative")
+	}
+	sum := s.ProviderPct + s.PlatformPct
+	if s.RiderID != nil {
+		sum += s.RiderPct
+	}
+	if sum < 1.0-splitEpsilon || sum > 1.0+splitEpsilon {
+		return fmt.Errorf("settlement: split must sum to 1.0, got %.6f", sum)
+	}
+	return nil
 }

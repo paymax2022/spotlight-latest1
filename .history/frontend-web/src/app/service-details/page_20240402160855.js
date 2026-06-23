@@ -61,9 +61,9 @@ export default function ServiceDetails() {
                                 </div>
                                 <div className="col-12 col-lg-8 order-1 order-md-2">
                                     <div className="service-details-items">
-                                        <div className="details-image">
+                                        {/* <div className="details-image">
                                             <img src="/assets/img/service/details-1.jpg" alt="img" />
-                                        </div>
+                                        </div> */}
                                         <div className="details-content">
                                             <h3>IT Consultancy</h3>
                                             <p className="mt-3">

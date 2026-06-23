@@ -1,0 +1,773 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight — Associations (Group Membership) API
+  version: 1.0.0
+  description: >
+    Group / Association membership management consumed by the mobile app's live
+    data layer (src/features/association/api/*.api.ts). Bare paths are served at
+    the app base URL (EXPO_PUBLIC_API_BASE_URL) exactly as the client calls them,
+    e.g. GET /associations/me/dashboard. Set EXPO_PUBLIC_ASSOCIATION_USE_MOCK=false
+    to switch the client from mock to these endpoints.
+
+    Conventions: every request carries a Supabase Bearer JWT; every state-changing
+    request (POST/PUT/PATCH/DELETE) requires an Idempotency-Key header. All monetary
+    amounts are integers in minor units (kobo). Standalone module spec (cf.
+    contracts/doctor.openapi.yaml, invest.openapi.yaml) to be merged into
+    contracts/openapi.yaml. Spec-first per CLAUDE.md.
+
+servers:
+  - url: /
+    description: frontend-web API base (EXPO_PUBLIC_API_BASE_URL)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Discovery
+  - name: Join
+  - name: Member
+  - name: Directory
+  - name: Dues
+  - name: Engagement
+  - name: Meetings
+  - name: Tasks
+  - name: Documents
+  - name: Chat
+  - name: AI Notes
+  - name: Community
+  - name: Settings
+  - name: Support
+  - name: Admin
+
+paths:
+  # ── Discovery (B) ───────────────────────────────────────────────────────────
+  /associations:
+    get:
+      tags: [Discovery]
+      summary: Search / list organisations
+      parameters:
+        - { name: search, in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: Organisation summaries
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/OrganisationSummary' } } } }
+    post:
+      tags: [Admin]
+      summary: Publish a new organisation (creation wizard)
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/OrgDraft' } } }
+      responses:
+        '201':
+          description: Created
+          content: { application/json: { schema: { $ref: '#/components/schemas/PublishResult' } } }
+  /associations/{id}:
+    get:
+      tags: [Discovery]
+      summary: Organisation detail
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Organisation' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Join (B) ──────────────────────────────────────────────────────────────
+  /associations/invites/validate:
+    post:
+      tags: [Join]
+      summary: Validate an invite code
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { code: { type: string } }, required: [code] } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CodeValidation' } } } } }
+  /associations/access-codes/validate:
+    post:
+      tags: [Join]
+      summary: Validate a group/chapter access code
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { code: { type: string } }, required: [code] } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CodeValidation' } } } } }
+  /associations/members/apply:
+    post:
+      tags: [Join]
+      summary: Submit a membership application
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/JoinDraft' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationResult' } } } } }
+
+  # ── Member self (C, D, E, G) ────────────────────────────────────────────────
+  /associations/me/dashboard:
+    get: { tags: [Member], summary: Member dashboard, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MemberDashboard' } } } } } }
+  /associations/me/card:
+    get: { tags: [Member], summary: Digital membership card, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MembershipCard' } } } } } }
+  /associations/me/profile:
+    get: { tags: [Member], summary: My profile, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MyProfile' } } } } } }
+    put:
+      tags: [Member]
+      summary: Update my profile
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ProfileEdit' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MyProfile' } } } } }
+  /associations/me/privacy:
+    get: { tags: [Member], summary: Privacy settings, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/PrivacySettings' } } } } } }
+    put:
+      tags: [Member]
+      summary: Update privacy settings
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PrivacySettings' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/PrivacySettings' } } } } }
+  /associations/me/activity:
+    get: { tags: [Member], summary: My activity history, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ActivityEntry' } } } } } } }
+  /associations/me/dues:
+    get: { tags: [Dues], summary: My dues summary, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DuesSummary' } } } } } }
+  /associations/me/admin-access:
+    get: { tags: [Admin], summary: My admin role + capabilities (RBAC), responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminAccess' } } } } } }
+  /associations/me/notification-prefs:
+    get: { tags: [Settings], summary: Notification preferences, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationPrefs' } } } } } }
+    put:
+      tags: [Settings]
+      summary: Update notification preferences
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationPrefs' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationPrefs' } } } } }
+  /associations/me/security:
+    get: { tags: [Settings], summary: Security settings, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SecuritySettings' } } } } } }
+    put:
+      tags: [Settings]
+      summary: Update security settings
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SecuritySettings' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SecuritySettings' } } } } }
+  /associations/me/devices:
+    get: { tags: [Settings], summary: Active sessions/devices, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Device' } } } } } } }
+  /associations/me/devices/{id}:
+    delete:
+      tags: [Settings]
+      summary: Revoke a device session
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+
+  # ── Directory (F) ───────────────────────────────────────────────────────────
+  /associations/members:
+    get:
+      tags: [Directory]
+      summary: Member directory
+      parameters:
+        - { name: search, in: query, schema: { type: string } }
+        - { name: chapterId, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/MemberStatus' } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/MemberProfileSummary' } } } } } }
+  /associations/members/{id}:
+    get:
+      tags: [Directory]
+      summary: Member profile (respects privacy)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MemberProfile' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+
+  # ── Dues & payments (G) ───────────────────────────────────────────────────
+  /associations/dues/{invoiceId}/pay:
+    post:
+      tags: [Dues]
+      summary: Pay a dues invoice (money mutation)
+      description: Posts balanced double-entry ledger entries and emits an audit event. Requires Idempotency-Key.
+      parameters:
+        - { name: invoiceId, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { method: { $ref: '#/components/schemas/PaymentMethod' } }, required: [method] } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/PayInvoiceResult' } } } } }
+  /associations/receipts/{receiptId}:
+    get:
+      tags: [Dues]
+      summary: Payment receipt (with revenue split)
+      parameters: [ { name: receiptId, in: path, required: true, schema: { type: string } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentReceipt' } } } } }
+
+  # ── Announcements & notifications (J, X) ─────────────────────────────────────
+  /associations/announcements:
+    get: { tags: [Engagement], summary: Announcement feed, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AnnouncementSummary' } } } } } } }
+  /associations/announcements/{id}:
+    get:
+      tags: [Engagement]
+      summary: Announcement detail
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Announcement' } } } } }
+  /associations/announcements/{id}/acknowledge:
+    post:
+      tags: [Engagement]
+      summary: Acknowledge an announcement
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+  /associations/notifications:
+    get: { tags: [Engagement], summary: Notification center, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AppNotification' } } } } } } }
+  /associations/notifications/read:
+    post: { tags: [Engagement], summary: Mark notifications read, responses: { '200': { $ref: '#/components/responses/Ok' } } }
+
+  # ── Meetings (K) ──────────────────────────────────────────────────────────
+  /associations/meetings:
+    get: { tags: [Meetings], summary: Meetings list, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/MeetingSummary' } } } } } } }
+  /associations/meetings/{id}:
+    get:
+      tags: [Meetings]
+      summary: Meeting detail
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Meeting' } } } } }
+  /associations/meetings/{id}/rsvp:
+    post:
+      tags: [Meetings]
+      summary: RSVP to a meeting
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { status: { $ref: '#/components/schemas/RsvpStatus' } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+  /associations/meetings/{id}/attendance:
+    post:
+      tags: [Meetings]
+      summary: Check in to a meeting
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+
+  # ── Tasks (M) ─────────────────────────────────────────────────────────────
+  /associations/tasks:
+    get:
+      tags: [Tasks]
+      summary: Tasks list
+      parameters: [ { name: scope, in: query, schema: { type: string, enum: [mine, assigned, overdue, completed] } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/TaskSummary' } } } } } }
+  /associations/tasks/{id}:
+    get:
+      tags: [Tasks]
+      summary: Task detail
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } } }
+    patch:
+      tags: [Tasks]
+      summary: Update task status
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { status: { $ref: '#/components/schemas/TaskStatus' } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+
+  # ── Documents (P) ─────────────────────────────────────────────────────────
+  /associations/documents:
+    get: { tags: [Documents], summary: Document vault, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DocumentSummary' } } } } } } }
+  /associations/documents/{id}:
+    get:
+      tags: [Documents]
+      summary: Document detail
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DocumentDetail' } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/documents/{id}/acknowledge:
+    post:
+      tags: [Documents]
+      summary: Acknowledge a document
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+
+  # ── Chat (I) ──────────────────────────────────────────────────────────────
+  /associations/chat/threads:
+    get: { tags: [Chat], summary: Chat thread list, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ChatThreadSummary' } } } } } } }
+  /associations/chat/threads/{id}:
+    get:
+      tags: [Chat]
+      summary: Chat thread + messages
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ChatThread' } } } } }
+  /associations/chat/threads/{id}/messages:
+    post:
+      tags: [Chat]
+      summary: Send a message
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { body: { type: string } }, required: [body] } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/ChatMessage' } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+
+  # ── AI notes (L) ──────────────────────────────────────────────────────────
+  /associations/ai-notes:
+    get: { tags: [AI Notes], summary: AI note history, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AiNoteSummary' } } } } } } }
+    post:
+      tags: [AI Notes]
+      summary: Create an AI note job (record/upload)
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateAiNoteInput' } } } }
+      responses: { '202': { description: Accepted, content: { application/json: { schema: { type: object, properties: { id: { type: string }, status: { $ref: '#/components/schemas/AiNoteStatus' } } } } } } }
+  /associations/ai-notes/{id}:
+    get:
+      tags: [AI Notes]
+      summary: AI note (minutes draft)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AiNote' } } } } }
+  /associations/ai-notes/{id}/status:
+    get:
+      tags: [AI Notes]
+      summary: Poll processing status
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { status: { $ref: '#/components/schemas/AiNoteStatus' } } } } } } }
+  /associations/ai-notes/{id}/approve:
+    post:
+      tags: [AI Notes]
+      summary: Approve AI minutes (human gate)
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+  /associations/ai-notes/{id}/publish:
+    post:
+      tags: [AI Notes]
+      summary: Publish approved minutes
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+  /associations/ai-notes/{noteId}/action-items/{itemId}/convert:
+    post:
+      tags: [AI Notes]
+      summary: Convert an action item into a Task
+      parameters:
+        - { name: noteId, in: path, required: true, schema: { type: string } }
+        - { name: itemId, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '201': { description: Created, content: { application/json: { schema: { type: object, properties: { taskId: { type: string } } } } } } }
+
+  # ── Community: committees & events (N, O) ────────────────────────────────────
+  /associations/committees:
+    get: { tags: [Community], summary: Committees, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/CommitteeSummary' } } } } } } }
+  /associations/committees/{id}:
+    get:
+      tags: [Community]
+      summary: Committee detail
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Committee' } } } } }
+  /associations/committees/{id}/join:
+    post:
+      tags: [Community]
+      summary: Request to join a committee
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+  /associations/events:
+    get: { tags: [Community], summary: Events, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/EventSummary' } } } } } } }
+  /associations/events/{id}:
+    get:
+      tags: [Community]
+      summary: Event detail
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Event' } } } } }
+  /associations/events/{id}/rsvp:
+    post:
+      tags: [Community]
+      summary: RSVP to an event
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { rsvp: { $ref: '#/components/schemas/EventRsvp' } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+  /associations/events/{id}/register:
+    post:
+      tags: [Community]
+      summary: Register for an event (paid events post to the dues/pay flow)
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, ticketCode: { type: string } } } } } } }
+  /associations/events/{id}/feedback:
+    post:
+      tags: [Community]
+      summary: Submit post-event feedback
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { rating: { type: integer, minimum: 1, maximum: 5 }, comment: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+
+  # ── Support (W) ───────────────────────────────────────────────────────────
+  /associations/support/faqs:
+    get: { tags: [Support], summary: FAQs, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/FaqItem' } } } } } } }
+  /associations/support/tickets:
+    get: { tags: [Support], summary: My tickets, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/SupportTicketSummary' } } } } } } }
+    post:
+      tags: [Support]
+      summary: Create a support ticket
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateTicketInput' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { type: object, properties: { id: { type: string } } } } } } }
+  /associations/support/tickets/{id}:
+    get:
+      tags: [Support]
+      summary: Ticket detail (thread)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SupportTicket' } } } } }
+  /associations/support/tickets/{id}/messages:
+    post:
+      tags: [Support]
+      summary: Reply to a ticket
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { body: { type: string } }, required: [body] } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/TicketMessage' } } } } }
+
+  # ── Admin (Q, R, S) ───────────────────────────────────────────────────────
+  /associations/admin/kpis:
+    get: { tags: [Admin], summary: Admin dashboard KPIs, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminKpis' } } } } } }
+  /associations/admin/approvals:
+    get:
+      tags: [Admin]
+      summary: Membership approval queue
+      parameters: [ { name: jurisdiction, in: query, schema: { type: string, enum: [ALL, CHAPTER, NATIONAL] } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AdminApplicationSummary' } } } } } }
+  /associations/admin/approvals/{id}:
+    get:
+      tags: [Admin]
+      summary: Application detail
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminApplication' } } } } }
+  /associations/admin/approvals/{id}/decision:
+    post:
+      tags: [Admin]
+      summary: Approve / reject / request-info (audit-logged)
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { decision: { type: string, enum: [APPROVE, REJECT, REQUEST_INFO] }, note: { type: string } }, required: [decision] } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+  /associations/admin/finance:
+    get: { tags: [Admin], summary: Finance summary, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/FinanceSummary' } } } } } }
+  /associations/admin/finance/offline:
+    get: { tags: [Admin], summary: Pending offline payments, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/OfflinePayment' } } } } } } }
+  /associations/admin/finance/offline/{id}/decision:
+    post:
+      tags: [Admin]
+      summary: Approve / reject an offline payment proof (money mutation)
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { approve: { type: boolean } }, required: [approve] } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+  /associations/admin/import/preview:
+    post:
+      tags: [Admin]
+      summary: Preview a bulk member import file
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ImportPreview' } } } } }
+  /associations/admin/import/confirm:
+    post:
+      tags: [Admin]
+      summary: Confirm a bulk member import
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { sendInvites: { type: boolean } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ImportResult' } } } } }
+  /associations/admin/members/{id}/suspend:
+    post:
+      tags: [Admin]
+      summary: Suspend a member (audit-logged)
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { reason: { type: string } } } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+  /associations/admin/members/{id}/restore:
+    post:
+      tags: [Admin]
+      summary: Restore a suspended member
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+  /associations/admin/members/{id}/transfer:
+    post:
+      tags: [Admin]
+      summary: Transfer a member to another chapter (audit-logged)
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { chapter: { type: string } }, required: [chapter] } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+  /associations/admin/members/{id}/role:
+    post:
+      tags: [Admin]
+      summary: Assign an admin role to a member (audit-logged)
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { role: { $ref: '#/components/schemas/AdminRole' } }, required: [role] } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string } }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Required on all state-changing requests (IRON RULE).
+      schema: { type: string }
+  responses:
+    Ok:
+      description: Success
+      content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } }
+    NotFound:
+      description: Not found
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Forbidden:
+      description: Access restricted (role or payment-gated)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  schemas:
+    Error: { type: object, properties: { code: { type: string }, message: { type: string } } }
+    Kobo: { type: integer, description: Amount in minor units (kobo), minimum: 0 }
+    GroupType: { type: string, enum: [OPEN, CLOSED, INVITE_ONLY, CODE_BASED, PAID] }
+    MemberStatus: { type: string, enum: [ACTIVE, PENDING, INACTIVE, SUSPENDED, EXPIRED, RESTRICTED] }
+    PaymentStanding: { type: string, enum: [PAID, DUE, OVERDUE] }
+    PaymentMethod: { type: string, enum: [WALLET, PAYSTACK] }
+    DuesCadence: { type: string, enum: [ONE_OFF, MONTHLY, QUARTERLY, ANNUAL, LIFETIME] }
+    InvoiceStatus: { type: string, enum: [PAID, DUE, OVERDUE, PROCESSING] }
+    RsvpStatus: { type: [string, 'null'], enum: [YES, NO, MAYBE, null] }
+    TaskStatus: { type: string, enum: [ASSIGNED, ACCEPTED, IN_PROGRESS, BLOCKED, AWAITING_REVIEW, COMPLETED, OVERDUE] }
+    AiNoteStatus: { type: string, enum: [PROCESSING, READY, APPROVED, PUBLISHED, FAILED] }
+    EventRsvp: { type: [string, 'null'], enum: [GOING, NOT_GOING, null] }
+    AdminRole: { type: string, enum: [NONE, CHAPTER_ADMIN, FINANCE_ADMIN, SECRETARY, NATIONAL_ADMIN, SUPER_ADMIN] }
+
+    OrganisationSummary:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        acronym: { type: [string, 'null'] }
+        category: { type: string }
+        logoUrl: { type: [string, 'null'] }
+        coverUrl: { type: [string, 'null'] }
+        groupType: { $ref: '#/components/schemas/GroupType' }
+        memberCount: { type: integer }
+        chapterCount: { type: integer }
+        verified: { type: boolean }
+        location: { type: [string, 'null'] }
+        tagline: { type: [string, 'null'] }
+    Organisation:
+      allOf:
+        - { $ref: '#/components/schemas/OrganisationSummary' }
+        - type: object
+          properties:
+            description: { type: string }
+            foundedYear: { type: [integer, 'null'] }
+            requiresPayment: { type: boolean }
+            registrationFeeKobo: { $ref: '#/components/schemas/Kobo' }
+            approvalSummary: { type: string }
+            membershipCategories: { type: array, items: { $ref: '#/components/schemas/MembershipCategory' } }
+            chapters: { type: array, items: { $ref: '#/components/schemas/Chapter' } }
+            requirements: { type: array, items: { $ref: '#/components/schemas/JoinRequirement' } }
+            rules: { type: array, items: { type: string } }
+            website: { type: [string, 'null'] }
+    MembershipCategory:
+      type: object
+      properties: { id: { type: string }, label: { type: string }, description: { type: [string, 'null'] }, duesKobo: { $ref: '#/components/schemas/Kobo' }, duesCadence: { $ref: '#/components/schemas/DuesCadence' } }
+    Chapter:
+      type: object
+      properties: { id: { type: string }, name: { type: string }, level: { type: string, enum: [REGION, STATE, LOCAL, BRANCH] }, parentId: { type: [string, 'null'] }, memberCount: { type: integer } }
+    JoinRequirement:
+      type: object
+      properties: { id: { type: string }, label: { type: string }, type: { type: string, enum: [DOCUMENT, SPONSOR, PAYMENT, INFO] }, required: { type: boolean } }
+    CodeValidation:
+      type: object
+      properties:
+        valid: { type: boolean }
+        kind: { type: string, enum: [INVITE, ACCESS] }
+        expired: { type: boolean }
+        organisationId: { type: [string, 'null'] }
+        organisationName: { type: [string, 'null'] }
+        organisationAcronym: { type: [string, 'null'] }
+        chapterName: { type: [string, 'null'] }
+        categoryLabel: { type: [string, 'null'] }
+        message: { type: string }
+    JoinDraft:
+      type: object
+      properties:
+        organisationId: { type: string }
+        categoryId: { type: [string, 'null'] }
+        chapterId: { type: [string, 'null'] }
+        sponsorName: { type: [string, 'null'] }
+        documents: { type: array, items: { type: object, properties: { requirementId: { type: string }, uri: { type: string }, name: { type: string } } } }
+        acceptedRules: { type: boolean }
+      required: [organisationId, acceptedRules]
+    ApplicationResult:
+      type: object
+      properties:
+        applicationId: { type: string }
+        status: { type: string, enum: [SUBMITTED, PENDING_CHAPTER, PENDING_NATIONAL, PENDING_PAYMENT, APPROVED, REJECTED, INFO_REQUESTED] }
+        organisationName: { type: string }
+        submittedAt: { type: string, format: date-time }
+        message: { type: string }
+        nextStep: { type: [string, 'null'] }
+    MembershipCard:
+      type: object
+      properties:
+        memberId: { type: string }
+        fullName: { type: string }
+        photoUrl: { type: [string, 'null'] }
+        organisationName: { type: string }
+        organisationAcronym: { type: [string, 'null'] }
+        categoryLabel: { type: string }
+        chapterName: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/MemberStatus' }
+        paymentStanding: { $ref: '#/components/schemas/PaymentStanding' }
+        verified: { type: boolean }
+        validThrough: { type: string, format: date-time }
+        qrPayload: { type: string }
+    MemberDashboard:
+      type: object
+      properties:
+        card: { $ref: '#/components/schemas/MembershipCard' }
+        outstandingKobo: { $ref: '#/components/schemas/Kobo' }
+        nextDueDate: { type: [string, 'null'] }
+        unreadAnnouncements: { type: integer }
+        openTasks: { type: integer }
+        nextMeeting: { type: [object, 'null'] }
+        latestAnnouncement: { type: [object, 'null'] }
+        restriction: { type: [object, 'null'] }
+    MemberProfileSummary:
+      type: object
+      properties: { id: { type: string }, fullName: { type: string }, memberId: { type: string }, photoUrl: { type: [string, 'null'] }, categoryLabel: { type: string }, chapterName: { type: [string, 'null'] }, status: { $ref: '#/components/schemas/MemberStatus' }, profession: { type: [string, 'null'] }, committees: { type: array, items: { type: string } } }
+    MemberProfile:
+      allOf:
+        - { $ref: '#/components/schemas/MemberProfileSummary' }
+        - type: object
+          properties: { email: { type: [string, 'null'] }, phone: { type: [string, 'null'] }, location: { type: [string, 'null'] }, joinedAt: { type: string }, paymentStanding: { $ref: '#/components/schemas/PaymentStanding' }, bio: { type: [string, 'null'] }, contactRestricted: { type: boolean } }
+    MyProfile:
+      type: object
+      properties: { fullName: { type: string }, memberId: { type: string }, photoUrl: { type: [string, 'null'] }, email: { type: string }, phone: { type: string }, profession: { type: string }, location: { type: string }, dob: { type: [string, 'null'] }, bio: { type: string }, emergency: { type: object }, nextOfKin: { type: object }, categoryLabel: { type: string }, chapterName: { type: [string, 'null'] } }
+    ProfileEdit: { type: object }
+    PrivacySettings:
+      type: object
+      properties: { showPhone: { type: boolean }, showEmail: { type: boolean }, showInDirectory: { type: boolean }, showProfession: { type: boolean } }
+    ActivityEntry:
+      type: object
+      properties: { id: { type: string }, type: { type: string }, text: { type: string }, at: { type: string, format: date-time } }
+    DuesInvoice:
+      type: object
+      properties: { id: { type: string }, title: { type: string }, description: { type: [string, 'null'] }, amountKobo: { $ref: '#/components/schemas/Kobo' }, cadence: { $ref: '#/components/schemas/DuesCadence' }, status: { $ref: '#/components/schemas/InvoiceStatus' }, dueDate: { type: string }, scope: { type: string, enum: [NATIONAL, STATE, LOCAL, COMMITTEE] } }
+    DuesSummary:
+      type: object
+      properties: { outstandingKobo: { $ref: '#/components/schemas/Kobo' }, paidThisYearKobo: { $ref: '#/components/schemas/Kobo' }, standing: { $ref: '#/components/schemas/PaymentStanding' }, invoices: { type: array, items: { $ref: '#/components/schemas/DuesInvoice' } } }
+    PayInvoiceResult:
+      type: object
+      properties: { receiptId: { type: string }, status: { type: string, enum: [SUCCESS, PENDING, FAILED] } }
+    PaymentReceipt:
+      type: object
+      properties: { id: { type: string }, reference: { type: string }, invoiceTitle: { type: string }, amountKobo: { $ref: '#/components/schemas/Kobo' }, method: { $ref: '#/components/schemas/PaymentMethod' }, paidAt: { type: string }, memberName: { type: string }, organisationName: { type: string }, split: { type: array, items: { type: object, properties: { label: { type: string }, amountKobo: { $ref: '#/components/schemas/Kobo' } } } } }
+    AnnouncementSummary:
+      type: object
+      properties: { id: { type: string }, title: { type: string }, preview: { type: string }, audience: { type: string }, postedAt: { type: string }, author: { type: string }, urgent: { type: boolean }, read: { type: boolean }, requiresAck: { type: boolean }, acknowledged: { type: boolean } }
+    Announcement:
+      allOf:
+        - { $ref: '#/components/schemas/AnnouncementSummary' }
+        - type: object
+          properties: { body: { type: string }, attachments: { type: array, items: { type: object } }, readCount: { type: integer }, totalRecipients: { type: integer } }
+    AppNotification:
+      type: object
+      properties: { id: { type: string }, kind: { type: string }, title: { type: string }, body: { type: string }, createdAt: { type: string }, read: { type: boolean }, route: { type: [string, 'null'] } }
+    MeetingSummary:
+      type: object
+      properties: { id: { type: string }, title: { type: string }, mode: { type: string, enum: [PHYSICAL, VIRTUAL, HYBRID] }, startsAt: { type: string }, endsAt: { type: [string, 'null'] }, location: { type: [string, 'null'] }, state: { type: string, enum: [UPCOMING, LIVE, PAST, CANCELLED] }, rsvp: { $ref: '#/components/schemas/RsvpStatus' }, attendeeCount: { type: integer } }
+    Meeting:
+      allOf:
+        - { $ref: '#/components/schemas/MeetingSummary' }
+        - type: object
+          properties: { description: { type: string }, agenda: { type: array, items: { type: object } }, documents: { type: array, items: { type: object } }, checkedIn: { type: boolean }, minutesPublished: { type: boolean }, attendanceCode: { type: string } }
+    TaskSummary:
+      type: object
+      properties: { id: { type: string }, title: { type: string }, status: { $ref: '#/components/schemas/TaskStatus' }, priority: { type: string, enum: [LOW, MEDIUM, HIGH] }, dueDate: { type: [string, 'null'] }, assigneeName: { type: string }, committee: { type: [string, 'null'] } }
+    Task:
+      allOf:
+        - { $ref: '#/components/schemas/TaskSummary' }
+        - type: object
+          properties: { description: { type: string }, checklist: { type: array, items: { type: object } }, comments: { type: array, items: { type: object } }, createdBy: { type: string }, meetingId: { type: [string, 'null'] }, meetingTitle: { type: [string, 'null'] } }
+    DocumentSummary:
+      type: object
+      properties: { id: { type: string }, title: { type: string }, category: { type: string }, kind: { type: string, enum: [pdf, image, doc] }, sizeLabel: { type: string }, updatedAt: { type: string }, restricted: { type: boolean }, requiresAck: { type: boolean }, acknowledged: { type: boolean } }
+    DocumentDetail:
+      allOf:
+        - { $ref: '#/components/schemas/DocumentSummary' }
+        - type: object
+          properties: { description: { type: [string, 'null'] }, version: { type: string }, versionHistory: { type: array, items: { type: object } }, aiSummary: { type: [string, 'null'] }, uploadedBy: { type: string } }
+    ChatThreadSummary:
+      type: object
+      properties: { id: { type: string }, title: { type: string }, scope: { type: string }, lastMessage: { type: string }, lastAt: { type: string }, unreadCount: { type: integer }, muted: { type: boolean }, memberCount: { type: integer }, postingBlock: { type: [string, 'null'] } }
+    ChatThread:
+      allOf:
+        - { $ref: '#/components/schemas/ChatThreadSummary' }
+        - type: object
+          properties: { description: { type: [string, 'null'] }, messages: { type: array, items: { $ref: '#/components/schemas/ChatMessage' } } }
+    ChatMessage:
+      type: object
+      properties: { id: { type: string }, threadId: { type: string }, authorId: { type: string }, authorName: { type: string }, authorRole: { type: [string, 'null'] }, body: { type: string }, createdAt: { type: string }, mine: { type: boolean }, system: { type: boolean }, pinned: { type: boolean } }
+    AiNoteSummary:
+      type: object
+      properties: { id: { type: string }, meetingTitle: { type: string }, status: { $ref: '#/components/schemas/AiNoteStatus' }, source: { type: string, enum: [RECORD, AUDIO, VIDEO, TRANSCRIPT] }, createdAt: { type: string }, durationLabel: { type: string } }
+    AiNote:
+      allOf:
+        - { $ref: '#/components/schemas/AiNoteSummary' }
+        - type: object
+          properties: { summary: { type: string }, minutes: { type: string }, decisions: { type: array, items: { type: object } }, actionItems: { type: array, items: { type: object } }, unresolved: { type: array, items: { type: string } }, financialCommitments: { type: array, items: { type: object } }, attendees: { type: array, items: { type: object } }, transcriptPreview: { type: string }, meetingId: { type: [string, 'null'] } }
+    CreateAiNoteInput:
+      type: object
+      properties: { source: { type: string, enum: [RECORD, AUDIO, VIDEO, TRANSCRIPT] }, meetingTitle: { type: string }, meetingId: { type: [string, 'null'] } }
+      required: [source, meetingTitle]
+    CommitteeSummary:
+      type: object
+      properties: { id: { type: string }, name: { type: string }, purpose: { type: string }, memberCount: { type: integer }, joinStatus: { type: string, enum: [NONE, PENDING, MEMBER] }, myRole: { type: [string, 'null'] } }
+    Committee:
+      allOf:
+        - { $ref: '#/components/schemas/CommitteeSummary' }
+        - type: object
+          properties: { description: { type: string }, chair: { type: string }, secretary: { type: string }, members: { type: array, items: { type: object } }, meetingsCount: { type: integer }, tasksCount: { type: integer }, docsCount: { type: integer }, chatThreadId: { type: [string, 'null'] } }
+    EventSummary:
+      type: object
+      properties: { id: { type: string }, title: { type: string }, startsAt: { type: string }, location: { type: string }, state: { type: string, enum: [UPCOMING, PAST] }, paid: { type: boolean }, feeKobo: { $ref: '#/components/schemas/Kobo' }, registered: { type: boolean }, rsvp: { $ref: '#/components/schemas/EventRsvp' }, coverUrl: { type: [string, 'null'] } }
+    Event:
+      allOf:
+        - { $ref: '#/components/schemas/EventSummary' }
+        - type: object
+          properties: { description: { type: string }, endsAt: { type: [string, 'null'] }, organiser: { type: string }, attendeeCount: { type: integer }, capacity: { type: [integer, 'null'] }, documents: { type: array, items: { type: object } }, ticketCode: { type: string }, checkedIn: { type: boolean }, feedbackSubmitted: { type: boolean } }
+    NotificationPrefs:
+      type: object
+      properties: { announcements: { type: boolean }, duesReminders: { type: boolean }, meetings: { type: boolean }, tasks: { type: boolean }, chat: { type: boolean }, events: { type: boolean } }
+    SecuritySettings:
+      type: object
+      properties: { biometricEnabled: { type: boolean }, twoFactorEnabled: { type: boolean } }
+    Device:
+      type: object
+      properties: { id: { type: string }, name: { type: string }, platform: { type: string }, lastActive: { type: string }, current: { type: boolean }, location: { type: [string, 'null'] } }
+    FaqItem:
+      type: object
+      properties: { id: { type: string }, question: { type: string }, answer: { type: string } }
+    SupportTicketSummary:
+      type: object
+      properties: { id: { type: string }, subject: { type: string }, category: { type: string, enum: [MEMBERSHIP, PAYMENT, TECHNICAL, OTHER] }, status: { type: string, enum: [OPEN, IN_PROGRESS, RESOLVED] }, updatedAt: { type: string } }
+    SupportTicket:
+      allOf:
+        - { $ref: '#/components/schemas/SupportTicketSummary' }
+        - type: object
+          properties: { messages: { type: array, items: { $ref: '#/components/schemas/TicketMessage' } } }
+    TicketMessage:
+      type: object
+      properties: { id: { type: string }, author: { type: string }, fromSupport: { type: boolean }, body: { type: string }, createdAt: { type: string } }
+    CreateTicketInput:
+      type: object
+      properties: { subject: { type: string }, category: { type: string, enum: [MEMBERSHIP, PAYMENT, TECHNICAL, OTHER] }, message: { type: string } }
+      required: [subject, category, message]
+    AdminKpis:
+      type: object
+      properties: { totalMembers: { type: integer }, activeMembers: { type: integer }, pendingApprovals: { type: integer }, unpaidMembers: { type: integer }, duesCollectedKobo: { $ref: '#/components/schemas/Kobo' }, duesOutstandingKobo: { $ref: '#/components/schemas/Kobo' } }
+    AdminApplicationSummary:
+      type: object
+      properties: { id: { type: string }, applicantName: { type: string }, category: { type: string }, chapter: { type: string }, submittedAt: { type: string }, status: { type: string, enum: [PENDING, INFO_REQUESTED] }, jurisdiction: { type: string, enum: [CHAPTER, NATIONAL] }, paid: { type: boolean } }
+    AdminApplication:
+      allOf:
+        - { $ref: '#/components/schemas/AdminApplicationSummary' }
+        - type: object
+          properties: { email: { type: string }, phone: { type: string }, profession: { type: string }, sponsor: { type: [string, 'null'] }, documents: { type: array, items: { type: object } }, registrationFeeKobo: { $ref: '#/components/schemas/Kobo' }, slaHoursLeft: { type: integer } }
+    FinanceSummary:
+      type: object
+      properties: { collectedKobo: { $ref: '#/components/schemas/Kobo' }, outstandingKobo: { $ref: '#/components/schemas/Kobo' }, paidMembers: { type: integer }, unpaidMembers: { type: integer }, byChapter: { type: array, items: { type: object } }, byCategory: { type: array, items: { type: object } }, offlinePending: { type: integer } }
+    OfflinePayment:
+      type: object
+      properties: { id: { type: string }, memberName: { type: string }, memberId: { type: string }, amountKobo: { $ref: '#/components/schemas/Kobo' }, method: { type: string }, reference: { type: string }, forItem: { type: string }, submittedAt: { type: string }, status: { type: string, enum: [PENDING, APPROVED, REJECTED] } }
+    ImportPreview:
+      type: object
+      properties: { fileName: { type: string }, total: { type: integer }, valid: { type: integer }, duplicates: { type: integer }, invalid: { type: integer }, rows: { type: array, items: { type: object } } }
+    ImportResult:
+      type: object
+      properties: { imported: { type: integer }, skipped: { type: integer }, invited: { type: integer }, batchId: { type: string } }
+    AdminAccess:
+      type: object
+      properties:
+        isAdmin: { type: boolean }
+        role: { $ref: '#/components/schemas/AdminRole' }
+        roleLabel: { type: string }
+        jurisdiction: { type: string, enum: [CHAPTER, NATIONAL, GLOBAL] }
+        can: { type: object, properties: { approveMembers: { type: boolean }, manageMembers: { type: boolean }, manageFinance: { type: boolean }, importMembers: { type: boolean } } }
+    OrgDraft:
+      type: object
+      properties:
+        name: { type: string }
+        acronym: { type: string }
+        category: { type: string }
+        description: { type: string }
+        logoUri: { type: [string, 'null'] }
+        groupType: { $ref: '#/components/schemas/GroupType' }
+        approvalRule: { type: string, enum: [AUTO, ADMIN, CHAPTER_THEN_NATIONAL, PAYMENT_FIRST] }
+        registrationFeeKobo: { $ref: '#/components/schemas/Kobo' }
+        chapters: { type: array, items: { type: object } }
+        categories: { type: array, items: { type: object } }
+        restrictions: { type: object }
+        acceptedTerms: { type: boolean }
+      required: [name, category, groupType, acceptedTerms]
+    PublishResult:
+      type: object
+      properties: { organisationId: { type: string }, name: { type: string } }

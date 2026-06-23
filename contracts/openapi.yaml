@@ -41,6 +41,324 @@ components:
         within 24 hours return the cached response without side effects.
 
   schemas:
+    # ── MapService (provider-agnostic maps abstraction) ───────────────────────
+    # Every result carries `provider` + `source`. `source` is the licensing
+    # stack ('openstack' | 'google' | 'mapbox' | 'own'); the client may only
+    # render a point on a basemap with a matching source (license coherence).
+    MapPoint:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat: { type: number, format: double }
+        lng: { type: number, format: double }
+        source:
+          type: string
+          enum: [openstack, google, mapbox, own]
+          description: Licensing stack the coordinate originated from.
+    MapGeoResult:
+      type: object
+      required: [lat, lng, provider, source, cacheable]
+      properties:
+        lat: { type: number, format: double }
+        lng: { type: number, format: double }
+        address: { type: string }
+        plus_code: { type: string, description: Open Location Code (Plus Code) }
+        provider: { type: string }
+        source: { type: string, enum: [openstack, google, mapbox, own] }
+        cacheable:
+          type: boolean
+          description: >
+            false for Google-sourced results, which are NEVER persisted (the
+            backend cache writer refuses them).
+    MapSuggestion:
+      type: object
+      required: [label, provider, source]
+      properties:
+        label: { type: string }
+        place_id: { type: string }
+        lat: { type: number, format: double }
+        lng: { type: number, format: double }
+        has_coords: { type: boolean }
+        provider: { type: string }
+        source: { type: string, enum: [openstack, google, mapbox, own] }
+    MapPlace:
+      type: object
+      required: [name, lat, lng, provider, source]
+      properties:
+        name: { type: string }
+        address: { type: string }
+        lat: { type: number, format: double }
+        lng: { type: number, format: double }
+        category: { type: string }
+        place_id: { type: string }
+        provider: { type: string }
+        source: { type: string, enum: [openstack, google, mapbox, own] }
+    MapRoute:
+      type: object
+      required: [distance_m, duration_s, provider, source]
+      properties:
+        distance_m: { type: integer }
+        duration_s: { type: integer }
+        polyline: { type: string, description: Encoded polyline geometry }
+        provider: { type: string }
+        source: { type: string, enum: [openstack, google, mapbox, own] }
+        degraded:
+          type: boolean
+          description: true when served by a degraded fallback provider (cost guard).
+    MapMatrixCell:
+      type: object
+      properties:
+        distance_m: { type: integer }
+        duration_s: { type: integer }
+    MapMatrix:
+      type: object
+      required: [rows, provider, source]
+      properties:
+        rows:
+          type: array
+          items:
+            type: array
+            items: { $ref: '#/components/schemas/MapMatrixCell' }
+          description: rows[i][j] is origins[i] -> dests[j].
+        provider: { type: string }
+        source: { type: string, enum: [openstack, google, mapbox, own] }
+    MapPolyline:
+      type: object
+      required: [provider, source]
+      properties:
+        points:
+          type: array
+          items: { $ref: '#/components/schemas/MapPoint' }
+        encoded: { type: string }
+        provider: { type: string }
+        source: { type: string, enum: [openstack, google, mapbox, own] }
+    MapStyleConfig:
+      type: object
+      required: [style_url, attribution, provider, source]
+      properties:
+        style_url: { type: string, description: MapLibre GL style URL }
+        attribution: { type: string }
+        provider: { type: string }
+        source: { type: string, enum: [openstack, google, mapbox, own] }
+    MapOwnEntity:
+      type: object
+      required: [entity_id, entity_type, lat, lng, distance_m]
+      properties:
+        entity_id: { type: string }
+        entity_type: { type: string }
+        lat: { type: number, format: double }
+        lng: { type: number, format: double }
+        plus_code: { type: string }
+        distance_m: { type: number, format: double }
+    MapUsageRow:
+      type: object
+      properties:
+        provider: { type: string }
+        primitive: { type: string }
+        month: { type: string }
+        count: { type: integer, format: int64 }
+        cap: { type: integer, format: int64 }
+        pct: { type: integer }
+
+    # ── Mobility (ride-hailing) ───────────────────────────────────────────────
+    Place:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat: { type: number, format: double }
+        lng: { type: number, format: double }
+        address: { type: string }
+
+    PricingConfig:
+      type: object
+      description: Admin-configurable per zone + service_type. Money in kobo; pct as fractions.
+      properties:
+        zone: { type: string }
+        service_type: { type: string }
+        currency: { type: string, default: NGN }
+        base_fare_kobo: { type: integer, format: int64 }
+        per_km_kobo: { type: integer, format: int64 }
+        per_min_kobo: { type: integer, format: int64 }
+        min_fare_kobo: { type: integer, format: int64 }
+        fare_floor_pct: { type: number, description: "offers must be >= system_fare * this" }
+        fare_ceiling_pct: { type: number, description: "offers must be <= system_fare * this" }
+        driver_profit_floor_kobo: { type: integer, format: int64, description: "accepted fare net of commission must be >= this" }
+        surge_multiplier: { type: number }
+        cancellation_fee_kobo: { type: integer, format: int64 }
+        waiting_fee_per_min_kobo: { type: integer, format: int64 }
+        active: { type: boolean }
+
+    EstimateRequest:
+      type: object
+      required: [pickup, dest]
+      properties:
+        pickup: { $ref: '#/components/schemas/Place' }
+        dest: { $ref: '#/components/schemas/Place' }
+        service_type: { type: string, default: ride_hailing }
+
+    FareEstimate:
+      type: object
+      properties:
+        distance_m: { type: integer }
+        duration_s: { type: integer }
+        system_fare_kobo: { type: integer, format: int64 }
+        offer_min_kobo: { type: integer, format: int64 }
+        offer_max_kobo: { type: integer, format: int64 }
+        polyline: { type: string }
+
+    MobilityError:
+      type: object
+      properties:
+        error: { type: string }
+        code:
+          type: string
+          enum: [FARE_BELOW_FLOOR, FARE_ABOVE_CEILING, INVALID_STATE, PIN_MISMATCH, DRIVER_NOT_APPROVED, NOT_FOUND, FORBIDDEN]
+
+    # ── FX Orchestration (normalized, provider-agnostic) ──────────────────────
+    FxMoney:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: integer, format: int64, description: Integer minor units (kobo/cents) }
+        currency: { type: string, description: ISO-4217 code }
+    FxFee:
+      type: object
+      properties:
+        type: { type: string, enum: [provider_fee, rail_fee, paymax_spread] }
+        amount: { $ref: '#/components/schemas/FxMoney' }
+    FxRoute:
+      type: object
+      properties:
+        provider: { type: string }
+        corridor: { type: string }
+        rail: { type: string, enum: [bank_transfer, mobile_money, iban, wallet, stablecoin] }
+    FxAlternative:
+      type: object
+      properties:
+        provider: { type: string }
+        corridor: { type: string }
+        rail: { type: string }
+        all_in_rate: { type: number, format: double }
+        destination: { $ref: '#/components/schemas/FxMoney' }
+    FxQuoteRequest:
+      type: object
+      required: [source, destination, amount, intent]
+      properties:
+        source: { type: string, description: ISO-4217 }
+        destination: { type: string, description: ISO-4217 }
+        amount: { type: integer, format: int64, description: minor units of the amount_type side }
+        amount_type: { type: string, enum: [source, destination], default: source }
+        intent: { type: string, enum: [conversion, transfer, collection] }
+        destination_rail: { type: string, enum: [bank_transfer, mobile_money, iban, wallet, stablecoin] }
+        lock: { type: boolean, default: false }
+    FxQuote:
+      type: object
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [quoted, locked, consumed, expired] }
+        amount_type: { type: string }
+        source: { $ref: '#/components/schemas/FxMoney' }
+        destination: { $ref: '#/components/schemas/FxMoney' }
+        rate: { type: number, format: double, description: indicative mid }
+        all_in_rate: { type: number, format: double, description: effective rate after spread+fees }
+        fees: { type: array, items: { $ref: '#/components/schemas/FxFee' } }
+        route: { $ref: '#/components/schemas/FxRoute' }
+        alternatives: { type: array, items: { $ref: '#/components/schemas/FxAlternative' } }
+        locked: { type: boolean }
+        expires_at: { type: string, format: date-time }
+    FxConversionRequest:
+      type: object
+      required: [quote_id]
+      properties:
+        quote_id: { type: string }
+        customer_id: { type: string }
+        reference: { type: string }
+    FxConversion:
+      type: object
+      properties:
+        id: { type: string }
+        reference: { type: string }
+        status: { type: string, enum: [pending, settled, failed] }
+        source: { $ref: '#/components/schemas/FxMoney' }
+        destination: { $ref: '#/components/schemas/FxMoney' }
+        rate: { type: number, format: double }
+        all_in_rate: { type: number, format: double }
+        fees: { type: array, items: { $ref: '#/components/schemas/FxFee' } }
+        route: { $ref: '#/components/schemas/FxRoute' }
+        provider_ref: { type: string }
+        transaction_id: { type: string }
+        created_at: { type: string, format: date-time }
+    FxDestination:
+      type: object
+      required: [rail, currency, account_number]
+      properties:
+        rail: { type: string }
+        currency: { type: string }
+        scheme: { type: string }
+        account_number: { type: string }
+        bank_code: { type: string }
+        counterparty:
+          type: object
+          properties: { name: { type: string } }
+    FxTransferRequest:
+      type: object
+      properties:
+        quote_id: { type: string, description: omit for same-currency transfer }
+        customer_id: { type: string }
+        beneficiary_id: { type: string }
+        destination: { $ref: '#/components/schemas/FxDestination' }
+        amount: { $ref: '#/components/schemas/FxMoney' }
+        narration: { type: string }
+        reference: { type: string }
+    FxTransfer:
+      type: object
+      properties:
+        id: { type: string }
+        reference: { type: string }
+        status: { type: string, enum: [queued, processing, paid, failed, reversed] }
+        source: { $ref: '#/components/schemas/FxMoney' }
+        destination: { $ref: '#/components/schemas/FxMoney' }
+        quoted_rate: { type: number, format: double }
+        executed_rate: { type: number, format: double }
+        fees: { type: array, items: { $ref: '#/components/schemas/FxFee' } }
+        route: { $ref: '#/components/schemas/FxRoute' }
+        provider_ref: { type: string }
+        transaction_id: { type: string }
+        status_history:
+          type: array
+          items:
+            type: object
+            properties: { status: { type: string }, at: { type: string, format: date-time } }
+        created_at: { type: string, format: date-time }
+    FxCollectionRequest:
+      type: object
+      required: [currency, type]
+      properties:
+        customer_id: { type: string }
+        currency: { type: string }
+        type: { type: string, enum: [virtual_account, iban] }
+    FxVirtualAccount:
+      type: object
+      properties:
+        id: { type: string }
+        currency: { type: string }
+        type: { type: string }
+        provider: { type: string }
+        status: { type: string }
+        details: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+    FxError:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            type: { type: string, enum: [invalid_request, authentication, rate_expired, insufficient_float, insufficient_balance, routing_unavailable, provider_error, compliance_block, conflict, rate_limited, internal] }
+            code: { type: string }
+            message: { type: string }
+            param: { type: string, nullable: true }
+            provider_ref: { type: string, nullable: true }
+            request_id: { type: string }
     Error:
       type: object
       required: [success, error]
@@ -248,6 +566,1220 @@ security:
 # ── KYC endpoints ─────────────────────────────────────────────────────────────
 
 paths:
+  # ╔══════════════════════════════════════════════════════════════════════╗
+  # ║ SESSION HARDENING — #19 (refresh rotation + suspicious-login response)  ║
+  # ║ Feature flag: FEATURE_SESSION_HARDENING_ENABLED (default OFF).          ║
+  # ║ When OFF, every endpoint below returns 503 { error: feature_disabled }. ║
+  # ║ Self routes require bearerAuth; admin routes additionally require the    ║
+  # ║ users.suspend permission. Tokens are stored hashed only.                 ║
+  # ╚══════════════════════════════════════════════════════════════════════╝
+  /api/auth/sessions:
+    get:
+      operationId: listMySessions
+      summary: List the caller's active auth sessions
+      tags: [SessionHardening]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Active sessions (no token material is ever returned)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  sessions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        device: { type: string, description: non-PII device fingerprint }
+                        ip: { type: string }
+                        userAgent: { type: string }
+                        rotationCounter: { type: integer }
+                        lastSeenAt: { type: string, format: date-time, nullable: true }
+                        expiresAt: { type: string, format: date-time }
+                        createdAt: { type: string, format: date-time }
+        '401': { description: Unauthenticated }
+        '503': { description: Feature disabled (flag off) }
+  /api/auth/sessions/{id}:
+    delete:
+      operationId: revokeMySession
+      summary: Revoke one of the caller's own sessions
+      tags: [SessionHardening]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Session revoked }
+        '400': { description: Invalid / foreign session (object-level authz) }
+        '401': { description: Unauthenticated }
+        '503': { description: Feature disabled (flag off) }
+  /api/auth/sessions/revoke-all:
+    post:
+      operationId: revokeAllMySessions
+      summary: Revoke all of the caller's active sessions
+      tags: [SessionHardening]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  revoked: { type: integer }
+        '401': { description: Unauthenticated }
+        '503': { description: Feature disabled (flag off) }
+  /api/admin/users/{id}/force-logout:
+    post:
+      operationId: adminForceLogout
+      summary: Admin — revoke all of a user's sessions (force logout)
+      description: Requires the users.suspend permission. Audited; raises a security event.
+      tags: [SessionHardening]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  revoked: { type: integer }
+        '403': { description: Missing users.suspend permission }
+        '503': { description: Feature disabled (flag off) }
+  /api/admin/users/{id}/force-password-reset:
+    post:
+      operationId: adminForcePasswordReset
+      summary: Admin — force a password reset and revoke the user's sessions
+      description: Sets force_password_reset, revokes all sessions, notifies the user, audited as critical.
+      tags: [SessionHardening]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Reset enforced; sessions revoked }
+        '403': { description: Missing users.suspend permission }
+        '503': { description: Feature disabled (flag off) }
+  # ╔══════════════════════════════════════════════════════════════════════╗
+  # ║ ESTATE SUPER-APP — Blocks 29-44 (Backend Agent 2)                      ║
+  # ║ Base: /api/finance/estate/:id/...  ·  bearerAuth  ·  money in kobo.    ║
+  # ║ Dues pay is the money path: Idempotency-Key header REQUIRED.           ║
+  # ╚══════════════════════════════════════════════════════════════════════╝
+  /api/finance/estate/{id}/dues/invoices:
+    get:
+      operationId: estateListInvoices
+      summary: List dues invoices (own; admin sees all)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: status, in: query, required: false, schema: { type: string, enum: [pending, paid, overdue, waived] } }
+      responses:
+        '200': { description: Invoice list }
+    post:
+      operationId: estateCreateInvoice
+      summary: Bill a resident (estate admin only)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resident_id, category, amount_kobo, due_date]
+              properties:
+                resident_id: { type: string, format: uuid }
+                property_id: { type: string, format: uuid }
+                category: { type: string, enum: [service_charge, security_levy, waste, water, electricity, rent, facility, penalty, other] }
+                amount_kobo: { type: integer, format: int64, minimum: 1, description: Minor units (kobo) }
+                due_date: { type: string, format: date-time }
+      responses:
+        '201': { description: Invoice created }
+        '403': { description: Not an estate admin }
+  /api/finance/estate/{id}/dues/invoices/{invoiceId}/pay:
+    post:
+      operationId: estatePayDues
+      summary: Pay a dues invoice from wallet (balanced double-entry; immutable receipt)
+      description: >
+        Debits the payer wallet and credits the estate settlement account in one
+        balanced ledger journal. The Idempotency-Key header is REQUIRED and fails
+        closed if absent (HTTP 400). Tier-limit checked fail-closed. Retries with
+        the same key are no-ops returning the original receipt.
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: invoiceId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string }, description: Required — money mutation fails closed without it }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                method: { type: string, enum: [wallet, card, transfer, ussd], default: wallet }
+                amount_kobo: { type: integer, format: int64, description: Optional; must equal the invoice amount }
+      responses:
+        '201': { description: Payment receipt (immutable) }
+        '400': { description: Idempotency-Key missing }
+        '409': { description: Invoice state / amount / tier-limit conflict }
+        '503': { description: Ledger unavailable }
+  /api/finance/estate/{id}/dues/restrictions:
+    post:
+      operationId: estateApplyRestriction
+      summary: Apply soft/hard service restriction on a defaulting resident (admin)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resident_id, level]
+              properties:
+                resident_id: { type: string, format: uuid }
+                invoice_id: { type: string, format: uuid }
+                level: { type: string, enum: [soft, hard] }
+                reason: { type: string }
+      responses:
+        '201': { description: Restriction applied }
+  /api/finance/estate/{id}/dues/restrictions/{residentId}/lift:
+    post:
+      operationId: estateLiftRestriction
+      summary: Lift a resident's active restriction (estate admin only)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: residentId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Restriction lifted }
+  /api/finance/estate/{id}/tasks:
+    get:
+      operationId: estateListTasks
+      summary: List estate tasks
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: status, in: query, required: false, schema: { type: string, enum: [todo, in_progress, done] } }
+      responses: { '200': { description: Task list } }
+    post:
+      operationId: estateCreateTask
+      summary: Create a task (estate admin only)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 2, maxLength: 200 }
+                description: { type: string }
+                assignee_id: { type: string, format: uuid }
+                due_date: { type: string, format: date-time }
+                priority: { type: string, enum: [low, medium, high] }
+      responses: { '201': { description: Task created } }
+  /api/finance/estate/{id}/tasks/{taskId}/status:
+    patch:
+      operationId: estateUpdateTaskStatus
+      summary: Move a task (admin or assignee)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [status], properties: { status: { type: string, enum: [todo, in_progress, done] } } }
+      responses: { '200': { description: Updated } }
+  /api/finance/estate/{id}/repairs:
+    get:
+      operationId: estateListRepairs
+      summary: List repair requests (own; admin sees all)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: status, in: query, required: false, schema: { type: string } }
+      responses: { '200': { description: Repair list } }
+    post:
+      operationId: estateCreateRepair
+      summary: Raise a maintenance/repair request
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, description]
+              properties:
+                property_id: { type: string, format: uuid }
+                category: { type: string, enum: [plumbing, electrical, gate, generator, elevator, water, waste, road, pest, facility, other] }
+                description: { type: string, minLength: 5 }
+                urgency: { type: string, enum: [low, medium, high] }
+      responses: { '201': { description: Repair created } }
+  /api/finance/estate/{id}/repairs/{repairId}/updates:
+    get:
+      operationId: estateListRepairUpdates
+      summary: List status updates for a repair
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: repairId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Update list } }
+    post:
+      operationId: estateAddRepairUpdate
+      summary: Append a status update (estate admin only)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: repairId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [status], properties: { status: { type: string }, note: { type: string } } }
+      responses: { '201': { description: Update added } }
+  /api/finance/estate/{id}/facilities:
+    get:
+      operationId: estateListFacilities
+      summary: List bookable facilities
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Facility list } }
+    post:
+      operationId: estateCreateFacility
+      summary: Create a facility (estate admin only)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 200 }
+                kind: { type: string }
+                capacity: { type: integer }
+                fee_kobo: { type: integer, format: int64, minimum: 0 }
+      responses: { '201': { description: Facility created } }
+  /api/finance/estate/{id}/facilities/{facilityId}/book:
+    post:
+      operationId: estateBookFacility
+      summary: Book a facility (blocked by a hard dues restriction)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: facilityId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [starts_at, ends_at]
+              properties:
+                starts_at: { type: string, format: date-time }
+                ends_at: { type: string, format: date-time }
+      responses:
+        '201': { description: Booking created }
+        '409': { description: Window invalid or hard restriction active }
+  /api/finance/estate/{id}/bookings:
+    get:
+      operationId: estateListMyBookings
+      summary: List the caller's facility bookings
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Booking list } }
+  /api/finance/estate/{id}/announcements:
+    get:
+      operationId: estateListAnnouncements
+      summary: List announcements (with per-caller read flag)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Announcement list } }
+    post:
+      operationId: estateCreateAnnouncement
+      summary: Post an announcement (estate admin only)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, body]
+              properties:
+                title: { type: string, minLength: 2, maxLength: 200 }
+                body: { type: string, minLength: 1 }
+                kind: { type: string, enum: [general, emergency, security, payment, maintenance, meeting, election] }
+      responses: { '201': { description: Announcement posted } }
+  /api/finance/estate/{id}/announcements/{annId}/read:
+    post:
+      operationId: estateMarkAnnouncementRead
+      summary: Mark an announcement read
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: annId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Marked read } }
+  /api/finance/estate/{id}/emergencies:
+    get:
+      operationId: estateListEmergencies
+      summary: List emergency alerts
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: status, in: query, required: false, schema: { type: string, enum: [open, responding, resolved] } }
+      responses: { '200': { description: Emergency list } }
+    post:
+      operationId: estateRaiseEmergency
+      summary: Raise an emergency / panic alert
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [panic, medical, fire, security, noise, theft, domestic, other] }
+                description: { type: string }
+                location: { type: string }
+      responses: { '201': { description: Alert raised } }
+  /api/finance/estate/{id}/emergencies/{alertId}/status:
+    patch:
+      operationId: estateUpdateEmergencyStatus
+      summary: Update emergency status (estate admin only)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: alertId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [status], properties: { status: { type: string, enum: [open, responding, resolved] } } }
+      responses: { '200': { description: Updated } }
+  /api/finance/estate/{id}/documents:
+    get:
+      operationId: estateListDocuments
+      summary: List estate documents (non-admins never see restricted docs)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: category, in: query, required: false, schema: { type: string } }
+      responses: { '200': { description: Document list } }
+    post:
+      operationId: estateCreateDocument
+      summary: Record an uploaded document (admin; file via presigned R2 — type/size validated)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, file_url]
+              properties:
+                title: { type: string, minLength: 2, maxLength: 200 }
+                category: { type: string }
+                file_url: { type: string, format: uri, description: R2 object URL from the presigned upload step }
+                restricted: { type: boolean }
+                content_type: { type: string, description: Validated against the upload allow-list }
+                size_bytes: { type: integer, format: int64, description: Validated against 25 MiB cap }
+      responses:
+        '201': { description: Document recorded }
+        '403': { description: Not an estate admin, or content type/size rejected }
+  /api/finance/estate/{id}/vendors:
+    get:
+      operationId: estateListVendors
+      summary: List vendors / artisans
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: status, in: query, required: false, schema: { type: string, enum: [pending, verified, suspended] } }
+      responses: { '200': { description: Vendor list } }
+    post:
+      operationId: estateCreateVendor
+      summary: Register a vendor (estate admin only)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 200 }
+                category: { type: string }
+                phone: { type: string }
+                user_id: { type: string, format: uuid }
+      responses: { '201': { description: Vendor registered } }
+  /api/finance/estate/{id}/vendors/{vendorId}/verify:
+    post:
+      operationId: estateVerifyVendor
+      summary: Set vendor status (estate admin only)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: vendorId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [status], properties: { status: { type: string, enum: [pending, verified, suspended] } } }
+      responses: { '200': { description: Updated } }
+  /api/finance/estate/{id}/finance/dashboard:
+    get:
+      operationId: estateFinanceDashboard
+      summary: Estate finance dashboard (derived; estate admin only)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Aggregated collections / outstanding / restrictions } }
+  /api/finance/estate/{id}/notifications:
+    get:
+      operationId: estateNotifications
+      summary: Unified resident notification feed (announcements + open emergencies)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Notification feed } }
+  /api/finance/estate/{id}/reports:
+    get:
+      operationId: estateReport
+      summary: Estate analytics snapshot (derived; estate admin only)
+      tags: [Estate]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Report snapshot } }
+  # ── END ESTATE SUPER-APP block ────────────────────────────────────────────
+  # ── MapService (provider-agnostic maps abstraction) ───────────────────────
+  # All provider keys are server-side; the client calls ONLY these endpoints.
+  # findNearbyOwn (/nearby) and isInZone (/in-zone) run on PostGIS, not a maps API.
+  /api/finance/maps/basemap:
+    get:
+      operationId: mapsGetBasemap
+      summary: MapLibre GL style + attribution for a surface
+      tags: [Maps]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: surface, in: query, required: false, schema: { type: string }, description: 'e.g. default | checkout | delivery' }
+      responses:
+        '200':
+          description: Basemap style config
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MapStyleConfig' }
+  /api/finance/maps/geocode:
+    post:
+      operationId: mapsGeocode
+      summary: Geocode an address (cache-first; OpenStack results cached in PostGIS)
+      tags: [Maps]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: { type: string }
+                surface: { type: string }
+      responses:
+        '200':
+          description: Resolved coordinate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MapGeoResult' }
+  /api/finance/maps/reverse:
+    post:
+      operationId: mapsReverseGeocode
+      summary: Reverse-geocode a coordinate (cache-first; OpenStack only cached)
+      tags: [Maps]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lat, lng]
+              properties:
+                lat: { type: number, format: double }
+                lng: { type: number, format: double }
+                surface: { type: string }
+      responses:
+        '200':
+          description: Resolved address
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MapGeoResult' }
+  /api/finance/maps/autocomplete:
+    post:
+      operationId: mapsAutocomplete
+      summary: Address autocomplete (Google on consumer surfaces, else OpenStack)
+      tags: [Maps]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string }
+                session_token: { type: string, description: Per-session billing token }
+                surface: { type: string }
+                near: { $ref: '#/components/schemas/MapPoint' }
+      responses:
+        '200':
+          description: Address suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suggestions:
+                    type: array
+                    items: { $ref: '#/components/schemas/MapSuggestion' }
+  /api/finance/maps/places:
+    post:
+      operationId: mapsSearchPlaces
+      summary: Search external world POIs (Google; degrades to OSM at soft cap)
+      tags: [Maps]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string }
+                near: { $ref: '#/components/schemas/MapPoint' }
+      responses:
+        '200':
+          description: External places
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  places:
+                    type: array
+                    items: { $ref: '#/components/schemas/MapPlace' }
+  /api/finance/maps/route:
+    post:
+      operationId: mapsGetRoute
+      summary: Route geometry + ETA (OSRM/OpenStack)
+      tags: [Maps]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [origin, dest]
+              properties:
+                origin: { $ref: '#/components/schemas/MapPoint' }
+                dest: { $ref: '#/components/schemas/MapPoint' }
+                profile: { type: string, description: 'driving | cycling | walking' }
+      responses:
+        '200':
+          description: Route
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MapRoute' }
+  /api/finance/maps/matrix:
+    post:
+      operationId: mapsGetDistanceMatrix
+      summary: Many-to-many distance/ETA matrix for dispatch (OSRM/OpenStack)
+      tags: [Maps]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [origins, dests]
+              properties:
+                origins: { type: array, items: { $ref: '#/components/schemas/MapPoint' } }
+                dests: { type: array, items: { $ref: '#/components/schemas/MapPoint' } }
+      responses:
+        '200':
+          description: Distance/ETA matrix
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MapMatrix' }
+  /api/finance/maps/match:
+    post:
+      operationId: mapsMatchToRoad
+      summary: Snap a GPS trace to roads for live tracking (OSRM/OpenStack)
+      tags: [Maps]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [trace]
+              properties:
+                trace: { type: array, items: { $ref: '#/components/schemas/MapPoint' } }
+      responses:
+        '200':
+          description: Snapped polyline
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MapPolyline' }
+  /api/finance/maps/nearby:
+    post:
+      operationId: mapsFindNearbyOwn
+      summary: Near-me over OUR records via PostGIS (ST_DWithin) — not a maps API
+      tags: [Maps]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entity_type, point, radius_m]
+              properties:
+                entity_type: { type: string }
+                point: { $ref: '#/components/schemas/MapPoint' }
+                radius_m: { type: number, format: double }
+                limit: { type: integer }
+      responses:
+        '200':
+          description: Nearby own entities, nearest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items: { $ref: '#/components/schemas/MapOwnEntity' }
+  /api/finance/maps/in-zone:
+    post:
+      operationId: mapsIsInZone
+      summary: Geofence check via PostGIS (ST_Contains) — not a maps API
+      tags: [Maps]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [point, zone_id]
+              properties:
+                point: { $ref: '#/components/schemas/MapPoint' }
+                zone_id: { type: string }
+      responses:
+        '200':
+          description: Geofence result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  in_zone: { type: boolean }
+  /api/finance/maps/locations:
+    post:
+      operationId: mapsUpsertLocation
+      summary: Persist a confirmed map pin + Plus Code (source of truth)
+      tags: [Maps]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entity_id, entity_type, lat, lng]
+              properties:
+                entity_id: { type: string }
+                entity_type: { type: string }
+                lat: { type: number, format: double }
+                lng: { type: number, format: double }
+                plus_code: { type: string }
+      responses:
+        '200':
+          description: Stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  plus_code: { type: string }
+  /api/finance/maps/usage:
+    get:
+      operationId: mapsUsage
+      summary: Per-provider/per-primitive monthly usage (cost-guard metrics)
+      tags: [Maps]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current-month usage
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  month: { type: string }
+                  usage:
+                    type: array
+                    items: { $ref: '#/components/schemas/MapUsageRow' }
+
+  /api/finance/maps/metrics:
+    get:
+      operationId: mapsMetrics
+      summary: Prometheus metrics (RED + cache/degradation + monthly usage)
+      tags: [Maps]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Prometheus text exposition format
+          content:
+            text/plain:
+              schema: { type: string }
+
+  # ── Real-time trip tracking ───────────────────────────────────────────────
+  # Driver streams GPS here; the backend snaps it via MapService.MatchToRoad and
+  # pushes "trip.position" messages to the rider + driver over the WebSocket at
+  # GET /api/finance/mobility/ws (auth via Authorization header on handshake).
+  /api/finance/mobility/trips/{id}/track:
+    post:
+      operationId: mobilityTrackPosition
+      summary: Stream one driver GPS sample for a trip (driver-only)
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lat, lng]
+              properties:
+                lat: { type: number, format: double }
+                lng: { type: number, format: double }
+                heading: { type: number, format: double }
+                speed_mps: { type: number, format: double }
+      responses:
+        '202': { description: Accepted — position fanned out to participants }
+        '403': { description: Caller is not the trip's driver }
+
+  # ── FX Orchestration (provider-agnostic normalized API) ───────────────────
+  /api/v1/fx/quotes:
+    post:
+      operationId: fxCreateQuote
+      summary: Create a provider-agnostic FX quote (best route + alternatives)
+      tags: [FX Orchestration]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FxQuoteRequest' }
+      responses:
+        '200':
+          description: Quote with chosen route, alternatives and itemized fees
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxQuote' }
+        '422':
+          description: routing_unavailable / unsupported corridor
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
+  /api/v1/fx/quotes/{id}/lock:
+    post:
+      operationId: fxLockQuote
+      summary: Lock a quote's rate for the lock window
+      tags: [FX Orchestration]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Locked quote
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxQuote' }
+  /api/v1/fx/conversions:
+    post:
+      operationId: fxCreateConversion
+      summary: Execute a conversion against a quote (requires Idempotency-Key)
+      tags: [FX Orchestration]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FxConversionRequest' }
+      responses:
+        '201':
+          description: Conversion settled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxConversion' }
+        '409':
+          description: rate_expired / duplicate-key conflict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
+        '422':
+          description: insufficient_balance / compliance_block
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
+  /api/v1/fx/transfers:
+    post:
+      operationId: fxCreateTransfer
+      summary: Execute a payout, optionally with embedded FX (requires Idempotency-Key)
+      tags: [FX Orchestration]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FxTransferRequest' }
+      responses:
+        '201':
+          description: Transfer queued/processing
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxTransfer' }
+        '409':
+          description: rate_expired / conflict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
+  /api/v1/fx/collections/virtual-accounts:
+    post:
+      operationId: fxCreateCollection
+      summary: Provision an inbound virtual account / IBAN
+      tags: [FX Orchestration]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FxCollectionRequest' }
+      responses:
+        '201':
+          description: Virtual account / IBAN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxVirtualAccount' }
+  /api/v1/fx/rates:
+    get:
+      operationId: fxGetRates
+      summary: Indicative mid + Paymax sell rates (display/alerts only)
+      tags: [FX Orchestration]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Indicative rates
+  /api/v1/fx/balances:
+    get:
+      operationId: fxGetBalances
+      summary: Customer multi-currency balances
+      tags: [FX Orchestration]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Balances array
+  /api/v1/fx/transactions:
+    get:
+      operationId: fxListTransactions
+      summary: Unified ledger view (conversions, transfers, collections)
+      tags: [FX Orchestration]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Transaction list
+  /api/v1/fx/transactions/{id}:
+    get:
+      operationId: fxGetTransaction
+      summary: Single unified transaction by id/reference
+      tags: [FX Orchestration]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Transaction detail
+
+  # ── Merchant Onboarding & Role-Upgrade (PRD: Identity/Upgrade/Onboarding) ──
+  /api/v1/onboarding/modules:
+    get:
+      operationId: listOnboardingModules
+      summary: List modules open for merchant onboarding
+      tags: [Onboarding]
+      responses:
+        '200':
+          description: Modules open for onboarding
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { type: object }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/onboarding/modules/{id}/merchant-types:
+    get:
+      operationId: listMerchantTypes
+      summary: List open merchant types within a module
+      tags: [Onboarding]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Merchant types, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { type: object } } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/onboarding/merchant-types/{id}:
+    get:
+      operationId: getMerchantType
+      summary: Get a merchant type
+      tags: [Onboarding]
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses:
+        '200': { description: Merchant type, content: { application/json: { schema: { type: object } } } }
+        '404': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/onboarding/form-schemas/{id}:
+    get:
+      operationId: getFormSchema
+      summary: Get the current published form schema for a merchant type
+      tags: [Onboarding]
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses:
+        '200': { description: Versioned form schema (steps/fields/validation/conditions), content: { application/json: { schema: { type: object } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/onboarding/applications:
+    post:
+      operationId: createOnboardingApplication
+      summary: Create a DRAFT onboarding application (blocks duplicate active app/profile)
+      tags: [Onboarding]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [merchantTypeId]
+              properties:
+                merchantTypeId: { type: string }
+      responses:
+        '201': { description: Draft created, content: { application/json: { schema: { type: object } } } }
+        '409': { description: Duplicate active application or profile for this (module, merchant type) }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/onboarding/applications/{id}:
+    get:
+      operationId: getOnboardingApplication
+      summary: Get an onboarding application
+      tags: [Onboarding]
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses:
+        '200': { description: Application, content: { application/json: { schema: { type: object } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      operationId: saveOnboardingDraft
+      summary: Save draft application data (resumable)
+      tags: [Onboarding]
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { data: { type: object } } }
+      responses:
+        '200': { description: Draft saved, content: { application/json: { schema: { type: object } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/onboarding/applications/{id}/submit:
+    post:
+      operationId: submitOnboardingApplication
+      summary: Submit a DRAFT application (validated server-side against its schema version)
+      tags: [Onboarding]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { data: { type: object } } }
+      responses:
+        '200': { description: Submitted (DRAFT -> SUBMITTED), content: { application/json: { schema: { type: object } } } }
+        '409': { description: Illegal state transition }
+        '422': { description: Validation failed against the form schema }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/onboarding/applications/{id}/resubmit:
+    post:
+      operationId: resubmitOnboardingApplication
+      summary: Resubmit after NEEDS_MORE_INFO (-> UNDER_REVIEW)
+      tags: [Onboarding]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, properties: { data: { type: object } } } } }
+      responses:
+        '200': { description: Resubmitted, content: { application/json: { schema: { type: object } } } }
+        '409': { description: Illegal state transition }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/me/capabilities:
+    get:
+      operationId: getMyCapabilities
+      summary: Get the caller's Customer profile + all merchant profiles + in-flight applications
+      tags: [Onboarding]
+      responses:
+        '200': { description: Capabilities, content: { application/json: { schema: { type: object } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/admin/onboarding/review-queue:
+    get:
+      operationId: getReviewQueue
+      summary: Routed review queue (RBAC onboarding.review)
+      tags: [Onboarding Admin]
+      parameters:
+        - { name: module, in: query, required: false, schema: { type: string } }
+        - { name: type, in: query, required: false, schema: { type: string } }
+        - { name: status, in: query, required: false, schema: { type: string } }
+        - { name: age, in: query, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Queue rows, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { type: object } } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/admin/onboarding/applications/{id}/approve:
+    post:
+      operationId: approveApplication
+      summary: Approve — idempotently create/activate MerchantProfile, grant role, audit (RBAC onboarding.review)
+      tags: [Onboarding Admin]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200': { description: Approved; profile active + role granted }
+        '409': { description: Illegal state transition }
+        '403': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/admin/onboarding/applications/{id}/reject:
+    post:
+      operationId: rejectApplication
+      summary: Reject with reason (RBAC onboarding.review)
+      tags: [Onboarding Admin]
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string } } } } }
+      responses:
+        '200': { description: Rejected }
+        '403': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/admin/onboarding/applications/{id}/request-info:
+    post:
+      operationId: requestMoreInfo
+      summary: Request more info with checklist (-> NEEDS_MORE_INFO) (RBAC onboarding.review)
+      tags: [Onboarding Admin]
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, properties: { checklist: { type: array, items: { type: string } } } } } }
+      responses:
+        '200': { description: Marked NEEDS_MORE_INFO }
+        '403': { $ref: '#/components/responses/Unauthorized' }
   /kyc/me:
     get:
       operationId: getMyKyc
@@ -541,6 +2073,12 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        # MONEY-PATH AGENT 1 — go-live gate: FEATURE_BANK_TRANSFERS_ENABLED=false → 503
+        '503':
+          description: Bank transfers feature disabled (FEATURE_BANK_TRANSFERS_ENABLED=false)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
 # ── Bank Transfer schemas ──────────────────────────────────────────────────────
 
@@ -571,6 +2109,12 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
           description: No Paymax user found for this identifier
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        # MONEY-PATH AGENT 1 — go-live gate: FEATURE_WALLET_TRANSFERS_ENABLED=false → 503
+        '503':
+          description: Wallet transfers feature disabled (FEATURE_WALLET_TRANSFERS_ENABLED=false)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -631,6 +2175,12 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '422': { $ref: '#/components/responses/UnprocessableEntity' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        # MONEY-PATH AGENT 1 — go-live gate: FEATURE_WALLET_TRANSFERS_ENABLED=false → 503
+        '503':
+          description: Wallet transfers feature disabled (FEATURE_WALLET_TRANSFERS_ENABLED=false)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
 # ── Referrals ──────────────────────────────────────────────────────────────────
 
@@ -1284,6 +2834,467 @@ paths:
         '200':
           description: Appointment completed, fee settled
 
+  # ── Telemedicine v1 (Health Premium — mobile-facing) ──────────────────────────
+  /telemedicine/specialties:
+    get:
+      operationId: listSpecialties
+      summary: List consultation specialty categories
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Specialty list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/ConsultationSpecialty' } }
+
+  /telemedicine/doctors/{id}:
+    get:
+      operationId: getDoctorProfile
+      summary: Get a single doctor's full profile
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Doctor profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DoctorProfile' }
+
+  /telemedicine/appointments:
+    get:
+      operationId: listMyAppointments
+      summary: List the authenticated user's appointments
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: filter, in: query, schema: { type: string, enum: [upcoming, past] } }
+      responses:
+        '200':
+          description: Appointment list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Appointment' } }
+
+  /telemedicine/appointments/{id}:
+    get:
+      operationId: getAppointment
+      summary: Get a single appointment
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Appointment detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Appointment' }
+
+  /telemedicine/doctor/register:
+    post:
+      operationId: registerDoctorV2
+      summary: Register as a doctor (Health Premium onboarding flow)
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [full_name, email, phone, specialty, mdcn_number]
+              properties:
+                full_name: { type: string }
+                email: { type: string, format: email }
+                phone: { type: string }
+                specialty: { type: string }
+                years_experience: { type: integer, minimum: 0 }
+                mdcn_number: { type: string }
+      responses:
+        '201':
+          description: Doctor record created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      doctor_id: { type: string, format: uuid }
+
+  /telemedicine/doctor/dashboard:
+    get:
+      operationId: getDoctorDashboard
+      summary: Get doctor's dashboard stats, pending requests, and today's schedule
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Doctor dashboard
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DoctorDashboard' }
+
+  /telemedicine/doctor/availability:
+    patch:
+      operationId: toggleDoctorAvailability
+      summary: Set doctor's online / availability status
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_online: { type: boolean }
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+
+  /telemedicine/doctor/notes:
+    post:
+      operationId: submitSOAPNote
+      summary: Submit or update a SOAP note for an appointment (doctor only)
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubmitSOAPNoteRequest' }
+      responses:
+        '201':
+          description: SOAP note saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SOAPNote' }
+
+  /telemedicine/doctor/licence:
+    post:
+      operationId: uploadLicenceDoc
+      summary: Upload a medical licence or credential document (doctor only)
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document_type, filename]
+              properties:
+                document_type:
+                  type: string
+                  enum: [mdcn, degree, specialisation, passport, final_submission]
+                filename: { type: string }
+                base64: { type: string, description: "Base64-encoded file content" }
+                idempotency_key: { type: string }
+      responses:
+        '201':
+          description: Document record created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      upload_id: { type: string, format: uuid }
+
+  # ── Telemedicine — Block 13 (scheduling, lifecycle, reviews) ──────────────────
+  /telemedicine/doctors/{id}/availability:
+    get:
+      operationId: getDoctorAvailability
+      summary: List a doctor's bookable slots for the next 5 days
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Slot calendar
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Slot' } }
+
+  /telemedicine/doctors/{id}/reviews:
+    get:
+      operationId: listDoctorReviews
+      summary: List visible patient reviews for a doctor
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+      responses:
+        '200':
+          description: Review list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Review' } }
+
+  /telemedicine/appointments/{id}/confirm:
+    post:
+      operationId: confirmAppointment
+      summary: Confirm a booked appointment (patient or doctor)
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Appointment confirmed
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean } } }
+
+  /telemedicine/appointments/{id}/reschedule:
+    post:
+      operationId: rescheduleAppointment
+      summary: Move an appointment to a new time (no money moves)
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scheduled_at]
+              properties:
+                scheduled_at: { type: string, format: date-time }
+                slot_time: { type: string }
+      responses:
+        '200':
+          description: Appointment rescheduled
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean } } }
+
+  /telemedicine/appointments/{id}/cancel:
+    post:
+      operationId: cancelAppointment
+      summary: Cancel an appointment and refund the patient
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Appointment cancelled and refunded
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean } } }
+
+  /telemedicine/appointments/{id}/summary:
+    get:
+      operationId: getVisitSummary
+      summary: Get the patient-facing visit summary (diagnosis, notes, follow-up)
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Visit summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/VisitSummary' }
+
+  /telemedicine/appointments/{id}/review:
+    post:
+      operationId: addReview
+      summary: Leave a rating and comment for a completed appointment
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rating]
+              properties:
+                rating: { type: integer, minimum: 1, maximum: 5 }
+                comment: { type: string }
+      responses:
+        '201':
+          description: Review created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Review' }
+
+  # ── Pharmacy ───────────────────────────────────────────────────────────────────
+  /pharmacy/products:
+    get:
+      operationId: listPharmacyProducts
+      summary: List in-stock pharmacy products
+      tags: [Pharmacy]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: category, in: query, schema: { type: string, enum: [pain, vitamins, first_aid, baby, skincare, devices, prescription, otc] } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Product list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/PharmacyProduct' } }
+
+  /pharmacy/cart:
+    get:
+      operationId: getCart
+      summary: Get the authenticated user's pharmacy cart
+      tags: [Pharmacy]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Cart items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/CartItem' } }
+    post:
+      operationId: addToCart
+      summary: Add a product to the cart (upserts — increments quantity if already in cart)
+      tags: [Pharmacy]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_id]
+              properties:
+                product_id: { type: string, format: uuid }
+                quantity: { type: integer, minimum: 1, default: 1 }
+                idempotency_key: { type: string }
+      responses:
+        '201':
+          description: Cart item added / updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/CartItem' }
+    delete:
+      operationId: clearCart
+      summary: Remove all items from the cart
+      tags: [Pharmacy]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Cart cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+
+  /pharmacy/cart/{product_id}:
+    patch:
+      operationId: updateCartItem
+      summary: Set quantity for a specific cart item
+      tags: [Pharmacy]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: product_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Quantity updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/CartItem' }
+    delete:
+      operationId: removeFromCart
+      summary: Remove a single product from the cart
+      tags: [Pharmacy]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: product_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Item removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+
   # ── Transport ─────────────────────────────────────────────────────────────────
   /transport/trips:
     post:
@@ -1343,6 +3354,860 @@ paths:
                   enum: [accepted, picked_up, completed, cancelled]
       responses:
         '200': { description: Status updated }
+
+  # ── Mobility (ride-hailing) — customer ────────────────────────────────────────
+  /mobility/home:
+    get:
+      operationId: mobilityHome
+      summary: Rider mobility landing payload
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Home payload (active trip, profile, tiles, safety reminder) }
+
+  /mobility/config/pricing:
+    get:
+      operationId: mobilityPricingConfig
+      summary: Active pricing config for a zone + service type
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: zone, in: query, schema: { type: string } }
+        - { name: service_type, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Pricing config
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PricingConfig' }
+
+  /mobility/rides/estimate:
+    post:
+      operationId: estimateRide
+      summary: Fare estimate + negotiable offer range
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EstimateRequest' }
+      responses:
+        '200':
+          description: Estimate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FareEstimate' }
+
+  /mobility/rides/request:
+    post:
+      operationId: requestRide
+      summary: Request a ride (escrows fare; instant or offer mode)
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pickup, dest, pricing_mode]
+              properties:
+                pickup: { $ref: '#/components/schemas/Place' }
+                dest: { $ref: '#/components/schemas/Place' }
+                service_type: { type: string, default: ride_hailing }
+                pricing_mode: { type: string, enum: [instant, offer] }
+                offer_kobo: { type: integer, format: int64, description: required when pricing_mode=offer }
+                payment_method: { type: string, default: wallet }
+                idempotency_key: { type: string }
+      responses:
+        '201': { description: Trip created }
+        '422':
+          description: Offer outside floor/ceiling
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MobilityError' }
+
+  /mobility/rides/active:
+    get:
+      operationId: activeRide
+      summary: Rider's current active trip
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Active trip or null }
+
+  /mobility/rides/{id}:
+    get:
+      operationId: getRide
+      summary: Trip detail (rider view, includes PIN)
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Trip detail }
+        '403': { description: Not a trip participant }
+        '404': { description: Not found }
+
+  /mobility/rides/{id}/offer:
+    post:
+      operationId: riderOffer
+      summary: Rider makes/raises a fare offer (validated to range)
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [offer_kobo]
+              properties: { offer_kobo: { type: integer, format: int64, minimum: 1 } }
+      responses:
+        '200': { description: Fare offer updated }
+        '422':
+          description: Offer below floor / above ceiling
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MobilityError' }
+
+  /mobility/rides/{id}/accept-counter:
+    post:
+      operationId: acceptCounter
+      summary: Rider accepts the driver's counter-offer (re-validates profit floor)
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Counter accepted }
+        '422': { description: Accepted fare below driver-profit floor }
+
+  /mobility/rides/{id}/cancel:
+    post:
+      operationId: cancelRide
+      summary: Cancel a ride (refunds escrow)
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { reason: { type: string } } }
+      responses:
+        '200': { description: Cancelled }
+        '409': { description: Illegal state transition }
+
+  /mobility/rides/{id}/share:
+    post:
+      operationId: shareRide
+      summary: Issue a live-share token
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Share token }
+
+  /mobility/rides/{id}/sos:
+    post:
+      operationId: rideSos
+      summary: Trigger SOS (creates a SafetyIncident, holds the trip)
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                lat: { type: number }
+                lng: { type: number }
+                description: { type: string }
+      responses:
+        '201': { description: Incident created }
+
+  /mobility/rides/{id}/rate:
+    post:
+      operationId: rateRide
+      summary: Rate the trip + optional tip
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stars]
+              properties:
+                stars: { type: integer, minimum: 1, maximum: 5 }
+                comment: { type: string }
+                tip_kobo: { type: integer, format: int64, minimum: 0 }
+      responses:
+        '201': { description: Rating recorded }
+
+  /mobility/history:
+    get:
+      operationId: mobilityHistory
+      summary: Rider trip history
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Past trips }
+
+  /mobility/profile:
+    get:
+      operationId: getMobilityProfile
+      summary: Rider mobility profile (trust level, addresses)
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Profile }
+    put:
+      operationId: updateMobilityProfile
+      summary: Update rider mobility profile
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                trust_level: { type: string }
+                default_payment: { type: string }
+                home_address: { type: string }
+                work_address: { type: string }
+      responses:
+        '200': { description: Updated }
+
+  /mobility/trusted-contacts:
+    get:
+      operationId: listTrustedContacts
+      summary: List emergency contacts
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Contacts }
+    post:
+      operationId: addTrustedContact
+      summary: Add an emergency contact
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, phone]
+              properties: { name: { type: string }, phone: { type: string } }
+      responses:
+        '201': { description: Added }
+
+  /mobility/trusted-contacts/{id}:
+    delete:
+      operationId: deleteTrustedContact
+      summary: Remove an emergency contact
+      tags: [Mobility]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Removed }
+
+  # ── Mobility (ride-hailing) — driver ──────────────────────────────────────────
+  /driver/onboarding/submit:
+    post:
+      operationId: driverOnboardingSubmit
+      summary: Submit driver onboarding (→ verification under review)
+      tags: [Mobility Driver]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, email]
+              properties:
+                phone: { type: string }
+                email: { type: string, format: email }
+                photo_url: { type: string }
+                service_categories: { type: array, items: { type: string } }
+      responses:
+        '200': { description: Submitted }
+
+  /driver/documents:
+    post:
+      operationId: driverAddDocument
+      summary: Upload a driver document (expiry-tracked)
+      tags: [Mobility Driver]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [doc_type, file_url]
+              properties:
+                doc_type: { type: string }
+                file_url: { type: string }
+                expiry_date: { type: string, format: date }
+      responses:
+        '201': { description: Document added }
+
+  /driver/vehicle:
+    post:
+      operationId: driverAddVehicle
+      summary: Register a vehicle
+      tags: [Mobility Driver]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plate_number]
+              properties:
+                plate_number: { type: string }
+                make: { type: string }
+                model: { type: string }
+                year: { type: integer }
+                color: { type: string }
+                category: { type: string }
+                capacity: { type: integer }
+      responses:
+        '201': { description: Vehicle added }
+
+  /driver/me:
+    get:
+      operationId: driverMe
+      summary: Driver profile + verification + docs + vehicles
+      tags: [Mobility Driver]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Driver profile }
+
+  /driver/status:
+    patch:
+      operationId: driverSetStatus
+      summary: Go online/offline (+ location). Approved drivers only for online.
+      tags: [Mobility Driver]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [online, offline] }
+                lat: { type: number }
+                lng: { type: number }
+      responses:
+        '200': { description: Status updated }
+        '403': { description: Driver not approved }
+
+  /driver/requests:
+    get:
+      operationId: driverRequests
+      summary: Open ride requests near the driver
+      tags: [Mobility Driver]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Candidate requests }
+
+  /driver/requests/{id}/accept:
+    post:
+      operationId: driverAcceptRequest
+      summary: Accept a request at the standing fare (profit floor enforced)
+      tags: [Mobility Driver]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Assigned }
+        '422': { description: Fare below driver-profit floor }
+
+  /driver/requests/{id}/counter:
+    post:
+      operationId: driverCounter
+      summary: Counter-offer (validated to range + profit floor)
+      tags: [Mobility Driver]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [counter_kobo]
+              properties: { counter_kobo: { type: integer, format: int64, minimum: 1 } }
+      responses:
+        '200': { description: Counter recorded }
+        '422': { description: Counter outside allowed bounds }
+
+  /driver/trips/{id}/arrive:
+    post:
+      operationId: driverArrive
+      summary: Mark arrived at pickup
+      tags: [Mobility Driver]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Arriving }
+
+  /driver/trips/{id}/verify-pin:
+    post:
+      operationId: driverVerifyPin
+      summary: Verify the rider's trip PIN before starting
+      tags: [Mobility Driver]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin]
+              properties: { pin: { type: string } }
+      responses:
+        '200': { description: PIN verified }
+        '422': { description: PIN mismatch }
+
+  /driver/trips/{id}/start:
+    post:
+      operationId: driverStartTrip
+      summary: Start the trip (pin_verified → in_progress)
+      tags: [Mobility Driver]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Started }
+        '409': { description: Illegal state transition }
+
+  /driver/trips/{id}/complete:
+    post:
+      operationId: driverCompleteTrip
+      summary: Complete the trip and settle the fare split
+      tags: [Mobility Driver]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Completed + settled }
+
+  /driver/earnings:
+    get:
+      operationId: driverEarnings
+      summary: Driver economic dashboard (gross/fee/net, rates, tier)
+      tags: [Mobility Driver]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Earnings }
+
+  /driver/sos:
+    post:
+      operationId: driverSos
+      summary: Driver-side SOS (creates a SafetyIncident)
+      tags: [Mobility Driver]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                trip_id: { type: string, format: uuid }
+                lat: { type: number }
+                lng: { type: number }
+      responses:
+        '201': { description: Incident created }
+
+  # ── Mobility — admin (gated + audited) · base /api/finance/admin/transport ─────
+  /admin/transport/dashboard:
+    get: { operationId: admMobilityDashboard, summary: Mobility KPIs, tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '200': { description: KPIs } } }
+  /admin/transport/drivers:
+    get:
+      operationId: admListDrivers
+      summary: Driver list / verification queue
+      tags: [Mobility Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: status, in: query, schema: { type: string } }]
+      responses: { '200': { description: Drivers } }
+  /admin/transport/drivers/{id}:
+    get:
+      operationId: admDriverDetail
+      summary: Driver detail (docs + vehicle)
+      tags: [Mobility Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Driver } }
+  /admin/transport/drivers/{id}/verification:
+    patch:
+      operationId: admSetVerification
+      summary: Guarded driver verification transition (audited)
+      tags: [Mobility Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [approved, rejected, suspended, under_review] }
+                reason: { type: string }
+      responses: { '200': { description: Updated }, '409': { description: Illegal transition } }
+  /admin/transport/vehicles:
+    get:
+      operationId: admListVehicles
+      summary: Vehicle compliance list
+      tags: [Mobility Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: status, in: query, schema: { type: string } }]
+      responses: { '200': { description: Vehicles } }
+  /admin/transport/vehicles/{id}/status:
+    patch:
+      operationId: admSetVehicleStatus
+      summary: Update vehicle status / inspection / insurance (audited)
+      tags: [Mobility Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Updated } }
+  /admin/transport/trips:
+    get:
+      operationId: admListTrips
+      summary: Trips list (optionally by phase)
+      tags: [Mobility Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: phase, in: query, schema: { type: string } }]
+      responses: { '200': { description: Trips } }
+  /admin/transport/dispatch/live:
+    get: { operationId: admDispatchLive, summary: Live dispatch (active trips + online drivers + SOS), tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '200': { description: Live view } } }
+  /admin/transport/dispatch/{trip_id}/assign:
+    post:
+      operationId: admManualAssign
+      summary: Manually assign a driver (audited)
+      tags: [Mobility Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: trip_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [driver_id], properties: { driver_id: { type: string, format: uuid } } }
+      responses: { '200': { description: Assigned } }
+  /admin/transport/pricing:
+    get:
+      operationId: admGetPricing
+      summary: Pricing config
+      tags: [Mobility Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: zone, in: query, schema: { type: string } }
+        - { name: service_type, in: query, schema: { type: string } }
+      responses: { '200': { description: Pricing } }
+    patch:
+      operationId: admPatchPricing
+      summary: Update pricing config (audited)
+      tags: [Mobility Admin]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PricingConfig' }
+      responses: { '200': { description: Updated } }
+  /admin/transport/commission:
+    get: { operationId: admListCommission, summary: Commission tiers, tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '200': { description: Tiers } } }
+  /admin/transport/commission/{tier}:
+    patch:
+      operationId: admPatchCommission
+      summary: Update a commission tier (audited)
+      tags: [Mobility Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: tier, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Updated } }
+  /admin/transport/safety/incidents:
+    get:
+      operationId: admListIncidents
+      summary: Safety center incident feed
+      tags: [Mobility Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: status, in: query, schema: { type: string } }]
+      responses: { '200': { description: Incidents } }
+  /admin/transport/safety/incidents/{id}:
+    patch:
+      operationId: admPatchIncident
+      summary: Update a safety case (assign / resolve, audited)
+      tags: [Mobility Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Updated } }
+  /admin/transport/reports/summary:
+    get: { operationId: admReportsSummary, summary: Revenue/commission/cancellation rollups, tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '200': { description: Summary } } }
+  /admin/transport/audit:
+    get: { operationId: admAuditFeed, summary: Transport audit log feed, tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '200': { description: Audit log } } }
+
+  # ── Admin: multi-mode (gated + audited) ───────────────────────────────────────
+  /admin/transport/parcels:
+    get: { operationId: admListParcels, summary: Parcel list, tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '200': { description: Parcels } } }
+  /admin/transport/parcels/{id}/status:
+    patch: { operationId: admParcelStatus, summary: Update parcel status (audited), tags: [Mobility Admin], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Updated } } }
+  /admin/transport/bus/routes:
+    get: { operationId: admListBusRoutes, summary: Bus routes, tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '200': { description: Routes } } }
+    post: { operationId: admCreateBusRoute, summary: Create bus route (audited), tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '201': { description: Created } } }
+  /admin/transport/bus/schedules:
+    post: { operationId: admCreateBusSchedule, summary: Create bus schedule (audited), tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '201': { description: Created } } }
+  /admin/transport/bus/schedules/{id}/approve-fare:
+    post: { operationId: admApproveBusFare, summary: Approve schedule fare (audited), tags: [Mobility Admin], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Approved } } }
+  /admin/transport/bus/manifest:
+    get: { operationId: admBusManifest, summary: Passenger manifest by schedule, tags: [Mobility Admin], security: [{ bearerAuth: [] }], parameters: [{ name: schedule_id, in: query, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Manifest } } }
+  /admin/transport/towing:
+    get: { operationId: admListTowing, summary: Towing jobs, tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '200': { description: Jobs } } }
+  /admin/transport/towing/{id}/status:
+    patch: { operationId: admTowingStatus, summary: Update towing status (audited), tags: [Mobility Admin], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Updated } } }
+  /admin/transport/movers:
+    get: { operationId: admListMovers, summary: Mover jobs, tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '200': { description: Jobs } } }
+  /admin/transport/movers/{id}/status:
+    patch: { operationId: admMoverStatus, summary: Update mover status (audited), tags: [Mobility Admin], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Updated } } }
+  /admin/transport/car-hire:
+    get: { operationId: admListCarHire, summary: Car-hire bookings, tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '200': { description: Bookings } } }
+  /admin/transport/car-hire/{id}/status:
+    patch: { operationId: admCarHireStatus, summary: Update car-hire status (audited), tags: [Mobility Admin], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Updated } } }
+  /admin/transport/business/accounts:
+    get: { operationId: admListBusinessAccounts, summary: Business accounts, tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '200': { description: Accounts } } }
+  /admin/transport/business/accounts/{id}/status:
+    patch: { operationId: admBusinessAccountStatus, summary: Update account status (audited), tags: [Mobility Admin], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Updated } } }
+  /admin/transport/business/deliveries:
+    get: { operationId: admListBusinessDeliveries, summary: Business deliveries, tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '200': { description: Deliveries } } }
+  /admin/transport/business/deliveries/{id}/status:
+    patch: { operationId: admBusinessDeliveryStatus, summary: Update delivery status (audited), tags: [Mobility Admin], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Updated } } }
+  /admin/transport/business/invoices:
+    get: { operationId: admListBusinessInvoices, summary: Business invoices, tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '200': { description: Invoices } } }
+  /admin/transport/business/invoices/{id}/issue:
+    post: { operationId: admIssueInvoice, summary: Issue invoice (audited), tags: [Mobility Admin], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Issued } } }
+  /admin/transport/business/invoices/{id}/mark-paid:
+    post: { operationId: admMarkInvoicePaid, summary: Mark invoice paid (audited), tags: [Mobility Admin], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Paid } } }
+  /admin/transport/events/offers:
+    get: { operationId: admListEventOffers, summary: Event transport offers, tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '200': { description: Offers } } }
+  /admin/transport/events/offers/{id}/status:
+    patch: { operationId: admEventOfferStatus, summary: Update event offer status (audited), tags: [Mobility Admin], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Updated } } }
+  /admin/transport/events/bookings:
+    get: { operationId: admListEventBookings, summary: Event bookings, tags: [Mobility Admin], security: [{ bearerAuth: [] }], responses: { '200': { description: Bookings } } }
+
+  # ── Parcel delivery ───────────────────────────────────────────────────────────
+  /mobility/parcels/estimate:
+    post: { operationId: parcelEstimate, summary: Parcel fare estimate, tags: [Mobility Parcel], security: [{ bearerAuth: [] }], responses: { '200': { description: Estimate } } }
+  /mobility/parcels:
+    post:
+      operationId: bookParcel
+      summary: Book a parcel (escrows fare, generates pickup+dropoff PINs)
+      tags: [Mobility Parcel]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: Parcel created }, '422': { description: Prohibited item / invalid } }
+    get: { operationId: listParcels, summary: Sender's parcels, tags: [Mobility Parcel], security: [{ bearerAuth: [] }], responses: { '200': { description: Parcels } } }
+  /mobility/parcels/{id}:
+    get: { operationId: getParcel, summary: Parcel detail (sender sees PINs), tags: [Mobility Parcel], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Parcel } } }
+  /mobility/parcels/{id}/cancel:
+    post: { operationId: cancelParcel, summary: Cancel + refund, tags: [Mobility Parcel], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+  /driver/parcels/requests:
+    get: { operationId: parcelCourierRequests, summary: Open courier requests, tags: [Mobility Parcel], security: [{ bearerAuth: [] }], responses: { '200': { description: Requests } } }
+  /driver/parcels/{id}/accept:
+    post: { operationId: parcelAccept, summary: Courier accepts, tags: [Mobility Parcel], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Assigned } } }
+  /driver/parcels/{id}/verify-pickup-pin:
+    post: { operationId: parcelVerifyPickup, summary: Verify pickup PIN, tags: [Mobility Parcel], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Verified }, '422': { description: PIN mismatch } } }
+  /driver/parcels/{id}/picked-up:
+    post: { operationId: parcelPickedUp, summary: Confirm pickup + photo, tags: [Mobility Parcel], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: In transit } } }
+  /driver/parcels/{id}/verify-dropoff:
+    post: { operationId: parcelVerifyDropoff, summary: Verify dropoff PIN + proof → deliver + settle, tags: [Mobility Parcel], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Delivered }, '422': { description: PIN mismatch } } }
+
+  # ── Bus booking ───────────────────────────────────────────────────────────────
+  /mobility/bus/routes:
+    get: { operationId: busRoutes, summary: Search routes, tags: [Mobility Bus], security: [{ bearerAuth: [] }], parameters: [{ name: origin, in: query, schema: { type: string } }, { name: dest, in: query, schema: { type: string } }], responses: { '200': { description: Routes } } }
+  /mobility/bus/schedules:
+    get: { operationId: busSchedules, summary: Schedules + seats left, tags: [Mobility Bus], security: [{ bearerAuth: [] }], parameters: [{ name: route_id, in: query, schema: { type: string, format: uuid } }, { name: date, in: query, schema: { type: string, format: date } }], responses: { '200': { description: Schedules } } }
+  /mobility/bus/book:
+    post:
+      operationId: bookBus
+      summary: Book a seat (escrow→settle operator, QR issued)
+      tags: [Mobility Bus]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: Ticket issued }, '409': { description: Seat taken } }
+  /mobility/bus/tickets:
+    get: { operationId: busTickets, summary: My tickets (QR), tags: [Mobility Bus], security: [{ bearerAuth: [] }], responses: { '200': { description: Tickets } } }
+  /mobility/bus/tickets/{id}/cancel:
+    post: { operationId: cancelBusTicket, summary: Cancel + refund per rules, tags: [Mobility Bus], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Refunded } } }
+  /driver/bus/validate:
+    post: { operationId: busValidate, summary: Operator validates QR → boarded, tags: [Mobility Bus], security: [{ bearerAuth: [] }], responses: { '200': { description: Boarded }, '404': { description: Invalid QR } } }
+
+  # ── Towing / roadside ─────────────────────────────────────────────────────────
+  /mobility/towing/estimate:
+    post: { operationId: towingEstimate, summary: Towing estimate (callout + distance), tags: [Mobility Towing], security: [{ bearerAuth: [] }], responses: { '200': { description: Estimate } } }
+  /mobility/towing:
+    post:
+      operationId: bookTowing
+      summary: Book towing (escrow + operator PIN)
+      tags: [Mobility Towing]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: Requested } }
+  /mobility/towing/{id}:
+    get: { operationId: getTowing, summary: Towing detail, tags: [Mobility Towing], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Job } } }
+  /mobility/towing/{id}/cancel:
+    post: { operationId: cancelTowing, summary: Cancel + refund, tags: [Mobility Towing], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+  /driver/towing/requests:
+    get: { operationId: towingRequests, summary: Open towing requests, tags: [Mobility Towing], security: [{ bearerAuth: [] }], responses: { '200': { description: Requests } } }
+  /driver/towing/{id}/accept:
+    post: { operationId: towingAccept, summary: Operator accepts, tags: [Mobility Towing], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Accepted } } }
+  /driver/towing/{id}/en-route:
+    post: { operationId: towingEnRoute, summary: Operator en route, tags: [Mobility Towing], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: En route } } }
+  /driver/towing/{id}/verify-pin:
+    post: { operationId: towingVerifyPin, summary: Verify operator PIN, tags: [Mobility Towing], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Verified }, '422': { description: PIN mismatch } } }
+  /driver/towing/{id}/start:
+    post: { operationId: towingStart, summary: Start service, tags: [Mobility Towing], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: In progress } } }
+  /driver/towing/{id}/complete:
+    post: { operationId: towingComplete, summary: Complete + settle, tags: [Mobility Towing], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Completed } } }
+
+  # ── Mover trucks (bidding + escrow) ───────────────────────────────────────────
+  /mobility/movers/quote:
+    post: { operationId: moverQuote, summary: Request a move (quote_requested), tags: [Mobility Movers], security: [{ bearerAuth: [] }], responses: { '201': { description: Job created } } }
+  /mobility/movers/{id}:
+    get: { operationId: getMoverJob, summary: Job + bids, tags: [Mobility Movers], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Job } } }
+  /mobility/movers/{id}/accept-bid:
+    post:
+      operationId: acceptMoverBid
+      summary: Accept a bid (escrow funded)
+      tags: [Mobility Movers]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { description: Bid accepted, escrow funded } }
+  /mobility/movers/{id}/confirm-completion:
+    post: { operationId: confirmMoverCompletion, summary: Confirm completion → release escrow, tags: [Mobility Movers], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Released + settled } } }
+  /mobility/movers/{id}/cancel:
+    post: { operationId: cancelMoverJob, summary: Cancel + refund, tags: [Mobility Movers], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+  /driver/movers/open:
+    get: { operationId: moverOpenJobs, summary: Open jobs for bidding, tags: [Mobility Movers], security: [{ bearerAuth: [] }], responses: { '200': { description: Jobs } } }
+  /driver/movers/{id}/bid:
+    post: { operationId: moverBid, summary: Submit a bid, tags: [Mobility Movers], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '201': { description: Bid submitted }, '409': { description: Bid exists } } }
+  /driver/movers/{id}/start:
+    post: { operationId: moverStart, summary: Start move, tags: [Mobility Movers], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: In progress } } }
+  /driver/movers/{id}/complete:
+    post: { operationId: moverComplete, summary: Mark provider-complete (awaits customer confirm), tags: [Mobility Movers], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Awaiting confirmation } } }
+
+  # ── Car hire / chauffeur ──────────────────────────────────────────────────────
+  /mobility/car-hire:
+    get: { operationId: listCarHire, summary: My car-hire bookings, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], responses: { '200': { description: Bookings } } }
+  /mobility/car-hire/quote:
+    post: { operationId: carHireQuote, summary: Quote (fare + deposit), tags: [Mobility CarHire], security: [{ bearerAuth: [] }], responses: { '200': { description: Quote } } }
+  /mobility/car-hire/{id}/activate:
+    post: { operationId: activateCarHire, summary: Activate a confirmed hire, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Active } } }
+  /mobility/car-hire/{id}/cancel:
+    post: { operationId: cancelCarHire, summary: Cancel + refund, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+  /mobility/car-hire/book:
+    post:
+      operationId: bookCarHire
+      summary: Book (escrow fare + deposit)
+      tags: [Mobility CarHire]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: Booked } }
+  /mobility/car-hire/{id}:
+    get: { operationId: getCarHire, summary: Booking detail, tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Booking } } }
+  /mobility/car-hire/{id}/extend:
+    post: { operationId: extendCarHire, summary: Extend (escrow delta), tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Extended } } }
+  /mobility/car-hire/{id}/complete:
+    post: { operationId: completeCarHire, summary: Complete (settle + release deposit), tags: [Mobility CarHire], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Completed } } }
+
+  # ── Business logistics ────────────────────────────────────────────────────────
+  /mobility/business/accounts:
+    post: { operationId: createBusinessAccount, summary: Register a business account, tags: [Mobility Logistics], security: [{ bearerAuth: [] }], responses: { '201': { description: Created } } }
+  /mobility/business/accounts/me:
+    get: { operationId: getBusinessAccount, summary: Owner's business account, tags: [Mobility Logistics], security: [{ bearerAuth: [] }], responses: { '200': { description: Account } } }
+  /mobility/business/deliveries:
+    post:
+      operationId: createBusinessDelivery
+      summary: Single delivery (escrow prepaid, or accrue to invoice)
+      tags: [Mobility Logistics]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: Created } }
+    get: { operationId: listBusinessDeliveries, summary: Tracking dashboard, tags: [Mobility Logistics], security: [{ bearerAuth: [] }], parameters: [{ name: status, in: query, schema: { type: string } }], responses: { '200': { description: Deliveries } } }
+  /mobility/business/deliveries/{id}:
+    get: { operationId: getBusinessDelivery, summary: Delivery detail, tags: [Mobility Logistics], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Delivery } } }
+  /mobility/business/deliveries/{id}/cancel:
+    post: { operationId: cancelBusinessDelivery, summary: Cancel + refund/void, tags: [Mobility Logistics], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+  /mobility/business/batches:
+    post:
+      operationId: createDeliveryBatch
+      summary: Bulk batch (creates batch + N deliveries)
+      tags: [Mobility Logistics]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: Batch created } }
+    get: { operationId: listDeliveryBatches, summary: Batches, tags: [Mobility Logistics], security: [{ bearerAuth: [] }], responses: { '200': { description: Batches } } }
+  /mobility/business/batches/{id}:
+    get: { operationId: getDeliveryBatch, summary: Batch detail + stops, tags: [Mobility Logistics], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Batch } } }
+  /mobility/business/invoices:
+    get: { operationId: listBusinessInvoices, summary: Monthly invoices, tags: [Mobility Logistics], security: [{ bearerAuth: [] }], responses: { '200': { description: Invoices } } }
+  /mobility/business/analytics:
+    get: { operationId: businessAnalytics, summary: Counts, success rate, COD totals, tags: [Mobility Logistics], security: [{ bearerAuth: [] }], responses: { '200': { description: Analytics } } }
+  /driver/business/requests:
+    get: { operationId: businessCourierRequests, summary: Open business delivery requests, tags: [Mobility Logistics], security: [{ bearerAuth: [] }], responses: { '200': { description: Requests } } }
+  /driver/business/{id}/accept:
+    post: { operationId: businessAccept, summary: Courier accepts, tags: [Mobility Logistics], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Assigned } } }
+  /driver/business/{id}/picked-up:
+    post: { operationId: businessPickedUp, summary: Confirm pickup, tags: [Mobility Logistics], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Picked up } } }
+  /driver/business/{id}/deliver:
+    post: { operationId: businessDeliver, summary: "Deliver (PIN/proof then settle or accrue)", tags: [Mobility Logistics], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Delivered }, '422': { description: PIN mismatch } } }
+  /driver/business/{id}/fail:
+    post: { operationId: businessFail, summary: Mark failed (reason), tags: [Mobility Logistics], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Failed } } }
+
+  # ── Event transport (Spotlight) ───────────────────────────────────────────────
+  /mobility/events/transport:
+    get: { operationId: listEventTransport, summary: Transport offers for an event, tags: [Mobility Event], security: [{ bearerAuth: [] }], parameters: [{ name: event_id, in: query, required: true, schema: { type: string } }], responses: { '200': { description: Offers } } }
+    post: { operationId: createEventTransport, summary: Organizer creates an offer, tags: [Mobility Event], security: [{ bearerAuth: [] }], responses: { '201': { description: Offer created } } }
+  /mobility/events/transport/{id}:
+    get: { operationId: getEventTransport, summary: Offer detail, tags: [Mobility Event], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Offer } } }
+  /mobility/events/transport/{id}/book:
+    post:
+      operationId: bookEventTransport
+      summary: Book seats (escrow→settle organizer, QR; capacity enforced)
+      tags: [Mobility Event]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: Booked }, '409': { description: Capacity exceeded } }
+  /mobility/events/bookings:
+    get: { operationId: listEventBookings, summary: My event bookings (QR), tags: [Mobility Event], security: [{ bearerAuth: [] }], responses: { '200': { description: Bookings } } }
+  /mobility/events/bookings/{id}/cancel:
+    post: { operationId: cancelEventBooking, summary: Cancel + refund, tags: [Mobility Event], security: [{ bearerAuth: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+  /driver/events/validate:
+    post: { operationId: validateEventBooking, summary: Validate QR → boarded (organizer/driver), tags: [Mobility Event], security: [{ bearerAuth: [] }], responses: { '200': { description: Boarded }, '404': { description: Invalid QR } } }
 
   # ── AI Customer Care ──────────────────────────────────────────────────────────
   /support/sessions:
@@ -1679,9 +4544,148 @@ paths:
         name: { type: string }
         specialty:
           type: string
-          enum: [general, cardiology, dermatology, paediatrics, veterinary, pharmacy]
+          enum: [general, cardiology, dermatology, paediatrics, veterinary, pharmacy,
+                 mental_health, womens_health, neurology, eye_care, nutrition, dentistry,
+                 oncology, orthopedic]
         consult_fee_kobo: { type: integer, format: int64 }
         is_available: { type: boolean }
+        is_online: { type: boolean }
+        is_hmo_verified: { type: boolean }
+        rating: { type: number, format: float }
+        review_count: { type: integer }
+        patients_count: { type: integer }
+        experience_years: { type: integer }
+        success_rate: { type: integer }
+        about: { type: string }
+        education:
+          type: array
+          items:
+            type: object
+            properties:
+              institution: { type: string }
+              degree: { type: string }
+              year: { type: integer }
+
+    DoctorProfile:
+      allOf:
+        - $ref: '#/components/schemas/Doctor'
+        - type: object
+          properties:
+            mdcn_number: { type: string, nullable: true }
+            phone: { type: string, nullable: true }
+            sub_specialty: { type: string, nullable: true }
+            avatar_url: { type: string, nullable: true }
+            created_at: { type: string, format: date-time }
+
+    ConsultationSpecialty:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: string }
+        icon: { type: string }
+        doctor_count: { type: integer }
+        is_featured: { type: boolean }
+
+    DoctorDashboard:
+      type: object
+      properties:
+        stats:
+          type: object
+          properties:
+            weekly_revenue_kobo: { type: integer, format: int64 }
+            revenue_growth_pct: { type: number, format: float }
+            patients_seen: { type: integer }
+            rating: { type: number, format: float }
+            is_online: { type: boolean }
+        pending_requests:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              patient_name: { type: string }
+              request_type: { type: string }
+              created_at: { type: string, format: date-time }
+        todays_appointments:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              patient_name: { type: string }
+              time: { type: string }
+              type: { type: string, enum: [video, in_person] }
+              reason: { type: string }
+              status: { type: string }
+
+    SOAPNote:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        appointment_id: { type: string, format: uuid }
+        doctor_id: { type: string, format: uuid }
+        patient_id: { type: string, format: uuid }
+        subjective: { type: string }
+        objective: { type: string }
+        assessment: { type: string }
+        plan: { type: string }
+        prescriptions:
+          type: array
+          items:
+            type: object
+            properties:
+              drug: { type: string }
+              dosage: { type: string }
+              duration: { type: string }
+        created_at: { type: string, format: date-time }
+
+    SubmitSOAPNoteRequest:
+      type: object
+      required: [appointment_id, subjective, assessment, plan]
+      properties:
+        appointment_id: { type: string, format: uuid }
+        subjective: { type: string }
+        objective: { type: string }
+        assessment: { type: string }
+        plan: { type: string }
+        prescriptions:
+          type: array
+          items:
+            type: object
+            properties:
+              drug: { type: string }
+              dosage: { type: string }
+              duration: { type: string }
+        idempotency_key: { type: string }
+
+    # ── Pharmacy ──────────────────────────────────────────────────────────────────
+    PharmacyProduct:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        category:
+          type: string
+          enum: [pain, vitamins, first_aid, baby, skincare, devices, prescription, otc]
+        price_kobo: { type: integer, format: int64 }
+        unit: { type: string }
+        is_bestseller: { type: boolean }
+        is_essential: { type: boolean }
+        in_stock: { type: boolean }
+        image_url: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    CartItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        quantity: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        product: { $ref: '#/components/schemas/PharmacyProduct', nullable: true }
 
     Appointment:
       type: object
@@ -1689,9 +4693,47 @@ paths:
         id: { type: string, format: uuid }
         patient_id: { type: string, format: uuid }
         doctor_id: { type: string, format: uuid }
+        doctor_name: { type: string }
+        doctor_specialty: { type: string }
+        consultation_type: { type: string, enum: [video, audio, chat, in_person] }
         scheduled_at: { type: string, format: date-time }
+        starts_at: { type: string, format: date-time, nullable: true }
         status: { type: string, enum: [booked, confirmed, completed, cancelled] }
+        notes: { type: string }
         fee_kobo: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+
+    Slot:
+      type: object
+      properties:
+        id: { type: string }
+        doctor_id: { type: string, format: uuid }
+        date: { type: string, format: date }
+        time: { type: string, description: "e.g. 09:00 AM" }
+        available: { type: boolean }
+
+    Review:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        appointment_id: { type: string, format: uuid }
+        doctor_id: { type: string, format: uuid }
+        patient_id: { type: string, format: uuid }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: string }
+        is_hidden: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    VisitSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        appointment_id: { type: string, format: uuid }
+        doctor_id: { type: string, format: uuid }
+        patient_id: { type: string, format: uuid }
+        diagnosis: { type: string }
+        notes: { type: string }
+        follow_up: { type: string }
         created_at: { type: string, format: date-time }
 
     # ── Transport ────────────────────────────────────────────────────────────────

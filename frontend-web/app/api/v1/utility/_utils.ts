@@ -22,8 +22,18 @@ export function utilityRateLimit(request: Request, scope: string, actorId: strin
 }
 
 export function parseUtilityCategory(value: string | null): UtilityCategory | undefined {
-  if (value === 'airtime' || value === 'data' || value === 'electricity' || value === 'cable_tv' || value === 'internet') {
-    return value;
+  // Case-insensitive: the billing client sends UPPERCASE (AIRTIME/DATA/ELECTRICITY/
+  // CABLE_TV), while the canonical category values are lowercase. Normalise before
+  // matching so either case is accepted (was previously rejecting uppercase as 400).
+  const normalized = (value ?? '').trim().toLowerCase();
+  if (
+    normalized === 'airtime' ||
+    normalized === 'data' ||
+    normalized === 'electricity' ||
+    normalized === 'cable_tv' ||
+    normalized === 'internet'
+  ) {
+    return normalized as UtilityCategory;
   }
   return undefined;
 }

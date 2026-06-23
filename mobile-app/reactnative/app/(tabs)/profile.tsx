@@ -24,6 +24,8 @@ import {
   RefreshCw,
   ShieldCheck,
   UserRound,
+  Store,
+  ChevronRight,
 } from 'lucide-react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import TextInputField from '@/components/TextInputField';
@@ -669,6 +671,22 @@ export default function ProfileScreen() {
             ) : null}
           </View>
 
+          <Pressable
+            onPress={() => router.push('/(merchant)')}
+            style={({ pressed }) => [styles.merchantCard, shadow1, pressed && { opacity: 0.9 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Become a merchant or service provider"
+          >
+            <View style={styles.merchantIcon}>
+              <Store size={20} color={Colors.onPrimary} strokeWidth={2} />
+            </View>
+            <View style={styles.merchantBody}>
+              <Text style={styles.merchantTitle}>Become a Merchant / Provider</Text>
+              <Text style={styles.merchantSub}>Sell or offer services — keep your customer account</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.onPrimary} strokeWidth={2} />
+          </Pressable>
+
           <View style={[styles.signOutCard, shadow1]}>
             <Pressable onPress={handleLogout} style={styles.signOutButton}>
               <LogOut size={19} color={Colors.error} strokeWidth={2.2} />
@@ -685,6 +703,11 @@ export default function ProfileScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
+  merchantCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.primary, borderRadius: Radius.lg, padding: Spacing.md, marginHorizontal: Spacing.containerMargin, marginTop: Spacing.md, marginBottom: Spacing.sm },
+  merchantIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' },
+  merchantBody: { flex: 1, gap: 2 },
+  merchantTitle: { ...Typography.labelLg, color: Colors.onPrimary },
+  merchantSub: { ...Typography.labelSm, color: Colors.inverseOnSurface },
   content: {
     paddingBottom: Platform.OS === 'ios' ? 116 : 96,
   },

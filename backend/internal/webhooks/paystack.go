@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/finance/transfers"
 	"spotlight/backend/internal/finance/va"
+	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/provider"
 )
 
@@ -48,13 +48,14 @@ type transferData struct {
 // PaystackHandler dispatches inbound Paystack webhooks to the appropriate
 // finance sub-handlers.
 type PaystackHandler struct {
-	payment   provider.PaymentProvider
-	vaSvc     *va.Service
-	xferSvc   *transfers.Service
+	payment    provider.PaymentProvider
+	vaSvc      *va.Service
+	xferSvc    *transfers.Service
+	walletSvc  *wallet.Service
 }
 
-func NewPaystackHandler(payment provider.PaymentProvider, vaSvc *va.Service, xferSvc *transfers.Service) *PaystackHandler {
-	return &PaystackHandler{payment: payment, vaSvc: vaSvc, xferSvc: xferSvc}
+func NewPaystackHandler(payment provider.PaymentProvider, vaSvc *va.Service, xferSvc *transfers.Service, walletSvc *wallet.Service) *PaystackHandler {
+	return &PaystackHandler{payment: payment, vaSvc: vaSvc, xferSvc: xferSvc, walletSvc: walletSvc}
 }
 
 // Handle handles POST /api/webhooks/paystack
@@ -123,15 +124,11 @@ func (h *PaystackHandler) handleChargeSuccess(ctx context.Context, data json.Raw
 }
 
 func (h *PaystackHandler) handleWalletTopup(ctx context.Context, userID, reference string, amountKobo int64) error {
-	// Update topup intent status in DB then credit the ledger.
-	// The wallet.Service.Credit call is idempotent on the reference.
-	_ = ctx
-	_ = userID
-	_ = reference
-	_ = amountKobo
-	// TODO: wire wallet.Service here once circular import is resolved via an event bus.
-	// For MVP: wallet topup webhook is still handled by Next.js; Go VA inbound is new.
-	return nil
+	if h.walletSvc == nil {
+		return nil
+	}
+	idempotencyKey := "paystack:topup:" + reference
+	return h.walletSvc.Credit(ctx, userID, reference, idempotencyKey, amountKobo)
 }
 
 func (h *PaystackHandler) handleTransferUpdate(ctx context.Context, data json.RawMessage, newStatus string) error {
@@ -143,13 +140,5 @@ func (h *PaystackHandler) handleTransferUpdate(ctx context.Context, data json.Ra
 }
 
 func (h *PaystackHandler) updateBankTransferStatus(ctx context.Context, reference, status string, amountKobo int64) error {
-	_ = ctx
-	_ = reference
-	_ = status
-	_ = amountKobo
-	// Implemented in transfers.Service.HandleWebhook — called here once circular
-	// dependency is resolved. Placeholder returns nil to allow compilation.
-	// Full implementation: update bank_transfers.status, insert REVERSAL_DEBIT on failed/reversed.
-	_ = strings.TrimSpace("placeholder")
-	return nil
+	return h.xferSvc.HandleWebhook(ctx, reference, status, amountKobo)
 }

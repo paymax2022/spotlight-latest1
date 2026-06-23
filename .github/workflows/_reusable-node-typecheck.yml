@@ -1,0 +1,41 @@
+name: _reusable node typecheck
+
+# Reusable: npm ci + a typecheck command in any Node workspace.
+# Used by ci.yml for frontend-admin (npm run type-check => tsc --noEmit, strict),
+# and reusable by module workflows for scoped tsconfigs.
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Workspace directory (e.g. frontend-admin)
+        required: true
+        type: string
+      typecheck-command:
+        description: Command that runs the typecheck (e.g. npm run type-check)
+        required: true
+        type: string
+      node-version:
+        required: false
+        type: string
+        default: '20'
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: ${{ inputs.typecheck-command }}

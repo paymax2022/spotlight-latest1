@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "skipLibCheck": true },
+  "include": [
+    "src/types/**/*",
+    "src/components/map/**/*",
+    "src/services/mapsClient.ts",
+    "src/config/env.ts",
+    "src/lib/supabase/**/*"
+  ]
+}

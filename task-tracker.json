@@ -1,0 +1,23 @@
+{
+  "session": "Doctor (provider) telemedicine — mobile (A + C–AD) + backend FULL contract coverage (320 routes) + CI",
+  "app_root": "mobile-app/reactnative",
+  "backend_root": "backend/internal/doctor",
+  "last_updated": "2026-06-22",
+  "status": "Mobile screens 100% + production switch. Backend: 81-table migration + full OpenAPI + FULL CONTRACT COVERAGE (320 routes, 315/315 ops, 0 missing) across 7 QA-passed waves (money path, AI assist, realtime). CI in place.",
+  "note": "This root file is contended by concurrent agent sessions; authoritative durable copy: mobile-app/reactnative/DOCTOR_TASK_TRACKER.json.",
+  "completed_tasks": [
+    { "id": "mobile-all", "title": "Mobile: ALL spec sections A + C–AD + sandbox→live switch + GO_LIVE runbook" },
+    { "id": "be-foundation", "title": "Backend: contracts/doctor.openapi.yaml + additive migration (81 tables, RLS)" },
+    { "id": "be-mvp", "title": "MVP + money path: POST /payouts full ledger/idempotency/tier/audit bar + tests" },
+    { "id": "be-waves2-6", "title": "Waves 2–6: account/provider, human clinical, vet/pet, ops (chat/call/schedule/queue/clinics), AI assist (LLM, safe), realtime (RTC tokens + WS push). All QA PASS." },
+    { "id": "be-wave7", "title": "Wave 7: +67 endpoints, LLM rate guard, pet-growth idempotency, removed dead code, fixed 3 cross-wave gin param-panic conflicts. QA full-set route-safety 0 conflicts." },
+    { "id": "be-wave7b", "title": "Wave 7b: wired final 26 ops → FULL CONTRACT COVERAGE 320 routes / 315 ops / 0 missing; coverage doc corrected." },
+    { "id": "ci", "title": "CI: doctor-ci.yml + tsconfig.doctorcheck.json (backend build/vet/test, OpenAPI validate, mobile tsc, additive-only migration guard). Validated." }
+  ],
+  "pending_tasks": [
+    { "id": "ci-run", "priority": 1, "blocked_on": "Go+Node runner", "title": "Run doctor-ci.yml to formally close static-only verification (no Go toolchain in authoring sandbox)." },
+    { "id": "agora-token-verify", "priority": 1, "title": "Validate Agora AccessToken2 byte-format vs github.com/AgoraIO/Tools before live Agora (VideoSDK JWT is high-confidence fallback)." },
+    { "id": "go-live", "priority": 2, "blocked_on": "live env", "title": "Set ANTHROPIC/AGORA/VIDEOSDK secrets; supabase db push; FEATURE_DOCTOR_ENABLED=true + EXPO_PUBLIC_DOCTOR_USE_MOCK=false; flip flags; e2e." },
+    { "id": "minors", "priority": 3, "title": "Cosmetic carry-over nits only — no functional gaps remain in the contract." }
+  ]
+}

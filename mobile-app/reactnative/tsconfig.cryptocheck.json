@@ -1,0 +1,2 @@
+{ "extends": "./tsconfig.json", "compilerOptions": { "skipLibCheck": true, "noEmit": true, "jsx": "react-jsx" },
+  "include": ["src/features/crypto/**/*.ts", "src/features/crypto/**/*.tsx", "app/crypto/**/*.tsx"] }

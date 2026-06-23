@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": [
+    "src/features/merchant/**/*.ts",
+    "src/features/merchant/**/*.tsx",
+    "app/(merchant)/**/*.tsx",
+    "src/types/merchant.ts"
+  ],
+  "exclude": [
+    "**/__tests__/**"
+  ]
+}

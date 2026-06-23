@@ -172,12 +172,10 @@ export async function forgotPassword(payload: { email: string }): Promise<void> 
   if (error) throw readableAuthError(error, 'Could not send reset link. Please try again.');
 }
 
-export async function resetPassword(payload: { token: string; password: string }): Promise<void> {
+export async function resetPassword(payload: { password: string }): Promise<void> {
   const supabase = createSupabaseClient();
-  if (payload.token) {
-    throw new Error('Open the reset link from your email, then set a new password.');
-  }
-
+  // Session is already established by the deep-link recovery handler before
+  // this function is called — just update the password in the active session.
   const { error } = await supabase.auth.updateUser({ password: payload.password });
   if (error) throw readableAuthError(error, 'Could not reset password. Please try again.');
 }

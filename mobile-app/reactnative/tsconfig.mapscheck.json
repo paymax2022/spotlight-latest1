@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "skipLibCheck": true },
+  "include": [
+    "app/maps/**/*",
+    "src/features/mobility/**/*",
+    "src/api/**/*",
+    "src/constants/**/*",
+    "src/lib/**/*",
+    "src/store/**/*",
+    "src/utils/**/*"
+  ]
+}

@@ -65,6 +65,9 @@ export default function TabsLayout() {
       <Tabs.Screen name="pay" options={{ title: 'Pay' }} />
       <Tabs.Screen name="vote" options={{ title: 'Vote' }} />
       <Tabs.Screen name="more" options={{ title: 'More' }} />
+      {/* Invest is not yet backed by an API — keep the route but hide it from the
+          tab bar so it never appears as a dead screen (INVEST-1). */}
+      <Tabs.Screen name="invest" options={{ href: null }} />
     </Tabs>
   );
 }

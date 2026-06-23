@@ -10,6 +10,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.108.2",
     "next": "15.1.11",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"

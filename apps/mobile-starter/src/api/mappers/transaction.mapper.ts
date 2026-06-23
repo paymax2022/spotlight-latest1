@@ -41,6 +41,7 @@ function mapServiceType(raw: unknown): ServiceType {
 
 export function mapTransactionFromApi(value: unknown): Transaction {
   const record = asRecord(value);
+  const meta = asRecord(record.metadata);
 
   // Utility API uses kobo amounts; legacy billing used naira amounts directly.
   // retail_amount_kobo is the authoritative amount field from utility_transactions.
@@ -64,8 +65,13 @@ export function mapTransactionFromApi(value: unknown): Transaction {
     charges,
     totalAmount: amount + charges,
     reference: String(record.provider_reference ?? record.reference ?? record.idempotency_key ?? ''),
+    // customerIdentifier maps from the utility shape's customer_reference (the
+    // phone/meter/smartcard the bill was paid against). Electricity transactions
+    // may surface the meter under meter_number (or in metadata); fall back across
+    // both snake_case and camelCase variants. (TX-5)
     customerIdentifier: String(
       record.customer_reference ?? record.customerIdentifier ?? record.customer_identifier ??
+      record.meter_number ?? meta.meter_number ??
       record.phoneNumber ?? record.meterNumber ?? record.smartCardNumber ?? ''
     ),
     providerName: optionalString(

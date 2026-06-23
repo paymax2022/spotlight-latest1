@@ -1,0 +1,2 @@
+{ "extends": "./tsconfig.json", "compilerOptions": { "noEmit": true },
+  "include": ["src/types/crowdfunding.ts","src/services/crowdfundingAdminService.ts","src/components/layouts/AdminSidebar.tsx","app/admin/crowdfunding/**/*.tsx","next-env.d.ts"] }

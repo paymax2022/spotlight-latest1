@@ -1,0 +1,113 @@
+name: Realtor CI
+
+# Verifies the realtor module on a full Node + network runner:
+#  - mobile module type-check (scoped tsconfig)
+#  - frontend-web type-check + lint (covers the AI route)
+#  - SQL migration sanity (additive-only guard)
+# (The authoring sandbox cannot complete a full project tsc nor run Postgres.)
+
+on:
+  push:
+    paths:
+      - 'mobile-app/reactnative/src/features/realtor/**'
+      - 'mobile-app/reactnative/app/realtor/**'
+      - 'frontend-web/app/api/v1/realtor/**'
+      - 'frontend-admin/app/admin/realtor/**'
+      - 'frontend-admin/src/services/realtorAdminService.ts'
+      - 'supabase/migrations/*realtor*.sql'
+      - '.github/workflows/realtor-ci.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  mobile-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app/reactnative
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck realtor module (scoped)
+        run: npx tsc --noEmit -p tsconfig.realtorcheck.json
+      - name: Typecheck whole app (belt-and-braces)
+        run: npx tsc --noEmit -p tsconfig.json
+
+  frontend-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Type-check (covers /api/v1/realtor/ai/{listing-copy,assist})
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+
+  admin-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Type-check realtor admin console
+        run: npx tsc --noEmit
+
+  migration-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject destructive DDL in realtor migrations (additive-only)
+        run: |
+          set -e
+          FILES=$(ls supabase/migrations/*realtor*.sql 2>/dev/null || true)
+          if [ -z "$FILES" ]; then echo "no realtor migrations"; exit 0; fi
+          if grep -iE '\b(drop\s+(table|column)|alter\s+column|drop\s+not\s+null)\b' $FILES; then
+            echo "::error::Destructive DDL found in realtor migration (must be additive-only)"; exit 1;
+          fi
+          echo "Additive-only guard passed for: $FILES"
+
+  migration-apply-and-rpc-tests:
+    # Applies the realtor migrations to a real Postgres and runs the RPC
+    # invariant tests (idempotent pay, no-double-booking, sold-out, dashboard).
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:14
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: realtor_ci }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      PGPASSWORD: postgres
+      PSQL: psql -h localhost -U postgres -d realtor_ci -v ON_ERROR_STOP=1 -q
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Supabase shim (extensions + auth helpers)
+        run: $PSQL -f supabase/tests/_supabase_shim.sql
+      - name: Apply realtor migrations (in order)
+        run: |
+          set -e
+          for m in \
+            20260620000000_realtor_property_graph \
+            20260620010000_realtor_lease_payments \
+            20260620020000_realtor_backend_rpcs \
+            20260620030000_realtor_maintenance \
+            20260620040000_realtor_hotel; do
+            echo "applying $m"; $PSQL -f "supabase/migrations/${m}.sql"
+          done
+      - name: Run RPC invariant tests
+        run: $PSQL -f supabase/tests/realtor_rpcs.test.sql

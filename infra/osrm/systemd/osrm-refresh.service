@@ -1,0 +1,18 @@
+# Weekly OSRM graph refresh (oneshot). Install into /etc/systemd/system/ and
+# adjust WorkingDirectory + User to your deployment. Pair with osrm-refresh.timer.
+[Unit]
+Description=Refresh OSRM routing graph from latest OSM extract
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/spotlight/infra/osrm
+ExecStart=/opt/spotlight/infra/osrm/refresh-graph.sh
+# Graph builds are CPU/RAM heavy; give it room and don't kill mid-build.
+TimeoutStartSec=3600
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

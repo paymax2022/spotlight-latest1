@@ -4,14 +4,20 @@
  * Stitch screen: "Select Payment Method"
  */
 import { Ionicons } from '@expo/vector-icons';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Pressable, StatusBar, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRef, useState } from 'react';
 import { usePaystack } from 'react-native-paystack-webview';
 
-import { initiatePaidVote, verifyPaidVote, walletPaidVote } from '@/api/voting.api';
+import {
+  fetchContestantDetail,
+  fetchRemainingFreeVotes,
+  initiatePaidVote,
+  verifyPaidVote,
+  walletPaidVote,
+} from '@/api/voting.api';
 import { GlassCard } from '@/components/voting/GlassCard';
 import { VoteButton } from '@/components/voting/VoteButton';
 import { GLASS_BORDER, votingColors, votingRadius, votingSpacing, votingTypography } from '@/theme/voting';
@@ -43,6 +49,45 @@ export default function PaymentMethodScreen() {
 
   const { popup } = usePaystack();
 
+  // Current vote total for the contestant — used to compute the post-purchase
+  // "new total" shown on the success screen (current voteCount + votes credited).
+  const contestant = useQuery({
+    queryKey: ['contestant', params.contestantId],
+    queryFn: () => fetchContestantDetail(params.contestantId ?? ''),
+    enabled: !!params.contestantId,
+  });
+
+  // Navigate to the success screen with real, fetched numbers — no hardcoding.
+  // votesCredited comes from the vote response; freeVotesRemaining is fetched
+  // fresh from the votes-remaining endpoint right before navigating.
+  const goToSuccess = async (votesCredited: number) => {
+    const currentCount = Number(contestant.data?.voteCount ?? 0);
+    const credited = Number.isFinite(votesCredited) ? votesCredited : 0;
+    const newTotal = currentCount + credited;
+
+    let freeVotesRemaining = 0;
+    if (params.contestId) {
+      try {
+        const remaining = await fetchRemainingFreeVotes(params.contestId);
+        freeVotesRemaining = Number(remaining?.freeVotesRemaining ?? 0);
+      } catch {
+        // Non-fatal: the vote already succeeded. Fall back to 0 rather than
+        // blocking the success screen on a secondary read.
+        freeVotesRemaining = 0;
+      }
+    }
+
+    router.replace({
+      pathname: '/contest/vote-success',
+      params: {
+        contestantName: params.contestantName ?? '',
+        voteCount: String(credited || params.voteCount),
+        newTotal: String(newTotal),
+        freeVotesRemaining: String(freeVotesRemaining),
+      },
+    });
+  };
+
   const verifyVote = useMutation({
     mutationFn: ({ transactionId, paymentReference }: { transactionId: string; paymentReference: string }) =>
       verifyPaidVote({
@@ -55,15 +100,7 @@ export default function PaymentMethodScreen() {
       queryClient.invalidateQueries({ queryKey: ['contestants', params.contestId] });
       queryClient.invalidateQueries({ queryKey: ['leaderboard', params.contestId] });
 
-      router.replace({
-        pathname: '/contest/vote-success',
-        params: {
-          contestantName: params.contestantName ?? '',
-          voteCount: params.voteCount,
-          newTotal: String(result.votesCredited ?? params.voteCount),
-          freeVotesRemaining: '0',
-        },
-      });
+      void goToSuccess(Number(result.votesCredited ?? params.voteCount));
     },
     onError: (err: any) => {
       setErrorMsg(err?.message ?? 'Payment was received but vote confirmation failed. Please contact support with your reference.');
@@ -124,15 +161,7 @@ export default function PaymentMethodScreen() {
       queryClient.invalidateQueries({ queryKey: ['contestants', params.contestId] });
       queryClient.invalidateQueries({ queryKey: ['leaderboard', params.contestId] });
 
-      router.replace({
-        pathname: '/contest/vote-success',
-        params: {
-          contestantName: params.contestantName ?? '',
-          voteCount: params.voteCount,
-          newTotal: String(result.votesCredited ?? params.voteCount),
-          freeVotesRemaining: '0',
-        },
-      });
+      void goToSuccess(Number(result.votesCredited ?? params.voteCount));
     },
     onError: (err: any) => {
       setErrorMsg(err?.message ?? 'Wallet payment failed. Please try again.');

@@ -1,0 +1,2 @@
+{ "extends": "./tsconfig.json", "compilerOptions": { "skipLibCheck": true, "noEmit": true },
+  "include": ["src/features/visitor/**/*.ts","src/features/visitor/**/*.tsx","src/components/ScreenHeader.tsx","src/components/StateView.tsx","src/components/TextInputField.tsx","app/visitor/**/*.tsx","app/guard/**/*.tsx"] }

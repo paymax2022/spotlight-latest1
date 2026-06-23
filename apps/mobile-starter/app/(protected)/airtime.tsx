@@ -13,6 +13,8 @@ import { AppLoader } from '@/components/ui/AppLoader';
 import { AppScreen } from '@/components/ui/AppScreen';
 import { AppText } from '@/components/ui/AppText';
 import { StatusMessage } from '@/components/ui/StatusMessage';
+import { BeneficiaryList } from '@/components/billing/BeneficiaryList';
+import { useBeneficiaries } from '@/hooks/useBeneficiaries';
 import { useBillingInvalidation } from '@/hooks/useBillingInvalidation';
 import { getFriendlyErrorMessage } from '@/utils/errorMapper';
 import { formatCurrency } from '@/utils/format';
@@ -23,15 +25,38 @@ export default function AirtimeScreen() {
   const router = useRouter();
   const invalidate = useBillingInvalidation();
   const networks = useQuery({ queryKey: ['airtime-networks'], queryFn: getAirtimeNetworks });
+  const beneficiaries = useBeneficiaries('AIRTIME');
   const [networkCode, setNetworkCode] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [amount, setAmount] = useState('');
   const [error, setError] = useState('');
+
+  const offerSaveBeneficiary = () => {
+    const network = networks.data?.find((item) => item.code === networkCode);
+    const alreadySaved = (beneficiaries.list.data ?? []).some(
+      (b) => b.billerId === networkCode || b.customerReference === phoneNumber,
+    );
+    const proceed = () => router.push(`/receipt/${purchase.data?.transactionId ?? purchase.data?.id ?? ''}`);
+    if (alreadySaved) { proceed(); return; }
+    Alert.alert('Save beneficiary?', `Save ${phoneNumber} (${network?.name ?? 'this number'}) for quick refills next time?`, [
+      { text: 'Not now', style: 'cancel', onPress: proceed },
+      {
+        text: 'Save',
+        onPress: () => {
+          beneficiaries.save.mutate(
+            { billerId: networkCode, label: phoneNumber, customerReference: phoneNumber },
+            { onSettled: proceed },
+          );
+        },
+      },
+    ]);
+  };
+
   const purchase = useMutation({
     mutationFn: () => buyAirtime({ networkCode, phoneNumber, amount: Number(amount), paymentMethod: 'WALLET', idempotencyKey: generateIdempotencyKey() }),
-    onSuccess: (data) => {
+    onSuccess: () => {
       invalidate();
-      router.push(`/receipt/${data.transactionId ?? data.id}`);
+      offerSaveBeneficiary();
     },
     onError: (err) => setError(getFriendlyErrorMessage(err, 'Transaction failed. Your wallet was not charged.'))
   });
@@ -50,9 +75,21 @@ export default function AirtimeScreen() {
     ]);
   };
 
+  const selectBeneficiary = (b) => {
+    setNetworkCode(b.billerId || networkCode);
+    setPhoneNumber(b.customerReference);
+    setError('');
+  };
+
   return (
     <AppScreen>
       <AppText variant="h1">Buy Airtime</AppText>
+      <BeneficiaryList
+        isLoading={beneficiaries.list.isLoading}
+        isError={beneficiaries.list.isError}
+        beneficiaries={beneficiaries.list.data ?? []}
+        onSelect={selectBeneficiary}
+      />
       <AppCard>
         <AppText variant="h2">Network</AppText>
         <ChoiceList choices={(networks.data ?? []).map((item) => ({ label: item.name, value: item.code }))} value={networkCode} onChange={setNetworkCode} />

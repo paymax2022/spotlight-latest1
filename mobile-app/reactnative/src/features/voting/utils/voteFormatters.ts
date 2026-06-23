@@ -46,3 +46,29 @@ export function truncate(text: string, maxLen = 80): string {
   if (text.length <= maxLen) return text;
   return text.slice(0, maxLen).trimEnd() + '…';
 }
+
+/**
+ * Resolve a leaderboard entry's trend direction into the uppercase movement
+ * value the RankMovementBadge renders.
+ *
+ * Preference order: the endpoint's `rankChange` ('up'|'down'|'same'), then the
+ * legacy `movement` field, then a safe 'SAME' fallback for missing/unknown
+ * values — so a malformed or absent signal never breaks the arrow.
+ */
+export function resolveMovement(
+  rankChange?: string | null,
+  movement?: 'UP' | 'DOWN' | 'SAME' | null,
+): 'UP' | 'DOWN' | 'SAME' {
+  switch (String(rankChange ?? '').toLowerCase()) {
+    case 'up':
+      return 'UP';
+    case 'down':
+      return 'DOWN';
+    case 'same':
+      return 'SAME';
+    default:
+      break;
+  }
+  if (movement === 'UP' || movement === 'DOWN' || movement === 'SAME') return movement;
+  return 'SAME';
+}

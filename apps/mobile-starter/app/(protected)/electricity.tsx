@@ -13,6 +13,8 @@ import { AppScreen } from '@/components/ui/AppScreen';
 import { AppText } from '@/components/ui/AppText';
 import { ChoiceList } from '@/components/ui/ChoiceList';
 import { StatusMessage } from '@/components/ui/StatusMessage';
+import { BeneficiaryList } from '@/components/billing/BeneficiaryList';
+import { useBeneficiaries } from '@/hooks/useBeneficiaries';
 import { useBillingInvalidation } from '@/hooks/useBillingInvalidation';
 import { colors } from '@/theme';
 import { getFriendlyErrorMessage } from '@/utils/errorMapper';
@@ -24,6 +26,7 @@ export default function ElectricityScreen() {
   const router = useRouter();
   const invalidate = useBillingInvalidation();
   const discos = useQuery({ queryKey: ['electricity-discos'], queryFn: getElectricityDiscos });
+  const beneficiaries = useBeneficiaries('ELECTRICITY');
   const [discoCode, setDiscoCode] = useState('');
   const [meterType, setMeterType] = useState('PREPAID');
   const [meterNumber, setMeterNumber] = useState('');
@@ -40,11 +43,37 @@ export default function ElectricityScreen() {
       setError(getFriendlyErrorMessage(err, 'Unable to validate meter number. Please check the number and try again.'));
     }
   });
+  const offerSaveBeneficiary = () => {
+    const disco = discos.data?.find((item) => item.code === discoCode);
+    const alreadySaved = (beneficiaries.list.data ?? []).some(
+      (b) => b.billerId === discoCode && b.customerReference === meterNumber,
+    );
+    const proceed = () => router.push(`/receipt/${payment.data?.transactionId ?? payment.data?.id ?? ''}`);
+    if (alreadySaved) { proceed(); return; }
+    Alert.alert('Save beneficiary?', `Save meter ${meterNumber} (${disco?.name ?? 'this disco'}) for quick payments next time?`, [
+      { text: 'Not now', style: 'cancel', onPress: proceed },
+      {
+        text: 'Save',
+        onPress: () => {
+          beneficiaries.save.mutate(
+            {
+              billerId: discoCode,
+              label: validated?.customerName ? `${validated.customerName} · ${meterNumber}` : meterNumber,
+              customerReference: meterNumber,
+              customerName: validated?.customerName,
+            },
+            { onSettled: proceed },
+          );
+        },
+      },
+    ]);
+  };
+
   const payment = useMutation({
     mutationFn: () => payElectricity({ discoCode, meterNumber, meterType, amount: Number(amount), customerPhone: phone, customerEmail: email || undefined, paymentMethod: 'WALLET', idempotencyKey: generateIdempotencyKey() }),
-    onSuccess: (data) => {
+    onSuccess: () => {
       invalidate();
-      router.push(`/receipt/${data.transactionId ?? data.id}`);
+      offerSaveBeneficiary();
     },
     onError: (err) => setError(getFriendlyErrorMessage(err, 'Transaction failed. Your wallet was not charged.'))
   });
@@ -69,9 +98,22 @@ export default function ElectricityScreen() {
     ]);
   };
 
+  const selectBeneficiary = (b) => {
+    setDiscoCode(b.billerId || discoCode);
+    setMeterNumber(b.customerReference);
+    setValidated(null);
+    setError('');
+  };
+
   return (
     <AppScreen>
       <AppText variant="h1">Electricity</AppText>
+      <BeneficiaryList
+        isLoading={beneficiaries.list.isLoading}
+        isError={beneficiaries.list.isError}
+        beneficiaries={beneficiaries.list.data ?? []}
+        onSelect={selectBeneficiary}
+      />
       <AppCard>
         <AppText variant="h2">Disco</AppText>
         <ChoiceList choices={(discos.data ?? []).filter((item) => meterType === 'PREPAID' ? item.supportsPrepaid : item.supportsPostpaid).map((item) => ({ label: item.name, value: item.code }))} value={discoCode} onChange={(value) => { setDiscoCode(value); setValidated(null); }} />

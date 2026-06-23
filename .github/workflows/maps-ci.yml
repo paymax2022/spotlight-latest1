@@ -1,0 +1,147 @@
+name: Maps CI
+
+# Verification gate for the provider-agnostic MapService layer.
+# The authoring sandbox had no Go toolchain, so the slice was static-verified
+# only — this workflow is the real gate. Blocks merges on red.
+# See backend/internal/maps/README.md and docs/adr/ADR-007-maps-abstraction.md.
+
+on:
+  push:
+    paths:
+      - 'backend/internal/maps/**'
+      - 'backend/internal/transport/maps_bridge.go'
+      - 'backend/internal/transport/ws_tracking.go'
+      - 'backend/internal/transport/handler.go'
+      - 'backend/internal/restaurant/service.go'
+      - 'backend/internal/estate/service.go'
+      - 'backend/internal/app/finance_routes.go'
+      - 'backend/internal/app/router.go'
+      - 'backend/internal/config/config.go'
+      - 'supabase/migrations/2026062600*.sql'
+      - 'supabase/migrations/*maps*.sql'
+      - 'supabase/migrations/*merchant_locations*.sql'
+      - 'contracts/openapi.yaml'
+      - 'frontend-web/src/components/map/**'
+      - 'frontend-web/src/services/mapsClient.ts'
+      - 'mobile-app/reactnative/src/features/mobility/**'
+      - 'mobile-app/reactnative/app/maps/**'
+      - 'mobile-app/reactnative/tsconfig.mapscheck.json'
+      - '.github/workflows/maps-ci.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ── 1. Go: build whole backend, then vet + unit-test the maps slice ──────────
+  backend:
+    name: Go build / vet / test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+      - name: Build (whole backend — catches wiring/import breaks)
+        run: go build ./...
+      - name: Vet (maps + bridged modules)
+        run: go vet ./internal/maps/... ./internal/transport/... ./internal/restaurant/... ./internal/estate/...
+      - name: Test (maps unit — guards, cache logic, pluscode, degradation)
+        run: go test ./internal/maps/... -count=1 -v
+      - name: Test (all — regression)
+        run: go test ./... -count=1
+
+  # ── 2. Integration: real Postgres+PostGIS via Supabase, migrations applied ───
+  integration:
+    name: PostGIS integration (Supabase)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start Supabase (applies all migrations incl. 20260626* maps)
+        run: supabase start
+      - name: Run maps integration tests against PostGIS
+        working-directory: backend
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+        run: go test -tags=integration ./internal/maps/... -count=1 -v
+      - name: Stop Supabase
+        if: always()
+        run: supabase stop || true
+
+  # ── 3. Web typecheck (MapView / AddressEntry / LiveTrackingMap + client) ─────
+  web-typecheck:
+    name: Web tsc --noEmit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck web (whole app)
+        run: npx tsc --noEmit
+
+  # ── 4. Mobile typecheck (scoped to the maps/mobility slice) ──────────────────
+  mobile-typecheck:
+    name: Mobile tsc (scoped)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app/reactnative
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck maps slice (scoped)
+        run: npx tsc --noEmit -p tsconfig.mapscheck.json
+
+  # ── 5. Additive-only DDL guard on the maps migrations ────────────────────────
+  migration-guard:
+    name: Additive-only migration guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject destructive DDL in maps migrations
+        run: |
+          set -e
+          FILES=$(ls supabase/migrations/2026062600*.sql supabase/migrations/*maps*.sql supabase/migrations/*merchant_locations*.sql 2>/dev/null | sort -u || true)
+          if [ -z "$FILES" ]; then echo "no maps migrations"; exit 0; fi
+          # Allow idempotent CREATE OR REPLACE and ADD COLUMN; reject real
+          # destructive DDL (drop table/column/type, drop not null, renames).
+          if grep -iEn '\b(drop\s+(table|column|type)|alter\s+[a-z_."]+\s+drop|drop\s+not\s+null|rename\s+(column|to))\b' $FILES; then
+            echo "::error::Destructive DDL found in a maps migration (must be additive-only)"; exit 1;
+          fi
+          echo "Additive-only guard passed for:"; echo "$FILES"
+
+  # ── 6. OpenAPI parses + maps paths present ───────────────────────────────────
+  openapi:
+    name: OpenAPI sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Validate contracts/openapi.yaml and maps paths
+        run: |
+          python3 - <<'PY'
+          import yaml, sys
+          d = yaml.safe_load(open('contracts/openapi.yaml'))
+          paths = d['paths']
+          maps = [p for p in paths if '/maps/' in p]
+          assert len(maps) >= 10, f"expected maps paths, found {maps}"
+          schemas = [s for s in d['components']['schemas'] if s.startswith('Map')]
+          assert 'MapGeoResult' in schemas and 'MapStyleConfig' in schemas, schemas
+          print("OpenAPI OK:", len(maps), "maps paths,", len(schemas), "Map* schemas")
+          PY

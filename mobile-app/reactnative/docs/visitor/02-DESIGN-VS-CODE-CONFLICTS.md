@@ -1,0 +1,19 @@
+# Design-Spec vs Codebase — Conflicts & Decisions
+
+Where `DESIGN-Mobile.md` (the Google Stitch export) diverges from the shipped code, **the code is treated as ground truth** (per the task brief) and the divergence is recorded here.
+
+| # | Topic | DESIGN-Mobile.md says | Actual code | Decision |
+|---|---|---|---|---|
+| 1 | **Doc location / name** | Task referenced `design-mobile.md` "at repo root". | File is `mobile-app/reactnative/DESIGN-Mobile.md`; a second app (`apps/mobile-starter`) has its own `src/theme` and no design doc. | Built in `mobile-app/reactnative` (the design-doc app) per your confirmation. |
+| 2 | **PRD path** | Task referenced `visitor.prd` in `docs/prd`. | File is `docs/prd/Visitor.md`. | Used `docs/prd/Visitor.md`. |
+| 3 | **Two apps, overlapping scope** | n/a | The A–Z estate screens already exist (370 files) in `apps/mobile-starter`, a *different* app from the design-doc app. | Treated this as a fresh, design-compliant build of the Visitor module inside the design-doc app rather than touching the other app. |
+| 4 | **Button height** | Primary button **56px**, "thumb-friendly". | `PrimaryButton` height = **56** ✓. | Matches. Bespoke action rows (approve/deny) also 56. |
+| 5 | **Card radius** | "Base radius **16px** for cards/buttons/inputs"; large 24px. | `Radius.lg = 16`, `Radius.xl = 24`. Existing cards mostly use `Radius.lg`; some use `Radius.md (12)`. | Followed token usage in code: `lg` for primary cards/buttons, `md` for nested rows. |
+| 6 | **Input background** | Inputs: background `#F1F5F9`, focus = 1.5px Electric Blue. | `TextInputField` uses `Colors.surfaceContainerLow (#EFF4FF)`, focus `Colors.secondary` 1.5px. Hex differs slightly from spec's `#F1F5F9`. | Used the **token** (`surfaceContainerLow`) — the code's resolved value, not the doc's literal hex. Visually equivalent cool-grey. |
+| 7 | **Background color** | Prose says light cool-grey `#F8FAFC`; front-matter says `#f8f9ff`. | Code `Colors.background = #F8F9FF` (matches front-matter). | Used token; doc is internally inconsistent (`#F8FAFC` prose vs `#f8f9ff` token) — token wins. |
+| 8 | **Typography font** | Plus Jakarta Sans across all levels. | `typography.ts` sets `fontFamily` to **system** (Plus Jakarta Sans not yet wired via `@expo-google-fonts`). | Used `Typography` tokens as-is. When the font is installed in `_layout.tsx`, the whole module inherits it automatically (no per-screen change needed). Flagged as a project-level gap, not a module defect. |
+| 9 | **Glassmorphism / 20px blur nav** | Bottom bar + sheets use 20px backdrop blur at 70% white. | No backdrop-filter blur primitive in the RN code (`shadows.ts` simulates elevation; SelectField sheet is opaque). | Followed the code's opaque-surface + shadow approach (RN has no first-class backdrop blur without extra deps). Recorded as a spec feature not implemented app-wide. |
+| 10 | **"No hardcoded colors" (task rule) vs existing code** | Task: no hardcoded colors at all. | Existing modules (`VotingColors`, several services screens) define **module-scoped semantic hexes** on top of base tokens. | Adopted the **existing precedent**: module hexes live only in `visitor.constants.ts` (`VisitorColors`/`CODE_TYPES`); screens/components contain **zero** raw colors. This both honors the rule's intent and matches shipped convention. |
+| 11 | **`claude.md` says "Framework: Next.js / Tailwind"** | The folder's `claude.md` describes a Next.js + Tailwind stack. | The app is actually **Expo / React Native** (StyleSheet, not Tailwind). | `claude.md` is stale; followed the real RN stack. |
+
+**Net:** no blocking conflicts. The design system is faithfully implemented by `src/constants/*`; the only genuine spec gaps are app-wide (Plus Jakarta Sans not loaded; glassmorphic blur not implemented) and are out of scope for a single module to fix.

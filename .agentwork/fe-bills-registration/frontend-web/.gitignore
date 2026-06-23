@@ -1,0 +1,22 @@
+# >>> AUTO-MANAGED: update-gitignore >>>
+/.DS_Store
+
+/.env
+/.env.*
+!.env.example
+!.env.*.example
+
+/.next/
+/.npm-cache/
+/node_modules/
+/dist/
+/out/
+/coverage/
+/tsconfig.tsbuildinfo
+
+/*.pem
+/*.key
+/*.p12
+/*.pfx
+/*.jks
+# <<< AUTO-MANAGED: update-gitignore <<<

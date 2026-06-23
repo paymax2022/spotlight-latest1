@@ -1,0 +1,876 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight — Estate Super-App Module API
+  version: 1.0.0
+  description: >
+    Estate vertical (Blocks 29–46): dues/payments, meetings, tasks, maintenance,
+    facilities, announcements, emergencies, documents, vendors, property
+    management, AI meeting notes, finance dashboard, admin panel, notifications,
+    reports, and member settings.
+
+    Conventions:
+      - All monetary amounts are integers in minor units (kobo). Never floats.
+      - Money mutations require an Idempotency-Key header and post a balanced,
+        tier-checked ledger entry (see /estate/dues/{id}/pay).
+      - Auth: Bearer JWT issued by Supabase Auth. Estate scope is derived
+        server-side from estate_residents; admin-only routes also require
+        role = estate_admin.
+    Module spec — mirrors contracts/visitor.openapi.yaml. Served under /api/v1.
+
+servers:
+  - url: /api/v1
+    description: Estate module routes (Next.js route handlers)
+
+tags:
+  - { name: Dues, description: Dues / rent / levies (money-path) }
+  - { name: Meetings }
+  - { name: Tasks }
+  - { name: Maintenance }
+  - { name: Facilities }
+  - { name: Announcements }
+  - { name: Emergencies }
+  - { name: Documents }
+  - { name: Vendors }
+  - { name: Properties }
+  - { name: AINotes }
+  - { name: Finance }
+  - { name: EstateAdmin }
+  - { name: Notifications }
+  - { name: Reports }
+  - { name: EstateSettings }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 128 }
+      description: Client-generated unique key; identical replays are no-ops.
+    PathId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthorized: { description: Missing or invalid bearer token }
+    Forbidden: { description: Not a resident of the estate, or admin role required }
+    NotFound: { description: Resource not found or not in caller's estate }
+    BadRequest: { description: Validation failed }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        status: { type: integer }
+
+    # ── Dues / payments (Block 29) ──
+    DuesInvoice:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        estateId: { type: string, format: uuid }
+        residentId: { type: string, format: uuid }
+        category: { type: string, enum: [service_charge, security_levy, waste, water, electricity, rent, facility, penalty, other] }
+        amountKobo: { type: integer, format: int64, minimum: 0 }
+        dueDate: { type: string, format: date-time }
+        status: { type: string, enum: [pending, paid, overdue, waived] }
+        createdAt: { type: string, format: date-time }
+    PayResult:
+      type: object
+      properties:
+        success: { type: boolean }
+        already_processed: { type: boolean }
+        payment:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            amountKobo: { type: integer, format: int64 }
+            reference: { type: string }
+            createdAt: { type: string, format: date-time }
+        invoice: { $ref: '#/components/schemas/DuesInvoice' }
+
+    # ── Meetings (Block 30) ──
+    Meeting:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        estateId: { type: string, format: uuid }
+        title: { type: string }
+        agenda: { type: string, nullable: true }
+        mode: { type: string, enum: [physical, virtual, hybrid] }
+        location: { type: string, nullable: true }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time, nullable: true }
+        status: { type: string, enum: [scheduled, live, ended, cancelled] }
+        rsvpCounts: { type: object, additionalProperties: { type: integer } }
+        myRsvp: { type: string, enum: [yes, no, maybe], nullable: true }
+
+    # ── Tasks (Block 31) ──
+    Task:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        estateId: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        assigneeId: { type: string, format: uuid, nullable: true }
+        assigneeName: { type: string, nullable: true }
+        dueDate: { type: string, format: date-time, nullable: true }
+        priority: { type: string, enum: [low, medium, high] }
+        status: { type: string, enum: [todo, in_progress, done] }
+        createdAt: { type: string, format: date-time }
+
+    # ── Maintenance / repairs (Block 32) ──
+    RepairRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        estateId: { type: string, format: uuid }
+        reporterId: { type: string, format: uuid }
+        reporterName: { type: string, nullable: true }
+        category: { type: string, enum: [plumbing, electrical, gate, generator, elevator, water, waste, road, pest, facility, other] }
+        description: { type: string }
+        urgency: { type: string, enum: [low, medium, high] }
+        status: { type: string, enum: [reported, inspection, assigned, in_progress, completed, reopened, cancelled] }
+        costEstimateKobo: { type: integer, format: int64, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updates:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              status: { type: string }
+              note: { type: string, nullable: true }
+              byName: { type: string, nullable: true }
+              createdAt: { type: string, format: date-time }
+
+    # ── Facilities (Block 33) ──
+    Facility:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        estateId: { type: string, format: uuid }
+        name: { type: string }
+        kind: { type: string }
+        capacity: { type: integer, nullable: true }
+        feeKobo: { type: integer, format: int64, minimum: 0 }
+    FacilityBooking:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        facilityId: { type: string, format: uuid }
+        facilityName: { type: string, nullable: true }
+        residentId: { type: string, format: uuid }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        status: { type: string, enum: [pending, confirmed, cancelled, refunded] }
+        amountKobo: { type: integer, format: int64, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+
+    # ── Announcements (Block 34) ──
+    Announcement:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        estateId: { type: string, format: uuid }
+        title: { type: string }
+        body: { type: string }
+        kind: { type: string, enum: [general, emergency, security, payment, maintenance, meeting, election] }
+        createdByName: { type: string }
+        createdAt: { type: string, format: date-time }
+        read: { type: boolean }
+
+    # ── Emergencies (Block 35) ──
+    EmergencyAlert:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        estateId: { type: string, format: uuid }
+        reporterId: { type: string, format: uuid }
+        reporterName: { type: string, nullable: true }
+        kind: { type: string, enum: [panic, medical, fire, security, noise, theft, domestic, other] }
+        description: { type: string, nullable: true }
+        location: { type: string, nullable: true }
+        status: { type: string, enum: [open, responding, resolved] }
+        createdAt: { type: string, format: date-time }
+
+    # ── Documents (Block 36) ──
+    Document:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        estateId: { type: string, format: uuid }
+        title: { type: string }
+        category: { type: string }
+        fileUrl: { type: string, format: uri }
+        uploaderName: { type: string, nullable: true }
+        restricted: { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    # ── Vendors (Block 37) ──
+    Vendor:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        estateId: { type: string, format: uuid }
+        name: { type: string }
+        category: { type: string }
+        phone: { type: string, nullable: true }
+        status: { type: string, enum: [pending, verified, suspended] }
+        rating: { type: number, format: float }
+    VendorJob:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        vendorId: { type: string, format: uuid }
+        vendorName: { type: string, nullable: true }
+        repairRequestId: { type: string, format: uuid, nullable: true }
+        status: { type: string, enum: [available, accepted, rejected, en_route, in_progress, completed, paid] }
+        amountKobo: { type: integer, format: int64, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+
+    # ── Properties (Block 38) ──
+    Property:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        unitLabel: { type: string }
+        propertyType: { type: string, enum: [apartment, house, commercial, land, other] }
+        floor: { type: string, nullable: true }
+        block: { type: string, nullable: true }
+        occupancyStatus: { type: string, enum: [vacant, occupied, reserved] }
+        landlordName: { type: string, nullable: true }
+        tenantName: { type: string, nullable: true }
+    PropertiesResponse:
+      type: object
+      properties:
+        summary:
+          type: object
+          properties:
+            total: { type: integer }
+            occupied: { type: integer }
+            vacant: { type: integer }
+            reserved: { type: integer }
+            occupancyRate: { type: integer }
+        properties:
+          type: array
+          items: { $ref: '#/components/schemas/Property' }
+
+    # ── AI notes (Block 39) ──
+    AiNote:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        meetingId: { type: string, format: uuid, nullable: true }
+        meetingTitle: { type: string, nullable: true }
+        title: { type: string }
+        summary: { type: string }
+        actionItems: { type: array, items: { type: string } }
+        source: { type: string, enum: [generated, manual] }
+        createdByName: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    # ── Finance dashboard (Block 40) ──
+    FinanceDashboard:
+      type: object
+      properties:
+        collectedTotalKobo: { type: integer, format: int64 }
+        collectedThisMonthKobo: { type: integer, format: int64 }
+        outstandingKobo: { type: integer, format: int64 }
+        invoiceCount: { type: integer }
+        paidCount: { type: integer }
+        collectionRate: { type: integer }
+        byCategory:
+          type: array
+          items:
+            type: object
+            properties:
+              category: { type: string }
+              amountKobo: { type: integer, format: int64 }
+        recentPayments:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              amountKobo: { type: integer, format: int64 }
+              method: { type: string }
+              payerName: { type: string, nullable: true }
+              createdAt: { type: string, format: date-time }
+
+    # ── Admin summary (Block 41) ──
+    AdminSummary:
+      type: object
+      properties:
+        residents: { type: integer }
+        properties: { type: integer }
+        upcomingMeetings: { type: integer }
+        attention:
+          type: object
+          properties:
+            pendingJoinRequests: { type: integer }
+            openEmergencies: { type: integer }
+            openRepairs: { type: integer }
+            pendingInvoices: { type: integer }
+            pendingBookings: { type: integer }
+
+    # ── Notifications (Block 43) ──
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        category: { type: string, enum: [general, payment, meeting, election, security, maintenance, facility, announcement, system] }
+        title: { type: string }
+        body: { type: string, nullable: true }
+        deepLink: { type: string, nullable: true }
+        readAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    # ── Reports (Block 44) ──
+    ReportsResponse:
+      type: object
+      properties:
+        sections:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              title: { type: string }
+              metrics:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    label: { type: string }
+                    value: { type: string }
+
+    # ── Settings (Block 45) ──
+    MemberSettings:
+      type: object
+      properties:
+        pushEnabled: { type: boolean }
+        emailEnabled: { type: boolean }
+        notifyPayments: { type: boolean }
+        notifyMeetings: { type: boolean }
+        notifyElections: { type: boolean }
+        notifySecurity: { type: boolean }
+        notifyMaintenance: { type: boolean }
+        notifyAnnouncements: { type: boolean }
+        language: { type: string }
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ── Dues / payments (Block 29) — money-path ──
+  /estate/dues:
+    get:
+      operationId: listDues
+      summary: List the caller's dues invoices (overdue projected at read-time)
+      tags: [Dues]
+      responses:
+        '200':
+          description: Invoices
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DuesInvoice' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /estate/dues/{id}/pay:
+    post:
+      operationId: payDues
+      summary: Pay a dues invoice from the wallet (balanced ledger debit, tier-checked)
+      description: Requires Idempotency-Key. Re-using the same key returns the same payment (no double-debit).
+      tags: [Dues]
+      parameters:
+        - { $ref: '#/components/parameters/PathId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '201': { description: Paid, content: { application/json: { schema: { $ref: '#/components/schemas/PayResult' } } } }
+        '200': { description: Already processed (idempotent replay), content: { application/json: { schema: { $ref: '#/components/schemas/PayResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '402': { description: Insufficient wallet balance }
+        '403': { description: Tier limit reached / not a resident }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invoice already paid or waived }
+        '422': { description: Invoice amount invalid }
+
+  # ── Meetings (Block 30) ──
+  /estate/meetings:
+    get:
+      operationId: listMeetings
+      summary: List estate meetings
+      tags: [Meetings]
+      responses:
+        '200': { description: Meetings, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Meeting' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: createMeeting
+      summary: Schedule a meeting (auto-RSVPs the creator)
+      tags: [Meetings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, startsAt]
+              properties:
+                title: { type: string }
+                agenda: { type: string }
+                mode: { type: string, enum: [physical, virtual, hybrid] }
+                location: { type: string }
+                startsAt: { type: string, format: date-time }
+                endsAt: { type: string, format: date-time }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Meeting' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /estate/meetings/{id}:
+    get:
+      operationId: getMeeting
+      summary: Meeting detail
+      tags: [Meetings]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Meeting, content: { application/json: { schema: { $ref: '#/components/schemas/Meeting' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /estate/meetings/{id}/rsvp:
+    post:
+      operationId: rsvpMeeting
+      summary: Set the caller's RSVP (upsert)
+      tags: [Meetings]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [response], properties: { response: { type: string, enum: [yes, no, maybe] } } }
+      responses:
+        '200': { description: RSVP recorded, content: { application/json: { schema: { $ref: '#/components/schemas/Meeting' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /estate/meetings/{id}/minutes:
+    get:
+      operationId: getMeetingMinutes
+      summary: Recorded minutes for a meeting
+      tags: [Meetings]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200':
+          description: Minutes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, format: uuid }
+                    content: { type: string }
+                    decisions: { type: array, items: { type: string } }
+                    createdAt: { type: string, format: date-time }
+
+  # ── Tasks (Block 31) ──
+  /estate/tasks:
+    get:
+      operationId: listTasks
+      summary: List estate committee tasks
+      tags: [Tasks]
+      responses:
+        '200': { description: Tasks, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Task' } } } } }
+    post:
+      operationId: createTask
+      summary: Create a task
+      tags: [Tasks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string }
+                description: { type: string }
+                assigneeId: { type: string, format: uuid }
+                dueDate: { type: string, format: date-time }
+                priority: { type: string, enum: [low, medium, high] }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /estate/tasks/{id}:
+    get:
+      operationId: getTask
+      summary: Task detail
+      tags: [Tasks]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Task, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /estate/tasks/{id}/status:
+    post:
+      operationId: updateTaskStatus
+      summary: Update a task's status
+      tags: [Tasks]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [status], properties: { status: { type: string, enum: [todo, in_progress, done] } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Maintenance / repairs (Block 32) ──
+  /estate/repairs:
+    get:
+      operationId: listRepairs
+      summary: List maintenance requests
+      tags: [Maintenance]
+      responses:
+        '200': { description: Requests, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/RepairRequest' } } } } }
+    post:
+      operationId: createRepair
+      summary: Report a maintenance issue
+      tags: [Maintenance]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, description]
+              properties:
+                category: { type: string }
+                description: { type: string }
+                urgency: { type: string, enum: [low, medium, high] }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/RepairRequest' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /estate/repairs/{id}:
+    get:
+      operationId: getRepair
+      summary: Repair request detail with activity timeline
+      tags: [Maintenance]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Request, content: { application/json: { schema: { $ref: '#/components/schemas/RepairRequest' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /estate/repairs/{id}/updates:
+    post:
+      operationId: addRepairUpdate
+      summary: Append a status update (advances the request status)
+      tags: [Maintenance]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [reported, inspection, assigned, in_progress, completed, reopened, cancelled] }
+                note: { type: string }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/RepairRequest' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Facilities (Block 33) ──
+  /estate/facilities:
+    get:
+      operationId: listFacilities
+      summary: List bookable facilities
+      tags: [Facilities]
+      responses:
+        '200': { description: Facilities, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Facility' } } } } }
+  /estate/facilities/bookings:
+    get:
+      operationId: listMyBookings
+      summary: The caller's facility bookings
+      tags: [Facilities]
+      responses:
+        '200': { description: Bookings, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/FacilityBooking' } } } } }
+    post:
+      operationId: createBooking
+      summary: Reserve a facility (fee captured in kobo; settled via dues money-path)
+      tags: [Facilities]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [facilityId, startsAt, endsAt]
+              properties:
+                facilityId: { type: string, format: uuid }
+                startsAt: { type: string, format: date-time }
+                endsAt: { type: string, format: date-time }
+      responses:
+        '201': { description: Reserved, content: { application/json: { schema: { $ref: '#/components/schemas/FacilityBooking' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /estate/facilities/bookings/{id}/cancel:
+    post:
+      operationId: cancelBooking
+      summary: Cancel one of the caller's bookings
+      tags: [Facilities]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Cancelled, content: { application/json: { schema: { $ref: '#/components/schemas/FacilityBooking' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Booking already closed }
+
+  # ── Announcements (Block 34) ──
+  /estate/announcements:
+    get:
+      operationId: listAnnouncements
+      summary: List announcements with per-user read state
+      tags: [Announcements]
+      responses:
+        '200': { description: Announcements, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Announcement' } } } } }
+    post:
+      operationId: createAnnouncement
+      summary: Post an announcement (estate admin only)
+      tags: [Announcements]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, body]
+              properties:
+                title: { type: string }
+                body: { type: string }
+                kind: { type: string, enum: [general, emergency, security, payment, maintenance, meeting, election] }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Announcement' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /estate/announcements/{id}:
+    get:
+      operationId: getAnnouncement
+      summary: Announcement detail (marks read for the caller)
+      tags: [Announcements]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Announcement, content: { application/json: { schema: { $ref: '#/components/schemas/Announcement' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /estate/announcements/{id}/read:
+    post:
+      operationId: markAnnouncementRead
+      summary: Mark an announcement read
+      tags: [Announcements]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '204': { description: Marked read }
+
+  # ── Emergencies (Block 35) ──
+  /estate/emergencies:
+    get:
+      operationId: listEmergencies
+      summary: List estate emergency alerts
+      tags: [Emergencies]
+      responses:
+        '200': { description: Alerts, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/EmergencyAlert' } } } } }
+    post:
+      operationId: createEmergency
+      summary: Raise an emergency alert
+      tags: [Emergencies]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [panic, medical, fire, security, noise, theft, domestic, other] }
+                description: { type: string }
+                location: { type: string }
+      responses:
+        '201': { description: Raised, content: { application/json: { schema: { $ref: '#/components/schemas/EmergencyAlert' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /estate/emergencies/{id}/resolve:
+    post:
+      operationId: resolveEmergency
+      summary: Mark an emergency resolved
+      tags: [Emergencies]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Resolved, content: { application/json: { schema: { $ref: '#/components/schemas/EmergencyAlert' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Documents (Block 36) ──
+  /estate/documents:
+    get:
+      operationId: listDocuments
+      summary: List estate documents (restricted docs visible to admins only)
+      tags: [Documents]
+      responses:
+        '200': { description: Documents, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Document' } } } } }
+    post:
+      operationId: createDocument
+      summary: Record a document (estate admin only)
+      tags: [Documents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, fileUrl]
+              properties:
+                title: { type: string }
+                category: { type: string }
+                fileUrl: { type: string, format: uri }
+                restricted: { type: boolean }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Document' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── Vendors (Block 37) ──
+  /estate/vendors:
+    get:
+      operationId: listVendors
+      summary: Vendor directory (ordered by rating)
+      tags: [Vendors]
+      responses:
+        '200': { description: Vendors, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Vendor' } } } } }
+  /estate/vendors/jobs:
+    get:
+      operationId: listVendorJobs
+      summary: List vendor jobs in the estate
+      tags: [Vendors]
+      responses:
+        '200': { description: Jobs, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/VendorJob' } } } } }
+  /estate/vendors/jobs/{id}/status:
+    post:
+      operationId: updateVendorJobStatus
+      summary: Advance a vendor job's lifecycle status
+      tags: [Vendors]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [status], properties: { status: { type: string, enum: [available, accepted, rejected, en_route, in_progress, completed, paid] } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/VendorJob' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Properties (Block 38) ──
+  /estate/properties:
+    get:
+      operationId: listProperties
+      summary: Property directory + occupancy summary
+      tags: [Properties]
+      responses:
+        '200': { description: Properties, content: { application/json: { schema: { $ref: '#/components/schemas/PropertiesResponse' } } } }
+
+  # ── AI notes (Block 39) ──
+  /estate/ai-notes:
+    get:
+      operationId: listAiNotes
+      summary: List AI meeting-note summaries
+      tags: [AINotes]
+      responses:
+        '200': { description: Notes, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AiNote' } } } } }
+  /estate/ai-notes/generate:
+    post:
+      operationId: generateAiNote
+      summary: Generate an extractive summary from a meeting's minutes (admin only)
+      tags: [AINotes]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [meetingId], properties: { meetingId: { type: string, format: uuid } } }
+      responses:
+        '201': { description: Generated, content: { application/json: { schema: { $ref: '#/components/schemas/AiNote' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: No minutes recorded for this meeting }
+
+  # ── Finance dashboard (Block 40) ──
+  /estate/finance:
+    get:
+      operationId: getFinanceDashboard
+      summary: Estate finance dashboard (admin only)
+      tags: [Finance]
+      responses:
+        '200': { description: Dashboard, content: { application/json: { schema: { $ref: '#/components/schemas/FinanceDashboard' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── Admin panel (Block 41) ──
+  /estate/admin/summary:
+    get:
+      operationId: getAdminSummary
+      summary: Counts of items needing admin attention (admin only)
+      tags: [EstateAdmin]
+      responses:
+        '200': { description: Summary, content: { application/json: { schema: { $ref: '#/components/schemas/AdminSummary' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── Notifications (Block 43) ──
+  /estate/notifications:
+    get:
+      operationId: listNotifications
+      summary: The caller's notification feed
+      tags: [Notifications]
+      responses:
+        '200': { description: Notifications, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Notification' } } } } }
+  /estate/notifications/{id}/read:
+    post:
+      operationId: markNotificationRead
+      summary: Mark one notification read
+      tags: [Notifications]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '204': { description: Marked read }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /estate/notifications/read-all:
+    post:
+      operationId: markAllNotificationsRead
+      summary: Mark all unread notifications read
+      tags: [Notifications]
+      responses:
+        '204': { description: All marked read }
+
+  # ── Reports (Block 44) ──
+  /estate/reports:
+    get:
+      operationId: getReports
+      summary: Computed estate reports (admin only)
+      tags: [Reports]
+      responses:
+        '200': { description: Reports, content: { application/json: { schema: { $ref: '#/components/schemas/ReportsResponse' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── Member settings (Block 45) ──
+  /estate/settings:
+    get:
+      operationId: getMemberSettings
+      summary: The caller's estate notification settings (defaults if unset)
+      tags: [EstateSettings]
+      responses:
+        '200': { description: Settings, content: { application/json: { schema: { $ref: '#/components/schemas/MemberSettings' } } } }
+    patch:
+      operationId: updateMemberSettings
+      summary: Partially update settings (merges onto saved row)
+      tags: [EstateSettings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemberSettings' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/MemberSettings' } } } }

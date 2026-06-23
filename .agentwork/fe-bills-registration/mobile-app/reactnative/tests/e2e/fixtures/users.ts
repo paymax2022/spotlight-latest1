@@ -1,0 +1,32 @@
+export const users = {
+  funded: {
+    id: 'usr-funded-001',
+    fullName: 'Funded QA User',
+    email: 'funded.qa@paymax.test',
+    phone: '08031234567',
+    password: 'Password123!',
+    accessToken: 'e2e-funded-access-token',
+    walletBalance: 150_000,
+    transactionPin: '1234',
+  },
+  unfunded: {
+    id: 'usr-unfunded-001',
+    fullName: 'Unfunded QA User',
+    email: 'unfunded.qa@paymax.test',
+    phone: '08039876543',
+    password: 'Password123!',
+    accessToken: 'e2e-unfunded-access-token',
+    walletBalance: 25,
+    transactionPin: '1234',
+  },
+  lockedPin: {
+    id: 'usr-pin-lock-001',
+    fullName: 'PIN Lock QA User',
+    email: 'pin.lock.qa@paymax.test',
+    phone: '08035550111',
+    password: 'Password123!',
+    accessToken: 'e2e-pin-lock-access-token',
+    walletBalance: 50_000,
+    transactionPin: '0000',
+  },
+} as const;

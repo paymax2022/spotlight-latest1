@@ -17,13 +17,13 @@ export default function TextInputField({ label, error, leftIcon, secure, style, 
   const inputRef = useRef<TextInput>(null);
   const [focused,  setFocused]  = useState(false);
   const [revealed, setRevealed] = useState(false);
-  const { onFocus, onBlur, editable = true, ...inputProps } = rest;
+  const { onFocus, onBlur, editable = true, multiline, ...inputProps } = rest;
 
   return (
     <View style={styles.wrapper}>
       {label && <Text style={styles.label}>{label}</Text>}
       <Pressable
-        style={[styles.container, focused && styles.focused, !!error && styles.errored]}
+        style={[styles.container, multiline && styles.containerMultiline, focused && styles.focused, !!error && styles.errored]}
         onPress={() => inputRef.current?.focus()}
         disabled={!editable}
       >
@@ -31,6 +31,7 @@ export default function TextInputField({ label, error, leftIcon, secure, style, 
         <TextInput
           ref={inputRef}
           {...inputProps}
+          multiline={multiline}
           editable={editable}
           secureTextEntry={secure && !revealed}
           onFocus={(event) => {
@@ -74,6 +75,12 @@ const styles = StyleSheet.create({
     borderColor:     Colors.transparent,
     height:          56,
     paddingHorizontal: Spacing.md,
+  },
+  containerMultiline: {
+    height:          undefined,
+    minHeight:       56,
+    alignItems:      'stretch',
+    paddingVertical: Spacing.sm,
   },
   focused: {
     borderColor:     Colors.secondary,

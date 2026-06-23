@@ -5,6 +5,7 @@ import { Plus, Send, ArrowDown, RefreshCw } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import AppHeader from '@/components/AppHeader';
+import ElectionHeaderBanner from '@/features/election/components/ElectionHeaderBanner';
 import SearchBar from '@/components/SearchBar';
 import BalanceCard from '@/components/BalanceCard';
 import SectionHeader from '@/components/SectionHeader';
@@ -103,6 +104,7 @@ export default function HomeScreen() {
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />}
       >
         <AppHeader name={userName} notifCount={0} />
+        <ElectionHeaderBanner />
         <SearchBar />
 
         {isLoading ? (

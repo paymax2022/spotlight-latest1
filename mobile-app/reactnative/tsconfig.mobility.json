@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/features/mobility/**/*.ts",
+    "src/features/mobility/**/*.tsx",
+    "app/mobility/**/*.ts",
+    "app/mobility/**/*.tsx",
+    "src/constants/**/*.ts",
+    "src/components/**/*.tsx",
+    "src/api/client.ts",
+    "src/lib/**/*.ts"
+  ]
+}

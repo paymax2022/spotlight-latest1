@@ -1,0 +1,45 @@
+name: _reusable openapi validate
+
+# Reusable: validate every contract under contracts/ is well-formed YAML and
+# (where the toolchain is available) a structurally valid OpenAPI document.
+# CLAUDE.md: "API changes start in contracts/openapi.yaml — spec PR first."
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: YAML well-formedness (all contracts)
+        run: |
+          set -e
+          shopt -s nullglob
+          files=(contracts/*.yaml contracts/*.yml)
+          if [ ${#files[@]} -eq 0 ]; then echo "no contracts found"; exit 0; fi
+          for f in "${files[@]}"; do
+            python3 -c "import yaml,sys; yaml.safe_load(open('$f')); print('OK  ', '$f')"
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: OpenAPI structural validation (Redocly)
+        run: |
+          set -e
+          shopt -s nullglob
+          files=(contracts/*.yaml contracts/*.yml)
+          fail=0
+          for f in "${files[@]}"; do
+            echo "::group::lint $f"
+            # Redocly returns non-zero on spec errors; warnings do not fail the gate.
+            npx --yes @redocly/cli@1 lint "$f" --format=stylish || fail=1
+            echo "::endgroup::"
+          done
+          exit $fail

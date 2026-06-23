@@ -86,11 +86,17 @@ export const featureFlags = {
   /** FX currency exchange via Maplerad */
   fx: () => envFlag('FEATURE_FX_ENABLED'),
 
+  /** Realtor — property graph, listings, inspections, leases, shortlet, AI assist */
+  realtor: () => envFlag('FEATURE_REALTOR_ENABLED'),
+
   /** Dispute management — users raise tickets; admin resolves */
   disputes: () => envFlag('FEATURE_DISPUTES_ENABLED'),
 
   /** Post-transaction ratings for doctors, riders, restaurants, etc. */
   ratings: () => envFlag('FEATURE_RATINGS_ENABLED'),
+
+  /** Group / Association membership — dues, directory, meetings, chat, AI notes */
+  association: () => envFlag('FEATURE_ASSOCIATION_ENABLED'),
 } as const;
 
 export type FeatureName = keyof typeof featureFlags;

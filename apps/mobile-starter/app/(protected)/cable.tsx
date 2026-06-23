@@ -13,6 +13,8 @@ import { AppScreen } from '@/components/ui/AppScreen';
 import { AppText } from '@/components/ui/AppText';
 import { ChoiceList } from '@/components/ui/ChoiceList';
 import { StatusMessage } from '@/components/ui/StatusMessage';
+import { BeneficiaryList } from '@/components/billing/BeneficiaryList';
+import { useBeneficiaries } from '@/hooks/useBeneficiaries';
 import { useBillingInvalidation } from '@/hooks/useBillingInvalidation';
 import { colors } from '@/theme';
 import { getFriendlyErrorMessage } from '@/utils/errorMapper';
@@ -32,6 +34,7 @@ export default function CableScreen() {
   const [error, setError] = useState('');
   const providers = useQuery({ queryKey: ['cable-providers'], queryFn: getCableProviders });
   const packages = useQuery({ queryKey: ['cable-packages', providerCode], queryFn: () => getCablePackages(providerCode), enabled: Boolean(providerCode) });
+  const beneficiaries = useBeneficiaries('CABLE_TV');
   const validation = useMutation({
     mutationFn: () => validateCable({ providerCode, smartCardNumber }),
     onSuccess: setValidated,
@@ -40,11 +43,38 @@ export default function CableScreen() {
       setError(getFriendlyErrorMessage(err, 'Unable to validate smart card. Please check the number and try again.'));
     }
   });
+
+  const offerSaveBeneficiary = () => {
+    const provider = providers.data?.find((item) => item.code === providerCode);
+    const alreadySaved = (beneficiaries.list.data ?? []).some(
+      (b) => b.billerId === providerCode && b.customerReference === smartCardNumber,
+    );
+    const proceed = () => router.push(`/receipt/${payment.data?.transactionId ?? payment.data?.id ?? ''}`);
+    if (alreadySaved) { proceed(); return; }
+    Alert.alert('Save beneficiary?', `Save card ${smartCardNumber} (${provider?.name ?? 'this provider'}) for quick payments next time?`, [
+      { text: 'Not now', style: 'cancel', onPress: proceed },
+      {
+        text: 'Save',
+        onPress: () => {
+          beneficiaries.save.mutate(
+            {
+              billerId: providerCode,
+              label: validated?.customerName ? `${validated.customerName} · ${smartCardNumber}` : smartCardNumber,
+              customerReference: smartCardNumber,
+              customerName: validated?.customerName,
+            },
+            { onSettled: proceed },
+          );
+        },
+      },
+    ]);
+  };
+
   const payment = useMutation({
     mutationFn: () => payCable({ providerCode, smartCardNumber, packageId, customerPhone: phone, customerEmail: email || undefined, paymentMethod: 'WALLET', idempotencyKey: generateIdempotencyKey() }),
-    onSuccess: (data) => {
+    onSuccess: () => {
       invalidate();
-      router.push(`/receipt/${data.transactionId ?? data.id}`);
+      offerSaveBeneficiary();
     },
     onError: (err) => setError(getFriendlyErrorMessage(err, 'Transaction failed. Your wallet was not charged.'))
   });
@@ -69,9 +99,23 @@ export default function CableScreen() {
     ]);
   };
 
+  const selectBeneficiary = (b) => {
+    setProviderCode(b.billerId || providerCode);
+    setPackageId('');
+    setSmartCardNumber(b.customerReference);
+    setValidated(null);
+    setError('');
+  };
+
   return (
     <AppScreen>
       <AppText variant="h1">Cable TV</AppText>
+      <BeneficiaryList
+        isLoading={beneficiaries.list.isLoading}
+        isError={beneficiaries.list.isError}
+        beneficiaries={beneficiaries.list.data ?? []}
+        onSelect={selectBeneficiary}
+      />
       <AppCard>
         <AppText variant="h2">Provider</AppText>
         <ChoiceList choices={(providers.data ?? []).map((item) => ({ label: item.name, value: item.code }))} value={providerCode} onChange={(value) => { setProviderCode(value); setPackageId(''); setValidated(null); }} />

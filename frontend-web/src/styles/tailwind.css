@@ -2,10 +2,12 @@
 
 :root {
   --font-kumbh-fallback: 'Kumbh Sans', sans-serif;
-  --font-sans: var(--font-kumbh), var(--font-kumbh-fallback);
-  --font-serif: var(--font-kumbh), var(--font-kumbh-fallback);
-  --bs-font-sans-serif: var(--font-kumbh), var(--font-kumbh-fallback);
-  --bs-body-font-family: var(--font-kumbh), var(--font-kumbh-fallback);
+  /* Override Tailwind v4 preflight's html { font-family: var(--default-font-family...) } */
+  --default-font-family: var(--font-kumbh, 'Kumbh Sans', sans-serif);
+  --font-sans: var(--font-kumbh, 'Kumbh Sans', sans-serif);
+  --font-serif: var(--font-kumbh, 'Kumbh Sans', sans-serif);
+  --bs-font-sans-serif: var(--font-kumbh, 'Kumbh Sans', sans-serif);
+  --bs-body-font-family: var(--font-kumbh, 'Kumbh Sans', sans-serif);
   --body: #fff;
   --black: #000;
   --white: #fff;
@@ -22,8 +24,8 @@
   --bg3: #ffffff33;
   --box-shadow: 0px 4px 25px rgba(0, 0, 0, 0.06);
   --box-shadow-2: 0px 4px 25px rgba(56, 75, 255, 0.1);
-  --heading-font: var(--font-kumbh), var(--font-kumbh-fallback);
-  --body-font: var(--font-kumbh), var(--font-kumbh-fallback);
+  --heading-font: var(--font-kumbh, 'Kumbh Sans', sans-serif);
+  --body-font: var(--font-kumbh, 'Kumbh Sans', sans-serif);
 
   /* Back-compat aliases used by existing Spotlight classes */
   --bg-card: var(--white);
@@ -595,7 +597,7 @@ html {
 }
 
 body {
-  font-family: var(--font-kumbh), var(--font-kumbh-fallback);
+  font-family: var(--font-kumbh, 'Kumbh Sans', sans-serif);
   font-size: 16px;
   line-height: 1.75;
   font-weight: 400;
@@ -609,7 +611,7 @@ h1,
 h2,
 h3,
 .font-display {
-  font-family: var(--font-kumbh), var(--font-kumbh-fallback);
+  font-family: var(--font-kumbh, 'Kumbh Sans', sans-serif);
 }
 
 h1 {
@@ -759,7 +761,7 @@ h3 {
 .btn-primary {
   background: var(--accent-gold);
   color: #0d0d0d;
-  font-family: 'Kumbh Sans', sans-serif;
+  font-family: var(--font-kumbh, 'Kumbh Sans', sans-serif) !important;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -778,7 +780,7 @@ h3 {
 .btn-outline {
   border: 1px solid rgba(245, 240, 232, 0.2);
   color: var(--foreground);
-  font-family: 'Kumbh Sans', sans-serif;
+  font-family: var(--font-kumbh, 'Kumbh Sans', sans-serif) !important;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -794,7 +796,7 @@ h3 {
 
 /* Section label */
 .section-label {
-  font-family: 'Kumbh Sans', sans-serif;
+  font-family: var(--font-kumbh, 'Kumbh Sans', sans-serif) !important;
   font-size: 0.65rem;
   font-weight: 700;
   letter-spacing: 0.5em;
@@ -816,7 +818,7 @@ h3 {
   /* Explicit dark colour — never inherits from a dark container */
   color: #111827;
   padding: 0.875rem 1.25rem;
-  font-family: 'Kumbh Sans', sans-serif;
+  font-family: var(--font-kumbh, 'Kumbh Sans', sans-serif) !important;
   font-size: 0.9rem;
   transition:
     border-color 0.2s ease,
@@ -1137,5 +1139,5 @@ h6,
 .font-display,
 .font-sans,
 .font-serif {
-  font-family: var(--font-kumbh), var(--font-kumbh-fallback) !important;
+  font-family: var(--font-kumbh, 'Kumbh Sans', sans-serif) !important;
 }

@@ -1,0 +1,87 @@
+// ── Association — Group chat mock dataset (I) ─────────────────────────────────
+
+import type { ChatThread } from '../types/chat.types';
+
+export const MOCK_THREADS: ChatThread[] = [
+  {
+    id: 'th1',
+    title: 'NMA — All Members',
+    scope: 'ORG',
+    description: 'Organisation-wide channel for all members.',
+    lastMessage: 'Reminder: dues deadline extended to 31 July.',
+    lastAt: '2026-06-19T09:10:00Z',
+    unreadCount: 2,
+    muted: false,
+    memberCount: 42180,
+    postingBlock: 'ANNOUNCEMENT_ONLY',
+    messages: [
+      { id: 'm1', threadId: 'th1', authorId: 'sec', authorName: 'National Secretariat', authorRole: 'Admin', body: 'Welcome to the official NMA members channel.', createdAt: '2026-06-01T08:00:00Z', mine: false, system: false, pinned: true, imageUrl: null, reactions: [] },
+      { id: 'm2', threadId: 'th1', authorId: 'sec', authorName: 'National Secretariat', authorRole: 'Admin', body: 'Reminder: dues deadline extended to 31 July.', createdAt: '2026-06-19T09:10:00Z', mine: false, system: false, pinned: false, imageUrl: null, reactions: [] },
+    ],
+  },
+  {
+    id: 'th2',
+    title: 'Lagos State Chapter',
+    scope: 'CHAPTER',
+    description: 'Lagos chapter general discussion.',
+    lastMessage: 'Dr. Bello: See everyone at the CPD seminar 👍',
+    lastAt: '2026-06-19T18:42:00Z',
+    unreadCount: 5,
+    muted: false,
+    memberCount: 6120,
+    postingBlock: null,
+    messages: [
+      { id: 'm3', threadId: 'th2', authorId: 'u9', authorName: 'Dr. Adebayo Williams', authorRole: 'Welfare Chair', body: 'Has everyone seen the new CPD schedule?', createdAt: '2026-06-19T18:30:00Z', mine: false, system: false, pinned: false, imageUrl: null, reactions: [] },
+      { id: 'm4', threadId: 'th2', authorId: 'me', authorName: 'You', authorRole: null, body: 'Yes — registering now.', createdAt: '2026-06-19T18:35:00Z', mine: true, system: false, pinned: false, imageUrl: null, reactions: [] },
+      { id: 'm5', threadId: 'th2', authorId: 'u2', authorName: 'Dr. Fatima Bello', authorRole: null, body: 'See everyone at the CPD seminar 👍', createdAt: '2026-06-19T18:42:00Z', mine: false, system: false, pinned: false, imageUrl: null, reactions: [] },
+    ],
+  },
+  {
+    id: 'th3',
+    title: 'Welfare Committee',
+    scope: 'COMMITTEE',
+    description: 'Welfare committee coordination.',
+    lastMessage: 'You: Draft report attached for review.',
+    lastAt: '2026-06-18T13:05:00Z',
+    unreadCount: 0,
+    muted: true,
+    memberCount: 12,
+    postingBlock: null,
+    messages: [
+      { id: 'm6', threadId: 'th3', authorId: 'u9', authorName: 'Dr. Adebayo Williams', authorRole: 'Chair', body: 'Please share the Q2 disbursement figures.', createdAt: '2026-06-18T12:50:00Z', mine: false, system: false, pinned: false, imageUrl: null, reactions: [] },
+      { id: 'm7', threadId: 'th3', authorId: 'me', authorName: 'You', authorRole: null, body: 'Draft report attached for review.', createdAt: '2026-06-18T13:05:00Z', mine: true, system: false, pinned: false, imageUrl: null, reactions: [] },
+    ],
+  },
+  {
+    id: 'th4',
+    title: 'Executive Council',
+    scope: 'EXECUTIVE',
+    description: 'Executive members only.',
+    lastMessage: 'Restricted channel.',
+    lastAt: '2026-06-17T20:00:00Z',
+    unreadCount: 0,
+    muted: false,
+    memberCount: 22,
+    postingBlock: 'ROLE_RESTRICTED',
+    messages: [
+      { id: 'm8', threadId: 'th4', authorId: 'sys', authorName: 'System', authorRole: null, body: 'This channel is limited to Executive Council members.', createdAt: '2026-06-17T20:00:00Z', mine: false, system: true, pinned: false, imageUrl: null, reactions: [] },
+    ],
+  },
+  {
+    id: 'th5',
+    title: 'Dr. Adebayo Williams',
+    scope: 'DIRECT',
+    description: null,
+    lastMessage: 'Thanks, talk soon.',
+    lastAt: '2026-06-16T10:15:00Z',
+    unreadCount: 0,
+    muted: false,
+    memberCount: 0,
+    postingBlock: null,
+    messages: [
+      { id: 'm9', threadId: 'th5', authorId: 'u9', authorName: 'Dr. Adebayo Williams', authorRole: null, body: 'Could you send the welfare figures?', createdAt: '2026-06-16T10:00:00Z', mine: false, system: false, pinned: false, imageUrl: null, reactions: [] },
+      { id: 'm10', threadId: 'th5', authorId: 'me', authorName: 'You', authorRole: null, body: 'Sent to your email.', createdAt: '2026-06-16T10:12:00Z', mine: true, system: false, pinned: false, imageUrl: null, reactions: [] },
+      { id: 'm11', threadId: 'th5', authorId: 'u9', authorName: 'Dr. Adebayo Williams', authorRole: null, body: 'Thanks, talk soon.', createdAt: '2026-06-16T10:15:00Z', mine: false, system: false, pinned: false, imageUrl: null, reactions: [] },
+    ],
+  },
+];

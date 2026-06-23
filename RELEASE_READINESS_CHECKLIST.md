@@ -16,8 +16,13 @@ Last updated: 2026-05-28
 - [x] Critical-permission assignment restricted to super-admin
 - [x] Audit logs for sensitive RBAC actions
 - [x] Login activity + security events endpoints
-- [~] Full suspicious-activity response playbook (notify user, revoke sessions, forced reset)
-- [~] Full refresh-token/session revocation lifecycle hardening
+- [x] Full suspicious-activity response playbook (notify user, revoke sessions, forced reset)
+      — #19: new-device/new-IP/impossible-travel/failed-spike detection, security_events
+      record, Resend notification, configurable escalation (notify|force_reverify|force_password_reset).
+- [x] Full refresh-token/session revocation lifecycle hardening
+      — #19: refresh-token rotation + reuse-detection (family revoke), revoke-one/all,
+      admin force-logout/force-reset, fail-closed middleware session check. Gated by
+      FEATURE_SESSION_HARDENING_ENABLED (default OFF).
 
 ## 2) API Completion
 - [x] Auth core endpoints available

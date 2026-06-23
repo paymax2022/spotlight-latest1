@@ -32,17 +32,26 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	auditService := services.NewAuditService(auditRepo)
 	rbacService := services.NewRBACService(rbacRepo)
 	authService := services.NewAuthService(supabase, rbacService, cfg)
-	authHandler := handlers.NewAuthHandler(authService, rbacService, auditService)
+	// Session-hardening (#19): store + notifier + service, feature-flagged.
+	sessionStore := repositories.NewSessionSupabaseRepository(supabase)
+	securityNotifier := services.NewResendNotifier(cfg, supabase)
+	sessionService := services.NewSessionService(sessionStore, securityNotifier, auditService, cfg)
+	sessionHandler := handlers.NewSessionHandler(sessionService, auditService, cfg)
+	authHandler := handlers.NewAuthHandler(authService, rbacService, auditService).
+		WithSessions(sessionService, cfg.FeatureSessionHardeningEnabled)
 	rbacHandler := handlers.NewRBACHandler(rbacService, auditService)
 	auditHandler := handlers.NewAuditHandler(auditService)
-	adminUsersHandler := handlers.NewAdminUsersHandler(rbacService, auditService)
+	adminUsersHandler := handlers.NewAdminUsersHandler(rbacService, auditService).
+		WithSessions(sessionService, cfg.FeatureSessionHardeningEnabled)
 	leads := handlers.NewLeadHandler(services.NewLeadService(leadRepo))
 	chats := handlers.NewChatHandler(services.NewChatService(chatRepo))
 	handoffs := handlers.NewHandoffHandler(services.NewHandoffService(handoffRepo))
 	analytics := handlers.NewAnalyticsHandler(services.NewAnalyticsService(analyticsRepo))
-	competitions := handlers.NewCompetitionHandler(services.NewCompetitionService(competitionRepo))
+	competitions := handlers.NewCompetitionHandler(services.NewCompetitionService(competitionRepo)).WithAudit(auditService)
 	realityTV := handlers.NewRealityTVHandler(services.NewRealityTVService(realityTVRepo))
-	stem := handlers.NewStemHandler(services.NewStemService(stemRepo))
+	// #23 audit coverage: STEM sensitive mutations emit structured audit events
+	// via the shared audit_service. Additive — read endpoints are unaffected.
+	stem := handlers.NewStemHandler(services.NewStemService(stemRepo)).WithAudit(auditService)
 
 	v1 := r.Group("/api/v1")
 	{
@@ -61,10 +70,14 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		apiAuth.GET("/verify-email", authHandler.VerifyEmail)
 		apiAuth.POST("/resend-verification-link", authHandler.ResendVerificationLink)
 		apiAuthProtected := apiAuth.Group("")
-		apiAuthProtected.Use(middleware.RequireAuthContext(supabase, rbacService))
+		apiAuthProtected.Use(middleware.RequireAuthContextWithSessions(supabase, rbacService, sessionService, cfg.FeatureSessionHardeningEnabled))
 		apiAuthProtected.GET("/me", authHandler.Me)
 		apiAuthProtected.POST("/change-password", authHandler.ChangePassword)
 		apiAuthProtected.POST("/complete-profile", authHandler.CompleteProfile)
+		// Self-service session management (feature-flagged; 503 when OFF).
+		apiAuthProtected.GET("/sessions", sessionHandler.ListMySessions)
+		apiAuthProtected.DELETE("/sessions/:id", sessionHandler.RevokeMySession)
+		apiAuthProtected.POST("/sessions/revoke-all", sessionHandler.RevokeMyAllSessions)
 
 		users := v1.Group("/users")
 		users.GET("/health", health.GenericHealth)
@@ -273,8 +286,22 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		rbacAdmin.GET("/login-activity", middleware.RequirePermission(rbacService, "audit.logs.view"), auditHandler.LoginActivity)
 		rbacAdmin.GET("/security-events", middleware.RequirePermission(rbacService, "audit.logs.view"), auditHandler.SecurityEvents)
 		rbacAdmin.GET("/users", middleware.RequirePermission(rbacService, "users.view"), adminUsersHandler.List)
+		rbacAdmin.GET("/users/export", middleware.RequirePermission(rbacService, "users.view"), adminUsersHandler.Export)
+		// Bulk role assignment (one role → many users). Distinct static path placed
+		// BEFORE the /users/:id param routes to avoid wildcard capture.
+		rbacAdmin.POST("/users/bulk-roles", middleware.RequirePermission(rbacService, "users.roles.assign"), adminUsersHandler.BulkAssignRoleToUsers)
 		rbacAdmin.GET("/users/:id", middleware.RequirePermission(rbacService, "users.view"), adminUsersHandler.Get)
 		rbacAdmin.PATCH("/users/:id", middleware.RequirePermission(rbacService, "users.update"), adminUsersHandler.Update)
+		// Read-only per-user session/security view (composes #19 session surface).
+		rbacAdmin.GET("/users/:id/sessions", middleware.RequirePermission(rbacService, "users.view"), adminUsersHandler.Sessions)
+		// Bulk role assignment (many roles → one user).
+		rbacAdmin.POST("/users/:id/roles/bulk", middleware.RequirePermission(rbacService, "users.roles.assign"), adminUsersHandler.BulkAssignRoles)
+		// Bulk permission assignment (many permissions → one role).
+		rbacAdmin.POST("/roles/:id/permissions/bulk", middleware.RequirePermission(rbacService, "permissions.assign"), rbacHandler.BulkAssignPermissionsToRole)
+		// Admin session controls (#19, feature-flagged). High-impact actions are
+		// gated on users.suspend (a strong, super-admin-restricted-ish permission).
+		rbacAdmin.POST("/users/:id/force-logout", middleware.RequirePermission(rbacService, "users.suspend"), sessionHandler.AdminForceLogout)
+		rbacAdmin.POST("/users/:id/force-password-reset", middleware.RequirePermission(rbacService, "users.suspend"), sessionHandler.AdminForcePasswordReset)
 
 		mobile := v1.Group("/mobile")
 		mobile.GET("/health", health.GenericHealth)
@@ -284,7 +311,10 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	}
 
 	// Finance modules — wired only when DATABASE_URL is present.
-	registerFinanceRoutes(r, cfg)
+	registerFinanceRoutes(r, cfg, supabase, rbacService)
+
+	// Paymax Connect module — wired only when FEATURE_CONNECT_ENABLED + DATABASE_URL.
+	registerConnectRoutes(r, cfg, supabase, rbacService)
 
 	return r
 }

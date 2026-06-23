@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "skipLibCheck": true },
+  "include": [
+    "src/types/doctor.onboarding.ts",
+    "src/api/doctor.onboarding.api.ts",
+    "src/features/doctor/hooks/useOnboarding.ts",
+    "src/features/doctor/constants/onboarding.ts"
+  ]
+}

@@ -7,43 +7,72 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 
 interface Props {
-  label:     string;
-  icon:      string;
-  iconColor: string;
-  bgColor:   string;
-  badge?:    string;
-  onPress:   () => void;
+  label:       string;
+  icon:        string;
+  iconColor:   string;
+  bgColor:     string;
+  badge?:      string;
+  comingSoon?: boolean;
+  onPress:     () => void;
 }
 
-export default function ModuleCard({ label, icon, iconColor, bgColor, badge, onPress }: Props) {
+export default function ModuleCard({ label, icon, iconColor, bgColor, badge, comingSoon, onPress }: Props) {
   const IconComponent = (Icons as unknown as Record<string, Icons.LucideIcon>)[icon] ?? Icons.LayoutGrid;
 
   return (
     <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.container, pressed && styles.pressed]}
+      onPress={comingSoon ? undefined : onPress}
+      style={({ pressed }) => [
+        styles.container,
+        comingSoon && styles.disabled,
+        pressed && !comingSoon && styles.pressed,
+      ]}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: comingSoon }}
+      accessibilityLabel={comingSoon ? `${label} — coming soon` : label}
     >
-      <View style={[styles.iconBox, { backgroundColor: bgColor }]}>
-        <IconComponent size={24} color={iconColor} strokeWidth={1.8} />
-        {badge && (
+      <View style={[styles.iconBox, { backgroundColor: comingSoon ? Colors.surfaceContainerHigh : bgColor }]}>
+        <IconComponent
+          size={24}
+          color={comingSoon ? Colors.outline : iconColor}
+          strokeWidth={1.8}
+        />
+
+        {/* Badge — only shown when not comingSoon */}
+        {badge && !comingSoon && (
           <View style={styles.badge}>
             <Text style={styles.badgeText}>{badge}</Text>
           </View>
         )}
+
+        {/* Coming-soon lock pip */}
+        {comingSoon && (
+          <View style={styles.soonPip}>
+            <Icons.Lock size={8} color={Colors.white} strokeWidth={2.5} />
+          </View>
+        )}
       </View>
-      <Text style={styles.label} numberOfLines={2}>{label}</Text>
+
+      <Text style={[styles.label, comingSoon && styles.labelMuted]} numberOfLines={2}>{label}</Text>
+
+      {comingSoon && (
+        <Text style={styles.soonTag}>Soon</Text>
+      )}
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    alignItems:  'center',
-    gap:         Spacing.xs,
+    alignItems:      'center',
+    gap:             Spacing.xs,
     paddingVertical: Spacing.xs,
   },
+  disabled: {
+    opacity: 0.6,
+  },
   pressed: {
-    opacity: 0.75,
+    opacity:   0.75,
     transform: [{ scale: 0.96 }],
   },
   iconBox: {
@@ -55,24 +84,45 @@ const styles = StyleSheet.create({
     position:       'relative',
   },
   badge: {
-    position:        'absolute',
-    top:             -4,
-    right:           -4,
-    backgroundColor: Colors.error,
-    borderRadius:    Radius.full,
+    position:          'absolute',
+    top:               -4,
+    right:             -4,
+    backgroundColor:   Colors.error,
+    borderRadius:      Radius.full,
     paddingHorizontal: 5,
-    paddingVertical: 1,
+    paddingVertical:   1,
   },
   badgeText: {
     ...Typography.caption,
-    color:       Colors.onError,
-    fontSize:    9,
-    fontWeight:  '700',
+    color:      Colors.onError,
+    fontSize:   9,
+    fontWeight: '700',
+  },
+  soonPip: {
+    position:        'absolute',
+    top:             -4,
+    right:           -4,
+    width:           16,
+    height:          16,
+    borderRadius:    Radius.full,
+    backgroundColor: Colors.outline,
+    alignItems:      'center',
+    justifyContent:  'center',
   },
   label: {
     ...Typography.labelSm,
-    color:       Colors.onSurface,
-    textAlign:   'center',
-    maxWidth:    72,
+    color:    Colors.onSurface,
+    textAlign: 'center',
+    maxWidth:  72,
+  },
+  labelMuted: {
+    color: Colors.outline,
+  },
+  soonTag: {
+    ...Typography.caption,
+    fontSize:          8,
+    color:             Colors.outline,
+    textTransform:     'uppercase',
+    letterSpacing:     0.5,
   },
 });

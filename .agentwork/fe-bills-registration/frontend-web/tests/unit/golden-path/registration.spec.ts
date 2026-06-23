@@ -1,0 +1,253 @@
+/**
+ * Golden-path suite: contest registration flow
+ *   POST /api/registration/applications         — create draft
+ *   POST /api/registration/applications/[id]/submit — submit draft
+ *
+ * The registration store is in-memory (globalThis Map) — no database.
+ * Store functions are mocked so tests stay isolated and fast.
+ * Auth (requireUser) is mocked to control auth outcomes.
+ *
+ * Protected sources:
+ *   frontend-web/app/api/registration/applications/route.ts         (DO NOT EDIT)
+ *   frontend-web/app/api/registration/applications/[id]/submit/route.ts (DO NOT EDIT)
+ *   frontend-web/src/server/registration/store.ts                   (DO NOT EDIT)
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { makeRequest } from './_fixtures';
+
+// ── Module mocks ──────────────────────────────────────────────────────────────
+
+vi.mock('next/server', () => ({
+  NextResponse: {
+    json: (body: unknown, init?: ResponseInit) =>
+      new Response(JSON.stringify(body), {
+        ...init,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+  },
+}));
+
+vi.mock('@/src/lib/auth/server', () => ({
+  requireUser: vi.fn(),
+}));
+
+vi.mock('@/src/server/registration/store', () => ({
+  listRegistrationApplications: vi.fn().mockReturnValue([]),
+  startRegistrationDraft: vi.fn(),
+  getRegistrationDraft: vi.fn(),
+  submitRegistrationApplication: vi.fn(),
+}));
+
+// ── Import after mocks ────────────────────────────────────────────────────────
+
+import { POST as createPost, GET as listGet } from '../../../app/api/registration/applications/route';
+import { POST as submitPost } from '../../../app/api/registration/applications/[id]/submit/route';
+import { requireUser } from '@/src/lib/auth/server';
+import {
+  startRegistrationDraft,
+  getRegistrationDraft,
+  submitRegistrationApplication,
+  listRegistrationApplications,
+} from '@/src/server/registration/store';
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const TEST_USER = { id: 'user-001', email: 'applicant@example.com', role: 'public_user' };
+
+function authAsTestUser() {
+  vi.mocked(requireUser).mockResolvedValue({ user: TEST_USER } as any);
+}
+
+function authUnauthorized() {
+  vi.mocked(requireUser).mockRejectedValue(new Error('UNAUTHORIZED'));
+}
+
+function makeDraft(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'draft-id-001',
+    reference: 'REALIT-123456-ABCD',
+    contestSlug: 'reality-tv-show',
+    status: 'draft',
+    role: 'public_user',
+    userId: TEST_USER.id,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    formData: {},
+    completionPercent: 0,
+    currentStep: 'account_gate',
+    fraudFlags: [],
+    ...overrides,
+  };
+}
+
+// ── Tests: create draft ───────────────────────────────────────────────────────
+
+describe('POST /api/registration/applications', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authAsTestUser();
+  });
+
+  it('should create a registration draft for a valid contest', async () => {
+    const draft = makeDraft();
+    vi.mocked(startRegistrationDraft).mockReturnValue(draft as any);
+
+    const res = await createPost(
+      makeRequest('/api/registration/applications', {
+        body: { contestSlug: 'reality-tv-show' },
+      }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(body.success).toBe(true);
+    expect(body.draft.id).toBe('draft-id-001');
+    expect(body.draft.contestSlug).toBe('reality-tv-show');
+    expect(body.draft.status).toBe('draft');
+    expect(vi.mocked(startRegistrationDraft)).toHaveBeenCalledWith({
+      contestSlug: 'reality-tv-show',
+      userId: TEST_USER.id,
+      role: undefined,
+      accountData: undefined,
+    });
+  });
+
+  it('should return 400 when contestSlug is missing', async () => {
+    const res = await createPost(
+      makeRequest('/api/registration/applications', { body: {} }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.success).toBe(false);
+    expect(body.error).toMatch(/contestSlug/i);
+  });
+
+  it('should return 401 when user is not authenticated', async () => {
+    authUnauthorized();
+
+    const res = await createPost(
+      makeRequest('/api/registration/applications', {
+        body: { contestSlug: 'reality-tv-show' },
+      }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(401);
+    expect(body.success).toBe(false);
+  });
+});
+
+// ── Tests: GET list ───────────────────────────────────────────────────────────
+
+describe('GET /api/registration/applications', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authAsTestUser();
+  });
+
+  it('should return applications belonging to the authenticated user', async () => {
+    const draft = makeDraft();
+    vi.mocked(listRegistrationApplications).mockReturnValue([draft] as any);
+
+    const res = await listGet(
+      new Request('http://localhost/api/registration/applications', { method: 'GET' }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+    // Only drafts owned by the current user are returned
+    expect(body.applications).toHaveLength(1);
+    expect(body.applications[0].userId).toBe(TEST_USER.id);
+  });
+});
+
+// ── Tests: submit draft ───────────────────────────────────────────────────────
+
+describe('POST /api/registration/applications/[id]/submit', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authAsTestUser();
+  });
+
+  it('should submit a draft and return a reference number', async () => {
+    const draft = makeDraft({ status: 'submitted' });
+    vi.mocked(getRegistrationDraft).mockReturnValue(draft as any);
+    vi.mocked(submitRegistrationApplication).mockReturnValue({
+      success: true,
+      draft,
+    } as any);
+
+    const res = await submitPost(
+      makeRequest('/api/registration/applications/draft-id-001/submit', {}),
+      { params: { id: 'draft-id-001' } },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.draft.reference).toBe('REALIT-123456-ABCD');
+    expect(body.message).toMatch(/REALIT-123456-ABCD/);
+  });
+
+  it('should return 404 when the draft does not exist', async () => {
+    vi.mocked(getRegistrationDraft).mockReturnValue(null);
+
+    const res = await submitPost(
+      makeRequest('/api/registration/applications/unknown-id/submit', {}),
+      { params: { id: 'unknown-id' } },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(body.error).toMatch(/not found/i);
+  });
+
+  it('should return 403 when the draft belongs to a different user', async () => {
+    const otherUserDraft = makeDraft({ userId: 'different-user-999' });
+    vi.mocked(getRegistrationDraft).mockReturnValue(otherUserDraft as any);
+
+    const res = await submitPost(
+      makeRequest('/api/registration/applications/draft-id-001/submit', {}),
+      { params: { id: 'draft-id-001' } },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(body.error).toMatch(/forbidden/i);
+  });
+
+  it('should return 401 when user is not authenticated', async () => {
+    authUnauthorized();
+
+    const res = await submitPost(
+      makeRequest('/api/registration/applications/draft-id-001/submit', {}),
+      { params: { id: 'draft-id-001' } },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(401);
+    expect(body.success).toBe(false);
+  });
+
+  it('should return 400 when validation fails on submit', async () => {
+    const draft = makeDraft(); // draft status, no formData filled
+    vi.mocked(getRegistrationDraft).mockReturnValue(draft as any);
+    vi.mocked(submitRegistrationApplication).mockReturnValue({
+      success: false,
+      validationErrors: { 'personal.fullName': 'Required' },
+      draft,
+    } as any);
+
+    const res = await submitPost(
+      makeRequest('/api/registration/applications/draft-id-001/submit', {}),
+      { params: { id: 'draft-id-001' } },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.success).toBe(false);
+    expect(body.error).toMatch(/validation failed/i);
+  });
+});

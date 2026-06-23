@@ -10,14 +10,30 @@ import (
 	"spotlight/backend/internal/finance/settlement"
 )
 
+// AddressGeocoder resolves a typed address to a pin + Plus Code. Satisfied by
+// maps.LocationGeocoder (the provider-agnostic MapService). Optional: when nil,
+// restaurants are created without coordinates (a pin can be set later via the
+// MapService /locations endpoint).
+type AddressGeocoder interface {
+	Geocode(ctx context.Context, address string) (lat, lng float64, plusCode string, err error)
+}
+
 // Service manages restaurants, menus, and orders.
 type Service struct {
 	db         *pgxpool.Pool
 	settlement *settlement.Service
+	geocoder   AddressGeocoder
 }
 
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
 	return &Service{db: db, settlement: settlement}
+}
+
+// WithGeocoder attaches an address geocoder so new restaurants get a pin
+// (geo_lat/geo_lng + plus_code) automatically, which syncs into merchant_locations.
+func (s *Service) WithGeocoder(g AddressGeocoder) *Service {
+	s.geocoder = g
+	return s
 }
 
 // CreateRestaurant registers a new restaurant.
@@ -34,6 +50,17 @@ func (s *Service) CreateRestaurant(ctx context.Context, ownerID string, req Crea
 	}
 	const q = `INSERT INTO restaurants (id, owner_id, name, description, address, logo_url, is_open) VALUES ($1,$2,$3,$4,$5,$6,false)`
 	_, err := s.db.Exec(ctx, q, r.ID, r.OwnerID, r.Name, r.Description, r.Address, r.LogoURL)
+
+	// Best-effort: geocode the address to a pin so "near me" works. The UPDATE
+	// fires the merchant_locations sync trigger. A geocode failure never fails
+	// restaurant creation (the pin can be set later via /maps/locations).
+	if err == nil && s.geocoder != nil && r.Address != "" {
+		if lat, lng, plus, gerr := s.geocoder.Geocode(ctx, r.Address); gerr == nil {
+			_, _ = s.db.Exec(ctx,
+				`UPDATE restaurants SET geo_lat=$2, geo_lng=$3, plus_code=$4, updated_at=NOW() WHERE id=$1`,
+				r.ID, lat, lng, plus)
+		}
+	}
 	return r, err
 }
 
@@ -147,12 +174,19 @@ func (s *Service) UpdateStatus(ctx context.Context, orderID, actorID string, new
 		s.db.QueryRow(ctx, `SELECT rider_id FROM orders WHERE id=$1`, orderID).Scan(&riderID)
 		var ownerID string
 		s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, order.RestaurantID).Scan(&ownerID)
+		// Split must sum to 1.0. With a rider: 80% restaurant / 10% platform / 10%
+		// rider. With NO rider, the 10% rider share folds back into the restaurant
+		// (90% / 10%) so escrow is fully released and nothing is orphaned.
 		split := settlement.Split{
 			ProviderID:  ownerID,
 			ProviderPct: 0.80,
 			PlatformPct: 0.10,
 			RiderID:     riderID,
 			RiderPct:    0.10,
+		}
+		if riderID == nil {
+			split.ProviderPct = 0.90
+			split.RiderPct = 0
 		}
 		if err := s.settlement.Settle(ctx, order.SettlementID, split); err != nil {
 			return fmt.Errorf("restaurant: settle order: %w", err)

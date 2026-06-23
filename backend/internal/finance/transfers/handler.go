@@ -1,0 +1,121 @@
+package transfers
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+// Handler exposes wallet-to-wallet (P2P) and wallet-to-bank transfer endpoints.
+// Flag gating is applied per-feature: WalletEnabled gates the P2P routes,
+// BankEnabled gates the payout routes. When a flag is off the handler returns
+// 503 (service unavailable) — the go-live gate FEATURE_*_ENABLED=false → 503.
+type Handler struct {
+	svc           *Service
+	walletEnabled bool
+	bankEnabled   bool
+}
+
+// NewHandler builds a transfers HTTP handler. Pass the resolved feature-flag
+// values so each route family can fail closed with 503 when disabled.
+func NewHandler(svc *Service, walletTransfersEnabled, bankTransfersEnabled bool) *Handler {
+	return &Handler{svc: svc, walletEnabled: walletTransfersEnabled, bankEnabled: bankTransfersEnabled}
+}
+
+func writeError(c *gin.Context, err error) {
+	c.JSON(HTTPStatusForError(err), gin.H{
+		"error": err.Error(),
+		"code":  ErrorCode(err),
+	})
+}
+
+func unavailable(c *gin.Context, feature string) {
+	c.JSON(http.StatusServiceUnavailable, gin.H{
+		"error": feature + " is not enabled",
+		"code":  "feature_disabled",
+	})
+}
+
+// ResolvePaymax handles GET /finance/transfers/paymax/resolve?phone=...
+// Returns the recipient's masked phone + display name (never the full number).
+func (h *Handler) ResolvePaymax(c *gin.Context) {
+	if !h.walletEnabled {
+		unavailable(c, "wallet transfers")
+		return
+	}
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	phone := c.Query("phone")
+	resp, err := h.svc.ResolvePaymaxUser(c.Request.Context(), phone)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// InitiatePaymax handles POST /finance/transfers/paymax (wallet-to-wallet).
+func (h *Handler) InitiatePaymax(c *gin.Context) {
+	if !h.walletEnabled {
+		unavailable(c, "wallet transfers")
+		return
+	}
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	var req WalletTransferRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "invalid_request"})
+		return
+	}
+	// Header Idempotency-Key wins over a body field if present.
+	if k := c.GetHeader("Idempotency-Key"); k != "" {
+		req.IdempotencyKey = k
+	}
+	wt, err := h.svc.InitiateWalletToWallet(c.Request.Context(), userID, req)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	status := http.StatusCreated
+	if wt.AlreadyProcessed {
+		status = http.StatusOK // replay — already processed
+	}
+	c.JSON(status, wt)
+}
+
+// InitiateBank handles POST /finance/transfers/bank (wallet-to-bank payout).
+func (h *Handler) InitiateBank(c *gin.Context) {
+	if !h.bankEnabled {
+		unavailable(c, "bank transfers")
+		return
+	}
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	var req BankTransferRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "invalid_request"})
+		return
+	}
+	if k := c.GetHeader("Idempotency-Key"); k != "" {
+		req.IdempotencyKey = k
+	}
+	bt, err := h.svc.InitiateBankTransfer(c.Request.Context(), userID, req)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	status := http.StatusCreated
+	if bt.AlreadyProcessed {
+		status = http.StatusOK
+	}
+	c.JSON(status, bt)
+}

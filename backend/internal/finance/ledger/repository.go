@@ -111,6 +111,43 @@ func (r *Repository) PostJournal(ctx context.Context, j JournalEntry) error {
 	return tx.Commit(ctx)
 }
 
+// PostReversalPair writes a balanced REVERSAL_DEBIT / REVERSAL_CREDIT pair
+// atomically. Unlike PostJournal (which always posts DEBIT/CREDIT), this is the
+// only correction primitive: it restores a held amount to creditAccountID
+// (REVERSAL_DEBIT, counted as +balance) and drains debitAccountID
+// (REVERSAL_CREDIT). Idempotency keys are suffixed per side so a duplicate
+// webhook violates the unique constraint and is a no-op.
+//
+// creditAccountID is the account whose balance is restored (e.g. the user
+// wallet); debitAccountID is the account the hold is released from (e.g. the
+// failed-transfer suspense account).
+func (r *Repository) PostReversalPair(ctx context.Context, creditAccountID, debitAccountID string, amountKobo int64, reference, idempotencyKey string) error {
+	if amountKobo <= 0 {
+		return fmt.Errorf("ledger: reversal amount must be positive kobo, got %d", amountKobo)
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("ledger: begin reversal tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	const insertEntry = `
+		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
+		VALUES ($1, $2, $3, $4, $5)`
+
+	// Restore balance to the user wallet — REVERSAL_DEBIT reads as +balance.
+	if _, err := tx.Exec(ctx, insertEntry,
+		creditAccountID, string(EntryReversalDebit), amountKobo, reference, idempotencyKey+":rev_debit"); err != nil {
+		return fmt.Errorf("ledger: insert reversal debit: %w", err)
+	}
+	// Drain the suspense hold — REVERSAL_CREDIT reads as -balance.
+	if _, err := tx.Exec(ctx, insertEntry,
+		debitAccountID, string(EntryReversalCredit), amountKobo, reference, idempotencyKey+":rev_credit"); err != nil {
+		return fmt.Errorf("ledger: insert reversal credit: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
 // ListEntries returns ledger entries for an account ordered by created_at desc.
 func (r *Repository) ListEntries(ctx context.Context, accountID string, limit, offset int) ([]Entry, error) {
 	const q = `

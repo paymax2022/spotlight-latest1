@@ -1,0 +1,23 @@
+{
+  "name": "frontend-admin",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "next dev -p 4030",
+    "build": "next build",
+    "start": "next start -p 4030",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "15.1.11",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "~19.2.10",
+    "@types/react-dom": "~19.2.0",
+    "typescript": "^5"
+  }
+}

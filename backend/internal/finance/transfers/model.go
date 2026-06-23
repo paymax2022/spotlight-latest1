@@ -6,9 +6,11 @@ import "time"
 type WalletTransferStatus string
 
 const (
-	WalletTransferPending   WalletTransferStatus = "pending"
-	WalletTransferCompleted WalletTransferStatus = "completed"
-	WalletTransferFailed    WalletTransferStatus = "failed"
+	// Status values align with contracts/openapi.yaml WalletTransfer.status
+	// enum: [successful, failed, reversed].
+	WalletTransferSuccessful WalletTransferStatus = "successful"
+	WalletTransferFailed     WalletTransferStatus = "failed"
+	WalletTransferReversed   WalletTransferStatus = "reversed"
 )
 
 // BankTransferStatus tracks the lifecycle of a wallet-to-bank transfer.
@@ -33,6 +35,9 @@ type WalletTransfer struct {
 	Status         WalletTransferStatus `json:"status"`
 	IdempotencyKey string               `json:"idempotency_key"`
 	CreatedAt      time.Time            `json:"created_at"`
+	// AlreadyProcessed is true when this result was returned by an idempotent
+	// replay (same Idempotency-Key seen before) rather than a fresh mutation.
+	AlreadyProcessed bool `json:"already_processed,omitempty"`
 }
 
 // WalletTransferRequest is the body for POST /finance/transfers/paymax.
@@ -64,6 +69,8 @@ type BankTransfer struct {
 	TransferCode   *string            `json:"transfer_code,omitempty"`
 	IdempotencyKey string             `json:"idempotency_key"`
 	CreatedAt      time.Time          `json:"created_at"`
+	// AlreadyProcessed is true when returned by an idempotent replay.
+	AlreadyProcessed bool `json:"already_processed,omitempty"`
 }
 
 // BankTransferRequest is the body for POST /finance/transfers/bank.

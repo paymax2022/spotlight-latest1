@@ -97,11 +97,19 @@ export interface FreeVoteAllocation {
   resetsAt: string;
 }
 
+/**
+ * Direction of a contestant's rank movement as reported by the leaderboard
+ * endpoint. The API emits lowercase `rankChange` ('up' | 'down' | 'same').
+ */
+export type RankChange = 'up' | 'down' | 'same';
+
 export interface LeaderboardEntry {
   rank: number;
   contestant: Contestant;
   previousRank?: number;
   movement?: 'UP' | 'DOWN' | 'SAME';
+  /** Raw trend signal from the endpoint. Preferred source for trend arrows. */
+  rankChange?: RankChange;
 }
 
 export interface VotingNotification {

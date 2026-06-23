@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Mail, Lock } from 'lucide-react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -23,6 +23,7 @@ type Form = z.infer<typeof schema>;
 export default function LoginScreen() {
   const { login } = useAuthStore();
   const [apiError, setApiError] = useState('');
+  const { returnTo } = useLocalSearchParams<{ returnTo?: string }>();
 
   const { control, handleSubmit, formState: { errors, isSubmitting } } = useForm<Form>({
     resolver: zodResolver(schema),
@@ -32,7 +33,12 @@ export default function LoginScreen() {
     setApiError('');
     try {
       await login(values.email, values.password);
-      // AuthGate in _layout will redirect to home automatically
+      // Navigate to the originating module screen, or the home grid as fallback.
+      // Validate returnTo starts with "/" to prevent open-redirect.
+      const dest = (typeof returnTo === 'string' && returnTo.startsWith('/'))
+        ? returnTo
+        : '/(tabs)/home';
+      router.replace(dest as never);
     } catch (err) {
       setApiError(getErrorMessage(err));
     }

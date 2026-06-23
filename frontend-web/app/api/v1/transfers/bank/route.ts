@@ -29,6 +29,7 @@ export async function POST(request: Request) {
 
     const body = (await request.json()) as {
       bank_code?: unknown;
+      bank_name?: unknown;
       account_number?: unknown;
       amount_kobo?: unknown;
       narration?: unknown;
@@ -50,10 +51,11 @@ export async function POST(request: Request) {
     // Resolve account name (validates the account exists at the bank)
     const resolved = await resolveBankAccount(bankCode, accountNumber);
 
-    // We don't know the bank name without fetching the list; use a placeholder
-    // that the client should supply, or fall back to bank_code.
-    // TODO: accept bank_name in body once client sends it.
-    const bankName = bankCode;
+    // Use bank_name from the request body when provided; fall back to bank_code
+    // so the stored record is always human-readable.
+    const bankName = typeof body.bank_name === 'string' && body.bank_name.trim()
+      ? body.bank_name.trim()
+      : bankCode;
 
     const result = await initiateWalletToBank({
       userId:          user.id,

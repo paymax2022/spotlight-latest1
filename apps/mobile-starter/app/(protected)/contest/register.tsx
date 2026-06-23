@@ -10,8 +10,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMutation } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import {
-  Alert, Image, KeyboardAvoidingView, Platform, Pressable,
+  ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, Pressable,
   ScrollView, StatusBar, Text, TextInput, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -19,6 +20,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useState } from 'react';
 
 import { api } from '@/api/client';
+import { uploadRegistrationPhoto } from '@/api/registration.api';
 
 import { GlassCard } from '@/components/voting/GlassCard';
 import { VoteButton } from '@/components/voting/VoteButton';
@@ -193,7 +195,14 @@ function Step1({ form, update }: { form: FormState; update: (k: keyof FormState,
   );
 }
 
-function Step2({ form, update }: { form: FormState; update: (k: keyof FormState, v: any) => void }) {
+function Step2({
+  form, onPickPhoto, uploading, uploadError,
+}: {
+  form: FormState;
+  onPickPhoto: () => void;
+  uploading: boolean;
+  uploadError: string | null;
+}) {
   return (
     <View style={{ gap: votingSpacing.lg }}>
       <View>
@@ -205,7 +214,11 @@ function Step2({ form, update }: { form: FormState; update: (k: keyof FormState,
 
       {/* Photo upload area */}
       <Pressable
-        onPress={() => Alert.alert('Photo Upload', 'Camera roll picker will open here when native permissions are wired.')}
+        onPress={uploading ? undefined : onPickPhoto}
+        disabled={uploading}
+        accessibilityRole="button"
+        accessibilityLabel="Choose a profile photo"
+        accessibilityState={{ disabled: uploading, busy: uploading }}
         style={{
           height: 200, borderRadius: votingRadius.xl,
           borderWidth: 2, borderColor: GLASS_BORDER, borderStyle: 'dashed',
@@ -225,7 +238,37 @@ function Step2({ form, update }: { form: FormState; update: (k: keyof FormState,
             <Text style={[votingTypography.labelSm, { color: votingColors.onSurfaceMuted }]}>JPG, PNG · Max 5MB</Text>
           </>
         )}
+
+        {uploading && (
+          <View style={{
+            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.55)',
+            alignItems: 'center', justifyContent: 'center', gap: votingSpacing.sm,
+          }}>
+            <ActivityIndicator color={votingColors.gold.DEFAULT} />
+            <Text style={[votingTypography.labelMd, { color: '#fff' }]}>Uploading…</Text>
+          </View>
+        )}
+
+        {form.photoUri && !uploading && (
+          <View style={{
+            position: 'absolute', bottom: 10, right: 10,
+            flexDirection: 'row', alignItems: 'center', gap: 6,
+            backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999,
+            paddingHorizontal: 10, paddingVertical: 6,
+          }}>
+            <Ionicons name="swap-horizontal" size={14} color="#fff" />
+            <Text style={[votingTypography.labelSm, { color: '#fff' }]}>Change photo</Text>
+          </View>
+        )}
       </Pressable>
+
+      {uploadError ? (
+        <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+          <Ionicons name="alert-circle" size={16} color={votingColors.error ?? '#ef4444'} />
+          <Text style={[votingTypography.labelMd, { color: votingColors.error ?? '#ef4444', flex: 1 }]}>{uploadError}</Text>
+        </View>
+      ) : null}
 
       {/* Tips card */}
       <GlassCard>
@@ -319,6 +362,40 @@ export default function ContestRegistrationScreen() {
   const [form, setForm] = useState<FormState>({
     fullName: '', stageName: '', category: '', location: '', bio: '', photoUri: null,
   });
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  async function onPickPhoto() {
+    setUploadError(null);
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setUploadError('Photo library access is required to choose a photo. Enable it in Settings.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (result.canceled || !result.assets?.length) return;
+
+    const asset = result.assets[0];
+    setUploading(true);
+    try {
+      const upload = await uploadRegistrationPhoto({
+        uri: asset.uri,
+        fileName: asset.fileName,
+        mimeType: asset.mimeType,
+      });
+      update('photoUri', upload.url);
+    } catch (err: any) {
+      setUploadError(err?.message ?? 'Photo upload failed. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  }
 
   const submit = useMutation({
     mutationFn: () => submitRegistration(form, contestSlug),
@@ -348,6 +425,7 @@ export default function ContestRegistrationScreen() {
   }
 
   function onNext() {
+    if (uploading) { Alert.alert('Please wait', 'Your photo is still uploading.'); return; }
     const err = validateStep();
     if (err) { Alert.alert('Missing info', err); return; }
     if (step < 2) { setStep(step + 1); return; }
@@ -378,7 +456,7 @@ export default function ContestRegistrationScreen() {
           contentContainerStyle={{ padding: votingSpacing.margin, paddingBottom: 48, gap: votingSpacing.lg }}
         >
           {step === 0 && <Step1 form={form} update={update} />}
-          {step === 1 && <Step2 form={form} update={update} />}
+          {step === 1 && <Step2 form={form} onPickPhoto={onPickPhoto} uploading={uploading} uploadError={uploadError} />}
           {step === 2 && <Step3 form={form} />}
 
           <VoteButton

@@ -55,6 +55,38 @@ func TestSplitValidation(t *testing.T) {
 	}
 }
 
+// TestSplitValidateMethod exercises the fail-closed Split.Validate() invariant
+// (called at the top of Settle): the split MUST sum to exactly 1.0, no negatives,
+// and the rider share only counts when a rider is present.
+func TestSplitValidateMethod(t *testing.T) {
+	rider := "rider-1"
+	cases := []struct {
+		name    string
+		split   settlement.Split
+		wantErr bool
+	}{
+		{"provider+platform 90/10", settlement.Split{ProviderPct: 0.90, PlatformPct: 0.10}, false},
+		{"all-provider tip 100/0", settlement.Split{ProviderPct: 1.0, PlatformPct: 0.0}, false},
+		{"with rider 80/10/10", settlement.Split{ProviderPct: 0.80, PlatformPct: 0.10, RiderID: &rider, RiderPct: 0.10}, false},
+		{"tier 88/12", settlement.Split{ProviderPct: 0.88, PlatformPct: 0.12}, false},
+		// Failures:
+		{"sums < 1 (orphaned rider share, no rider)", settlement.Split{ProviderPct: 0.80, PlatformPct: 0.10, RiderPct: 0.10}, true},
+		{"sums > 1", settlement.Split{ProviderPct: 0.95, PlatformPct: 0.10}, true},
+		{"negative platform", settlement.Split{ProviderPct: 1.10, PlatformPct: -0.10}, true},
+		{"rider present but sum < 1", settlement.Split{ProviderPct: 0.80, PlatformPct: 0.10, RiderID: &rider, RiderPct: 0.05}, true},
+		{"empty split", settlement.Split{}, true},
+	}
+	for _, tc := range cases {
+		err := tc.split.Validate()
+		if tc.wantErr && err == nil {
+			t.Errorf("%s: expected validation error, got nil", tc.name)
+		}
+		if !tc.wantErr && err != nil {
+			t.Errorf("%s: unexpected error: %v", tc.name, err)
+		}
+	}
+}
+
 // TestSplitKoboCalculation verifies split arithmetic produces integer kobo values.
 // This is the double-entry constraint: sum of split parts must equal TotalKobo.
 func TestSplitKoboCalculation(t *testing.T) {

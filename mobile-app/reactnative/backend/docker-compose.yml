@@ -1,0 +1,14 @@
+# Local run of the crypto service. Build once, run anywhere.
+#   docker compose up --build      # http://localhost:8080
+services:
+  crypto-service:
+    build:
+      context: .
+    image: paymax/crypto-service:local
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+    restart: unless-stopped
+    # The distroless image has no shell, so health is checked by the platform via
+    # an HTTP probe on GET /healthz (compose has no HTTP probe; rely on the app).

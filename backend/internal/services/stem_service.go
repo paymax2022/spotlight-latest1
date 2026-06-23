@@ -27,6 +27,7 @@ type StemService interface {
 	CreateContest(input domain.StemContestCreateInput) (domain.StemContest, error)
 	CheckEligibility(input domain.StemEligibilityCheckInput) (domain.StemEligibilityCheckResult, error)
 	ListLeaderboard(contestID string, limit int) ([]domain.StemLeaderboardEntry, error)
+	ListLeaderboardWithRankChange(contestID string, limit int) ([]domain.StemLeaderboardEntry, error)
 	ListLeaderboardSlices(contestID string, by string, limit int) ([]domain.StemLeaderboardSlice, error)
 	ListSubmissions(limit int, status string) ([]domain.StemSubmission, error)
 	UpdateSubmissionStatus(submissionID string, status string, reviewStage string) error

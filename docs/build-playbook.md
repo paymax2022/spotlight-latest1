@@ -366,6 +366,97 @@ Acceptance criteria:
 
 ---
 
+## Block 13 — Telemedicine App & Admin Console
+**Branch:** `feat/telemedicine`
+**Depends on:** Blocks 4 (wallet), 7 (tiers & limits), settlement service
+**Flag:** `FEATURE_TELEMEDICINE_ENABLED`
+
+Build a comprehensive telemedicine experience: a patient-facing mobile app (book → consult → pay → review) plus an admin web console to manage doctors, appointments, settlements, and compliance. **Build order is strict: Phase A (mobile UI/UX) first, then Phase B (backend), then Phase C (integration).** Each phase must leave TypeScript/Go checks green and the feature flagged off before merge.
+
+### Phase A — Mobile UI/UX (build first)
+**Design reference:** `mobile-app/reactnative/DESIGN-Mobile.md` (Paymax High-End Ecosystem).
+**Design system:** Deep Purple primary (#340075), Electric Blue secondary (#0051d5), Teal/Gold accents; Plus Jakarta Sans; Corporate-Modern glassmorphism; 16px (`rounded-lg`) cards, 56px thumb-friendly buttons, 20px safe-area margins, 4px baseline grid.
+**Stack:** `mobile-app/reactnative/` — Expo Router. New route group `app/services/telemedicine/`, feature module `src/features/telemedicine/`, API client `src/api/telemedicine.api.ts`, types `src/types/telemedicine.ts`.
+
+Infrastructure:
+
+| # | Task | File |
+|---|------|------|
+| 1 | Telemedicine types (Doctor, Specialty, Slot, Appointment, Prescription, ConsultStatus) | `src/types/telemedicine.ts` |
+| 2 | Shared components (DoctorCard, SpecialtyChip, SlotPicker, ConsultStatusBadge, RatingStars, PrescriptionCard) | `src/features/telemedicine/components/` |
+| 3 | API client (typed fetch/mutate, demo `placeholderData` so screens render without a live API) | `src/api/telemedicine.api.ts` |
+| 4 | Telemedicine entry on the super-app service grid | `app/services/_layout.tsx` + service grid |
+
+Screens & workflows:
+
+| # | Screen | Route | Workflow |
+|---|--------|-------|----------|
+| T1 | Telemedicine Home (specialties grid, featured/online doctors, "Book now") | `app/services/telemedicine/index.tsx` | entry |
+| T2 | Find a Doctor (search + specialty/price/rating/availability filters) | `app/services/telemedicine/doctors.tsx` | discover |
+| T3 | Doctor Profile (bio, specialties, fee, reviews, next slots) | `app/services/telemedicine/doctor/[id].tsx` | discover → book |
+| T4 | Slot Picker (calendar + time slots, consult type: video/audio/chat) | `app/services/telemedicine/doctor/[id]/book.tsx` | book |
+| T5 | Booking Confirm & Pay (fee breakdown, wallet balance, confirm) | `app/services/telemedicine/book/confirm.tsx` | book → pay |
+| T6 | Booking Success (appointment ref, add-to-calendar, join CTA) | `app/services/telemedicine/book/success.tsx` | pay |
+| T7 | My Appointments (upcoming / past tabs, status badges) | `app/services/telemedicine/appointments.tsx` | manage |
+| T8 | Appointment Detail (join/reschedule/cancel, doctor notes) | `app/services/telemedicine/appointment/[id].tsx` | manage |
+| T9 | Consultation Room (video/audio/chat UI, end-call, in-call notes) | `app/services/telemedicine/consult/[id].tsx` | consult |
+| T10 | Prescription & Visit Summary (downloadable, "order meds" CTA) | `app/services/telemedicine/appointment/[id]/summary.tsx` | post-consult |
+| T11 | Rate & Review (stars + comment) | `app/services/telemedicine/appointment/[id]/review.tsx` | post-consult |
+| T12 | Cancel / Reschedule sheet (policy + refund preview) | bottom sheet on T8 | manage |
+
+Phase A acceptance:
+- [x] Every screen renders without a live API (demo `placeholderData` in all queries; `telemedicine.api.ts` resolves `DEMO_*` data)
+- [x] Full happy path navigable: T1 → T2 → T3 → T4 → T5 → T6 → T7 → T9 → T10 → T11
+- [x] Strictly uses `DESIGN-Mobile.md` tokens via `@/constants` (Deep Purple/Electric Blue, Plus Jakarta Sans scale, 16px radius)
+- [x] Telemedicine reachable from the services grid (`SERVICE_MODULES` → `/services/telemedicine`)
+- [x] `cd mobile-app/reactnative && npx tsc --noEmit` passes (0 errors)
+
+Phase A status: ✅ DONE — built `src/types/telemedicine.ts`, `src/api/telemedicine.api.ts`, `src/features/telemedicine/components/` (DoctorCard, DoctorAvatar, SpecialtyChip, SlotPicker, ConsultStatusBadge, ConsultTypePicker, RatingStars, PrescriptionCard, TeleHeader), and all 12 screens under `app/services/telemedicine/` (incl. T12 cancel/reschedule sheet on the appointment detail screen).
+
+### Phase B — Backend (build after mobile UI)
+**Stack:** `backend/` — Go 1.23, Gin v1.10 (per CLAUDE.md — NOT Chi). Money-path via pgx; additive migrations only.
+
+Deliverables:
+- `contracts/openapi.yaml` — `Doctor`, `Specialty`, `Slot`, `Appointment`, `Prescription`, `Review` schemas; telemedicine endpoints (spec PR first, then implementation)
+- `supabase/migrations/YYYYMMDDHHMMSS_telemedicine_doctors.sql` — `doctors`, `doctor_specialties`, `doctor_availability` (additive)
+- `supabase/migrations/YYYYMMDDHHMMSS_telemedicine_appointments.sql` — `appointments` (patient_id → auth.users, doctor_id, slot, consult_type, status, fee_kobo, settlement_id, idempotency_key UNIQUE)
+- `supabase/migrations/YYYYMMDDHHMMSS_telemedicine_clinical.sql` — `prescriptions`, `visit_summaries`, `reviews` (immutable clinical records)
+- `backend/internal/telemedicine/service.go` — `ListDoctors()`, `GetAvailability()`, `Book()`, `Confirm()`, `Cancel()`, `Reschedule()`, `Complete()`, `Settle()` (85% doctor / 15% platform), `AddReview()`
+- Settlement via `settlement.Service.Settle()`; `Refund()` (minus policy penalty) on cancellation
+- Feature-flag guard `FEATURE_TELEMEDICINE_ENABLED` on every route
+- Tests: `backend/internal/telemedicine/*_test.go` (booking, double-book, settlement split, refund, idempotency)
+
+API routes (Gin):
+- `GET /api/v1/telemedicine/doctors`, `GET /api/v1/telemedicine/doctors/:id`, `GET /api/v1/telemedicine/doctors/:id/availability`
+- `POST /api/v1/telemedicine/appointments`, `POST /api/v1/telemedicine/appointments/:id/confirm`, `POST /api/v1/telemedicine/appointments/:id/cancel`
+- `GET /api/v1/telemedicine/appointments` (mine), `GET /api/v1/telemedicine/appointments/:id`
+- `POST /api/v1/telemedicine/appointments/:id/review`
+- ADR: `docs/adr/ADR-006-telemedicine-settlement.md`
+
+### Phase C — Admin console + integration (build last)
+**Stack:** `frontend-admin/` — Next.js 15.1, port 4030. RBAC via `frontend-web/src/server/admin/rbac.ts`.
+
+Deliverables:
+- New admin roles/permissions: `telemed_admin`, `telemed_support` with `telemedicine:doctor:manage`, `telemedicine:appointment:manage`, `telemedicine:settlement:view`
+- `frontend-admin/app/admin/telemedicine/` — pages: Doctors (verify/onboard/suspend), Specialties, Appointments (search/filter/refund), Settlements (per-doctor splits & payouts), Reviews/moderation, Audit
+- Wire mobile `src/api/telemedicine.api.ts` from demo `placeholderData` to the live Phase B endpoints (auth header, idempotency key on `Book`)
+- Replace mobile booking-confirm flow to call real `POST /appointments` and reflect wallet debit
+- Contract check + end-to-end: book on mobile → appears in admin → settle → review
+
+Acceptance criteria (whole block):
+- [ ] `FEATURE_TELEMEDICINE_ENABLED=false` → mobile entry hidden + all API routes 503
+- [ ] Booking debits patient wallet atomically and idempotently (Idempotency-Key required)
+- [ ] Settlement: doctor receives 85%, platform 15% of `fee_kobo`; balanced ledger entries
+- [ ] Cancellation refunds patient minus policy penalty; reversing entries only
+- [ ] Double-booking same slot → 409
+- [ ] Tier 0 patient cannot book (403 via `enforceWalletLimit`)
+- [ ] Admin can verify/suspend doctors and view settlements; all actions audited
+- [ ] All migrations additive-only; `browfield-guardian` PASS (no protected files touched)
+- [ ] `cd mobile-app/reactnative && npx tsc --noEmit` and `cd backend && go build ./... && go test ./internal/telemedicine/...` green
+- [ ] Golden-path suite still green (`npx vitest run`)
+
+---
+
 ## Cross-cutting rules (apply every block)
 
 1. **Additive migrations only.** No DROP, RENAME, or type narrowing. Load `db-migrations` skill.

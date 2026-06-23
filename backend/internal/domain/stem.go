@@ -226,6 +226,11 @@ type StemLeaderboardEntry struct {
 	StageScore      float64 `json:"stageScore"`
 	FinalScore      float64 `json:"finalScore"`
 	RankPosition    int     `json:"rankPosition"`
+	// PreviousRank is this participant's rank in the most recent prior snapshot
+	// (0 = not previously ranked). Additive projection — never alters scoring.
+	PreviousRank int `json:"previousRank,omitempty"`
+	// RankChange is "up" | "down" | "same" | "new" relative to PreviousRank.
+	RankChange string `json:"rankChange,omitempty"`
 }
 
 type StemLeaderboardSlice struct {

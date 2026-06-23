@@ -1,0 +1,1807 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight Super App API
+  version: 2.0.0
+  description: >
+    Fintech super-app layer — wallet, KYC, FX, transfers, referrals, VA, and vertical modules.
+    All monetary amounts are integers in minor units (kobo / currency-minor-unit).
+    All mutation endpoints require an Idempotency-Key header.
+    Authentication: Bearer JWT issued by Supabase Auth.
+    Go backend routes: /api/finance/* (feature-flagged, gated on DATABASE_URL).
+    Legacy Next.js routes: /api/v1/* (stable, unchanged).
+
+servers:
+  - url: /api/finance
+    description: Go backend — financial core (Paymax v2)
+  - url: /api/v1
+    description: Stable fintech API (Next.js route handlers, v1 blocks 0-12)
+  - url: /api/v2
+    description: Bridge API (wraps protected legacy vote engine)
+
+# ── Shared components ──────────────────────────────────────────────────────────
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+      description: >
+        Client-generated unique key. Identical requests with the same key
+        within 24 hours return the cached response without side effects.
+
+  schemas:
+    Error:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+
+    KycTier:
+      type: integer
+      enum: [0, 1, 2, 3]
+      description: "0=Unverified, 1=Basic, 2=Standard, 3=Premium"
+
+    KycStatus:
+      type: string
+      enum: [unverified, pending, verified, failed, suspended]
+
+    WalletBalance:
+      type: object
+      required: [available_kobo, pending_kobo, currency]
+      properties:
+        available_kobo:
+          type: integer
+          format: int64
+          description: Spendable balance in kobo (projection of ledger)
+        pending_kobo:
+          type: integer
+          format: int64
+          description: Balance locked in pending topup intents
+        currency:
+          type: string
+          enum: [NGN]
+
+    LedgerEntry:
+      type: object
+      required: [id, type, amount_kobo, reference, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [CREDIT, DEBIT, REVERSAL_CREDIT, REVERSAL_DEBIT]
+        amount_kobo:
+          type: integer
+          format: int64
+        reference:
+          type: string
+          description: Human-readable reference (e.g. PAY_xxx, VOTE_xxx)
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    VirtualAccount:
+      type: object
+      required: [account_number, bank_name, bank_code, provisioned_at]
+      properties:
+        account_number:
+          type: string
+        bank_name:
+          type: string
+        bank_code:
+          type: string
+        provisioned_at:
+          type: string
+          format: date-time
+
+    ReferralSummary:
+      type: object
+      required: [code, total_referrals, total_earned_kobo]
+      properties:
+        code:
+          type: string
+          description: Unique share code (e.g. SPOT-A1B2C3)
+        total_referrals:
+          type: integer
+        total_earned_kobo:
+          type: integer
+          format: int64
+
+    PaymaxTransferRecipient:
+      type: object
+      required: [user_id, display_name, masked_phone]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+          description: Recipient's full name
+        masked_phone:
+          type: string
+          description: Phone number with middle digits masked (e.g. 0801****678)
+        avatar_url:
+          type: string
+          nullable: true
+
+    WalletTransfer:
+      type: object
+      required: [id, reference, amount_kobo, fee_kobo, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        reference:
+          type: string
+        amount_kobo:
+          type: integer
+          format: int64
+        fee_kobo:
+          type: integer
+          format: int64
+        narration:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [successful, failed, reversed]
+        sender_display_name:
+          type: string
+          nullable: true
+        receiver_display_name:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    Bank:
+      type: object
+      required: [code, name]
+      properties:
+        code:
+          type: string
+          description: Paystack bank code (e.g. "058" for GTBank)
+        name:
+          type: string
+        slug:
+          type: string
+          nullable: true
+        type:
+          type: string
+          nullable: true
+
+    BankTransfer:
+      type: object
+      required: [id, reference, amount_kobo, fee_kobo, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        reference:
+          type: string
+        amount_kobo:
+          type: integer
+          format: int64
+        fee_kobo:
+          type: integer
+          format: int64
+        account_name:
+          type: string
+        account_number_last4:
+          type: string
+        bank_name:
+          type: string
+        narration:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [funds_reserved, provider_initiated, successful, failed, reversed]
+        created_at:
+          type: string
+          format: date-time
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid Bearer token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Authenticated but not authorized (KYC tier or RBAC)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UnprocessableEntity:
+      description: Validation error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyRequests:
+      description: Rate or daily limit exceeded
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+security:
+  - bearerAuth: []
+
+# ── KYC endpoints ─────────────────────────────────────────────────────────────
+
+paths:
+  /kyc/me:
+    get:
+      operationId: getMyKyc
+      summary: Get current user's KYC status and tier
+      tags: [KYC]
+      responses:
+        '200':
+          description: KYC profile
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, kyc_tier, kyc_status]
+                properties:
+                  success: { type: boolean }
+                  kyc_tier: { $ref: '#/components/schemas/KycTier' }
+                  kyc_status: { $ref: '#/components/schemas/KycStatus' }
+                  phone_verified: { type: boolean }
+                  submitted_at: { type: string, format: date-time, nullable: true }
+                  verified_at: { type: string, format: date-time, nullable: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /kyc/initiate:
+    post:
+      operationId: initiateKyc
+      summary: Submit KYC documents to advance to a higher tier
+      tags: [KYC]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document_type, document_ref]
+              properties:
+                document_type:
+                  type: string
+                  enum: [BVN, NIN, PASSPORT, DRIVERS_LICENSE]
+                document_ref:
+                  type: string
+                  description: Provider reference or encrypted document ID
+                phone:
+                  type: string
+      responses:
+        '202':
+          description: KYC submission accepted; verification is asynchronous
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  kyc_status: { $ref: '#/components/schemas/KycStatus' }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+# ── Wallet endpoints ───────────────────────────────────────────────────────────
+
+  /wallet/balance:
+    get:
+      operationId: getWalletBalance
+      summary: Get real-time wallet balance (derived from ledger)
+      tags: [Wallet]
+      responses:
+        '200':
+          description: Current balance
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, balance]
+                properties:
+                  success: { type: boolean }
+                  balance: { $ref: '#/components/schemas/WalletBalance' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Wallet disabled — KYC tier 0
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /wallet/transactions:
+    get:
+      operationId: listWalletTransactions
+      summary: Paginated ledger transaction history
+      tags: [Wallet]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+          description: Opaque cursor for keyset pagination
+      responses:
+        '200':
+          description: Ledger entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, entries]
+                properties:
+                  success: { type: boolean }
+                  entries:
+                    type: array
+                    items: { $ref: '#/components/schemas/LedgerEntry' }
+                  next_cursor: { type: string, nullable: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /wallet/topup:
+    post:
+      operationId: initiateWalletTopup
+      summary: Initiate a Paystack payment to top up the wallet
+      tags: [Wallet]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount_kobo]
+              properties:
+                amount_kobo:
+                  type: integer
+                  format: int64
+                  minimum: 10000
+                  description: Amount to top up in kobo (min ₦100)
+      responses:
+        '200':
+          description: Paystack payment initialized
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, authorization_url, reference]
+                properties:
+                  success: { type: boolean }
+                  authorization_url: { type: string, format: uri }
+                  reference: { type: string }
+                  amount_kobo: { type: integer, format: int64 }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+# ── Virtual accounts ───────────────────────────────────────────────────────────
+
+  /virtual-accounts/me:
+    get:
+      operationId: getMyVirtualAccount
+      summary: Get the authenticated user's dedicated virtual bank account
+      tags: [VirtualAccounts]
+      responses:
+        '200':
+          description: Virtual account details
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, account]
+                properties:
+                  success: { type: boolean }
+                  account: { $ref: '#/components/schemas/VirtualAccount' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Not available — KYC tier below 1
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Not yet provisioned (auto-provisioning in progress)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+# ── Bank Transfers ─────────────────────────────────────────────────────────────
+
+  /banks:
+    get:
+      operationId: listBanks
+      summary: List all Nigerian banks supported for outbound transfers
+      tags: [BankTransfers]
+      responses:
+        '200':
+          description: Bank list (cached up to 1 hour)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, banks]
+                properties:
+                  success: { type: boolean }
+                  banks:
+                    type: array
+                    items: { $ref: '#/components/schemas/Bank' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /banks/resolve:
+    post:
+      operationId: resolveBankAccount
+      summary: Resolve a bank account number to get the account holder name
+      tags: [BankTransfers]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bank_code, account_number]
+              properties:
+                bank_code: { type: string }
+                account_number: { type: string, minLength: 10, maxLength: 10 }
+      responses:
+        '200':
+          description: Resolved account name
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, account_name, account_number]
+                properties:
+                  success: { type: boolean }
+                  account_name: { type: string }
+                  account_number: { type: string }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: Account not found at the bank
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /transfers/bank:
+    post:
+      operationId: initiateWalletToBankTransfer
+      summary: >
+        Transfer funds from the authenticated user's wallet to any Nigerian
+        bank account. Funds are reserved atomically before calling Paystack.
+        Transfer result is delivered via webhook (transfer.success / transfer.failed).
+      tags: [BankTransfers]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bank_code, account_number, amount_kobo]
+              properties:
+                bank_code:
+                  type: string
+                account_number:
+                  type: string
+                  minLength: 10
+                  maxLength: 10
+                amount_kobo:
+                  type: integer
+                  format: int64
+                  minimum: 100000
+                  description: Minimum ₦1,000 (100,000 kobo)
+                narration:
+                  type: string
+                  maxLength: 100
+                save_beneficiary:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Transfer initiated — final status via webhook
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, transfer]
+                properties:
+                  success: { type: boolean }
+                  already_processed: { type: boolean }
+                  transfer: { $ref: '#/components/schemas/BankTransfer' }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Insufficient wallet balance
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+# ── Bank Transfer schemas ──────────────────────────────────────────────────────
+
+  /transfers/paymax/resolve:
+    get:
+      operationId: resolvePaymaxRecipient
+      summary: Resolve a Paymax user by phone, email, or username for transfer
+      tags: [Transfers]
+      parameters:
+        - name: identifier
+          in: query
+          required: true
+          schema: { type: string }
+          description: Phone number, email address, or Paymax username
+      responses:
+        '200':
+          description: Recipient preview (safe — no PII exposed)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, recipient]
+                properties:
+                  success: { type: boolean }
+                  recipient: { $ref: '#/components/schemas/PaymaxTransferRecipient' }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: No Paymax user found for this identifier
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /transfers/paymax:
+    post:
+      operationId: initiateWalletToWalletTransfer
+      summary: >
+        Instantly transfer funds from the authenticated user's wallet to another
+        Paymax user. Atomic — sender is debited and receiver is credited in a
+        single DB transaction. Idempotent on the provided key.
+      tags: [Transfers]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recipient_identifier, amount_kobo]
+              properties:
+                recipient_identifier:
+                  type: string
+                  description: Recipient's phone, email, or Paymax username
+                amount_kobo:
+                  type: integer
+                  format: int64
+                  minimum: 100
+                  description: Amount to transfer in kobo (min ₦1)
+                narration:
+                  type: string
+                  maxLength: 100
+      responses:
+        '200':
+          description: Transfer successful (or already processed — idempotent)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, transfer]
+                properties:
+                  success: { type: boolean }
+                  already_processed: { type: boolean }
+                  transfer: { $ref: '#/components/schemas/WalletTransfer' }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Insufficient wallet balance
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Recipient not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+# ── Referrals ──────────────────────────────────────────────────────────────────
+
+  /referrals/me:
+    get:
+      operationId: getMyReferrals
+      summary: Get the authenticated user's referral code and earnings summary
+      tags: [Referrals]
+      responses:
+        '200':
+          description: Referral summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, referral]
+                properties:
+                  success: { type: boolean }
+                  referral: { $ref: '#/components/schemas/ReferralSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+# ── Vote bridge (v2) ───────────────────────────────────────────────────────────
+
+  /api/v2/votes/free:
+    post:
+      operationId: castFreeVoteBridged
+      summary: Cast a free vote through the bridge (idempotent, KYC-gated)
+      tags: [VoteBridge]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contestId, contestantId]
+              properties:
+                contestId: { type: string }
+                contestantId: { type: string }
+                shareCode: { type: string, description: Referrer's share code }
+      responses:
+        '200':
+          description: Vote cast
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  votesAdded: { type: integer }
+                  freeVotesRemaining: { type: integer }
+                  newTotalVotes: { type: integer }
+                  fraudStatus: { type: string }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/v2/votes/paid/verify:
+    post:
+      operationId: verifyPaidVoteBridged
+      summary: Verify and credit paid votes through the bridge (SELECT FOR UPDATE locked)
+      tags: [VoteBridge]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transactionId, paymentReference]
+              properties:
+                transactionId: { type: string, format: uuid }
+                paymentReference: { type: string }
+      responses:
+        '200':
+          description: Votes credited (or already credited — idempotent)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  alreadyProcessed: { type: boolean }
+                  votesCredited: { type: integer }
+                  newTotalVotes: { type: integer }
+                  receiptNumber: { type: string }
+        '400': { $ref: '#/components/responses/UnprocessableEntity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Payment not completed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+# ── Admin fintech ──────────────────────────────────────────────────────────────
+
+  /admin/adjustments:
+    post:
+      operationId: initiateAdjustment
+      summary: >
+        Finance maker: propose a manual wallet credit or debit.
+        Amounts ≥ ₦100,000 require checker approval before execution.
+      tags: [AdminFintech]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, type, amount_kobo, reason]
+              properties:
+                user_id: { type: string, format: uuid }
+                type: { type: string, enum: [CREDIT, DEBIT] }
+                amount_kobo: { type: integer, format: int64, minimum: 1 }
+                reason: { type: string, minLength: 10 }
+      responses:
+        '201':
+          description: Adjustment initiated (pending approval if ≥ ₦100,000)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  adjustment_id: { type: string, format: uuid }
+                  status: { type: string, enum: [pending_approval, executed] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/adjustments/{id}/approve:
+    post:
+      operationId: approveAdjustment
+      summary: Finance checker approves a pending adjustment (self-approval blocked)
+      tags: [AdminFintech]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200':
+          description: Adjustment approved and executed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  adjustment_id: { type: string, format: uuid }
+                  ledger_entry_id: { type: string, format: uuid }
+        '403':
+          description: Self-approval attempted or insufficient role
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Adjustment not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+# ── Go Finance API (/api/finance) ─────────────────────────────────────────────
+# All routes require Bearer JWT. Feature-flagged server-side (FEATURE_*_ENABLED).
+
+  /wallet/balance:
+    get:
+      summary: Get wallet balance
+      operationId: getWalletBalance
+      tags: [Wallet]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current balance in kobo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id: { type: string, format: uuid }
+                  balance_kobo: { type: integer, format: int64 }
+                  balance_naira: { type: number, format: double }
+        '401': { description: Unauthenticated }
+
+  /wallet/transactions:
+    get:
+      summary: List wallet transactions (paginated)
+      operationId: listWalletTransactions
+      tags: [Wallet]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Paginated ledger entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transactions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        type: { type: string, enum: [credit, debit] }
+                        amount_kobo: { type: integer, format: int64 }
+                        reference: { type: string }
+                        created_at: { type: string, format: date-time }
+                  limit: { type: integer }
+                  offset: { type: integer }
+
+  /kyc/me:
+    get:
+      summary: Get current user's KYC profile
+      operationId: getKYCProfile
+      tags: [KYC]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: KYC profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KYCProfile' }
+
+  /kyc/initiate:
+    post:
+      summary: Initiate KYC verification
+      operationId: initiateKYC
+      tags: [KYC]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [requested_tier]
+              properties:
+                requested_tier: { type: integer, minimum: 1, maximum: 3 }
+                document_type: { type: string }
+                document_ref: { type: string }
+                bvn: { type: string }
+                nin: { type: string }
+      responses:
+        '200':
+          description: Updated KYC profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KYCProfile' }
+        '400': { description: Validation error }
+
+  /va/me:
+    get:
+      summary: Get or provision virtual account
+      operationId: getVirtualAccount
+      tags: [VirtualAccount]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Virtual account details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VirtualAccount' }
+        '403': { description: KYC tier 0 — provisioning not allowed }
+
+  /referrals/me:
+    get:
+      summary: Get referral code and earnings summary
+      operationId: getReferralSummary
+      tags: [Referrals]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Referral summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string }
+                  total_referrals: { type: integer }
+                  total_earned_kobo: { type: integer, format: int64 }
+
+  /fx/quote:
+    post:
+      summary: Get an FX rate quote (valid for 5 minutes)
+      operationId: getFXQuote
+      tags: [FX]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source_currency, target_currency, amount_kobo]
+              properties:
+                source_currency: { type: string, minLength: 3, maxLength: 3, example: NGN }
+                target_currency: { type: string, minLength: 3, maxLength: 3, example: USD }
+                amount_kobo: { type: integer, format: int64, minimum: 100 }
+      responses:
+        '200':
+          description: FX quote (expires in 5 min — quote_id required for convert)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FXQuote' }
+        '400': { description: Invalid currencies or amount }
+
+  /fx/convert:
+    post:
+      summary: Execute an FX conversion using a valid quote
+      operationId: convertFX
+      tags: [FX]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quote_id, idempotency_key]
+              properties:
+                quote_id: { type: string, format: uuid }
+                idempotency_key: { type: string, minLength: 8 }
+      responses:
+        '200':
+          description: Conversion result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FXConversion' }
+        '400': { description: Expired or invalid quote }
+        '402': { description: Insufficient balance }
+
+  /fx/history:
+    get:
+      summary: List FX conversion history
+      operationId: listFXHistory
+      tags: [FX]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Paginated conversion history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversions:
+                    type: array
+                    items: { $ref: '#/components/schemas/FXConversion' }
+
+  /fx/wallets/{currency}:
+    get:
+      summary: Get or create a foreign currency wallet
+      operationId: getFXWallet
+      tags: [FX]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: currency
+          in: path
+          required: true
+          schema: { type: string, minLength: 3, maxLength: 3 }
+      responses:
+        '200':
+          description: Currency wallet
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CurrencyWallet' }
+
+  # ── Groups ────────────────────────────────────────────────────────────────────
+  /groups:
+    post:
+      operationId: createGroup
+      summary: Create a community group
+      tags: [Groups]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 100 }
+                description: { type: string }
+                is_public: { type: boolean }
+                avatar_url: { type: string, nullable: true }
+      responses:
+        '201':
+          description: Group created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    get:
+      operationId: listMyGroups
+      summary: List groups the authenticated user belongs to
+      tags: [Groups]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Groups list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Group' } }
+
+  /groups/{id}/dues:
+    post:
+      operationId: payGroupDues
+      summary: Pay subscription dues for a group
+      tags: [Groups]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_id, idempotency_key]
+              properties:
+                plan_id: { type: string, format: uuid }
+                idempotency_key: { type: string }
+      responses:
+        '201':
+          description: Dues paid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionPayment' }
+
+  # ── Events ────────────────────────────────────────────────────────────────────
+  /events:
+    post:
+      operationId: createEvent
+      summary: Create a ticketed event
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, starts_at, ends_at]
+              properties:
+                title: { type: string, minLength: 2, maxLength: 200 }
+                description: { type: string }
+                venue_address: { type: string }
+                starts_at: { type: string, format: date-time }
+                ends_at: { type: string, format: date-time }
+                banner_url: { type: string, nullable: true }
+      responses:
+        '201':
+          description: Event created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Event' }
+
+  /events/{id}/tickets:
+    post:
+      operationId: purchaseTicket
+      summary: Purchase a ticket for an event (wallet payment)
+      tags: [Events]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticket_type_id, idempotency_key]
+              properties:
+                ticket_type_id: { type: string, format: uuid }
+                idempotency_key: { type: string }
+      responses:
+        '201':
+          description: Ticket issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+
+  # ── Crowdfunding ──────────────────────────────────────────────────────────────
+  /crowdfunding/campaigns:
+    post:
+      operationId: createCampaign
+      summary: Create a fundraising campaign
+      tags: [Crowdfunding]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, goal_kobo, deadline]
+              properties:
+                title: { type: string, minLength: 2, maxLength: 200 }
+                description: { type: string }
+                goal_kobo: { type: integer, format: int64, minimum: 100 }
+                deadline: { type: string, format: date-time }
+      responses:
+        '201':
+          description: Campaign created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Campaign' }
+
+  /crowdfunding/campaigns/{id}:
+    get:
+      operationId: getCampaign
+      summary: Get a campaign with live raised total
+      tags: [Crowdfunding]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Campaign
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Campaign' }
+
+  /crowdfunding/campaigns/{id}/contribute:
+    post:
+      operationId: contributeToСampaign
+      summary: Contribute to a campaign (escrows funds)
+      tags: [Crowdfunding]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount_kobo, idempotency_key]
+              properties:
+                amount_kobo: { type: integer, format: int64, minimum: 100 }
+                idempotency_key: { type: string }
+      responses:
+        '201':
+          description: Contribution escrowed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Contribution' }
+
+  # ── Telemedicine ──────────────────────────────────────────────────────────────
+  /telemedicine/doctors:
+    get:
+      operationId: listDoctors
+      summary: List available doctors, optionally filtered by specialty
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: specialty, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Doctors list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Doctor' } }
+    post:
+      operationId: registerDoctor
+      summary: Register as a healthcare provider
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, specialty, consult_fee_kobo]
+              properties:
+                name: { type: string }
+                specialty: { type: string }
+                bio: { type: string }
+                consult_fee_kobo: { type: integer, format: int64, minimum: 100 }
+      responses:
+        '201':
+          description: Doctor registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Doctor' }
+
+  /telemedicine/appointments:
+    post:
+      operationId: bookAppointment
+      summary: Book a consultation (escrows fee)
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [doctor_id, scheduled_at, idempotency_key]
+              properties:
+                doctor_id: { type: string, format: uuid }
+                scheduled_at: { type: string, format: date-time }
+                notes: { type: string }
+                idempotency_key: { type: string }
+      responses:
+        '201':
+          description: Appointment booked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+
+  /telemedicine/appointments/{id}/complete:
+    post:
+      operationId: completeAppointment
+      summary: Mark appointment completed and settle fee (doctor only)
+      tags: [Telemedicine]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Appointment completed, fee settled
+
+  # ── Transport ─────────────────────────────────────────────────────────────────
+  /transport/trips:
+    post:
+      operationId: requestTrip
+      summary: Request a ride (escrows fare)
+      tags: [Transport]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pickup_address, dest_address, fare_kobo, idempotency_key]
+              properties:
+                pickup_address: { type: string }
+                dest_address: { type: string }
+                fare_kobo: { type: integer, format: int64, minimum: 150000 }
+                idempotency_key: { type: string }
+      responses:
+        '201':
+          description: Trip requested
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trip' }
+
+  /transport/trips/{id}/accept:
+    post:
+      operationId: acceptTrip
+      summary: Driver accepts a trip request
+      tags: [Transport]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Trip accepted }
+
+  /transport/trips/{id}/status:
+    patch:
+      operationId: updateTripStatus
+      summary: Advance trip status (driver/system)
+      tags: [Transport]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [accepted, picked_up, completed, cancelled]
+      responses:
+        '200': { description: Status updated }
+
+  # ── AI Customer Care ──────────────────────────────────────────────────────────
+  /support/sessions:
+    post:
+      operationId: createSupportSession
+      summary: Open a new AI support session
+      tags: [AIcare]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                topic: { type: string }
+      responses:
+        '201':
+          description: Session opened
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupportSession' }
+
+  /support/sessions/{id}/messages:
+    post:
+      operationId: sendSupportMessage
+      summary: Send a message and receive AI reply
+      tags: [AIcare]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string, minLength: 1, maxLength: 4000 }
+      responses:
+        '201':
+          description: Message sent and AI reply returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_message: { $ref: '#/components/schemas/SupportMessage' }
+                  ai_reply: { $ref: '#/components/schemas/SupportMessage' }
+    get:
+      operationId: getSupportHistory
+      summary: Get full message history for a session
+      tags: [AIcare]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Message history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/SupportMessage' } }
+
+  /support/sessions/{id}/escalate:
+    post:
+      operationId: escalateSupportSession
+      summary: Escalate session to human agent
+      tags: [AIcare]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '200': { description: Session escalated }
+
+  # ── Disputes ─────────────────────────────────────────────────────────────────
+  /disputes:
+    post:
+      operationId: openDispute
+      summary: Open a new dispute ticket
+      tags: [Disputes]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OpenDisputeRequest' }
+      responses:
+        '201':
+          description: Dispute created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dispute' }
+        '400': { description: Validation error }
+    get:
+      operationId: listDisputes
+      summary: List the authenticated user's disputes
+      tags: [Disputes]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Disputes list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Dispute' } }
+                  count: { type: integer }
+
+  # ── Ratings ───────────────────────────────────────────────────────────────────
+  /ratings:
+    post:
+      operationId: submitRating
+      summary: Submit a post-transaction rating for an entity
+      tags: [Ratings]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRatingRequest' }
+      responses:
+        '201':
+          description: Rating submitted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Rating' }
+        '400': { description: Validation error }
+
+  /ratings/{entity_id}:
+    get:
+      operationId: getRatingSummary
+      summary: Get aggregated rating summary for an entity
+      tags: [Ratings]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: entity_id, in: path, required: true, schema: { type: string } }
+        - { name: type, in: query, required: true, schema: { type: string, enum: [doctor, pharmacy, restaurant, rider, driver, bus_operator, event_organiser, campaign, group_admin] } }
+      responses:
+        '200':
+          description: Rating summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RatingSummary' }
+
+  # ── Vote Bridge ───────────────────────────────────────────────────────────────
+  /vote-bridge/debit:
+    post:
+      operationId: voteWalletDebit
+      summary: Debit wallet for paid vote (called by Next.js bridge, not end users)
+      tags: [VoteBridge]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VoteDebitRequest' }
+      responses:
+        '200':
+          description: Debit successful
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VoteDebitResponse' }
+        '402':
+          description: Insufficient balance or tier limit exceeded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+# ── New schemas ───────────────────────────────────────────────────────────────
+
+# (appended to components/schemas section — spec tooling merges by key)
+
+
+    KYCProfile:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        kyc_tier: { type: integer, minimum: 0, maximum: 3 }
+        kyc_status: { type: string, enum: [none, pending, submitted, verified, failed] }
+        kyc_submitted_at: { type: string, format: date-time, nullable: true }
+        kyc_verified_at: { type: string, format: date-time, nullable: true }
+        phone_verified: { type: boolean }
+        document_type: { type: string, nullable: true }
+        requested_tier: { type: integer, nullable: true }
+
+    FXQuote:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        source_currency: { type: string }
+        target_currency: { type: string }
+        source_amount_kobo: { type: integer, format: int64 }
+        target_amount_minor: { type: integer, format: int64 }
+        rate: { type: number, format: double }
+        fee_kobo: { type: integer, format: int64 }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    FXConversion:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        quote_id: { type: string, format: uuid }
+        source_currency: { type: string }
+        target_currency: { type: string }
+        source_amount_kobo: { type: integer, format: int64 }
+        target_amount_minor: { type: integer, format: int64 }
+        rate: { type: number, format: double }
+        fee_kobo: { type: integer, format: int64 }
+        status: { type: string, enum: [pending, completed, failed, reversed] }
+        reference: { type: string }
+        created_at: { type: string, format: date-time }
+
+    CurrencyWallet:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        currency: { type: string, minLength: 3, maxLength: 3 }
+        balance_minor: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+
+    # ── Groups ──────────────────────────────────────────────────────────────────
+    Group:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        created_by: { type: string, format: uuid }
+        avatar_url: { type: string, nullable: true }
+        is_public: { type: boolean }
+        member_count: { type: integer }
+        created_at: { type: string, format: date-time }
+
+    SubscriptionPayment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        group_id: { type: string, format: uuid }
+        member_id: { type: string, format: uuid }
+        plan_id: { type: string, format: uuid }
+        amount_kobo: { type: integer, format: int64 }
+        status: { type: string, enum: [paid, pending, overdue, refunded] }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    # ── Events ──────────────────────────────────────────────────────────────────
+    Event:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organizer_id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        venue_address: { type: string, nullable: true }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        status: { type: string, enum: [draft, published, cancelled, completed] }
+        created_at: { type: string, format: date-time }
+
+    Ticket:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        event_id: { type: string, format: uuid }
+        ticket_type_id: { type: string, format: uuid }
+        owner_id: { type: string, format: uuid }
+        qr_code: { type: string, format: uuid }
+        status: { type: string, enum: [issued, used, refunded, cancelled] }
+        price_paid_kobo: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+
+    # ── Crowdfunding ─────────────────────────────────────────────────────────────
+    Campaign:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        creator_id: { type: string, format: uuid }
+        title: { type: string }
+        goal_kobo: { type: integer, format: int64 }
+        raised_kobo: { type: integer, format: int64 }
+        status: { type: string, enum: [draft, active, funded, failed, cancelled] }
+        deadline: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    Contribution:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        campaign_id: { type: string, format: uuid }
+        contributor_id: { type: string, format: uuid }
+        amount_kobo: { type: integer, format: int64 }
+        status: { type: string, enum: [escrowed, released, refunded] }
+        created_at: { type: string, format: date-time }
+
+    # ── Restaurant & Delivery ────────────────────────────────────────────────────
+    Order:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        restaurant_id: { type: string, format: uuid }
+        subtotal_kobo: { type: integer, format: int64 }
+        delivery_kobo: { type: integer, format: int64 }
+        total_kobo: { type: integer, format: int64 }
+        status:
+          type: string
+          enum: [pending, confirmed, preparing, ready, picked_up, delivered, cancelled]
+        created_at: { type: string, format: date-time }
+
+    # ── Telemedicine ─────────────────────────────────────────────────────────────
+    Doctor:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        specialty:
+          type: string
+          enum: [general, cardiology, dermatology, paediatrics, veterinary, pharmacy]
+        consult_fee_kobo: { type: integer, format: int64 }
+        is_available: { type: boolean }
+
+    Appointment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        patient_id: { type: string, format: uuid }
+        doctor_id: { type: string, format: uuid }
+        scheduled_at: { type: string, format: date-time }
+        status: { type: string, enum: [booked, confirmed, completed, cancelled] }
+        fee_kobo: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+
+    # ── Transport ────────────────────────────────────────────────────────────────
+    Trip:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        rider_id: { type: string, format: uuid }
+        driver_id: { type: string, format: uuid, nullable: true }
+        pickup_address: { type: string }
+        dest_address: { type: string }
+        fare_kobo: { type: integer, format: int64 }
+        status:
+          type: string
+          enum: [requested, accepted, picked_up, completed, cancelled]
+        created_at: { type: string, format: date-time }
+
+    # ── AI Customer Care ─────────────────────────────────────────────────────────
+    SupportSession:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        status: { type: string, enum: [open, escalated, resolved] }
+        topic: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    SupportMessage:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        role: { type: string, enum: [user, ai, agent] }
+        content: { type: string }
+        created_at: { type: string, format: date-time }
+
+    # ── Vote bridge ──────────────────────────────────────────────────────────────
+    VoteDebitRequest:
+      type: object
+      required: [contest_id, contestant_id, vote_count, cost_kobo, idempotency_key]
+      properties:
+        contest_id: { type: string, format: uuid }
+        contestant_id: { type: string, format: uuid }
+        vote_count: { type: integer, minimum: 1 }
+        cost_kobo: { type: integer, format: int64, minimum: 1 }
+        idempotency_key: { type: string }
+
+    VoteDebitResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        balance_kobo: { type: integer, format: int64 }
+        idempotency_key: { type: string }
+
+    # ── Disputes ─────────────────────────────────────────────────────────────────
+    OpenDisputeRequest:
+      type: object
+      required: [reference, module_type, type, description]
+      properties:
+        reference: { type: string, description: "Transaction reference being disputed" }
+        module_type: { type: string, description: "e.g. wallet, transport, restaurant" }
+        type:
+          type: string
+          enum: [transfer, topup, vote, order, ticket, ride, contribution]
+        description: { type: string, minLength: 20 }
+
+    Dispute:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        reference: { type: string }
+        module_type: { type: string }
+        type: { type: string }
+        description: { type: string }
+        status: { type: string, enum: [open, investigating, resolved, closed] }
+        resolution: { type: string, enum: [refund, partial_refund, no_action], nullable: true }
+        admin_note: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    # ── Ratings ───────────────────────────────────────────────────────────────────
+    CreateRatingRequest:
+      type: object
+      required: [entity_id, entity_type, transaction_ref, score]
+      properties:
+        entity_id: { type: string }
+        entity_type:
+          type: string
+          enum: [doctor, pharmacy, restaurant, rider, driver, bus_operator, event_organiser, campaign, group_admin]
+        transaction_ref: { type: string, description: "Prevents duplicate ratings per order/appointment/trip" }
+        score: { type: number, format: float, minimum: 1.0, maximum: 5.0 }
+        comment: { type: string, nullable: true }
+
+    Rating:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        rater_id: { type: string, format: uuid }
+        entity_id: { type: string }
+        entity_type: { type: string }
+        transaction_ref: { type: string }
+        score: { type: number, format: float }
+        comment: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    RatingSummary:
+      type: object
+      properties:
+        entity_id: { type: string }
+        entity_type: { type: string }
+        average: { type: number, format: float }
+        count: { type: integer }

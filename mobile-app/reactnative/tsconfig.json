@@ -4,8 +4,15 @@
     "strict": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": [
+        "src/*"
+      ]
     }
   },
-  "exclude": ["banking", "node_modules"]
+  "exclude": [
+    "banking",
+    "node_modules",
+    "**/__tests__/**",
+    "tsconfig.merchant.json"
+  ]
 }

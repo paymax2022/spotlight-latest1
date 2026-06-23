@@ -108,8 +108,17 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 			"locked_until":          nil,
 			"last_login_at":         time.Now().UTC().Format(time.RFC3339),
 		}, nil)
+		// Surface the platform user id to the handler (internal hint, stripped
+		// before the response is returned to the client). Lets the session layer
+		// issue a tracked session + run suspicious-login detection.
+		out["__user_id"] = user.ID
 	}
-	_ = s.createSession(user, out)
+	// When session hardening is ON the SessionService owns session creation
+	// (richer row + rotation metadata), so skip the legacy minimal insert to
+	// avoid duplicate rows. Flag OFF keeps the existing behaviour.
+	if !s.cfg.FeatureSessionHardeningEnabled {
+		_ = s.createSession(user, out)
+	}
 	return out, nil
 }
 

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import SearchBar from '@/components/SearchBar';
+import ElectionHeaderBanner from '@/features/election/components/ElectionHeaderBanner';
 import ModuleGrid from '@/components/ModuleGrid';
 import SectionHeader from '@/components/SectionHeader';
 import { Colors } from '@/constants/colors';
@@ -35,6 +36,8 @@ export default function ServicesScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>All Services</Text>
       </View>
+
+      <ElectionHeaderBanner />
 
       <SearchBar value={search} onChangeText={setSearch} placeholder="Search a service…" />
 

@@ -1,0 +1,12 @@
+# Runs the OSRM graph refresh weekly (Sun 03:30) with jitter. Enable with:
+#   sudo systemctl enable --now osrm-refresh.timer
+[Unit]
+Description=Weekly OSRM graph refresh
+
+[Timer]
+OnCalendar=Sun *-*-* 03:30:00
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target

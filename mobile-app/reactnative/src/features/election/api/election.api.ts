@@ -1,0 +1,195 @@
+// ── Estate Election API surface ──────────────────────────────────────────────
+// Two paths per function:
+//   • USE_MOCK === true  → in-memory mock; "live" derived from the admin window
+//   • USE_MOCK === false → real HTTP against /elections via api/client
+// Signatures/types/hooks are identical for both. Flip EXPO_PUBLIC_ELECTION_USE_MOCK=false to go live.
+
+import { api } from '@/api/client';
+import { generateIdempotencyKey } from '@/utils/idempotency';
+import { getRestrictionStatus } from '@/features/visitor/api/visitor.api';
+import { ELECTION_API_BASE as B, USE_MOCK } from '../constants/election.constants';
+import type {
+  CastVoteInput,
+  CreateElectionInput,
+  Election,
+  MyBallot,
+  VoterEligibility,
+} from '../types/election.types';
+import { hasEnded, isLiveNow } from '../utils/electionFormatters';
+import { seedElections } from './election.mock';
+
+let elections: Election[] = JSON.parse(JSON.stringify(seedElections));
+const ballots: Record<string, MyBallot> = {};
+
+const latency = (ms = 350) => new Promise((r) => setTimeout(r, ms));
+const idem = (key?: string) => ({ headers: { 'Idempotency-Key': key ?? generateIdempotencyKey() } });
+
+export class ElectionApiError extends Error {
+  code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+    this.name = 'ElectionApiError';
+  }
+}
+
+/** The election whose window is open right now (or null). Drives the banner. */
+export async function getActiveElection(): Promise<Election | null> {
+  if (USE_MOCK) {
+    await latency(200);
+    const live = elections.find((e) => isLiveNow(e));
+    return live ? JSON.parse(JSON.stringify(live)) : null;
+  }
+  const { data } = await api.get<Election | null>(`${B}/active`);
+  return data ?? null;
+}
+
+export async function listElections(): Promise<Election[]> {
+  if (USE_MOCK) {
+    await latency();
+    return JSON.parse(JSON.stringify(elections));
+  }
+  const { data } = await api.get<Election[]>(B);
+  return data;
+}
+
+export async function getElection(id: string): Promise<Election> {
+  if (USE_MOCK) {
+    await latency(250);
+    const e = elections.find((x) => x.id === id);
+    if (!e) throw new ElectionApiError('NOT_FOUND', 'Election not found.');
+    return JSON.parse(JSON.stringify(e));
+  }
+  const { data } = await api.get<Election>(`${B}/${id}`);
+  return data;
+}
+
+export async function getVoterEligibility(electionId: string): Promise<VoterEligibility> {
+  if (USE_MOCK) {
+    // Wired to payment standing: residents under a hard payment ban are
+    // payment-ineligible to vote (elections PRD). Reads the same restriction
+    // status the Visitor module consumes from Payments.
+    try {
+      const r = await getRestrictionStatus();
+      if (r.state === 'hard_ban') {
+        return { eligible: false, reason: 'Voting is disabled while you have outstanding estate dues. Settle your balance to vote.' };
+      }
+    } catch {
+      /* if standing can't be read, fail open so genuine voters aren't blocked */
+    }
+    return { eligible: true };
+  }
+  const { data } = await api.get<VoterEligibility>(`${B}/${electionId}/eligibility`);
+  return data;
+}
+
+export async function getMyBallot(electionId: string): Promise<MyBallot> {
+  if (USE_MOCK) {
+    await latency(150);
+    return ballots[electionId] ?? { electionId, choices: {} };
+  }
+  const { data } = await api.get<MyBallot>(`${B}/${electionId}/ballot`);
+  return data;
+}
+
+export async function castVote(input: CastVoteInput): Promise<MyBallot> {
+  if (USE_MOCK) {
+    await latency(450);
+    const election = elections.find((e) => e.id === input.electionId);
+    if (!election) throw new ElectionApiError('NOT_FOUND', 'Election not found.');
+    if (!isLiveNow(election)) throw new ElectionApiError('CLOSED', 'Voting is not open for this election.');
+
+    const ballot = ballots[input.electionId] ?? { electionId: input.electionId, choices: {} };
+    if (ballot.choices[input.positionId]) {
+      throw new ElectionApiError('ALREADY_VOTED', 'You have already voted for this position.');
+    }
+
+    const position = election.positions.find((p) => p.id === input.positionId);
+    const candidate = position?.candidates.find((c) => c.id === input.candidateId);
+    if (!position || !candidate) throw new ElectionApiError('INVALID', 'Invalid candidate selection.');
+
+    candidate.votes += 1;
+    ballot.choices[input.positionId] = input.candidateId;
+
+    // Count a fully-submitted ballot once the resident has voted every position.
+    const complete = election.positions.every((p) => ballot.choices[p.id]);
+    if (complete && !ballot.submittedAt) {
+      ballot.submittedAt = new Date().toISOString();
+      election.votesCast += 1;
+    }
+    ballots[input.electionId] = ballot;
+    return JSON.parse(JSON.stringify(ballot));
+  }
+  const { data } = await api.post<MyBallot>(
+    `${B}/${input.electionId}/vote`,
+    { positionId: input.positionId, candidateId: input.candidateId },
+    idem(input.idempotencyKey),
+  );
+  return data;
+}
+
+// Admin: create/schedule an election. Status is derived from the window on read.
+export async function createElection(input: CreateElectionInput): Promise<Election> {
+  if (USE_MOCK) {
+    await latency(600);
+    if (!input.title.trim()) throw new ElectionApiError('VALIDATION', 'Election title is required.');
+    if (+new Date(input.endsAt) <= +new Date(input.startsAt)) {
+      throw new ElectionApiError('VALIDATION', 'End time must be after the start time.');
+    }
+    const validPositions = input.positions
+      .map((p) => ({ ...p, title: p.title.trim(), candidateNames: p.candidateNames.map((n) => n.trim()).filter(Boolean) }))
+      .filter((p) => p.title && p.candidateNames.length >= 2);
+    if (validPositions.length === 0) {
+      throw new ElectionApiError('VALIDATION', 'Add at least one position with two or more candidates.');
+    }
+    const id = `elec_${Date.now()}`;
+    const election: Election = {
+      id,
+      estateId: 'est_amber_court',
+      title: input.title.trim(),
+      description: input.description?.trim() || undefined,
+      startsAt: input.startsAt,
+      endsAt: input.endsAt,
+      status: 'scheduled',
+      totalEligibleVoters: 142,
+      votesCast: 0,
+      resultsPublished: false,
+      positions: validPositions.map((p, pi) => ({
+        id: `pos_${id}_${pi}`,
+        title: p.title,
+        seats: Math.max(1, p.seats),
+        candidates: p.candidateNames.map((name, ci) => ({
+          id: `cand_${id}_${pi}_${ci}`,
+          positionId: `pos_${id}_${pi}`,
+          name,
+          votes: 0,
+        })),
+      })),
+    };
+    elections = [election, ...elections];
+    return JSON.parse(JSON.stringify(election));
+  }
+  const { data } = await api.post<Election>(B, input, idem(input.idempotencyKey));
+  return data;
+}
+
+// Admin: publish results once the election has ended (results announcement).
+export async function publishResults(electionId: string): Promise<Election> {
+  if (USE_MOCK) {
+    await latency(400);
+    const e = elections.find((x) => x.id === electionId);
+    if (!e) throw new ElectionApiError('NOT_FOUND', 'Election not found.');
+    if (!hasEnded(e)) throw new ElectionApiError('NOT_ENDED', 'Results can only be published after the election closes.');
+    e.resultsPublished = true;
+    e.status = 'results_published';
+    return JSON.parse(JSON.stringify(e));
+  }
+  const { data } = await api.post<Election>(`${B}/${electionId}/publish`, {}, idem());
+  return data;
+}
+
+/** Test helper — reset the in-memory stores (mock mode). */
+export function __resetElectionStore(): void {
+  elections = JSON.parse(JSON.stringify(seedElections));
+  Object.keys(ballots).forEach((k) => delete ballots[k]);
+}
