@@ -22,6 +22,9 @@ export const Colors = {
   onTertiaryContainer:  '#48B8AC',
   teal:                 '#48B8AC',
 
+  // Accent — Subtle Gold (favorites / elite / rewards, per DESIGN-Mobile.md)
+  gold:                 '#EAB308',
+
   // Surface layers
   background:               '#F8F9FF',
   surface:                  '#F8F9FF',
@@ -49,6 +52,8 @@ export const Colors = {
   error:          '#BA1A1A',
   onError:        '#FFFFFF',
   errorContainer: '#FFDAD6',
+  onWarning:      '#8A6D00',   // dark amber text on gold/warning chips (Colors.gold is too light for text)
+  backdropDark:   '#0B1C30',   // full-bleed dark backdrop (e.g. photo gallery) — matches onSurface ink
 
   // Fixed accents
   primaryFixed:          '#EBDCFF',
@@ -62,14 +67,16 @@ export const Colors = {
   tertiaryFixedDim:      '#6BD8CB',
 
   // Gradient helpers
-  gradientPurple: ['#340075', '#4C1D95', '#0051D5'] as string[],
-  gradientCard:   ['#340075', '#1A0050'] as string[],
+  gradientPurple: ['#340075', '#4C1D95', '#0051D5'] as [string, string, string],
+  gradientCard:   ['#340075', '#1A0050'] as [string, string],
+  gradientMuted:  ['#3A3340', '#241F29'] as [string, string],   // disabled / suspended surfaces
 
   // Service icon tint backgrounds (10% opacity of icon color)
   iconBgPurple:  'rgba(52,  0, 117, 0.08)',
   iconBgBlue:    'rgba(  0, 81, 213, 0.08)',
   iconBgTeal:    'rgba( 72,184, 172, 0.10)',
   iconBgOrange:  'rgba(234,127,  0, 0.10)',
+  iconBgGold:    'rgba(234,179,  8, 0.12)',
   iconBgGreen:   'rgba( 22,163, 74, 0.08)',
   iconBgRed:     'rgba(220, 38, 38, 0.08)',
 
