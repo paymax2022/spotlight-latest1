@@ -19,12 +19,13 @@ migrations applied.
 1. **FIXED — spotlight test seeded an invalid `kind`.** `tests/spotlightwealth/live_db_integration_test.go`
    inserted `kind='learn'`, but the schema CHECK only allows `('literacy','quiz','savings')` →
    `spotlight_challenges_kind_check` violation. Changed to `'literacy'`. (Committed.)
-2. **OPEN — live-DB tests don't seed `auth.users`.** Every live-DB suite uses fresh `uuid.New()`
-   user IDs but the schema FKs `user_id → auth.users(id)`. On a fresh/disposable DB these fail with
-   `..._user_id_fkey` violations. In the sandbox I dropped the `auth.users` FKs to validate the
-   module LOGIC. To run these suites unmodified you must either (a) seed each test user into
-   `auth.users`, or (b) run against a DB where those users exist. RECOMMENDED FIX: have each test's
-   setup `INSERT INTO auth.users(id) VALUES ($userID)` before using it. (Left for a QA follow-up.)
+2. **FIXED — live-DB tests now seed `auth.users`.** They used fresh `uuid.New()` user IDs but the
+   schema FKs `user_id → auth.users(id)`, so on a fresh DB they failed with `..._user_id_fkey`
+   violations. Added a `seedUser(t, ctx, pool)` helper (`INSERT INTO auth.users (id) ... ON CONFLICT
+   DO NOTHING`) to the learn / spotlightwealth / crypto live-DB suites and repointed every user-mint
+   site to it. Re-validated **with the FK constraint INTACT** (no workaround): **learn 5/5 PASS,
+   spotlightwealth 5/6 PASS** on a fresh migrated Postgres. (association / transport_scheduled don't
+   FK to auth.users — no change needed.)
 
 ## Why the money/ledger tests need your full stack
 `crypto` swap/withdrawal and `spotlight` challenge-completion post to the finance ledger via

@@ -134,6 +134,18 @@ func seedWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 // balance equals the reward exactly once (not doubled), and (c) the caller's
 // wallet balance increases by exactly the reward amount (the balanced credit
 // from paymax_revenue).
+
+// seedUser inserts a synthetic auth.users row so FKs (user_id -> auth.users) are
+// satisfied on a fresh Supabase DB. Needed by the persistence + ledger paths.
+func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
+	t.Helper()
+	id := uuid.New().String()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id) VALUES ($1) ON CONFLICT DO NOTHING`, id); err != nil {
+		t.Fatalf("seed auth.users: %v", err)
+	}
+	return id
+}
+
 func TestLiveDB_CompleteChallenge_IdempotentRetry_OneLedgerCreditOneRewardRow(t *testing.T) {
 	pool := liveDBPool(t)
 	defer pool.Close()
@@ -143,7 +155,7 @@ func TestLiveDB_CompleteChallenge_IdempotentRetry_OneLedgerCreditOneRewardRow(t 
 
 	const rewardKobo = int64(2_500_00) // ₦2,500
 	challengeID := seedChallenge(t, ctx, pool, rewardKobo)
-	userID := uuid.New().String()
+	userID := seedUser(t, ctx, pool)
 
 	if _, err := svc.JoinChallenge(ctx, userID, challengeID); err != nil {
 		t.Fatalf("JoinChallenge: %v", err)
@@ -227,7 +239,7 @@ func TestLiveDB_CompleteChallenge_RequiresIdempotencyKey(t *testing.T) {
 	ctx := context.Background()
 
 	challengeID := seedChallenge(t, ctx, pool, 1_000_00)
-	userID := uuid.New().String()
+	userID := seedUser(t, ctx, pool)
 	if _, err := svc.JoinChallenge(ctx, userID, challengeID); err != nil {
 		t.Fatalf("JoinChallenge: %v", err)
 	}
@@ -258,7 +270,7 @@ func TestLiveDB_CompleteChallenge_ZeroRewardChallenge_CompletesWithNoLedgerPost(
 	ctx := context.Background()
 
 	challengeID := seedChallenge(t, ctx, pool, 0)
-	userID := uuid.New().String()
+	userID := seedUser(t, ctx, pool)
 	if _, err := svc.JoinChallenge(ctx, userID, challengeID); err != nil {
 		t.Fatalf("JoinChallenge: %v", err)
 	}
@@ -295,7 +307,7 @@ func TestLiveDB_JoinChallenge_RejectsEndedChallenge(t *testing.T) {
 	ctx := context.Background()
 
 	challengeID := seedEndedChallenge(t, ctx, pool, 1_000_00)
-	userID := uuid.New().String()
+	userID := seedUser(t, ctx, pool)
 
 	_, err := svc.JoinChallenge(ctx, userID, challengeID)
 	if err != spotlightwealth.ErrChallengeEnded {
@@ -319,7 +331,7 @@ func TestLiveDB_JoinChallenge_RejectsEndedChallenge(t *testing.T) {
 // user and returns the user id.
 func seedLearningPoints(t *testing.T, ctx context.Context, pool *pgxpool.Pool, displayName string, points int) string {
 	t.Helper()
-	userID := uuid.New().String()
+	userID := seedUser(t, ctx, pool)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO spotlight_learning_points (user_id, display_name, points)
 		VALUES ($1,$2,$3)

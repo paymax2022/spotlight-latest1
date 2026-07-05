@@ -121,6 +121,18 @@ func buyToSeedHolding(t *testing.T, ctx context.Context, svc *crypto.Service, us
 // idempotent posting), (c) both holdings move exactly once, and (d) a retried
 // Swap with the SAME Idempotency-Key is a full no-op (same order id, no
 // further holding movement, no further wallet change).
+
+// seedUser inserts a synthetic auth.users row so FKs (user_id -> auth.users) are
+// satisfied on a fresh Supabase DB. Needed by the persistence + ledger paths.
+func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
+	t.Helper()
+	id := uuid.New().String()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id) VALUES ($1) ON CONFLICT DO NOTHING`, id); err != nil {
+		t.Fatalf("seed auth.users: %v", err)
+	}
+	return id
+}
+
 func TestLiveDB_Swap_NetWalletDeltaZero_SpreadToRevenue_Idempotent(t *testing.T) {
 	pool := liveDBPool(t)
 	defer pool.Close()
@@ -129,7 +141,7 @@ func TestLiveDB_Swap_NetWalletDeltaZero_SpreadToRevenue_Idempotent(t *testing.T)
 	ctx := context.Background()
 
 	fromAssetID, toAssetID := seedTradableAssets(t, ctx, svc)
-	userID := uuid.New().String()
+	userID := seedUser(t, ctx, pool)
 
 	// Fund the wallet and buy into the from-asset so there's a holding to swap.
 	seedWallet(t, ctx, led, userID, 50_000_000_00) // ample headroom
@@ -229,7 +241,7 @@ func TestLiveDB_Swap_OversellRejected_HoldingsUnchanged(t *testing.T) {
 	ctx := context.Background()
 
 	fromAssetID, toAssetID := seedTradableAssets(t, ctx, svc)
-	userID := uuid.New().String()
+	userID := seedUser(t, ctx, pool)
 	seedWallet(t, ctx, led, userID, 5_000_000_00)
 	buyToSeedHolding(t, ctx, svc, userID, fromAssetID, 1_000_00) // tiny holding
 
@@ -296,7 +308,7 @@ func TestLiveDB_Withdraw_RequiresWhitelistedAddress(t *testing.T) {
 	ctx := context.Background()
 
 	fromAssetID, _ := seedTradableAssets(t, ctx, svc)
-	userID := uuid.New().String()
+	userID := seedUser(t, ctx, pool)
 	seedWallet(t, ctx, led, userID, 5_000_000_00)
 	buyToSeedHolding(t, ctx, svc, userID, fromAssetID, 1_000_000_00)
 
@@ -336,7 +348,7 @@ func TestLiveDB_Withdraw_ParksUnitsOnCreate_ReturnsOnProviderFailure(t *testing.
 	ctx := context.Background()
 
 	fromAssetID, _ := seedTradableAssets(t, ctx, svc)
-	userID := uuid.New().String()
+	userID := seedUser(t, ctx, pool)
 	seedWallet(t, ctx, led, userID, 5_000_000_00)
 	buyToSeedHolding(t, ctx, svc, userID, fromAssetID, 1_000_000_00)
 
@@ -404,7 +416,7 @@ func TestLiveDB_Withdraw_IdempotentCreate_ParksUnitsOnce(t *testing.T) {
 	ctx := context.Background()
 
 	fromAssetID, _ := seedTradableAssets(t, ctx, svc)
-	userID := uuid.New().String()
+	userID := seedUser(t, ctx, pool)
 	seedWallet(t, ctx, led, userID, 5_000_000_00)
 	buyToSeedHolding(t, ctx, svc, userID, fromAssetID, 1_000_000_00)
 
@@ -466,7 +478,7 @@ func TestLiveDB_Withdraw_OverWithdrawalRejected_HoldingUnchanged(t *testing.T) {
 	ctx := context.Background()
 
 	fromAssetID, _ := seedTradableAssets(t, ctx, svc)
-	userID := uuid.New().String()
+	userID := seedUser(t, ctx, pool)
 	seedWallet(t, ctx, led, userID, 5_000_000_00)
 	buyToSeedHolding(t, ctx, svc, userID, fromAssetID, 10_000_00) // small holding
 

@@ -133,6 +133,18 @@ func seedQuizWithOneQuestion(t *testing.T, ctx context.Context, pool *pgxpool.Po
 // TestLiveDB_GetQuiz_AnswerKeyNeverSerialized proves end-to-end that the
 // client-facing GetQuiz response scrubs every option's Correct flag to false,
 // even though the DB row for the correct option has is_correct=true.
+
+// seedUser inserts a synthetic row into auth.users so FKs (learn_quiz_attempts /
+// learn_lesson_progress → auth.users) are satisfied on a fresh Supabase DB.
+func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
+	t.Helper()
+	id := uuid.New().String()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id) VALUES ($1) ON CONFLICT DO NOTHING`, id); err != nil {
+		t.Fatalf("seed auth.users: %v", err)
+	}
+	return id
+}
+
 func TestLiveDB_GetQuiz_AnswerKeyNeverSerialized(t *testing.T) {
 	pool := liveDBPool(t)
 	defer pool.Close()
@@ -171,7 +183,7 @@ func TestLiveDB_SubmitQuiz_ScoresAuthoritativelyAndPasses(t *testing.T) {
 	lessonID := seedLesson(t, ctx, pool, pathID)
 	quizID, questionID, correctOptID, _ := seedQuizWithOneQuestion(t, ctx, pool, lessonID)
 
-	userID := uuid.New().String()
+	userID := seedUser(t, ctx, pool)
 	result, err := svc.SubmitQuiz(ctx, userID, quizID, learn.QuizAnswers{questionID: correctOptID})
 	if err != nil {
 		t.Fatalf("SubmitQuiz: %v", err)
@@ -208,7 +220,7 @@ func TestLiveDB_SubmitQuiz_WrongAnswerFails(t *testing.T) {
 	lessonID := seedLesson(t, ctx, pool, pathID)
 	quizID, questionID, _, wrongOptID := seedQuizWithOneQuestion(t, ctx, pool, lessonID)
 
-	userID := uuid.New().String()
+	userID := seedUser(t, ctx, pool)
 	result, err := svc.SubmitQuiz(ctx, userID, quizID, learn.QuizAnswers{questionID: wrongOptID})
 	if err != nil {
 		t.Fatalf("SubmitQuiz: %v", err)
@@ -258,7 +270,7 @@ func TestLiveDB_GetLesson_MarksProgressAndAdvancesPathPercent(t *testing.T) {
 	pathID := seedPath(t, ctx, pool)
 	lesson1 := seedLesson(t, ctx, pool, pathID)
 	lesson2 := seedLesson(t, ctx, pool, pathID)
-	userID := uuid.New().String()
+	userID := seedUser(t, ctx, pool)
 
 	pBefore, err := svc.GetPath(ctx, userID, pathID)
 	if err != nil {
