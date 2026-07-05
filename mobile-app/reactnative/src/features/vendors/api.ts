@@ -16,27 +16,15 @@ export interface VendorJob {
 
 export const USE_MOCK = (process.env.EXPO_PUBLIC_VENDORS_USE_MOCK ?? 'true') !== 'false';
 
-// Vendors/Artisans are NOT a standalone backend module — they are nested
-// under the Estate module (backend/internal/app/finance_routes.go: estGroup :=
-// finance.Group("/estate"); backend/internal/estate/handler.go:
-// ListVendors/CreateVendor/VerifyVendor take :id (estate); the vendor
-// self-service suite OnboardVendor/GetVendorProfile/ListVendorJobs/
-// AssignVendorJob/AcceptVendorJob/... also take :id (estate)). There is no
-// flat /vendors or /vendor namespace and no frontend-web proxy for
-// /api/v1/estate/vendors|vendor — the blanket rewrite only covers
-// /api/finance/:path*.
-// MISSING: a shared estate-context provider; DEFAULT_ESTATE_ID is a stopgap
-// (mirrors the election/meetings convention) until multi-estate selection ships.
-export const DEFAULT_ESTATE_ID = 'est_amber_court';
-export const VENDORS_API_BASE = `/api/finance/estate/${DEFAULT_ESTATE_ID}/vendors`; // admin directory (GET)
-export const VENDOR_APP_BASE = `/api/finance/estate/${DEFAULT_ESTATE_ID}/vendor`;   // vendor self-service (Block 42)
+// Vendors/Artisans are served by the resident-scoped frontend-web handlers under
+// /api/v1/estate/vendors. The current resident's estate is derived SERVER-SIDE
+// from the auth token (frontend-web/src/server/estate/resident.ts →
+// getResidentContext), so the client never passes an estate ID.
+//   • VENDORS_API_BASE   — vendor directory + jobs list + job status transition.
+//   • VENDOR_APP_BASE     — vendor self-service (Block 42): onboard/earnings/quote.
+export const VENDORS_API_BASE = '/api/v1/estate/vendors';       // directory + jobs (GET/POST status)
+export const VENDOR_APP_BASE = '/api/v1/estate/vendors/self';   // vendor self-service (Block 42)
 export const RATING_STAR_COLOR = '#EAB308';
-
-// Maps a target JobStatus to its backend transition endpoint (Block 42).
-export const JOB_STATUS_ACTION: Record<JobStatus, string> = {
-  accepted: 'accept', rejected: 'reject', en_route: 'checkin',
-  in_progress: 'start', completed: 'complete', paid: 'payout', available: '',
-};
 
 export const VENDOR_CATEGORY_META: Record<string, { label: string; icon: string }> = {
   general:    { label: 'General',    icon: 'Wrench' },
@@ -88,15 +76,17 @@ let jobs: VendorJob[] = [
 ];
 const latency = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
-// jobFromApi maps the snake_case backend job payload to the client shape.
+// jobFromApi maps a job payload to the client shape. The resident-scoped
+// handlers return camelCase (mapJob), but tolerate snake_case too so the mapper
+// is robust to either source.
 function jobFromApi(r: any): VendorJob {
   return {
-    id: r.id, estateId: r.estate_id, vendorId: r.vendor_id,
-    vendorName: r.vendor_name ?? undefined,
-    repairRequestId: r.repair_request_id ?? undefined,
+    id: r.id, estateId: r.estateId ?? r.estate_id, vendorId: r.vendorId ?? r.vendor_id,
+    vendorName: r.vendorName ?? r.vendor_name ?? undefined,
+    repairRequestId: r.repairRequestId ?? r.repair_request_id ?? undefined,
     status: r.status as JobStatus,
-    amountKobo: Number(r.amount_kobo ?? 0),
-    createdAt: r.created_at ?? new Date().toISOString(),
+    amountKobo: Number(r.amountKobo ?? r.amount_kobo ?? 0),
+    createdAt: r.createdAt ?? r.created_at ?? new Date().toISOString(),
   };
 }
 
@@ -104,24 +94,23 @@ export async function listVendors(): Promise<Vendor[]> {
   if (USE_MOCK) { await latency(); return vendors.slice().sort((a, b) => b.rating - a.rating); }
   const res = await api.get(VENDORS_API_BASE);
   const rows = (res.data?.data ?? res.data ?? []) as any[];
-  return rows.map((r) => ({ id: r.id, estateId: r.estate_id, name: r.name, category: r.category, phone: r.phone ?? undefined, status: r.status as VendorStatus, rating: Number(r.rating ?? 0) }));
+  return rows.map((r) => ({ id: r.id, estateId: r.estateId ?? r.estate_id, name: r.name, category: r.category, phone: r.phone ?? undefined, status: r.status as VendorStatus, rating: Number(r.rating ?? 0) }));
 }
 
 export async function listJobs(): Promise<VendorJob[]> {
   if (USE_MOCK) { await latency(); return jobs.slice().sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)); }
-  const res = await api.get(`${VENDOR_APP_BASE}/jobs`);
+  const res = await api.get(`${VENDORS_API_BASE}/jobs`);
   const rows = (res.data?.data ?? res.data ?? []) as any[];
   return rows.map(jobFromApi);
 }
 
-// updateJobStatus advances a job via the matching backend transition endpoint.
-// 'paid' is the payout money path and requires an Idempotency-Key header.
+// updateJobStatus advances a job to the target status via the resident-scoped
+// transition handler (POST /api/v1/estate/vendors/jobs/{id}/status, body
+// { status }). 'paid' is the payout money path and requires an Idempotency-Key.
 export async function updateJobStatus(id: string, status: JobStatus): Promise<VendorJob> {
   if (USE_MOCK) { await latency(250); const j = jobs.find((x) => x.id === id); if (!j) throw new Error('Not found'); j.status = status; return { ...j }; }
-  const action = JOB_STATUS_ACTION[status];
-  if (!action) throw new Error(`no transition for status ${status}`);
   const headers = status === 'paid' ? { 'Idempotency-Key': `payout:${id}` } : undefined;
-  const { data } = await api.post(`${VENDOR_APP_BASE}/jobs/${id}/${action}`, {}, { headers });
+  const { data } = await api.post(`${VENDORS_API_BASE}/jobs/${id}/status`, { status }, { headers });
   return jobFromApi(data);
 }
 
@@ -133,7 +122,7 @@ export async function onboardVendor(input: OnboardVendorInput): Promise<Vendor> 
   const { data } = await api.post(`${VENDOR_APP_BASE}/onboard`, {
     business_name: input.businessName, category: input.category, phone: input.phone, specialties: input.specialties ?? [],
   });
-  return { id: data.id, estateId: data.estate_id, name: data.name, category: data.category, phone: data.phone ?? undefined, status: data.status as VendorStatus, rating: Number(data.rating ?? 0) };
+  return { id: data.id, estateId: data.estateId ?? data.estate_id, name: data.name, category: data.category, phone: data.phone ?? undefined, status: data.status as VendorStatus, rating: Number(data.rating ?? 0) };
 }
 
 export interface VendorEarnings { paidJobs: number; totalEarnedKobo: number; openJobs: number; }

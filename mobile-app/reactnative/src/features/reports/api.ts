@@ -7,16 +7,12 @@ export interface ReportsResponse { sections: ReportSection[] }
 
 export const USE_MOCK = (process.env.EXPO_PUBLIC_REPORTS_USE_MOCK ?? 'true') !== 'false';
 
-// Reports/analytics are NOT a standalone backend module — they are nested
-// under the Estate module (backend/internal/app/finance_routes.go: estGroup :=
-// finance.Group("/estate"); backend/internal/estate/handler.go: Report and
-// GetAnalytics both take :id (estate)). There is no flat /reports or
-// /analytics namespace and no frontend-web proxy for /api/v1/estate/reports|
-// analytics — the blanket rewrite only covers /api/finance/:path*.
-// MISSING: a shared estate-context provider; DEFAULT_ESTATE_ID is a stopgap
-// (mirrors the election/meetings convention) until multi-estate selection ships.
-export const DEFAULT_ESTATE_ID = 'est_amber_court';
-export const REPORTS_API_BASE = `/api/finance/estate/${DEFAULT_ESTATE_ID}/reports`;
+// Reports/analytics are served by the resident-scoped frontend-web handlers
+// under /api/v1/estate/reports and /api/v1/estate/analytics/{type}. The current
+// resident's estate is derived SERVER-SIDE from the auth token
+// (frontend-web/src/server/estate/resident.ts → getResidentContext), so the
+// client never passes an estate ID. Both are estate-admin only server-side.
+export const REPORTS_API_BASE = '/api/v1/estate/reports';
 
 export const SECTION_ICON: Record<string, string> = {
   dues_collection: 'ReceiptText', payment_methods: 'Wallet', maintenance: 'Wrench', meetings: 'CalendarDays',
@@ -44,27 +40,17 @@ const latency = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 
 export async function getReports(): Promise<ReportsResponse> {
   if (USE_MOCK) { await latency(); return JSON.parse(JSON.stringify(mock)); }
-  // Backend /reports returns a flat EstateReport; fold it into an overview section.
-  const { data } = await api.get(REPORTS_API_BASE);
-  return {
-    sections: [
-      { id: 'overview', title: 'Overview', metrics: [
-        { label: 'Residents', value: String(data.residents ?? 0) },
-        { label: 'Open repairs', value: String(data.open_repairs ?? 0) },
-        { label: 'Open emergencies', value: String(data.open_emergencies ?? 0) },
-        { label: 'Announcements (30d)', value: String(data.announcements_30d ?? 0) },
-        { label: 'Facilities', value: String(data.facilities_count ?? 0) },
-        { label: 'Verified vendors', value: String(data.vendors_verified ?? 0) },
-      ] },
-    ],
-  };
+  // The resident-scoped handler already returns the computed { sections } shape
+  // (frontend-web/app/api/v1/estate/reports/route.ts → buildReports()).
+  const { data } = await api.get<ReportsResponse>(REPORTS_API_BASE);
+  return { sections: Array.isArray(data?.sections) ? data.sections : [] };
 }
 
 // ── Block 44 analytics (chart-ready, date-filtered) ───────────────────────────
 export type AnalyticsType = 'visitors' | 'gate' | 'payments' | 'repairs' | 'facilities' | 'meetings' | 'elections' | 'security' | 'vendors';
 export interface AnalyticsPoint { label: string; value: number; }
 export interface AnalyticsResult { type: string; from: string; to: string; series: AnalyticsPoint[]; summary: Record<string, number>; }
-export const ANALYTICS_BASE = `/api/finance/estate/${DEFAULT_ESTATE_ID}/analytics`;
+export const ANALYTICS_BASE = '/api/v1/estate/analytics';
 
 export async function getAnalytics(type: AnalyticsType, from?: string, to?: string): Promise<AnalyticsResult> {
   if (USE_MOCK) {

@@ -13,17 +13,12 @@ export interface CreateEmergencyInput { kind: EmergencyKind; description?: strin
 
 export const USE_MOCK = (process.env.EXPO_PUBLIC_EMERGENCIES_USE_MOCK ?? 'true') !== 'false';
 
-// Emergencies/incidents are NOT a standalone backend module — they are
-// nested under the Estate module (backend/internal/app/finance_routes.go:
-// estGroup := finance.Group("/estate"); backend/internal/estate/handler.go:
-// ListEmergencies/RaiseEmergency/UpdateEmergencyStatus all take :id (estate)).
-// There is no flat /emergencies namespace and no frontend-web proxy for
-// /api/v1/estate/emergencies — the blanket rewrite only covers
-// /api/finance/:path*.
-// MISSING: a shared estate-context provider; DEFAULT_ESTATE_ID is a stopgap
-// (mirrors the election/meetings convention) until multi-estate selection ships.
-export const DEFAULT_ESTATE_ID = 'est_amber_court';
-export const EMERGENCIES_API_BASE = `/api/finance/estate/${DEFAULT_ESTATE_ID}/emergencies`;
+// Emergencies/incidents are served by the resident-scoped frontend-web handlers
+// under /api/v1/estate/emergencies (GET list, POST create, POST /{id}/resolve).
+// The current resident's estate is derived SERVER-SIDE from the auth token
+// (frontend-web/src/server/estate/resident.ts → getResidentContext), so the
+// client never passes an estate ID.
+export const EMERGENCIES_API_BASE = '/api/v1/estate/emergencies';
 
 export const KIND_META: Record<EmergencyKind, { label: string; icon: string }> = {
   panic:    { label: 'Panic',    icon: 'Siren' },
@@ -61,10 +56,10 @@ export async function createEmergency(input: CreateEmergencyInput): Promise<Emer
   }
   const { data } = await api.post<EmergencyAlert>(EMERGENCIES_API_BASE, input, idem(input.idempotencyKey)); return data;
 }
-// NOTE: the backend has no POST .../resolve — the real transition endpoint is
-// PATCH /:id/emergencies/:alertId/status (UpdateEmergencyStatus), matching the
-// tasks/status convention. Send { status: 'resolved' } via PATCH.
+// The resident-scoped handler exposes POST /api/v1/estate/emergencies/{id}/resolve
+// (frontend-web/app/api/v1/estate/emergencies/[id]/resolve/route.ts), which sets
+// status='resolved' and returns the updated alert.
 export async function resolveEmergency(id: string): Promise<EmergencyAlert> {
   if (USE_MOCK) { await latency(250); const a = alerts.find((x) => x.id === id); if (!a) throw new Error('Not found'); a.status = 'resolved'; return { ...a }; }
-  const { data } = await api.patch<EmergencyAlert>(`${EMERGENCIES_API_BASE}/${id}/status`, { status: 'resolved' }, idem()); return data;
+  const { data } = await api.post<EmergencyAlert>(`${EMERGENCIES_API_BASE}/${id}/resolve`, {}, idem()); return data;
 }

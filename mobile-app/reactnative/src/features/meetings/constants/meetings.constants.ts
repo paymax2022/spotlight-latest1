@@ -5,20 +5,12 @@ import type { MeetingMode, MeetingStatus, RsvpResponse } from '../types/meetings
 // EXPO_PUBLIC_MEETINGS_USE_MOCK=false). Mirrors the visitor/election convention.
 export const USE_MOCK = (process.env.EXPO_PUBLIC_MEETINGS_USE_MOCK ?? 'true') !== 'false';
 
-// Meetings are NOT a standalone backend module — they are nested under the
-// Estate module on the Go backend (Gin), confirmed against
-// backend/internal/app/finance_routes.go (estGroup := finance.Group("/estate"))
-// + backend/internal/estate/handler.go (CreateMeeting/ListMeetings/GetMeeting/
-// RSVPMeeting/GetMinutes all take :id (estate) + :mid). There is NO flat
-// /meetings namespace and no frontend-web proxy for /api/v1/estate/meetings —
-// the blanket rewrite only covers /api/finance/:path*.
-export const MEETINGS_API_BASE = '/api/finance/estate';
-
-// The mobile meetings feature has no estate-selection UI yet (mirrors the
-// election/facilities convention of a single hardcoded estate). Until
-// multi-estate selection is wired, live calls target this one estate.
-// MISSING: a shared estate-context provider so this isn't hardcoded per module.
-export const DEFAULT_ESTATE_ID = 'est_amber_court';
+// Meetings are served by the resident-scoped frontend-web handlers under
+// /api/v1/estate/meetings (GET list, POST create, GET /{mid}, POST /{mid}/rsvp,
+// GET /{mid}/minutes). The current resident's estate is derived SERVER-SIDE from
+// the auth token (frontend-web/src/server/meetings/meetings.service.ts →
+// getResidentContext), so the client never passes an estate ID.
+export const MEETINGS_API_BASE = '/api/v1/estate/meetings';
 
 // Module-scoped semantic colors (mirrors VotingColors/VisitorColors).
 export const MeetingColors = {

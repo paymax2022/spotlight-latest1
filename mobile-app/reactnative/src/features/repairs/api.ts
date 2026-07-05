@@ -18,17 +18,12 @@ export interface AddRepairUpdateInput { status: RepairStatus; note?: string; ide
 
 export const USE_MOCK = (process.env.EXPO_PUBLIC_REPAIRS_USE_MOCK ?? 'true') !== 'false';
 
-// Repairs/maintenance are NOT a standalone backend module — they are nested
-// under the Estate module (backend/internal/app/finance_routes.go: estGroup :=
-// finance.Group("/estate"); backend/internal/estate/handler.go:
-// ListRepairs/CreateRepair/ListRepairUpdates/AddRepairUpdate all take :id
-// (estate)). There is no flat /repairs namespace and no frontend-web proxy
-// for /api/v1/estate/repairs — the blanket rewrite only covers
-// /api/finance/:path*.
-// MISSING: a shared estate-context provider; DEFAULT_ESTATE_ID is a stopgap
-// (mirrors the election/meetings convention) until multi-estate selection ships.
-export const DEFAULT_ESTATE_ID = 'est_amber_court';
-export const REPAIRS_API_BASE = `/api/finance/estate/${DEFAULT_ESTATE_ID}/repairs`;
+// Repairs/maintenance are served by the resident-scoped frontend-web handlers
+// under /api/v1/estate/repairs (GET list, POST create, GET/POST /{id}/updates).
+// The current resident's estate is derived SERVER-SIDE from the auth token
+// (frontend-web/src/server/estate/resident.ts → getResidentContext), so the
+// client never passes an estate ID.
+export const REPAIRS_API_BASE = '/api/v1/estate/repairs';
 
 export const CATEGORY_META: Record<RepairCategory, { label: string; icon: string }> = {
   plumbing:  { label: 'Plumbing',  icon: 'Droplets' },

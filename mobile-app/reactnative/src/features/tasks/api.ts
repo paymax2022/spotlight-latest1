@@ -6,16 +6,12 @@ import type { CreateTaskInput, EstateTask, TaskPriority, TaskStatus, UpdateTaskS
 
 export const USE_MOCK = (process.env.EXPO_PUBLIC_TASKS_USE_MOCK ?? 'true') !== 'false';
 
-// Tasks are NOT a standalone backend module — they are nested under the
-// Estate module (backend/internal/app/finance_routes.go: estGroup :=
-// finance.Group("/estate"); backend/internal/estate/handler.go:
-// ListTasks/CreateTask/UpdateTaskStatus all take :id (estate)). There is no
-// flat /tasks namespace and no frontend-web proxy for /api/v1/estate/tasks —
-// the blanket rewrite only covers /api/finance/:path*.
-// MISSING: a shared estate-context provider; DEFAULT_ESTATE_ID is a stopgap
-// (mirrors the election/meetings convention) until multi-estate selection ships.
-export const DEFAULT_ESTATE_ID = 'est_amber_court';
-export const TASKS_API_BASE = `/api/finance/estate/${DEFAULT_ESTATE_ID}/tasks`;
+// Tasks are served by the resident-scoped frontend-web handlers under
+// /api/v1/estate/tasks (GET list, POST create, GET /{id}, POST /{id}/status).
+// The current resident's estate is derived SERVER-SIDE from the auth token
+// (frontend-web/src/server/estate/resident.ts → getResidentContext), so the
+// client never passes an estate ID.
+export const TASKS_API_BASE = '/api/v1/estate/tasks';
 
 export const TaskColors: Record<TaskStatus, { color: string; bg: string }> = {
   todo:        { color: Colors.outline,   bg: 'rgba(123,116,131,0.12)' },

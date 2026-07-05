@@ -1,8 +1,9 @@
 // ── Paymax Invest · Onboarding — API wrapper ─────────────────────────────────
 // Typed data layer the onboarding screens code against (Backend role owns this).
 // Mirrors crypto.api.ts: mock-flagged. Flip EXPO_PUBLIC_ONBOARDING_USE_MOCK=false
-// once the real Paymax endpoints land. Maps to /api/v1/invest/* and
-// /api/v1/suitability/* per docs/crypto/api.md.
+// once the real Paymax endpoints land. Maps entirely under /api/v1/invest/*
+// (backend/internal/invest/routes.go) — suitability lives at
+// /api/v1/invest/suitability/*, not a top-level /api/v1/suitability/*.
 
 import { api } from '@/api/client';
 import {
@@ -91,7 +92,7 @@ export async function submitKyc(draft: KycDraft): Promise<{ status: KycStatus }>
 export async function getSuitabilityQuestions() {
   if (USE_MOCK) { await delay(160); return SUITABILITY_QUESTIONS; }
   try {
-    return unwrap<typeof SUITABILITY_QUESTIONS>(await api.get('/api/v1/suitability/questions'));
+    return unwrap<typeof SUITABILITY_QUESTIONS>(await api.get('/api/v1/invest/suitability/questions'));
   } catch (err) {
     throw toOnboardingError(err);
   }
@@ -100,7 +101,7 @@ export async function getSuitabilityQuestions() {
 export async function getSuitability(): Promise<SuitabilityResult | null> {
   if (USE_MOCK) { await delay(200); return mockState.suitability; }
   try {
-    return unwrap<SuitabilityResult | null>(await api.get('/api/v1/suitability/result'));
+    return unwrap<SuitabilityResult | null>(await api.get('/api/v1/invest/suitability/result'));
   } catch (err) {
     throw toOnboardingError(err);
   }
@@ -114,7 +115,7 @@ export async function submitSuitability(answers: SuitabilityAnswers): Promise<Su
     return result;
   }
   try {
-    return unwrap<SuitabilityResult>(await api.post('/api/v1/suitability/submit', answers));
+    return unwrap<SuitabilityResult>(await api.post('/api/v1/invest/suitability/submit', answers));
   } catch (err) {
     throw toOnboardingError(err);
   }

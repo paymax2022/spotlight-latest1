@@ -11,16 +11,12 @@ export interface CreateDocumentInput { title: string; category: DocumentCategory
 
 export const USE_MOCK = (process.env.EXPO_PUBLIC_DOCUMENTS_USE_MOCK ?? 'true') !== 'false';
 
-// Documents are NOT a standalone backend module — they are nested under the
-// Estate module (backend/internal/app/finance_routes.go: estGroup :=
-// finance.Group("/estate"); backend/internal/estate/handler.go:
-// ListDocuments/CreateDocument/DocumentDownloadURL all take :id (estate)).
-// There is no flat /documents namespace and no frontend-web proxy for
-// /api/v1/estate/documents — the blanket rewrite only covers /api/finance/:path*.
-// MISSING: a shared estate-context provider; DEFAULT_ESTATE_ID is a stopgap
-// (mirrors the election/meetings convention) until multi-estate selection ships.
-export const DEFAULT_ESTATE_ID = 'est_amber_court';
-export const DOCUMENTS_API_BASE = `/api/finance/estate/${DEFAULT_ESTATE_ID}/documents`;
+// Documents are served by the resident-scoped frontend-web handler under
+// /api/v1/estate/documents (GET list, POST create). The current resident's
+// estate is derived SERVER-SIDE from the auth token
+// (frontend-web/src/server/estate/resident.ts → getResidentContext), so the
+// client never passes an estate ID.
+export const DOCUMENTS_API_BASE = '/api/v1/estate/documents';
 
 export const CATEGORY_META: Record<DocumentCategory, { label: string; icon: string }> = {
   general:  { label: 'General',  icon: 'File' },

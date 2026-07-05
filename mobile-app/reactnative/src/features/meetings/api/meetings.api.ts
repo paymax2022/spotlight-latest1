@@ -1,13 +1,11 @@
 // ── Estate Meetings API surface (Block 30) ───────────────────────────────────
-// Dual path: USE_MOCK in-memory store, else live HTTP to
-// /api/finance/estate/:estateId/meetings (see constants for the base-path note).
+// Dual path: USE_MOCK in-memory store, else live HTTP to the resident-scoped
+// /api/v1/estate/meetings handlers (estate resolved server-side; see constants).
 // Signatures/types/hooks are identical for both.
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import { MEETINGS_API_BASE as ESTATE_BASE, DEFAULT_ESTATE_ID, USE_MOCK } from '../constants/meetings.constants';
-
-const B = `${ESTATE_BASE}/${DEFAULT_ESTATE_ID}/meetings`;
+import { MEETINGS_API_BASE as B, USE_MOCK } from '../constants/meetings.constants';
 import type {
   CreateMeetingInput,
   Meeting,

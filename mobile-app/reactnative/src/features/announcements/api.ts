@@ -12,17 +12,12 @@ export interface CreateAnnouncementInput { title: string; body: string; kind: An
 
 export const USE_MOCK = (process.env.EXPO_PUBLIC_ANNOUNCEMENTS_USE_MOCK ?? 'true') !== 'false';
 
-// Announcements are NOT a standalone backend module — they are nested under
-// the Estate module (backend/internal/app/finance_routes.go: estGroup :=
-// finance.Group("/estate"); backend/internal/estate/handler.go:
-// ListAnnouncements/CreateAnnouncement/MarkAnnouncementRead all take :id
-// (estate)). There is no flat /announcements namespace and no frontend-web
-// proxy for /api/v1/estate/announcements — the blanket rewrite only covers
-// /api/finance/:path*.
-// MISSING: a shared estate-context provider; DEFAULT_ESTATE_ID is a stopgap
-// (mirrors the election/meetings convention) until multi-estate selection ships.
-export const DEFAULT_ESTATE_ID = 'est_amber_court';
-export const ANNOUNCEMENTS_API_BASE = `/api/finance/estate/${DEFAULT_ESTATE_ID}/announcements`;
+// Announcements are served by the resident-scoped frontend-web handlers under
+// /api/v1/estate/announcements (GET list, POST create, GET/POST /{id},
+// POST /{id}/read). The current resident's estate is derived SERVER-SIDE from
+// the auth token (frontend-web/src/server/estate/resident.ts →
+// getResidentContext), so the client never passes an estate ID.
+export const ANNOUNCEMENTS_API_BASE = '/api/v1/estate/announcements';
 
 export const KIND_META: Record<AnnouncementKind, { label: string; icon: string; color: string; bg: string }> = {
   general:     { label: 'General',     icon: 'Megaphone',     color: Colors.primary,   bg: Colors.iconBgPurple },
