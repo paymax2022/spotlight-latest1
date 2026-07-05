@@ -375,5 +375,14 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		RegisterSpotlightwealthRoutes(r, supabase, rbacService, sharedPool)
 	}
 
+	// Paymax InvestAI education assistant under /api/v1/ai/invest/* — the exact base
+	// path the mobile investai feature calls. Education-only (no money path); refuses
+	// advice-seeking prompts and disclaimers every assistant turn. Reuses the aicare
+	// Anthropic provider when a key is set, else a deterministic mock. Wired only when
+	// the flag is on and the shared pool is present.
+	if cfg.FeatureInvestaiEnabled {
+		RegisterInvestAIRoutes(r, cfg, supabase, rbacService, sharedPool)
+	}
+
 	return r
 }

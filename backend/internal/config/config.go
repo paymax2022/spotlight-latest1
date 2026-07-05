@@ -210,6 +210,10 @@ type Config struct {
 
 	// Learn Center (education). DEFAULT OFF. Gates /api/v1/learn (internal/learn).
 	FeatureLearnEnabled bool
+	// Invest-AI education assistant. DEFAULT OFF. Gates /api/v1/ai/invest
+	// (internal/investai): DB-backed chat, pluggable AIProvider (mock or Anthropic),
+	// education-only guardrails. No money path.
+	FeatureInvestaiEnabled bool
 	// Spotlight Wealth (learn-to-earn challenges + reward wallet). DEFAULT OFF.
 	// Gates /api/v1/spotlight (internal/spotlightwealth); rewards via finance ledger.
 	FeatureSpotlightwealthEnabled bool
@@ -559,6 +563,7 @@ func Load() Config {
 		FeatureFractionalREEnabled:            getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
 		FeatureCryptoEnabled:                  getEnvBool("FEATURE_CRYPTO_ENABLED", false),
 		FeatureLearnEnabled:                   getEnvBool("FEATURE_LEARN_ENABLED", false),
+		FeatureInvestaiEnabled:                getEnvBool("FEATURE_INVESTAI_ENABLED", false),
 		FeatureSpotlightwealthEnabled:         getEnvBool("FEATURE_SPOTLIGHTWEALTH_ENABLED", false),
 		FeatureInsuranceEnabled:               getEnvBool("FEATURE_INSURANCE_ENABLED", false),
 		FeatureStaysEnabled:                   getEnvBool("FEATURE_STAYS_ENABLED", false),

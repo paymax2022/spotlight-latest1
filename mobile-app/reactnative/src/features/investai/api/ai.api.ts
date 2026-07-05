@@ -32,6 +32,16 @@ function toAiError(err: unknown): Error {
 let seq = 0;
 const newId = (role: string) => `msg_${role}_${Date.now()}_${seq++}`;
 
+// Server-issued session id for the live backend. Held for the app session so
+// consecutive `ask` turns thread into one investai_sessions row (history +
+// context). Unused in mock mode. Reset by resetInvestAiSession() to start fresh.
+let currentSessionId: string | null = null;
+
+/** Start a new server-side conversation (drops the remembered session id). */
+export function resetInvestAiSession(): void {
+  currentSessionId = null;
+}
+
 function assistantMessage(text: string): ChatMessage {
   return { id: newId('a'), role: 'assistant', text, disclaimer: true, at: new Date().toISOString() };
 }
@@ -50,11 +60,17 @@ export async function ask(prompt: string, context?: AskContext): Promise<ChatMes
     return assistantMessage(answerFor(prompt, context));
   }
   try {
-    const res = await api.post('/api/v1/ai/invest/chat', { prompt, context });
-    const data = unwrap<{ text: string; refused?: boolean }>(res);
-    // The server enforces the same guardrails; default to a disclaimered turn,
-    // and fall back to the standing refusal if the server flags a refusal with
-    // no message of its own.
+    const res = await api.post('/api/v1/ai/invest/chat', {
+      prompt,
+      context,
+      session_id: currentSessionId ?? undefined,
+    });
+    const data = unwrap<{ text: string; refused?: boolean; session_id?: string }>(res);
+    // Remember the server session so follow-up turns share one conversation.
+    if (data.session_id) currentSessionId = data.session_id;
+    // The server enforces the same guardrails (refuses advice-seeking prompts,
+    // disclaimers every turn). Default to a disclaimered turn, and fall back to
+    // the standing refusal if the server flags a refusal with no message of its own.
     const text = data.text || (data.refused ? REFUSAL : DISCLAIMER);
     return assistantMessage(text);
   } catch (err) {
