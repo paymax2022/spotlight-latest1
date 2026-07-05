@@ -9,7 +9,20 @@ export interface EstateNotification {
 }
 
 export const USE_MOCK = (process.env.EXPO_PUBLIC_NOTIFICATIONS_USE_MOCK ?? 'true') !== 'false';
-export const NOTIFICATIONS_API_BASE = '/api/v1/estate/notifications';
+
+// The in-app notification feed here is the Estate module's notification
+// center (Block 43) — NOT a standalone notifications module. Confirmed
+// against backend/internal/app/finance_routes.go (estGroup :=
+// finance.Group("/estate")) + backend/internal/estate/handler.go
+// (Notifications takes :id (estate)). There is no flat /notifications
+// namespace and no frontend-web proxy for /api/v1/estate/notifications —
+// the blanket rewrite only covers /api/finance/:path*.
+// MISSING: (1) a shared estate-context provider — DEFAULT_ESTATE_ID is a
+// stopgap (mirrors the election/meetings convention); (2) the backend has
+// no POST mark-read / mark-all-read endpoints at all — GET
+// /:id/notifications is the only route registered (see report).
+export const DEFAULT_ESTATE_ID = 'est_amber_court';
+export const NOTIFICATIONS_API_BASE = `/api/finance/estate/${DEFAULT_ESTATE_ID}/notifications`;
 
 export const CATEGORY_META: Record<NotificationCategory, { label: string; icon: string }> = {
   general:      { label: 'General',      icon: 'Bell' },

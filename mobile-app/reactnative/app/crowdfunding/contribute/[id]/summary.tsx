@@ -15,12 +15,14 @@ import { useCampaign, useInitiateContribution } from '@/features/crowdfunding/ho
 import { PAYMENT_METHODS } from '@/features/crowdfunding/constants/crowdfunding.constants';
 import { computeFees, formatNaira } from '@/features/crowdfunding/utils/crowdfundingFormatters';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import type { PaymentMethod, ContributionDraft } from '@/features/crowdfunding/types/crowdfunding.types';
+import type { PaymentMethod, ContributionDraft, InitiateContributionResult } from '@/features/crowdfunding/types/crowdfunding.types';
+import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 
 export default function ContributeSummaryScreen() {
   const params = useLocalSearchParams<{ id: string; amountKobo: string; anonymous?: string; message?: string; rewardTierId?: string }>();
   const { data: c, isLoading, isError, refetch } = useCampaign(params.id);
   const initiate = useInitiateContribution();
+  const checkout = usePurchasePayment<InitiateContributionResult>();
 
   const amountKobo = Number(params.amountKobo ?? 0);
   const [method, setMethod] = useState<PaymentMethod>('WALLET');
@@ -40,17 +42,14 @@ export default function ContributeSummaryScreen() {
       paymentMethod: method,
       acceptedRefundPolicy: accepted,
     };
-    initiate.mutate(
-      { draft, idempotencyKey: generateIdempotencyKey() },
-      {
-        onSuccess: (res) => {
-          router.replace(`/crowdfunding/contribute/${params.id}/processing?reference=${res.reference}&status=${res.status}`);
-        },
-        onError: () => {
-          router.replace(`/crowdfunding/contribute/${params.id}/failed?reason=init`);
-        },
+    checkout.start({
+      amountKobo: fees.totalKobo,
+      title: 'Contribute to campaign',
+      charge: () => initiate.mutateAsync({ draft, idempotencyKey: generateIdempotencyKey() }),
+      onPaid: (res) => {
+        router.replace(`/crowdfunding/contribute/${params.id}/processing?reference=${res.reference}&status=${res.status}`);
       },
-    );
+    });
   };
 
   if (isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Review" /><StateView kind="loading" /></SafeAreaView>;
@@ -124,6 +123,7 @@ export default function ContributeSummaryScreen() {
           disabled={!accepted}
         />
       </View>
+      <PaymentSheet controller={checkout} />
     </SafeAreaView>
   );
 }

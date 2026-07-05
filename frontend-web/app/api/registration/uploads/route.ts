@@ -1,20 +1,9 @@
-import { promises as fs } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { errorResponse, successResponse, handleApiError } from '@/src/lib/api/responses';
-
-// FIXME (storage backend — cross-agent flag, owner: fe-bills-registration):
-// This endpoint writes uploaded registration files to /tmp (see fs.writeFile below).
-// /tmp is EPHEMERAL on cPanel Passenger (lost on restart) and NOT shared across
-// Passenger workers, so the previewUrl can 404 from a different worker and files
-// vanish on deploy. Swap the storage backend to Cloudflare R2 using the existing
-// helper `@/src/lib/storage/r2` (bucket `spotlight-open-mic`, presigned PUT/GET):
-//   1. presign a PUT key (e.g. `registration/<uid>/<uuid><ext>`),
-//   2. either proxy the buffer to R2 here or return a presigned URL for a direct
-//      client PUT (preferred — keeps large binaries off the Node process),
-//   3. return a presigned GET as previewUrl instead of `/api/registration/uploads/<key>`.
-// Left as-is here to avoid colliding with that agent's in-flight work; tracked as a
-// follow-up. Until then, treat uploads as non-durable.
+import { errorResponse, successResponse } from '@/src/lib/api/responses';
+import { requireUser } from '@/src/lib/auth/server';
+import { createR2UploadUrl, createR2DownloadUrl, hasR2Config } from '@/src/lib/storage/r2';
+import { saveLocalUpload } from '@/src/lib/storage/local-uploads';
 
 const MAX_FILE_SIZE_MB = 100;
 const allowedExtensions = new Set([
@@ -34,8 +23,15 @@ const allowedExtensions = new Set([
   '.pptx',
 ]);
 
+// Durable storage for registration uploads lives in Cloudflare R2 (bucket
+// `spotlight-open-mic`). The registration client posts the file buffer in a
+// single multipart request, so we proxy that buffer to R2 here via a presigned
+// PUT, then hand back a stable retrieval route as `previewUrl` (it issues a
+// short-lived presigned GET on demand — see `[fileKey]/route.ts`).
 export async function POST(request: Request) {
   try {
+    const { user } = await requireUser(request);
+
     const formData = await request.formData();
     const file = formData.get('file');
 
@@ -54,26 +50,62 @@ export async function POST(request: Request) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const folder = path.join('/tmp', 'spotlight-registration-uploads');
-    await fs.mkdir(folder, { recursive: true });
+    const contentType = file.type || 'application/octet-stream';
+    const objectKey = `registration/${user.id}/${randomUUID()}${ext}`;
 
-    const fileKey = `${Date.now()}-${randomUUID()}${ext}`;
-    const filePath = path.join(folder, fileKey);
-    await fs.writeFile(filePath, buffer);
+    // Stable retrieval route — encodes the full (slash-containing) key into a
+    // single path segment so the route param survives. The GET route resolves
+    // the file (R2 presigned GET in prod, local file in dev) on each access.
+    const fileKeyParam = Buffer.from(objectKey, 'utf8').toString('base64url');
+    const previewUrl = `/api/registration/uploads/${fileKeyParam}`;
+
+    let signedPreviewUrl = previewUrl;
+
+    if (hasR2Config()) {
+      // Proxy the buffer to R2 using a presigned PUT. This keeps R2 credentials
+      // server-side while reusing the existing storage helper as-is.
+      const uploadUrl = await createR2UploadUrl({ key: objectKey, contentType });
+      const putResponse = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': contentType },
+        body: buffer,
+      });
+      if (!putResponse.ok) {
+        throw new Error(`R2 upload failed with status ${putResponse.status}`);
+      }
+      // A short-lived signed GET for immediate inline preview by the client.
+      signedPreviewUrl = await createR2DownloadUrl({
+        key: objectKey,
+        fileName: file.name,
+        disposition: 'inline',
+      });
+    } else {
+      // No R2 configured (e.g. local dev): persist to the local filesystem so
+      // uploads work without cloud credentials. Retrieval streams from the same
+      // stable route.
+      await saveLocalUpload(objectKey, buffer);
+    }
 
     return successResponse({
       success: true,
       upload: {
         fileName: file.name,
         fileSize: file.size,
-        mimeType: file.type,
-        storageKey: fileKey,
-        storagePath: filePath,
-        // Production note: replace with signed/private object storage URL.
-        previewUrl: `/api/registration/uploads/${fileKey}`,
+        mimeType: contentType,
+        storageKey: objectKey,
+        key: objectKey,
+        previewUrl,
+        signedPreviewUrl,
       },
     });
   } catch (error) {
-    return handleApiError(error, 'Upload failed');
+    if (error instanceof Error && error.message === 'UNAUTHORIZED') {
+      return errorResponse('Authentication required', 401);
+    }
+    // Surface the real reason (R2 misconfig, filesystem permissions, etc.) so
+    // failures are diagnosable instead of a blanket "Upload failed".
+    console.error('[registration/uploads] upload failed:', error);
+    const detail = error instanceof Error ? error.message : 'Unknown error';
+    return errorResponse(`Upload failed: ${detail}`, 500);
   }
 }

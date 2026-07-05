@@ -27,6 +27,13 @@ const (
 	AccountFXSpreadIncome     AccountType = "fx_spread_income"
 	AccountSettlement         AccountType = "settlement"
 	AccountFailedTransferSusp AccountType = "failed_transfer_suspense"
+	// Featured Placement standing accounts (paid landing-page promotion).
+	// Escrow holds a merchant's pre-paid placement spend; on completion the
+	// earned portion is recognized into revenue, with unused remainder reversed
+	// back to the merchant wallet. Same standing-account pattern as escrow above
+	// (auto-created on first GetOrCreateStandingAccount; no seed row required).
+	AccountPlacementEscrow  AccountType = "placement_escrow"
+	AccountPlacementRevenue AccountType = "placement_revenue"
 )
 
 // Account is a logical wallet / standing account in the ledger.

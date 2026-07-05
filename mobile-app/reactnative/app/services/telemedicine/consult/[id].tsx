@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
-  Mic, MicOff, Video as VideoIcon, VideoOff, PhoneOff, MessageCircle, Send, NotebookPen,
+  Mic, MicOff, Video as VideoIcon, VideoOff, PhoneOff, MessageCircle, Send, NotebookPen, ClipboardList,
 } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
@@ -13,6 +13,8 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { getAppointment, DEMO_APPOINTMENTS } from '@/api/telemedicine.api';
 import { DoctorAvatar } from '@/features/telemedicine/components';
+import { useApptIntake } from '@/features/health/hooks';
+import PrimaryButton from '@/components/PrimaryButton';
 
 interface ChatMessage { id: string; from: 'me' | 'doctor'; text: string; }
 
@@ -37,6 +39,11 @@ export default function ConsultRoomScreen() {
     placeholderData: DEMO_APPOINTMENTS.find((a) => a.id === id) ?? DEMO_APPOINTMENTS[0],
   });
 
+  // PRD §1 structural gate: the consult cannot start until intake is SUBMITTED.
+  // Fail-safe — anything other than an explicit SUBMITTED blocks the room.
+  const intakeQ = useApptIntake(String(id));
+  const intakeReady = intakeQ.data?.intake.status === 'SUBMITTED';
+
   useEffect(() => {
     const t = setInterval(() => setSeconds((s) => s + 1), 1000);
     return () => clearInterval(t);
@@ -55,6 +62,41 @@ export default function ConsultRoomScreen() {
   const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
   const ss = String(seconds % 60).padStart(2, '0');
   const doctor = appt?.doctor;
+
+  // Intake gate — block the live room until the patient has submitted intake.
+  if (!intakeReady) {
+    const loading = intakeQ.isLoading;
+    return (
+      <SafeAreaView style={styles.gateSafe} edges={['top', 'bottom']}>
+        <View style={styles.gateWrap}>
+          <View style={styles.gateIcon}>
+            <ClipboardList size={40} color={Colors.primary} strokeWidth={1.8} />
+          </View>
+          <Text style={styles.gateTitle}>
+            {loading ? 'Checking your intake…' : 'Complete your health intake first'}
+          </Text>
+          <Text style={styles.gateBody}>
+            {loading
+              ? 'One moment.'
+              : 'Your consultation can’t start until you’ve shared your health details with the doctor. It only takes a minute and helps your doctor prepare.'}
+          </Text>
+          {!loading && (
+            <View style={styles.gateActions}>
+              <PrimaryButton
+                label="Add your health details"
+                onPress={() => router.replace(`/services/telemedicine/appointment/${id}/intake`)}
+              />
+              <PrimaryButton
+                label="Back to appointment"
+                variant="ghost"
+                onPress={() => router.replace(`/services/telemedicine/appointment/${id}`)}
+              />
+            </View>
+          )}
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
@@ -143,6 +185,12 @@ function ControlBtn({ active, onPress, On, Off }: { active: boolean; onPress: ()
 
 const styles = StyleSheet.create({
   safe:       { flex: 1, backgroundColor: '#1A0050' },
+  gateSafe:   { flex: 1, backgroundColor: Colors.background },
+  gateWrap:   { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.xl, gap: Spacing.md },
+  gateIcon:   { width: 84, height: 84, borderRadius: 42, backgroundColor: Colors.primaryContainer, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
+  gateTitle:  { ...Typography.titleLg, color: Colors.onSurface, textAlign: 'center' },
+  gateBody:   { ...Typography.bodyMd, color: Colors.onSurfaceVariant, textAlign: 'center', lineHeight: 22 },
+  gateActions:{ alignSelf: 'stretch', gap: Spacing.sm, marginTop: Spacing.md },
   topBar:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md },
   liveTag:    { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, height: 28, borderRadius: Radius.full, backgroundColor: 'rgba(255,255,255,0.15)' },
   liveDot:    { width: 7, height: 7, borderRadius: 4, backgroundColor: '#FF5A5A' },

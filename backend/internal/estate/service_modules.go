@@ -42,6 +42,10 @@ func (s *Service) CreateTask(ctx context.Context, estateID, adminID string, req 
 	if _, err := s.db.Exec(ctx, q, t.ID, estateID, t.Title, t.Description, t.AssigneeID, adminID, t.DueDate, priority); err != nil {
 		return nil, fmt.Errorf("estate: insert task: %w", err)
 	}
+	// Block 34/43: notify the assignee. Fire-and-forget.
+	if t.AssigneeID != nil {
+		s.notify(ctx, estateID, *t.AssigneeID, NotifTaskAssigned, "New task: "+t.Title, t.Description, map[string]any{"task_id": t.ID, "priority": priority})
+	}
 	return t, nil
 }
 
@@ -245,7 +249,8 @@ func (s *Service) ListFacilities(ctx context.Context, estateID, userID string) (
 	return out, rows.Err()
 }
 
-// BookFacility reserves a facility. A hard dues restriction blocks booking.
+// BookFacility reserves a facility. A soft or hard dues restriction blocks
+// booking (Block 30 matrix).
 func (s *Service) BookFacility(ctx context.Context, estateID, residentID, facilityID string, req BookFacilityRequest) (*FacilityBooking, error) {
 	if err := s.assertResident(ctx, estateID, residentID); err != nil {
 		return nil, err
@@ -253,9 +258,9 @@ func (s *Service) BookFacility(ctx context.Context, estateID, residentID, facili
 	if !req.EndsAt.After(req.StartsAt) {
 		return nil, fmt.Errorf("estate: ends_at must be after starts_at")
 	}
-	// Hard restriction enforcement (Block 29 ↔ 33).
-	if level, _ := s.activeRestriction(ctx, estateID, residentID); level == "hard" {
-		return nil, fmt.Errorf("estate: facility booking blocked — clear outstanding dues first")
+	// Dues-restriction enforcement: soft AND hard both block facility booking.
+	if err := s.enforceNotRestricted(ctx, estateID, residentID, ActionFacility); err != nil {
+		return nil, err
 	}
 	// Load fee (estate-scoped).
 	var fee int64
@@ -271,6 +276,8 @@ func (s *Service) BookFacility(ctx context.Context, estateID, residentID, facili
 	if _, err := s.db.Exec(ctx, q, b.ID, estateID, facilityID, residentID, b.StartsAt, b.EndsAt, fee); err != nil {
 		return nil, fmt.Errorf("estate: insert booking: %w", err)
 	}
+	// Block 36/43: confirm the booking to the resident. Fire-and-forget.
+	s.notify(ctx, estateID, residentID, NotifFacilityBookingConfirmed, "Facility booking received", "Your booking is pending confirmation.", map[string]any{"booking_id": b.ID, "facility_id": facilityID})
 	return b, nil
 }
 
@@ -311,6 +318,8 @@ func (s *Service) CreateAnnouncement(ctx context.Context, estateID, adminID stri
 	if _, err := s.db.Exec(ctx, q, a.ID, estateID, a.Title, a.Body, kind, adminID); err != nil {
 		return nil, fmt.Errorf("estate: insert announcement: %w", err)
 	}
+	// Block 37/43: broadcast to all members (in-app feed + push). Fire-and-forget.
+	s.notifyMembers(ctx, estateID, NotifAnnouncement, a.Title, a.Body, map[string]any{"announcement_id": a.ID, "kind": kind})
 	return a, nil
 }
 
@@ -369,6 +378,10 @@ func (s *Service) RaiseEmergency(ctx context.Context, estateID, reporterID strin
 		return nil, fmt.Errorf("estate: insert emergency: %w", err)
 	}
 	_ = s.audit(ctx, estateID, reporterID, "EMERGENCY_RAISE", "emergency", a.ID, map[string]any{"kind": a.Kind})
+	// Block 38/43: escalate to estate admins + security staff. Fire-and-forget.
+	s.notifyMembers(ctx, estateID, NotifEmergencyAlert, "Emergency: "+a.Kind, a.Description,
+		map[string]any{"alert_id": a.ID, "kind": a.Kind, "location": a.Location},
+		"estate_admin", "estate_security")
 	return a, nil
 }
 
@@ -433,12 +446,49 @@ func (s *Service) CreateDocument(ctx context.Context, estateID, adminID string, 
 	if category == "" {
 		category = "general"
 	}
-	d := &Document{ID: uuid.New().String(), EstateID: estateID, Title: req.Title, Category: category, FileURL: req.FileURL, UploadedBy: adminID, Restricted: req.Restricted, CreatedAt: time.Now()}
-	const q = `INSERT INTO estate_documents (id, estate_id, title, category, file_url, uploaded_by, restricted) VALUES ($1,$2,$3,$4,$5,$6,$7)`
-	if _, err := s.db.Exec(ctx, q, d.ID, estateID, d.Title, category, d.FileURL, adminID, d.Restricted); err != nil {
+	d := &Document{ID: uuid.New().String(), EstateID: estateID, Title: req.Title, Category: category, FileURL: req.FileURL, ObjectKey: req.ObjectKey, UploadedBy: adminID, Restricted: req.Restricted, CreatedAt: time.Now()}
+	const q = `INSERT INTO estate_documents (id, estate_id, title, category, file_url, object_key, uploaded_by, restricted) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
+	if _, err := s.db.Exec(ctx, q, d.ID, estateID, d.Title, category, d.FileURL, d.ObjectKey, adminID, d.Restricted); err != nil {
 		return nil, fmt.Errorf("estate: insert document: %w", err)
 	}
 	return d, nil
+}
+
+// docDownloadAllowed reports whether a caller with the given estate role may
+// download a document with the given restricted flag. Restricted documents are
+// admin-only, mirroring ListDocuments visibility. Pure (no DB) for unit testing.
+func docDownloadAllowed(role string, restricted bool) bool {
+	if restricted {
+		return role == "estate_admin"
+	}
+	return true
+}
+
+// ResolveDocumentForDownload authorises a download and returns the document's R2
+// object key (preferred) and stored file URL, scoped to the estate. The caller
+// must be an estate member; restricted documents are admin-only. Returns
+// ErrDocumentNotFound / ErrDocumentForbidden as appropriate.
+func (s *Service) ResolveDocumentForDownload(ctx context.Context, estateID, userID, docID string) (objectKey, fileURL string, err error) {
+	role, err := s.roleIn(ctx, estateID, userID)
+	if err != nil {
+		return "", "", err
+	}
+	var (
+		key        *string // object_key is nullable for legacy rows
+		furl       string
+		restricted bool
+	)
+	const q = `SELECT object_key, file_url, restricted FROM estate_documents WHERE id=$1 AND estate_id=$2`
+	if err := s.db.QueryRow(ctx, q, docID, estateID).Scan(&key, &furl, &restricted); err != nil {
+		return "", "", ErrDocumentNotFound
+	}
+	if !docDownloadAllowed(role, restricted) {
+		return "", "", ErrDocumentForbidden
+	}
+	if key != nil {
+		objectKey = *key
+	}
+	return objectKey, furl, nil
 }
 
 func (s *Service) ListDocuments(ctx context.Context, estateID, userID, category string) ([]Document, error) {
@@ -585,15 +635,15 @@ func (s *Service) Notifications(ctx context.Context, estateID, userID string) ([
 	if err := s.assertResident(ctx, estateID, userID); err != nil {
 		return nil, err
 	}
+	// Per-user persisted feed (Block 43): notifications are written to
+	// estate_notifications by the emitting events (announcement, emergency,
+	// payment, restriction, task, facility, …).
 	const q = `
-		SELECT id, kind, title, body, created_at FROM (
-			SELECT id, 'announcement' AS kind, title, body, created_at
-			FROM estate_announcements WHERE estate_id=$1
-			UNION ALL
-			SELECT id, 'emergency' AS kind, kind AS title, COALESCE(description,'') AS body, created_at
-			FROM estate_emergency_alerts WHERE estate_id=$1 AND status <> 'resolved'
-		) feed ORDER BY created_at DESC LIMIT 50`
-	rows, err := s.db.Query(ctx, q, estateID)
+		SELECT id, category, title, COALESCE(body,''), created_at
+		FROM estate_notifications
+		WHERE estate_id=$1 AND user_id=$2
+		ORDER BY created_at DESC LIMIT 50`
+	rows, err := s.db.Query(ctx, q, estateID, userID)
 	if err != nil {
 		return nil, err
 	}

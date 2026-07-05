@@ -31,7 +31,16 @@ Last updated: 2026-05-28
 - [x] User-role assignment/removal endpoints
 - [x] User status endpoints (suspend/unsuspend/lock/unlock)
 - [x] Audit/log activity/security/export endpoints with filters
-- [~] Full endpoint parity from long-form spec across every domain module
+- [x] Full endpoint parity from long-form spec across admin user + RBAC endpoints
+      — #23: scoped list filters (program/contest/school/country), admin-user export,
+      read-only per-user session view (composes #19), bulk role assign (one↔many),
+      bulk permission→role assign. Deny-by-default gated + audited; in openapi.yaml.
+      (Specialized money-module admin paths use native ledger/event trails — see
+      docs/audit/09-audit-coverage-matrix.md.)
+- [x] Full audit coverage for STEM + contest sensitive mutations
+      — #23: create/update/state-transition/approve/award events emitted from the
+      handler edge via audit_service (no protected-module edits). Money path keeps
+      its append-only ledger / kyc_events / tier_limit_events trails.
 
 ## 3) Frontend Admin Completion
 - [x] Route guard + permission-based sidebar visibility

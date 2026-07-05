@@ -140,15 +140,41 @@ pluggable `Notifier`. Conditions: `above`/`below` (price in kobo) and `pct_gain`
 (threshold in hundredths-of-a-percent vs the day's change). Default `LogNotifier` logs;
 inject push/in-app delivery via `Deps.Notifier`. Unit-tested (`alertHit`).
 
-## Remaining for production (not in this pass)
-- Real PIN/biometric verification (currently `MockPINVerifier`) → hook the platform
-  security service into `PINVerifier`.
-- Real broker + market-data adapters (after sandbox validation) → implement the
-  `BrokerAdapter` / `MarketDataAdapter` interfaces; select via admin provider config.
-- Real alert delivery: pass a `Deps.Notifier` that wraps `notifications.Service`
-  (requires an asynq client) instead of the default `LogNotifier`.
-- Webhook handlers for async broker fills/settlement once a real broker is integrated.
-- Multi-instance: guard the settlement + alert workers with a Redlock so only one node
-  runs per tick (single-node is already safe via idempotency / status guards).
-- Provider-health surfaces; corporate-action / dividend ingestion jobs.
-- Seed the `invest.manage` RBAC permission and assign it to the relevant admin roles.
+## Production hardening — implemented
+- **Real transaction PIN** (`internal/invest/security.go`, migration
+  `20260621030000_invest_pins.sql`): salted SHA-256 hash, failed-attempt **lockout**
+  (5 tries → 15 min), `GET/POST /api/v1/invest/security/pin`, DB-backed verifier wired
+  by default (`FEATURE_INVEST_PIN_DEV_BYPASS=true` keeps the format-only verifier for
+  local/mock dev). Mobile set-PIN screen (`app/invest/security/pin.tsx`) + buy/sell
+  redirect on the `pin_not_set` error code.
+- **Real provider adapters** (`internal/invest/provider_http.go`): `HTTPMarketData` +
+  `HTTPBroker` implement the same interfaces as the mocks against a documented JSON
+  contract (prices in naira → converted to kobo at the boundary). Selected automatically
+  when `INVEST_MARKETDATA_BASE_URL` / `INVEST_BROKER_BASE_URL` are set, else mock. Both
+  expose a `Healthy()` check.
+- **Broker webhook** (`internal/invest/webhook.go`): HMAC-SHA256-verified
+  `POST /api/v1/invest/webhooks/broker` handling `order.filled` / `order.settled` /
+  `order.rejected` — drives the state machine + ledger, idempotently (mounted only when
+  the broker exposes a webhook secret).
+- **Redlock-guarded workers**: settlement + alert workers acquire a single-node Redis
+  lock per tick (`internal/invest/worker.go`), safe to run on every instance.
+- **Real alert delivery**: `finance_routes.go` builds a `notifications.Service`-backed
+  `Notifier` (asynq) and injects it; falls back to `LogNotifier` without Redis.
+- **Corporate-action / dividend ingestion + provider health**
+  (`internal/invest/admin_content.go`): admin endpoints to upsert dividends and corporate
+  actions (audited, source-traceable) and a provider-health view, with admin pages
+  (`app/admin/invest/corporate-actions`, `app/admin/invest/providers`).
+- **RBAC**: migration `20260621040000_invest_rbac.sql` seeds the `invest.manage`
+  permission and grants it to `super-admin`.
+
+## Migrations (apply in order with `supabase db push`)
+`20260621010000_invest_module.sql`, `20260621020000_invest_admin.sql`,
+`20260621030000_invest_pins.sql`, `20260621040000_invest_rbac.sql`.
+
+## Genuinely external / future work
+- Real biometric confirmation on device (PIN is enforced server-side today).
+- Map a specific NGX broker/market-data API onto the `provider_http.go` JSON contract
+  (or run a thin shim) and validate in the partner sandbox.
+- True multi-node Redlock across multiple Redis nodes (current helper is single-node).
+- Corporate-action *automated* provider sync jobs (manual/admin ingestion exists).
+- Assign `invest.manage` to Trading-Ops / Finance / Product roles beyond super-admin.

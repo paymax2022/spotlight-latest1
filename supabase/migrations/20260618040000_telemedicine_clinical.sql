@@ -15,10 +15,10 @@ ALTER TABLE appointments ADD CONSTRAINT appointments_consultation_type_check CHE
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS ref TEXT;
 CREATE INDEX IF NOT EXISTS appointments_ref_idx ON appointments(ref);
 
--- ─── doctor_availability ─────────────────────────────────────────────────────
+-- ─── doctor_availability_slots ─────────────────────────────────────────────────────
 -- One row per bookable slot. Booking flips is_available -> FALSE; the UNIQUE
 -- constraint plus the conditional update is what prevents double-booking a slot.
-CREATE TABLE IF NOT EXISTS doctor_availability (
+CREATE TABLE IF NOT EXISTS doctor_availability_slots (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     doctor_id     UUID NOT NULL REFERENCES doctors(id),
     slot_date     DATE NOT NULL,
@@ -29,12 +29,12 @@ CREATE TABLE IF NOT EXISTS doctor_availability (
     UNIQUE (doctor_id, slot_date, slot_time)
 );
 
-CREATE INDEX IF NOT EXISTS doctor_availability_doctor_idx ON doctor_availability(doctor_id, slot_date);
-CREATE INDEX IF NOT EXISTS doctor_availability_open_idx   ON doctor_availability(doctor_id) WHERE is_available = TRUE;
+CREATE INDEX IF NOT EXISTS doctor_availability_slots_doctor_idx ON doctor_availability_slots(doctor_id, slot_date);
+CREATE INDEX IF NOT EXISTS doctor_availability_slots_open_idx   ON doctor_availability_slots(doctor_id) WHERE is_available = TRUE;
 
-ALTER TABLE doctor_availability ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "availability_select"  ON doctor_availability FOR SELECT TO authenticated USING (TRUE);
-CREATE POLICY "availability_service" ON doctor_availability TO service_role USING (TRUE) WITH CHECK (TRUE);
+ALTER TABLE doctor_availability_slots ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "availability_select"  ON doctor_availability_slots FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "availability_service" ON doctor_availability_slots TO service_role USING (TRUE) WITH CHECK (TRUE);
 
 -- ─── reviews (immutable patient feedback) ────────────────────────────────────
 CREATE TABLE IF NOT EXISTS telemedicine_reviews (

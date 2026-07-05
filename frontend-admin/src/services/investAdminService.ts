@@ -6,7 +6,7 @@
 import { env } from '@/config/env';
 import type {
   InvestOverview, AdminStockAsset, AdminOrder, FeeConfig, AuditEntry, AssetUpdate,
-  ReconResult,
+  ReconResult, Dividend, CorporateAction, ProviderHealth,
 } from '@/types/investAdmin';
 
 const USE_MOCK = (process.env.NEXT_PUBLIC_INVEST_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
@@ -127,6 +127,37 @@ export async function updateFees(fc: FeeConfig & { reason?: string }): Promise<F
 export async function listAudit(): Promise<AuditEntry[]> {
   if (USE_MOCK) { await delay(); return MOCK_AUDIT; }
   return req<AuditEntry[]>('/audit');
+}
+
+export async function listDividends(): Promise<Dividend[]> {
+  if (USE_MOCK) { await delay(); return [{ id: 'd1', symbol: 'GTCO', amount_per_share_kobo: 30_00, currency: 'NGN', payment_date: '2026-07-15', status: 'announced', source: 'NGX' }]; }
+  return req<Dividend[]>('/dividends');
+}
+
+export async function createDividend(payload: { symbol: string; amount_per_share_kobo: number; ex_date?: string; record_date?: string; payment_date?: string; source?: string }): Promise<{ id: string }> {
+  if (USE_MOCK) { await delay(); return { id: 'new' }; }
+  return req<{ id: string }>('/dividends', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function listCorporateActions(): Promise<CorporateAction[]> {
+  if (USE_MOCK) { await delay(); return [{ id: 'c1', symbol: 'DANGCEM', type: 'bonus', title: '1-for-10 bonus issue', status: 'announced', effective_date: '2026-08-01', source: 'Registrar' }]; }
+  return req<CorporateAction[]>('/corporate-actions');
+}
+
+export async function createCorporateAction(payload: { symbol: string; type: string; title: string; description?: string; effective_date?: string; record_date?: string; payment_date?: string; source?: string }): Promise<{ id: string }> {
+  if (USE_MOCK) { await delay(); return { id: 'new' }; }
+  return req<{ id: string }>('/corporate-actions', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function getProviderHealth(): Promise<ProviderHealth[]> {
+  if (USE_MOCK) {
+    await delay();
+    return [
+      { role: 'broker', provider: 'mock-broker', healthy: true, detail: 'mock/no health check' },
+      { role: 'market_data', provider: 'mock-market-data', healthy: true, detail: 'mock/no health check' },
+    ];
+  }
+  return req<ProviderHealth[]>('/providers/health');
 }
 
 export async function getReconciliation(): Promise<ReconResult> {

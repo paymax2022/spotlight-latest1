@@ -37,8 +37,6 @@ import {
   mockPricingConfig,
   makeTrip,
   mockStore,
-  MOCK_SAVED_PLACES,
-  MOCK_RECENT_PLACES,
   MOCK_QUICK_TILES,
   MOCK_HISTORY,
   MOCK_DRIVER,
@@ -54,29 +52,63 @@ const USE_MOCK =
   (process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
 
 // Go backend mounts the mobility + driver route groups directly under
-// /api/finance (siblings of the legacy /transport group), so BASE is /api/finance
-// and each call appends /mobility/... or /driver/... — e.g. /api/finance/mobility/home.
-const BASE = '/api/finance';
+// /api/finance (siblings of the legacy /transport group). The frontend-web Next
+// proxies /api/v1/mobility/* → /api/finance/mobility/* and /api/v1/driver/* →
+// /api/finance/driver/*, so BASE is /api/v1 and each call appends /mobility/...
+// or /driver/... — e.g. /api/v1/mobility/home.
+const BASE = '/api/v1';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });
+
+// The backend returns trips as a nested envelope
+//   { trip: {...}, driver: {...}, vehicle: {...}, fareOffer: {...} }
+// (all camelCase). The screens expect a FLAT Trip with driver/vehicle/fareOffer
+// attached, so collapse the envelope here. If a plain (already-flat) trip is
+// returned we pass it through unchanged.
+type TripEnvelope = {
+  trip?: Partial<Trip>;
+  driver?: Trip['driver'];
+  vehicle?: Trip['vehicle'];
+  fareOffer?: Trip['fareOffer'];
+};
+function flattenTrip(raw: TripEnvelope | Trip | null | undefined): Trip {
+  const env = (raw ?? {}) as TripEnvelope & Partial<Trip>;
+  // Flat shape already: no nested `trip` key → the object *is* the trip.
+  if (!env.trip) return raw as Trip;
+  return {
+    ...(env.trip as Trip),
+    driver: env.driver ?? env.trip.driver ?? null,
+    vehicle: env.vehicle ?? env.trip.vehicle ?? null,
+    fareOffer: env.fareOffer ?? env.trip.fareOffer ?? null,
+  };
+}
 
 // ─── Home ─────────────────────────────────────────────────────────────────────
 export async function getHome(): Promise<MobilityHome> {
   if (USE_MOCK) {
     await delay();
     return {
-      walletBalanceKobo: 2_450_000_00,
-      currency: 'NGN',
       activeTrip: mockStore.activeTrip,
-      quickTiles: MOCK_QUICK_TILES,
-      savedPlaces: MOCK_SAVED_PLACES,
-      recentPlaces: MOCK_RECENT_PLACES,
+      profile: { name: 'Ada', photoUrl: null, rating: 4.9 },
+      quickTiles: MOCK_QUICK_TILES.map((t) => t.id),
       safetyReminder: 'Always confirm the plate number and your trip PIN before getting in.',
-      serviceAvailable: true,
     };
   }
-  return unwrap<MobilityHome>(await api.get(`${BASE}/mobility/home`));
+  // Backend home is { activeTrip, profile, quickTiles: string[], safetyReminder }.
+  // activeTrip is a trip envelope (or null); flatten it for the screens.
+  const body = unwrap<{
+    activeTrip?: TripEnvelope | null;
+    profile?: MobilityHome['profile'];
+    quickTiles?: string[];
+    safetyReminder?: string;
+  }>(await api.get(`${BASE}/mobility/home`));
+  return {
+    activeTrip: body?.activeTrip ? flattenTrip(body.activeTrip) : null,
+    profile: body?.profile ?? null,
+    quickTiles: body?.quickTiles ?? [],
+    safetyReminder: body?.safetyReminder ?? '',
+  };
 }
 
 // ─── Pricing config ─────────────────────────────────────────────────────────────
@@ -142,18 +174,20 @@ export async function requestRide(req: RideRequest): Promise<Trip> {
     mockStore.activeTrip = trip;
     return trip;
   }
-  return unwrap<Trip>(
-    await api.post(
-      `${BASE}/mobility/rides/request`,
-      {
-        pickup: req.pickup,
-        dest: req.dest,
-        service_type: req.serviceType,
-        pricing_mode: req.pricingMode,
-        offer_kobo: req.offerKobo,
-        payment_method: req.paymentMethod,
-      },
-      idemHeader(req.idempotencyKey),
+  return flattenTrip(
+    unwrap<TripEnvelope>(
+      await api.post(
+        `${BASE}/mobility/rides/request`,
+        {
+          pickup: req.pickup,
+          dest: req.dest,
+          service_type: req.serviceType,
+          pricing_mode: req.pricingMode,
+          offer_kobo: req.offerKobo,
+          payment_method: req.paymentMethod,
+        },
+        idemHeader(req.idempotencyKey),
+      ),
     ),
   );
 }
@@ -181,7 +215,10 @@ export async function makeOffer(tripId: string, offerKobo: Kobo): Promise<FareOf
   return unwrap<FareOffer>(await api.post(`${BASE}/mobility/rides/${tripId}/offer`, { offer_kobo: offerKobo }));
 }
 
-/** Rider accepts a driver's counter; server re-escrows the delta. Idempotent. */
+/** Rider accepts a driver's counter; server re-escrows the delta. Idempotent.
+ *  The backend responds with the accepted FareOffer (NOT a trip), so we re-fetch
+ *  the trip afterwards to hand the screens the full, flattened Trip they read
+ *  (phase / driver / vehicle / fareOffer). */
 export async function acceptCounter(tripId: string, idempotencyKey: string): Promise<Trip> {
   if (USE_MOCK) {
     await delay(700);
@@ -197,7 +234,10 @@ export async function acceptCounter(tripId: string, idempotencyKey: string): Pro
     }
     return trip!;
   }
-  return unwrap<Trip>(await api.post(`${BASE}/mobility/rides/${tripId}/accept-counter`, {}, idemHeader(idempotencyKey)));
+  // Backend returns the FareOffer; discard it and re-read the trip so callers
+  // get the updated Trip (phase advances to driver_assigned on the server).
+  await api.post(`${BASE}/mobility/rides/${tripId}/accept-counter`, {}, idemHeader(idempotencyKey));
+  return getTrip(tripId);
 }
 
 // ─── Trip read ────────────────────────────────────────────────────────────────
@@ -209,7 +249,7 @@ export async function getTrip(tripId: string): Promise<Trip> {
     if (!found) throw new Error('Trip not found');
     return found;
   }
-  return unwrap<Trip>(await api.get(`${BASE}/mobility/rides/${tripId}`));
+  return flattenTrip(unwrap<TripEnvelope>(await api.get(`${BASE}/mobility/rides/${tripId}`)));
 }
 
 export async function getActiveTrip(): Promise<Trip | null> {
@@ -217,7 +257,10 @@ export async function getActiveTrip(): Promise<Trip | null> {
     await delay(220);
     return mockStore.activeTrip ? advanceMockTrip(mockStore.activeTrip) : null;
   }
-  return unwrap<Trip | null>(await api.get(`${BASE}/mobility/rides/active`));
+  // Backend returns { activeTrip: null } (or the field absent) when the rider is
+  // idle, and { activeTrip: {...envelope} } during a live trip.
+  const body = unwrap<{ activeTrip?: TripEnvelope | null }>(await api.get(`${BASE}/mobility/rides/active`));
+  return body?.activeTrip ? flattenTrip(body.activeTrip) : null;
 }
 
 export async function cancelRide(tripId: string, reason: string): Promise<Trip> {
@@ -243,7 +286,11 @@ export async function shareTrip(tripId: string): Promise<ShareLink> {
     if (mockStore.activeTrip) mockStore.activeTrip.shareToken = token;
     return { token, url: `https://paymax.app/t/${token}`, expiresAt: new Date(Date.now() + 3_600_000).toISOString() };
   }
-  return unwrap<ShareLink>(await api.post(`${BASE}/mobility/rides/${tripId}/share`, {}));
+  // Backend returns { shareToken, url, expiresAt }; map shareToken → token.
+  const body = unwrap<{ shareToken: string; url: string; expiresAt: string }>(
+    await api.post(`${BASE}/mobility/rides/${tripId}/share`, {}),
+  );
+  return { token: body.shareToken, url: body.url, expiresAt: body.expiresAt };
 }
 
 export async function triggerSos(
@@ -266,7 +313,9 @@ export async function getTrustedContacts(): Promise<TrustedContact[]> {
     await delay(220);
     return [...MOCK_TRUSTED_CONTACTS];
   }
-  return unwrap<TrustedContact[]>(await api.get(`${BASE}/mobility/trusted-contacts`));
+  // Backend wraps the list: { contacts: [...] }.
+  const body = unwrap<{ contacts?: TrustedContact[] }>(await api.get(`${BASE}/mobility/trusted-contacts`));
+  return body?.contacts ?? [];
 }
 
 export async function addTrustedContact(name: string, phone: string): Promise<TrustedContact> {
@@ -320,7 +369,9 @@ export async function getHistory(): Promise<Trip[]> {
     await delay();
     return [...MOCK_HISTORY].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
-  return unwrap<Trip[]>(await api.get(`${BASE}/mobility/history`));
+  // Backend wraps the list: { trips: [...] }. History rows are flat trips.
+  const body = unwrap<{ trips?: Trip[] }>(await api.get(`${BASE}/mobility/history`));
+  return body?.trips ?? [];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -356,6 +407,72 @@ export async function submitDriverOnboarding(draft: OnboardingSubmitDraft): Prom
       service_categories: draft.serviceCategories,
     }),
   );
+}
+
+// ─── Driver document upload → R2 presign ───────────────────────────────────────
+// Mirrors the health-intake attachment flow (features/health/api.ts): request a
+// presigned R2 PUT URL from the backend, then the caller PUTs the file binary to
+// it and submits the resulting object key via uploadDriverDocument(). No storage
+// backend is invented here — this reuses the same R2 presign pattern (Cloudflare
+// R2, bucket spotlight-open-mic) the rest of the app uses.
+//
+// Request body is snake_case; the response is camelCase (matches the rest of the
+// mobility contract). In mock mode we return a mock:// URL so the client PUT is a
+// no-op and the flow still exercises end-to-end.
+export interface DriverDocPresign {
+  /** Presigned PUT URL the client uploads the raw bytes to. */
+  uploadUrl: string;
+  /** Object key/URL to persist against the document once the PUT succeeds. */
+  fileUrl: string;
+}
+
+export async function presignDriverDocument(input: {
+  docType: DocumentDraft['docType'];
+  fileName: string;
+  mimeType: string;
+}): Promise<DriverDocPresign> {
+  if (USE_MOCK) {
+    await delay(260);
+    const key = `driver/documents/${input.docType}-${Date.now()}-${input.fileName}`;
+    return { uploadUrl: `mock://r2/${key}`, fileUrl: key };
+  }
+  return unwrap<DriverDocPresign>(
+    await api.post(`${BASE}/driver/documents/presign`, {
+      doc_type: input.docType,
+      file_name: input.fileName,
+      mime_type: input.mimeType,
+    }),
+  );
+}
+
+/**
+ * Full driver-document upload: presign → PUT the picked file to R2 → submit the
+ * resulting object key via uploadDriverDocument(). Returns the updated profile.
+ * `file` is a PickedUpload from the shared registration filePicker (image or
+ * document). Mock uploadUrls are no-ops so mock dev still round-trips.
+ */
+export async function uploadDriverDocumentFile(input: {
+  docType: DocumentDraft['docType'];
+  file: { uri: string; name: string; mimeType: string };
+  expiryDate?: string;
+}): Promise<DriverProfile> {
+  const { docType, file, expiryDate } = input;
+  const { uploadUrl, fileUrl } = await presignDriverDocument({
+    docType,
+    fileName: file.name,
+    mimeType: file.mimeType,
+  });
+  // Live: PUT the binary to the presigned R2 URL. Mock URLs are skipped.
+  if (!uploadUrl.startsWith('mock://')) {
+    const blob = await (await fetch(file.uri)).blob();
+    const res = await fetch(uploadUrl, {
+      method: 'PUT',
+      body: blob,
+      headers: { 'Content-Type': file.mimeType },
+    });
+    if (!res.ok) throw new Error(`R2 upload failed (${res.status})`);
+  }
+  return uploadDriverDocument({ docType, fileUrl, expiryDate });
 }
 
 export async function uploadDriverDocument(draft: DocumentDraft): Promise<DriverProfile> {

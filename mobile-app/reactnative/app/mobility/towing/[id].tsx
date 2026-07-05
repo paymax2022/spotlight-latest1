@@ -11,7 +11,7 @@ import { shadow1 } from '@/constants/shadows';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import ScreenHeader from '@/components/ScreenHeader';
-import MapPlaceholder from '@/features/mobility/components/MapPlaceholder';
+import MobilityMap from '@/features/mobility/components/MobilityMap';
 import TripPinDisplay from '@/features/mobility/components/TripPinDisplay';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
@@ -53,7 +53,9 @@ export default function TowingTrackScreen() {
           {j.operatorEtaS != null && isActive && <Text style={styles.eta}>ETA {formatEta(j.operatorEtaS)}</Text>}
         </View>
 
-        {isActive && <MapPlaceholder height={160} showRoute caption={TOWING_PHASE_LABEL[j.phase]} />}
+        {isActive && (
+          <MobilityMap height={160} showRoute pickup={j.pickup} dropoff={j.dest} caption={TOWING_PHASE_LABEL[j.phase]} />
+        )}
 
         {/* Operator */}
         {j.operator && (

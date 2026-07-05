@@ -19,6 +19,7 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.GET("/me/dashboard", h.GetDashboard)
 	rg.GET("/me/card", h.GetCard)
 	rg.GET("/me/profile", h.GetProfile)
+	rg.PUT("/me/profile", h.UpdateProfile)
 	rg.GET("/me/privacy", h.GetPrivacy)
 	rg.PUT("/me/privacy", h.UpdatePrivacy)
 	rg.GET("/me/activity", h.GetActivity)
@@ -35,33 +36,40 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 
 	// ── Engagement ──────────────────────────────────────────────
 	rg.GET("/announcements", h.ListAnnouncements)
+	rg.GET("/announcements/:id", h.GetAnnouncement)
 	rg.POST("/announcements/:id/acknowledge", h.AcknowledgeAnnouncement)
 	rg.GET("/notifications", h.ListNotifications)
 	rg.POST("/notifications/read", h.MarkNotificationsRead)
 
 	// ── Meetings ────────────────────────────────────────────────
 	rg.GET("/meetings", h.ListMeetings)
+	rg.GET("/meetings/:id", h.GetMeeting)
 	rg.POST("/meetings/:id/rsvp", h.RsvpMeeting)
 	rg.POST("/meetings/:id/attendance", h.CheckInMeeting)
 
 	// ── Tasks ───────────────────────────────────────────────────
 	rg.GET("/tasks", h.ListTasks)
+	rg.GET("/tasks/:id", h.GetTask)
 	rg.PATCH("/tasks/:id", h.UpdateTaskStatus)
 
 	// ── Documents ───────────────────────────────────────────────
 	rg.GET("/documents", h.ListDocuments)
+	rg.GET("/documents/:id", h.GetDocument)
 	rg.POST("/documents/:id/acknowledge", h.AcknowledgeDocument)
 
 	// ── Community ───────────────────────────────────────────────
 	rg.GET("/committees", h.ListCommittees)
+	rg.GET("/committees/:id", h.GetCommittee)
 	rg.POST("/committees/:id/join", h.JoinCommittee)
 	rg.GET("/events", h.ListEvents)
+	rg.GET("/events/:id", h.GetEvent)
 	rg.POST("/events/:id/rsvp", h.RsvpEvent)
 	rg.POST("/events/:id/register", h.RegisterEvent)
 	rg.POST("/events/:id/feedback", h.SubmitEventFeedback)
 
 	// ── Admin ───────────────────────────────────────────────────
 	rg.GET("/admin/kpis", h.GetAdminKpis)
+	rg.GET("/admin/audit-log", h.GetAuditLog)
 	rg.GET("/admin/approvals", h.ListApprovals)
 	rg.GET("/admin/approvals/:id", h.GetApproval)
 	rg.POST("/admin/approvals/:id/decision", h.DecideApplication)
@@ -100,12 +108,15 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.GET("/chat/threads", h.ListChatThreads)
 	rg.GET("/chat/threads/:id", h.GetChatThread)
 	rg.POST("/chat/threads/:id/messages", h.SendChatMessage)
+	rg.POST("/chat/threads/:id/messages/:messageId/react", h.ReactToMessage)
+	rg.POST("/chat/threads/:id/mute", h.MuteChatThread)
 
 	// ── AI notes (L) ────────────────────────────────────────────
 	rg.GET("/ai-notes", h.ListAiNotes)
 	rg.POST("/ai-notes", h.CreateAiNote)
 	rg.GET("/ai-notes/:id", h.GetAiNote)
 	rg.GET("/ai-notes/:id/status", h.GetAiNoteStatus)
+	rg.POST("/ai-notes/:id/regenerate-summary", h.RegenerateAiNoteSummary)
 	rg.POST("/ai-notes/:id/approve", h.ApproveAiNote)
 	rg.POST("/ai-notes/:id/publish", h.PublishAiNote)
 	rg.POST("/ai-notes/:id/action-items/:itemId/convert", h.ConvertActionItem)

@@ -14,8 +14,11 @@ import { shadow1 } from '@/constants/shadows';
 import { getAppointment, cancelAppointment, formatKobo, DEMO_APPOINTMENTS } from '@/api/telemedicine.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { TeleHeader, DoctorAvatar, ConsultStatusBadge } from '@/features/telemedicine/components';
+import { IntakeStatusBadge } from '@/features/health/components';
+import { useApptIntake } from '@/features/health/hooks';
 import type { ConsultType } from '@/types/telemedicine';
 import PrimaryButton from '@/components/PrimaryButton';
+import { ClipboardList, ChevronRight } from 'lucide-react-native';
 
 const TYPE_META: Record<ConsultType, { label: string; Icon: typeof Video }> = {
   video: { label: 'Video', Icon: Video },
@@ -33,6 +36,17 @@ export default function AppointmentDetailScreen() {
     queryFn:  () => getAppointment(String(id)),
     placeholderData: DEMO_APPOINTMENTS.find((a) => a.id === id),
   });
+
+  // Pre-Consult intake gate (M1 status card + consult guard).
+  const intakeQ = useApptIntake(String(id));
+  const intakeStatus = intakeQ.data?.intake.status;
+  const intakeReady = intakeStatus === 'SUBMITTED';
+  const goIntake = () => {
+    const base = `/services/telemedicine/appointment/${id}/intake`;
+    if (intakeStatus === 'SUBMITTED') router.push(base as never); // M16 edit
+    else if (intakeStatus === 'DRAFT') router.push(`${base}?resume=1` as never); // M3 resume
+    else router.push(`${base}/consent` as never); // M2 consent first
+  };
 
   const { mutate: doCancel, isPending: cancelling, error: cancelErr } = useMutation({
     mutationFn: () => cancelAppointment(String(id)),
@@ -65,7 +79,8 @@ export default function AppointmentDetailScreen() {
   const dateLabel = new Date(`${appt.slotDate}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const isUpcoming = ['upcoming', 'confirmed', 'in_progress'].includes(appt.status);
   const isCompleted = appt.status === 'completed';
-  const canJoin = ['confirmed', 'in_progress'].includes(appt.status);
+  // Consult is unreachable until intake is SUBMITTED (PRD §1 structural gate).
+  const canJoin = ['confirmed', 'in_progress'].includes(appt.status) && intakeReady;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -95,6 +110,29 @@ export default function AppointmentDetailScreen() {
           <Row label="Fee paid" value={formatKobo(appt.feeKobo)} last />
         </View>
 
+        {/* M1 — Pre-Consult intake status card */}
+        {isUpcoming ? (
+          <Pressable style={[styles.card, shadow1]} onPress={goIntake}>
+            <View style={styles.intakeHead}>
+              <View style={styles.intakeHeadLeft}>
+                <ClipboardList size={16} color={Colors.primary} strokeWidth={2} />
+                <Text style={styles.noteTitle}>Health intake</Text>
+              </View>
+              <IntakeStatusBadge status={intakeStatus} />
+            </View>
+            <View style={styles.intakeBody}>
+              <Text style={[styles.noteText, { flex: 1, paddingBottom: 0 }]}>
+                {intakeReady
+                  ? 'Your details are ready for your doctor. Tap to review or update them before the consult.'
+                  : intakeStatus === 'DRAFT'
+                    ? 'Pick up where you left off — your progress is saved.'
+                    : 'Add your health details so your doctor walks in informed.'}
+              </Text>
+              <ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
+            </View>
+          </Pressable>
+        ) : null}
+
         {appt.reason ? (
           <View style={[styles.card, shadow1]}>
             <View style={styles.noteHead}>
@@ -119,10 +157,23 @@ export default function AppointmentDetailScreen() {
       <View style={styles.footer}>
         {isUpcoming && (
           <>
+            {!intakeReady ? (
+              <PrimaryButton
+                label={intakeStatus === 'DRAFT' ? 'Finish health intake' : 'Add your health details'}
+                onPress={goIntake}
+              />
+            ) : null}
             <PrimaryButton
-              label={canJoin ? 'Join consultation' : 'Awaiting doctor confirmation'}
+              label={
+                !intakeReady
+                  ? 'Complete intake to join'
+                  : canJoin
+                    ? 'Join consultation'
+                    : 'Awaiting doctor confirmation'
+              }
               onPress={() => router.push(`/services/telemedicine/consult/${appt.id}`)}
               disabled={!canJoin}
+              variant={!intakeReady ? 'secondary' : 'primary'}
             />
             <View style={styles.footerRow}>
               <PrimaryButton label="Reschedule" variant="secondary" fullWidth={false} style={{ flex: 1 }} onPress={() => setSheet('reschedule')} />
@@ -208,6 +259,9 @@ const styles = StyleSheet.create({
   typeBadge:   { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, height: 28, borderRadius: Radius.full, backgroundColor: Colors.iconBgBlue },
   typeText:    { ...Typography.labelSm, color: Colors.secondary },
   noteHead:    { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingTop: Spacing.md, marginBottom: Spacing.sm },
+  intakeHead:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: Spacing.md, marginBottom: Spacing.sm },
+  intakeHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  intakeBody:  { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingBottom: Spacing.md },
   noteTitle:   { ...Typography.titleMd, color: Colors.onSurface },
   noteText:    { ...Typography.bodyMd, color: Colors.onSurfaceVariant, lineHeight: 22, paddingBottom: Spacing.md },
   footer:      { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md, paddingBottom: Platform.OS === 'ios' ? 32 : Spacing.md, gap: Spacing.sm, backgroundColor: Colors.surfaceContainerLowest, borderTopWidth: 1, borderTopColor: Colors.surfaceContainerHigh },

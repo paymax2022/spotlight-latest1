@@ -5,9 +5,19 @@ import type { ElectionStatus } from '../types/election.types';
 // EXPO_PUBLIC_ELECTION_USE_MOCK=false). Mirrors the visitor/voting convention.
 export const USE_MOCK = (process.env.EXPO_PUBLIC_ELECTION_USE_MOCK ?? 'true') !== 'false';
 
-// REST namespace served by the frontend-web API (see api/client).
-// Matches the stable /api/v1 convention used by all frontend-web route handlers.
-export const ELECTION_API_BASE = '/api/v1/elections';
+// Elections are NOT a standalone backend module — they are nested under the
+// Estate module on the Go backend (Gin), confirmed against
+// backend/internal/app/finance_routes.go (estGroup := finance.Group("/estate"))
+// + backend/internal/estate/handler.go (CreateElection/CastVote/GetResults/
+// GetVoterEligibility/SetEligibilityRules all take :id (estate) + :electionId).
+// There is NO flat /elections namespace and no frontend-web proxy for it.
+export const ELECTION_API_BASE = '/api/finance/estate';
+
+// The mobile election feature has no estate-selection UI yet (mirrors the
+// mock's single hardcoded "est_amber_court" estate). Until multi-estate
+// selection is wired, live calls target this one estate.
+// MISSING: an estate-context provider so this isn't hardcoded.
+export const DEFAULT_ESTATE_ID = 'est_amber_court';
 
 // Module-scoped semantic colors (mirrors the VotingColors/VisitorColors pattern).
 export const ElectionColors = {

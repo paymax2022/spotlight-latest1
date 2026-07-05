@@ -1,0 +1,373 @@
+openapi: 3.0.3
+info:
+  title: Paymax Connect — Phases 2,3,4,6 (Professional / Event networking / Creator / Monetization)
+  version: 1.0.0
+  description: >
+    Growth verticals of Paymax Connect. All member routes sit under
+    /api/v1/connect/* behind RequireAuthContext and the FeatureConnectEnabled gate
+    (OFF by default). Admin routes sit under /api/connect/admin/* and require the
+    relevant connect.* RBAC permission. Safety invariants enforced server-side:
+    consent-before-messaging (Phase 2 intro), opt-in event-attendee discovery with
+    per-attendee privacy mask (Phase 3), portfolio media moderated before public
+    visibility + server-side fan-message control (Phase 4), and a strict money path
+    (Phase 6) — amounts are integer kobo, every purchase requires an Idempotency-Key
+    and posts a balanced double-entry ledger debit (reusing finance/wallet), with
+    entitlements enforced server-side and plans owned by the backend (connect_plans).
+servers:
+  - url: /api/v1/connect
+    description: Member (versioned) base path
+  - url: /api/connect/admin
+    description: Admin base path
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string }
+      description: >
+        REQUIRED on all money mutations (subscriptions/boosts/passes/bookings).
+        The same key flows to the ledger; retries are a safe no-op (ledger unique key).
+  schemas:
+    Error:
+      type: object
+      properties: { error: { type: string } }
+    # ── Phase 2 ──────────────────────────────────────────────────────────────
+    ProfessionalProfile:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        headline: { type: string }
+        company: { type: string }
+        role_title: { type: string }
+        industry: { type: string }
+        bio: { type: string }
+        verification_status: { type: string, enum: [unverified, pending, verified, rejected] }
+        visible: { type: boolean }
+    IntroRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        from_user_id: { type: string, format: uuid }
+        to_user_id: { type: string, format: uuid }
+        message: { type: string }
+        status: { type: string, enum: [pending, accepted, declined, withdrawn] }
+    # ── Phase 3 ──────────────────────────────────────────────────────────────
+    EventOptIn:
+      type: object
+      properties:
+        event_id: { type: string, format: uuid }
+        opted_in: { type: boolean }
+        visibility:
+          type: object
+          description: per-field opt-in privacy mask
+          properties:
+            name: { type: boolean }
+            headline: { type: boolean }
+            company: { type: boolean }
+        checked_in: { type: boolean }
+    Attendee:
+      type: object
+      description: Fields appear only where the attendee's privacy mask allows.
+      properties:
+        user_id: { type: string, format: uuid }
+        checked_in: { type: boolean }
+        name: { type: string }
+        headline: { type: string }
+        company: { type: string }
+    # ── Phase 4 ──────────────────────────────────────────────────────────────
+    CreatorProfile:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        handle: { type: string }
+        display_name: { type: string }
+        category: { type: string }
+        verification_status: { type: string, enum: [unverified, pending, verified, rejected] }
+        fan_messages: { type: string, enum: [open, verified_only, off] }
+    PortfolioItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        url: { type: string }
+        kind: { type: string, enum: [image, video, link, audio] }
+        moderation_status: { type: string, enum: [pending, approved, rejected] }
+    # ── Phase 6 ──────────────────────────────────────────────────────────────
+    Plan:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        kind: { type: string, enum: [subscription, boost, pass] }
+        name: { type: string }
+        price_kobo: { type: integer, format: int64, description: integer minor units }
+        interval_days: { type: integer, nullable: true }
+        entitlements: { type: object, additionalProperties: true }
+        active: { type: boolean }
+    PurchaseRequest:
+      type: object
+      required: [plan_code]
+      properties:
+        plan_code: { type: string, description: price is resolved server-side from the plan }
+    Order:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        plan_code: { type: string }
+        kind: { type: string }
+        amount_kobo: { type: integer, format: int64 }
+        status: { type: string, enum: [paid, refunded, failed] }
+        ledger_ref: { type: string }
+    Entitlement:
+      type: object
+      properties:
+        plan_code: { type: string }
+        kind: { type: string }
+        features: { type: object, additionalProperties: true }
+        expires_at: { type: string, format: date-time, nullable: true }
+        active: { type: boolean }
+    Booking:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [ride, ticket] }
+        amount_kobo: { type: integer, format: int64 }
+        status: { type: string, enum: [booked, cancelled, refunded] }
+        ledger_ref: { type: string }
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ════════════════ Phase 2 — Professional ════════════════
+  /professional/profile:
+    get:
+      summary: Get the caller's professional profile
+      responses: { '200': { description: OK } }
+    patch:
+      summary: Create/update professional profile
+      responses: { '200': { description: OK } }
+  /professional/verification:
+    post:
+      summary: Request business verification (encrypted evidence_ref only; no raw PII)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [evidence_ref], properties: { evidence_ref: { type: string } } } } }
+      responses: { '202': { description: pending }, '409': { description: already in progress } }
+  /professional/discovery:
+    get:
+      summary: Discover visible professional profiles
+      parameters:
+        - { name: industry, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses: { '200': { description: OK } }
+  /professional/intro:
+    post:
+      summary: Send an intro request (CONSENT BEFORE MESSAGING — recipient must accept)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [to_user_id], properties: { to_user_id: { type: string }, message: { type: string } } } } }
+      responses: { '201': { description: created }, '400': { description: self-intro } }
+  /professional/intro/{id}/respond:
+    post:
+      summary: Recipient accepts/declines an intro (object-level authz)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, properties: { accept: { type: boolean } } } } }
+      responses: { '200': { description: OK }, '403': { description: not recipient }, '409': { description: bad transition } }
+  /professional/business-card:
+    patch:
+      summary: Create/update the caller's shareable business card
+      responses: { '200': { description: OK } }
+  /professional/contacts:
+    get:
+      summary: List saved contacts
+      responses: { '200': { description: OK } }
+    post:
+      summary: Exchange/save a contact's card — requires an accepted intro
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [contact_id], properties: { contact_id: { type: string } } } } }
+      responses: { '201': { description: saved }, '403': { description: no accepted intro (consent) } }
+  /professional/rooms:
+    post:
+      summary: Create a professional room (owner auto-joins)
+      responses: { '201': { description: created } }
+  /professional/rooms/{id}/join:
+    post:
+      summary: Join a public room
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '409': { description: not joinable } }
+  /professional/rooms/{id}/moderate:
+    post:
+      summary: Owner/moderator mutes/removes/promotes a member (object-level authz)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [user_id, action], properties: { user_id: { type: string }, action: { type: string, enum: [mute, remove, promote] } } } } }
+      responses: { '200': { description: OK }, '403': { description: not owner/moderator } }
+
+  # ════════════════ Phase 3 — Event networking (reuses events/event_tickets) ════
+  /events/{id}/networking/opt-in:
+    post:
+      summary: Explicit per-event networking opt-in (requires a ticket)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content: { application/json: { schema: { $ref: '#/components/schemas/EventOptIn' } } }
+      responses: { '200': { description: OK }, '403': { description: no ticket } }
+  /events/{id}/attendees:
+    get:
+      summary: Discover opted-in attendees (mutual opt-in; per-attendee privacy mask)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '403': { description: viewer not opted in } }
+  /events/{id}/checkin:
+    post:
+      summary: Self check-in for an event the caller holds a ticket for
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '403': { description: no ticket } }
+  /events/{id}/qr/scan:
+    post:
+      summary: Organiser scans a ticket QR — marks the ticket used + holder checked-in
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [qr_code], properties: { qr_code: { type: string, format: uuid } } } } }
+      responses: { '200': { description: OK }, '400': { description: bad QR }, '403': { description: not organiser } }
+  /events/{id}/contacts:
+    post:
+      summary: Save an event contact for follow-up (both must be opted-in attendees)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [contact_id], properties: { contact_id: { type: string }, note: { type: string } } } } }
+      responses: { '201': { description: saved }, '403': { description: not opted in } }
+  /events/contacts:
+    get:
+      summary: List saved event contacts (follow-up)
+      parameters: [{ name: event_id, in: query, schema: { type: string } }]
+      responses: { '200': { description: OK } }
+
+  # ════════════════ Phase 4 — Creator ════════════════
+  /creator/profile:
+    get: { summary: Get the caller's creator profile, responses: { '200': { description: OK } } }
+    patch: { summary: Create/update creator profile, responses: { '200': { description: OK } } }
+  /creator/portfolio:
+    get: { summary: List the caller's portfolio items, responses: { '200': { description: OK } } }
+    post:
+      summary: Add a portfolio item (moderation_status=pending — not public until approved)
+      responses: { '201': { description: created } }
+  /creator/verification:
+    post:
+      summary: Request Spotlight creator verification (encrypted evidence_ref only)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [evidence_ref], properties: { evidence_ref: { type: string } } } } }
+      responses: { '202': { description: pending } }
+  /creator/fan-messages:
+    patch:
+      summary: Set server-side fan-message control
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [fan_messages], properties: { fan_messages: { type: string, enum: [open, verified_only, off] } } } } }
+      responses: { '200': { description: OK } }
+  /creator/collab-requests:
+    get: { summary: List collab requests addressed to the caller's creator profile, responses: { '200': { description: OK } } }
+    post:
+      summary: Submit a collaboration request to a creator
+      responses: { '201': { description: created } }
+  /creator/collab-requests/{id}/respond:
+    post:
+      summary: Creator accepts/declines a pending collab (object-level authz)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { accept: { type: boolean } } } } }
+      responses: { '200': { description: OK }, '403': { description: not creator }, '409': { description: bad transition } }
+
+  # ════════════════ Phase 6 — Monetization (Paymax wallet; kobo; idempotent) ════
+  /plans:
+    get:
+      summary: List the backend-owned plan/boost/pass catalogue
+      parameters: [{ name: kind, in: query, schema: { type: string, enum: [subscription, boost, pass] } }]
+      responses: { '200': { description: OK } }
+  /subscriptions:
+    post:
+      summary: Subscribe via Paymax wallet (balanced double-entry debit; entitlement granted server-side)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PurchaseRequest' } } } }
+      responses:
+        '201': { description: order + entitlement created }
+        '400': { description: missing Idempotency-Key / wrong plan kind }
+        '402': { description: insufficient wallet balance }
+        '409': { description: duplicate request }
+  /boosts:
+    post:
+      summary: Buy a profile boost via Paymax wallet
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PurchaseRequest' } } } }
+      responses: { '201': { description: OK }, '402': { description: insufficient balance } }
+  /passes:
+    post:
+      summary: Buy a super-like (etc.) pass via Paymax wallet
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PurchaseRequest' } } } }
+      responses: { '201': { description: OK }, '402': { description: insufficient balance } }
+  /entitlements:
+    get:
+      summary: Read the caller's active server-side entitlements (enforcement source of truth)
+      responses: { '200': { description: OK } }
+  /date-plans/{id}/ride:
+    post:
+      summary: Book a ride from the date planner (reuses Mobility + wallet)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { amount_kobo: { type: integer, format: int64 }, external_ref: { type: string } } } } }
+      responses: { '201': { description: booked }, '402': { description: insufficient balance } }
+  /date-plans/{id}/tickets:
+    post:
+      summary: Book event tickets from the date planner (reuses Events + wallet)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { amount_kobo: { type: integer, format: int64 }, event_id: { type: string }, ticket_type_id: { type: string } } } } }
+      responses: { '201': { description: booked }, '402': { description: insufficient balance } }
+
+  # ════════════════ Admin (RBAC-gated) ════════════════
+  /business/verification:
+    post:
+      summary: 'Admin: review business verification (RBAC connect.business.review)'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [user_id], properties: { user_id: { type: string }, approve: { type: boolean }, reason: { type: string } } } } }
+      responses: { '200': { description: OK }, '403': { description: forbidden } }
+  /creator/verification:
+    get:
+      summary: 'Admin: list pending creator verifications (RBAC connect.creator.view)'
+      responses: { '200': { description: OK }, '403': { description: forbidden } }
+    post:
+      summary: 'Admin: approve/reject creator verification (RBAC connect.creator.review)'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [user_id], properties: { user_id: { type: string }, approve: { type: boolean }, reason: { type: string } } } } }
+      responses: { '200': { description: OK }, '403': { description: forbidden } }
+  /plans-admin:
+    post:
+      summary: 'Admin: create/update a plan (POST /api/connect/admin/plans; RBAC connect.plans.manage)'
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Plan' } } } }
+      responses: { '200': { description: OK }, '403': { description: forbidden } }
+  /orders:
+    get:
+      summary: 'Admin: list orders for reconciliation (RBAC connect.payments.reconcile)'
+      parameters:
+        - { name: user_id, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses: { '200': { description: OK }, '403': { description: forbidden } }

@@ -138,14 +138,17 @@ export const DEMO_LICENCE_EXPIRY_WARNING: LicenceExpiryWarning = {
 
 // ─── Demo data: verification decision (screens 26, 27, 28) ───────────────────
 
+// PRIVACY: reason labels are shown to the doctor — keep them coarse and never
+// reference the MDCN register or matched-field detail.
 export const DEMO_REJECTION_REASONS: VerificationRejectionReason[] = [
   { code: 'doc_unclear',      label: 'Document image is blurry or unreadable', docType: 'government_id' },
-  { code: 'licence_mismatch', label: 'Licence number does not match the MDCN register', docType: 'medical_license' },
+  { code: 'licence_mismatch', label: 'We could not confirm your licence details', docType: 'medical_license' },
 ];
 
+// PRIVACY: `reviewer` and `notes` are intentionally NOT surfaced on the doctor's
+// verification screens (assisted Mode B). Kept here only as a coarse demo record.
 export const DEMO_VERIFICATION_DECISION: VerificationDecision = {
   submissionId: 'ver-1', outcome: 'approved', decidedAt: iso(27),
-  reviewer: 'Verification Team', notes: 'Credentials verified against the MDCN register.',
 };
 
 // ─── Read endpoints ──────────────────────────────────────────────────────────

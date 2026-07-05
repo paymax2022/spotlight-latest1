@@ -1,13 +1,19 @@
 package app
 
 import (
+	"context"
+	"log"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	goredis "github.com/redis/go-redis/v9"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/handlers"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
+	platformDB "spotlight/backend/internal/platform/db"
+	platformRedis "spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/services"
 )
@@ -310,11 +316,53 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		webhooks.GET("/health", health.GenericHealth)
 	}
 
-	// Finance modules — wired only when DATABASE_URL is present.
-	registerFinanceRoutes(r, cfg, supabase, rbacService)
+	// Single shared pgx pool for all DB-backed module aggregators. Created once
+	// here (was previously opened twice — finance + connect each called
+	// platformDB.New). nil when DATABASE_URL is unset or the connection fails;
+	// each aggregator skips its routes on a nil pool.
+	var sharedPool *pgxpool.Pool
+	if cfg.DatabaseURL != "" {
+		if p, err := platformDB.New(context.Background(), cfg.DatabaseURL); err != nil {
+			log.Printf("[router] WARN: could not connect to database: %v — DB-backed routes disabled", err)
+		} else {
+			sharedPool = p
+		}
+	}
 
-	// Paymax Connect module — wired only when FEATURE_CONNECT_ENABLED + DATABASE_URL.
-	registerConnectRoutes(r, cfg, supabase, rbacService)
+	// Shared Redis client for idempotency fast-paths (arena ledger, etc.). nil when
+	// REDIS_URL is unset or the connection fails — callers fall back to DB-unique
+	// constraints, so Redis is a latency optimization, never a correctness dependency.
+	var sharedRedis *goredis.Client
+	if cfg.RedisURL != "" {
+		if rc, err := platformRedis.New(cfg.RedisURL); err != nil {
+			log.Printf("[router] WARN: could not connect to Redis: %v — idempotency uses DB-unique fallback", err)
+		} else {
+			sharedRedis = rc
+		}
+	}
+
+	// Finance modules — wired only when the shared pool is present. Returns the
+	// Direct Referral Rewards engine service (nil when flag-off) so Phase-1 revenue
+	// modules wired below (Marketplace) can emit purchase events (PRD §2.5/§7.1).
+	referralRewardsSvc := registerFinanceRoutes(r, cfg, supabase, rbacService, sharedPool)
+
+	// Paymax Connect module — wired only when FEATURE_CONNECT_ENABLED + shared pool.
+	registerConnectRoutes(r, cfg, supabase, rbacService, sharedPool)
+
+	// Arena competition engine (ADR-014) — feature-flagged, default off. The merit
+	// firewall lives inside: only the ScoringGateway holds signers. The shared Redis
+	// client enables the ledger idempotency fast-path (DB-unique constraints remain
+	// the correctness backstop when Redis is unavailable).
+	if cfg.FeatureArenaEnabled {
+		RegisterArena(r, cfg, supabase, sharedPool, rbacService, sharedRedis)
+	}
+
+	// Paymax Marketplace (Jiji-style classifieds + escrow checkout). Feature-flagged,
+	// default off. Reuses the finance double-entry ledger for escrow; app-wiring
+	// injects Agent B's *search.Client via svc.SetSearcher when search is available.
+	if cfg.FeatureMarketplaceEnabled {
+		RegisterMarketplace(r, cfg, supabase, rbacService, sharedPool, sharedRedis, referralRewardsSvc)
+	}
 
 	return r
 }

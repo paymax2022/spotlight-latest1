@@ -71,7 +71,8 @@ export function useCancelParcel() {
 export function useRateParcel() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, stars, comment }: { id: string; stars: number; comment?: string }) => parcel.rateParcel(id, stars, comment),
+    mutationFn: ({ id, stars, comment, tipKobo }: { id: string; stars: number; comment?: string; tipKobo?: number }) =>
+      parcel.rateParcel(id, stars, newIdempotencyKey('parcel-rate'), comment, tipKobo),
     onSuccess: () => qc.invalidateQueries({ queryKey: [PARCEL_KEY] }),
   });
 }
@@ -198,7 +199,8 @@ export function useCancelTowing() {
 export function useRateTowing() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, stars, comment }: { id: string; stars: number; comment?: string }) => towing.rateTowing(id, stars, comment),
+    mutationFn: ({ id, stars, comment, tipKobo }: { id: string; stars: number; comment?: string; tipKobo?: number }) =>
+      towing.rateTowing(id, stars, newIdempotencyKey('towing-rate'), comment, tipKobo),
     onSuccess: () => qc.invalidateQueries({ queryKey: [TOWING_KEY] }),
   });
 }
@@ -243,7 +245,8 @@ export function useMoverActions() {
     onSuccess: (_d, id) => invalidate(id),
   });
   const rate = useMutation({
-    mutationFn: ({ id, stars, comment }: { id: string; stars: number; comment?: string }) => movers.rateMover(id, stars, comment),
+    mutationFn: ({ id, stars, comment, tipKobo }: { id: string; stars: number; comment?: string; tipKobo?: number }) =>
+      movers.rateMover(id, stars, newIdempotencyKey('mover-rate'), comment, tipKobo),
     onSuccess: (_d, v) => invalidate(v.id),
   });
   return { acceptBid, confirmCompletion, rate };

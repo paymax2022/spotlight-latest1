@@ -14,7 +14,7 @@ import type {
   InvestorRiskProfile,
 } from '../types/investment.types';
 
-const USE_MOCK = true;
+const USE_MOCK = process.env.EXPO_PUBLIC_CF_USE_MOCK !== 'false';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 
 // Mutable in mock mode so onboarding progress persists within a session.
@@ -86,7 +86,7 @@ let MOCK_PORTFOLIO: PortfolioHolding[] = [];
 
 export async function getInvestorProfile(): Promise<InvestorProfile> {
   if (USE_MOCK) { await delay(160); return { ...PROFILE }; }
-  const res = await api.get('/crowdfunding/investment/profile');
+  const res = await api.get('/api/v1/crowdfunding/investment/profile');
   return res.data?.data ?? res.data;
 }
 
@@ -100,12 +100,12 @@ export async function completeOnboardingStep(step: 'kyc' | 'education' | 'quiz' 
     PROFILE.onboarded = PROFILE.kycComplete && PROFILE.educationComplete && PROFILE.quizPassed && !!PROFILE.riskProfile;
     return;
   }
-  await api.post('/crowdfunding/investment/onboarding', { step, riskProfile });
+  await api.post('/api/v1/crowdfunding/investment/onboarding', { step, riskProfile });
 }
 
 export async function getOffers(): Promise<InvestmentOffer[]> {
   if (USE_MOCK) { await delay(); return OFFERS; }
-  const res = await api.get('/crowdfunding/investment/offers');
+  const res = await api.get('/api/v1/crowdfunding/investment/offers');
   return res.data?.data ?? res.data;
 }
 
@@ -116,19 +116,19 @@ export async function getOffer(id: string): Promise<InvestmentOffer> {
     if (!o) throw new Error('Offer not found');
     return o;
   }
-  const res = await api.get(`/crowdfunding/investment/offers/${id}`);
+  const res = await api.get(`/api/v1/crowdfunding/investment/offers/${id}`);
   return res.data?.data ?? res.data;
 }
 
 export async function getEducation(): Promise<EducationModule[]> {
   if (USE_MOCK) { await delay(120); return EDUCATION; }
-  const res = await api.get('/crowdfunding/investment/education');
+  const res = await api.get('/api/v1/crowdfunding/investment/education');
   return res.data?.data ?? res.data;
 }
 
 export async function getQuiz(): Promise<QuizQuestion[]> {
   if (USE_MOCK) { await delay(120); return QUIZ; }
-  const res = await api.get('/crowdfunding/investment/quiz');
+  const res = await api.get('/api/v1/crowdfunding/investment/quiz');
   return res.data?.data ?? res.data;
 }
 
@@ -149,12 +149,12 @@ export async function subscribe(input: InvestmentSubscriptionInput): Promise<Inv
     ];
     return cert;
   }
-  const res = await api.post('/crowdfunding/investment/subscribe', input, { headers: { 'Idempotency-Key': generateIdempotencyKey() } });
+  const res = await api.post('/api/v1/crowdfunding/investment/subscribe', input, { headers: { 'Idempotency-Key': generateIdempotencyKey() } });
   return res.data?.data ?? res.data;
 }
 
 export async function getPortfolio(): Promise<PortfolioHolding[]> {
   if (USE_MOCK) { await delay(); return MOCK_PORTFOLIO; }
-  const res = await api.get('/crowdfunding/investment/portfolio');
+  const res = await api.get('/api/v1/crowdfunding/investment/portfolio');
   return res.data?.data ?? res.data;
 }

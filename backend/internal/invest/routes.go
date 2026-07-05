@@ -9,6 +9,7 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
+	platformRedis "spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/services"
 )
 
@@ -21,8 +22,10 @@ type Deps struct {
 	Broker     BrokerAdapter   // nil → mock
 	Market     MarketDataAdapter
 	Offers     PublicOfferAdapter
-	Notifier   Notifier // nil → LogNotifier (price-alert delivery)
-	Enabled    bool     // FEATURE_INVEST_ENABLED
+	Notifier     Notifier              // nil → LogNotifier (price-alert delivery)
+	Redis        *platformRedis.Client // optional; enables Redlock-guarded workers
+	PINDevBypass bool                  // dev only: accept any well-formed PIN (no DB PIN)
+	Enabled      bool                  // FEATURE_INVEST_ENABLED
 }
 
 // Register mounts all invest routes under /api/v1/invest and /api/v1/stocks.
@@ -48,22 +51,19 @@ func Register(r *gin.Engine, d Deps) *Service {
 
 	svc := NewService(d.DB, d.MainLedger, d.Broker, d.Market, d.Offers)
 	svc.SetNotifier(d.Notifier) // no-op when nil (keeps LogNotifier default)
+	// Production: DB-backed PIN verifier with lockout. Dev bypass keeps the
+	// format-only MockPINVerifier so local/mock flows don't require an enrolled PIN.
+	if !d.PINDevBypass {
+		svc.SetPINVerifier(NewDBPINVerifier(svc.repo))
+	}
 	h := NewHandler(svc)
 
 	// authn maps the authenticated user's id into the gin context key handlers
 	// read (matches the finance/onboarding modules' user_id convention).
 	authn := func() gin.HandlerFunc {
-		base := middleware.RequireAuthContext(d.Supabase, d.RBAC)
-		return func(c *gin.Context) {
-			base(c)
-			if c.IsAborted() {
-				return
-			}
-			if au, ok := middleware.GetAuthenticatedUser(c); ok {
-				c.Set("user_id", au.ID)
-			}
-			c.Next()
-		}
+		// RequireAuthContext validates the token and sets user_id/user_email before
+		// it calls c.Next(); handlers read those directly, so no post-base mirror.
+		return middleware.RequireAuthContext(d.Supabase, d.RBAC)
 	}
 
 	v1 := r.Group("/api/v1")
@@ -74,6 +74,9 @@ func Register(r *gin.Engine, d Deps) *Service {
 	{
 		inv.GET("/profile", h.GetProfile)
 		inv.POST("/start", h.Start)
+		// Alias: the mobile client calls /invest/activate for the same onboarding
+		// start action. Kept as a thin alias so both paths resolve identically.
+		inv.POST("/activate", h.Start)
 		inv.GET("/eligibility", h.Eligibility)
 		inv.GET("/agreements", h.Agreements)
 		inv.POST("/agreements/accept", h.AcceptAgreements)
@@ -81,6 +84,10 @@ func Register(r *gin.Engine, d Deps) *Service {
 		inv.GET("/suitability/questions", h.SuitabilityQuestions)
 		inv.POST("/suitability/submit", h.SubmitSuitability)
 		inv.GET("/suitability/result", h.SuitabilityResult)
+
+		// Transaction PIN (gates order confirmation)
+		inv.GET("/security/pin", h.PINStatus)
+		inv.POST("/security/pin", h.SetPIN)
 
 		// Portfolio
 		inv.GET("/portfolio", h.Portfolio)
@@ -161,7 +168,21 @@ func Register(r *gin.Engine, d Deps) *Service {
 		admin.GET("/fees", ah.GetFees)
 		admin.PUT("/fees", ah.UpdateFees)
 		admin.GET("/reconciliation", ah.Reconciliation)
+		admin.GET("/dividends", ah.ListDividends)
+		admin.POST("/dividends", ah.CreateDividend)
+		admin.GET("/corporate-actions", ah.ListCorporateActions)
+		admin.POST("/corporate-actions", ah.CreateCorporateAction)
+		admin.GET("/providers/health", ah.ProviderHealth)
 		admin.GET("/audit", ah.AuditLog)
+	}
+
+	// ── Broker webhook (async fills/settlement) ──────────────────────────────
+	// Unauthenticated but provider-signed (HMAC). Only mounted when the broker
+	// adapter exposes a webhook secret (the mock broker does not).
+	if wp, ok := d.Broker.(webhookSecretProvider); ok && wp.WebhookSecret() != "" {
+		wh := NewWebhookHandler(svc, wp.WebhookSecret())
+		r.POST("/api/v1/invest/webhooks/broker", wh.Handle)
+		log.Println("[invest] broker webhook registered at /api/v1/invest/webhooks/broker")
 	}
 
 	log.Println("[invest] routes registered at /api/v1/invest, /api/v1/stocks and /api/v1/admin/invest (broker=" +

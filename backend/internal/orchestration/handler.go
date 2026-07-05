@@ -10,10 +10,15 @@ import (
 // Handler exposes the normalized FX API over Gin.
 type Handler struct {
 	svc *Service
+	sec SecondaryStore // beneficiaries + rate alerts; nil → handlers fall back to stubs
 }
 
 // NewHandler builds the orchestration HTTP handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// WithSecondary attaches the persistence store for beneficiaries + rate alerts.
+// Returns the handler for chaining. When nil, those handlers stay in stub mode.
+func (h *Handler) WithSecondary(s SecondaryStore) *Handler { h.sec = s; return h }
 
 func customerID(c *gin.Context) string { return c.GetString("user_id") }
 

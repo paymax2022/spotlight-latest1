@@ -64,6 +64,14 @@ func requireAuth(supabase *integrations.SupabaseRestClient, rbac services.RBACSe
 		au := domain.AuthenticatedUser{ID: id, Email: email, Status: status, Roles: roles, Permissions: perms}
 		c.Set(AuthUserContextKey, au)
 		c.Set(AuthTokenContextKey, token)
+		// Mirror the authenticated user's id/email into the plain string context keys
+		// that downstream module middleware (requireUserID) and handlers read. This is
+		// set HERE — before c.Next() — because RequireAuthContext advances the chain
+		// itself; module wrappers that mirror user_id AFTER calling this handler do so
+		// too late (the downstream handler has already run). Setting it centrally makes
+		// the codebase-wide "user_id set by RequireAuthContext" assumption actually true.
+		c.Set("user_id", id)
+		c.Set("user_email", email)
 		c.Next()
 	}
 }

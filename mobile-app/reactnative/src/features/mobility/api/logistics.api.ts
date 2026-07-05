@@ -1,6 +1,6 @@
 // ── Business Logistics — API wrapper ─────────────────────────────────────────
 // Typed data layer the business-logistics screens code against. Mirrors
-// parcel.api.ts: mock-flagged, BASE = '/api/finance', Idempotency-Key on money
+// parcel.api.ts: mock-flagged, BASE = '/api/v1', Idempotency-Key on money
 // mutations. Flip EXPO_PUBLIC_MOBILITY_USE_MOCK=false (or
 // EXPO_PUBLIC_LOGISTICS_USE_MOCK) once the Go endpoints land.
 //
@@ -34,7 +34,7 @@ import {
 const USE_MOCK =
   (process.env.EXPO_PUBLIC_LOGISTICS_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
 
-const BASE = '/api/finance';
+const BASE = '/api/v1';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });

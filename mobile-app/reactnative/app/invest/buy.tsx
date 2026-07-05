@@ -52,6 +52,14 @@ export default function BuyScreen() {
       const res = await buy.mutateAsync({ symbol: sym, order_type: 'market', amount_kobo: amountKobo, pin });
       setReceipt(res);
     } catch (e: any) {
+      const code = e?.response?.data?.code;
+      if (code === 'pin_not_set') {
+        Alert.alert('Set a transaction PIN', 'You need a transaction PIN before you can trade.', [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Set PIN', onPress: () => router.push('/invest/security/pin') },
+        ]);
+        return;
+      }
       const msg = e?.response?.data?.error ?? 'Your order could not be placed. Any locked cash has been released.';
       Alert.alert('Order failed', msg);
     }

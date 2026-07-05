@@ -16,6 +16,18 @@ export interface DraftChapter {
   level: 'REGION' | 'STATE' | 'LOCAL';
 }
 
+// Leadership structure: a single central body, or state chapters each with an
+// appointed leader who may be mandated to approve members in their state.
+export type StructureType = 'SINGLE' | 'STATEWIDE';
+
+export interface DraftStateLeader {
+  id:                string;
+  state:             string;   // one of the 36 states + FCT
+  leaderName:        string;
+  leaderContact:     string;   // phone / email (optional)
+  canApproveMembers: boolean;  // mandate to act & approve members in this state
+}
+
 export interface DraftCategory {
   id:        string;
   label:     string;
@@ -45,9 +57,12 @@ export interface OrgDraft {
   groupType:   GroupType | null;
   approvalRule: ApprovalRule | null;
   registrationFeeKobo: number;
+  structureType: StructureType;      // single central body vs state chapters
+  stateLeaders: DraftStateLeader[];  // only relevant when structureType = STATEWIDE
   chapters:    DraftChapter[];
   committees:  DraftCommittee[];
   categories:  DraftCategory[];
+  rules:       string[];             // group rules an applicant must accept
   restrictions: RestrictionConfig;
   acceptedTerms: boolean;
 }

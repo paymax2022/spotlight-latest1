@@ -29,20 +29,22 @@ type SurfaceConfig struct {
 }
 
 // DefaultSurfaceConfig is the acceptance-criteria default:
-//   - OpenStack for display/geocode/reverse/route/matrix/tracking/geofence
-//   - Google ONLY for autocomplete (consumer surfaces) + external POIs
+//   - Google for all address lookup: geocode/reverse/autocomplete/places/matrix
+//     (standardized server-side per docs/ENV.md; Google results are non-cacheable
+//     and degrade to the OpenStack stack via Fallback on error/soft-cap)
+//   - OpenStack for the display/tracking layer: maptiler basemap, osrm route + match
 //
 // Provider names here match adapter Name() values.
 func DefaultSurfaceConfig() SurfaceConfig {
 	return SurfaceConfig{
 		Default: ProviderMap{
-			PrimBasemap:      "maptiler",
-			PrimGeocode:      "geoapify",
-			PrimReverse:      "geoapify",
-			PrimAutocomplete: "geoapify", // OpenStack by default; Google only on consumer surfaces
-			PrimPlaces:       "google",   // external world POIs are Google-only
-			PrimRoute:        "osrm",
-			PrimMatrix:       "osrm",
+			PrimBasemap:      "maptiler", // basemap tiles stay MapLibre/OSM (display layer)
+			PrimGeocode:      "google",   // Google for all address lookup/geocoding
+			PrimReverse:      "google",
+			PrimAutocomplete: "google",
+			PrimPlaces:       "google",
+			PrimRoute:        "osrm",   // single-route polyline (live tracking) stays OSRM
+			PrimMatrix:       "google", // Google Distance Matrix → delivery-fee driving distance/ETA
 			PrimMatchToRoad:  "osrm",
 		},
 		// Consumer checkout/delivery surfaces: Google autocomplete + POI, shown

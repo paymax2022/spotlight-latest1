@@ -78,6 +78,38 @@ export interface ReconResult {
   trapped_funds: AdminOrder[];
 }
 
+export interface Dividend {
+  id: string;
+  symbol: string;
+  amount_per_share_kobo: number;
+  currency: string;
+  ex_date?: string;
+  record_date?: string;
+  payment_date?: string;
+  status: string;
+  source?: string;
+}
+
+export interface CorporateAction {
+  id: string;
+  symbol: string;
+  type: string;
+  title: string;
+  description?: string;
+  effective_date?: string;
+  record_date?: string;
+  payment_date?: string;
+  status: string;
+  source?: string;
+}
+
+export interface ProviderHealth {
+  role: string;
+  provider: string;
+  healthy: boolean;
+  detail: string;
+}
+
 export interface AssetUpdate {
   status?: AdminStockAsset['status'];
   buy_enabled?: boolean;

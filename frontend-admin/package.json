@@ -3,9 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev": "next dev -p 4030",
+    "dev": "next dev -p 3001",
     "build": "next build",
-    "start": "next start -p 4030",
+    "start": "next start -p 3001",
     "lint": "next lint",
     "type-check": "tsc --noEmit"
   },
@@ -16,9 +16,13 @@
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^20",
     "@types/react": "~19.2.10",
     "@types/react-dom": "~19.2.0",
-    "typescript": "^5"
+    "@vitejs/plugin-react": "^6.0.3",
+    "typescript": "^5",
+    "vitest": "^4.1.9"
   }
 }

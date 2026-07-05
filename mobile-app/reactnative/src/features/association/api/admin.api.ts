@@ -2,7 +2,7 @@
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import { USE_MOCK } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
 import type {
   AdminKpis, AdminApplication, AdminApplicationSummary, ApplicationJurisdiction, ApprovalDecision,
   FinanceSummary, OfflinePayment, ImportPreview, ImportResult, AuditEntry,
@@ -20,7 +20,7 @@ const toAppSummary = (a: AdminApplication): AdminApplicationSummary => {
 
 export async function getAdminKpis(): Promise<AdminKpis> {
   if (USE_MOCK) { await delay(); return MOCK_KPIS; }
-  const { data } = await api.get('/associations/admin/kpis');
+  const { data } = await api.get(`${BASE}/admin/kpis`);
   return data;
 }
 
@@ -30,7 +30,7 @@ export async function getApprovalQueue(jurisdiction: ApplicationJurisdiction | '
     const list = MOCK_APPLICATIONS.map(toAppSummary);
     return jurisdiction === 'ALL' ? list : list.filter((a) => a.jurisdiction === jurisdiction);
   }
-  const { data } = await api.get('/associations/admin/approvals', { params: { jurisdiction } });
+  const { data } = await api.get(`${BASE}/admin/approvals`, { params: { jurisdiction } });
   return data;
 }
 
@@ -41,14 +41,14 @@ export async function getApplication(id: string): Promise<AdminApplication> {
     if (!found) throw new Error('Application not found');
     return found;
   }
-  const { data } = await api.get(`/associations/admin/approvals/${id}`);
+  const { data } = await api.get(`${BASE}/admin/approvals/${id}`);
   return data;
 }
 
 export async function decideApplication(id: string, decision: ApprovalDecision, note?: string): Promise<{ ok: true }> {
   if (USE_MOCK) { await delay(400); return { ok: true }; }
   const { data } = await api.post(
-    `/associations/admin/approvals/${id}/decision`,
+    `${BASE}/admin/approvals/${id}/decision`,
     { decision, note },
     { headers: { 'Idempotency-Key': generateIdempotencyKey() } },
   );
@@ -59,20 +59,20 @@ export async function decideApplication(id: string, decision: ApprovalDecision, 
 
 export async function getFinanceSummary(): Promise<FinanceSummary> {
   if (USE_MOCK) { await delay(); return MOCK_FINANCE; }
-  const { data } = await api.get('/associations/admin/finance');
+  const { data } = await api.get(`${BASE}/admin/finance`);
   return data;
 }
 
 export async function getOfflinePayments(): Promise<OfflinePayment[]> {
   if (USE_MOCK) { await delay(); return MOCK_OFFLINE_PAYMENTS.filter((p) => p.status === 'PENDING'); }
-  const { data } = await api.get('/associations/admin/finance/offline');
+  const { data } = await api.get(`${BASE}/admin/finance/offline`);
   return data;
 }
 
 export async function decideOfflinePayment(id: string, approve: boolean): Promise<{ ok: true }> {
   if (USE_MOCK) { await delay(350); return { ok: true }; }
   const { data } = await api.post(
-    `/associations/admin/finance/offline/${id}/decision`,
+    `${BASE}/admin/finance/offline/${id}/decision`,
     { approve },
     { headers: { 'Idempotency-Key': generateIdempotencyKey() } },
   );
@@ -86,7 +86,7 @@ export async function getAuditLog(action?: string): Promise<AuditEntry[]> {
     await delay();
     return action && action !== 'all' ? MOCK_AUDIT.filter((a) => a.action === action) : MOCK_AUDIT;
   }
-  const { data } = await api.get('/associations/admin/audit-log', { params: { action } });
+  const { data } = await api.get(`${BASE}/admin/audit-log`, { params: { action } });
   return data;
 }
 
@@ -94,7 +94,7 @@ export async function getAuditLog(action?: string): Promise<AuditEntry[]> {
 
 export async function getImportPreview(): Promise<ImportPreview> {
   if (USE_MOCK) { await delay(500); return MOCK_IMPORT_PREVIEW; }
-  const { data } = await api.post('/associations/admin/import/preview', {});
+  const { data } = await api.post(`${BASE}/admin/import/preview`, {});
   return data;
 }
 
@@ -105,7 +105,7 @@ export async function confirmImport(sendInvites: boolean): Promise<ImportResult>
     return { imported: p.valid, skipped: p.duplicates + p.invalid, invited: sendInvites ? p.valid : 0, batchId: `batch_${Date.now()}` };
   }
   const { data } = await api.post(
-    '/associations/admin/import/confirm',
+    `${BASE}/admin/import/confirm`,
     { sendInvites },
     { headers: { 'Idempotency-Key': generateIdempotencyKey() } },
   );

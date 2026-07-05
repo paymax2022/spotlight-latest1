@@ -1,0 +1,2 @@
+{ "extends": "./tsconfig.json", "compilerOptions": { "skipLibCheck": true, "noEmit": true, "jsx": "react-jsx" },
+  "include": ["src/features/investsettings/**/*.ts", "src/features/investsettings/**/*.tsx", "app/invest-settings/**/*.tsx"] }

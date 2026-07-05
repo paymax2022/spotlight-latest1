@@ -1,0 +1,67 @@
+# Deploy — build-once → promote (ENVIRONMENT-AND-GOLIVE.md §5). One immutable image
+# tagged by commit SHA flows dev→staging→prod; only config/secrets differ
+# (RAILS_MODE + provider creds). Prod is human-gated; rollback = redeploy a prior SHA.
+# Secrets come from GitHub Environments (vault), via OIDC — never the repo/image/logs.
+name: deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA to (re)deploy — used for rollback"
+        required: false
+
+permissions:
+  contents: read
+  id-token: write # OIDC — short-lived cloud creds, least privilege
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository }}/paymax-backend
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: echo "sha=${{ github.event.inputs.sha || github.sha }}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build-once + push (immutable, SHA-tagged)
+        run: |
+          docker build -t "$REGISTRY/$IMAGE:${{ steps.meta.outputs.sha }}" backend
+          docker push "$REGISTRY/$IMAGE:${{ steps.meta.outputs.sha }}"
+
+  staging:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: staging # secrets: RAILS_MODE=sandbox + *_SANDBOX creds
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run migrations (expand/contract, backward-compatible)
+        run: echo "TODO: apply supabase migrations to staging DB (make migrate-up with staging DATABASE_URL)"
+      - name: Deploy image to staging (rails=sandbox)
+        run: echo "TODO: deploy $REGISTRY/$IMAGE:${{ needs.build.outputs.sha }} via flyctl/gcloud/aws with RAILS_MODE=sandbox"
+      - name: Smoke tests (against provider sandboxes)
+        run: echo "TODO: hit /healthz + a BNPL/payout sandbox round-trip; fail the job on red"
+
+  production:
+    needs: staging
+    runs-on: ubuntu-latest
+    environment: production # protected: requires manual approval (human gate)
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run migrations (already expand-applied in staging)
+        run: echo "TODO: apply pending additive migrations to prod DB"
+      - name: Deploy image to prod (rails=live, blue/green or canary)
+        run: echo "TODO: blue/green deploy $REGISTRY/$IMAGE:${{ needs.build.outputs.sha }} with RAILS_MODE=live; health-check; keep prior SHA for rollback"
+      - name: Post-deploy health check
+        run: echo "TODO: verify golden signals; auto-rollback on canary error-rate breach"

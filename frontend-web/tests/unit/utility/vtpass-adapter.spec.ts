@@ -18,8 +18,12 @@ const pricing = {
   grossMarginBps: 400,
 };
 
+// NOTE: the adapter now has a local sandbox simulator — when
+// VTPASS_ENVIRONMENT=sandbox, validateCustomer/purchase/queryTransactionStatus
+// short-circuit (no fetch). The HTTP-contract tests below therefore run in
+// 'live' mode against a fake base URL; sandbox behaviour has its own tests.
 function setVtpassEnv() {
-  process.env.VTPASS_ENVIRONMENT = 'sandbox';
+  process.env.VTPASS_ENVIRONMENT = 'live';
   process.env.VTPASS_BASE_URL = 'https://sandbox.vtpass.test/api';
   process.env.VTPASS_API_KEY = 'test-api-key';
   process.env.VTPASS_PUBLIC_KEY = 'test-public-key';
@@ -220,6 +224,51 @@ describe('VTPass utility adapter', () => {
       providerReference: '202606131245abc123',
       idempotencyKey: 'UTILITY-key',
     })).rejects.toThrow(/VTPASS_SECRET_KEY/);
+  });
+
+  it('simulates purchases locally in sandbox mode without calling VTPass', async () => {
+    process.env.VTPASS_ENVIRONMENT = 'sandbox';
+
+    const result = await vtpassUtilityAdapter.purchase({
+      transactionId: 'tx-sandbox-001',
+      idempotencyKey: 'UTILITY-user-sandbox-abc123',
+      category: 'electricity',
+      billerCode: 'eko-electric',
+      providerBillerCode: 'eko-electric',
+      productCode: 'eko-prepaid',
+      providerProductCode: 'eko-electric',
+      customerReference: '1111111111111', // documented sandbox prepaid meter
+      pricing,
+      metadata: { paymentType: 'prepaid' },
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result.status).toBe('successful');
+    expect(result.token).toBeTruthy();
+    expect(result.raw).toEqual(expect.objectContaining({ sandbox: true }));
+  });
+
+  it('validates only the documented sandbox meters in sandbox mode', async () => {
+    process.env.VTPASS_ENVIRONMENT = 'sandbox';
+
+    const valid = await vtpassUtilityAdapter.validateCustomer({
+      category: 'electricity',
+      billerCode: 'eko-electric',
+      providerBillerCode: 'eko-electric',
+      customerReference: '1010101010101', // documented sandbox postpaid meter
+      metadata: { paymentType: 'postpaid' },
+    });
+    const invalid = await vtpassUtilityAdapter.validateCustomer({
+      category: 'electricity',
+      billerCode: 'eko-electric',
+      providerBillerCode: 'eko-electric',
+      customerReference: '9999999999999',
+      metadata: { paymentType: 'prepaid' },
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(valid.valid).toBe(true);
+    expect(invalid.valid).toBe(false);
   });
 
   it('uses public-key for balance health checks', async () => {

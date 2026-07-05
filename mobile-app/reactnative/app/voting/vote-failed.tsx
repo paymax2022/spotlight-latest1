@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
-import { XCircle, MessageCircle } from 'lucide-react-native';
+import { router, useLocalSearchParams } from 'expo-router';
+import { XCircle } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -10,6 +10,9 @@ import { Radius } from '@/constants/radius';
 import PrimaryButton from '@/components/PrimaryButton';
 
 export default function VoteFailedScreen() {
+  const { reason } = useLocalSearchParams<{ reason?: string }>();
+  const isPending = !!reason;
+
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <View style={styles.content}>
@@ -17,26 +20,34 @@ export default function VoteFailedScreen() {
           <View style={styles.iconWrap}>
             <XCircle size={52} color={Colors.error} strokeWidth={1.5} />
           </View>
-          <Text style={styles.title}>Vote Not Completed</Text>
+          <Text style={styles.title}>{isPending ? 'Payment Pending' : 'Vote Not Completed'}</Text>
           <Text style={styles.sub}>
-            Your vote was not completed due to a payment or network error.{'\n'}
-            You have not been charged.
+            {isPending
+              ? 'We could not confirm your payment in time.'
+              : 'Your vote was not completed due to a payment or network error.\nYou have not been charged.'}
           </Text>
 
           <View style={styles.infoCard}>
             <Text style={styles.infoTitle}>What happened?</Text>
             <Text style={styles.infoText}>
-              This could be due to an insufficient wallet balance, network timeout, or a temporary issue with the payment processor.
-              Please try again or contact support if the issue persists.
+              {reason ??
+                'This could be due to an insufficient wallet balance, network timeout, or a temporary issue with the payment processor. Please try again or contact support if the issue persists.'}
             </Text>
           </View>
         </View>
 
         <View style={styles.actions}>
-          <PrimaryButton
-            label="Try Again"
-            onPress={() => router.back()}
-          />
+          {isPending ? (
+            <PrimaryButton
+              label="View My Votes"
+              onPress={() => router.replace('/voting/my-votes')}
+            />
+          ) : (
+            <PrimaryButton
+              label="Try Again"
+              onPress={() => router.back()}
+            />
+          )}
           <PrimaryButton
             label="Contact Support"
             onPress={() => router.push('/voting/support')}

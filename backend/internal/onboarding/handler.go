@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/internal/middleware"
 )
 
 // Handler exposes the onboarding API over Gin.
@@ -39,7 +40,16 @@ func (h *Handler) fail(c *gin.Context, err error) {
 	}
 }
 
-func userID(c *gin.Context) string { return c.GetString("user_id") }
+// userID resolves the authenticated user's id from the auth context. It reads the
+// AuthenticatedUser that RequireAuthContext stores BEFORE it calls c.Next() — not a
+// "user_id" string set afterwards, which would be too late (the handler runs during
+// base's c.Next(), before any post-base mirror could execute).
+func userID(c *gin.Context) string {
+	if au, ok := middleware.GetAuthenticatedUser(c); ok {
+		return au.ID
+	}
+	return ""
+}
 
 // ─── Public / customer catalogue ─────────────────────────────────────────────
 
@@ -145,7 +155,10 @@ func (h *Handler) GetApplication(c *gin.Context) {
 
 // Capabilities aggregates the caller's customer + merchant identities.
 func (h *Handler) Capabilities(c *gin.Context) {
-	displayName := c.GetString("display_name")
+	displayName := ""
+	if au, ok := middleware.GetAuthenticatedUser(c); ok {
+		displayName = au.Email
+	}
 	kycTier, _ := strconv.Atoi(c.GetString("kyc_tier"))
 	caps, err := h.svc.Capabilities(c.Request.Context(), userID(c), displayName, kycTier)
 	if err != nil {

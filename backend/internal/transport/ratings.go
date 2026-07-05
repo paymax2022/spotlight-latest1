@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -49,21 +50,37 @@ func (s *Service) RateTrip(ctx context.Context, tripID, raterID string, req Rate
 	}
 
 	// Tip: escrow from rater, settle 100% to the driver (no commission on tips).
+	// The tip is a MONEY MUTATION and must not be silently swallowed. The rating
+	// itself is already durably persisted above, so we recompute the aggregate
+	// first (the rating always succeeds independently of the tip), then attempt the
+	// tip and surface any escrow/settle failure to the caller. tipRef is a stable
+	// idempotency key ("trip:<id>:tip"), so a retried rate-with-tip re-uses the same
+	// escrow and cannot double-charge.
+	s.recomputeRating(ctx, rateeID, role)
+
 	if req.TipKobo > 0 && role == "rider" && driverUserID != "" {
+		// Fail-closed tier/spending-limit gate before the tip wallet escrow.
+		if err := s.enforceTierLimit(ctx, raterID, req.TipKobo); err != nil {
+			return r, err
+		}
 		tipRef := "trip:" + tripID + ":tip"
-		if sett, err := s.settlement.Escrow(ctx, raterID, tipRef, tipRef, "transport", req.TipKobo); err == nil {
-			s.settleTipDirect(ctx, sett.ID, driverUserID)
+		sett, err := s.settlement.Escrow(ctx, raterID, tipRef, tipRef, "transport", req.TipKobo)
+		if err != nil {
+			return r, fmt.Errorf("transport: tip escrow failed (rating saved): %w", err)
+		}
+		if err := s.settleTipDirect(ctx, sett.ID, driverUserID); err != nil {
+			return r, fmt.Errorf("transport: tip settlement failed (rating saved, tip escrowed — reconcile settlement %s): %w", sett.ID, err)
 		}
 	}
 
-	s.recomputeRating(ctx, rateeID, role)
 	return r, nil
 }
 
-// settleTipDirect releases a tip escrow 100% to the driver.
-func (s *Service) settleTipDirect(ctx context.Context, settlementID, driverUserID string) {
+// settleTipDirect releases a tip escrow 100% to the driver. Returns the settle
+// error so the tip money path is never silently swallowed.
+func (s *Service) settleTipDirect(ctx context.Context, settlementID, driverUserID string) error {
 	// 100% provider, 0% platform — tips are not commissioned.
-	s.settlement.Settle(ctx, settlementID, settlementSplitAllProvider(driverUserID))
+	return s.settlement.Settle(ctx, settlementID, settlementSplitAllProvider(driverUserID))
 }
 
 // recomputeRating recalculates a ratee's average rating from their received

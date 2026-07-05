@@ -72,9 +72,9 @@ type CarHireExtendRequest struct {
 
 // CarHireQuote is the quote response.
 type CarHireQuote struct {
-	FareKobo    int64 `json:"fare_kobo"`
-	DepositKobo int64 `json:"deposit_kobo"`
-	TotalKobo   int64 `json:"total_kobo"`
+	FareKobo    int64 `json:"fareKobo"`
+	DepositKobo int64 `json:"depositKobo"`
+	TotalKobo   int64 `json:"totalKobo"`
 }
 
 // carHireRow is the internal projection of a car-hire booking.
@@ -145,6 +145,14 @@ func (s *Service) BookCarHire(ctx context.Context, userID string, req CarHireBoo
 		vehicleClass = "economy"
 	}
 
+	// Fail-closed tier/spending-limit gate BEFORE any wallet escrow (same contract
+	// as RequestRide). The gate covers the FULL wallet debit about to be attempted
+	// (fare + deposit), not just the fare, so an over-limit user cannot slip through
+	// on the sum of the two escrows.
+	if err := s.enforceTierLimit(ctx, userID, fare+deposit); err != nil {
+		return nil, err
+	}
+
 	bookingID := uuid.New().String()
 	// Escrow fare and deposit as two separate settlements under one prefix.
 	fareSett, err := s.settlement.Escrow(ctx, userID, "carhire:"+bookingID, idempotencyKey+":fare", "transport", fare)
@@ -204,10 +212,10 @@ func (s *Service) CarHireDetail(ctx context.Context, id, callerID string) (map[s
 		}
 	}
 	return map[string]any{
-		"id": bid, "user_id": uid, "driver_id": driverID, "hire_type": hireType,
-		"vehicle_class": vehicleClass, "chauffeur": chauffeur, "start_at": startAt,
-		"duration_hours": duration, "pickup_address": pickup, "special_request": special,
-		"deposit_kobo": deposit, "fare_kobo": fare, "status": status, "created_at": createdAt,
+		"id": bid, "userId": uid, "driverId": driverID, "hireType": hireType,
+		"vehicleClass": vehicleClass, "chauffeur": chauffeur, "startAt": startAt,
+		"durationHours": duration, "pickupAddress": pickup, "specialRequest": special,
+		"depositKobo": deposit, "fareKobo": fare, "status": status, "createdAt": createdAt,
 	}, nil
 }
 
@@ -233,6 +241,11 @@ func (s *Service) ExtendCarHire(ctx context.Context, id, userID string, extraHou
 	delta := int64(extraHours) * cfg.PerKMKobo
 	if delta <= 0 {
 		return nil, codedErr(http.StatusUnprocessableEntity, "INVALID_EXTENSION", "extension amount must be positive")
+	}
+	// Fail-closed tier/spending-limit gate BEFORE the extension escrow (same contract
+	// as adjustEscrow's delta gate): an over-limit user cannot extend on wallet.
+	if err := s.enforceTierLimit(ctx, userID, delta); err != nil {
+		return nil, err
 	}
 	extRef := fmt.Sprintf("carhire:%s:ext:%d", id, time.Now().UnixNano())
 	if _, err := s.settlement.Escrow(ctx, userID, extRef, idempotencyKey, "transport", delta); err != nil {
@@ -429,9 +442,9 @@ func (s *Service) ListCarHire(ctx context.Context, userID string) ([]map[string]
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "hire_type": hireType, "vehicle_class": vehicleClass, "start_at": startAt,
-			"duration_hours": duration, "fare_kobo": fare, "deposit_kobo": deposit,
-			"status": status, "created_at": createdAt,
+			"id": id, "hireType": hireType, "vehicleClass": vehicleClass, "startAt": startAt,
+			"durationHours": duration, "fareKobo": fare, "depositKobo": deposit,
+			"status": status, "createdAt": createdAt,
 		})
 	}
 	return out, nil

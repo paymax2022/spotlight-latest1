@@ -158,11 +158,11 @@ func (s *Service) MoverDetail(ctx context.Context, id, callerID string) (map[str
 		return nil, err
 	}
 	return map[string]any{
-		"id": jid, "user_id": uid, "provider_id": providerID,
-		"pickup_address": pickup, "dropoff_address": dropoff, "property_type": propType,
-		"truck_size": truckSize, "helpers": helpers, "fragile": fragile, "move_at": moveAt,
-		"accepted_bid_id": acceptedBid, "quote_amount_kobo": quoteAmount,
-		"status": status, "escrow_status": escrowStatus, "created_at": createdAt, "bids": bids,
+		"id": jid, "userId": uid, "providerId": providerID,
+		"pickupAddress": pickup, "dropoffAddress": dropoff, "propertyType": propType,
+		"truckSize": truckSize, "helpers": helpers, "fragile": fragile, "moveAt": moveAt,
+		"acceptedBidId": acceptedBid, "quoteAmountKobo": quoteAmount,
+		"status": status, "escrowStatus": escrowStatus, "createdAt": createdAt, "bids": bids,
 	}, nil
 }
 
@@ -186,8 +186,8 @@ func (s *Service) listMoverBids(ctx context.Context, jobID string) ([]map[string
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "provider_id": providerID, "amount_kobo": amount, "note": note,
-			"status": status, "created_at": createdAt, "provider_name": name, "provider_rating": rating,
+			"id": id, "providerId": providerID, "amountKobo": amount, "note": note,
+			"status": status, "createdAt": createdAt, "providerName": name, "providerRating": rating,
 		})
 	}
 	return out, nil
@@ -222,6 +222,12 @@ func (s *Service) AcceptMoverBid(ctx context.Context, jobID, userID, bidID, idem
 	}
 	if bidStatus != "submitted" {
 		return nil, codedErr(http.StatusConflict, CodeInvalidState, "bid not available")
+	}
+
+	// Fail-closed tier/spending-limit gate BEFORE any wallet escrow (same contract
+	// as RequestRide): a Tier0/over-limit customer cannot fund the bid.
+	if err := s.enforceTierLimit(ctx, userID, amount); err != nil {
+		return nil, err
 	}
 
 	ref := "mover:" + jobID
@@ -360,9 +366,9 @@ func (s *Service) OpenMoverJobs(ctx context.Context, driverUserID string) ([]map
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "pickup_address": pickup, "dropoff_address": dropoff, "property_type": propType,
-			"truck_size": truckSize, "helpers": helpers, "fragile": fragile, "move_at": moveAt,
-			"status": status, "created_at": createdAt,
+			"id": id, "pickupAddress": pickup, "dropoffAddress": dropoff, "propertyType": propType,
+			"truckSize": truckSize, "helpers": helpers, "fragile": fragile, "moveAt": moveAt,
+			"status": status, "createdAt": createdAt,
 		})
 	}
 	return out, nil
@@ -393,7 +399,7 @@ func (s *Service) SubmitMoverBid(ctx context.Context, jobID, driverUserID string
 	}
 	s.recordModeEvent(ctx, driverUserID, "mover.bid_submitted", "mover_job", jobID, m.Status, "bids_received",
 		map[string]any{"bid_id": bidID, "amount_kobo": amount})
-	return map[string]any{"id": bidID, "job_id": jobID, "amount_kobo": amount, "status": "submitted"}, nil
+	return map[string]any{"id": bidID, "jobId": jobID, "amountKobo": amount, "status": "submitted"}, nil
 }
 
 // StartMoverJob: bid_accepted/crew_assigned → in_progress (assigned provider only).

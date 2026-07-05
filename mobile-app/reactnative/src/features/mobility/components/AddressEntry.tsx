@@ -1,15 +1,33 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  NativeModules,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import MapLibreGL from '@maplibre/maplibre-react-native';
 import MapView from './MapView';
-import { autocomplete, geocode, reverse, type MapSuggestion } from '../api/maps.api';
+
+// Same lazy-require pattern as MapView.tsx — @maplibre throws at module-init
+// time when the native binary is absent (Expo Go / JS-only builds).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let MapLibreGL: any = null;
+if (!!NativeModules.MLRNModule) {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    MapLibreGL = require('@maplibre/maplibre-react-native').default;
+  } catch {
+    // Native module missing — PointAnnotation simply won't render
+  }
+}
+import {
+  searchAddress,
+  resolveCoordinate,
+  reverseLookup,
+  type AddressHit,
+} from '@/lib/addressLookup';
 
 export interface ConfirmedAddress {
   lat: number;
@@ -23,6 +41,8 @@ export interface AddressEntryProps {
   /** Consumer surface uses Google autocomplete per config. */
   surface?: 'checkout' | 'delivery';
   initialCenter?: { lat: number; lng: number };
+  /** Seed the search box (e.g. the currently-set pickup address when editing). */
+  initialQuery?: string;
   onConfirmed: (addr: ConfirmedAddress) => void;
 }
 
@@ -43,11 +63,12 @@ function makeToken(): string {
 export default function AddressEntry({
   surface = 'checkout',
   initialCenter = { lat: 6.4541, lng: 3.3947 },
+  initialQuery = '',
   onConfirmed,
 }: AddressEntryProps) {
   const sessionToken = useMemo(makeToken, []);
-  const [query, setQuery] = useState('');
-  const [suggestions, setSuggestions] = useState<MapSuggestion[]>([]);
+  const [query, setQuery] = useState(initialQuery);
+  const [suggestions, setSuggestions] = useState<AddressHit[]>([]);
   const [pin, setPin] = useState<{ lat: number; lng: number } | null>(null);
   const [plusCode, setPlusCode] = useState('');
   const [label, setLabel] = useState('');
@@ -64,41 +85,46 @@ export default function AddressEntry({
       return;
     }
     debounceRef.current = setTimeout(async () => {
-      try {
-        const s = await autocomplete(value, { sessionToken, surface, near: pin ?? initialCenter });
-        setSuggestions(s);
-      } catch {
-        setSuggestions([]); // graceful: user can still drop a pin manually
-      }
+      // Unified resolver: backend MapService proxy (Google) with an offline
+      // fallback + circuit breaker — the field never goes dead when the proxy
+      // is down/misconfigured (searchAddress returns [] instead of throwing).
+      const s = await searchAddress(value, { sessionToken, surface, near: pin ?? initialCenter });
+      setSuggestions(s);
     }, 250);
   };
 
-  // Place/move the pin and refresh Plus Code + label from the OpenStack reverse
-  // geocoder (source of truth).
-  const placePin = async (lat: number, lng: number) => {
+  // Place/move the pin and refresh Plus Code + label from the reverse geocoder
+  // (proxy 'default' surface; offline fallback keeps the pin usable).
+  // `keepLabel` preserves a label the user just chose from a suggestion — the
+  // reverse-geocode label must never clobber it (React state is async, so the
+  // `label` state var read here is stale on the selectSuggestion path).
+  const placePin = async (lat: number, lng: number, opts: { keepLabel?: boolean } = {}) => {
     setPin({ lat, lng });
     setConfirmed(false);
-    try {
-      const r = await reverse(lat, lng, 'default');
-      setPlusCode(r.plus_code);
-      if (!label) setLabel(r.address);
-    } catch {
-      /* keep the pin even if reverse fails — routing works off the pin */
+    const r = await reverseLookup(lat, lng); // never throws
+    if (r) {
+      setPlusCode(r.plusCode ?? '');
+      if (!opts.keepLabel) setLabel((prev) => prev || r.label);
     }
+    /* keep the pin even if reverse fails — routing works off the pin */
   };
 
-  const selectSuggestion = async (s: MapSuggestion) => {
+  const selectSuggestion = async (s: AddressHit) => {
     setQuery(s.label);
     setLabel(s.label);
     setSuggestions([]);
     setBusy(true);
     try {
-      // Resolve an OpenStack pin for the chosen text (never use Google coords on
-      // the OSM map). If the OSM geocoder misses, the user drops a pin manually.
-      const g = await geocode(s.label, 'default');
-      await placePin(g.lat, g.lng);
-    } catch {
-      /* fall through to manual pin drop */
+      // Resolve a pin for the chosen text. Google text suggestions carry no
+      // coordinate, so this geocodes via the proxy's 'default' (OpenStack)
+      // surface — never a Google coord on the OSM map. Offline (mock) hits
+      // already carry safe coordinates and pass straight through. If everything
+      // misses, the user drops a pin manually.
+      const isProxyTextHit = s.source === 'proxy';
+      const r = await resolveCoordinate(
+        isProxyTextHit ? { ...s, lat: undefined, lng: undefined } : s,
+      );
+      if (r) await placePin(r.lat, r.lng, { keepLabel: true });
     } finally {
       setBusy(false);
     }
@@ -114,7 +140,9 @@ export default function AddressEntry({
 
   return (
     <View style={styles.wrap}>
-      <View>
+      {/* zIndex lifts the input+dropdown above the MapView sibling — without it
+          the suggestion list paints UNDER the map on web (RNW stacking). */}
+      <View style={styles.searchWrap}>
         <TextInput
           value={query}
           onChangeText={onType}
@@ -124,15 +152,23 @@ export default function AddressEntry({
         />
         {suggestions.length > 0 && (
           <View style={styles.dropdown}>
-            {suggestions.map((s, i) => (
+            {suggestions.map((s) => (
               <Pressable
-                key={s.place_id || String(i)}
+                key={s.id}
                 onPress={() => selectSuggestion(s)}
                 style={styles.suggestion}
               >
-                <Text numberOfLines={1}>{s.label}</Text>
+                <Text numberOfLines={1}>{s.primary}</Text>
+                {s.secondary ? (
+                  <Text numberOfLines={1} style={styles.suggestionSecondary}>{s.secondary}</Text>
+                ) : null}
               </Pressable>
             ))}
+            {/* Google requires attribution when Places results aren't shown on a
+                Google map (these render on the MapLibre/OSM basemap). */}
+            {suggestions.some((s) => s.source === 'proxy') ? (
+              <Text style={styles.attribution}>Powered by Google</Text>
+            ) : null}
           </View>
         )}
       </View>
@@ -144,7 +180,7 @@ export default function AddressEntry({
         onPress={(lat, lng) => placePin(lat, lng)}
         style={styles.map}
       >
-        {pin && (
+        {pin && MapLibreGL && (
           <MapLibreGL.PointAnnotation
             id="address-pin"
             coordinate={[pin.lng, pin.lat]}
@@ -185,13 +221,14 @@ export default function AddressEntry({
 
 const styles = StyleSheet.create({
   wrap: { gap: 8 },
+  searchWrap: { position: 'relative', zIndex: 10 },
   input: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, padding: 12, backgroundColor: '#fff' },
   dropdown: {
     position: 'absolute',
     top: 52,
     left: 0,
     right: 0,
-    zIndex: 5,
+    zIndex: 20,
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#e5e7eb',
@@ -199,6 +236,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   suggestion: { padding: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#f1f5f9' },
+  suggestionSecondary: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  attribution: { fontSize: 11, color: '#9ca3af', textAlign: 'right', paddingHorizontal: 10, paddingVertical: 4 },
   map: { height: 300 },
   info: { fontSize: 13, color: '#374151' },
   button: { padding: 14, borderRadius: 8, alignItems: 'center' },

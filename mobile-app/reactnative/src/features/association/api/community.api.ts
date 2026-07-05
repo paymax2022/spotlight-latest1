@@ -2,7 +2,7 @@
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import { USE_MOCK } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
 import type {
   Committee, CommitteeSummary, Event, EventSummary, EventRsvp,
 } from '../types/community.types';
@@ -19,7 +19,7 @@ const toCommitteeSummary = (c: Committee): CommitteeSummary => {
 
 export async function getCommittees(): Promise<CommitteeSummary[]> {
   if (USE_MOCK) { await delay(); return MOCK_COMMITTEES.map(toCommitteeSummary); }
-  const { data } = await api.get('/associations/committees');
+  const { data } = await api.get(`${BASE}/committees`);
   return data;
 }
 
@@ -30,13 +30,13 @@ export async function getCommittee(id: string): Promise<Committee> {
     if (!found) throw new Error('Committee not found');
     return found;
   }
-  const { data } = await api.get(`/associations/committees/${id}`);
+  const { data } = await api.get(`${BASE}/committees/${id}`);
   return data;
 }
 
 export async function requestJoinCommittee(id: string): Promise<{ ok: true }> {
   if (USE_MOCK) { await delay(); return { ok: true }; }
-  const { data } = await api.post(`/associations/committees/${id}/join`, {}, {
+  const { data } = await api.post(`${BASE}/committees/${id}/join`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
   return data;
@@ -51,7 +51,7 @@ const toEventSummary = (e: Event): EventSummary => {
 
 export async function getEvents(): Promise<EventSummary[]> {
   if (USE_MOCK) { await delay(); return MOCK_EVENTS.map(toEventSummary); }
-  const { data } = await api.get('/associations/events');
+  const { data } = await api.get(`${BASE}/events`);
   return data;
 }
 
@@ -62,19 +62,19 @@ export async function getEvent(id: string): Promise<Event> {
     if (!found) throw new Error('Event not found');
     return found;
   }
-  const { data } = await api.get(`/associations/events/${id}`);
+  const { data } = await api.get(`${BASE}/events/${id}`);
   return data;
 }
 
 export async function rsvpEvent(id: string, rsvp: EventRsvp): Promise<{ ok: true }> {
   if (USE_MOCK) { await delay(); return { ok: true }; }
-  const { data } = await api.post(`/associations/events/${id}/rsvp`, { rsvp });
+  const { data } = await api.post(`${BASE}/events/${id}/rsvp`, { rsvp });
   return data;
 }
 
 export async function registerEvent(id: string): Promise<{ ok: true; ticketCode: string }> {
   if (USE_MOCK) { await delay(400); return { ok: true, ticketCode: `SPOTLIGHT:EVT:${id}:ticket` }; }
-  const { data } = await api.post(`/associations/events/${id}/register`, {}, {
+  const { data } = await api.post(`${BASE}/events/${id}/register`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
   return data;
@@ -82,6 +82,6 @@ export async function registerEvent(id: string): Promise<{ ok: true; ticketCode:
 
 export async function submitEventFeedback(id: string, rating: number, comment: string): Promise<{ ok: true }> {
   if (USE_MOCK) { await delay(); return { ok: true }; }
-  const { data } = await api.post(`/associations/events/${id}/feedback`, { rating, comment });
+  const { data } = await api.post(`${BASE}/events/${id}/feedback`, { rating, comment });
   return data;
 }

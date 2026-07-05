@@ -14,7 +14,12 @@ export async function GET(request: Request, { params }: { params: { id: string }
     const steps = buildRegistrationSteps(draft);
     return successResponse({ success: true, draft, steps });
   } catch (error) {
-    return handleApiError(error, 'Failed to load registration application');
+    if (error instanceof Error && error.message === 'UNAUTHORIZED') {
+      return errorResponse('Authentication required', 401);
+    }
+    console.error('[registration/applications GET] failed for', params.id, error);
+    const detail = error instanceof Error ? error.message : 'Unknown error';
+    return errorResponse(`Failed to load registration application: ${detail}`, 500);
   }
 }
 

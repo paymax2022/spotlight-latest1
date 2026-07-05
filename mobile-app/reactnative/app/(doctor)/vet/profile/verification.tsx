@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Clock, CheckCircle2, XCircle, FileCheck2 } from 'lucide-react-native';
+import { Clock, CheckCircle2, XCircle, FileCheck2, AlertCircle, PauseCircle } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -17,8 +17,10 @@ import type { VerificationStatus } from '@/types/doctor.batch1';
 const STATUS_CONFIG: Record<VerificationStatus, { icon: LucideIcon; color: string; bg: string; title: string; sub: string }> = {
   unsubmitted: { icon: FileCheck2,   color: Colors.onSurfaceVariant, bg: Colors.surfaceContainerLow, title: 'Not submitted',           sub: 'Submit your vet profile to begin verification.' },
   pending:     { icon: Clock,        color: Colors.secondary,        bg: Colors.iconBgBlue,          title: 'Verification submitted',  sub: 'Your documents are under review. This usually takes 24–48 hours.' },
+  needs_info:  { icon: AlertCircle,  color: Colors.secondary,        bg: Colors.iconBgBlue,          title: 'More information needed', sub: 'We need a little more from you to finish verification. Please re-upload the requested documents.' },
   approved:    { icon: CheckCircle2, color: Colors.teal,             bg: Colors.iconBgTeal,          title: 'Verified',                sub: 'You are verified. Publish your vet profile to start accepting animal consults.' },
   rejected:    { icon: XCircle,      color: Colors.error,            bg: Colors.errorContainer,      title: 'Verification rejected',   sub: 'Please review the reason below and resubmit your profile.' },
+  suspended:   { icon: PauseCircle,  color: Colors.error,            bg: Colors.errorContainer,      title: 'Verification suspended',  sub: 'Your licence has expired and your verification is suspended. Please renew your licence to continue practising.' },
 };
 
 export default function VetVerificationScreen() {

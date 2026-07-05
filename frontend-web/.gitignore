@@ -20,3 +20,5 @@
 /*.pfx
 /*.jks
 # <<< AUTO-MANAGED: update-gitignore <<<
+.uploads/
+.registration-store.json

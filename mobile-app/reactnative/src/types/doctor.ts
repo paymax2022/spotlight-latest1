@@ -14,8 +14,10 @@ export type { ConsultType, ConsultStatus } from '@/types/telemedicine';
 export type VerificationStatus =
   | 'unsubmitted'  // doctor has not yet submitted documents
   | 'pending'      // submitted, awaiting review
+  | 'needs_info'   // reviewer needs more information — doctor re-submits documents
   | 'approved'     // verified, can practise
-  | 'rejected';    // rejected, must resubmit
+  | 'rejected'     // rejected, must resubmit
+  | 'suspended';   // previously approved but licence expired / suspended
 
 export interface DoctorProfile {
   id:              string;

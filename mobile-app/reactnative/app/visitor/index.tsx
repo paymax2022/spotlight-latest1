@@ -2,7 +2,11 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Plus, QrCode, History, ListChecks, ChevronRight, Bell, BarChart3, PartyPopper } from 'lucide-react-native';
+import {
+  Plus, QrCode, History, ListChecks, ChevronRight, Bell, BarChart3, PartyPopper,
+  Building2, ReceiptText, FileBarChart, Wrench, CalendarCheck, FolderOpen, Megaphone,
+  CalendarDays, Vote, Hammer, Briefcase, Sparkles, Siren, Settings,
+} from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -11,6 +15,7 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import SectionHeader from '@/components/SectionHeader';
+import ElectionHeaderBanner from '@/features/election/components/ElectionHeaderBanner';
 import AccessCodeCard from '@/features/visitor/components/AccessCodeCard';
 import VisitEventRow from '@/features/visitor/components/VisitEventRow';
 import RestrictionBanner from '@/features/visitor/components/RestrictionBanner';
@@ -21,6 +26,28 @@ const QUICK_ACTIONS = [
   { key: 'create', label: 'Invite visitor', icon: Plus,       bg: Colors.iconBgPurple, color: Colors.primary,   route: '/visitor/create' },
   { key: 'active', label: 'Active codes',   icon: ListChecks, bg: Colors.iconBgBlue,   color: Colors.secondary, route: '/visitor/active' },
   { key: 'history',label: 'History',        icon: History,    bg: Colors.iconBgTeal,   color: Colors.teal,      route: '/visitor/history' },
+] as const;
+
+// Estate-management sections — consolidated here (the occupant/tenant hub)
+// instead of scattered as separate top-level service icons. Estate community
+// features (elections, meetings, announcements, maintenance, facilities,
+// documents, AI notes) live here too — they "share visitor logic" per the PRD.
+const ESTATE_HUB = [
+  { key: 'properties',    label: 'Properties',      icon: Building2,     route: '/properties' },
+  { key: 'dues',          label: 'Dues & Rent',     icon: ReceiptText,   route: '/dues' },
+  { key: 'reports',       label: 'Reports',         icon: FileBarChart,  route: '/reports' },
+  { key: 'tasks',         label: 'Estate Tasks',    icon: ListChecks,    route: '/tasks' },
+  { key: 'maintenance',   label: 'Maintenance',     icon: Wrench,        route: '/repairs' },
+  { key: 'facilities',    label: 'Facilities',      icon: CalendarCheck, route: '/facilities' },
+  { key: 'documents',     label: 'Documents',       icon: FolderOpen,    route: '/documents' },
+  { key: 'announcements', label: 'Announcements',   icon: Megaphone,     route: '/announcements' },
+  { key: 'meetings',      label: 'Meetings',        icon: CalendarDays,  route: '/meetings' },
+  { key: 'elections',     label: 'Elections',       icon: Vote,          route: '/election/list' },
+  { key: 'vendors',       label: 'Vendors',         icon: Hammer,        route: '/vendors' },
+  { key: 'vendorPortal',  label: 'Vendor Portal',   icon: Briefcase,     route: '/vendor-portal' },
+  { key: 'aiNotes',       label: 'AI Notes',        icon: Sparkles,      route: '/ai-notes' },
+  { key: 'emergencies',   label: 'Emergencies',     icon: Siren,         route: '/emergencies' },
+  { key: 'settings',      label: 'Estate Settings', icon: Settings,      route: '/estate-settings' },
 ] as const;
 
 export default function VisitorDashboard() {
@@ -57,6 +84,9 @@ export default function VisitorDashboard() {
         {restriction.data ? (
           <RestrictionBanner status={restriction.data} onPress={() => router.push('/visitor/restricted')} />
         ) : null}
+
+        {/* Estate election banner — scoped to this module (occupant/tenant only) */}
+        <ElectionHeaderBanner />
 
         {/* Quick actions */}
         <View style={styles.actionsRow}>
@@ -106,6 +136,28 @@ export default function VisitorDashboard() {
             <BarChart3 size={18} color={Colors.teal} strokeWidth={1.8} />
             <Text style={styles.linkText}>Analytics</Text>
           </Pressable>
+        </View>
+
+        {/* Estate management — consolidated occupant/tenant hub */}
+        <SectionHeader title="Estate management" style={styles.section} />
+        <View style={styles.estateGrid}>
+          {ESTATE_HUB.map((it) => {
+            const Icon = it.icon;
+            return (
+              <Pressable
+                key={it.key}
+                onPress={() => router.push(it.route as never)}
+                accessibilityRole="button"
+                accessibilityLabel={it.label}
+                style={({ pressed }) => [styles.estateTile, pressed && styles.pressed]}
+              >
+                <View style={styles.estateIcon}>
+                  <Icon size={20} color={Colors.primary} strokeWidth={1.8} />
+                </View>
+                <Text style={styles.estateLabel} numberOfLines={2}>{it.label}</Text>
+              </Pressable>
+            );
+          })}
         </View>
 
         {/* Active codes */}
@@ -192,6 +244,10 @@ const styles = StyleSheet.create({
   linkCard: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, minHeight: 48, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.surfaceContainerLow },
   linkText: { ...Typography.labelMd, color: Colors.onSurface },
   section: { paddingHorizontal: 0, marginTop: Spacing.sm },
+  estateGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  estateTile: { width: '25%', alignItems: 'center', gap: 6, paddingVertical: Spacing.sm },
+  estateIcon: { width: 52, height: 52, borderRadius: Radius.lg, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
+  estateLabel: { ...Typography.labelSm, color: Colors.onSurface, textAlign: 'center' },
   list: { gap: Spacing.sm },
   activityCard: {
     backgroundColor: Colors.surfaceContainerLowest,

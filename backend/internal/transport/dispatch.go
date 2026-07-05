@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"net/http"
 	"time"
@@ -9,23 +10,41 @@ import (
 
 // nearbyDriver is a dispatch candidate.
 type nearbyDriver struct {
-	DriverID   string   `json:"driver_id"`
-	UserID     string   `json:"user_id"`
+	DriverID   string   `json:"driverId"`
+	UserID     string   `json:"userId"`
 	Name       string   `json:"name"`
 	Rating     float64  `json:"rating"`
-	DistanceM  float64  `json:"distance_m"`
-	CurrentLat *float64 `json:"current_lat,omitempty"`
-	CurrentLng *float64 `json:"current_lng,omitempty"`
+	DistanceM  float64  `json:"distanceM"`
+	CurrentLat *float64 `json:"currentLat,omitempty"`
+	CurrentLng *float64 `json:"currentLng,omitempty"`
 }
 
-// NearbyDrivers returns approved, online drivers within radiusM of a point.
+// NearbyDrivers returns approved, online drivers within radiusM of a point,
+// ordered nearest-first. It uses PostGIS: ST_DWithin on the drivers.geog GiST
+// index (drivers_geog_gist) filters candidates by great-circle distance in SQL
+// instead of full-scanning online drivers and computing haversine in Go, and
+// ST_Distance yields the per-driver distance in metres. Drivers whose geog is
+// NULL (coordinates never set) are excluded automatically — ST_DWithin against
+// NULL is NULL/false.
 func (s *Service) NearbyDrivers(ctx context.Context, lat, lng float64, radiusM float64) ([]nearbyDriver, error) {
+	// Cap the candidate set for the dispatcher's nearest-driver search. The admin
+	// live-board (AdminService.DispatchLive) reuses this with a sentinel radius of
+	// 1e12 m to pull *every* online driver, so an effectively-global radius disables
+	// the cap; a normal dispatch radius keeps the sensible cap.
+	const dispatchCap = 20
+	limit := dispatchCap
+	if radiusM >= 1e9 { // ~1,000,000 km: "give me everything" sentinel from admin
+		limit = 0 // 0 -> no LIMIT (see NULLIF below)
+	}
 	const q = `
-		SELECT id, user_id, name, rating, current_lat, current_lng
+		SELECT id, user_id, name, rating, current_lat, current_lng,
+		       ST_Distance(geog, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography) AS distance_m
 		FROM drivers
 		WHERE status='online' AND verification_status='approved'
-		  AND current_lat IS NOT NULL AND current_lng IS NOT NULL`
-	rows, err := s.db.Query(ctx, q)
+		  AND ST_DWithin(geog, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $3)
+		ORDER BY ST_Distance(geog, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography) ASC
+		LIMIT NULLIF($4, 0)`
+	rows, err := s.db.Query(ctx, q, lng, lat, radiusM, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -33,16 +52,12 @@ func (s *Service) NearbyDrivers(ctx context.Context, lat, lng float64, radiusM f
 	var out []nearbyDriver
 	for rows.Next() {
 		var d nearbyDriver
-		if err := rows.Scan(&d.DriverID, &d.UserID, &d.Name, &d.Rating, &d.CurrentLat, &d.CurrentLng); err != nil {
+		if err := rows.Scan(&d.DriverID, &d.UserID, &d.Name, &d.Rating, &d.CurrentLat, &d.CurrentLng, &d.DistanceM); err != nil {
 			return nil, err
 		}
-		dist := haversineM(LatLng{Lat: lat, Lng: lng}, LatLng{Lat: *d.CurrentLat, Lng: *d.CurrentLng})
-		if dist <= radiusM {
-			d.DistanceM = dist
-			out = append(out, d)
-		}
+		out = append(out, d)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // OpenRequests returns open ride requests visible to a driver (dispatch feed).
@@ -70,11 +85,11 @@ func (s *Service) OpenRequests(ctx context.Context, driverUserID string) ([]map[
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "pickup_address": pickup, "dest_address": dest,
-			"pickup": map[string]any{"lat": plat, "lng": plng},
-			"dest":   map[string]any{"lat": dlat, "lng": dlng},
-			"fare_kobo": fare, "fare_estimate_kobo": est, "pricing_mode": mode,
-			"phase": phase, "distance_m": distM, "duration_s": durS, "created_at": createdAt,
+			"id": id, "pickupAddress": pickup, "destAddress": dest,
+			"pickup":   map[string]any{"lat": plat, "lng": plng},
+			"dest":     map[string]any{"lat": dlat, "lng": dlng},
+			"fareKobo": fare, "fareEstimateKobo": est, "pricingMode": mode,
+			"phase": phase, "distanceM": distM, "durationS": durS, "createdAt": createdAt,
 		})
 	}
 	return out, nil
@@ -235,8 +250,23 @@ func (s *Service) CompleteTrip(ctx context.Context, tripID, driverUserID string)
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
+	// CRASH-SAFETY: settlement runs AFTER the completion commit because settleTrip
+	// drives the shared settlement engine, which opens its own DB tx and posts
+	// wallet ledger entries on a separate connection — it cannot be folded into the
+	// completion tx above without a larger cross-package refactor (the ledger API
+	// exposes no tx-aware Credit/Debit). If the process crashes, or Settle errors,
+	// after the trip is marked completed but before funds move, escrow is stranded.
+	// We MUST NOT swallow that: record a durable "settlement_pending" marker (a
+	// trip_events row + a mirrored flag on the trip) and log at ERROR so a
+	// reconciliation job can re-drive settleTrip (which is idempotent — each
+	// settlement's Settle is keyed on its settlement id and no-ops if already
+	// settled). Then surface a clear error to the caller.
+	// RECONCILIATION REQUIREMENT: a background job must scan trips where
+	// settlement_status='pending' (or trip_events.event_type='settlement_pending')
+	// and re-invoke settleTrip until every linked settlement reaches 'settled'.
 	if err := s.settleTrip(ctx, t); err != nil {
-		return err
+		s.markSettlementPending(ctx, t, err)
+		return fmt.Errorf("transport: trip completed but settlement failed (marked pending for reconciliation): %w", err)
 	}
 	if t.DriverID != nil {
 		s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *t.DriverID)
@@ -308,14 +338,14 @@ func (s *Service) Earnings(ctx context.Context, driverUserID string) (map[string
 		cancelRate = float64(cancelled) / float64(total)
 	}
 	return map[string]any{
-		"gross_kobo":       gross,
-		"platform_fee_kobo": platformFee,
-		"net_kobo":         net,
-		"completed_trips":  completed,
-		"cancelled_trips":  cancelled,
-		"cancel_rate":      cancelRate,
-		"commission_tier":  tier,
-		"provider_pct":     comm.ProviderPct,
-		"platform_pct":     comm.PlatformPct,
+		"grossKobo":       gross,
+		"platformFeeKobo": platformFee,
+		"netKobo":         net,
+		"completedTrips":  completed,
+		"cancelledTrips":  cancelled,
+		"cancelRate":      cancelRate,
+		"commissionTier":  tier,
+		"providerPct":     comm.ProviderPct,
+		"platformPct":     comm.PlatformPct,
 	}, nil
 }

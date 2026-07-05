@@ -217,8 +217,8 @@ func (s *Service) BusinessAccountMe(ctx context.Context, ownerID string) (map[st
 		return nil, err
 	}
 	return map[string]any{
-		"id": b.ID, "owner_id": b.OwnerID, "name": b.Name, "account_type": b.AccountType,
-		"billing_mode": b.BillingMode, "cod_enabled": b.CODEnabled, "status": b.Status,
+		"id": b.ID, "ownerId": b.OwnerID, "name": b.Name, "accountType": b.AccountType,
+		"billingMode": b.BillingMode, "codEnabled": b.CODEnabled, "status": b.Status,
 	}, nil
 }
 
@@ -255,6 +255,13 @@ func (s *Service) insertDelivery(ctx context.Context, b *businessAccountRow, sto
 	if b.BillingMode == "prepaid_wallet" {
 		if idempotencyKey == "" {
 			return "", codedErr(http.StatusBadRequest, "MISSING_IDEMPOTENCY_KEY", "idempotency key required")
+		}
+		// Fail-closed tier/spending-limit gate BEFORE the prepaid-wallet escrow (same
+		// contract as RequestRide). The monthly_invoice path below accrues (no escrow,
+		// no wallet debit) and is intentionally NOT gated here — it is billed via the
+		// admin invoice cycle, not a per-delivery wallet move.
+		if err := s.enforceTierLimit(ctx, b.OwnerID, fare); err != nil {
+			return "", err
 		}
 		ref := "business_logistics:" + deliveryID
 		sett, err := s.settlement.Escrow(ctx, b.OwnerID, ref, idempotencyKey, "transport", fare)
@@ -392,15 +399,15 @@ func (s *Service) DeliveryDetail(ctx context.Context, id, callerID string) (map[
 		}
 	}
 	out := map[string]any{
-		"id": did, "batch_id": batchID, "business_id": businessID, "courier_id": courierID,
-		"sequence": sequence, "pickup_address": pickup, "dropoff_address": dropoff,
-		"receiver_name": receiver, "receiver_phone": rphone, "parcel_size": size,
-		"cod_kobo": cod, "fare_kobo": fare, "status": status, "failure_reason": failure,
-		"proof_url": proofURL, "created_at": createdAt,
+		"id": did, "batchId": batchID, "businessId": businessID, "courierId": courierID,
+		"sequence": sequence, "pickupAddress": pickup, "dropoffAddress": dropoff,
+		"receiverName": receiver, "receiverPhone": rphone, "parcelSize": size,
+		"codKobo": cod, "fareKobo": fare, "status": status, "failureReason": failure,
+		"proofUrl": proofURL, "createdAt": createdAt,
 	}
 	// Only the owner may read the dropoff PIN (the courier verifies, never reads).
 	if isOwner {
-		out["dropoff_pin"] = dropoffPin
+		out["dropoffPin"] = dropoffPin
 	}
 	return out, nil
 }
@@ -444,9 +451,9 @@ func (s *Service) ListDeliveries(ctx context.Context, ownerID, status string) ([
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "batch_id": batchID, "courier_id": courierID, "sequence": sequence,
-			"dropoff_address": dropoff, "parcel_size": size, "cod_kobo": cod,
-			"fare_kobo": fare, "status": st, "created_at": createdAt,
+			"id": id, "batchId": batchID, "courierId": courierID, "sequence": sequence,
+			"dropoffAddress": dropoff, "parcelSize": size, "codKobo": cod,
+			"fareKobo": fare, "status": st, "createdAt": createdAt,
 		})
 	}
 	return out, nil
@@ -474,7 +481,7 @@ func (s *Service) ListBatches(ctx context.Context, ownerID string) ([]map[string
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "name": name, "total_stops": totalStops, "status": st, "created_at": createdAt,
+			"id": id, "name": name, "totalStops": totalStops, "status": st, "createdAt": createdAt,
 		})
 	}
 	return out, nil
@@ -514,13 +521,13 @@ func (s *Service) BatchDetail(ctx context.Context, id, ownerID string) (map[stri
 			return nil, err
 		}
 		stops = append(stops, map[string]any{
-			"id": sid, "courier_id": courierID, "sequence": sequence,
-			"dropoff_address": dropoff, "parcel_size": size, "fare_kobo": fare, "status": st,
+			"id": sid, "courierId": courierID, "sequence": sequence,
+			"dropoffAddress": dropoff, "parcelSize": size, "fareKobo": fare, "status": st,
 		})
 	}
 	return map[string]any{
-		"id": id, "business_id": businessID, "name": name, "total_stops": totalStops,
-		"status": status, "created_at": createdAt, "stops": stops,
+		"id": id, "businessId": businessID, "name": name, "totalStops": totalStops,
+		"status": status, "createdAt": createdAt, "stops": stops,
 	}, nil
 }
 
@@ -547,8 +554,8 @@ func (s *Service) ListInvoices(ctx context.Context, ownerID string) ([]map[strin
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "period_start": periodStart, "period_end": periodEnd,
-			"delivery_count": count, "total_kobo": total, "status": st, "created_at": createdAt,
+			"id": id, "periodStart": periodStart, "periodEnd": periodEnd,
+			"deliveryCount": count, "totalKobo": total, "status": st, "createdAt": createdAt,
 		})
 	}
 	return out, nil
@@ -573,14 +580,14 @@ func (s *Service) BusinessAnalytics(ctx context.Context, ownerID string) (map[st
 		successRate = float64(delivered) / float64(total)
 	}
 	return map[string]any{
-		"business_id":         b.ID,
-		"total_deliveries":    total,
-		"delivered":           delivered,
-		"failed":              failed,
-		"cancelled":           cancelled,
-		"success_rate":        successRate,
-		"cod_collected_kobo":  codDelivered,
-		"fare_delivered_kobo": fareDelivered,
+		"businessId":        b.ID,
+		"totalDeliveries":   total,
+		"delivered":         delivered,
+		"failed":            failed,
+		"cancelled":         cancelled,
+		"successRate":       successRate,
+		"codCollectedKobo":  codDelivered,
+		"fareDeliveredKobo": fareDelivered,
 	}, nil
 }
 
@@ -681,8 +688,8 @@ func (s *Service) OpenDeliveryRequests(ctx context.Context, driverUserID string)
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "business_id": businessID, "pickup_address": pickup, "dropoff_address": dropoff,
-			"parcel_size": size, "cod_kobo": cod, "fare_kobo": fare, "created_at": createdAt,
+			"id": id, "businessId": businessID, "pickupAddress": pickup, "dropoffAddress": dropoff,
+			"parcelSize": size, "codKobo": cod, "fareKobo": fare, "createdAt": createdAt,
 		})
 	}
 	return out, nil

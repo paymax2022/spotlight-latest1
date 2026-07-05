@@ -141,9 +141,12 @@ keys/accounts to dodge free-tier limits.**
 1. **Green CI.** Push and confirm `maps-ci.yml` passes — especially `backend`
    (build/vet/test) and `integration` (Supabase + PostGIS). This is the first
    real compile/test of the whole initiative. Fix anything red before proceeding.
-2. **Migrations.** Apply `20260626000000/000100/000200` to the live Supabase
-   (`supabase db push`). Confirm the `postgis` extension is allowed and the
-   triggers create cleanly.
+2. **Migrations.** Apply pending migrations with the local-first workflow
+   (`supabase migration up`, or `supabase db reset` to replay in dev). `supabase
+   db push` to the live project is a human-DBA, go-live-only step. Confirm the
+   `postgis` extension is allowed and the triggers create cleanly. Note the
+   dispatch geo migration `20260710000000_transport_dispatch_geo_and_shares.sql`
+   adds `drivers.geog` (used by `ST_DWithin` radius search).
 3. **OSRM.** Stand up `infra/osrm` (build the Nigeria graph, `docker compose up`),
    bind to a private network, enable the weekly refresh timer. Set
    `MAPS_OSRM_BASE_URL`.

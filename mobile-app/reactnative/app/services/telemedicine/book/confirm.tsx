@@ -11,11 +11,14 @@ import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { getDoctor, bookAppointment, formatKobo, DEMO_DOCTORS } from '@/api/telemedicine.api';
 import { getWallet } from '@/api/wallet.api';
-import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { TeleHeader } from '@/features/telemedicine/components';
-import type { ConsultType } from '@/types/telemedicine';
+import type { ConsultType, BookAppointmentResult } from '@/types/telemedicine';
 import PrimaryButton from '@/components/PrimaryButton';
+import { usePurchasePayment, PaymentSheet } from '@/features/payments';
+import { submitApptIntake } from '@/features/health/api';
+import { CONSENT_VERSION } from '@/features/health/api/preconsult.mock';
+import { getIntakeDraft, clearIntakeDraft } from '@/features/health/intakeDraftStore';
 
 const SERVICE_FEE_KOBO = 0; // platform booking fee (demo: free)
 
@@ -34,7 +37,7 @@ export default function ConfirmBookingScreen() {
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState('');
   const idemKeyRef = useRef('');
-  const inFlightRef = useRef(false);
+  const checkout = usePurchasePayment<BookAppointmentResult>();
 
   const { data: doctor } = useQuery({
     queryKey: ['tele-doctor', params.doctorId],
@@ -49,41 +52,56 @@ export default function ConfirmBookingScreen() {
   const balanceKobo = Math.round((wallet?.balance ?? 0) * 100);
   const insufficient = balanceKobo < totalKobo;
 
-  const { mutate, isPending, error } = useMutation({
+  const { mutateAsync: bookAppointmentAsync, isPending } = useMutation({
     mutationFn: bookAppointment,
-    onSuccess: (result) => {
-      inFlightRef.current = false;
-      qc.invalidateQueries({ queryKey: ['wallet'] });
-      qc.invalidateQueries({ queryKey: ['tele-appointments'] });
-      router.replace({
-        pathname: '/services/telemedicine/book/success',
-        params: {
-          ref: result.ref,
-          appointmentId: result.appointmentId,
-          doctorName: doctor?.name ?? 'your doctor',
-          slotDate: params.slotDate,
-          slotTime: params.slotTime,
-          consultType: params.consultType,
-        },
-      });
-    },
-    onError: () => { inFlightRef.current = false; },
   });
 
   const onConfirm = () => {
-    if (!doctor || inFlightRef.current || isPending) return;
-    if (insufficient) { setPinError('Top up your wallet to complete this booking.'); return; }
+    if (!doctor || isPending) return;
     if (!/^\d{4}$/.test(pin)) { setPinError('Enter your 4-digit transaction PIN.'); return; }
     setPinError('');
-    inFlightRef.current = true;
     idemKeyRef.current = generateIdempotencyKey();
-    mutate({
-      doctorId: doctor.id,
-      slotId: String(params.slotId),
-      consultType: params.consultType,
-      reason: String(params.reason ?? ''),
-      feeKobo,
-      idempotencyKey: idemKeyRef.current,
+    checkout.start({
+      amountKobo: totalKobo,
+      title: 'Consultation booking',
+      charge: () =>
+        bookAppointmentAsync({
+          doctorId: doctor.id,
+          slotId: String(params.slotId),
+          consultType: params.consultType,
+          reason: String(params.reason ?? ''),
+          feeKobo,
+          idempotencyKey: idemKeyRef.current,
+        }),
+      onPaid: async (result) => {
+        qc.invalidateQueries({ queryKey: ['wallet'] });
+        qc.invalidateQueries({ queryKey: ['tele-appointments'] });
+        // Carry the pre-booking triage (completed from the doctor profile, saved
+        // under `pre-<doctorId>`) into the real appointment + submit it, so the
+        // consult gate is satisfied and the patient isn't re-asked. Best-effort:
+        // if it fails (e.g. live consent-version mismatch), the post-booking
+        // intake remains the backstop.
+        try {
+          const pre = await getIntakeDraft(`pre-${params.doctorId}`);
+          if (pre && Object.keys(pre).length > 0) {
+            await submitApptIntake(result.appointmentId, pre, CONSENT_VERSION);
+            await clearIntakeDraft(`pre-${params.doctorId}`);
+            qc.invalidateQueries({ queryKey: ['health', 'appt-intake', result.appointmentId] });
+          }
+        } catch { /* non-blocking — booking already succeeded */ }
+        router.replace({
+          pathname: '/services/telemedicine/book/success',
+          params: {
+            ref: result.ref,
+            appointmentId: result.appointmentId,
+            doctorName: doctor?.name ?? 'your doctor',
+            slotDate: params.slotDate,
+            slotTime: params.slotTime,
+            consultType: params.consultType,
+            reason: String(params.reason ?? ''),
+          },
+        });
+      },
     });
   };
 
@@ -146,7 +164,6 @@ export default function ConfirmBookingScreen() {
             onChangeText={(t) => { setPin(t.replace(/[^0-9]/g, '')); setPinError(''); }}
           />
           {pinError ? <Text style={styles.errorText}>{pinError}</Text> : null}
-          {error ? <Text style={styles.errorText}>{getErrorMessage(error)}</Text> : null}
         </View>
       </ScrollView>
 
@@ -155,9 +172,9 @@ export default function ConfirmBookingScreen() {
           label={`Pay ${formatKobo(totalKobo)}`}
           onPress={onConfirm}
           loading={isPending}
-          disabled={insufficient}
         />
       </View>
+      <PaymentSheet controller={checkout} />
     </SafeAreaView>
   );
 }

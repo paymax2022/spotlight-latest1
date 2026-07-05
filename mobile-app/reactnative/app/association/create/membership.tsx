@@ -14,7 +14,7 @@ import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
 import WizardProgress from '@/features/association/components/WizardProgress';
 import { useOrgDraft } from '@/features/association/store/orgDraftStore';
-import { CADENCE_OPTIONS } from '@/features/association/constants/orgWizard.constants';
+import { CADENCE_OPTIONS, MEMBERSHIP_CATEGORY_OPTIONS } from '@/features/association/constants/orgWizard.constants';
 import { CADENCE_LABEL } from '@/features/association/constants/association.constants';
 import { formatNaira } from '@/features/association/utils/associationFormatters';
 import type { DuesCadence } from '@/features/association/types/association.types';
@@ -22,17 +22,20 @@ import type { DuesCadence } from '@/features/association/types/association.types
 export default function WizardMembership() {
   const { draft, addCategory, removeCategory } = useOrgDraft();
   const [touched, setTouched] = useState(false);
-  const [label, setLabel] = useState('');
+  const [category, setCategory] = useState('');   // dropdown selection
+  const [customLabel, setCustomLabel] = useState(''); // used when "Other"
   const [dues, setDues] = useState('');
   const [cadence, setCadence] = useState<DuesCadence>('ANNUAL');
 
+  // The effective category name: the picked option, or the custom text for "Other".
+  const effectiveLabel = (category === 'Other' ? customLabel : category).trim();
   const valid = draft.categories.length > 0;
 
   const onAdd = () => {
-    if (!label.trim()) return;
+    if (!effectiveLabel) return;
     const naira = parseInt(dues.replace(/[^0-9]/g, ''), 10) || 0;
-    addCategory({ id: `cat_${Date.now()}`, label: label.trim(), duesKobo: naira * 100, cadence });
-    setLabel(''); setDues('');
+    addCategory({ id: `cat_${Date.now()}`, label: effectiveLabel, duesKobo: naira * 100, cadence });
+    setCategory(''); setCustomLabel(''); setDues('');
   };
   const next = () => { setTouched(true); if (valid) router.push('/association/create/access'); };
 
@@ -63,7 +66,15 @@ export default function WizardMembership() {
         ) : null}
 
         <View style={styles.addCard}>
-          <TextInputField placeholder="Category name (e.g. Full member)" value={label} onChangeText={setLabel} />
+          <SelectField
+            placeholder="Select membership category"
+            value={category}
+            options={[...MEMBERSHIP_CATEGORY_OPTIONS]}
+            onChange={setCategory}
+          />
+          {category === 'Other' ? (
+            <TextInputField placeholder="Enter category name" value={customLabel} onChangeText={setCustomLabel} />
+          ) : null}
           <TextInputField placeholder="Dues amount (₦)" value={dues} onChangeText={setDues} keyboardType="number-pad" />
           <SelectField
             value={CADENCE_LABEL[cadence]}
@@ -74,7 +85,7 @@ export default function WizardMembership() {
             }}
             searchable={false}
           />
-          <Pressable onPress={onAdd} style={[styles.addBtn, !label.trim() && styles.addBtnDisabled]} disabled={!label.trim()} accessibilityRole="button" accessibilityLabel="Add category">
+          <Pressable onPress={onAdd} style={[styles.addBtn, !effectiveLabel && styles.addBtnDisabled]} disabled={!effectiveLabel} accessibilityRole="button" accessibilityLabel="Add category">
             <Plus size={16} color={Colors.onPrimary} strokeWidth={2.4} />
             <Text style={styles.addText}>Add category</Text>
           </Pressable>

@@ -85,7 +85,7 @@ export default function ContestDetailsScreen() {
             <View style={styles.stat}>
               <Trophy size={20} color={Colors.primary} strokeWidth={1.5} />
               <Text style={styles.statValue}>{contest.freeVotesPerDay}</Text>
-              <Text style={styles.statLabel}>Free Votes/Day</Text>
+              <Text style={styles.statLabel}>Free/contestant/day</Text>
             </View>
             <View style={styles.statDivider} />
             <View style={styles.stat}>
@@ -142,14 +142,21 @@ export default function ContestDetailsScreen() {
           {/* CTA */}
           <View style={styles.ctaRow}>
             <PrimaryButton
-              label="View All Contestants"
-              onPress={() => router.push(`/voting/contestants?contestId=${contest.id}`)}
+              label="Register / Apply to Compete"
+              onPress={() => router.push('/registration')}
             />
             <PrimaryButton
-              label="View Leaderboard"
-              onPress={() => router.push(`/voting/leaderboard?contestId=${contest.id}`)}
+              label="View All Contestants"
+              onPress={() => router.push(`/voting/contestants?contestId=${contest.id}`)}
               variant="secondary"
             />
+            {contest.showLeaderboard !== false && (
+              <PrimaryButton
+                label="View Leaderboard"
+                onPress={() => router.push(`/voting/leaderboard?contestId=${contest.id}`)}
+                variant="secondary"
+              />
+            )}
           </View>
         </View>
       </ScrollView>

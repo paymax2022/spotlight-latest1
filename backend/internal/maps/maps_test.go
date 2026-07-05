@@ -79,9 +79,10 @@ func testService(cfg SurfaceConfig, cache GeocodeCache, usage CapGuard, repo Geo
 	reg.AddMapMatcher(o)
 
 	g := NewMockProvider("google", SourceGoogle)
-	reg.AddGeocoder(g) // only used when a test points geocode -> google
+	reg.AddGeocoder(g) // default geocode/reverse route here (address lookup standardized on Google)
 	reg.AddAutocompleter(g)
 	reg.AddPlaceSearcher(g)
+	reg.AddMatrixer(g) // default matrix routes to Google Distance Matrix (delivery-fee distance/ETA)
 
 	return NewService(Deps{
 		Config: cfg, Registry: reg, Cache: cache, Usage: usage, Repo: repo, DefaultSurface: "default",
@@ -90,9 +91,33 @@ func testService(cfg SurfaceConfig, cache GeocodeCache, usage CapGuard, repo Geo
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+// osmCacheableGeocoder simulates a REAL OSM-licensed geocoder (results are
+// cacheable). MockProvider results are deliberately never cacheable — synthetic
+// answers must not poison geocode_cache — so the write-through path needs this
+// stand-in rather than the mock itself.
+type osmCacheableGeocoder struct{ *MockProvider }
+
+func (g osmCacheableGeocoder) Geocode(ctx context.Context, address string) (GeoResult, error) {
+	r, err := g.MockProvider.Geocode(ctx, address)
+	r.Cacheable = true
+	return r, err
+}
+
+func (g osmCacheableGeocoder) ReverseGeocode(ctx context.Context, lat, lng float64) (GeoResult, error) {
+	r, err := g.MockProvider.ReverseGeocode(ctx, lat, lng)
+	r.Cacheable = true
+	return r, err
+}
+
 func TestGeocodeCacheMiss_ThenHit(t *testing.T) {
 	cache := newRecordingCache()
-	svc := testService(DefaultSurfaceConfig(), cache, newFakeUsage(), fakeRepo{})
+	// Route geocode to the OSM-licensed provider so the write-through cache path is
+	// exercised. (Default geocode is Google, whose results are non-cacheable — that
+	// no-cache guarantee is covered by TestNoCacheGoogleGuard.)
+	cfg := DefaultSurfaceConfig()
+	cfg.Default[PrimGeocode] = "geoapify"
+	svc := testService(cfg, cache, newFakeUsage(), fakeRepo{})
+	svc.reg.AddGeocoder(osmCacheableGeocoder{NewMockProvider("geoapify", SourceOpenStack)})
 	ctx := context.Background()
 
 	// Miss: provider is called, OSM result is cached.
@@ -198,8 +223,8 @@ func TestDistanceMatrixRouting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("matrix: %v", err)
 	}
-	if m.Provider != "osrm" || m.Source != SourceOpenStack {
-		t.Fatalf("expected osrm/openstack, got %s/%s", m.Provider, m.Source)
+	if m.Provider != "google" || m.Source != SourceGoogle {
+		t.Fatalf("expected google/google (Distance Matrix), got %s/%s", m.Provider, m.Source)
 	}
 	if len(m.Rows) != 2 || len(m.Rows[0]) != 3 {
 		t.Fatalf("expected 2x3 matrix, got %dx?", len(m.Rows))

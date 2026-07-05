@@ -31,14 +31,15 @@ import {
   MOCK_COMMENTS,
 } from './crowdfundingExtras.mock';
 
-const USE_MOCK = true;
+const USE_MOCK = process.env.EXPO_PUBLIC_CF_USE_MOCK !== 'false';
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
 // ─── Wallet & ledger ──────────────────────────────────────────────────────────
 
 export async function getCampaignWallet(campaignId?: string): Promise<CampaignWalletSummary> {
   if (USE_MOCK) { await delay(200); return MOCK_WALLET; }
-  const res = await api.get(`/crowdfunding/campaigns/${campaignId}/wallet`);
+  // Proxy: /api/v1/crowdfunding/wallet/[id] → Go GET /api/finance/crowdfunding/campaigns/:id/wallet
+  const res = await api.get(`/api/v1/crowdfunding/wallet/${campaignId}`);
   return res.data?.data ?? res.data;
 }
 
@@ -47,7 +48,9 @@ export async function getLedger(campaignId?: string, type?: string): Promise<Led
     await delay();
     return type ? MOCK_LEDGER.filter((e) => e.type === type) : MOCK_LEDGER;
   }
-  const res = await api.get(`/crowdfunding/campaigns/${campaignId}/ledger`, { params: { type } });
+  // Proxy: /api/v1/crowdfunding/ledger/[id] → Go GET /api/finance/crowdfunding/campaigns/:id/ledger
+  // NOTE: [id] here is the CAMPAIGN id (the feed), not a ledger entry id.
+  const res = await api.get(`/api/v1/crowdfunding/ledger/${campaignId}`, { params: { type } });
   return res.data?.data ?? res.data;
 }
 
@@ -58,19 +61,22 @@ export async function getLedgerEntry(id: string): Promise<LedgerEntry> {
     if (!found) throw new Error('Entry not found');
     return found;
   }
-  const res = await api.get(`/crowdfunding/ledger/${id}`);
+  // Proxy: /api/v1/crowdfunding/ledger-entry/[id] → Go GET /api/finance/crowdfunding/ledger/:id
+  const res = await api.get(`/api/v1/crowdfunding/ledger-entry/${id}`);
   return res.data?.data ?? res.data;
 }
 
 export async function getBankAccounts(): Promise<BankAccount[]> {
   if (USE_MOCK) { await delay(180); return MOCK_BANK_ACCOUNTS; }
-  const res = await api.get('/crowdfunding/bank-accounts');
+  const res = await api.get('/api/v1/crowdfunding/bank-accounts');
   return res.data?.data ?? res.data;
 }
 
 export async function submitWithdrawal(input: WithdrawalRequestInput, idempotencyKey: string): Promise<{ reference: string; status: string }> {
   if (USE_MOCK) { await delay(800); return { reference: `SPL-WD-${Date.now()}`, status: 'PENDING' }; }
-  const res = await api.post(`/crowdfunding/campaigns/${input.campaignId}/withdrawal-request`, input, {
+  // Proxy: /api/v1/crowdfunding/withdraw/[id] → Go POST /api/finance/crowdfunding/campaigns/:id/withdrawal-request
+  // Money mutation — the proxy route rejects the request if Idempotency-Key is missing.
+  const res = await api.post(`/api/v1/crowdfunding/withdraw/${input.campaignId}`, input, {
     headers: { 'Idempotency-Key': idempotencyKey },
   });
   return res.data?.data ?? res.data;
@@ -80,7 +86,7 @@ export async function submitWithdrawal(input: WithdrawalRequestInput, idempotenc
 
 export async function getHelpArticles(): Promise<HelpArticle[]> {
   if (USE_MOCK) { await delay(160); return MOCK_HELP; }
-  const res = await api.get('/crowdfunding/help');
+  const res = await api.get('/api/v1/crowdfunding/help');
   return res.data?.data ?? res.data;
 }
 
@@ -89,7 +95,7 @@ export async function getTickets(): Promise<SupportTicket[]> {
     await delay();
     return [...MOCK_TICKETS].sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt));
   }
-  const res = await api.get('/crowdfunding/support/tickets');
+  const res = await api.get('/api/v1/crowdfunding/support/tickets');
   return res.data?.data ?? res.data;
 }
 
@@ -100,7 +106,7 @@ export async function getTicket(id: string): Promise<SupportTicket> {
     if (!found) throw new Error('Ticket not found');
     return found;
   }
-  const res = await api.get(`/crowdfunding/support/tickets/${id}`);
+  const res = await api.get(`/api/v1/crowdfunding/support/tickets/${id}`);
   return res.data?.data ?? res.data;
 }
 
@@ -116,7 +122,7 @@ export async function createTicket(input: CreateTicketInput): Promise<SupportTic
     MOCK_TICKETS.unshift(ticket);
     return ticket;
   }
-  const res = await api.post('/crowdfunding/support/tickets', input);
+  const res = await api.post('/api/v1/crowdfunding/support/tickets', input);
   return res.data?.data ?? res.data;
 }
 
@@ -128,7 +134,7 @@ export async function replyTicket(ticketId: string, body: string): Promise<Ticke
     if (t) { t.messages.push(msg); t.updatedAt = msg.createdAt; t.status = 'PENDING'; }
     return msg;
   }
-  const res = await api.post(`/crowdfunding/support/tickets/${ticketId}/reply`, { body });
+  const res = await api.post(`/api/v1/crowdfunding/support/tickets/${ticketId}/reply`, { body });
   return res.data?.data ?? res.data;
 }
 
@@ -136,13 +142,13 @@ export async function replyTicket(ticketId: string, body: string): Promise<Ticke
 
 export async function getNotifications(): Promise<AppNotification[]> {
   if (USE_MOCK) { await delay(200); return MOCK_NOTIFICATIONS; }
-  const res = await api.get('/crowdfunding/notifications');
+  const res = await api.get('/api/v1/crowdfunding/notifications');
   return res.data?.data ?? res.data;
 }
 
 export async function markNotificationsRead(): Promise<void> {
   if (USE_MOCK) { await delay(120); MOCK_NOTIFICATIONS.forEach((n) => (n.read = true)); return; }
-  await api.post('/crowdfunding/notifications/read');
+  await api.post('/api/v1/crowdfunding/notifications/read');
 }
 
 // ─── Reward fulfilment ────────────────────────────────────────────────────────
@@ -152,7 +158,7 @@ export async function getRewardBackers(status?: string): Promise<RewardBacker[]>
     await delay();
     return status ? MOCK_BACKERS.filter((b) => b.status === status) : MOCK_BACKERS;
   }
-  const res = await api.get('/crowdfunding/rewards/backers', { params: { status } });
+  const res = await api.get('/api/v1/crowdfunding/rewards/backers', { params: { status } });
   return res.data?.data ?? res.data;
 }
 
@@ -163,20 +169,20 @@ export async function updateRewardStatus(backerId: string, status: RewardFulfilm
     if (b) b.status = status;
     return;
   }
-  await api.put(`/crowdfunding/rewards/fulfilment/${backerId}`, { status });
+  await api.put(`/api/v1/crowdfunding/rewards/fulfilment/${backerId}`, { status });
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
 export async function getNotificationPrefs(): Promise<NotificationPrefs> {
   if (USE_MOCK) { await delay(160); return { ...MOCK_NOTIFICATION_PREFS }; }
-  const res = await api.get('/crowdfunding/settings/notifications');
+  const res = await api.get('/api/v1/crowdfunding/settings/notifications');
   return res.data?.data ?? res.data;
 }
 
 export async function updateNotificationPrefs(prefs: NotificationPrefs): Promise<NotificationPrefs> {
   if (USE_MOCK) { await delay(200); Object.assign(MOCK_NOTIFICATION_PREFS, prefs); return prefs; }
-  const res = await api.put('/crowdfunding/settings/notifications', prefs);
+  const res = await api.put('/api/v1/crowdfunding/settings/notifications', prefs);
   return res.data?.data ?? res.data;
 }
 
@@ -189,7 +195,7 @@ export async function getComments(campaignId: string): Promise<CampaignComment[]
       .filter((c) => c.campaignId === campaignId)
       .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
-  const res = await api.get(`/crowdfunding/campaigns/${campaignId}/comments`);
+  const res = await api.get(`/api/v1/crowdfunding/campaigns/${campaignId}/comments`);
   return res.data?.data ?? res.data;
 }
 
@@ -203,7 +209,7 @@ export async function postComment(campaignId: string, body: string, isQuestion: 
     MOCK_COMMENTS.unshift(comment);
     return comment;
   }
-  const res = await api.post(`/crowdfunding/campaigns/${campaignId}/comments`, { body, isQuestion });
+  const res = await api.post(`/api/v1/crowdfunding/campaigns/${campaignId}/comments`, { body, isQuestion });
   return res.data?.data ?? res.data;
 }
 
@@ -214,7 +220,7 @@ export async function replyComment(commentId: string, body: string): Promise<voi
     if (c) c.replies.push({ id: `rp${Date.now()}`, authorName: 'You (creator)', body, createdAt: new Date().toISOString(), isCreator: true });
     return;
   }
-  await api.post(`/crowdfunding/comments/${commentId}/reply`, { body });
+  await api.post(`/api/v1/crowdfunding/comments/${commentId}/reply`, { body });
 }
 
 export async function reportComment(commentId: string): Promise<void> {
@@ -224,17 +230,17 @@ export async function reportComment(commentId: string): Promise<void> {
     if (c) c.reported = true;
     return;
   }
-  await api.post(`/crowdfunding/comments/${commentId}/report`);
+  await api.post(`/api/v1/crowdfunding/comments/${commentId}/report`);
 }
 
 export async function postCampaignUpdate(input: PostUpdateInput): Promise<{ id: string }> {
   if (USE_MOCK) { await delay(600); return { id: `up${Date.now()}` }; }
-  const res = await api.post(`/crowdfunding/campaigns/${input.campaignId}/updates`, input);
+  const res = await api.post(`/api/v1/crowdfunding/campaigns/${input.campaignId}/updates`, input);
   return res.data?.data ?? res.data;
 }
 
 export async function broadcastToContributors(input: BroadcastInput): Promise<{ recipients: number }> {
   if (USE_MOCK) { await delay(600); return { recipients: 412 }; }
-  const res = await api.post(`/crowdfunding/campaigns/${input.campaignId}/broadcast`, input);
+  const res = await api.post(`/api/v1/crowdfunding/campaigns/${input.campaignId}/broadcast`, input);
   return res.data?.data ?? res.data;
 }

@@ -4,11 +4,22 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/internal/platform/ws"
 )
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc *Service
+	hub *ws.Hub
+}
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// WithRealtime attaches the WS hub used for the per-order live channel.
+func (h *Handler) WithRealtime(hub *ws.Hub) *Handler {
+	h.hub = hub
+	return h
+}
 
 func (h *Handler) Create(c *gin.Context) {
 	userID := c.GetString("user_id")
@@ -38,6 +49,71 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, order)
+}
+
+// DeliveryQuote previews the delivery fee for a destination before order placement.
+// POST /restaurant/:id/delivery-quote  body {lat,lng[,night,weather]}.
+func (h *Handler) DeliveryQuote(c *gin.Context) {
+	var body struct {
+		Lat     float64 `json:"lat" binding:"required"`
+		Lng     float64 `json:"lng" binding:"required"`
+		Night   *bool   `json:"night,omitempty"`
+		Weather *bool   `json:"weather,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	q, err := h.svc.QuoteDelivery(c.Request.Context(), c.Param("id"), body.Lat, body.Lng, body.Night, body.Weather)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, q)
+}
+
+// GetDeliveryConfig returns the effective/stored delivery-fee config (admin).
+// GET /restaurant/admin/delivery-config?restaurant_id=
+func (h *Handler) GetDeliveryConfig(c *gin.Context) {
+	var restaurantID *string
+	if rid := c.Query("restaurant_id"); rid != "" {
+		restaurantID = &rid
+	}
+	row, err := h.svc.GetDeliveryConfig(c.Request.Context(), restaurantID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, row)
+}
+
+// PutDeliveryConfig upserts the delivery-fee config (admin).
+// PUT /restaurant/admin/delivery-config
+//
+//	body { restaurant_id?: string|null, ...DeliveryFeeConfig fields, active }
+func (h *Handler) PutDeliveryConfig(c *gin.Context) {
+	var body struct {
+		RestaurantID *string `json:"restaurant_id"`
+		Active       *bool   `json:"active"`
+		DeliveryFeeConfig
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	active := true
+	if body.Active != nil {
+		active = *body.Active
+	}
+	if body.RestaurantID != nil && *body.RestaurantID == "" {
+		body.RestaurantID = nil
+	}
+	row, err := h.svc.SetDeliveryConfig(c.Request.Context(), body.RestaurantID, body.DeliveryFeeConfig, active)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, row)
 }
 
 func (h *Handler) UpdateStatus(c *gin.Context) {

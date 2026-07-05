@@ -129,11 +129,11 @@ type ParcelVerifyDropoffRequest struct {
 
 // ParcelEstimate is the estimate response.
 type ParcelEstimate struct {
-	DistanceM      int   `json:"distance_m"`
-	DurationS      int   `json:"duration_s"`
-	FareKobo       int64 `json:"fare_kobo"`
-	SizeMultiplier float64 `json:"size_multiplier"`
-	SpeedMultiplier float64 `json:"speed_multiplier"`
+	DistanceM      int   `json:"distanceM"`
+	DurationS      int   `json:"durationS"`
+	FareKobo       int64 `json:"fareKobo"`
+	SizeMultiplier float64 `json:"sizeMultiplier"`
+	SpeedMultiplier float64 `json:"speedMultiplier"`
 }
 
 // ─── Service methods ─────────────────────────────────────────────────────────
@@ -210,6 +210,12 @@ func (s *Service) BookParcel(ctx context.Context, senderID string, req ParcelBoo
 	}
 	fare := parcelFare(route.DistanceM, route.DurationS, size, speed, cfg)
 
+	// Fail-closed tier/spending-limit gate BEFORE any wallet escrow (same contract
+	// as RequestRide): a Tier0/over-limit sender cannot move money.
+	if err := s.enforceTierLimit(ctx, senderID, fare); err != nil {
+		return nil, err
+	}
+
 	parcelID := uuid.New().String()
 	ref := "parcel:" + parcelID
 	sett, err := s.settlement.Escrow(ctx, senderID, ref, idempotencyKey, "transport", fare)
@@ -272,17 +278,17 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 		}
 	}
 	out := map[string]any{
-		"id": pid, "sender_id": senderID, "courier_id": courierID,
-		"pickup_address": pickup, "dropoff_address": dropoff,
-		"receiver_name": receiver, "receiver_phone": rphone,
+		"id": pid, "senderId": senderID, "courierId": courierID,
+		"pickupAddress": pickup, "dropoffAddress": dropoff,
+		"receiverName": receiver, "receiverPhone": rphone,
 		"category": category, "size": size, "speed": speed,
-		"declared_value_kobo": declared, "fare_kobo": fare, "status": status,
-		"photo_url": photoURL, "proof_url": proofURL, "distance_m": distM, "created_at": createdAt,
+		"declaredValueKobo": declared, "fareKobo": fare, "status": status,
+		"photoUrl": photoURL, "proofUrl": proofURL, "distanceM": distM, "createdAt": createdAt,
 	}
 	// Only the sender may read the PINs (courier verifies, never reads).
 	if isSender {
-		out["pickup_pin"] = pickupPin
-		out["dropoff_pin"] = dropoffPin
+		out["pickupPin"] = pickupPin
+		out["dropoffPin"] = dropoffPin
 	}
 	return out, nil
 }
@@ -306,8 +312,8 @@ func (s *Service) ListParcels(ctx context.Context, senderID string) ([]map[strin
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "pickup_address": pickup, "dropoff_address": dropoff,
-			"category": category, "size": size, "fare_kobo": fare, "status": status, "created_at": createdAt,
+			"id": id, "pickupAddress": pickup, "dropoffAddress": dropoff,
+			"category": category, "size": size, "fareKobo": fare, "status": status, "createdAt": createdAt,
 		})
 	}
 	return out, nil
@@ -378,9 +384,9 @@ func (s *Service) OpenParcelRequests(ctx context.Context, driverUserID string) (
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "pickup_address": pickup, "dropoff_address": dropoff,
+			"id": id, "pickupAddress": pickup, "dropoffAddress": dropoff,
 			"category": category, "size": size, "speed": speed,
-			"fare_kobo": fare, "distance_m": distM, "created_at": createdAt,
+			"fareKobo": fare, "distanceM": distM, "createdAt": createdAt,
 		})
 	}
 	return out, nil

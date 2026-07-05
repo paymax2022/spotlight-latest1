@@ -130,15 +130,27 @@ func (h *Handler) ActiveRide(c *gin.Context) {
 	c.JSON(http.StatusOK, detail)
 }
 
-// ShareRide returns a live-share token.
+// ShareRide returns a live-share link ({shareToken, url, expiresAt}).
 func (h *Handler) ShareRide(c *gin.Context) {
 	userID := c.GetString("user_id")
-	token, err := h.svc.ShareToken(c.Request.Context(), c.Param("id"), userID)
+	link, err := h.svc.ShareToken(c.Request.Context(), c.Param("id"), userID)
 	if err != nil {
 		respondErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"share_token": token})
+	c.JSON(http.StatusOK, link)
+}
+
+// ResolveShare resolves a live-share token to a public tracking view. Intentionally
+// token-authenticated (no user session) so a share link is openable by anyone with
+// the link; returns only non-sensitive fields (never the trip PIN).
+func (h *Handler) ResolveShare(c *gin.Context) {
+	view, err := h.svc.ResolveShare(c.Request.Context(), c.Param("token"))
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, view)
 }
 
 // SOS creates a safety incident from the rider.

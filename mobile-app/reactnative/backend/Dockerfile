@@ -5,8 +5,8 @@
 FROM golang:1.22-alpine AS build
 WORKDIR /src
 
-# Module cache layer (no external deps, but keeps caching correct if any are added).
-COPY go.mod ./
+# Module cache layer — go.sum must be committed (run `go mod tidy` locally).
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .

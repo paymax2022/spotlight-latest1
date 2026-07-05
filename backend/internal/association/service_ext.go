@@ -2,8 +2,10 @@ package association
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/google/uuid"
@@ -256,16 +258,29 @@ func (s *Service) ReplyTicket(ctx context.Context, userID, ticketID, body string
 // ─── Chat ─────────────────────────────────────────────────────────────────────
 
 func (s *Service) GetChatThreads(ctx context.Context, userID string) ([]ChatThreadSummary, error) {
-	_, orgID, err := s.primaryMembership(ctx, userID)
+	mid, orgID, err := s.primaryMembership(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
+	// Threads are organisation-scoped, so memberCount is the org's active
+	// membership count. unreadCount = messages after the caller's last_read_at
+	// (default 'epoch' → all messages unread until first viewed). muted comes
+	// from the per-member thread-state row (absent → false).
 	const q = `
 		SELECT t.id, t.title, t.scope, t.posting_block,
 		       COALESCE((SELECT body FROM assoc_chat_messages m WHERE m.thread_id=t.id ORDER BY created_at DESC LIMIT 1), ''),
-		       COALESCE((SELECT to_char(created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"') FROM assoc_chat_messages m WHERE m.thread_id=t.id ORDER BY created_at DESC LIMIT 1), to_char(t.created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
-		FROM assoc_chat_threads t WHERE t.organisation_id=$1 ORDER BY 6 DESC`
-	rows, err := s.db.Query(ctx, q, orgID)
+		       COALESCE((SELECT to_char(created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"') FROM assoc_chat_messages m WHERE m.thread_id=t.id ORDER BY created_at DESC LIMIT 1), to_char(t.created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')),
+		       COALESCE(st.muted, false),
+		       (SELECT count(*) FROM assoc_chat_messages m
+		          WHERE m.thread_id=t.id
+		            AND m.created_at > COALESCE(st.last_read_at, 'epoch'::timestamptz)
+		            AND m.author_id IS DISTINCT FROM $2::uuid),
+		       (SELECT count(*) FROM assoc_memberships mm WHERE mm.organisation_id=$1 AND mm.status='ACTIVE')
+		FROM assoc_chat_threads t
+		LEFT JOIN assoc_chat_thread_state st ON st.thread_id=t.id AND st.membership_id=$3
+		WHERE t.organisation_id=$1
+		ORDER BY 6 DESC`
+	rows, err := s.db.Query(ctx, q, orgID, userID, mid)
 	if err != nil {
 		return nil, fmt.Errorf("association: list threads: %w", err)
 	}
@@ -273,7 +288,8 @@ func (s *Service) GetChatThreads(ctx context.Context, userID string) ([]ChatThre
 	out := []ChatThreadSummary{}
 	for rows.Next() {
 		var t ChatThreadSummary
-		if err := rows.Scan(&t.ID, &t.Title, &t.Scope, &t.PostingBlock, &t.LastMessage, &t.LastAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Title, &t.Scope, &t.PostingBlock, &t.LastMessage, &t.LastAt,
+			&t.Muted, &t.UnreadCount, &t.MemberCount); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -282,9 +298,21 @@ func (s *Service) GetChatThreads(ctx context.Context, userID string) ([]ChatThre
 }
 
 func (s *Service) GetChatThread(ctx context.Context, userID, threadID string) (*ChatThread, error) {
+	mid, orgID, err := s.primaryMembership(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	t := &ChatThread{}
-	const q = `SELECT id, title, scope, posting_block, description FROM assoc_chat_threads WHERE id=$1`
-	if err := s.db.QueryRow(ctx, q, threadID).Scan(&t.ID, &t.Title, &t.Scope, &t.PostingBlock, &t.Description); err != nil {
+	const q = `
+		SELECT t.id, t.title, t.scope, t.posting_block, t.description,
+		       COALESCE(st.muted, false),
+		       (SELECT count(*) FROM assoc_memberships mm WHERE mm.organisation_id=$2 AND mm.status='ACTIVE')
+		FROM assoc_chat_threads t
+		LEFT JOIN assoc_chat_thread_state st ON st.thread_id=t.id AND st.membership_id=$3
+		WHERE t.id=$1`
+	if err := s.db.QueryRow(ctx, q, threadID, orgID, mid).Scan(
+		&t.ID, &t.Title, &t.Scope, &t.PostingBlock, &t.Description, &t.Muted, &t.MemberCount,
+	); err != nil {
 		return nil, fmt.Errorf("association: thread not found: %w", err)
 	}
 	const qm = `
@@ -306,7 +334,43 @@ func (s *Service) GetChatThread(ctx context.Context, userID, threadID string) (*
 		m.AuthorName = "Member"
 		t.Messages = append(t.Messages, m)
 	}
-	return t, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Viewing the thread marks it read: upsert last_read_at=now() so subsequent
+	// unread counts reset. Best-effort — a write failure must not block the read.
+	_ = s.markThreadRead(ctx, mid, threadID)
+	t.UnreadCount = 0
+	return t, nil
+}
+
+// markThreadRead upserts the caller's thread-state row with last_read_at=now(),
+// preserving any existing mute preference.
+func (s *Service) markThreadRead(ctx context.Context, membershipID, threadID string) error {
+	const q = `
+		INSERT INTO assoc_chat_thread_state (thread_id, membership_id, last_read_at, updated_at)
+		VALUES ($1, $2, now(), now())
+		ON CONFLICT (thread_id, membership_id)
+		DO UPDATE SET last_read_at = now(), updated_at = now()`
+	_, err := s.db.Exec(ctx, q, threadID, membershipID)
+	return err
+}
+
+// MuteThread persists the caller's per-thread mute preference. Idempotent.
+func (s *Service) MuteThread(ctx context.Context, userID, threadID string, muted bool) error {
+	mid, _, err := s.primaryMembership(ctx, userID)
+	if err != nil {
+		return err
+	}
+	const q = `
+		INSERT INTO assoc_chat_thread_state (thread_id, membership_id, muted, updated_at)
+		VALUES ($1, $2, $3, now())
+		ON CONFLICT (thread_id, membership_id)
+		DO UPDATE SET muted = $3, updated_at = now()`
+	if _, err := s.db.Exec(ctx, q, threadID, mid, muted); err != nil {
+		return fmt.Errorf("association: mute thread: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) SendChatMessage(ctx context.Context, userID, threadID, body string) (*ChatMessage, error) {
@@ -388,6 +452,14 @@ func (s *Service) CreateAiNote(ctx context.Context, userID string, in CreateAiNo
 }
 
 func (s *Service) SetAiNoteStatus(ctx context.Context, adminID, noteID, status, action string) error {
+	// Authorization: approving/publishing meeting minutes is an admin-style
+	// mutation. Guard with requireAssocAdmin (any admin role, SECRETARY-or-above)
+	// — matching ConfirmImport and the other admin mutations in this package, and
+	// the doctrine that a human admin/secretary reviews minutes before publish.
+	// Fail-closed: a plain member gets ErrForbidden and no row is written.
+	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
+		return err
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
@@ -479,13 +551,92 @@ func (s *Service) SubmitApplication(ctx context.Context, userID string, d JoinDr
 
 // ─── Bulk import (admin) ──────────────────────────────────────────────────────
 
-func (s *Service) ImportPreview(ctx context.Context, adminID string) (*ImportPreview, error) {
-	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
+func (s *Service) ImportPreview(ctx context.Context, adminID, orgID, fileName string, r io.Reader) (*ImportPreview, error) {
+	if err := s.requireCap(ctx, adminID, func(c AdminCapabilities) bool { return c.ImportMembers }); err != nil {
 		return nil, err
 	}
-	// Real implementation parses the uploaded file; this wave returns an empty
-	// preview (the client supplies rows during the column-mapping step).
-	return &ImportPreview{Rows: []ImportRow{}}, nil
+	// Resolve the target organisation: explicit org_id wins, else the caller's
+	// primary membership. Duplicate detection is scoped to this org.
+	if orgID == "" {
+		_, oid, err := s.primaryMembership(ctx, adminID)
+		if err != nil {
+			return nil, err
+		}
+		orgID = oid
+	}
+
+	cr := csv.NewReader(r)
+	cr.TrimLeadingSpace = true
+	cr.FieldsPerRecord = -1 // tolerate ragged rows
+
+	// Skip the header row (same shape as BulkImportMembers:
+	// name,email,phone,member_code,category_label,chapter_label).
+	if _, err := cr.Read(); err != nil {
+		if err == io.EOF {
+			return &ImportPreview{FileName: fileName, Rows: []ImportRow{}}, nil
+		}
+		return nil, fmt.Errorf("association: preview: read header: %w", err)
+	}
+
+	preview := &ImportPreview{FileName: fileName, Rows: []ImportRow{}}
+	seen := map[string]bool{} // in-file dedupe by lowercased email
+	rowNum := 0
+	for {
+		rec, err := cr.Read()
+		if err == io.EOF {
+			break
+		}
+		rowNum++
+		if err != nil {
+			issue := "Malformed row"
+			preview.Invalid++
+			preview.Rows = append(preview.Rows, ImportRow{RowNum: rowNum, Issue: &issue})
+			continue
+		}
+		parsed := parseImportRow(rec)
+		row := ImportRow{
+			RowNum:  rowNum,
+			Name:    parsed.Name,
+			Email:   parsed.Email,
+			Phone:   parsed.Phone,
+			Chapter: parsed.ChapterLabel,
+		}
+
+		// Invalid: missing/!looks-like email.
+		email := strings.ToLower(strings.TrimSpace(parsed.Email))
+		if email == "" || !strings.Contains(email, "@") {
+			issue := "Missing or invalid email"
+			row.Issue = &issue
+			preview.Invalid++
+			preview.Rows = append(preview.Rows, row)
+			continue
+		}
+
+		// Duplicate: repeated within the file, or already an active member of org.
+		dup := seen[email]
+		if !dup {
+			var existing int
+			_ = s.db.QueryRow(ctx, `
+				SELECT count(*) FROM assoc_memberships m
+				JOIN auth.users u ON u.id = m.user_id
+				WHERE m.organisation_id=$1 AND lower(u.email)=$2`,
+				orgID, email).Scan(&existing)
+			dup = existing > 0
+		}
+		seen[email] = true
+		if dup {
+			issue := "Already a member"
+			row.Issue = &issue
+			preview.Duplicates++
+			preview.Rows = append(preview.Rows, row)
+			continue
+		}
+
+		preview.Valid++
+		preview.Rows = append(preview.Rows, row)
+	}
+	preview.Total = rowNum
+	return preview, nil
 }
 
 func (s *Service) ConfirmImport(ctx context.Context, adminID string, sendInvites bool, preview ImportPreview) (*ImportResult, error) {

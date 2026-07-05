@@ -1,6 +1,7 @@
 package va
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -24,7 +25,17 @@ func (h *Handler) GetMe(c *gin.Context) {
 	}
 	va, err := h.svc.GetOrProvision(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		switch {
+		case errors.Is(err, ErrTierTooLow):
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "Complete Tier 1 (BVN) verification to get a virtual account.",
+				"code":  "tier_required",
+			})
+		case errors.Is(err, ErrProviderUnavailable):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Virtual accounts are temporarily unavailable."})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
 		return
 	}
 	c.JSON(http.StatusOK, va)

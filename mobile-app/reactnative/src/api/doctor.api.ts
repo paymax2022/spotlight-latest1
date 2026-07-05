@@ -82,7 +82,8 @@ export const DEMO_VERIFICATION: VerificationSubmission = {
     { type: 'government_id',     label: 'Government ID',       fileName: 'nin.jpg',        uploadedAt: new Date(Date.now() - 30 * 86400000).toISOString() },
     { type: 'passport_photo',    label: 'Passport Photo',     fileName: 'passport.jpg',   uploadedAt: new Date(Date.now() - 30 * 86400000).toISOString() },
   ],
-  notes: 'Credentials verified against the MDCN register.',
+  // PRIVACY: internal/reviewer-only — never surfaced on the doctor's screens.
+  notes: 'Verification complete.',
 };
 
 const PATIENT_TUNDE = { id: 'pat-1', name: 'Tunde Akinwale', initials: 'TA', avatarColor: Colors.secondary, age: 34, gender: 'male' as const };

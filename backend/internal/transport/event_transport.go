@@ -119,11 +119,11 @@ func (s *Service) ListEventOffers(ctx context.Context, eventID string) ([]map[st
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "event_id": eventIDv, "organizer_id": organizerID, "type": offerType, "title": title,
-			"venue_address": venueAddr, "venue_lat": venueLat, "venue_lng": venueLng,
-			"geofence_radius_m": radius, "capacity": capacity, "booked_count": booked,
-			"seats_left": capacity - booked, "fare_kobo": fare, "departure_time": departure,
-			"status": status, "created_at": createdAt,
+			"id": id, "eventId": eventIDv, "organizerId": organizerID, "type": offerType, "title": title,
+			"venueAddress": venueAddr, "venueLat": venueLat, "venueLng": venueLng,
+			"geofenceRadiusM": radius, "capacity": capacity, "bookedCount": booked,
+			"seatsLeft": capacity - booked, "fareKobo": fare, "departureTime": departure,
+			"status": status, "createdAt": createdAt,
 		})
 	}
 	return out, nil
@@ -153,11 +153,11 @@ func (s *Service) EventOfferDetail(ctx context.Context, id string) (map[string]a
 		return nil, codedErr(http.StatusNotFound, CodeNotFound, "offer not found")
 	}
 	return map[string]any{
-		"id": oid, "event_id": eventID, "organizer_id": organizerID, "type": offerType, "title": title,
-		"venue_address": venueAddr, "venue_lat": venueLat, "venue_lng": venueLng,
-		"geofence_radius_m": radius, "capacity": capacity, "booked_count": booked,
-		"seats_left": capacity - booked, "fare_kobo": fare, "departure_time": departure,
-		"bus_schedule_id": busSchedID, "promo_code": promo, "status": status, "created_at": createdAt,
+		"id": oid, "eventId": eventID, "organizerId": organizerID, "type": offerType, "title": title,
+		"venueAddress": venueAddr, "venueLat": venueLat, "venueLng": venueLng,
+		"geofenceRadiusM": radius, "capacity": capacity, "bookedCount": booked,
+		"seatsLeft": capacity - booked, "fareKobo": fare, "departureTime": departure,
+		"busScheduleId": busSchedID, "promoCode": promo, "status": status, "createdAt": createdAt,
 	}, nil
 }
 
@@ -189,6 +189,12 @@ func (s *Service) BookEventTransport(ctx context.Context, userID, offerID string
 		return nil, codedErr(http.StatusConflict, CodeInvalidState, "offer not open for booking")
 	}
 	total := fareKobo * int64(req.Seats)
+
+	// Fail-closed tier/spending-limit gate BEFORE any wallet escrow (same contract
+	// as RequestRide). Gate on the FULL debit (fare × seats), not the per-seat fare.
+	if err := s.enforceTierLimit(ctx, userID, total); err != nil {
+		return nil, err
+	}
 
 	bookingID := uuid.New().String()
 	ref := "event_transport:" + bookingID
@@ -281,8 +287,8 @@ func (s *Service) EventBookingDetail(ctx context.Context, id, userID string) (ma
 		return nil, codedErr(http.StatusForbidden, CodeForbidden, "not your booking")
 	}
 	return map[string]any{
-		"id": bid, "offer_id": offerID, "user_id": uid, "ticket_ref": ticketRef,
-		"seats": seats, "fare_kobo": fare, "qr_code": qr, "status": status, "created_at": createdAt,
+		"id": bid, "offerId": offerID, "userId": uid, "ticketRef": ticketRef,
+		"seats": seats, "fareKobo": fare, "qrCode": qr, "status": status, "createdAt": createdAt,
 	}, nil
 }
 
@@ -311,9 +317,9 @@ func (s *Service) ListEventBookings(ctx context.Context, userID string) ([]map[s
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "offer_id": offerID, "ticket_ref": ticketRef, "seats": seats,
-			"fare_kobo": fare, "qr_code": qr, "status": status, "created_at": createdAt,
-			"offer_title": title, "offer_type": offerType, "departure_time": departure,
+			"id": id, "offerId": offerID, "ticketRef": ticketRef, "seats": seats,
+			"fareKobo": fare, "qrCode": qr, "status": status, "createdAt": createdAt,
+			"offerTitle": title, "offerType": offerType, "departureTime": departure,
 		})
 	}
 	return out, nil
@@ -387,7 +393,7 @@ func (s *Service) ValidateEventBooking(ctx context.Context, organizerUserID, qrC
 		return nil, err
 	}
 	s.recordModeEvent(ctx, organizerUserID, "event.boarded", "event_transport_booking", bookingID, status, "boarded", nil)
-	return map[string]any{"ok": true, "booking_id": bookingID, "status": "boarded"}, nil
+	return map[string]any{"ok": true, "bookingId": bookingID, "status": "boarded"}, nil
 }
 
 // nullFloat returns nil for a zero coordinate so it stores as SQL NULL.

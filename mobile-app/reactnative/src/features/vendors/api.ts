@@ -15,8 +15,28 @@ export interface VendorJob {
 }
 
 export const USE_MOCK = (process.env.EXPO_PUBLIC_VENDORS_USE_MOCK ?? 'true') !== 'false';
-export const VENDORS_API_BASE = '/api/v1/estate/vendors';
+
+// Vendors/Artisans are NOT a standalone backend module — they are nested
+// under the Estate module (backend/internal/app/finance_routes.go: estGroup :=
+// finance.Group("/estate"); backend/internal/estate/handler.go:
+// ListVendors/CreateVendor/VerifyVendor take :id (estate); the vendor
+// self-service suite OnboardVendor/GetVendorProfile/ListVendorJobs/
+// AssignVendorJob/AcceptVendorJob/... also take :id (estate)). There is no
+// flat /vendors or /vendor namespace and no frontend-web proxy for
+// /api/v1/estate/vendors|vendor — the blanket rewrite only covers
+// /api/finance/:path*.
+// MISSING: a shared estate-context provider; DEFAULT_ESTATE_ID is a stopgap
+// (mirrors the election/meetings convention) until multi-estate selection ships.
+export const DEFAULT_ESTATE_ID = 'est_amber_court';
+export const VENDORS_API_BASE = `/api/finance/estate/${DEFAULT_ESTATE_ID}/vendors`; // admin directory (GET)
+export const VENDOR_APP_BASE = `/api/finance/estate/${DEFAULT_ESTATE_ID}/vendor`;   // vendor self-service (Block 42)
 export const RATING_STAR_COLOR = '#EAB308';
+
+// Maps a target JobStatus to its backend transition endpoint (Block 42).
+export const JOB_STATUS_ACTION: Record<JobStatus, string> = {
+  accepted: 'accept', rejected: 'reject', en_route: 'checkin',
+  in_progress: 'start', completed: 'complete', paid: 'payout', available: '',
+};
 
 export const VENDOR_CATEGORY_META: Record<string, { label: string; icon: string }> = {
   general:    { label: 'General',    icon: 'Wrench' },
@@ -68,15 +88,64 @@ let jobs: VendorJob[] = [
 ];
 const latency = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
+// jobFromApi maps the snake_case backend job payload to the client shape.
+function jobFromApi(r: any): VendorJob {
+  return {
+    id: r.id, estateId: r.estate_id, vendorId: r.vendor_id,
+    vendorName: r.vendor_name ?? undefined,
+    repairRequestId: r.repair_request_id ?? undefined,
+    status: r.status as JobStatus,
+    amountKobo: Number(r.amount_kobo ?? 0),
+    createdAt: r.created_at ?? new Date().toISOString(),
+  };
+}
+
 export async function listVendors(): Promise<Vendor[]> {
   if (USE_MOCK) { await latency(); return vendors.slice().sort((a, b) => b.rating - a.rating); }
-  const { data } = await api.get<Vendor[]>(VENDORS_API_BASE); return data;
+  const res = await api.get(VENDORS_API_BASE);
+  const rows = (res.data?.data ?? res.data ?? []) as any[];
+  return rows.map((r) => ({ id: r.id, estateId: r.estate_id, name: r.name, category: r.category, phone: r.phone ?? undefined, status: r.status as VendorStatus, rating: Number(r.rating ?? 0) }));
 }
+
 export async function listJobs(): Promise<VendorJob[]> {
   if (USE_MOCK) { await latency(); return jobs.slice().sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)); }
-  const { data } = await api.get<VendorJob[]>(`${VENDORS_API_BASE}/jobs`); return data;
+  const res = await api.get(`${VENDOR_APP_BASE}/jobs`);
+  const rows = (res.data?.data ?? res.data ?? []) as any[];
+  return rows.map(jobFromApi);
 }
+
+// updateJobStatus advances a job via the matching backend transition endpoint.
+// 'paid' is the payout money path and requires an Idempotency-Key header.
 export async function updateJobStatus(id: string, status: JobStatus): Promise<VendorJob> {
   if (USE_MOCK) { await latency(250); const j = jobs.find((x) => x.id === id); if (!j) throw new Error('Not found'); j.status = status; return { ...j }; }
-  const { data } = await api.post<VendorJob>(`${VENDORS_API_BASE}/jobs/${id}/status`, { status }); return data;
+  const action = JOB_STATUS_ACTION[status];
+  if (!action) throw new Error(`no transition for status ${status}`);
+  const headers = status === 'paid' ? { 'Idempotency-Key': `payout:${id}` } : undefined;
+  const { data } = await api.post(`${VENDOR_APP_BASE}/jobs/${id}/${action}`, {}, { headers });
+  return jobFromApi(data);
+}
+
+// ── Block 42 vendor self-service ──────────────────────────────────────────────
+export interface OnboardVendorInput { businessName: string; category?: string; phone?: string; specialties?: string[]; }
+
+export async function onboardVendor(input: OnboardVendorInput): Promise<Vendor> {
+  if (USE_MOCK) { await latency(400); const v: Vendor = { id: `v_${Date.now()}`, estateId: 'est_amber_court', name: input.businessName, category: input.category ?? 'general', phone: input.phone, status: 'pending', rating: 0 }; vendors.push(v); return { ...v }; }
+  const { data } = await api.post(`${VENDOR_APP_BASE}/onboard`, {
+    business_name: input.businessName, category: input.category, phone: input.phone, specialties: input.specialties ?? [],
+  });
+  return { id: data.id, estateId: data.estate_id, name: data.name, category: data.category, phone: data.phone ?? undefined, status: data.status as VendorStatus, rating: Number(data.rating ?? 0) };
+}
+
+export interface VendorEarnings { paidJobs: number; totalEarnedKobo: number; openJobs: number; }
+
+export async function getVendorEarnings(): Promise<VendorEarnings> {
+  if (USE_MOCK) { await latency(); const paid = jobs.filter((j) => j.status === 'paid'); return { paidJobs: paid.length, totalEarnedKobo: paid.reduce((s, j) => s + j.amountKobo, 0), openJobs: jobs.filter((j) => !['paid', 'rejected'].includes(j.status)).length }; }
+  const { data } = await api.get(`${VENDOR_APP_BASE}/earnings`);
+  return { paidJobs: Number(data.paid_jobs ?? 0), totalEarnedKobo: Number(data.total_earned_kobo ?? 0), openJobs: Number(data.open_jobs ?? 0) };
+}
+
+export async function submitQuote(id: string, amountKobo: number): Promise<VendorJob> {
+  if (USE_MOCK) { await latency(); const j = jobs.find((x) => x.id === id); if (!j) throw new Error('Not found'); j.amountKobo = amountKobo; return { ...j }; }
+  const { data } = await api.post(`${VENDOR_APP_BASE}/jobs/${id}/quote`, { amount_kobo: amountKobo });
+  return jobFromApi(data);
 }

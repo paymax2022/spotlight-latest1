@@ -1,5 +1,40 @@
 import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
+import type { IdempotencyAnchor } from '@/src/server/voting/core';
+
+/**
+ * Bridge idempotency expressed as the shared-core `IdempotencyAnchor`.
+ *
+ * The durable dedup anchor for v2 is the `bridge_idempotency_keys` table
+ * (claim/store). We expose it through the core contract so v2 uses the SAME
+ * idempotency helper (`resolveIdempotency`) as v1 and open-mic — only the
+ * underlying storage differs, never the semantics.
+ *
+ * - lookupCached: read-only — returns the stored response if already completed.
+ * - claim: atomic INSERT; a race-loser whose key already completed gets the
+ *   cached value back, otherwise null ("claimed/in-flight — proceed").
+ */
+export function bridgeIdempotencyAnchor<T>(): IdempotencyAnchor<T> {
+  return {
+    lookupCached: async (key: string) => {
+      const supabase = createAdminClient();
+      const { data } = await supabase
+        .from('bridge_idempotency_keys')
+        .select('response')
+        .eq('key', key)
+        .maybeSingle();
+      const response = data?.response as Record<string, unknown> | null;
+      if (response && Object.keys(response).length > 0) {
+        return response as unknown as T;
+      }
+      return null;
+    },
+    claim: async (key: string) => {
+      const claimed = await checkAndClaimIdempotencyKey(key);
+      return (claimed as T | null) ?? null;
+    },
+  };
+}
 
 /**
  * Try to claim an idempotency key.

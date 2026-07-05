@@ -5,6 +5,7 @@ import { calculateUtilityPricing } from './pricing';
 import { getViableUtilityRoutes, selectUtilityProvider, type UtilityRouteCandidate } from './routing';
 import { canRequeryUtilityStatus, canReverseUtilityTransaction, nextStatusFromProvider } from './status';
 import { getUtilityAdapter } from './adapters/registry';
+import { fetchVtpassServices, type VtpassServiceInfo } from './adapters/vtpass';
 import type { UtilityValidationResult } from './adapters/types';
 import {
   protectProviderCredentialsPayload,
@@ -277,6 +278,29 @@ async function assertCategoryAvailableForPayment(
   }
 }
 
+// VTPass `services` identifiers per category — used to fetch official provider
+// logos (each service carries an `image` URL).
+const VTPASS_LOGO_IDENTIFIER: Partial<Record<UtilityCategory, string>> = {
+  electricity: 'electricity-bill',
+  airtime: 'airtime',
+  data: 'data',
+  cable_tv: 'tv-subscription',
+  education: 'education',
+};
+
+// Returns VTPass services (serviceID + name + image) for a category so clients
+// can show real provider logos. Best-effort: returns [] when VTPass creds are
+// absent or the call fails (clients fall back to brand logos).
+export async function listUtilityProviderLogos(category: UtilityCategory): Promise<VtpassServiceInfo[]> {
+  const identifier = VTPASS_LOGO_IDENTIFIER[category];
+  if (!identifier) return [];
+  try {
+    return await fetchVtpassServices(identifier);
+  } catch {
+    return [];
+  }
+}
+
 export async function listBillers(category?: UtilityCategory): Promise<UtilityBillerRow[]> {
   const supabase = createAdminClient();
   let query = supabase.from('utility_billers').select('*').eq('status', 'active').order('name', { ascending: true });
@@ -341,21 +365,45 @@ export async function validateUtilityCustomer(input: {
   billerId: string;
   productId?: string;
   customerReference: string;
+  metadata?: Record<string, unknown>;
 }) {
   const biller = await getBiller(input.billerId);
   if (biller.category !== input.category) throw new ApiError('Biller does not support this category.', 400);
 
-  const product = input.productId ? await getProduct(input.productId) : null;
+  // Resolve a route. If no product was supplied, fall back to the biller's first
+  // active product so validation still reaches the provider (electricity billers
+  // require validation and always have a variable product mapped).
+  let product = input.productId ? await getProduct(input.productId) : null;
+  if (!product) {
+    const products = await listProducts({ category: input.category, billerId: input.billerId });
+    product = products[0] ?? null;
+  }
   const candidates = product ? await getRouteCandidates(product) : [];
   const selected = product && candidates.length > 0
     ? selectUtilityProvider(candidates, { category: input.category, product, amountKobo: product.amount_kobo ?? product.min_amount_kobo ?? 100 })
     : null;
 
   if (!selected) {
+    // Sandbox safety net: when VTPass is in sandbox mode, validate via the VTPass
+    // adapter's documented test-meter simulation EVEN IF no provider route is
+    // seeded in this environment — so the documented test meters always validate
+    // for testing. (serviceID is derived from the biller code, e.g.
+    // 'vtpass-eko-electric' -> 'eko-electric'; the sandbox stub keys off the meter.)
+    if (process.env.VTPASS_ENVIRONMENT === 'sandbox' && biller.requires_validation) {
+      const adapter = getUtilityAdapter('vtpass');
+      const result = await adapter.validateCustomer({
+        category: input.category,
+        billerCode: biller.code,
+        providerBillerCode: biller.code.replace(/^vtpass-/, ''),
+        customerReference: input.customerReference,
+        metadata: input.metadata,
+      });
+      return { valid: result.valid, customer_name: result.customerName, message: result.message };
+    }
     return {
       valid: !biller.requires_validation,
       customer_name: biller.requires_validation ? undefined : 'Unvalidated customer',
-      message: biller.requires_validation ? 'Select a mapped product before validation.' : 'Validation is not required for this biller.',
+      message: biller.requires_validation ? 'No provider route configured for this biller. (Set VTPASS_ENVIRONMENT=sandbox to test with the sandbox meters.)' : 'Validation is not required for this biller.',
     };
   }
 
@@ -365,6 +413,7 @@ export async function validateUtilityCustomer(input: {
     billerCode: biller.code,
     providerBillerCode: selected.mapping.provider_biller_code,
     customerReference: input.customerReference,
+    metadata: input.metadata,
   });
 
   return {

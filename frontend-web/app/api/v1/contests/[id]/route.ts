@@ -1,6 +1,7 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getRemainingFreeVotes } from '@/src/server/voting/free-vote.service';
+import { getEffectiveVisibility } from '@/src/server/voting/visibility.service';
 
 function getIp(request: Request): string {
   return (
@@ -66,6 +67,11 @@ export async function GET(
     const now = Date.now();
     const isLive = !!(settings?.voting_enabled && endsAt && Date.parse(endsAt) > now);
 
+    // Effective visibility (per-phase override else contest-level). When vote
+    // count is hidden, do not leak the aggregate total; when the leaderboard is
+    // hidden, the client hides the leaderboard surface.
+    const vis = await getEffectiveVisibility(id);
+
     return successResponse({
       id: contest.id,
       title: contest.name,
@@ -74,14 +80,20 @@ export async function GET(
       prizePool: contest.prize_pool,
       category: contest.category ?? 'General',
       contestantCount: (totals ?? []).length,
-      totalVotes,
+      totalVotes: vis.showVoteCount ? totalVotes : null,
       endsAt: endsAt ?? new Date(Date.now() + 86_400_000).toISOString(),
       isLive,
-      isTrending: totalVotes > 10_000,
+      isTrending: vis.showVoteCount ? totalVotes > 10_000 : false,
       votingEnabled: settings?.voting_enabled ?? false,
       freeVotingEnabled: settings?.free_voting_enabled ?? false,
       freeVotesRemaining,
       userVoteCount: 0,
+      // Visibility controls (respected by the app).
+      showVoteCount: vis.showVoteCount,
+      showLeaderboard: vis.showLeaderboard,
+      showRank: vis.showRank,
+      activePhaseKey: vis.activePhaseKey,
+      activePhaseLabel: vis.activePhaseLabel,
     });
   } catch (error) {
     return handleApiError(error, 'Failed to load contest');

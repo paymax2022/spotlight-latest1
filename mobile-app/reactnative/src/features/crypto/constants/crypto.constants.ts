@@ -8,8 +8,8 @@ import type {
   ChartRange,
   CryptoFeeType,
   FiatCurrency,
-  OrderSide,
   RiskRating,
+  TxKind,
 } from '../types/crypto.types';
 
 /** Feature flag gating the whole crypto surface (docs: every risky capability flagged). */
@@ -88,11 +88,25 @@ export const CRYPTO_STATUS_STYLE: Record<
   ComplianceHold:  { label: 'On hold',    fg: Colors.onWarning,             bg: Colors.iconBgGold },
   Failed:          { label: 'Failed',     fg: Colors.error,                 bg: Colors.iconBgRed },
   Reversed:        { label: 'Reversed',   fg: Colors.error,                 bg: Colors.iconBgRed },
+  // Withdrawal lifecycle
+  WithdrawalPendingReview: { label: 'In review', fg: Colors.onWarning,             bg: Colors.iconBgGold },
+  WithdrawalApproved:      { label: 'Approved',  fg: Colors.onPrimaryFixedVariant, bg: Colors.iconBgPurple },
+  WithdrawalBroadcasting:  { label: 'Sending',   fg: Colors.onPrimaryFixedVariant, bg: Colors.iconBgPurple },
+  WithdrawalConfirmed:     { label: 'Completed', fg: Colors.tertiaryContainer,     bg: Colors.iconBgTeal },
+  WithdrawalFailed:        { label: 'Failed',    fg: Colors.error,                 bg: Colors.iconBgRed },
+  // Deposit lifecycle
+  DepositDetected:  { label: 'Detected',  fg: Colors.onPrimaryFixedVariant, bg: Colors.iconBgPurple },
+  DepositConfirmed: { label: 'Completed', fg: Colors.tertiaryContainer,     bg: Colors.iconBgTeal },
 };
 
-// ─── Trade side display ───────────────────────────────────────────────────────
+// ─── Transaction kind display ─────────────────────────────────────────────────
 
-export const SIDE_LABEL: Record<OrderSide, string> = { buy: 'Buy', sell: 'Sell' };
+export const SIDE_LABEL: Record<TxKind, string> = {
+  buy: 'Buy',
+  sell: 'Sell',
+  deposit: 'Deposit',
+  withdraw: 'Withdraw',
+};
 
 // ─── Risk / education copy (education-first; docs/crypto/product.md) ───────────
 

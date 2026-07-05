@@ -1,0 +1,6 @@
+food_code,name,source,prep_method,energy_kcal,protein_g,carb_g,sugar_g,fat_g,sat_fat_g,fiber_g,sodium_mg
+WAFCT-0500,"Yam, white, boiled",WAFCT,boiled,116,1.5,27.5,0.5,0.2,0.0,4.1,9
+WAFCT-0501,"Garri (cassava), soaked",WAFCT,raw,357,1.6,84.0,3.4,0.5,0.1,3.7,12
+WAFCT-0502,"Moi moi (bean pudding)",WAFCT,steamed,168,8.9,12.0,1.1,9.5,2.0,3.2,260
+NFCT-0410,"Okra soup (composite)",NFCT,stewed,89,5.5,6.0,1.0,5.0,1.4,2.8,330
+NFCT-0411,"Fufu (cassava), cooked",NFCT,boiled,267,1.2,64.0,1.8,0.3,0.1,1.9,8

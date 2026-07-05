@@ -49,7 +49,7 @@ INSERT INTO doctor_specialties (slug, name, description, icon, is_featured, sort
     ('general',       'General Practice', 'Everyday health needs',         'person-outline',            TRUE,  1),
     ('paediatrics',   'Pediatrics',       'Expert child care',             'happy-outline',             TRUE,  2),
     ('mental_health', 'Mental Health',    'Counselling & support',         'heart-outline',             TRUE,  3),
-    ('womens_health', "Women's Health",   'OBGYN & specialised care',      'female-outline',            TRUE,  4),
+    ('womens_health', 'Women''s Health',   'OBGYN & specialised care',      'female-outline',            TRUE,  4),
     ('cardiology',    'Cardiology',       'Heart & cardiovascular care',   'pulse-outline',             FALSE, 5),
     ('dermatology',   'Dermatology',      'Skin, hair & nails',            'color-palette-outline',     FALSE, 6),
     ('nutrition',     'Nutrition',        'Diet & wellness coaching',      'nutrition-outline',         FALSE, 7),

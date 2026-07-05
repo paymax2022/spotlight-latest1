@@ -115,8 +115,10 @@ export async function getReceipt(id: string): Promise<Receipt> {
 }
 
 // Retry is a server-side operation (re-queues the provider call).
+// Backend: POST /api/v1/utility/transactions/:id/requery → { success, transaction }.
 export async function retryTransaction(id: string): Promise<{ transactionId: string }> {
-  const res  = await api.post(`/api/bills/transactions/${id}/retry`);
+  const res  = await api.post(`/api/v1/utility/transactions/${id}/requery`);
   const data = (res.data?.data ?? res.data) as Record<string, unknown>;
-  return { transactionId: String(data.transactionId ?? data.transaction_id ?? id) };
+  const tx   = (data.transaction ?? data) as Record<string, unknown>;
+  return { transactionId: String(tx.id ?? tx.transactionId ?? tx.transaction_id ?? id) };
 }

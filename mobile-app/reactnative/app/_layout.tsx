@@ -1,12 +1,14 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { Stack, useRouter, useSegments, usePathname, useGlobalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Colors } from '@/constants/colors';
 import { useAuthStore } from '@/store/authStore';
+import { getPinStatus } from '@/features/transfers/api';
+import { rememberResume, toParamMap } from '@/lib/resume';
 import { useBrandFonts } from '@/lib/brandFonts';
 import { createSupabaseClient } from '@/lib/supabase';
 import { usePushNotifications } from '@/lib/push';
@@ -26,6 +28,14 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const { init, initialized, user } = useAuthStore();
   const segments = useSegments();
   const router   = useRouter();
+  const pathname = usePathname();
+  // useGlobalSearchParams() returns a NEW object every render; keeping it in the
+  // gate effect's deps made the effect re-run on every render and storm router.replace
+  // during redirects ("Maximum update depth exceeded"). It's only needed to snapshot
+  // the resume target, so hold it in a ref and keep it OUT of the dependency array.
+  const globalParams = useGlobalSearchParams();
+  const globalParamsRef = useRef(globalParams);
+  globalParamsRef.current = globalParams;
 
   useEffect(() => { init(); }, [init]);
 
@@ -47,6 +57,22 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   // Surface visitor + election alerts as local notifications (foreground fallback).
   useVisitorPushBridge(signedIn);
   useElectionPushBridge(signedIn);
+
+  // Transaction-PIN gate: a signed-in user without a 4-digit PIN is blocked on
+  // the set-PIN screen until they create one (it must exist before it can be
+  // requested/used anywhere). Shares the transfers pin-status query key so the
+  // whole app stays in sync once the PIN is set.
+  const pinQuery = useQuery({ queryKey: ['transfers', 'pin-status'], queryFn: getPinStatus, enabled: signedIn });
+  const pinMissing = signedIn && pinQuery.data?.hasPin === false;
+
+  // When the session ends (expiry or explicit logout: signedIn true → false),
+  // drop all cached authenticated data so the next sign-in can't see the previous
+  // session's data. The redirect to login is handled by the effect below.
+  const wasSignedIn = useRef(false);
+  useEffect(() => {
+    if (wasSignedIn.current && !signedIn) queryClient.clear();
+    wasSignedIn.current = signedIn;
+  }, [signedIn]);
 
   useEffect(() => {
     if (!initialized) return;
@@ -71,7 +97,18 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     // any URL-conflict fallback where (doctor)/onboarding shows as /onboarding)
     // must always land on the module-grid home.
     if (user && inPreAuth) router.replace('/(tabs)/home');
-  }, [initialized, user, segments, router]);
+
+    // Transaction-PIN block: keep a PIN-less user on the set-PIN screen. Runs
+    // only for a signed-in user who is not mid-auth and isn't already there.
+    const onSetPin = segments[0] === 'security'; // only /security/set-pin lives here
+    if (user && !inAuth && pinMissing && !onSetPin) {
+      // Remember where the user was so we can return them after they set the PIN.
+      rememberResume({ pathname, params: toParamMap(globalParamsRef.current) });
+      router.replace('/security/set-pin');
+    }
+    // globalParams intentionally omitted (read via ref) — see note above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialized, user, segments, router, pinMissing, pathname]);
 
   if (!initialized) {
     return (
@@ -106,12 +143,26 @@ export default function RootLayout() {
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="(doctor)" />
             <Stack.Screen name="services" />
+            <Stack.Screen name="food" />
             <Stack.Screen name="fx" />
             <Stack.Screen name="mobility" />
             <Stack.Screen name="crypto" />
+            <Stack.Screen name="stocks" />
+            <Stack.Screen name="invest-onboarding" />
+            <Stack.Screen name="learn" />
+            <Stack.Screen name="invest-settings" />
+            <Stack.Screen name="invest-ai" />
+            <Stack.Screen name="spotlight-wealth" />
+            <Stack.Screen name="fractionalre" />
+            <Stack.Screen name="admin" />
             <Stack.Screen name="realtor" />
+            <Stack.Screen name="property" />
             <Stack.Screen name="wallet" />
             <Stack.Screen name="voting" />
+            <Stack.Screen name="registration" />
+            <Stack.Screen name="investment" />
+            <Stack.Screen name="kyc" />
+            <Stack.Screen name="security" />
             <Stack.Screen name="visitor" />
             <Stack.Screen name="guard" />
             <Stack.Screen name="election" />
@@ -133,6 +184,7 @@ export default function RootLayout() {
             <Stack.Screen name="reports" />
             <Stack.Screen name="estate-settings" />
             <Stack.Screen name="(merchant)" />
+            <Stack.Screen name="featured" />
           </Stack>
         </AuthGate>
       </SafeAreaProvider>

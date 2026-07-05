@@ -9,6 +9,11 @@ import "paymax/crypto-backend/internal/domain"
 // Keeping the contract here (not *Store) means swapping storage engines is a
 // one-line change in cmd/server.
 type Repository interface {
+	// Eligibility returns the compliance facts (KYC tier, suitability, agreements,
+	// product flags) the trading gate is computed from. The gate is evaluated by
+	// engine.EvaluateEligibility — the store only supplies facts, fail-closed.
+	Eligibility() domain.EligibilityFacts
+
 	// Market data
 	Assets() []domain.Asset
 	Asset(key string) (domain.Asset, bool)
@@ -28,6 +33,9 @@ type Repository interface {
 	Positions() []domain.Position
 	Transactions(side string) []domain.TxSummary
 	Transaction(id string) (domain.TxDetail, bool)
+	// UpdateTransactionStatus advances a transaction's status (e.g. from a
+	// provider webhook). Returns false if no transaction matches the reference.
+	UpdateTransactionStatus(reference, status string) bool
 
 	// Watchlist
 	Watchlist() []domain.Asset
@@ -49,6 +57,13 @@ type Repository interface {
 	ExecuteBuy(q domain.Quote) (domain.Order, *ExecError)
 	ExecuteSell(q domain.Quote) (domain.Order, *ExecError)
 	ExecuteSwap(q domain.SwapQuote) (domain.SwapResult, *ExecError)
+
+	// On-chain movements (persist + move the position + ledger)
+	RecordWithdrawal(symbol, networkName, address string, cryptoAmount, networkFee, fiatValue int64) (domain.WithdrawalResult, *ExecError)
+	CreditDeposit(symbol string, cryptoAmount, fiatValue int64, providerRef string) (domain.TxDetail, *ExecError)
+	// ReverseWithdrawal re-credits a failed withdrawal's holding and marks it
+	// WithdrawalFailed. Returns false if no pending withdrawal matches.
+	ReverseWithdrawal(reference string) bool
 }
 
 // Compile-time assertion that the in-memory Store satisfies the contract.

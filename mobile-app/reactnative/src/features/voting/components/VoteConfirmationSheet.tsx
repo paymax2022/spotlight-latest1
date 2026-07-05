@@ -13,6 +13,7 @@ import VoteCounter from './VoteCounter';
 import VotePackageCard from './VotePackageCard';
 import FreeVoteBadge from './FreeVoteBadge';
 import type { Contestant, VotePackage, FreeVoteAllocation } from '../types/voting.types';
+import FreeVoteResetCountdown from './FreeVoteResetCountdown';
 import { formatAmount } from '../utils/voteFormatters';
 
 type Tab = 'free' | 'paid';
@@ -85,8 +86,12 @@ export default function VoteConfirmationSheet({
                 <FreeVoteBadge remaining={freeVotes.remaining} total={freeVotes.total} />
                 {freeVotes.remaining === 0 ? (
                   <View style={styles.exhausted}>
-                    <Text style={styles.exhaustedTitle}>No free votes left today</Text>
-                    <Text style={styles.exhaustedSub}>Your free votes reset at midnight. Switch to paid votes to continue supporting {contestant.stageName ?? contestant.name}.</Text>
+                    <Text style={styles.exhaustedTitle}>No free votes left for this contestant today</Text>
+                    <Text style={styles.exhaustedSub}>You’ve used your {freeVotes.total} daily free votes for {contestant.stageName ?? contestant.name}. They’ll be active again in:</Text>
+                    <View style={{ marginTop: 10, alignItems: 'center' }}>
+                      <FreeVoteResetCountdown resetAt={freeVotes.resetsAt} />
+                    </View>
+                    <Text style={[styles.exhaustedSub, { marginTop: 10 }]}>Switch to paid votes to keep supporting them now.</Text>
                   </View>
                 ) : (
                   <>

@@ -1,0 +1,46 @@
+# Dev-container service stack (ENVIRONMENT-AND-GOLIVE.md §1). Brings up Postgres,
+# Redis, and the local FAKE rails so Claude Code can run the real end-to-end loop:
+# go build/test, tsc, migrations, and money paths against fakes — no prod secrets.
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - "../..:/workspaces:cached"
+    command: sleep infinity
+    env_file: ["../.env.dev"]
+    depends_on: [db, redis, fakes]
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: paymax
+      POSTGRES_PASSWORD: paymax
+      POSTGRES_DB: paymax
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "paymax"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+
+  # Local stand-ins for the unbacked rails (BNPL/Payout/Disburse/Billing) — see §3.
+  # Deterministic, signature-signed async webhooks, identical shapes to the sandboxes.
+  fakes:
+    build:
+      context: ../tools/fakes
+      dockerfile: Dockerfile
+    environment:
+      # The fakes call the app's webhook endpoints back over the compose network.
+      FAKE_CALLBACK_BASE_URL: "http://app:8080/internal/webhooks/academy"
+      FAKE_WEBHOOK_SECRET: "dev-fake-secret"
+    ports: ["9100:9100"]
+
+volumes:
+  pgdata: {}

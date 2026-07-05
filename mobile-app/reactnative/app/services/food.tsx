@@ -43,6 +43,9 @@ const RESTAURANTS = [
     name: 'Mama Cass',
     cuisine: 'local',
     tags: ['Local', 'Soups'],
+    // Real dish names from this restaurant's menu (src/features/food/mock.ts,
+    // MENU_BY_RESTAURANT.r1) so dish search here matches what's actually orderable.
+    menuItems: ['Egusi Soup', 'Afang Soup', 'Ogbono Soup', 'Jollof Rice', 'Fried Rice', 'Pounded Yam'],
     rating: 4.8,
     time: '20–30 min',
     minOrder: '₦2,500',
@@ -56,6 +59,7 @@ const RESTAURANTS = [
     name: 'Chicken Republic',
     cuisine: 'fast',
     tags: ['Fast Food', 'Chicken'],
+    menuItems: ['Fried Chicken', 'Chicken Burger', 'Chicken Wrap', 'Chips', 'Meat Pie'],
     rating: 4.5,
     time: '15–25 min',
     minOrder: '₦1,500',
@@ -69,6 +73,7 @@ const RESTAURANTS = [
     name: 'Dragon Palace',
     cuisine: 'chinese',
     tags: ['Chinese', 'Rice'],
+    menuItems: ['Fried Rice', 'Sweet & Sour Chicken', 'Spring Rolls', 'Beef Noodles', 'Chow Mein'],
     rating: 4.6,
     time: '25–40 min',
     minOrder: '₦3,000',
@@ -82,6 +87,7 @@ const RESTAURANTS = [
     name: 'The Grill House',
     cuisine: 'grills',
     tags: ['Grills', 'BBQ'],
+    menuItems: ['Suya', 'Grilled Chicken', 'BBQ Ribs', 'Grilled Fish', 'Peppered Steak'],
     rating: 4.7,
     time: '30–45 min',
     minOrder: '₦4,000',
@@ -95,6 +101,7 @@ const RESTAURANTS = [
     name: 'Green Bowl',
     cuisine: 'healthy',
     tags: ['Healthy', 'Salads'],
+    menuItems: ['Caesar Salad', 'Grilled Chicken Salad', 'Smoothie Bowl', 'Quinoa Bowl', 'Avocado Toast'],
     rating: 4.9,
     time: '20–30 min',
     minOrder: '₦2,000',
@@ -108,6 +115,7 @@ const RESTAURANTS = [
     name: 'Street Buka',
     cuisine: 'local',
     tags: ['Local', 'Pepper Soup'],
+    menuItems: ['Pepper Soup', 'Amala', 'Ewedu', 'Gbegiri', 'Moin Moin'],
     rating: 4.4,
     time: '15–25 min',
     minOrder: '₦1,000',
@@ -139,7 +147,17 @@ const sr = StyleSheet.create({
   label: { ...Typography.labelSm, color: Colors.onSurface },
 });
 
-function RestaurantCard({ item, onPress }: { item: typeof RESTAURANTS[0]; onPress: () => void }) {
+function RestaurantCard({
+  item,
+  onPress,
+  matchedDish,
+}: {
+  item: typeof RESTAURANTS[0];
+  onPress: () => void;
+  /** Set when this card only matched the search via a menu item, not the
+   *  restaurant's name/tags — shown so it's clear why the result appeared. */
+  matchedDish?: string | null;
+}) {
   return (
     <Pressable
       onPress={onPress}
@@ -160,11 +178,18 @@ function RestaurantCard({ item, onPress }: { item: typeof RESTAURANTS[0]; onPres
           )}
         </View>
 
-        <View style={rc.metaRow}>
-          {item.tags.map((t) => (
-            <Text key={t} style={rc.tag}>{t}</Text>
-          ))}
-        </View>
+        {matchedDish ? (
+          <View style={rc.matchRow}>
+            <Icons.Search size={11} color={Colors.secondary} strokeWidth={2} />
+            <Text style={rc.matchText}>Has "{matchedDish}"</Text>
+          </View>
+        ) : (
+          <View style={rc.metaRow}>
+            {item.tags.map((t) => (
+              <Text key={t} style={rc.tag}>{t}</Text>
+            ))}
+          </View>
+        )}
 
         <View style={rc.bottomRow}>
           <StarRow rating={item.rating} />
@@ -213,6 +238,8 @@ const rc = StyleSheet.create({
   promoText: { ...Typography.labelSm, color: '#16A34A' },
   metaRow:  { flexDirection: 'row', gap: 6 },
   tag:      { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  matchRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  matchText: { ...Typography.labelSm, color: Colors.secondary },
   bottomRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
   dot:      { ...Typography.labelSm, color: Colors.outline },
   meta:     { ...Typography.labelSm, color: Colors.onSurfaceVariant },
@@ -224,12 +251,24 @@ export default function FoodScreen() {
   const [cuisine, setCuisine] = useState<Cuisine>('all');
   const [search, setSearch]   = useState('');
 
-  const filtered = RESTAURANTS.filter((r) => {
+  const query = search.trim().toLowerCase();
+
+  // A restaurant matches if the query hits its name/tags OR any dish on its
+  // menu — the search bar previously only checked name+tags, so searching
+  // e.g. "jollof" or "suya" found nothing even though those dishes exist.
+  // matchedDish (when the hit came from the menu, not the name/tags) is
+  // surfaced on the card so it's clear *why* a result showed up.
+  const filtered = RESTAURANTS.map((r) => {
     const matchesCuisine = cuisine === 'all' || r.cuisine === cuisine;
-    const matchesSearch  = !search || r.name.toLowerCase().includes(search.toLowerCase()) ||
-      r.tags.some((t) => t.toLowerCase().includes(search.toLowerCase()));
-    return matchesCuisine && matchesSearch;
-  });
+    if (!query) return matchesCuisine ? { ...r, matchedDish: null } : null;
+
+    const matchesName = r.name.toLowerCase().includes(query);
+    const matchesTag  = r.tags.some((t) => t.toLowerCase().includes(query));
+    const matchedDish = r.menuItems.find((item) => item.toLowerCase().includes(query)) ?? null;
+
+    if (!matchesCuisine || !(matchesName || matchesTag || matchedDish)) return null;
+    return { ...r, matchedDish: matchesName || matchesTag ? null : matchedDish };
+  }).filter((r): r is (typeof RESTAURANTS)[number] & { matchedDish: string | null } => r !== null);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
@@ -239,23 +278,34 @@ export default function FoodScreen() {
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Food & Delivery</Text>
-        <Pressable style={s.iconButton} accessibilityRole="button" accessibilityLabel="View cart">
+        <Pressable style={s.iconButton} onPress={() => router.push('/food')} accessibilityRole="button" accessibilityLabel="View cart">
           <Icons.ShoppingCart size={21} color={Colors.primary} strokeWidth={2} />
         </Pressable>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
-        {/* Hero */}
-        <LinearGradient
-          colors={['#EF4444', '#B91C1C']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[s.hero, shadow2]}
+        {/* Hero — primary entry into the full Food & Delivery experience */}
+        <Pressable
+          onPress={() => router.push('/food')}
+          style={({ pressed }) => pressed && { opacity: 0.92 }}
+          accessibilityRole="button"
+          accessibilityLabel="Open Food & Delivery"
         >
-          <Text style={s.heroEyebrow}>Paymax Food</Text>
-          <Text style={s.heroTitle}>Hungry? Order now</Text>
-          <Text style={s.heroSubtitle}>Restaurants near you, tracked delivery, pay with your Paymax wallet.</Text>
-        </LinearGradient>
+          <LinearGradient
+            colors={['#EF4444', '#B91C1C']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[s.hero, shadow2]}
+          >
+            <Text style={s.heroEyebrow}>Paymax Food</Text>
+            <Text style={s.heroTitle}>Hungry? Order now</Text>
+            <Text style={s.heroSubtitle}>Restaurants near you, live-tracked delivery, chat with your rider — pay with your Paymax wallet.</Text>
+            <View style={s.heroCta}>
+              <Text style={s.heroCtaText}>Browse restaurants</Text>
+              <Icons.ArrowRight size={16} color={Colors.white} strokeWidth={2.4} />
+            </View>
+          </LinearGradient>
+        </Pressable>
 
         {/* Search */}
         <SearchBar
@@ -318,7 +368,8 @@ export default function FoodScreen() {
               <RestaurantCard
                 key={item.id}
                 item={item}
-                onPress={() => {/* navigate to restaurant menu when built */}}
+                matchedDish={item.matchedDish}
+                onPress={() => router.push('/food')}
               />
             ))
           )}
@@ -364,6 +415,8 @@ const s = StyleSheet.create({
   heroEyebrow:  { ...Typography.labelSm, color: 'rgba(255,255,255,0.85)' },
   heroTitle:    { ...Typography.headlineLgMobile, color: Colors.white, marginTop: Spacing.xs },
   heroSubtitle: { ...Typography.bodySm, color: 'rgba(255,255,255,0.85)', marginTop: Spacing.xs },
+  heroCta: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: Spacing.md },
+  heroCtaText: { ...Typography.labelMd, color: Colors.white },
   sectionHeader: {
     paddingHorizontal: Spacing.containerMargin,
     marginTop: Spacing.lg,

@@ -15,11 +15,12 @@ interface Props {
   onPress?: () => void;
 }
 
-/** Buy/sell history row (docs/crypto/screens.md → crypto orders / transactions). */
+/** History row for trades + movements (docs/crypto/screens.md → orders / transactions). */
 export default function CryptoTransactionRow({ tx, onPress }: Props) {
-  const isBuy = tx.side === 'buy';
-  const Icon = isBuy ? ArrowDownLeft : ArrowUpRight;
-  const sign = isBuy ? '−' : '+';     // buy debits fiat, sell credits fiat
+  // "In" = crypto/cash arriving (sell proceeds, deposit); "out" = buy spend, withdraw.
+  const isIn = tx.side === 'sell' || tx.side === 'deposit';
+  const Icon = (tx.side === 'buy' || tx.side === 'deposit') ? ArrowDownLeft : ArrowUpRight;
+  const sign = isIn ? '+' : '−';
   return (
     <Pressable
       onPress={onPress}

@@ -1,3 +1,7 @@
+// PRIVACY: Assisted Mode B verification. This screen shows the doctor only a
+// coarse outcome (Approved) and the decision date. It must NEVER render MDCN/
+// register data, reviewer identity, internal reviewer notes, or matched-field
+// detail — the doctor never sees the MDCN portal.
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -48,8 +52,7 @@ export default function VerificationApprovedScreen() {
         <SectionCard title="Decision" style={styles.card}>
           <InfoRow label="Outcome" value="Approved" valueColor={Colors.teal} />
           <InfoRow label="Decided" value={new Date(decision.decidedAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' })} />
-          {!!decision.reviewer && <InfoRow label="Reviewer" value={decision.reviewer} />}
-          {!!decision.notes && <InfoRow label="Notes" value={decision.notes} />}
+          {/* PRIVACY: reviewer identity and internal notes are intentionally NOT shown. */}
         </SectionCard>
 
         <PrimaryButton label="Publish my profile" onPress={() => router.replace('/(doctor)/profile/published')} style={styles.btn} />

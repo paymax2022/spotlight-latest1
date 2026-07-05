@@ -57,7 +57,7 @@ type Alternative struct {
 	Provider  string  `json:"provider"`
 	Corridor  string  `json:"corridor"`
 	Rail      Rail    `json:"rail"`
-	AllInRate float64 `json:"all_in_rate"`
+	AllInRate float64 `json:"allInRate"`
 	Destination Money `json:"destination"`
 }
 
@@ -76,17 +76,17 @@ type Quote struct {
 	ID           string        `json:"id"`
 	CustomerID   string        `json:"-"`
 	Status       QuoteStatus   `json:"status"`
-	AmountType   AmountType    `json:"amount_type"`
+	AmountType   AmountType    `json:"amountType"`
 	Source       Money         `json:"source"`
 	Destination  Money         `json:"destination"`
 	Rate         float64       `json:"rate"`
-	AllInRate    float64       `json:"all_in_rate"`
+	AllInRate    float64       `json:"allInRate"`
 	Fees         []Fee         `json:"fees"`
 	Route        Route         `json:"route"`
 	Alternatives []Alternative `json:"alternatives"`
 	Locked       bool          `json:"locked"`
 	Intent       Intent        `json:"-"`
-	ExpiresAt    time.Time     `json:"expires_at"`
+	ExpiresAt    time.Time     `json:"expiresAt"`
 	CreatedAt    time.Time     `json:"-"`
 }
 
@@ -106,18 +106,18 @@ const (
 type Conversion struct {
 	ID            string           `json:"id"`
 	Reference     string           `json:"reference"`
-	CustomerID    string           `json:"customer_id"`
+	CustomerID    string           `json:"customerId"`
 	Status        ConversionStatus `json:"status"`
 	Source        Money            `json:"source"`
 	Destination   Money            `json:"destination"`
 	Rate          float64          `json:"rate"`
-	AllInRate     float64          `json:"all_in_rate"`
+	AllInRate     float64          `json:"allInRate"`
 	Fees          []Fee            `json:"fees"`
 	Route         Route            `json:"route"`
-	ProviderRef    string           `json:"provider_ref"`
-	TransactionID  string           `json:"transaction_id"`
+	ProviderRef    string           `json:"providerRef"`
+	TransactionID  string           `json:"transactionId"`
 	IdempotencyKey string           `json:"-"`
-	CreatedAt      time.Time        `json:"created_at"`
+	CreatedAt      time.Time        `json:"createdAt"`
 }
 
 // TransferStatus follows Appendix B: queued -> processing -> paid | failed | reversed.
@@ -156,20 +156,20 @@ type StatusEvent struct {
 type Transfer struct {
 	ID            string         `json:"id"`
 	Reference     string         `json:"reference"`
-	CustomerID    string         `json:"customer_id"`
+	CustomerID    string         `json:"customerId"`
 	Status        TransferStatus `json:"status"`
 	Source        Money          `json:"source"`
 	Destination   Money          `json:"destination"`
-	QuotedRate    float64        `json:"quoted_rate"`
-	ExecutedRate  float64        `json:"executed_rate"`
+	QuotedRate    float64        `json:"quotedRate"`
+	ExecutedRate  float64        `json:"executedRate"`
 	Fees          []Fee          `json:"fees"`
 	Route         Route          `json:"route"`
 	Narration     string         `json:"narration,omitempty"`
-	ProviderRef    string         `json:"provider_ref"`
-	TransactionID  string         `json:"transaction_id"`
-	StatusHistory  []StatusEvent  `json:"status_history"`
+	ProviderRef    string         `json:"providerRef"`
+	TransactionID  string         `json:"transactionId"`
+	StatusHistory  []StatusEvent  `json:"statusHistory"`
 	IdempotencyKey string         `json:"-"`
-	CreatedAt      time.Time      `json:"created_at"`
+	CreatedAt      time.Time      `json:"createdAt"`
 }
 
 // VirtualAccount is an inbound collection account (spec §5.5).
@@ -181,7 +181,7 @@ type VirtualAccount struct {
 	Provider  string                 `json:"provider"`
 	Status    string                 `json:"status"`
 	Details   map[string]interface{} `json:"details"`
-	CreatedAt time.Time              `json:"created_at"`
+	CreatedAt time.Time              `json:"createdAt"`
 }
 
 // --- Request bodies (normalized API) ---
@@ -191,9 +191,9 @@ type QuoteRequest struct {
 	Source          string     `json:"source" binding:"required"`          // ISO-4217
 	Destination     string     `json:"destination" binding:"required"`     // ISO-4217
 	Amount          int64      `json:"amount" binding:"required,min=1"`    // minor units
-	AmountType      AmountType `json:"amount_type"`                        // default source
+	AmountType      AmountType `json:"amountType"`                         // default source
 	Intent          Intent     `json:"intent" binding:"required"`
-	DestinationRail Rail       `json:"destination_rail,omitempty"`
+	DestinationRail Rail       `json:"destinationRail,omitempty"`
 	Lock            bool       `json:"lock"`
 }
 

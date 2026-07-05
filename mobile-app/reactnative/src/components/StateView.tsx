@@ -17,13 +17,14 @@ interface Props {
   actionLabel?: string;
   onAction?: () => void;
   compact?: boolean;             // render inline (no flex:1 centering)
+  hideIcon?: boolean;            // omit the leading icon (empty/error only)
 }
 
 /**
  * Shared loading / empty / error state block, reusable across modules so each
  * screen renders states consistently instead of re-styling them inline.
  */
-export default function StateView({ kind, title, message, icon, actionLabel, onAction, compact }: Props) {
+export default function StateView({ kind, title, message, icon, actionLabel, onAction, compact, hideIcon }: Props) {
   const IconComponent =
     (Icons as unknown as Record<string, Icons.LucideIcon>)[icon ?? ''] ??
     (kind === 'error' ? Icons.CloudOff : Icons.Inbox);
@@ -37,13 +38,15 @@ export default function StateView({ kind, title, message, icon, actionLabel, onA
         </>
       ) : (
         <>
-          <View style={[styles.iconBox, kind === 'error' && styles.iconBoxError]}>
-            <IconComponent
-              size={30}
-              color={kind === 'error' ? Colors.error : Colors.onSurfaceVariant}
-              strokeWidth={1.8}
-            />
-          </View>
+          {hideIcon ? null : (
+            <View style={[styles.iconBox, kind === 'error' && styles.iconBoxError]}>
+              <IconComponent
+                size={30}
+                color={kind === 'error' ? Colors.error : Colors.onSurfaceVariant}
+                strokeWidth={1.8}
+              />
+            </View>
+          )}
           {title ? <Text style={styles.title}>{title}</Text> : null}
           {message ? <Text style={styles.message}>{message}</Text> : null}
           {actionLabel && onAction ? (

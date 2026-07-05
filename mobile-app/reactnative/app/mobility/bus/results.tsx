@@ -18,6 +18,12 @@ import type { BusRoute, BusSchedule } from '@/features/mobility/types/modes.type
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString('en-NG', { hour: '2-digit', minute: '2-digit' });
 
+// A real connectivity drop (no HTTP response) is "offline"; anything the server
+// actually answered (404/5xx/parse) is a backend failure, not the user's network.
+// Mislabelling the latter as "offline" sends people to check their wifi for nothing.
+const errKind = (e: unknown): 'offline' | 'genericError' =>
+  (e as { response?: unknown })?.response ? 'genericError' : 'offline';
+
 export default function BusResultsScreen() {
   const { origin = '', dest = '', date = '' } = useLocalSearchParams<{ origin?: string; dest?: string; date?: string }>();
   const routes = useBusRoutes(origin, dest, Boolean(origin && dest));
@@ -29,7 +35,7 @@ export default function BusResultsScreen() {
       {routes.isLoading ? (
         <StateView kind="loading" message="Finding buses…" />
       ) : routes.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => routes.refetch()} />
+        <MobilityEdgeState kind={errKind(routes.error)} actionLabel="Retry" onAction={() => routes.refetch()} />
       ) : (routes.data?.length ?? 0) === 0 ? (
         <MobilityEdgeState kind="empty" title="No buses found" message="No operators run this route on the selected date. Try another date or city." actionLabel="Change search" onAction={() => router.back()} />
       ) : (
@@ -66,7 +72,7 @@ export default function BusResultsScreen() {
 function RouteSchedules({ routeId, date }: { routeId: string; date: string }) {
   const schedules = useBusSchedules(routeId, date);
   if (schedules.isLoading) return <View style={styles.scheduleWrap}><StateView kind="loading" compact message="Loading times…" /></View>;
-  if (schedules.isError) return <View style={styles.scheduleWrap}><MobilityEdgeState kind="offline" compact actionLabel="Retry" onAction={() => schedules.refetch()} /></View>;
+  if (schedules.isError) return <View style={styles.scheduleWrap}><MobilityEdgeState kind={errKind(schedules.error)} compact actionLabel="Retry" onAction={() => schedules.refetch()} /></View>;
   if ((schedules.data?.length ?? 0) === 0) return <View style={styles.scheduleWrap}><Text style={styles.noTimes}>No departures left today.</Text></View>;
 
   return (

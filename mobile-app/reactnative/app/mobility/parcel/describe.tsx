@@ -15,19 +15,38 @@ import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard'
 import SelectableCard from '@/features/mobility/components/SelectableCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { useParcelEstimate, useBookParcel } from '@/features/mobility/hooks/useModes';
+import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import {
   PARCEL_CATEGORIES,
   PARCEL_SIZES,
   PARCEL_SPEEDS,
   PROHIBITED_ITEMS,
 } from '@/features/mobility/constants/modes.constants';
-import { formatNairaWhole, nairaToKobo, toMobilityError } from '@/features/mobility/utils/mobilityFormatters';
+import { formatNairaWhole, nairaToKobo } from '@/features/mobility/utils/mobilityFormatters';
 import type { ParcelCategory, ParcelSize, ParcelSpeed, ParcelEstimate, Place } from '@/features/mobility/types/modes.types';
+import { withPlusCode } from '@/lib/addressLookup';
 
 export default function ParcelDescribeScreen() {
-  const params = useLocalSearchParams<{ pickup?: string; dropoff?: string }>();
-  const pickup: Place = useMemo(() => ({ address: params.pickup ?? '14 Admiralty Way, Lekki Phase 1', lat: 6.4459, lng: 3.473 }), [params.pickup]);
-  const dropoff: Place = useMemo(() => ({ address: params.dropoff ?? 'Ikeja City Mall, Alausa', lat: 6.6186, lng: 3.3585 }), [params.dropoff]);
+  const params = useLocalSearchParams<{
+    pickup?: string; dropoff?: string;
+    pickupLat?: string; pickupLng?: string;
+    dropoffLat?: string; dropoffLng?: string;
+    pickupPlus?: string; dropoffPlus?: string;
+  }>();
+  // Coordinates come from the address-lookup step (proxy/Google with offline
+  // fallback, confirmed on map). The fare is distance-based, so these must be the real
+  // picked coordinates — the fallbacks only guard a direct deep-link with none.
+  // The Plus Code rides inside the address text so the courier receives it.
+  const pickup: Place = useMemo(() => ({
+    address: withPlusCode(params.pickup ?? '14 Admiralty Way, Lekki Phase 1', params.pickupPlus),
+    lat: Number(params.pickupLat) || 6.4459,
+    lng: Number(params.pickupLng) || 3.473,
+  }), [params.pickup, params.pickupLat, params.pickupLng, params.pickupPlus]);
+  const dropoff: Place = useMemo(() => ({
+    address: withPlusCode(params.dropoff ?? 'Ikeja City Mall, Alausa', params.dropoffPlus),
+    lat: Number(params.dropoffLat) || 6.6186,
+    lng: Number(params.dropoffLng) || 3.3585,
+  }), [params.dropoff, params.dropoffLat, params.dropoffLng, params.dropoffPlus]);
 
   const [category, setCategory] = useState<ParcelCategory>('documents');
   const [size, setSize] = useState<ParcelSize>('small');
@@ -42,6 +61,8 @@ export default function ParcelDescribeScreen() {
   const estimate = useParcelEstimate();
   const book = useBookParcel();
   const est: ParcelEstimate | undefined = estimate.data;
+  // Shared chooser: wallet OR card (Paystack top-up) → then the booking charge.
+  const pay = usePurchasePayment<Awaited<ReturnType<typeof book.mutateAsync>>>();
 
   const declaredValueKobo = nairaToKobo(Number(declaredValue) || 0);
 
@@ -62,23 +83,21 @@ export default function ParcelDescribeScreen() {
   const onBook = () => {
     if (!est) return;
     setSubmitError(null);
-    book.mutate(
-      {
-        pickup, dropoff, category, size, speed, declaredValueKobo,
-        receiverName: receiverName.trim(),
-        receiverPhone: receiverPhone.trim(),
-        photoUrl: photoAttached ? 'mock://parcel-photo' : undefined,
-        prohibitedAck,
-        paymentMethod: 'wallet',
-      },
-      {
-        onSuccess: (parcel) => router.replace(`/mobility/parcel/${parcel.id}`),
-        onError: (e) => {
-          const me = toMobilityError(e);
-          setSubmitError(me.code === 'PAYMENT_FAILED' ? 'Payment could not be authorised. Top up or try another method.' : me.message);
-        },
-      },
-    );
+    pay.start({
+      amountKobo: est.totalKobo,
+      title: 'Pay for delivery',
+      // Existing wallet booking charge (with its Idempotency-Key) runs unchanged.
+      charge: () =>
+        book.mutateAsync({
+          pickup, dropoff, category, size, speed, declaredValueKobo,
+          receiverName: receiverName.trim(),
+          receiverPhone: receiverPhone.trim(),
+          photoUrl: photoAttached ? 'mock://parcel-photo' : undefined,
+          prohibitedAck,
+          paymentMethod: 'wallet',
+        }),
+      onPaid: (parcel) => router.replace(`/mobility/parcel/${parcel.id}`),
+    });
   };
 
   return (
@@ -178,6 +197,8 @@ export default function ParcelDescribeScreen() {
           </View>
         </>
       )}
+      {/* Shared wallet/card chooser — drives the booking charge above. */}
+      <PaymentSheet controller={pay} />
     </SafeAreaView>
   );
 }

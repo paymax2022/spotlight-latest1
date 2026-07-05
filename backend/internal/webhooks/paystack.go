@@ -120,6 +120,17 @@ func (h *PaystackHandler) handleChargeSuccess(ctx context.Context, data json.Raw
 	if userID, ok := d.Metadata["user_id"].(string); ok && userID != "" {
 		return h.handleWalletTopup(ctx, userID, d.Reference, d.Amount)
 	}
+	// Bank→bank funding collection — route to the transfers funding path. The
+	// transfers service no-ops if the reference is not a pending bank→bank funding.
+	if h.xferSvc != nil {
+		return h.xferSvc.HandleProviderWebhook(ctx, &provider.WebhookEvent{
+			Type:        "collection",
+			ProviderRef: d.Reference,
+			Reference:   d.Reference,
+			Status:      "successful",
+			AmountKobo:  d.Amount,
+		})
+	}
 	return nil
 }
 

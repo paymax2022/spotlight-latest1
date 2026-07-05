@@ -41,7 +41,15 @@ export default function CryptoTransactionDetailScreen() {
   }
 
   const t = tx.data;
-  const buy = t.side === 'buy';
+  const movement = t.side === 'deposit' || t.side === 'withdraw';
+  const inbound = t.side === 'buy' || t.side === 'deposit';
+  const cryptoLabel = t.side === 'withdraw' ? 'Crypto sent' : inbound ? 'Crypto received' : 'Crypto sold';
+  const totalLabel =
+    t.side === 'buy' ? 'Total paid'
+    : t.side === 'sell' ? 'Total received'
+    : t.side === 'deposit' ? 'Value received'
+    : 'Total sent';
+  const failed = t.status === 'Failed' || t.status === 'WithdrawalFailed';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -56,7 +64,7 @@ export default function CryptoTransactionDetailScreen() {
           <CryptoStatusBadge status={t.status} />
         </View>
 
-        {t.status === 'Failed' && t.failureReason ? (
+        {failed && t.failureReason ? (
           <View style={styles.failBox}>
             <Text style={styles.failText}>{t.failureReason}</Text>
           </View>
@@ -65,14 +73,14 @@ export default function CryptoTransactionDetailScreen() {
         {/* Summary */}
         <View style={styles.card}>
           <Row label="Type" value={`${SIDE_LABEL[t.side]} ${t.symbol}`} />
-          <Row label="Price" value={formatPrice(t.symbol, t.allInRate)} />
-          <Row label={buy ? 'Crypto received' : 'Crypto sold'} value={formatCrypto(t.crypto.amount, t.symbol, decimals)} />
+          {!movement ? <Row label="Price" value={formatPrice(t.symbol, t.allInRate)} /> : null}
+          <Row label={cryptoLabel} value={formatCrypto(t.crypto.amount, t.symbol, decimals)} />
           <View style={styles.divider} />
           {t.fees.filter((f) => f.amount.amount > 0).map((f) => (
             <Row key={f.type} label={CRYPTO_FEE_LABEL[f.type] ?? f.type} value={formatFiatObj(f.amount)} muted />
           ))}
           <View style={styles.divider} />
-          <Row label={buy ? 'Total paid' : 'Total received'} value={formatFiatObj(t.totalFiat)} emphasis />
+          <Row label={totalLabel} value={formatFiatObj(t.totalFiat)} emphasis />
         </View>
 
         {/* Status timeline */}

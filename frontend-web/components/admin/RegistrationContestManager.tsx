@@ -2,7 +2,18 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { DEFAULT_APPLICANT_CATEGORIES, NIGERIA_STATES } from '@/src/features/registration/config';
-import type { ContestRegistrationDefinition } from '@/src/features/registration/types';
+import {
+  FIELD_CATALOG,
+  CATALOG_GROUP_ORDER,
+  getCategoryFieldPreset,
+  getCatalogField,
+} from '@/src/features/registration/field-catalog';
+import type {
+  ConfigurableStepKey,
+  ContestCustomField,
+  ContestRegistrationDefinition,
+  FieldType,
+} from '@/src/features/registration/types';
 
 type ContestCategory = ContestRegistrationDefinition['contestCategory'];
 type ContestType = ContestRegistrationDefinition['contestType'];
@@ -51,6 +62,30 @@ function toSlug(raw: string) {
     .replace(/-+/g, '-');
 }
 
+const STEP_LABELS: Record<ConfigurableStepKey, string> = {
+  personal_information: 'Profile Information',
+  category_specific: 'Contest Requirements',
+};
+
+const CUSTOM_FIELD_TYPES: FieldType[] = [
+  'text', 'textarea', 'email', 'tel', 'url', 'number', 'date', 'select', 'multi_select', 'checkbox', 'file',
+];
+
+// Catalog grouped + ordered for the form-builder checklist.
+const GROUPED_CATALOG = CATALOG_GROUP_ORDER.map((group) => ({
+  group,
+  fields: FIELD_CATALOG.filter((field) => field.group === group),
+})).filter((section) => section.fields.length > 0);
+
+interface CustomFieldDraft {
+  id: string;
+  label: string;
+  type: FieldType;
+  step: ConfigurableStepKey;
+  required: boolean;
+  optionsText: string;
+}
+
 const defaultForm = {
   title: 'Spotlight Reality TV Show Contest',
   slug: 'spotlight-reality-tv-show-contest',
@@ -81,7 +116,77 @@ export default function RegistrationContestManager() {
   const [form, setForm] = useState(defaultForm);
   const [slugTouched, setSlugTouched] = useState(false);
 
+  // ── Form-builder (per-contest input mapping) state ─────────────────────────
+  const [includedFields, setIncludedFields] = useState<Set<string>>(
+    () => new Set(getCategoryFieldPreset(defaultForm.contestCategory)),
+  );
+  const [requiredOverrides, setRequiredOverrides] = useState<Record<string, boolean>>({});
+  const [customFields, setCustomFields] = useState<CustomFieldDraft[]>([]);
+
   const sortedStates = useMemo(() => [...NIGERIA_STATES].sort((a, b) => a.localeCompare(b)), []);
+
+  const isFieldRequired = (key: string) => {
+    if (Object.prototype.hasOwnProperty.call(requiredOverrides, key)) return requiredOverrides[key];
+    return Boolean(getCatalogField(key)?.defaultRequired);
+  };
+
+  const toggleIncludedField = (key: string) => {
+    setIncludedFields((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const setFieldRequired = (key: string, required: boolean) => {
+    setRequiredOverrides((prev) => ({ ...prev, [key]: required }));
+  };
+
+  const seedFromCategoryPreset = (category: string) => {
+    setIncludedFields(new Set(getCategoryFieldPreset(category)));
+    setRequiredOverrides({});
+    setCustomFields([]);
+  };
+
+  const addCustomField = () => {
+    setCustomFields((prev) => [
+      ...prev,
+      { id: `cf_${Date.now()}_${prev.length}`, label: '', type: 'text', step: 'category_specific', required: false, optionsText: '' },
+    ]);
+  };
+
+  const updateCustomField = (id: string, patch: Partial<CustomFieldDraft>) => {
+    setCustomFields((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  };
+
+  const removeCustomField = (id: string) => {
+    setCustomFields((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const buildFormSchemaPayload = () => {
+    const overrides: Record<string, boolean> = {};
+    for (const key of includedFields) {
+      overrides[key] = isFieldRequired(key);
+    }
+    const cleanedCustom: ContestCustomField[] = customFields
+      .filter((cf) => cf.label.trim())
+      .map((cf) => {
+        const options =
+          cf.type === 'select' || cf.type === 'multi_select'
+            ? cf.optionsText.split(',').map((opt) => opt.trim()).filter(Boolean)
+            : undefined;
+        return {
+          key: '',
+          label: cf.label.trim(),
+          type: cf.type,
+          step: cf.step,
+          required: cf.required,
+          options: options && options.length > 0 ? options : undefined,
+        };
+      });
+    return { version: 1 as const, includedFields: Array.from(includedFields), requiredOverrides: overrides, customFields: cleanedCustom };
+  };
 
   const loadContests = async () => {
     setLoading(true);
@@ -142,13 +247,14 @@ export default function RegistrationContestManager() {
       const res = await fetch('/api/admin/contests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, formSchema: buildFormSchemaPayload() }),
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok || !payload?.success) throw new Error(payload?.error || 'Failed to create contest.');
-      setMessage('Contest created successfully and is available in the registration contest list.');
+      setMessage('Contest created successfully. Contestants will only see the inputs you mapped below.');
       setForm(defaultForm);
       setSlugTouched(false);
+      seedFromCategoryPreset(defaultForm.contestCategory);
       await loadContests();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create contest.');
@@ -171,7 +277,7 @@ export default function RegistrationContestManager() {
           <div><label className="form-label">Slug</label><input className="form-input" value={form.slug} onChange={(e) => { setSlugTouched(true); setField('slug', toSlug(e.target.value)); }} /></div>
           <div><label className="form-label">Season / edition</label><input className="form-input" value={form.seasonOrEdition} onChange={(e) => setField('seasonOrEdition', e.target.value)} /></div>
 
-          <div><label className="form-label">Contest category</label><select className="form-input" value={form.contestCategory} onChange={(e) => setField('contestCategory', e.target.value as ContestCategory)}>{contestCategories.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>
+          <div><label className="form-label">Contest category</label><select className="form-input" value={form.contestCategory} onChange={(e) => { const v = e.target.value as ContestCategory; setField('contestCategory', v); seedFromCategoryPreset(v); }}>{contestCategories.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>
           <div><label className="form-label">Contest type</label><select className="form-input" value={form.contestType} onChange={(e) => setField('contestType', e.target.value as ContestType)}>{contestTypes.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>
           <div><label className="form-label">Region scope</label><select className="form-input" value={form.regionScope} onChange={(e) => setField('regionScope', e.target.value as ContestRegistrationDefinition['regionScope'])}><option value="state">state</option><option value="regional">regional</option><option value="national">national</option><option value="international">international</option></select></div>
 
@@ -219,11 +325,109 @@ export default function RegistrationContestManager() {
           <label className="flex items-center gap-2"><input type="checkbox" checked={form.supportsGroupEntry} onChange={(e) => setField('supportsGroupEntry', e.target.checked)} /> Group entry allowed</label>
         </div>
 
-        <div className="mt-3 flex gap-2">
+        <div className="mt-5 border-t border-border pt-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <h6 className="font-display text-lg text-foreground">Form builder — contestant inputs</h6>
+              <p className="text-foreground-muted text-[12px]">Only the inputs you enable here will be shown to contestants. Account login and legal consents are always included.</p>
+            </div>
+            <button type="button" className="btn-outline py-2 px-3 text-[11px]" onClick={() => seedFromCategoryPreset(form.contestCategory)}>
+              Reset to {form.contestCategory} preset
+            </button>
+          </div>
+
+          {(['personal_information', 'category_specific'] as ConfigurableStepKey[]).map((stepKey) => {
+            const sections = GROUPED_CATALOG
+              .map((section) => ({ group: section.group, fields: section.fields.filter((f) => f.step === stepKey) }))
+              .filter((section) => section.fields.length > 0);
+            const selectedCount = FIELD_CATALOG.filter((f) => f.step === stepKey && includedFields.has(f.key)).length;
+            return (
+              <div key={stepKey} className="mt-3">
+                <div className="text-[12px] font-semibold text-foreground mb-1">
+                  {STEP_LABELS[stepKey]} <span className="text-foreground-muted font-normal">— {selectedCount} selected</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {sections.map((section) => (
+                    <div key={section.group} className="border border-border rounded-sm p-3">
+                      <div className="text-[11px] uppercase tracking-[0.1em] text-foreground-dim mb-2">{section.group}</div>
+                      <div className="space-y-1.5">
+                        {section.fields.map((field) => {
+                          const checked = includedFields.has(field.key);
+                          return (
+                            <div key={field.key} className="flex items-center justify-between gap-2">
+                              <label className="text-[12px] text-foreground-muted flex items-center gap-2">
+                                <input type="checkbox" checked={checked} onChange={() => toggleIncludedField(field.key)} />
+                                <span>{field.label}{field.minorOnly ? ' (minors)' : ''}</span>
+                              </label>
+                              {checked ? (
+                                <label className="text-[11px] text-foreground-dim flex items-center gap-1 shrink-0">
+                                  <input type="checkbox" checked={isFieldRequired(field.key)} onChange={(e) => setFieldRequired(field.key, e.target.checked)} />
+                                  required
+                                </label>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+
+          <div className="mt-4">
+            <div className="flex items-center justify-between">
+              <div className="text-[12px] font-semibold text-foreground">Custom questions</div>
+              <button type="button" className="btn-outline py-1.5 px-3 text-[11px]" onClick={addCustomField}>+ Add question</button>
+            </div>
+            {customFields.length === 0 ? (
+              <p className="text-foreground-muted text-[12px] mt-1">No custom questions. Add your own inputs beyond the catalog above.</p>
+            ) : (
+              <div className="mt-2 space-y-2">
+                {customFields.map((cf) => (
+                  <div key={cf.id} className="border border-border rounded-sm p-3 grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+                    <div className="md:col-span-4">
+                      <label className="form-label">Question label</label>
+                      <input className="form-input" value={cf.label} placeholder="e.g. Which instrument do you play?" onChange={(e) => updateCustomField(cf.id, { label: e.target.value })} />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="form-label">Type</label>
+                      <select className="form-input" value={cf.type} onChange={(e) => updateCustomField(cf.id, { type: e.target.value as FieldType })}>
+                        {CUSTOM_FIELD_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </div>
+                    <div className="md:col-span-3">
+                      <label className="form-label">Step</label>
+                      <select className="form-input" value={cf.step} onChange={(e) => updateCustomField(cf.id, { step: e.target.value as ConfigurableStepKey })}>
+                        <option value="personal_information">{STEP_LABELS.personal_information}</option>
+                        <option value="category_specific">{STEP_LABELS.category_specific}</option>
+                      </select>
+                    </div>
+                    <div className="md:col-span-2 flex items-center gap-2">
+                      <label className="text-[12px] text-foreground-muted flex items-center gap-1"><input type="checkbox" checked={cf.required} onChange={(e) => updateCustomField(cf.id, { required: e.target.checked })} /> required</label>
+                    </div>
+                    <div className="md:col-span-1">
+                      <button type="button" className="btn-outline py-2 px-2 text-[11px] w-full" onClick={() => removeCustomField(cf.id)}>Remove</button>
+                    </div>
+                    {(cf.type === 'select' || cf.type === 'multi_select') ? (
+                      <div className="md:col-span-12">
+                        <label className="form-label">Options (comma-separated)</label>
+                        <input className="form-input" value={cf.optionsText} placeholder="Option A, Option B, Option C" onChange={(e) => updateCustomField(cf.id, { optionsText: e.target.value })} />
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-4 flex gap-2">
           <button type="button" className="btn-primary py-2.5 px-4 text-[11px]" disabled={saving} onClick={() => void submit()}>
             {saving ? 'Creating...' : 'Create Contest'}
           </button>
-          <button type="button" className="btn-outline py-2.5 px-4 text-[11px]" onClick={() => { setForm(defaultForm); setSlugTouched(false); }}>Reset</button>
+          <button type="button" className="btn-outline py-2.5 px-4 text-[11px]" onClick={() => { setForm(defaultForm); setSlugTouched(false); seedFromCategoryPreset(defaultForm.contestCategory); }}>Reset</button>
         </div>
 
         {message ? <p className="mt-2 text-[12px] text-green-700">{message}</p> : null}

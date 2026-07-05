@@ -5,17 +5,23 @@ import { Typography } from '@/constants/typography';
 import { Radius } from '@/constants/radius';
 import { VotingColors } from '../constants/voting.constants';
 import { Colors } from '@/constants/colors';
+import { resolveMovement } from '../utils/voteFormatters';
+import type { RankChange } from '../types/voting.types';
 
 interface Props {
   movement?: 'UP' | 'DOWN' | 'SAME';
+  /** Raw lowercase trend signal from the endpoint; preferred over `movement`. */
+  rankChange?: RankChange;
   previousRank?: number;
   currentRank?: number;
 }
 
-export default function RankMovementBadge({ movement = 'SAME', previousRank, currentRank }: Props) {
+export default function RankMovementBadge({ movement, rankChange, previousRank, currentRank }: Props) {
+  // Prefer the endpoint's rankChange signal; fall back to legacy movement, then 'SAME'.
+  const resolved = resolveMovement(rankChange, movement);
   const diff = previousRank && currentRank ? Math.abs(previousRank - currentRank) : undefined;
 
-  if (movement === 'UP') {
+  if (resolved === 'UP') {
     return (
       <View style={[styles.badge, styles.up]}>
         <TrendingUp size={11} color={VotingColors.contestLive} strokeWidth={2.5} />
@@ -24,7 +30,7 @@ export default function RankMovementBadge({ movement = 'SAME', previousRank, cur
     );
   }
 
-  if (movement === 'DOWN') {
+  if (resolved === 'DOWN') {
     return (
       <View style={[styles.badge, styles.down]}>
         <TrendingDown size={11} color={Colors.error} strokeWidth={2.5} />

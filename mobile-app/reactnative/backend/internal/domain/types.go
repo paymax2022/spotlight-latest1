@@ -188,7 +188,39 @@ type Eligibility struct {
 	CryptoEnabled bool   `json:"cryptoEnabled"`
 	Message       string `json:"message"`
 	CtaRoute      string `json:"ctaRoute,omitempty"`
+	// Reason is a stable machine-readable code for the gate decision (empty when
+	// State == "eligible"). One of: user_inactive, kyc_required, suitability_required,
+	// suitability_expired, agreements_required, crypto_disabled.
+	Reason string `json:"reason,omitempty"`
 }
+
+// EligibilityFacts is the compliance snapshot the store returns for a user. The
+// trading gate is computed from these facts server-side (Rule 2: never trust the
+// client). All fields are read from the persistence layer — there is no default
+// "eligible"; an absent user yields zero-value facts which fail closed.
+type EligibilityFacts struct {
+	// UserActive is false for suspended/closed accounts.
+	UserActive bool
+	// KycTier is the user's verified KYC tier (0 = none).
+	KycTier int
+	// CryptoEnabled is the per-user crypto product flag (feature/compliance gate).
+	CryptoEnabled bool
+	// SuitabilityComplete is true once the suitability questionnaire has produced
+	// a riskCategory + eligibleProducts that include crypto.
+	SuitabilityComplete bool
+	// SuitabilityExpired is true when a completed profile has lapsed and must be
+	// retaken before trading.
+	SuitabilityExpired bool
+	// AgreementsAccepted is true once every currently-required agreement version
+	// has an acceptance log for this user.
+	AgreementsAccepted bool
+}
+
+// MinCryptoKycTier is the minimum KYC tier required to buy/sell crypto. Per
+// docs/compliance.md "Product Access Tiers", crypto buy/sell needs Tier 2 (Full
+// KYC). Tier 1 may buy low-risk assets where a partner allows, but the
+// conservative, fail-closed default gates all crypto trading at Tier 2.
+const MinCryptoKycTier = 2
 
 // ── Watchlist / alerts ───────────────────────────────────────────────────────
 

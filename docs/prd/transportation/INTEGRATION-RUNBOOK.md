@@ -10,12 +10,18 @@ How to take the ride-hailing module from in-app mock data to the live Go backend
 
 The Go backend mounts mobility/driver groups **directly under `/api/finance`** (siblings of the legacy `/transport` group); admin under `/api/finance/admin/transport`. The mobile API base was corrected from `/api/finance/transport` → `/api/finance` to match.
 
+## Wire format — camelCase responses, snake_case requests
+Transport/mobility **response** bodies are **camelCase** (Go `json` tags: `riderId`, `fareKobo`, `settlementStatus`, `pickupAddress`, …). **Request** bodies remain **snake_case** (`pickup_address`, `fare_kobo`, `idempotency_key`, `pricing_mode`, …). Clients must serialize requests in snake_case and parse responses as camelCase; `contracts/openapi.yaml` reflects this split (response schemas camelCase, `*Request` schemas snake_case). The parcel rate route is plural: `POST /mobility/parcels/:id/rate`.
+
 ## Go-live checklist
 
-1. **Database** — apply the additive migration:
+1. **Database** — apply the additive migrations (local-first workflow):
    ```
-   supabase db push        # or: supabase migration up
+   supabase migration up        # apply pending migrations locally
+   # or, to replay from scratch in dev: supabase db reset
    ```
+   `supabase db push` is a **human-DBA, go-live-only** step against the live
+   project — do not run it from the dev loop.
    Adds: trip lifecycle columns, pricing/commission config (seeded), fare_offers, vehicles, driver_documents, safety_incidents, trip_events, trip_ratings, trusted_contacts, mobility_profiles, transport_audit_log. No DROP/RENAME — safe on existing data.
 
 2. **Backend** (`backend/.env`):

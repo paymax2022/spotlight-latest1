@@ -57,6 +57,7 @@ export default function DoctorProfile() {
   const [selectedSlot, setSelectedSlot] = useState('');
   const [consultType, setConsultType] = useState<'video' | 'in_person'>('video');
   const [booked, setBooked] = useState(false);
+  const [bookedApptId, setBookedApptId] = useState(null);
 
   const { data: doctor, isLoading } = useQuery({
     queryKey: ['doctor', id],
@@ -74,7 +75,7 @@ export default function DoctorProfile() {
         time: selectedSlot,
         type: consultType,
       }),
-    onSuccess: () => setBooked(true),
+    onSuccess: (data) => { setBooked(true); setBookedApptId(data?.id ?? null); },
   });
 
   const feeNaira = (doc.consultation_fee_kobo ?? 15000_00) / 100;
@@ -105,6 +106,14 @@ export default function DoctorProfile() {
           <Pressable style={s.successBtn} onPress={() => router.push('/telemedicine' as any)}>
             <Text style={s.successBtnText}>Back to Health Home</Text>
           </Pressable>
+          {bookedApptId && (
+            <Pressable
+              style={[s.successBtn, { marginTop: 12, backgroundColor: '#fff', borderWidth: 2, borderColor: C.primary }]}
+              onPress={() => router.push(`/telemedicine/appointment/${bookedApptId}/summary` as any)}
+            >
+              <Text style={[s.successBtnText, { color: C.primary }]}>View Summary</Text>
+            </Pressable>
+          )}
         </View>
       </SafeAreaView>
     );

@@ -1,9 +1,10 @@
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useQuery } from '@tanstack/react-query';
 import * as Icons from 'lucide-react-native';
-import { ArrowLeft, Wallet, Search, ShieldCheck, ChevronRight, Clock, Star } from 'lucide-react-native';
+import { ArrowLeft, Wallet, ShieldCheck, ChevronRight, Clock, Star, LocateFixed, MapPin, ArrowRight, Plus } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -11,21 +12,58 @@ import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
 import StateView from '@/components/StateView';
 import SectionHeader from '@/components/SectionHeader';
+import BalanceCard from '@/components/BalanceCard';
+import { getWallet } from '@/api/wallet.api';
 import { useMobilityHome } from '@/features/mobility/hooks/useMobility';
 import ActiveTripCard from '@/features/mobility/components/ActiveTripCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
-import { DRIVER_MODE_ENABLED } from '@/features/mobility/constants/mobility.constants';
+import { DRIVER_MODE_ENABLED, QUICK_TILE_REGISTRY, type QuickTileMeta } from '@/features/mobility/constants/mobility.constants';
 import { MODE_TILES, type ModeTile } from '@/features/mobility/constants/modes.constants';
 import { formatNaira } from '@/features/mobility/utils/mobilityFormatters';
-import type { QuickTile, SavedPlace, Place } from '@/features/mobility/types/mobility.types';
 
 export default function MobilityHomeScreen() {
   const home = useMobilityHome();
+  // Wallet balance is NOT part of the mobility home payload — read it from the
+  // shared wallet feature. Wallet.balance is naira (major units); convert to kobo
+  // for formatNaira. undefined-safe so we never render "₦0" from a missing field.
+  const wallet = useQuery({ queryKey: ['wallet', 'balance'], queryFn: getWallet, staleTime: 15_000 });
 
   const goEstimate = (params?: { destAddress?: string; lat?: number; lng?: number }) => {
     const q = params?.destAddress
       ? `?destAddress=${encodeURIComponent(params.destAddress)}&lat=${params.lat}&lng=${params.lng}`
       : '';
+    router.push(`/mobility/estimate${q}`);
+  };
+
+  // Trip planner state lives in the URL params so the Current location and
+  // Where to fields survive the round-trip to the address picker (and work on web).
+  const trip = useLocalSearchParams<{
+    pickupAddress?: string; pickupLat?: string; pickupLng?: string;
+    destAddress?: string; lat?: string; lng?: string;
+  }>();
+  const pickupAddress = trip.pickupAddress ? String(trip.pickupAddress) : '';
+  const destAddress = trip.destAddress ? String(trip.destAddress) : '';
+  const enc = encodeURIComponent;
+
+  // Open the shared AddressEntry autocomplete for either field, preserving the
+  // value already chosen for the other field.
+  const pickerHref = (target: 'pickup' | 'destination') => {
+    let q = `?target=${target}`;
+    if (target === 'pickup' && destAddress) {
+      q += `&destAddress=${enc(destAddress)}&lat=${enc(String(trip.lat ?? ''))}&lng=${enc(String(trip.lng ?? ''))}`;
+    }
+    if (target === 'destination' && pickupAddress) {
+      q += `&pickupAddress=${enc(pickupAddress)}&pickupLat=${enc(String(trip.pickupLat ?? ''))}&pickupLng=${enc(String(trip.pickupLng ?? ''))}`;
+    }
+    return `/mobility/destination${q}`;
+  };
+
+  const getEstimate = () => {
+    if (!destAddress) return;
+    let q = `?destAddress=${enc(destAddress)}&lat=${enc(String(trip.lat ?? ''))}&lng=${enc(String(trip.lng ?? ''))}`;
+    if (pickupAddress) {
+      q += `&pickupAddress=${enc(pickupAddress)}&pickupLat=${enc(String(trip.pickupLat ?? ''))}&pickupLng=${enc(String(trip.pickupLng ?? ''))}`;
+    }
     router.push(`/mobility/estimate${q}`);
   };
 
@@ -48,30 +86,69 @@ export default function MobilityHomeScreen() {
         <StateView kind="loading" message="Loading mobility…" />
       ) : home.isError ? (
         <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => home.refetch()} />
-      ) : home.data && !home.data.serviceAvailable ? (
-        <MobilityEdgeState kind="serviceUnavailable" />
       ) : (
         <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scroll}
           refreshControl={<RefreshControl refreshing={home.isRefetching} onRefresh={() => home.refetch()} tintColor={Colors.primary} />}
         >
-          {/* Wallet widget (reuses existing wallet balance) */}
-          <View style={[styles.walletCard, shadow1]}>
-            <View style={styles.walletIcon}><Wallet size={20} color={Colors.primary} strokeWidth={2.2} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.walletLabel}>Paymax wallet</Text>
-              <Text style={styles.walletBalance}>{formatNaira(home.data?.walletBalanceKobo ?? 0)}</Text>
-            </View>
-            <Pressable onPress={() => router.push('/wallet/add')} style={styles.topUpBtn}>
-              <Text style={styles.topUpLabel}>Top up</Text>
+          {/* Uniform wallet card — same design as the app home, with Top up.
+              Wrapped in a negative-margin View to cancel the scroll's horizontal
+              padding so BalanceCard's own margins align it exactly like on home. */}
+          <View style={styles.walletCardWrap}>
+            <BalanceCard
+              balance={wallet.data?.balance ?? 0}
+              currency="NGN"
+              quickActions={[
+                { id: 'topup', label: 'Top up', icon: <Plus size={20} color={Colors.onPrimary} strokeWidth={2.4} />, onPress: () => router.push('/wallet/add') },
+                { id: 'wallet', label: 'Wallet', icon: <Wallet size={20} color={Colors.onPrimary} strokeWidth={2} />, onPress: () => router.push('/(tabs)/wallet') },
+                { id: 'history', label: 'History', icon: <Clock size={20} color={Colors.onPrimary} strokeWidth={2} />, onPress: () => router.push('/services/transactions') },
+              ]}
+            />
+          </View>
+
+          {/* Trip planner — Current location + Where to. Both open the same
+              AddressEntry autocomplete (Google-powered lookup + confirm-on-map). */}
+          <View style={[styles.plannerCard, shadow1]}>
+            <Pressable style={styles.plannerRow} onPress={() => router.push(pickerHref('pickup'))} accessibilityLabel="Set current location">
+              <View style={styles.plannerDotWrap}><View style={styles.dotOrigin} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.plannerHint}>Current location</Text>
+                <Text style={[styles.plannerValue, !pickupAddress && styles.plannerPlaceholder]} numberOfLines={1}>
+                  {pickupAddress || 'Set your pickup point'}
+                </Text>
+              </View>
+              <LocateFixed size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
+            </Pressable>
+            <View style={styles.plannerDivider} />
+            <Pressable style={styles.plannerRow} onPress={() => router.push(pickerHref('destination'))} accessibilityLabel="Where to?">
+              <View style={styles.plannerDotWrap}><View style={styles.dotDest} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.plannerHint}>Where to</Text>
+                <Text style={[styles.plannerValue, !destAddress && styles.plannerPlaceholder]} numberOfLines={1}>
+                  {destAddress || 'Where to?'}
+                </Text>
+              </View>
+              <MapPin size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
             </Pressable>
           </View>
 
-          {/* Where to */}
-          <Pressable style={styles.searchBar} onPress={() => goEstimate()} accessibilityLabel="Where to?">
-            <Search size={20} color={Colors.onSurfaceVariant} strokeWidth={2} />
-            <Text style={styles.searchText}>Where to?</Text>
+          {destAddress ? (
+            <Pressable style={styles.estimateBtn} onPress={getEstimate} accessibilityLabel="Get ride estimate">
+              <Text style={styles.estimateBtnLabel}>Get estimate</Text>
+              <ArrowRight size={18} color={Colors.onPrimary} strokeWidth={2.2} />
+            </Pressable>
+          ) : null}
+
+          {/* Ride history — labeled entry point (mirrors the header clock icon) so
+              riders can quickly rebook a past trip in one tap. */}
+          <Pressable style={styles.placeRow} onPress={() => router.push('/mobility/history')} accessibilityLabel="View trip history and rebook a past ride">
+            <View style={styles.placeIcon}><Clock size={20} color={Colors.primary} strokeWidth={2} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.placeLabel}>Trip history</Text>
+              <Text style={styles.placeAddr} numberOfLines={1}>Rebook a past ride in one tap</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.onSurfaceVariant} />
           </Pressable>
 
           {/* Active trip */}
@@ -81,11 +158,22 @@ export default function MobilityHomeScreen() {
             </View>
           )}
 
-          {/* Quick tiles */}
+          {/* Quick tiles — backend sends string keys; map them to the registry. */}
           <View style={styles.tiles}>
-            {(home.data?.quickTiles ?? []).map((tile) => (
-              <QuickTileItem key={tile.id} tile={tile} onPress={() => tile.enabled && goEstimate()} />
-            ))}
+            {(home.data?.quickTiles ?? [])
+              .map((key) => QUICK_TILE_REGISTRY[key])
+              .filter((tile): tile is QuickTileMeta => Boolean(tile))
+              .map((tile) => (
+                <QuickTileItem
+                  key={tile.id}
+                  tile={tile}
+                  onPress={() => {
+                    if (!tile.enabled) return;
+                    if (tile.route) router.push(tile.route as never);
+                    else goEstimate();
+                  }}
+                />
+              ))}
           </View>
 
           {/* More ways to move (new mobility modes) */}
@@ -95,30 +183,6 @@ export default function MobilityHomeScreen() {
               <ModeTileRow key={mode.id} mode={mode} onPress={() => mode.enabled && router.push(mode.route as never)} />
             ))}
           </View>
-
-          {/* Saved places */}
-          {(home.data?.savedPlaces.length ?? 0) > 0 && (
-            <>
-              <SectionHeader title="Saved places" style={styles.sectionGap} />
-              <View style={styles.list}>
-                {home.data!.savedPlaces.map((p) => (
-                  <PlaceRow key={p.id} place={p} onPress={() => goEstimate({ destAddress: p.address, lat: p.lat, lng: p.lng })} />
-                ))}
-              </View>
-            </>
-          )}
-
-          {/* Recent */}
-          {(home.data?.recentPlaces.length ?? 0) > 0 && (
-            <>
-              <SectionHeader title="Recent" style={styles.sectionGap} />
-              <View style={styles.list}>
-                {home.data!.recentPlaces.map((p, i) => (
-                  <RecentRow key={`${p.address}-${i}`} place={p} onPress={() => goEstimate({ destAddress: p.address, lat: p.lat, lng: p.lng })} />
-                ))}
-              </View>
-            </>
-          )}
 
           {/* Safety reminder */}
           <View style={styles.safetyCard}>
@@ -143,7 +207,7 @@ export default function MobilityHomeScreen() {
   );
 }
 
-function QuickTileItem({ tile, onPress }: { tile: QuickTile; onPress: () => void }) {
+function QuickTileItem({ tile, onPress }: { tile: QuickTileMeta; onPress: () => void }) {
   const Icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[tile.icon] ?? Icons.Car;
   return (
     <Pressable style={[styles.tile, !tile.enabled && styles.tileDisabled]} onPress={onPress} disabled={!tile.enabled}>
@@ -168,30 +232,6 @@ function ModeTileRow({ mode, onPress }: { mode: ModeTile; onPress: () => void })
   );
 }
 
-function PlaceRow({ place, onPress }: { place: SavedPlace; onPress: () => void }) {
-  const Icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[place.icon ?? 'MapPin'] ?? Icons.MapPin;
-  return (
-    <Pressable style={styles.placeRow} onPress={onPress}>
-      <View style={styles.placeIcon}><Icon size={18} color={Colors.secondary} strokeWidth={2} /></View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.placeLabel}>{place.label}</Text>
-        <Text style={styles.placeAddr} numberOfLines={1}>{place.address}</Text>
-      </View>
-      <ChevronRight size={18} color={Colors.onSurfaceVariant} />
-    </Pressable>
-  );
-}
-
-function RecentRow({ place, onPress }: { place: Place; onPress: () => void }) {
-  return (
-    <Pressable style={styles.placeRow} onPress={onPress}>
-      <View style={styles.placeIcon}><Clock size={18} color={Colors.onSurfaceVariant} strokeWidth={2} /></View>
-      <Text style={[styles.placeAddr, { flex: 1, color: Colors.onSurface }]} numberOfLines={1}>{place.address}</Text>
-      <ChevronRight size={18} color={Colors.onSurfaceVariant} />
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   header: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.containerMargin, paddingVertical: Spacing.sm },
@@ -200,14 +240,20 @@ const styles = StyleSheet.create({
   eyebrow: { ...Typography.caption, color: Colors.primary, fontWeight: '700' as const, textTransform: 'uppercase', letterSpacing: 0.6 },
   headerTitle: { ...Typography.titleLg, color: Colors.onSurface },
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingBottom: 48, gap: Spacing.md },
-  walletCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, borderWidth: 1, borderColor: Colors.outlineVariant, marginTop: Spacing.xs },
-  walletIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.primaryFixed, alignItems: 'center', justifyContent: 'center' },
-  walletLabel: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
-  walletBalance: { ...Typography.titleMd, color: Colors.onSurface, fontWeight: '700' as const },
-  topUpBtn: { paddingHorizontal: Spacing.md, height: 38, borderRadius: Radius.full, backgroundColor: Colors.primaryFixed, alignItems: 'center', justifyContent: 'center' },
-  topUpLabel: { ...Typography.labelMd, color: Colors.primary },
-  searchBar: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, height: 56, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1.5, borderColor: Colors.outlineVariant, paddingHorizontal: Spacing.md },
-  searchText: { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
+  // Cancels the scroll's horizontal padding so the shared BalanceCard aligns
+  // full-width exactly as on the app home.
+  walletCardWrap: { marginHorizontal: -Spacing.containerMargin, marginTop: Spacing.xs },
+  plannerCard: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.outlineVariant, paddingHorizontal: Spacing.md },
+  plannerRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingVertical: Spacing.md },
+  plannerDotWrap: { width: 20, alignItems: 'center', justifyContent: 'center' },
+  dotOrigin: { width: 11, height: 11, borderRadius: 6, backgroundColor: Colors.primary },
+  dotDest: { width: 11, height: 11, borderRadius: 2, backgroundColor: Colors.error },
+  plannerDivider: { height: 1, backgroundColor: Colors.outlineVariant, marginLeft: 32 },
+  plannerHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  plannerValue: { ...Typography.bodyMd, color: Colors.onSurface },
+  plannerPlaceholder: { color: Colors.onSurfaceVariant },
+  estimateBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, height: 52, borderRadius: Radius.lg, backgroundColor: Colors.primary },
+  estimateBtnLabel: { ...Typography.labelLg, color: Colors.onPrimary },
   section: {},
   tiles: { flexDirection: 'row', gap: Spacing.sm },
   tile: { flex: 1, alignItems: 'center', gap: 6, paddingVertical: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLow },

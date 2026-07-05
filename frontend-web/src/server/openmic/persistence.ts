@@ -2,6 +2,7 @@ import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { hasUsableSupabaseConfig, hasUsableSupabaseReadConfig } from '@/lib/supabase/runtime';
 import { OPEN_MIC_CONTEST_TYPE } from '@/src/features/openmic/constants';
 import { randomUUID } from 'node:crypto';
+import { recordVoteFraudSignals, recordVoteAudit } from '@/src/server/voting/core';
 import type {
   OpenMicApplication,
   OpenMicApplicationStatus,
@@ -1632,6 +1633,41 @@ export async function castVote(input: OpenMicVoteInput) {
           votesInEvent: input.votes,
           status: 'open',
         },
+      });
+    }
+
+    // --- Shared cross-cutting core (unifies open-mic with v1/v2) ---
+    // Fraud signals (velocity/high-volume) + a canonical vote-audit entry in
+    // vote_audit_logs, in addition to the open-mic-specific records above. The
+    // domain table (competition_entry_votes) is untouched.
+    if (input.source === 'paid') {
+      const votePrice = contest?.votingConfig.votePrice ?? 0;
+      const amountKobo = Math.round(votePrice * input.votes * 100);
+      const fraud = await recordVoteFraudSignals({
+        domain: 'open-mic',
+        contestId: input.contestId,
+        contestantId: input.submissionId,
+        votes: input.votes,
+        paymentReference: input.paymentReference ?? null,
+        userId: input.voterUserId ?? null,
+        amountExpectedKobo: amountKobo,
+        amountPaidKobo: amountKobo,
+        highVolumeThreshold: suspiciousThreshold,
+        highVolumeHardThreshold: suspiciousHighThreshold,
+      });
+      await recordVoteAudit({
+        domain: 'open-mic',
+        action: 'vote_credited',
+        actorId: input.voterUserId ?? 'anonymous',
+        entityId: input.submissionId,
+        entityType: 'competition_entry',
+        contestId: input.contestId,
+        contestantId: input.submissionId,
+        paymentReference: input.paymentReference ?? null,
+        votes: input.votes,
+        amountPaidKobo: amountKobo,
+        amountExpectedKobo: amountKobo,
+        fraudScore: fraud.score,
       });
     }
     return updated;

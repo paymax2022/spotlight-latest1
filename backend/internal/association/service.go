@@ -337,8 +337,8 @@ func (s *Service) GetDashboard(ctx context.Context, userID string) (*MemberDashb
 	_ = s.db.QueryRow(ctx, `
 		SELECT count(*) FROM assoc_announcements a
 		JOIN assoc_memberships m ON m.organisation_id=a.organisation_id
-		WHERE m.user_id=$1
-		  AND NOT EXISTS (SELECT 1 FROM assoc_announcement_reads r WHERE r.announcement_id=a.id AND r.user_id=$1)`,
+		WHERE m.user_id=$1 AND m.status='ACTIVE'
+		  AND NOT EXISTS (SELECT 1 FROM assoc_announcement_reads r WHERE r.announcement_id=a.id AND r.membership_id=m.id AND r.read_at IS NOT NULL)`,
 		userID).Scan(&unread)
 	_ = s.db.QueryRow(ctx, `
 		SELECT count(*) FROM assoc_tasks t
@@ -652,14 +652,14 @@ func (s *Service) GetMember(ctx context.Context, viewerID, targetID string) (*Me
 // GetAnnouncements returns announcements for the caller's organisations.
 func (s *Service) GetAnnouncements(ctx context.Context, userID string) ([]AnnouncementSummary, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT a.id, a.title, LEFT(a.body,120), a.audience, a.created_at::text,
+		SELECT a.id, a.title, LEFT(COALESCE(a.body,''),120), COALESCE(a.audience,''), a.posted_at::text,
 		       COALESCE(a.author,''), a.urgent, a.requires_ack,
-		       EXISTS(SELECT 1 FROM assoc_announcement_reads r WHERE r.announcement_id=a.id AND r.user_id=$1),
-		       EXISTS(SELECT 1 FROM assoc_announcement_reads r WHERE r.announcement_id=a.id AND r.user_id=$1 AND r.acknowledged=true)
+		       EXISTS(SELECT 1 FROM assoc_announcement_reads r WHERE r.announcement_id=a.id AND r.membership_id=m.id AND r.read_at IS NOT NULL),
+		       EXISTS(SELECT 1 FROM assoc_announcement_reads r WHERE r.announcement_id=a.id AND r.membership_id=m.id AND r.acknowledged_at IS NOT NULL)
 		FROM assoc_announcements a
 		JOIN assoc_memberships m ON m.organisation_id=a.organisation_id
 		WHERE m.user_id=$1 AND m.status='ACTIVE'
-		ORDER BY a.urgent DESC, a.created_at DESC LIMIT 100`, userID)
+		ORDER BY a.urgent DESC, a.posted_at DESC LIMIT 100`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("association: announcements: %w", err)
 	}
@@ -682,10 +682,11 @@ func (s *Service) GetAnnouncements(ctx context.Context, userID string) ([]Announ
 // GetNotifications returns the in-app notification center for the caller.
 func (s *Service) GetNotifications(ctx context.Context, userID string) ([]AppNotification, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT id, kind, title, body, created_at::text, read, route
-		FROM assoc_notifications
-		WHERE user_id=$1
-		ORDER BY created_at DESC LIMIT 100`, userID)
+		SELECT n.id, n.kind, n.title, COALESCE(n.body,''), n.created_at::text, n.read, n.route
+		FROM assoc_notifications n
+		JOIN assoc_memberships m ON m.id=n.membership_id
+		WHERE m.user_id=$1
+		ORDER BY n.created_at DESC LIMIT 100`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("association: notifications: %w", err)
 	}
@@ -783,9 +784,9 @@ func (s *Service) GetTasks(ctx context.Context, userID, scope string) ([]TaskSum
 // GetDocuments returns accessible documents for the caller's organisations.
 func (s *Service) GetDocuments(ctx context.Context, userID string) ([]DocumentSummary, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT d.id, d.title, d.category, d.kind, d.size_label, d.updated_at::text,
+		SELECT d.id, d.title, d.category, d.kind, COALESCE(d.size_label,''), d.updated_at::text,
 		       d.restricted, d.requires_ack,
-		       EXISTS(SELECT 1 FROM assoc_document_acks a WHERE a.document_id=d.id AND a.user_id=$1)
+		       EXISTS(SELECT 1 FROM assoc_document_acks a WHERE a.document_id=d.id AND a.membership_id=m.id)
 		FROM assoc_documents d
 		JOIN assoc_memberships m ON m.organisation_id=d.organisation_id
 		WHERE m.user_id=$1 AND m.status='ACTIVE'

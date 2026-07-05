@@ -87,8 +87,8 @@ func (s *Service) SearchBusRoutes(ctx context.Context, origin, dest string) ([]m
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "operator_id": opID, "origin_terminal": o, "dest_terminal": d,
-			"distance_m": distM, "est_duration_s": durS, "category": category, "status": status,
+			"id": id, "operatorId": opID, "originTerminal": o, "destTerminal": d,
+			"distanceM": distM, "estDurationS": durS, "category": category, "status": status,
 		})
 	}
 	return out, nil
@@ -129,9 +129,9 @@ func (s *Service) ListBusSchedules(ctx context.Context, routeID, date string) ([
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "route_id": routeID, "departure_time": dep, "arrival_estimate": arr,
-			"total_seats": totalSeats, "fare_kobo": fare, "fare_approved": approved,
-			"status": status, "seats_left": seatsLeft,
+			"id": id, "routeId": routeID, "departureTime": dep, "arrivalEstimate": arr,
+			"totalSeats": totalSeats, "fareKobo": fare, "fareApproved": approved,
+			"status": status, "seatsLeft": seatsLeft,
 		})
 	}
 	return out, nil
@@ -146,17 +146,29 @@ func (s *Service) BookBusTicket(ctx context.Context, userID string, req BusBookR
 	if idempotencyKey == "" {
 		return nil, codedErr(http.StatusBadRequest, "MISSING_IDEMPOTENCY_KEY", "idempotency key required")
 	}
-	// Load schedule + operator, enforce approved fare and bookable status.
+	// Load schedule + operator + (optional) marketplace provider, enforce approved
+	// fare and bookable status.
 	var fare int64
 	var totalSeats int
 	var approved bool
 	var status, operatorID string
+	var providerID *string
 	const sq = `
-		SELECT s.fare_kobo, s.total_seats, s.fare_approved, s.status, r.operator_id
+		SELECT s.fare_kobo, s.total_seats, s.fare_approved, s.status, r.operator_id, r.provider_id
 		FROM bus_schedules s JOIN bus_routes r ON r.id = s.route_id
 		WHERE s.id=$1`
-	if err := s.db.QueryRow(ctx, sq, req.ScheduleID).Scan(&fare, &totalSeats, &approved, &status, &operatorID); err != nil {
+	if err := s.db.QueryRow(ctx, sq, req.ScheduleID).Scan(&fare, &totalSeats, &approved, &status, &operatorID, &providerID); err != nil {
 		return nil, codedErr(http.StatusNotFound, CodeNotFound, "schedule not found")
+	}
+	// Resolve the settlement recipient: for a marketplace route the payout goes to
+	// the PROVIDER's owner user (provider_id → bus_providers.owner_user_id); for a
+	// legacy admin route it stays the route operator_id.
+	settleUserID := operatorID
+	if providerID != nil {
+		var owner string
+		if err := s.db.QueryRow(ctx, `SELECT owner_user_id FROM bus_providers WHERE id=$1`, *providerID).Scan(&owner); err == nil && owner != "" {
+			settleUserID = owner
+		}
 	}
 	if !approved {
 		return nil, codedErr(http.StatusUnprocessableEntity, "FARE_NOT_APPROVED", "schedule fare not yet approved")
@@ -166,6 +178,12 @@ func (s *Service) BookBusTicket(ctx context.Context, userID string, req BusBookR
 	}
 	if req.SeatNumber > totalSeats {
 		return nil, codedErr(http.StatusUnprocessableEntity, "INVALID_SEAT", "seat number exceeds capacity")
+	}
+
+	// Fail-closed tier/spending-limit gate BEFORE any wallet escrow (same contract
+	// as RequestRide): a Tier0/over-limit passenger cannot move money.
+	if err := s.enforceTierLimit(ctx, userID, fare); err != nil {
+		return nil, err
 	}
 
 	ticketID := uuid.New().String()
@@ -189,13 +207,14 @@ func (s *Service) BookBusTicket(ctx context.Context, userID string, req BusBookR
 		return nil, codedErr(http.StatusConflict, "SEAT_TAKEN", "seat already booked")
 	}
 
-	// Bus tickets settle to the operator immediately on issue (trusted catalog).
+	// Bus tickets settle immediately on issue (trusted catalog): to the marketplace
+	// provider's owner user when the route has a provider, else the legacy operator.
 	comm, _ := s.commissionForTier(ctx, "standard")
-	if err := s.settlement.Settle(ctx, sett.ID, settlementSplit(operatorID, comm)); err != nil {
+	if err := s.settlement.Settle(ctx, sett.ID, settlementSplit(settleUserID, comm)); err != nil {
 		return nil, fmt.Errorf("transport: settle bus ticket: %w", err)
 	}
 	s.recordModeEvent(ctx, userID, "bus.ticket_issued", "bus_ticket", ticketID, "", "issued",
-		map[string]any{"schedule_id": req.ScheduleID, "seat_number": req.SeatNumber, "operator_id": operatorID})
+		map[string]any{"schedule_id": req.ScheduleID, "seat_number": req.SeatNumber, "settle_user_id": settleUserID})
 	return s.BusTicketDetail(ctx, ticketID, userID)
 }
 
@@ -222,10 +241,10 @@ func (s *Service) BusTicketDetail(ctx context.Context, id, userID string) (map[s
 		return nil, codedErr(http.StatusForbidden, CodeForbidden, "not your ticket")
 	}
 	return map[string]any{
-		"id": tid, "user_id": uid, "schedule_id": schedID, "seat_number": seat,
-		"passenger_name": pname, "passenger_phone": pphone, "qr_code": qr,
-		"fare_kobo": fare, "payment_status": payStatus, "boarding_status": boardStatus,
-		"status": status, "created_at": createdAt,
+		"id": tid, "userId": uid, "scheduleId": schedID, "seatNumber": seat,
+		"passengerName": pname, "passengerPhone": pphone, "qrCode": qr,
+		"fareKobo": fare, "paymentStatus": payStatus, "boardingStatus": boardStatus,
+		"status": status, "createdAt": createdAt,
 	}, nil
 }
 
@@ -250,9 +269,9 @@ func (s *Service) ListBusTickets(ctx context.Context, userID string) ([]map[stri
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "schedule_id": schedID, "seat_number": seat, "passenger_name": pname,
-			"qr_code": qr, "fare_kobo": fare, "payment_status": payStatus,
-			"boarding_status": boardStatus, "status": status, "created_at": createdAt,
+			"id": id, "scheduleId": schedID, "seatNumber": seat, "passengerName": pname,
+			"qrCode": qr, "fareKobo": fare, "paymentStatus": payStatus,
+			"boardingStatus": boardStatus, "status": status, "createdAt": createdAt,
 		})
 	}
 	return out, nil
@@ -318,7 +337,7 @@ func (s *Service) ValidateBusTicket(ctx context.Context, operatorUserID, qrCode 
 		return nil, err
 	}
 	s.recordModeEvent(ctx, operatorUserID, "bus.boarded", "bus_ticket", ticketID, status, "boarded", nil)
-	return map[string]any{"ok": true, "ticket_id": ticketID, "boarding_status": "boarded"}, nil
+	return map[string]any{"ok": true, "ticketId": ticketID, "boardingStatus": "boarded"}, nil
 }
 
 // ─── Admin: route / schedule CRUD + fare approval + manifest ─────────────────
@@ -365,9 +384,9 @@ func (s *Service) SearchBusRoutesAll(ctx context.Context) ([]map[string]any, err
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "operator_id": opID, "origin_terminal": o, "dest_terminal": d,
-			"distance_m": distM, "est_duration_s": durS, "category": category,
-			"status": status, "created_at": createdAt,
+			"id": id, "operatorId": opID, "originTerminal": o, "destTerminal": d,
+			"distanceM": distM, "estDurationS": durS, "category": category,
+			"status": status, "createdAt": createdAt,
 		})
 	}
 	return out, nil
@@ -394,7 +413,7 @@ func (a *AdminService) CreateBusSchedule(ctx context.Context, adminID string, re
 	}
 	writeAudit(ctx, a.svc.db, adminID, "bus.schedule.create", "bus_schedule", id, nil,
 		map[string]any{"route_id": req.RouteID, "fare_kobo": req.FareKobo, "total_seats": req.TotalSeats}, req.Reason)
-	return map[string]any{"id": id, "fare_approved": false, "status": "scheduled"}, nil
+	return map[string]any{"id": id, "fareApproved": false, "status": "scheduled"}, nil
 }
 
 // ApproveBusFare approves a schedule's fare (audited). Bookings require approval.
@@ -431,8 +450,8 @@ func (a *AdminService) BusManifest(ctx context.Context, scheduleID string) ([]ma
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"ticket_id": id, "user_id": uid, "seat_number": seat, "passenger_name": pname,
-			"passenger_phone": pphone, "boarding_status": boardStatus, "status": status, "qr_code": qr,
+			"ticketId": id, "userId": uid, "seatNumber": seat, "passengerName": pname,
+			"passengerPhone": pphone, "boardingStatus": boardStatus, "status": status, "qrCode": qr,
 		})
 	}
 	return out, nil

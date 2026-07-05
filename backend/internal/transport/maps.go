@@ -14,8 +14,8 @@ type LatLng struct {
 
 // RouteResult is the outcome of a routing query.
 type RouteResult struct {
-	DistanceM int    `json:"distance_m"`
-	DurationS int    `json:"duration_s"`
+	DistanceM int    `json:"distanceM"`
+	DurationS int    `json:"durationS"`
 	Polyline  string `json:"polyline"`
 }
 

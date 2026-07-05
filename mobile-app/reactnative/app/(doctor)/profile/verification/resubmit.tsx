@@ -1,3 +1,8 @@
+// PRIVACY: Assisted Mode B verification. Serves both the "rejected" resubmit and
+// the "more information needed" (needs_info) re-submission flow. It shows the
+// doctor only their own document slots + guidance. It must NEVER render MDCN/
+// register data, reviewer identity, internal reviewer notes, or matched-field
+// detail — Paymax verifies out-of-band and the doctor never sees the MDCN portal.
 import React, { useState } from 'react';
 import { Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';

@@ -56,6 +56,23 @@ func (s *Service) pushDoctor(userID, eventType string, payload any) {
 	s.hub.SendToUser(userID, platformWS.Message{Type: eventType, Payload: payload})
 }
 
+// pushChatParticipant fetches the other participant's user ID from the chat
+// thread's patient JSONB column and pushes a WS event to them. Fire-and-forget.
+func (s *Service) pushChatParticipant(ctx context.Context, threadID, senderID, eventType string, payload any) {
+	if s.hub == nil {
+		return
+	}
+	const q = `SELECT patient->>'userId' FROM doctor_chat_threads WHERE id = $1`
+	var patientUserID *string
+	if err := s.repo.db.QueryRow(ctx, q, threadID).Scan(&patientUserID); err != nil || patientUserID == nil || *patientUserID == "" {
+		return
+	}
+	if *patientUserID == senderID {
+		return
+	}
+	s.hub.SendToUser(*patientUserID, platformWS.Message{Type: eventType, Payload: payload})
+}
+
 // mergeCallDetail folds the RTC binding (provider/uid/expiry/configured) into the
 // caller-supplied detail body so the persisted row records what was issued. The
 // SIGNED TOKEN itself is intentionally NOT stored (short-lived; re-minted on demand).
@@ -171,8 +188,9 @@ func parseOpsDate(p *string) time.Time {
 }
 
 // ══ CHAT ════════════════════════════════════════════════════════════════════
-// NOTE: realtime WS push to the patient is OUT OF SCOPE for this wave — only REST
-// persistence is implemented. TODO(integration): wire a websocket/presence channel.
+// Realtime WS push is delivered to BOTH the doctor AND the patient.
+// Both connect via the same hub keyed by user ID. The patient user ID is
+// resolved from the thread's patient JSONB column (field: "userId").
 
 func (s *Service) ListChatThreads(ctx context.Context, userID string) ([]ChatThread, error) {
 	return s.repo.ListChatThreads(ctx, userID)
@@ -190,9 +208,10 @@ func (s *Service) SendChatMessage(ctx context.Context, userID, threadID, idemKey
 	if err != nil {
 		return nil, err
 	}
-	// Wave 6: best-effort realtime push to the doctor's connected devices.
-	// REST persistence already succeeded; WS failure must not fail this write.
+	// Best-effort realtime push to doctor AND patient. WS failure must not
+	// fail this write — REST persistence already succeeded.
 	s.pushDoctor(userID, "chat.message", msg)
+	s.pushChatParticipant(ctx, threadID, userID, "chat.message", msg)
 	return msg, nil
 }
 

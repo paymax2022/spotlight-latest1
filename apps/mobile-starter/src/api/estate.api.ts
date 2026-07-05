@@ -408,6 +408,24 @@ export async function verifyVehicle(estateId: string, vehicleId: string): Promis
   await api.post(`/api/finance/estate/${estateId}/profile/vehicles/${vehicleId}/verify`, {});
 }
 
+export interface ResidentCard {
+  resident_id: string;
+  estate_id: string;
+  estate_name: string;
+  full_name: string;
+  unit: string;
+  role: string;
+  occupancy_type: string;
+  profile_photo_url?: string;
+  qr_value: string; // "<estate_id>:<resident_id>" encoded in QR
+  issued_at: string;
+}
+
+export async function getResidentCard(estateId: string): Promise<ResidentCard> {
+  const res = await api.get(`/api/finance/estate/${estateId}/profile/id-card`);
+  return res.data;
+}
+
 // ── Block 26: Dashboard ───────────────────────────────────────────────────────
 
 export interface EstateDashboard {

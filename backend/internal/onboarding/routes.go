@@ -40,21 +40,14 @@ func Register(r *gin.Engine, d Deps) {
 
 	h := NewHandler(NewService(d.DB))
 
-	// authn maps the authenticated user's id into the gin context key that the
-	// module's handlers read (matches the finance modules' user_id convention).
+	// authn validates the bearer token and stores the AuthenticatedUser on the gin
+	// context. Handlers read it via middleware.GetAuthenticatedUser (see userID()).
+	// NOTE: RequireAuthContext calls c.Next() itself once auth succeeds, so any work
+	// wrapped *after* base(c) would run only AFTER the downstream handler has already
+	// executed — too late to mirror user_id into the context. Hence handlers source
+	// the user directly from the auth context instead of a mirrored string key.
 	authn := func() gin.HandlerFunc {
-		base := middleware.RequireAuthContext(d.Supabase, d.RBAC)
-		return func(c *gin.Context) {
-			base(c)
-			if c.IsAborted() {
-				return
-			}
-			if au, ok := middleware.GetAuthenticatedUser(c); ok {
-				c.Set("user_id", au.ID)
-				c.Set("display_name", au.Email)
-			}
-			c.Next()
-		}
+		return middleware.RequireAuthContext(d.Supabase, d.RBAC)
 	}
 
 	v1 := r.Group("/api/v1")

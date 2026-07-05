@@ -1,0 +1,14 @@
+{
+  "$comment": "MCP servers for Claude Code (ENVIRONMENT-AND-GOLIVE.md §2). Lets Claude open PRs / read CI + inspect the dev DB. Secrets come from env, never inline. Restrict container egress to npm, GitHub, Anthropic, your registry, and provider sandboxes.",
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" }
+    },
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres", "${DATABASE_URL}"]
+    }
+  }
+}

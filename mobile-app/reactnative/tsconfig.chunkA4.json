@@ -1,0 +1,27 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "app/fx/**/*.ts",
+    "app/fx/**/*.tsx",
+    "app/mobility/**/*.ts",
+    "app/mobility/**/*.tsx",
+    "app/insurance/**/*.ts",
+    "app/insurance/**/*.tsx",
+    "app/realtor/**/*.ts",
+    "app/realtor/**/*.tsx",
+    "app/crypto/**/*.ts",
+    "app/crypto/**/*.tsx",
+    "app/fractionalre/**/*.ts",
+    "app/fractionalre/**/*.tsx",
+    "app/services/**/*.ts",
+    "app/services/**/*.tsx",
+    "app/stocks/**/*.ts",
+    "app/stocks/**/*.tsx",
+    "app/social/**/*.ts",
+    "app/social/**/*.tsx",
+    "app/voting/**/*.ts",
+    "app/voting/**/*.tsx",
+    "app/events/**/*.ts",
+    "app/events/**/*.tsx"
+  ]
+}

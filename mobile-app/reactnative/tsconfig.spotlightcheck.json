@@ -1,0 +1,2 @@
+{ "extends": "./tsconfig.json", "compilerOptions": { "skipLibCheck": true, "noEmit": true, "jsx": "react-jsx" },
+  "include": ["src/features/spotlightwealth/**/*.ts", "src/features/spotlightwealth/**/*.tsx", "app/spotlight-wealth/**/*.tsx"] }

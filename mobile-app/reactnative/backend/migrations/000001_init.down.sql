@@ -10,6 +10,7 @@ DROP TABLE IF EXISTS ledger_entries;
 DROP TABLE IF EXISTS crypto_transaction_status_events;
 DROP TABLE IF EXISTS crypto_transaction_fees;
 DROP TABLE IF EXISTS crypto_transactions;
+DROP TABLE IF EXISTS wallet_balances;
 DROP TABLE IF EXISTS positions;
 DROP TABLE IF EXISTS asset_networks;
 DROP TABLE IF EXISTS assets;

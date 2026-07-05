@@ -20,6 +20,23 @@ import type {
  */
 export const USE_MOCK = (process.env.EXPO_PUBLIC_ASSOCIATION_USE_MOCK ?? 'true') !== 'false';
 
+/**
+ * Live API base path for the association module.
+ *
+ * The Go backend mounts the association router under the finance group:
+ *   finance := r.Group("/api/finance")
+ *   association.RegisterRoutes(finance.Group("/associations"), h)
+ * → every endpoint lives at `/api/finance/associations/...`.
+ *
+ * The shared axios client (`src/api/client.ts`) has baseURL = frontend-web
+ * (http://localhost:3000 in dev), which proxies `/api/*` to the Go backend —
+ * the same convention the wallet / mobility modules use (`/api/v1`, `/api/finance/...`).
+ *
+ * Every live path in this module's api/*.ts is built as `${ASSOCIATION_API_BASE}/...`.
+ * Keep the mock branches (`if (USE_MOCK)`) intact as the offline fallback.
+ */
+export const ASSOCIATION_API_BASE = '/api/finance/associations';
+
 export const GROUP_TYPE_LABEL: Record<GroupType, string> = {
   OPEN:        'Open · join instantly',
   CLOSED:      'Closed · approval required',

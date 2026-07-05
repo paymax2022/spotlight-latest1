@@ -13,7 +13,18 @@ export interface DuesInvoice {
 export interface PayResult { success: boolean; alreadyProcessed: boolean; payment: { id: string; amountKobo: number; reference?: string; createdAt: string }; invoice: DuesInvoice; }
 
 export const USE_MOCK = (process.env.EXPO_PUBLIC_DUES_USE_MOCK ?? 'true') !== 'false';
-export const DUES_API_BASE = '/api/v1/estate/dues';
+
+// Dues/invoices are NOT a standalone backend module — they are nested under
+// the Estate module (backend/internal/app/finance_routes.go: estGroup :=
+// finance.Group("/estate"); backend/internal/estate/handler.go:
+// ListInvoices/CreateInvoice/PayDues all take :id (estate); PayDues is the
+// money path — Idempotency-Key required). There is no flat /dues namespace
+// and no frontend-web proxy for /api/v1/estate/dues — the blanket rewrite
+// only covers /api/finance/:path*.
+// MISSING: a shared estate-context provider; DEFAULT_ESTATE_ID is a stopgap
+// (mirrors the election/meetings convention) until multi-estate selection ships.
+export const DEFAULT_ESTATE_ID = 'est_amber_court';
+export const DUES_API_BASE = `/api/finance/estate/${DEFAULT_ESTATE_ID}/dues/invoices`;
 
 export const CATEGORY_META: Record<DuesCategory, { label: string; icon: string }> = {
   service_charge: { label: 'Service Charge', icon: 'Receipt' },

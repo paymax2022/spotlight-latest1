@@ -61,6 +61,18 @@ export async function submitSuitability(answers: Record<string, number>): Promis
   return investPost<SuitabilityResult>('/invest/suitability/submit', { answers });
 }
 
+// ── Transaction PIN ──────────────────────────────────────────────────────────
+
+export async function getPINStatus(): Promise<{ pin_set: boolean }> {
+  if (INVEST_USE_MOCK) return waitMock({ pin_set: true });
+  return investGet<{ pin_set: boolean }>('/invest/security/pin');
+}
+
+export async function setPIN(pin: string, currentPin?: string): Promise<{ pin_set: boolean }> {
+  if (INVEST_USE_MOCK) return waitMock({ pin_set: true });
+  return investPost<{ pin_set: boolean }>('/invest/security/pin', { pin, current_pin: currentPin });
+}
+
 // ── Stocks / discovery ───────────────────────────────────────────────────────
 
 export async function listStocks(query?: string, sector?: string): Promise<StockWithQuote[]> {

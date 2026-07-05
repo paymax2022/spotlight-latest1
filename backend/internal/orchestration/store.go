@@ -18,11 +18,11 @@ type TxView struct {
 	Destination   Money     `json:"destination"`
 	Direction     string    `json:"direction"` // in | out
 	Route         Route     `json:"route"`
-	QuotedRate    float64   `json:"quoted_rate"`
-	ExecutedRate  float64   `json:"executed_rate"`
+	QuotedRate    float64   `json:"quotedRate"`
+	ExecutedRate  float64   `json:"executedRate"`
 	Fees          []Fee     `json:"fees"`
-	ProviderRef   string    `json:"provider_ref"`
-	CreatedAt     time.Time `json:"created_at"`
+	ProviderRef   string    `json:"providerRef"`
+	CreatedAt     time.Time `json:"createdAt"`
 }
 
 // Store is the persistence boundary for the orchestration ledger and records.

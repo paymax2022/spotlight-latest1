@@ -80,6 +80,15 @@ func (s *scopedRBAC) GetAdminUser(string) (domain.AdminUser, error) { return dom
 func (s *scopedRBAC) UpdateAdminUser(string, map[string]any) (domain.AdminUser, error) {
 	return domain.AdminUser{}, nil
 }
+func (s *scopedRBAC) BulkAssignRoleToUsers(string, string, string, string, []string) []services.BulkOpResult {
+	return nil
+}
+func (s *scopedRBAC) BulkAssignRolesToUser(string, string, string, string, []string) []services.BulkOpResult {
+	return nil
+}
+func (s *scopedRBAC) BulkAssignPermissionsToRole(string, string, []string) []services.BulkOpResult {
+	return nil
+}
 
 // scopedRouter builds a router that injects userID as the authed user and gates
 // GET /scope/:scopeID on RequireScopedPermission(perm, scopeType, "scopeID").

@@ -9,7 +9,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
-import MapPlaceholder from '@/features/mobility/components/MapPlaceholder';
+import MobilityMap from '@/features/mobility/components/MobilityMap';
 import TripPinInput from '@/features/mobility/components/TripPinInput';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import { useCourierActions } from '@/features/mobility/hooks/useModes';
@@ -70,7 +70,7 @@ export default function CourierJobScreen() {
           <StatusBadge label={STATUS[step]} tone={step === 'done' ? 'success' : 'info'} />
         </View>
 
-        {step !== 'done' && <MapPlaceholder height={160} showRoute caption={STATUS[step]} />}
+        {step !== 'done' && <MobilityMap height={160} showRoute caption={STATUS[step]} />}
 
         {step === 'navigate_pickup' && (
           <View style={styles.card}>

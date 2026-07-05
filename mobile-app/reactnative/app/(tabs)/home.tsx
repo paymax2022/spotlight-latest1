@@ -5,7 +5,6 @@ import { Plus, Send, ArrowDown, RefreshCw } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import AppHeader from '@/components/AppHeader';
-import ElectionHeaderBanner from '@/features/election/components/ElectionHeaderBanner';
 import SearchBar from '@/components/SearchBar';
 import BalanceCard from '@/components/BalanceCard';
 import SectionHeader from '@/components/SectionHeader';
@@ -13,6 +12,7 @@ import ModuleGrid from '@/components/ModuleGrid';
 import FeaturedServiceCard from '@/components/FeaturedServiceCard';
 import PromoBanner from '@/components/PromoBanner';
 import RecentActivityCard, { Activity } from '@/components/RecentActivityCard';
+import { FeaturedHomeSection } from '@/features/featured/components';
 import { Colors } from '@/constants/colors';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
@@ -74,6 +74,14 @@ function SubCategoryLabel({ label }: { label: string }) {
 }
 
 export default function HomeScreen() {
+  const [search, setSearch] = React.useState('');
+
+  const runSearch = (text: string) => {
+    const q = text.trim();
+    if (!q) return;
+    router.push({ pathname: '/(tabs)/services', params: { q } });
+  };
+
   const { data, isLoading, isError, error, refetch, isRefetching } = useQuery({
     queryKey: ['dashboard'],
     queryFn:  getDashboard,
@@ -104,8 +112,7 @@ export default function HomeScreen() {
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />}
       >
         <AppHeader name={userName} notifCount={0} />
-        <ElectionHeaderBanner />
-        <SearchBar />
+        <SearchBar value={search} onChangeText={setSearch} onSubmit={runSearch} />
 
         {isLoading ? (
           <View style={styles.loader}>
@@ -160,6 +167,20 @@ export default function HomeScreen() {
           cta="Apply Now"
           badge="NEW"
           onPress={() => { try { router.push('/voting' as never); } catch {} }}
+        />
+
+        {/* Featured Placement — dynamic sponsored content fed by the landing
+            resolver (hero + carousel + grid). Renders nothing when empty, so
+            existing home content is unaffected. */}
+        <FeaturedHomeSection />
+
+        {/* Merchant entry point into the Featured Placement booking wizard. */}
+        <PromoBanner
+          title="Promote your business"
+          subtitle="Feature your listing on the home screen"
+          cta="Get started"
+          badge="ADS"
+          onPress={() => { try { router.push('/featured/promotions' as never); } catch {} }}
         />
 
         {recent.length > 0 ? (

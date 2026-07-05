@@ -27,5 +27,41 @@ say "swap quote BTC→USDT";    curl -fsS -X POST "$BASE/api/v1/crypto/quote" \
                                 -d '{"side":"swap","fromAssetId":"ast_btc","toAssetId":"ast_usdt","fromAmount":100000}' | head -c 220; echo
 say "withdrawal eligibility"; curl -fsS "$BASE/api/v1/crypto/withdrawals/eligibility" | head -c 200; echo
 say "deposit address USDT/tron"; curl -fsS "$BASE/api/v1/crypto/deposit-address?symbol=USDT&network=tron" | head -c 220; echo
+say "readiness";             curl -fsS "$BASE/readyz"; echo
+say "webhook (dev: unsigned accepted)";
+                              curl -fsS -X POST "$BASE/api/v1/crypto/webhooks/mock" \
+                                -H 'Content-Type: application/json' \
+                                -d '{"id":"evt_smoke_1","type":"order.filled"}'; echo
+say "webhook replay (same id → duplicate)";
+                              curl -fsS -X POST "$BASE/api/v1/crypto/webhooks/mock" \
+                                -H 'Content-Type: application/json' \
+                                -d '{"id":"evt_smoke_1","type":"order.filled"}'; echo
+say "webhook deposit.confirmed (credits 100 USDT)";
+                              curl -fsS -X POST "$BASE/api/v1/crypto/webhooks/mock" \
+                                -H 'Content-Type: application/json' \
+                                -d '{"id":"evt_dep_1","type":"deposit.confirmed","data":{"symbol":"USDT","amount":100000000,"fiatValue":16050000}}'; echo
+say "USDT deposit now in history";
+                              curl -fsS "$BASE/api/v1/crypto/transactions" | grep -o '"side":"deposit"' | head -1
+
+say "stocks list (count)";   curl -fsS "$BASE/api/v1/stocks" | grep -o '"symbol"' | wc -l
+say "stock detail GTCO";     curl -fsS "$BASE/api/v1/stocks/GTCO" | head -c 180; echo
+say "stock portfolio";       curl -fsS "$BASE/api/v1/portfolio?assetType=stock" | head -c 200; echo
+say "stock orders";          curl -fsS "$BASE/api/v1/stocks/orders" | grep -o '"reference"' | wc -l
+say "public offers";         curl -fsS "$BASE/api/v1/stocks/offers" | grep -o '"symbol"' | wc -l
+
+say "admin dashboard";      curl -fsS "$BASE/api/v1/admin/dashboard" | head -c 200; echo
+say "admin assets (count)";  curl -fsS "$BASE/api/v1/admin/assets" | grep -o '"symbol"' | wc -l
+say "admin RBAC: SupportAdmin cannot toggle asset (expect 403)";
+                              curl -s -o /dev/null -w "%{http_code}\n" -X PATCH "$BASE/api/v1/admin/assets/ast_btc" \
+                                -H 'X-Admin-Role: SupportAdmin' -H 'Content-Type: application/json' -d '{"buyEnabled":false,"reason":"smoke"}'
+say "admin maker-checker: ProductAdmin disable → pending approval";
+                              curl -s -o /dev/null -w "%{http_code}\n" -X PATCH "$BASE/api/v1/admin/assets/ast_btc" \
+                                -H 'X-Admin-Role: ProductAdmin' -H 'Content-Type: application/json' -d '{"buyEnabled":false,"reason":"smoke maker"}'
+say "admin approvals queue";  curl -fsS "$BASE/api/v1/admin/approvals" | head -c 160; echo
+say "admin audit log";        curl -fsS "$BASE/api/v1/admin/audit" | grep -o '"action"' | wc -l
+
+say "reconciliation (ledger vs holdings)";
+                              curl -fsS "$BASE/api/v1/crypto/admin/reconciliation" | head -c 200; echo
+say "prometheus metrics";    curl -fsS "$BASE/metrics" | grep -E "crypto_requests_total|crypto_request_duration_seconds_count" | head -3
 
 printf "\n\033[32mAll smoke checks passed.\033[0m\n"

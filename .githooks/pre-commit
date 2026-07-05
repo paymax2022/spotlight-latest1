@@ -11,3 +11,6 @@ if ! git diff --quiet -- .gitignore frontend-web/.gitignore; then
   echo "pre-commit: refreshed and staged managed .gitignore files"
 fi
 
+# Secret hygiene: block commits that would expose a secret to a client bundle.
+bash scripts/check-client-secrets.sh
+

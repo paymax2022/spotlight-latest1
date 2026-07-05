@@ -64,9 +64,13 @@ func (m *MockProvider) Geocode(_ context.Context, address string) (GeoResult, er
 		return GeoResult{}, ErrEmptyQuery
 	}
 	lat, lng := pseudoPoint(address)
+	// Cacheable is ALWAYS false for mock results: synthetic answers must never
+	// enter geocode_cache, where they would keep shadowing a real provider after
+	// keys are configured (observed: mock-era rows served instead of Google).
 	return GeoResult{
 		Lat: lat, Lng: lng, Address: address, PlusCode: m.codec.Encode(lat, lng),
-		Provider: m.name, Source: m.source, Cacheable: isCacheableSource(m.source),
+		Provider: m.name, Source: m.source, Cacheable: false,
+		Confidence: 0.9, H3Cell: PointCellKey(lat, lng),
 	}, nil
 }
 
@@ -75,7 +79,8 @@ func (m *MockProvider) ReverseGeocode(_ context.Context, lat, lng float64) (GeoR
 		Lat: lat, Lng: lng,
 		Address:  fmt.Sprintf("%.5f, %.5f (mock)", lat, lng),
 		PlusCode: m.codec.Encode(lat, lng),
-		Provider: m.name, Source: m.source, Cacheable: isCacheableSource(m.source),
+		Provider: m.name, Source: m.source, Cacheable: false, // never cache synthetic results
+		Confidence: 0.9, H3Cell: PointCellKey(lat, lng),
 	}, nil
 }
 
@@ -85,8 +90,8 @@ func (m *MockProvider) Autocomplete(_ context.Context, query, _ string, _ *Point
 	}
 	lat, lng := pseudoPoint(query)
 	return []Suggestion{
-		{Label: query + ", Lagos, Nigeria (mock)", Lat: lat, Lng: lng, HasCoords: true, Provider: m.name, Source: m.source},
-		{Label: query + " Extension, Lagos, Nigeria (mock)", Provider: m.name, Source: m.source},
+		{Label: query + ", Lagos, Nigeria (mock)", Lat: lat, Lng: lng, HasCoords: true, Provider: m.name, Source: m.source, Confidence: 0.9},
+		{Label: query + " Extension, Lagos, Nigeria (mock)", Provider: m.name, Source: m.source, Confidence: 0.7},
 	}, nil
 }
 

@@ -1,8 +1,13 @@
+// PRIVACY: Assisted Mode B verification. This screen shows the doctor only a
+// coarse "in review" status and their own submission details. It must NEVER
+// render MDCN/register data, reviewer identity, internal reviewer notes, or
+// matched-field detail — Paymax verifies out-of-band and the doctor never sees
+// the MDCN portal.
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { CheckCircle2, Clock } from 'lucide-react-native';
+import { CheckCircle2, Clock, ShieldCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
@@ -54,6 +59,11 @@ export default function VerificationSubmittedScreen() {
         <View style={styles.next}>
           <Clock size={18} color={Colors.secondary} strokeWidth={2} />
           <Text style={styles.nextText}>Verification usually takes 24–48 hours. We will notify you of the outcome.</Text>
+        </View>
+
+        <View style={styles.next}>
+          <ShieldCheck size={18} color={Colors.secondary} strokeWidth={2} />
+          <Text style={styles.nextText}>You do not need to visit the MDCN portal or any external site — Paymax handles verification for you.</Text>
         </View>
 
         <PrimaryButton label="Track status" onPress={() => router.replace('/(doctor)/signup/pending')} style={styles.btn} />

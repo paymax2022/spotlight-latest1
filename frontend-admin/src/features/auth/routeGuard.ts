@@ -10,7 +10,12 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   { prefix: '/admin/roles', permissions: ['roles.view'] },
   { prefix: '/admin/rbac-settings', permissions: ['roles.view'] },
   { prefix: '/admin/users', permissions: ['users.view'] },
+  { prefix: '/admin/finance/transfers', permissions: ['finance.admin.transfers'] },
   { prefix: '/admin/merchant-onboarding', permissions: ['merchant.onboarding.view'] },
+  { prefix: '/admin/featured-placement', permissions: ['placement.admin.review'] },
+  { prefix: '/admin/nutrition', permissions: ['nutrition.admin.manage'] },
+  { prefix: '/admin/restaurant/delivery-fee', permissions: ['restaurant.admin.pricing'] },
+  { prefix: '/admin/intake', permissions: ['health.admin.intake'] },
   // Multi-modal expansion: each mode page requires mobility.view to enter; the
   // sensitive in-page actions are additionally gated by mode-specific
   // mobility.*.manage permissions (see _ui MOBILITY_PERMS).

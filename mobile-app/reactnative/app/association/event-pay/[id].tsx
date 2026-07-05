@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -10,18 +10,15 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import PaymentMethodSelector, { PaymentMethod } from '@/components/PaymentMethodSelector';
 import { useEvent, useRegisterEvent } from '@/features/association/hooks/useCommunity';
 import { formatNaira } from '@/features/association/utils/associationFormatters';
-
-// Mock wallet balance (naira) for the preview build. Real build reads the wallet API.
-const MOCK_WALLET_NAIRA = 15_000;
+import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 
 export default function EventPay() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const event = useEvent(id);
   const register = useRegisterEvent();
-  const [method, setMethod] = useState<PaymentMethod>('WALLET');
+  const checkout = usePurchasePayment();
 
   if (event.isLoading) {
     return (
@@ -41,12 +38,13 @@ export default function EventPay() {
   }
 
   const e = event.data;
-  const amountNaira = e.feeKobo / 100;
 
   const onPay = () => {
-    register.mutate(e.id, {
-      onSuccess: () => { Alert.alert('Registered', 'Payment received — your ticket is ready.'); router.replace(`/association/events/${e.id}`); },
-      onError: () => Alert.alert('Payment failed', 'Please try again.'),
+    checkout.start({
+      amountKobo: e.feeKobo,
+      title: e.title,
+      charge: () => register.mutateAsync(e.id),
+      onPaid: () => { Alert.alert('Registered', 'Payment received — your ticket is ready.'); router.replace(`/association/events/${e.id}`); },
     });
   };
 
@@ -61,12 +59,11 @@ export default function EventPay() {
             <Text style={styles.amount}>{formatNaira(e.feeKobo)}</Text>
           </View>
         </View>
-
-        <PaymentMethodSelector selected={method} onSelect={setMethod} walletBalance={MOCK_WALLET_NAIRA} amount={amountNaira} />
       </ScrollView>
       <View style={styles.footer}>
         <PrimaryButton label={`Pay ${formatNaira(e.feeKobo)} & register`} onPress={onPay} loading={register.isPending} />
       </View>
+      <PaymentSheet controller={checkout} />
     </SafeAreaView>
   );
 }

@@ -77,13 +77,6 @@ export async function initiateFunding(payload: {
   };
 }
 
-export async function verifyFunding(payload: {
-  reference: string;
-}): Promise<{ success: boolean; balance: number }> {
-  const res  = await api.post('/api/wallet/fund/verify', payload);
-  const data = (res.data?.data ?? res.data) as Record<string, unknown>;
-  return {
-    success: Boolean(data.success ?? false),
-    balance: Number(data.balance ?? 0),
-  };
-}
+// NOTE: manual funding verification was removed — there is no backend route for it.
+// Wallet top-ups are confirmed asynchronously by the Paystack webhook
+// (frontend-web/app/api/webhooks/paystack/route.ts), which credits the ledger.

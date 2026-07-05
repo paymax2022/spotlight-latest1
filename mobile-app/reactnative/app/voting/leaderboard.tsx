@@ -4,13 +4,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Trophy } from 'lucide-react-native';
+import { ArrowLeft, Trophy, EyeOff } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
-import { useLeaderboard } from '@/features/voting/hooks/useLeaderboard';
+import { useLeaderboardState } from '@/features/voting/hooks/useLeaderboard';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import TopThreePodium from '@/features/voting/components/TopThreePodium';
 import LeaderboardRow from '@/features/voting/components/LeaderboardRow';
@@ -20,10 +20,19 @@ import CountdownTimer from '@/features/voting/components/CountdownTimer';
 export default function LeaderboardScreen() {
   const { contestId } = useLocalSearchParams<{ contestId: string }>();
   const { data: contest } = useContestDetails(contestId ?? '');
-  const { data: leaderboard, isLoading, refetch, isRefetching } = useLeaderboard(contestId ?? '');
+  const { data: lbState, isLoading, refetch, isRefetching } = useLeaderboardState(contestId ?? '');
 
-  const topThree = (leaderboard ?? []).filter((e) => e.rank <= 3);
-  const restList = (leaderboard ?? []).filter((e) => e.rank > 3);
+  // Admin can hide the leaderboard for the contest or its active phase.
+  const hidden = lbState?.hidden === true || contest?.showLeaderboard === false;
+  const hiddenReason =
+    lbState?.reason ??
+    (contest?.activePhaseLabel
+      ? `The leaderboard is hidden during ${contest.activePhaseLabel}.`
+      : 'The organiser has hidden the leaderboard for this contest.');
+
+  const leaderboard = hidden ? [] : (lbState?.entries ?? []);
+  const topThree = leaderboard.filter((e) => e.rank <= 3);
+  const restList = leaderboard.filter((e) => e.rank > 3);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -49,6 +58,12 @@ export default function LeaderboardScreen() {
 
       {isLoading ? (
         <View style={styles.loader}><ActivityIndicator size="large" color={Colors.primary} /></View>
+      ) : hidden ? (
+        <View style={styles.empty}>
+          <EyeOff size={40} color={Colors.onSurfaceVariant} strokeWidth={1.5} />
+          <Text style={styles.emptyTitle}>Leaderboard hidden</Text>
+          <Text style={styles.emptySub}>{hiddenReason}</Text>
+        </View>
       ) : (
         <FlatList
           data={restList}

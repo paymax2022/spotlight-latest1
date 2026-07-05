@@ -1,0 +1,284 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight Voting API (drift-closing fragment)
+  version: 1.0.0
+  description: >
+    Standalone OpenAPI fragment documenting the live-but-undocumented voting
+    endpoints (wallet-paid votes, open-mic Paystack pay flow, and admin vote
+    reversal). These routes ship in the Next.js app under `frontend-web/app/api/`
+    but were missing from the master `contracts/openapi.yaml`.
+
+    All monetary amounts are integers in minor units (kobo). Every financial
+    mutation requires an `Idempotency-Key` (sent either as a header or, for the
+    legacy v2 wallet route, as an `idempotencyKey` body field — noted per path)
+    and posts balanced double-entry ledger entries + an audit event.
+
+    NOTE: This fragment is kept separate to avoid clobbering the large master
+    contract. Merge these `paths:` and `components:` into the master
+    `contracts/openapi.yaml` when integrating. Same style/auth/component
+    conventions as `contracts/invest.openapi.yaml`.
+
+servers:
+  - url: /api
+    description: Next.js route handlers (frontend-web) — voting module
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string }
+      description: Globally unique key per financial mutation (prevents duplicate retries / double charge).
+  schemas:
+    Money: { type: integer, format: int64, description: Amount in kobo (minor units) }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    # ── /api/v2/votes/wallet ────────────────────────────────────────────────
+    V2WalletVoteRequest:
+      type: object
+      required: [contestId, contestantId, voteCount, costKobo, idempotencyKey]
+      properties:
+        contestId: { type: string }
+        contestantId: { type: string }
+        voteCount: { type: integer, minimum: 1 }
+        costKobo: { $ref: '#/components/schemas/Money' }
+        idempotencyKey:
+          type: string
+          description: >
+            Idempotency key for this wallet mutation. This legacy v2 route accepts
+            the key in the JSON body (not the Idempotency-Key header).
+    V2WalletVoteResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        votesAdded: { type: integer }
+        newTotalVotes: { type: integer }
+        costKobo: { $ref: '#/components/schemas/Money' }
+    # ── /api/votes/paid/wallet ──────────────────────────────────────────────
+    PaidWalletVoteRequest:
+      type: object
+      required: [contestId, contestantId, packageId, voterEmail, voterName]
+      properties:
+        contestId: { type: string }
+        contestantId: { type: string }
+        packageId:
+          type: string
+          description: Vote package id. Price is resolved server-side; client-supplied price is never trusted.
+        voterEmail: { type: string, format: email }
+        voterName: { type: string }
+    PaidWalletVoteResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        transactionId: { type: string }
+        paymentReference: { type: string }
+        votesCredited: { type: integer }
+        amountKobo: { $ref: '#/components/schemas/Money' }
+    # ── /api/open-mic/votes/pay/initiate ────────────────────────────────────
+    OpenMicPayInitiateRequest:
+      type: object
+      required: [contestId, submissionId, votes, votePriceNgn]
+      properties:
+        contestId: { type: string }
+        submissionId: { type: string }
+        stageName: { type: string }
+        votes: { type: integer, minimum: 1 }
+        votePriceNgn: { type: number, minimum: 1, description: Price per vote in naira (whole currency units). }
+    OpenMicPayInitiateResponse:
+      type: object
+      properties:
+        reference: { type: string, description: Paystack payment reference to use on the verify call. }
+        amountKobo: { $ref: '#/components/schemas/Money' }
+        amountNgn: { type: number }
+        email: { type: string, format: email }
+        publicKey: { type: string, description: Paystack public key for the inline checkout. }
+        metadata:
+          type: object
+          properties:
+            contestId: { type: string }
+            submissionId: { type: string }
+            stageName: { type: string }
+            votes: { type: integer }
+            votePriceNgn: { type: number }
+            userId: { type: string }
+    # ── /api/open-mic/votes/pay/verify ──────────────────────────────────────
+    OpenMicPayVerifyRequest:
+      type: object
+      required: [reference, contestId, submissionId, votes]
+      properties:
+        reference: { type: string, description: Paystack reference returned by initiate. }
+        contestId: { type: string }
+        submissionId: { type: string }
+        votes: { type: integer, minimum: 1 }
+    OpenMicPayVerifyResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        newCount: { type: integer, description: Updated vote count for the submission after crediting. }
+    # ── /api/admin/voting/votes/{voteId}/reverse ────────────────────────────
+    VoteReverseRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 5, description: Audit reason for the reversal (>= 5 chars). }
+    VoteReverseResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        voteId: { type: string }
+        reversedQuantity: { type: integer }
+
+paths:
+  # ── Wallet-paid votes (in-app wallet debit, no Paystack redirect) ──────────
+  /v2/votes/wallet:
+    post:
+      summary: Cast votes paid from the in-app wallet (v2 bridge)
+      description: >
+        Debits the user's wallet via the Go vote-bridge endpoint, then credits
+        votes through the legacy voting service. Feature-flagged behind
+        FEATURE_VOTE_BRIDGE_ENABLED. **Financial mutation — requires an
+        idempotency key**; this legacy route reads it from the `idempotencyKey`
+        body field rather than the Idempotency-Key header. Duplicate keys return
+        the cached result (no double debit).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/V2WalletVoteRequest' }
+      responses:
+        '200':
+          description: Votes credited (or cached idempotent result returned)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/V2WalletVoteResponse' }
+        '400':
+          description: Missing/invalid body field (incl. missing idempotencyKey)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { description: Not authenticated }
+        '403': { description: Wallet voting not enabled, or KYC gate failed }
+  /votes/paid/wallet:
+    post:
+      summary: Cast votes paid from the in-app wallet (atomic debit)
+      description: >
+        Debits the authenticated user's wallet via the `debit_wallet_atomic` RPC
+        (balance check + tier daily cap), writes a double-entry ledger entry,
+        records the vote transaction, credits votes, and appends an audit log.
+        **Financial mutation — requires an `Idempotency-Key` header.** On a
+        transaction-record failure after the debit, the debit is reversed
+        best-effort before returning 500.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PaidWalletVoteRequest' }
+      responses:
+        '201':
+          description: Votes credited
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaidWalletVoteResponse' }
+        '400':
+          description: Missing Idempotency-Key header, missing body field, or paid voting disabled
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { description: Not authenticated }
+        '402': { description: Insufficient wallet balance }
+        '403': { description: Tier daily limit exceeded }
+        '404': { description: Vote package not found or inactive }
+        '500': { description: Failed to record vote transaction (wallet debit reversed) }
+        '503': { description: Wallet feature not available }
+  # ── Open-mic Paystack pay flow ─────────────────────────────────────────────
+  /open-mic/votes/pay/initiate:
+    post:
+      summary: Initiate a Paystack payment for open-mic votes
+      description: >
+        Computes the kobo amount (votes × votePriceNgn) and returns the Paystack
+        reference + public key for inline checkout. No money moves yet; the
+        wallet/ledger mutation happens on verify. The returned `reference` is the
+        idempotency anchor for the subsequent verify call (one credit per
+        reference).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OpenMicPayInitiateRequest' }
+      responses:
+        '200':
+          description: Payment initiated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenMicPayInitiateResponse' }
+        '400':
+          description: Missing/invalid body field
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { description: Not authenticated }
+  /open-mic/votes/pay/verify:
+    post:
+      summary: Verify a Paystack payment and credit open-mic votes
+      description: >
+        Verifies the payment with Paystack and credits votes for the submission.
+        **Financial mutation — idempotent on the Paystack `reference`.** A
+        duplicate verify of an already-credited reference returns the cached
+        success result (and must NOT double-credit). Vote is only cast if
+        Paystack confirms the charge succeeded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OpenMicPayVerifyRequest' }
+      responses:
+        '200':
+          description: Payment verified, votes credited (or cached idempotent success returned)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenMicPayVerifyResponse' }
+        '400':
+          description: Missing/invalid body field
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { description: Not authenticated }
+        '402': { description: Payment not confirmed by Paystack }
+  # ── Admin vote reversal ────────────────────────────────────────────────────
+  /admin/voting/votes/{voteId}/reverse:
+    post:
+      summary: Reverse a vote (admin)
+      description: >
+        Marks a confirmed vote as reversed, decrements running totals, and
+        appends an audit log. Requires the `votes:manage` permission. For a
+        wallet-paid vote this is a **financial mutation that refunds the wallet**
+        via a reversing ledger entry — it requires an `Idempotency-Key` and is
+        idempotent (re-running a reversal must NOT refund twice). Corrections are
+        reversing entries only; ledger entries are never mutated.
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - name: voteId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VoteReverseRequest' }
+      responses:
+        '200':
+          description: Vote reversed (and wallet refunded if it was wallet-paid)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VoteReverseResponse' }
+        '400':
+          description: Reason missing/too short, or vote already reversed
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { description: Not authenticated }
+        '403': { description: Missing votes:manage permission }
+        '404': { description: Vote not found }

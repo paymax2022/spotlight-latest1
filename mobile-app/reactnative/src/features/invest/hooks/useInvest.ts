@@ -59,6 +59,20 @@ export function useSubmitSuitability() {
   });
 }
 
+// ── Transaction PIN ──────────────────────────────────────────────────────────
+
+export function usePINStatus() {
+  return useQuery({ queryKey: [KEY, 'pin-status'], queryFn: invest.getPINStatus, staleTime: 60_000 });
+}
+
+export function useSetPIN() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pin, currentPin }: { pin: string; currentPin?: string }) => invest.setPIN(pin, currentPin),
+    onSettled: () => qc.invalidateQueries({ queryKey: [KEY, 'pin-status'] }),
+  });
+}
+
 // ── Stocks ───────────────────────────────────────────────────────────────────
 
 export function useStocks(query?: string, sector?: string) {

@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "app/health/**/*.ts",
+    "app/health/**/*.tsx",
+    "app/crowdfunding/**/*.ts",
+    "app/crowdfunding/**/*.tsx",
+    "app/food/**/*.ts",
+    "app/food/**/*.tsx",
+    "app/creators/**/*.ts",
+    "app/creators/**/*.tsx",
+    "app/invest-settings/**/*.ts",
+    "app/invest-settings/**/*.tsx",
+    "app/registration/**/*.ts",
+    "app/registration/**/*.tsx",
+    "app/spotlight-wealth/**/*.ts",
+    "app/spotlight-wealth/**/*.tsx",
+    "app/election/**/*.ts",
+    "app/election/**/*.tsx",
+    "app/nutrition/**/*.ts",
+    "app/nutrition/**/*.tsx"
+  ]
+}

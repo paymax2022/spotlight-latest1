@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Alert, Modal, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Phone, X, Clock3 } from 'lucide-react-native';
+import { Phone, X, Clock3, Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -11,7 +11,7 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import MapPlaceholder from '@/features/mobility/components/MapPlaceholder';
+import MobilityMap from '@/features/mobility/components/MobilityMap';
 import DriverCard from '@/features/mobility/components/DriverCard';
 import VehicleCard from '@/features/mobility/components/VehicleCard';
 import TripPinDisplay from '@/features/mobility/components/TripPinDisplay';
@@ -20,11 +20,23 @@ import SafetyButton from '@/features/mobility/components/SafetyButton';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { useTrip, useFareNegotiation, useCancelRide, useSafety } from '@/features/mobility/hooks/useMobility';
+import { useTripRealtime } from '@/features/mobility/hooks/useTripRealtime';
 import { formatNairaWhole, formatEta } from '@/features/mobility/utils/mobilityFormatters';
 import { PHASE_LABEL } from '@/features/mobility/constants/mobility.constants';
 import type { LatLng } from '@/features/mobility/types/mobility.types';
 
 const SHARE_LOC: LatLng = { lat: 6.44, lng: 3.46 };
+
+// Rider-side cancellation reasons. The chosen reason rides on the existing
+// cancel API (`reason` string) — ops uses it for driver quality + refund calls.
+const CANCEL_REASONS = [
+  'Driver is taking too long',
+  'Driver asked me to cancel',
+  'Change of plans',
+  'Booked by mistake',
+  'Fare is too high',
+  'Other',
+] as const;
 
 export default function TripScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -35,6 +47,9 @@ export default function TripScreen() {
   const [cancelling, setCancelling] = useState(false);
 
   const t = trip.data;
+  // Live driver position + status over the trip WebSocket; polling above remains
+  // the fallback when realtime is unavailable (or in mock mode).
+  const realtime = useTripRealtime(id, { phase: t?.phase });
 
   // Terminal redirects
   React.useEffect(() => {
@@ -56,12 +71,31 @@ export default function TripScreen() {
     Alert.alert('SOS sent', 'Paymax safety has been alerted and your live location shared.');
   };
 
+  // Cancel flow: always ask WHY before cancelling (reason sheet), then submit.
+  const [cancelSheetOpen, setCancelSheetOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState<string>('');
+  const [cancelNote, setCancelNote] = useState('');
+
   const onCancel = () => {
     if (!id) return;
+    setCancelReason('');
+    setCancelNote('');
+    setCancelSheetOpen(true);
+  };
+
+  const confirmCancel = () => {
+    if (!id || !cancelReason) return;
+    const reason =
+      cancelReason === 'Other'
+        ? `Other${cancelNote.trim() ? `: ${cancelNote.trim()}` : ''}`
+        : cancelReason;
     setCancelling(true);
-    cancel.mutate({ tripId: id, reason: 'Cancelled by rider' }, {
+    cancel.mutate({ tripId: id, reason }, {
       onSettled: () => setCancelling(false),
-      onSuccess: () => router.replace('/mobility'),
+      onSuccess: () => {
+        setCancelSheetOpen(false);
+        router.replace('/mobility');
+      },
     });
   };
 
@@ -99,6 +133,8 @@ export default function TripScreen() {
   const negotiating = t.phase === 'fare_negotiating';
   const arriving = t.phase === 'driver_assigned' || t.phase === 'driver_arriving';
   const inProgress = t.phase === 'in_progress' || t.phase === 'pin_verified';
+  // Rider can cancel any time before the ride starts (PIN verified / on-trip).
+  const cancellable = t.phase === 'requested' || negotiating || arriving;
   const counter = t.fareOffer?.driverCounterKobo;
 
   return (
@@ -106,7 +142,15 @@ export default function TripScreen() {
       <ScreenHeader title={PHASE_LABEL[t.phase] ?? 'Your trip'} showBack={!inProgress} />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-        <MapPlaceholder height={200} showRoute caption={inProgress ? 'On the way to your destination' : arriving ? 'Driver heading to your pickup' : undefined} />
+        <MobilityMap
+          height={200}
+          showRoute
+          pickup={t.pickup}
+          dropoff={t.dest}
+          driver={realtime.driver}
+          route={realtime.route}
+          caption={inProgress ? 'On the way to your destination' : arriving ? 'Driver heading to your pickup' : undefined}
+        />
 
         <View style={styles.statusRow}>
           <StatusBadge phase={t.phase} />
@@ -188,13 +232,63 @@ export default function TripScreen() {
         {(arriving || inProgress) && (
           <SafetyButton onSos={onSos} onShare={onShare} sosPending={safety.sos.isPending} />
         )}
-        {arriving && (
+        {cancellable && (
           <Pressable onPress={onCancel} disabled={cancelling} style={styles.cancelLink} accessibilityLabel="Cancel trip">
             <X size={16} color={Colors.error} strokeWidth={2.2} />
             <Text style={styles.cancelLinkLabel}>{cancelling ? 'Cancelling…' : 'Cancel trip'}</Text>
           </Pressable>
         )}
       </View>
+
+      {/* ── Cancel reason sheet — the rider always tells us WHY ── */}
+      <Modal visible={cancelSheetOpen} animationType="slide" transparent onRequestClose={() => setCancelSheetOpen(false)}>
+        <View style={styles.sheetBackdrop}>
+          <View style={styles.sheet}>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>Why are you cancelling?</Text>
+              <Pressable onPress={() => setCancelSheetOpen(false)} hitSlop={10} accessibilityLabel="Close">
+                <X size={20} color={Colors.onSurface} strokeWidth={2} />
+              </Pressable>
+            </View>
+            <Text style={styles.sheetSub}>This helps us improve pickups and handle refunds correctly.</Text>
+
+            {CANCEL_REASONS.map((r) => {
+              const active = cancelReason === r;
+              return (
+                <Pressable key={r} onPress={() => setCancelReason(r)} style={[styles.reasonRow, active && styles.reasonRowActive]} accessibilityRole="radio" accessibilityState={{ selected: active }}>
+                  <View style={[styles.radio, active && styles.radioActive]}>
+                    {active && <Check size={12} color="#fff" strokeWidth={3} />}
+                  </View>
+                  <Text style={[styles.reasonLabel, active && styles.reasonLabelActive]}>{r}</Text>
+                </Pressable>
+              );
+            })}
+
+            {cancelReason === 'Other' && (
+              <TextInput
+                style={styles.noteInput}
+                value={cancelNote}
+                onChangeText={setCancelNote}
+                placeholder="Tell us a little more (optional)"
+                placeholderTextColor={Colors.outline}
+                multiline
+                maxLength={200}
+              />
+            )}
+
+            <PrimaryButton
+              label={cancelling ? 'Cancelling…' : 'Cancel this trip'}
+              onPress={confirmCancel}
+              loading={cancelling}
+              disabled={!cancelReason}
+              style={{ marginTop: Spacing.md }}
+            />
+            <Pressable onPress={() => setCancelSheetOpen(false)} style={styles.keepBtn} disabled={cancelling}>
+              <Text style={styles.keepLabel}>Keep my trip</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -218,4 +312,18 @@ const styles = StyleSheet.create({
   footer: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.md, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLowest, gap: Spacing.sm },
   cancelLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: Spacing.sm },
   cancelLinkLabel: { ...Typography.labelMd, color: Colors.error },
+  sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: Colors.surfaceContainerLowest, borderTopLeftRadius: Radius.xl, borderTopRightRadius: Radius.xl, padding: Spacing.containerMargin, paddingBottom: Spacing.xl, gap: Spacing.xs },
+  sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  sheetTitle: { ...Typography.titleMd, color: Colors.onSurface },
+  sheetSub: { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginBottom: Spacing.sm },
+  reasonRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md, borderRadius: Radius.md, borderWidth: 1.5, borderColor: Colors.outlineVariant, marginBottom: 6 },
+  reasonRowActive: { borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
+  radio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: Colors.outline, alignItems: 'center', justifyContent: 'center' },
+  radioActive: { borderColor: Colors.primary, backgroundColor: Colors.primary },
+  reasonLabel: { ...Typography.bodyMd, color: Colors.onSurface, flex: 1 },
+  reasonLabelActive: { color: Colors.primary, fontWeight: '600' as const },
+  noteInput: { ...Typography.bodyMd, color: Colors.onSurface, borderWidth: 1, borderColor: Colors.outlineVariant, borderRadius: Radius.md, padding: Spacing.md, minHeight: 64, marginTop: 4 },
+  keepBtn: { alignItems: 'center', paddingVertical: Spacing.sm, marginTop: 2 },
+  keepLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
 });

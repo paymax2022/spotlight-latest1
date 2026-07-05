@@ -10,11 +10,18 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import PrimaryButton from '@/components/PrimaryButton';
+import { useApptIntake } from '@/features/health/hooks';
 
 export default function BookingSuccessScreen() {
   const params = useLocalSearchParams<{
-    ref: string; appointmentId: string; doctorName: string; slotDate: string; slotTime: string; consultType: string;
+    ref: string; appointmentId: string; doctorName: string; slotDate: string; slotTime: string; consultType: string; reason: string;
   }>();
+
+  // Intake is normally completed BEFORE booking (pre-visit triage) and submitted
+  // to this appointment at payment, so we lead with "Join". If it isn't submitted
+  // yet (e.g. a flow that skipped the triage), we prompt to add it instead.
+  const intakeQ = useApptIntake(String(params.appointmentId));
+  const intakeReady = intakeQ.data?.intake.status === 'SUBMITTED';
 
   const dateLabel = params.slotDate
     ? new Date(`${params.slotDate}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
@@ -48,20 +55,34 @@ export default function BookingSuccessScreen() {
         <View style={styles.tipCard}>
           <CalendarPlus size={18} color={Colors.secondary} strokeWidth={2} />
           <Text style={styles.tipText}>
-            We'll remind you 15 minutes before. Make sure you're in a quiet place with a stable connection.
+            {intakeReady
+              ? `Your pre-visit health check is saved and ready for ${params.doctorName || 'your doctor'}. We'll remind you before the appointment.`
+              : `Next: add your health details so ${params.doctorName || 'your doctor'} can prepare. Your consultation can't start until your intake is submitted.`}
           </Text>
         </View>
       </ScrollView>
 
       <View style={styles.footer}>
+        {intakeReady ? (
+          <PrimaryButton
+            label="Join consultation"
+            onPress={() => router.replace(`/services/telemedicine/consult/${params.appointmentId}`)}
+          />
+        ) : (
+          <PrimaryButton
+            label="Add your health details"
+            onPress={() =>
+              router.replace({
+                pathname: '/services/telemedicine/appointment/[id]/intake',
+                params: { id: String(params.appointmentId), reason: String(params.reason ?? '') },
+              })
+            }
+          />
+        )}
         <PrimaryButton
-          label="Join consultation"
-          onPress={() => router.replace(`/services/telemedicine/consult/${params.appointmentId}`)}
-        />
-        <PrimaryButton
-          label="View my appointments"
+          label="View appointment"
           variant="ghost"
-          onPress={() => router.replace('/services/telemedicine/appointments')}
+          onPress={() => router.replace(`/services/telemedicine/appointment/${params.appointmentId}`)}
         />
       </View>
     </SafeAreaView>

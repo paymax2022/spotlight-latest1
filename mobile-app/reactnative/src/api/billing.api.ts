@@ -144,14 +144,54 @@ async function postUtilityValidation(input: {
   billerId: string;
   productId?: string;
   customerReference: string;
+  metadata?: Record<string, unknown>;
 }): Promise<Record<string, unknown>> {
   const res = await api.post('/api/v1/utility/validate', {
     category: input.category,
     biller_id: input.billerId,
     product_id: input.productId,
     customer_reference: input.customerReference,
+    metadata: input.metadata ?? {},
   });
   return (res.data?.data ?? res.data) as Record<string, unknown>;
+}
+
+// ─── Provider logos (VTPass `image`) ────────────────────────────────────────
+
+export interface ProviderLogoInfo { serviceID: string; name: string; image?: string }
+
+// Fetches official provider logos (serviceID + image) for a category from VTPass
+// via the backend. Returns [] on failure — callers fall back to brand logos.
+export async function getProviderLogos(category: UtilityCategory): Promise<ProviderLogoInfo[]> {
+  try {
+    const res = await api.get(`/api/v1/utility/logos?category=${category}`);
+    const data = (res.data?.data ?? res.data) as { services?: ProviderLogoInfo[] };
+    return data.services ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// Resolves a provider/biller (by code or name) to its VTPass logo image URL.
+// Biller codes look like 'vtpass-eko-electric' / 'vtpass-mtn-airtime'; VTPass
+// serviceIDs are 'eko-electric' / 'mtn' / 'mtn-data' / 'dstv' / 'waec'.
+export function resolveProviderImage(
+  services: ProviderLogoInfo[],
+  code: string,
+  name: string,
+): string | undefined {
+  const stripped = (code || '').replace(/^vtpass-/, '').toLowerCase();
+  const byId = services.find((s) => {
+    const sid = (s.serviceID || '').toLowerCase();
+    return !!sid && (sid === stripped || stripped.startsWith(sid) || sid.startsWith(stripped));
+  });
+  if (byId?.image) return byId.image;
+  const first = (name || '').toLowerCase().split(' ')[0];
+  if (first) {
+    const byName = services.find((s) => (s.name || '').toLowerCase().includes(first));
+    if (byName?.image) return byName.image;
+  }
+  return undefined;
 }
 
 // ─── Airtime ─────────────────────────────────────────────────────────────────
@@ -285,24 +325,25 @@ export async function initiateDataPaystack(payload: Omit<DataPurchasePayload, 'p
 
 export async function getElectricityDiscos(): Promise<Disco[]> {
   const supabase = createSupabaseClient();
+  // NOTE: utility_billers has no `metadata` column — selecting it makes PostgREST
+  // reject the whole query, which previously left the DISCO grid silently empty.
+  // Prepaid/postpaid support defaults to true (per-product meter type is chosen
+  // in the form), matching the other biller-list queries above.
   const { data, error } = await supabase
     .from('utility_billers')
-    .select('id, name, code, status, metadata')
+    .select('id, name, code, status')
     .eq('category', 'electricity')
     .eq('status', 'active');
 
   if (error) throw error;
-  return (data ?? []).map((row) => {
-    const meta = ((row.metadata ?? {}) as Meta);
-    return {
-      id:               String(row.id),
-      name:             String(row.name),
-      code:             String(row.code),
-      supportsPrepaid:  Boolean(meta.supports_prepaid  ?? true),
-      supportsPostpaid: Boolean(meta.supports_postpaid ?? true),
-      isActive:         true,
-    };
-  });
+  return (data ?? []).map((row) => ({
+    id:               String(row.id),
+    name:             String(row.name),
+    code:             String(row.code),
+    supportsPrepaid:  true,
+    supportsPostpaid: true,
+    isActive:         true,
+  }));
 }
 
 export async function validateMeter(payload: {
@@ -317,6 +358,8 @@ export async function validateMeter(payload: {
     billerId,
     productId,
     customerReference: payload.meterNumber,
+    // VTPass needs the meter type (prepaid/postpaid) to verify an electricity meter.
+    metadata: { type: payload.meterType.toLowerCase() },
   });
   return mapMeterValidationFromApi({
     ...data,

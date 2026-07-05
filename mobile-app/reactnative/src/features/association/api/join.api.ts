@@ -2,7 +2,7 @@
 // Mock-flagged code validation for invite + access codes.
 
 import { api } from '@/api/client';
-import { USE_MOCK } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
 import { MOCK_ORGANISATIONS } from './association.mock';
 import type { CodeKind, CodeValidation } from '../types/join.types';
 
@@ -42,7 +42,7 @@ export async function validateCode(kind: CodeKind, raw: string): Promise<CodeVal
     return base(kind, { valid: false, message: kind === 'INVITE' ? 'Invite code not recognised.' : 'Group access code not recognised.' });
   }
 
-  const path = kind === 'INVITE' ? '/associations/invites/validate' : '/associations/access-codes/validate';
+  const path = kind === 'INVITE' ? `${BASE}/invites/validate` : `${BASE}/access-codes/validate`;
   const { data } = await api.post(path, { code: raw });
   return data;
 }

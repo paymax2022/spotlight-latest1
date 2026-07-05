@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "skipLibCheck": true, "noEmit": true, "jsx": "react-jsx" },
+  "include": [
+    "app/connect/live/**/*.ts",
+    "app/connect/live/**/*.tsx",
+    "app/connect/voting/**/*.ts",
+    "app/connect/voting/**/*.tsx",
+    "app/connect/gamification/**/*.ts",
+    "app/connect/gamification/**/*.tsx",
+    "src/features/connect/live/**/*.ts",
+    "src/features/connect/live/**/*.tsx",
+    "src/features/connect/voting/**/*.ts",
+    "src/features/connect/voting/**/*.tsx",
+    "src/features/connect/gamification/**/*.ts",
+    "src/features/connect/gamification/**/*.tsx",
+    "src/features/connect/components/live-*.tsx",
+    "src/features/connect/components/voting-*.tsx",
+    "src/features/connect/components/game-*.tsx"
+  ]
+}

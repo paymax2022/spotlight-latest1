@@ -146,10 +146,13 @@ export const PROFILE_DOC_TYPE_LABELS: Record<ProfileDocType, string> = {
 
 // ─── Verification rejection reasons (screens 27, 28) ─────────────────────────
 
+// PRIVACY: these labels are shown to the doctor on the verification-failed
+// screen. Keep them coarse and doctor-actionable — never reference the MDCN
+// register or expose matched-field detail.
 export const REJECTION_REASONS: { code: string; label: string }[] = [
   { code: 'doc_unclear',       label: 'Document image is blurry or unreadable' },
   { code: 'doc_expired',       label: 'Document has expired' },
-  { code: 'licence_mismatch',  label: 'Licence number does not match the MDCN register' },
+  { code: 'licence_mismatch',  label: 'We could not confirm your licence details' },
   { code: 'name_mismatch',     label: 'Name on documents does not match' },
   { code: 'incomplete',        label: 'A required document is missing' },
   { code: 'suspected_fraud',   label: 'Document could not be authenticated' },

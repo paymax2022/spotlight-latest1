@@ -102,7 +102,7 @@ describe('utility customer routes', () => {
     expect(body.success).toBe(false);
   });
 
-  it('returns utility categories for an authenticated KYC user', async () => {
+  it('returns utility categories for an authenticated user (auth-only, no KYC tier gate)', async () => {
     vi.mocked(listUtilityCategories).mockResolvedValue([{ id: 'airtime', label: 'Airtime' }]);
 
     const response = await getCategories(new Request('http://localhost/api/v1/utility/categories', {
@@ -112,7 +112,10 @@ describe('utility customer routes', () => {
 
     expect(response.status).toBe(200);
     expect(body.categories).toHaveLength(1);
-    expect(requireKycTier).toHaveBeenCalledWith(TEST_USER.id, 1);
+    expect(requireRequestUser).toHaveBeenCalled();
+    // KYC Tier-1 is intentionally NOT enforced in the utility module — per the
+    // product decision documented in app/api/v1/utility/_utils.ts.
+    expect(requireKycTier).not.toHaveBeenCalled();
   });
 
   it('requires Idempotency-Key for utility payments', async () => {

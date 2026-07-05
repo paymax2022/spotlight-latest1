@@ -91,23 +91,31 @@ or client change required.
 ## Persistence (the storage seam)
 
 The HTTP layer and adapters depend on `store.Repository` (see
-`internal/store/repository.go`), **not** the concrete in-memory `Store`. A
-Postgres-backed `Repository` is a drop-in — wire it in `cmd/server/main.go`:
+`internal/store/repository.go`), **not** a concrete store. Two implementations
+ship: the in-memory mock (`internal/store`) and **Postgres** (`internal/pgstore`,
+pgx/v5). `cmd/server/main.go` picks by env:
 
 ```go
-// today:
-srv := api.NewServer(store.New())
-// later (no handler/adapter change):
-srv := api.NewServer(pgstore.New(db))
+if DATABASE_URL set  → pgstore.New(ctx, dsn)   // real persistence
+else                 → store.New()             // in-memory mock
 ```
 
-The production schema lives in `migrations/` (golang-migrate format, expand-only
-init). Money is `BIGINT` minor units; the ledger is double-entry; idempotency
-keys and server quotes get their own tables.
+The schema lives in `migrations/` (golang-migrate format): `000001_init` (expand-
+only) + `000002_seed` (demo data). Money is `BIGINT` minor units; the ledger is
+double-entry; buy/sell/swap run in **one DB transaction** (wallet + position +
+ledger + history); idempotency keys and server quotes have their own tables.
 
 ```bash
-migrate -path migrations -database "$DATABASE_URL" up     # apply
-migrate -path migrations -database "$DATABASE_URL" down 1 # roll back one
+# external deps now (pgx) — commit go.sum:
+go mod tidy
+
+# run with Postgres (manual):
+export DATABASE_URL="postgres://paymax:paymax@localhost:5432/paymax?sslmode=disable"
+migrate -path migrations -database "$DATABASE_URL" up   # 000001 + 000002
+go run ./cmd/server
+
+# or the whole stack (postgres + migrate + service) in one command:
+docker compose up --build
 ```
 
 Follow **expand/contract** for future changes: add columns/tables (expand),

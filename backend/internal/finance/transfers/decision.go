@@ -27,6 +27,14 @@ var (
 	ErrMissingIdempotencyKey = errors.New("transfers: Idempotency-Key required")
 	// ErrInvalidAmount — non-positive kobo amount (400).
 	ErrInvalidAmount = errors.New("transfers: amount must be a positive kobo integer")
+	// ErrPinNotSet — money movement attempted before a transaction PIN exists (403).
+	ErrPinNotSet = errors.New("transfers: transaction PIN not set")
+	// ErrPinInvalid — wrong PIN supplied (403).
+	ErrPinInvalid = errors.New("transfers: invalid transaction PIN")
+	// ErrPinLocked — too many failed PIN attempts (403).
+	ErrPinLocked = errors.New("transfers: transaction PIN locked — try again later")
+	// ErrProviderUnavailable — no disbursement provider configured / all failed (502).
+	ErrProviderUnavailable = errors.New("transfers: no disbursement provider available")
 )
 
 // HTTPStatusForError maps a money-path error to its acceptance-gate HTTP status.
@@ -61,6 +69,14 @@ func HTTPStatusForError(err error) int {
 		return http.StatusBadRequest // 400
 	case errors.Is(err, ErrInvalidAmount):
 		return http.StatusBadRequest // 400
+	case errors.Is(err, ErrPinNotSet):
+		return http.StatusForbidden // 403
+	case errors.Is(err, ErrPinInvalid):
+		return http.StatusForbidden // 403
+	case errors.Is(err, ErrPinLocked):
+		return http.StatusForbidden // 403
+	case errors.Is(err, ErrProviderUnavailable):
+		return http.StatusBadGateway // 502
 	default:
 		return http.StatusInternalServerError // 500 — fail closed
 	}
@@ -85,6 +101,14 @@ func ErrorCode(err error) string {
 		return "idempotency_key_required"
 	case errors.Is(err, ErrInvalidAmount):
 		return "invalid_amount"
+	case errors.Is(err, ErrPinNotSet):
+		return "pin_not_set"
+	case errors.Is(err, ErrPinInvalid):
+		return "pin_invalid"
+	case errors.Is(err, ErrPinLocked):
+		return "pin_locked"
+	case errors.Is(err, ErrProviderUnavailable):
+		return "provider_unavailable"
 	default:
 		return "internal_error"
 	}
@@ -197,6 +221,59 @@ func ClassifyWebhookStatus(providerStatus string) (status BankTransferStatus, re
 // NextStatusOnProviderError returns the status a transfer should hold after the
 // provider call errors during initiation. Funds stay reserved — never lost,
 // never double-debited — until a webhook or reconciliation resolves it.
+// For a wallet-source transfer the hold is funds_reserved; for a bank-source
+// transfer that has already been funded into provider_clearing, the hold is
+// funded (the clearing balance is the parked money).
 func NextStatusOnProviderError(current BankTransferStatus) BankTransferStatus {
+	if current == BankTransferFunded {
+		return BankTransferFunded
+	}
 	return BankTransferFundsReserved
+}
+
+// ---------------------------------------------------------------------------
+// Per-leg idempotency key derivation.
+//
+// Every money leg of a transfer derives a distinct idempotency key from the
+// base key (or reference) suffixed by the leg name, so the ledger unique
+// constraint makes a duplicate webhook a benign no-op and success vs reversal
+// can never collide. These are pure and unit-tested.
+// ---------------------------------------------------------------------------
+
+// Leg names for the bank-transfer money path.
+const (
+	LegReserve  = "reserve"  // wallet→bank: DR wallet → CR suspense
+	LegFund     = "fund"     // bank→bank: DR provider_clearing → CR suspense
+	LegSettle   = "settle"   // success: DR suspense(amount) → CR settlement
+	LegFeeRev   = "fee"      // success: DR suspense(fee) → CR paymax_revenue
+	LegReversal = "reversal" // failure/reversed: restore source from suspense
+)
+
+// LegKey derives the per-leg idempotency key from a base key and the leg name.
+func LegKey(base, leg string) string {
+	return base + ":" + leg
+}
+
+// CanAdvanceBankToBank guards the bank→bank state machine. A transfer may only
+// move forward along: awaiting_funding → funded → provider_initiated →
+// successful, with failed/reversed reachable as terminal states. Returns false
+// for an illegal (backwards or skipping) transition so the funding webhook can't
+// re-fund or re-initiate. Equal states (idempotent replay) return false (no-op).
+func CanAdvanceBankToBank(from, to BankTransferStatus) bool {
+	rank := map[BankTransferStatus]int{
+		BankTransferAwaitingFunding:   1,
+		BankTransferFunded:            2,
+		BankTransferProviderInitiated: 3,
+		BankTransferSuccessful:        4,
+	}
+	// Terminal failure/reversal may be reached from any non-terminal state.
+	if to == BankTransferFailed || to == BankTransferReversed {
+		return from != BankTransferSuccessful && from != BankTransferFailed && from != BankTransferReversed
+	}
+	rf, okF := rank[from]
+	rt, okT := rank[to]
+	if !okF || !okT {
+		return false
+	}
+	return rt == rf+1
 }

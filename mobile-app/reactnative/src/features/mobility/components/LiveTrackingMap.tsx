@@ -1,7 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, ViewStyle } from 'react-native';
-import MapLibreGL from '@maplibre/maplibre-react-native';
+import { NativeModules, StyleSheet, View, ViewStyle } from 'react-native';
 import MapView from './MapView';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let MapLibreGL: any = null;
+if (!!NativeModules.MLRNModule) {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    MapLibreGL = require('@maplibre/maplibre-react-native').default;
+  } catch { /* native binary absent */ }
+}
 import { matchToRoad, type MapPoint } from '../api/maps.api';
 
 export interface LiveTrackingMapProps {
@@ -86,7 +94,7 @@ export default function LiveTrackingMap({ gpsTrace, style }: LiveTrackingMapProp
       zoom={14}
       style={style}
     >
-      {coords.length >= 2 && (
+      {coords.length >= 2 && MapLibreGL && (
         <MapLibreGL.ShapeSource id="live-track" shape={lineGeoJSON}>
           <MapLibreGL.LineLayer
             id="live-track-line"
@@ -94,7 +102,7 @@ export default function LiveTrackingMap({ gpsTrace, style }: LiveTrackingMapProp
           />
         </MapLibreGL.ShapeSource>
       )}
-      {last && (
+      {last && MapLibreGL && (
         <MapLibreGL.PointAnnotation id="live-pos" coordinate={last}>
           <View style={styles.dot} />
         </MapLibreGL.PointAnnotation>

@@ -13,9 +13,10 @@ import { castFreeVote } from '@/src/server/voting/free-vote.service';
 import { verifyAndCreditPaidVote } from '@/src/server/voting/paid-vote.service';
 import { ApiError } from '@/src/lib/api/responses';
 import { isBridgeEnabled } from './feature-flag';
-import { checkAndClaimIdempotencyKey, storeIdempotencyResult } from './idempotency';
+import { bridgeIdempotencyAnchor, storeIdempotencyResult } from './idempotency';
 import { assertKycGate } from './kyc-gate';
 import { enqueueOutboxEvent } from './outbox';
+import { resolveIdempotency } from '@/src/server/voting/core';
 
 // ---------------------------------------------------------------------------
 // bridgedCastFreeVote
@@ -38,9 +39,12 @@ export async function bridgedCastFreeVote(
     throw new ApiError('X-Idempotency-Key header is required for bridged votes.', 400);
   }
 
-  // Step 1: Idempotency check
-  const cached = await checkAndClaimIdempotencyKey(idempotencyKey);
-  if (cached) return cached as CastFreeVoteResponse;
+  // Step 1: Idempotency check (shared core helper, bridge-table anchor)
+  const idem = await resolveIdempotency<CastFreeVoteResponse>(
+    idempotencyKey,
+    bridgeIdempotencyAnchor<CastFreeVoteResponse>(),
+  );
+  if (idem.status === 'cached') return idem.value;
 
   // Step 2: KYC gate (only for authenticated users)
   if (userId) await assertKycGate(userId);
@@ -88,8 +92,15 @@ export async function bridgedVerifyPaidVote(
   // Use paymentReference as the idempotency key
   const idempotencyKey = `paid-vote-verify:${req.paymentReference}`;
 
-  const cached = await checkAndClaimIdempotencyKey(idempotencyKey);
-  if (cached) return cached as VerifyPaidVoteResponse;
+  // Shared core idempotency. NOTE: v1's verifyAndCreditPaidVote is itself
+  // idempotent on the transaction's vote_credit_status (via the same core
+  // helper), so this bridge-table guard is a belt-and-braces dedup that also
+  // caches the response shape for fast 200s on retries.
+  const idem = await resolveIdempotency<VerifyPaidVoteResponse>(
+    idempotencyKey,
+    bridgeIdempotencyAnchor<VerifyPaidVoteResponse>(),
+  );
+  if (idem.status === 'cached') return idem.value;
 
   const result = await verifyAndCreditPaidVote(req, actorId, ipAddress, userAgent);
 

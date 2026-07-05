@@ -38,6 +38,25 @@ export const featureFlags = {
   /** EPIC 5 — Referral codes and ledger rewards */
   referrals: () => envFlag('FEATURE_REFERRALS_ENABLED'),
 
+  /** Micro-insurance / Protection module (MyCover + Octamile via gateway) */
+  insurance: () => envFlag('FEATURE_INSURANCE_ENABLED'),
+
+  /** Hotel Booking / Stays module (Property Suite, dual-rail supply gateway) */
+  stays: () => envFlag('FEATURE_STAYS_ENABLED'),
+
+  /** Top-5 expansion modules (no-new-licence; existing wallet/ledger rails) */
+  events: () => envFlag('FEATURE_EVENTS_ENABLED'),
+  socialPay: () => envFlag('FEATURE_SOCIAL_PAY_ENABLED'),
+  savings: () => envFlag('FEATURE_SAVINGS_ENABLED'),
+  creators: () => envFlag('FEATURE_CREATORS_ENABLED'),
+  loyalty: () => envFlag('FEATURE_LOYALTY_ENABLED'),
+
+  /** Health verticals (marketplace; licensed partners deliver care) */
+  health: () => envFlag('FEATURE_HEALTH_ENABLED'),
+  healthPharmacy: () => envFlag('FEATURE_HEALTH_PHARMACY_ENABLED'),
+  healthLab: () => envFlag('FEATURE_HEALTH_LAB_ENABLED'),
+  healthVet: () => envFlag('FEATURE_HEALTH_VET_ENABLED'),
+
   /** EPIC 6 — Fintech admin RBAC (maker-checker) */
   fintechAdmin: () => envFlag('FEATURE_FINTECH_ADMIN_ENABLED'),
 
@@ -58,9 +77,6 @@ export const featureFlags = {
 
   /** P3 Lane B — Community groups with wallet-backed dues payments */
   groups: () => envFlag('FEATURE_GROUPS_ENABLED'),
-
-  /** P3 Lane C — Ticketed events with QR codes and escrow settlement */
-  events: () => envFlag('FEATURE_EVENTS_ENABLED'),
 
   /** P3 Lane D — Estate access control and private elections */
   estate: () => envFlag('FEATURE_ESTATE_ENABLED'),

@@ -72,6 +72,146 @@ func (h *Handler) BusTicketCancel(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "cancelled"})
 }
 
+// ─── Bus marketplace: customer discovery handlers ────────────────────────────
+
+// BusSearch returns bookable interstate trips (state pair / provider filters).
+func (h *Handler) BusSearch(c *gin.Context) {
+	trips, err := h.svc.SearchBusTrips(c.Request.Context(),
+		c.Query("fromState"), c.Query("toState"), c.Query("providerId"), c.Query("date"))
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"trips": trips})
+}
+
+// BusProviders lists active providers (state / free-text q filters).
+func (h *Handler) BusProviders(c *gin.Context) {
+	providers, err := h.svc.ListBusProviders(c.Request.Context(), c.Query("state"), c.Query("q"))
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"providers": providers})
+}
+
+// BusProviderDetail returns one active provider's profile + active routes.
+func (h *Handler) BusProviderDetail(c *gin.Context) {
+	res, err := h.svc.GetBusProvider(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// ─── Bus marketplace: provider self-service handlers (owner-gated) ────────────
+
+// BusProviderRegister creates the caller's provider row.
+func (h *Handler) BusProviderRegister(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req BusProviderRegisterRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	prov, err := h.svc.RegisterBusProvider(c.Request.Context(), userID, req)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"provider": prov})
+}
+
+// BusProviderMe returns the caller's provider dashboard (provider null if none).
+func (h *Handler) BusProviderMe(c *gin.Context) {
+	res, err := h.svc.GetMyBusProvider(c.Request.Context(), c.GetString("user_id"))
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// BusProviderUpdate patches the caller's provider profile.
+func (h *Handler) BusProviderUpdate(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req BusProviderUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	prov, err := h.svc.UpdateMyBusProvider(c.Request.Context(), userID, req)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"provider": prov})
+}
+
+// BusProviderRouteCreate publishes an interstate route for the caller's provider.
+func (h *Handler) BusProviderRouteCreate(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req BusProviderRouteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	route, err := h.svc.CreateProviderRoute(c.Request.Context(), userID, req)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"route": route})
+}
+
+// BusProviderRouteUpdate patches one of the caller's routes (ownership enforced).
+func (h *Handler) BusProviderRouteUpdate(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req BusProviderRoutePatchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	route, err := h.svc.UpdateProviderRoute(c.Request.Context(), userID, c.Param("id"), req)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"route": route})
+}
+
+// BusProviderScheduleCreate adds a departure to one of the caller's routes.
+func (h *Handler) BusProviderScheduleCreate(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req BusProviderScheduleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	sched, err := h.svc.CreateProviderSchedule(c.Request.Context(), userID, c.Param("id"), req)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"schedule": sched})
+}
+
+// BusProviderBookings returns the manifest for one of the caller's schedules.
+func (h *Handler) BusProviderBookings(c *gin.Context) {
+	scheduleID := c.Query("scheduleId")
+	if scheduleID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "scheduleId required"})
+		return
+	}
+	bookings, err := h.svc.ProviderBookings(c.Request.Context(), c.GetString("user_id"), scheduleID)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"bookings": bookings})
+}
+
 // ─── Bus operator (driver) handlers ──────────────────────────────────────────
 
 // BusValidate validates a QR → boarded.

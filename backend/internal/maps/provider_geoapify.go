@@ -35,8 +35,29 @@ type geoapifyResp struct {
 			PlaceID   string  `json:"place_id"`
 			Category  string  `json:"category"`
 			Name      string  `json:"name"`
+			Rank      struct {
+				Importance float64 `json:"importance"` // Nominatim importance (0..1)
+				Confidence float64 `json:"confidence"`  // Geoapify match confidence (0..1)
+			} `json:"rank"`
 		} `json:"properties"`
 	} `json:"features"`
+}
+
+// geoapifyConfidence normalizes Geoapify/Nominatim's native quality signals into
+// 0..1. Geoapify returns rank.confidence (its own 0..1 match score); when present
+// we prefer it. Otherwise we fall back to Nominatim's rank.importance (also 0..1).
+func geoapifyConfidence(confidence, importance float64) Confidence {
+	c := confidence
+	if c <= 0 {
+		c = importance
+	}
+	if c < 0 {
+		c = 0
+	}
+	if c > 1 {
+		c = 1
+	}
+	return c
 }
 
 func (g *Geoapify) Geocode(ctx context.Context, address string) (GeoResult, error) {
@@ -60,6 +81,8 @@ func (g *Geoapify) Geocode(ctx context.Context, address string) (GeoResult, erro
 		Lat: p.Lat, Lng: p.Lon, Address: p.Formatted,
 		PlusCode: g.codec.Encode(p.Lat, p.Lon),
 		Provider: g.Name(), Source: SourceOpenStack, Cacheable: true,
+		Confidence: geoapifyConfidence(p.Rank.Confidence, p.Rank.Importance),
+		H3Cell:     PointCellKey(p.Lat, p.Lon),
 	}, nil
 }
 
@@ -71,12 +94,18 @@ func (g *Geoapify) ReverseGeocode(ctx context.Context, lat, lng float64) (GeoRes
 		return GeoResult{}, err
 	}
 	addr := fmt.Sprintf("%.5f, %.5f", lat, lng)
+	conf := Confidence(1.0) // reverse from an exact coordinate is fully confident.
 	if len(r.Features) > 0 {
-		addr = r.Features[0].Properties.Formatted
+		p := r.Features[0].Properties
+		addr = p.Formatted
+		if p.Rank.Confidence > 0 || p.Rank.Importance > 0 {
+			conf = geoapifyConfidence(p.Rank.Confidence, p.Rank.Importance)
+		}
 	}
 	return GeoResult{
 		Lat: lat, Lng: lng, Address: addr, PlusCode: g.codec.Encode(lat, lng),
 		Provider: g.Name(), Source: SourceOpenStack, Cacheable: true,
+		Confidence: conf, H3Cell: PointCellKey(lat, lng),
 	}, nil
 }
 
@@ -103,6 +132,7 @@ func (g *Geoapify) Autocomplete(ctx context.Context, query, _ string, near *Poin
 			Label: p.Formatted, PlaceID: p.PlaceID,
 			Lat: p.Lat, Lng: p.Lon, HasCoords: p.Lat != 0 || p.Lon != 0,
 			Provider: g.Name(), Source: SourceOpenStack,
+			Confidence: geoapifyConfidence(p.Rank.Confidence, p.Rank.Importance),
 		})
 	}
 	return out, nil

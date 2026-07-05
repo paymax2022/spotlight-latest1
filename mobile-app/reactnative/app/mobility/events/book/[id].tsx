@@ -15,12 +15,15 @@ import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard'
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { useOffer, useBookOffer } from '@/features/mobility/hooks/useEvent';
 import { formatNaira } from '@/features/mobility/utils/mobilityFormatters';
+import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import type { MobilityError } from '@/features/mobility/types/mobility.types';
 
 export default function BookOfferScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const offer = useOffer(id);
   const book = useBookOffer();
+  // Shared chooser: wallet OR card (Paystack top-up) → then the booking charge.
+  const pay = usePurchasePayment<Awaited<ReturnType<typeof book.mutateAsync>>>();
   const [seats, setSeats] = useState(1);
   const [bundle, setBundle] = useState(false);
   const [ticketRef, setTicketRef] = useState('');
@@ -48,13 +51,21 @@ export default function BookOfferScreen() {
   const onConfirm = () => {
     if (!canSubmit) return;
     setErr(null);
-    book.mutate(
-      { offerId: o.id, seats, ticketRef: bundle && ticketRef.trim() ? ticketRef.trim() : undefined },
-      {
-        onSuccess: () => router.replace('/mobility/events/bookings'),
-        onError: (e) => setErr(e as MobilityError),
+    pay.start({
+      amountKobo: totalKobo,
+      title: 'Pay for booking',
+      // Existing wallet booking charge (with its Idempotency-Key) runs unchanged.
+      charge: async () => {
+        try {
+          return await book.mutateAsync({ offerId: o.id, seats, ticketRef: bundle && ticketRef.trim() ? ticketRef.trim() : undefined });
+        } catch (e) {
+          // Preserve the on-screen "offer full" / payment-failed UX.
+          setErr(e as MobilityError);
+          throw e;
+        }
       },
-    );
+      onPaid: () => router.replace('/mobility/events/bookings'),
+    });
   };
 
   const isFull = err?.status === 409 || (err?.code as string | undefined) === 'OFFER_FULL';
@@ -118,6 +129,9 @@ export default function BookOfferScreen() {
           <PrimaryButton label={`Confirm · ${formatNaira(totalKobo)}`} onPress={onConfirm} loading={book.isPending} disabled={!canSubmit} />
         </View>
       )}
+
+      {/* Shared wallet/card chooser — drives the booking charge above. */}
+      <PaymentSheet controller={pay} />
     </SafeAreaView>
   );
 }

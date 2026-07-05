@@ -47,6 +47,74 @@ interface VtpassResponse {
   [key: string]: unknown;
 }
 
+// ── Sandbox simulation (inline with VTPass docs) ────────────────────────────
+// VTPass publishes fixed sandbox meter numbers that deterministically simulate
+// outcomes (https://vtpass.com/documentation/eko-electricity-ekedc-payment-api/).
+// When VTPASS_ENVIRONMENT=sandbox we honour these locally so meter validation +
+// purchase work for testing WITHOUT live credentials or a network round-trip.
+// Live mode is unchanged (always calls the real VTPass API).
+const SANDBOX_METERS = {
+  PREPAID: '1111111111111', // Successful — Prepaid (token vended)
+  POSTPAID: '1010101010101', // Successful — Postpaid
+} as const;
+// Purchase-only simulation codes from the VTPass EKEDC sandbox table.
+const SANDBOX_PENDING_METER = '201000000000';
+const SANDBOX_UNEXPECTED_METER = '500000000000';
+const SANDBOX_NO_RESPONSE_METER = '400000000000';
+const SANDBOX_TIMEOUT_METER = '300000000000';
+
+function isSandboxEnv(): boolean {
+  return process.env.VTPASS_ENVIRONMENT === 'sandbox';
+}
+
+// Doc-accurate merchant-verify response for the two valid sandbox meters; null
+// for any other meter (which VTPass sandbox treats as a failed validation).
+function sandboxVerify(billersCode: string): VtpassResponse | null {
+  if (billersCode === SANDBOX_METERS.PREPAID || billersCode === SANDBOX_METERS.POSTPAID) {
+    const meterType = billersCode === SANDBOX_METERS.PREPAID ? 'PREPAID' : 'POSTPAID';
+    return {
+      code: '000',
+      response_description: 'Customer verified.',
+      content: {
+        Customer_Name: 'Eko Electric Customer',
+        Customer_Number: billersCode,
+        Customer_Type: meterType,
+        Address: '21a New Road Avenue',
+        Meter_Number: billersCode,
+        Meter_Type: meterType,
+        WrongBillersCode: false,
+      },
+    };
+  }
+  return null;
+}
+
+// Doc-accurate purchase simulation for the VTPass EKEDC sandbox billersCode table.
+function sandboxPurchase(request: UtilityPurchaseRequest, requestId: string): UtilityPurchaseResult {
+  const meter = request.customerReference;
+  const base = { providerReference: requestId };
+
+  if (meter === SANDBOX_METERS.PREPAID) {
+    return {
+      ...base,
+      status: 'successful',
+      token: '1178-6621-9027-6821-0244', // sandbox prepaid token
+      message: 'TRANSACTION SUCCESSFUL',
+      raw: { code: '000', sandbox: true, meter_type: 'PREPAID' },
+    };
+  }
+  if (meter === SANDBOX_METERS.POSTPAID) {
+    return { ...base, status: 'successful', message: 'TRANSACTION SUCCESSFUL', raw: { code: '000', sandbox: true, meter_type: 'POSTPAID' } };
+  }
+  if (meter === SANDBOX_PENDING_METER || meter === SANDBOX_TIMEOUT_METER) {
+    return { ...base, status: 'pending', message: 'Transaction is processing.', raw: { sandbox: true, simulated: meter === SANDBOX_TIMEOUT_METER ? 'timeout' : 'pending' } };
+  }
+  if (meter === SANDBOX_UNEXPECTED_METER || meter === SANDBOX_NO_RESPONSE_METER) {
+    return { ...base, status: 'failed', message: 'Provider returned an unexpected/no response.', raw: { sandbox: true, simulated: 'anomaly' } };
+  }
+  return { ...base, status: 'failed', message: 'Sandbox: meter not recognised (use 1111111111111 / 1010101010101).', raw: { sandbox: true, simulated: 'failed' } };
+}
+
 function readCredentials(): VtpassCredentials {
   const environment = (process.env.VTPASS_ENVIRONMENT === 'sandbox' ? 'sandbox' : 'live') satisfies VtpassEnvironment;
   const apiKey = process.env.VTPASS_API_KEY;
@@ -227,12 +295,59 @@ function purchasePayload(request: UtilityPurchaseRequest, requestId: string): Re
   };
 }
 
+export interface VtpassServiceInfo {
+  serviceID: string;
+  name: string;
+  image?: string;
+}
+
+// Fetch the VTPass service list for an identifier ('electricity-bill', 'airtime',
+// 'data', 'tv-subscription', 'education'). Each entry carries the official
+// provider logo `image` URL hosted on VTPass. Requires VTPass GET credentials
+// (api-key + public-key); callers should treat failures as "no logos".
+export async function fetchVtpassServices(identifier: string): Promise<VtpassServiceInfo[]> {
+  const payload = await vtpassFetch(`services?identifier=${encodeURIComponent(identifier)}`, 'GET');
+  const content = (payload as { content?: unknown }).content;
+  if (!Array.isArray(content)) return [];
+  return content
+    .map((row) => {
+      const r = row as Record<string, unknown>;
+      return {
+        serviceID: String(r.serviceID ?? ''),
+        name: String(r.name ?? ''),
+        image: typeof r.image === 'string' ? r.image : undefined,
+      };
+    })
+    .filter((s) => s.serviceID);
+}
+
 export const vtpassUtilityAdapter: UtilityProviderAdapter = {
   code: 'vtpass',
 
   async validateCustomer(request: UtilityValidationRequest) {
     if (request.category === 'airtime' || request.category === 'data' || request.category === 'education') {
       return { valid: true, raw: { skipped: true, reason: 'VTPass does not require merchant verification for this category.' } };
+    }
+
+    // Sandbox: validate against VTPass's documented test meter numbers locally so
+    // testing works without live credentials. Any other meter fails, exactly as
+    // the sandbox does ("use any number apart from the one provided to simulate a
+    // failed meter number validation").
+    if (isSandboxEnv()) {
+      const stub = sandboxVerify(request.customerReference);
+      if (stub) {
+        return {
+          valid: true,
+          customerName: stub.content?.Customer_Name,
+          message: 'Customer verified.',
+          raw: stub,
+        };
+      }
+      return {
+        valid: false,
+        message: 'Meter number could not be validated. (Sandbox: use 1111111111111 for prepaid or 1010101010101 for postpaid.)',
+        raw: { code: '012', content: { WrongBillersCode: true } },
+      };
     }
 
     const type = metadataString(request.metadata, ['type', 'payment_type', 'paymentType'])
@@ -254,12 +369,22 @@ export const vtpassUtilityAdapter: UtilityProviderAdapter = {
 
   async purchase(request: UtilityPurchaseRequest) {
     const requestId = vtpassRequestId(request.idempotencyKey);
+
+    // Sandbox: simulate the documented EKEDC purchase outcomes by meter number so
+    // end-to-end testing (debit → token) works without live credentials.
+    if (isSandboxEnv()) {
+      return sandboxPurchase(request, requestId);
+    }
+
     const payload = await vtpassFetch('pay', 'POST', purchasePayload(request, requestId));
     return normalizePurchase(payload, requestId);
   },
 
   async queryTransactionStatus(request: UtilityStatusQueryRequest): Promise<UtilityStatusResult> {
     const requestId = request.providerReference || vtpassRequestId(request.idempotencyKey);
+    if (isSandboxEnv()) {
+      return { status: 'successful', providerReference: requestId, message: 'TRANSACTION SUCCESSFUL', raw: { sandbox: true } };
+    }
     const payload = await vtpassFetch('requery', 'POST', { request_id: requestId });
     return normalizePurchase(payload, requestId);
   },

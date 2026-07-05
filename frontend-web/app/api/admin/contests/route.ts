@@ -1,5 +1,6 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import type { ContestCategory, ContestRegistrationDefinition, ContestType } from '@/src/features/registration/types';
+import { sanitizeContestFormSchema } from '@/src/features/registration/field-catalog';
 import { createRegistrationContest, listRegistrationContests } from '@/src/server/registration/store';
 
 const allowedCategories: ContestCategory[] = [
@@ -95,6 +96,7 @@ export async function POST(request: Request) {
         ? body.applicantCategories.map((item: unknown) => String(item)).filter(Boolean)
         : [],
       categoryQuestionSet: contestCategory,
+      formSchema: sanitizeContestFormSchema(body?.formSchema),
     });
 
     return successResponse({ success: true, contest }, 201);

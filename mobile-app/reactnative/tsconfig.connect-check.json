@@ -1,0 +1,17 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "baseUrl": ".",
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "paths": { "@/*": ["src/*"] }
+  },
+  "include": [
+    "app/connect/**/*.ts",
+    "app/connect/**/*.tsx",
+    "src/features/connect/**/*.ts",
+    "src/features/connect/**/*.tsx"
+  ]
+}

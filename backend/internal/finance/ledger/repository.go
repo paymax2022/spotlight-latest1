@@ -60,22 +60,124 @@ func (r *Repository) GetOrCreateAccount(ctx context.Context, userID *string, acc
 	return &a, nil
 }
 
+// balanceProjectionSQL projects an account balance from immutable ledger_entries.
+// CREDIT + REVERSAL_DEBIT count as +balance; DEBIT + REVERSAL_CREDIT as -balance.
+// Kept as a single const so the pooled (GetBalance) and in-tx (getBalanceTx)
+// readers can never drift apart — both must classify entry types identically.
+const balanceProjectionSQL = `
+	SELECT COALESCE(SUM(
+		CASE WHEN type IN ('CREDIT','REVERSAL_DEBIT') THEN amount_kobo
+		     ELSE -amount_kobo END
+	), 0)
+	FROM ledger_entries
+	WHERE account_id = $1`
+
 // GetBalance returns the current balance in kobo for an account by projecting
 // ledger entries. It never reads a balance column directly.
+//
+// NOTE: this reads on the pool (no lock). It is safe for display/read paths, but
+// MUST NOT be used as the sufficiency check that gates a debit — that check has a
+// TOCTOU race against concurrent debits and must run inside the debiting tx under
+// the account advisory lock (see getBalanceTx / Service.Debit).
 func (r *Repository) GetBalance(ctx context.Context, accountID string) (int64, error) {
-	const q = `
-		SELECT COALESCE(SUM(
-			CASE WHEN type IN ('CREDIT','REVERSAL_DEBIT') THEN amount_kobo
-			     ELSE -amount_kobo END
-		), 0)
-		FROM ledger_entries
-		WHERE account_id = $1`
 	var balance int64
-	err := r.db.QueryRow(ctx, q, accountID).Scan(&balance)
+	err := r.db.QueryRow(ctx, balanceProjectionSQL, accountID).Scan(&balance)
 	if err != nil {
 		return 0, fmt.Errorf("ledger: get balance account=%s: %w", accountID, err)
 	}
 	return balance, nil
+}
+
+// EntryExists reports whether a ledger entry with exactly this idempotency_key has
+// been durably posted. Read-only; lets callers decide crash-recovery from the
+// ledger of record without trusting the (optional) Redis idempotency cache.
+func (r *Repository) EntryExists(ctx context.Context, idempotencyKey string) (bool, error) {
+	var exists bool
+	if err := r.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM ledger_entries WHERE idempotency_key=$1)`, idempotencyKey).Scan(&exists); err != nil {
+		return false, fmt.Errorf("ledger: entry exists idem=%s: %w", idempotencyKey, err)
+	}
+	return exists, nil
+}
+
+// getBalanceTx projects an account balance from WITHIN an open transaction, so the
+// read observes any uncommitted entries the same tx already posted and — when the
+// caller holds the account's pg_advisory_xact_lock — is serialised against other
+// debits on the same account. This is the read half of the TOCTOU fix: check and
+// insert under one lock, one tx.
+func getBalanceTx(ctx context.Context, tx pgx.Tx, accountID string) (int64, error) {
+	var balance int64
+	if err := tx.QueryRow(ctx, balanceProjectionSQL, accountID).Scan(&balance); err != nil {
+		return 0, fmt.Errorf("ledger: get balance (tx) account=%s: %w", accountID, err)
+	}
+	return balance, nil
+}
+
+// DebitWithBalanceCheck performs the balance sufficiency check and the balanced
+// debit/credit insert as ONE atomic, serialised unit — closing the balance TOCTOU
+// race where two concurrent debits both read the pre-debit balance, both pass the
+// check, and together overdraw the wallet.
+//
+// Concurrency design:
+//   - Open a tx and take pg_advisory_xact_lock(hashtext("wallet:"+userID)) FIRST.
+//     Two debits on the same wallet therefore serialise: the second blocks until
+//     the first commits (releasing the xact-scoped lock), so it reads the balance
+//     AFTER the first debit landed. This mirrors the identical pattern already used
+//     in finance/transfers/service.go, so lock keys are consistent app-wide and the
+//     ordering can't deadlock against a transfer (both grab exactly one wallet lock,
+//     same key namespace "wallet:<userID>", in the same order — no lock cycle).
+//   - Re-project the balance INSIDE the tx (getBalanceTx) and fail-closed with
+//     ErrInsufficientFunds if it's short.
+//   - Insert the balanced DEBIT/CREDIT pair on the SAME tx. Idempotency is preserved:
+//     the per-side unique idempotency_key + ON CONFLICT DO NOTHING makes a replay a
+//     no-op instead of a duplicate-key error (the Redis fast-path in Service still
+//     short-circuits the common case before we ever open a tx).
+//
+// debitAccountID is the user wallet being drawn down; creditAccountID is the
+// counterpart (escrow / clearing / revenue). walletLockKey is the userID whose
+// wallet lock guards the check — always the debited wallet's owner.
+func (r *Repository) DebitWithBalanceCheck(ctx context.Context, walletLockKey string, j JournalEntry, amountKobo int64) error {
+	if amountKobo <= 0 {
+		return fmt.Errorf("ledger: debit amount must be positive kobo, got %d", amountKobo)
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("ledger: begin debit tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Serialise all debits against this wallet before reading its balance.
+	const lock = `SELECT pg_advisory_xact_lock(hashtext($1))`
+	if _, err := tx.Exec(ctx, lock, "wallet:"+walletLockKey); err != nil {
+		return fmt.Errorf("ledger: advisory lock wallet=%s: %w", walletLockKey, err)
+	}
+
+	// Sufficiency check under the lock — no other debit on this wallet can interleave
+	// between here and Commit.
+	balance, err := getBalanceTx(ctx, tx, j.DebitAccountID)
+	if err != nil {
+		return err
+	}
+	if balance < amountKobo {
+		return ErrInsufficientFunds
+	}
+
+	// Post the balanced pair on the SAME tx. ON CONFLICT DO NOTHING keeps a retry
+	// idempotent (unique idempotency_key would otherwise error the replay).
+	const insertEntry = `
+		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (idempotency_key) DO NOTHING`
+	if _, err := tx.Exec(ctx, insertEntry,
+		j.DebitAccountID, string(EntryDebit), amountKobo, j.Reference, j.IdempotencyKey+":debit"); err != nil {
+		return fmt.Errorf("ledger: insert debit entry: %w", err)
+	}
+	if _, err := tx.Exec(ctx, insertEntry,
+		j.CreditAccountID, string(EntryCredit), amountKobo, j.Reference, j.IdempotencyKey+":credit"); err != nil {
+		return fmt.Errorf("ledger: insert credit entry: %w", err)
+	}
+
+	return tx.Commit(ctx)
 }
 
 // PostJournal writes a balanced pair of ledger entries atomically.

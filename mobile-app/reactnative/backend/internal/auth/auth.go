@@ -109,7 +109,10 @@ func UserID(ctx context.Context) string {
 func Middleware(secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/healthz" {
+			// Exempt health/readiness and provider webhooks (webhooks authenticate
+			// by HMAC signature, not the user JWT).
+			if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" ||
+				strings.HasPrefix(r.URL.Path, "/api/v1/crypto/webhooks/") {
 				next.ServeHTTP(w, r)
 				return
 			}

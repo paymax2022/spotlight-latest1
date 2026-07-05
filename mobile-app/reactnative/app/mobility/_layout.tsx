@@ -47,6 +47,14 @@ export default function MobilityLayout() {
       <Stack.Screen name="bus/ticket/[id]" />
       <Stack.Screen name="bus/tickets" />
 
+      {/* Bus provider marketplace */}
+      <Stack.Screen name="bus/provider/index" />
+      <Stack.Screen name="bus/provider/register" />
+      <Stack.Screen name="bus/provider/[id]" />
+      <Stack.Screen name="bus/provider/route/new" />
+      <Stack.Screen name="bus/provider/route/[routeId]/schedule" />
+      <Stack.Screen name="bus/provider/manifest/[scheduleId]" />
+
       {/* Towing */}
       <Stack.Screen name="towing/index" />
       <Stack.Screen name="towing/[id]" options={{ gestureEnabled: false }} />
@@ -59,6 +67,7 @@ export default function MobilityLayout() {
 
       {/* Car hire */}
       <Stack.Screen name="carhire/index" />
+      <Stack.Screen name="carhire/gallery" options={{ presentation: 'modal' }} />
       <Stack.Screen name="carhire/[id]" options={{ gestureEnabled: false }} />
 
       {/* Business logistics */}
@@ -75,6 +84,11 @@ export default function MobilityLayout() {
       <Stack.Screen name="events/offer/[id]" />
       <Stack.Screen name="events/book/[id]" options={{ gestureEnabled: false }} />
       <Stack.Screen name="events/bookings" />
+
+      {/* Scheduled trips (advance booking: ride / parcel / airport / bus) */}
+      <Stack.Screen name="scheduled/index" />
+      <Stack.Screen name="scheduled/new" />
+      <Stack.Screen name="scheduled/[id]" options={{ gestureEnabled: false }} />
     </Stack>
   );
 }

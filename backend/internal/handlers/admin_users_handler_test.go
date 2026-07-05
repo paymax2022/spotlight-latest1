@@ -58,6 +58,15 @@ func (f fakeRBACService) GetAdminUser(string) (domain.AdminUser, error) {
 func (f fakeRBACService) UpdateAdminUser(string, map[string]any) (domain.AdminUser, error) {
 	return domain.AdminUser{}, nil
 }
+func (f fakeRBACService) BulkAssignRoleToUsers(string, string, string, string, []string) []services.BulkOpResult {
+	return nil
+}
+func (f fakeRBACService) BulkAssignRolesToUser(string, string, string, string, []string) []services.BulkOpResult {
+	return nil
+}
+func (f fakeRBACService) BulkAssignPermissionsToRole(string, string, []string) []services.BulkOpResult {
+	return nil
+}
 
 type fakeAuditService struct{}
 

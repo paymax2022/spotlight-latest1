@@ -9,9 +9,15 @@ import type {
   VotePackage,
 } from '@/src/features/voting/types';
 import { getVotingSettings, assertVotingOpen } from './free-vote.service';
-import { initializePaystackPayment, verifyPaystackPayment } from './payment/paystack';
+import { initializePaystackPayment } from './payment/paystack';
 import { incrementVoteTotals } from './totals.service';
 import { appendAuditLog } from './audit.service';
+import {
+  resolveIdempotency,
+  verifyVotePayment,
+  recordVoteFraudSignals,
+  recordVoteAudit,
+} from './core';
 import { randomUUID } from 'node:crypto';
 import { sendVoteReceiptEmail } from './email.service';
 
@@ -167,24 +173,35 @@ export async function verifyAndCreditPaidVote(
 
   if (txErr || !tx) throw new ApiError('Transaction not found', 404);
 
-  // --- Idempotency: already credited ---
-  if (tx.vote_credit_status === 'credited') {
-    return {
-      success: true,
-      alreadyProcessed: true,
-      votesCredited: tx.total_votes_to_credit,
-      newTotalVotes: 0,
-      receiptNumber: await getReceiptNumber(tx.id),
-    };
-  }
+  // --- Idempotency (shared core): durable anchor is vote_credit_status on the
+  //     transaction row. A duplicate verify returns the cached success and
+  //     never re-verifies/re-credits. ---
+  const idempotency = await resolveIdempotency<VerifyPaidVoteResponse>(
+    tx.payment_reference,
+    {
+      lookupCached: async () => {
+        if (tx.vote_credit_status === 'credited') {
+          return {
+            success: true,
+            alreadyProcessed: true,
+            votesCredited: tx.total_votes_to_credit,
+            newTotalVotes: 0,
+            receiptNumber: await getReceiptNumber(tx.id),
+          };
+        }
+        return null;
+      },
+    },
+  );
+  if (idempotency.status === 'cached') return idempotency.value;
 
   // --- Already failed ---
   if (tx.payment_status === 'failed' || tx.payment_status === 'abandoned') {
     throw new ApiError('This payment was not successful. No votes were added.', 400);
   }
 
-  // --- Verify payment server-side ---
-  const verification = await verifyPaystackPayment(tx.payment_reference);
+  // --- Verify payment server-side (shared core Paystack wrapper) ---
+  const verification = await verifyVotePayment(tx.payment_reference);
 
   if (!verification.success) {
     await supabase
@@ -197,11 +214,39 @@ export async function verifyAndCreditPaidVote(
   // --- Guard: amount must match ---
   const amountPaidKobo = verification.amountKobo;
   const amountPaidNgn = amountPaidKobo / 100;
+  const amountExpectedKobo = Math.round(Number(tx.amount_expected) * 100);
   if (Math.abs(amountPaidNgn - Number(tx.amount_expected)) > 1) {
     await supabase
       .from('vote_transactions')
       .update({ payment_status: 'failed', amount_paid: amountPaidNgn })
       .eq('id', tx.id);
+
+    // Shared fraud signal: mismatched amount on a paid vote.
+    await recordVoteFraudSignals({
+      domain: 'general',
+      contestId: tx.contest_id,
+      contestantId: tx.contestant_id,
+      votes: tx.total_votes_to_credit,
+      paymentReference: tx.payment_reference,
+      ipAddress,
+      userId: tx.voter_user_id ?? null,
+      amountExpectedKobo,
+      amountPaidKobo,
+    });
+    // Unified audit + legacy audit entry (kept for back-compat).
+    await recordVoteAudit({
+      domain: 'general',
+      action: 'vote_amount_mismatch',
+      actorId,
+      entityId: tx.id,
+      contestId: tx.contest_id,
+      contestantId: tx.contestant_id,
+      paymentReference: tx.payment_reference,
+      amountPaidKobo,
+      amountExpectedKobo,
+      ipAddress,
+      userAgent,
+    });
     await appendAuditLog({
       actorId,
       actorRole: 'system',
@@ -260,6 +305,34 @@ export async function verifyAndCreditPaidVote(
 
   // --- Generate receipt ---
   const receiptNumber = await issueReceipt(tx, amountPaidNgn, now);
+
+  // --- Shared core: high-volume fraud signal + unified credit audit ---
+  const fraud = await recordVoteFraudSignals({
+    domain: 'general',
+    contestId: tx.contest_id,
+    contestantId: tx.contestant_id,
+    votes: tx.total_votes_to_credit,
+    paymentReference: tx.payment_reference,
+    ipAddress,
+    userId: tx.voter_user_id ?? null,
+    amountExpectedKobo,
+    amountPaidKobo,
+  });
+  await recordVoteAudit({
+    domain: 'general',
+    action: 'vote_credited',
+    actorId,
+    entityId: tx.id,
+    contestId: tx.contest_id,
+    contestantId: tx.contestant_id,
+    paymentReference: tx.payment_reference,
+    votes: tx.total_votes_to_credit,
+    amountPaidKobo,
+    amountExpectedKobo,
+    fraudScore: fraud.score,
+    ipAddress,
+    userAgent,
+  });
 
   await appendAuditLog({
     actorId,

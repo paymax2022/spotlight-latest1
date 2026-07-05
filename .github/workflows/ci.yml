@@ -53,3 +53,11 @@ jobs:
   migration-guard:
     name: migrations (additive-only guard)
     uses: ./.github/workflows/_reusable-migration-guard.yml
+
+  secret-hygiene:
+    name: secrets (no client-exposed secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for secrets in client bundles
+        run: bash scripts/check-client-secrets.sh

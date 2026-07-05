@@ -17,20 +17,25 @@ import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { api } from '@/api/client';
 
-// Remote push notifications were removed from Expo Go in SDK 53.
+// Remote push notifications were removed from Expo Go in SDK 53, and
+// expo-notifications' native methods (getLastNotificationResponseAsync, listeners,
+// etc.) are not available on web — treat both as unsupported for push.
 const isExpoGo = Constants.executionEnvironment === 'storeClient';
+const isPushUnsupported = isExpoGo || Platform.OS === 'web';
 
 export type PushPayload = {
   type?: string;
   accessCodeId?: string;
   electionId?: string;
+  /** Telemedicine appointment id (e.g. intake reminder deep-links). */
+  appointmentId?: string;
   [k: string]: unknown;
 };
 
 // Returns the expo-notifications module only when safe to use (development
 // build or production). Returns null in Expo Go to prevent the SDK-53 crash.
 function N() {
-  if (isExpoGo) return null;
+  if (isPushUnsupported) return null;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   return require('expo-notifications') as typeof import('expo-notifications');
 }
@@ -69,7 +74,7 @@ function getProjectId(): string | undefined {
 
 /** Request permission and return the Expo push token (or null if unavailable). */
 export async function registerForPushNotificationsAsync(): Promise<string | null> {
-  if (isExpoGo) return null;
+  if (isPushUnsupported) return null;
   try {
     if (!Device.isDevice) return null;
     await ensureAndroidChannel();
@@ -140,6 +145,14 @@ export function routeFromPush(data: PushPayload | undefined): void {
       if (data.electionId) router.push(`/election?id=${data.electionId}` as never);
       else router.push('/election/list' as never);
       break;
+    case 'intake_reminder':
+      // Deep-link straight into the Pre-Consult intake wizard / resume (M3/M14).
+      if (data.appointmentId) {
+        router.push(`/services/telemedicine/appointment/${data.appointmentId}/intake?resume=1` as never);
+      } else {
+        router.push('/services/telemedicine/appointments' as never);
+      }
+      break;
     default:
       break;
   }
@@ -153,7 +166,7 @@ export function usePushNotifications(enabled: boolean): void {
   const registered = useRef(false);
 
   useEffect(() => {
-    if (isExpoGo || !enabled || registered.current) return;
+    if (isPushUnsupported || !enabled || registered.current) return;
     registered.current = true;
 
     ensureNotificationHandler();

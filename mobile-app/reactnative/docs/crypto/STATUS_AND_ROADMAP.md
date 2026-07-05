@@ -39,17 +39,17 @@ Turn the working mock into something shippable. Roughly mapped to product phases
 | Area | Gap | Priority |
 |---|---|---|
 | Build verification | Run `make check` (vet + test + build) on a Go 1.22 host; fix anything | **P0** |
-| Persistence | 🟡 Repository interface seam + Postgres schema/migrations done (`internal/store/repository.go`, `migrations/`). Remaining: implement the Postgres `Repository` + Redis for quotes/idempotency, wire in `main.go` | **P0** |
-| Auth | 🟡 HS256 JWT verification + middleware done (`internal/auth`, `SUPABASE_JWT_SECRET` enforces; dev fallback to demo user); userId on request context. Remaining: per-user data scoping (lands with Postgres `Repository`), RS256/JWKS variant | **P0** |
-| Real adapters | Implement Liquidity/Custody/MarketData against real providers (sandbox first) behind the existing interfaces | **P0** |
-| Quote integrity | Persist server quotes; execute strictly by `quote_id` with real expiry (today the server re-prices) | P1 |
+| Persistence | ✅ Repository seam + schema/migrations + two pgx impls: `pgstore` (single-user) and **`store.PgRepository` with per-user `ForUser` scoping + serializable-tx execution + JSONB quotes + ledger-derived cash balance**. `main.go` selects by `DATABASE_URL`. Remaining: Redis for hot quotes, pool tuning | P1 |
+| Auth | ✅ HS256 + **RS256/JWKS** verification (`SUPABASE_JWKS_URL` selects RS256, else HS256 secret) + middleware; userId on request context; `PgRepository.ForUser(userID)` gives full per-user scoping (wire in middleware → handlers to activate) | ✅ |
+| Real adapters | 🟡 **HTTP provider-adapter seam done** (`internal/httpadapter` implements MarketData/Liquidity/Custody; `PROVIDER=http` + `PROVIDER_BASE_URL`/`PROVIDER_API_KEY` selects it in `NewServer`). Remaining: a concrete provider's request/response mapping + sandbox validation | P1 |
+| Quote integrity | 🟡 `PgRepository` persists quotes as JSONB + marks them consumed on execute (`consumed`/`expires_at`). Remaining: switch execute path to fetch strictly by `quote_id` instead of re-pricing | P1 |
 | KYC / suitability / agreements | Wire the real eligibility gate (today it returns `eligible`) to KYC tier + suitability + agreement acceptance | **P0** |
 | Withdrawals | Real address screening (AML/sanctions), cooling-period enforcement, admin approval queue, on-chain broadcast | **P0** |
-| Webhooks | Provider webhooks (fill, deposit-detected, withdrawal-confirmed) with signature verification + replay prevention | **P0** |
-| Reconciliation | Daily ledger ↔ provider balance reconciliation + exception queue | P1 |
+| Webhooks | ✅ Signature verify (HMAC) + timestamp freshness + replay-dedup + signed-auth-exempt endpoint + full event routing: order.*/withdrawal.* → status mutation, deposit.confirmed → credit holding + history, **withdrawal.failed → auto-reversal (re-credit)**. Deposits/withdrawals are first-class records (mobile + backend). | ✅ |
+| Reconciliation | ✅ `internal/recon` — ledger/holdings reconciliation with exception report, exposed at `GET /api/v1/crypto/admin/reconciliation`. Remaining: scheduled daily run + provider-balance source | 🟡 |
 | Money math | Decide true crypto precision (8dp) vs the 2dp UI shortcut; audit rounding end-to-end | P1 |
-| Observability | Structured logs, metrics, tracing, error monitoring; rate limiting; circuit breakers | P1 |
-| Mobile hardening | Surface server error messages on failed screens; biometric auth (not just PIN); push notifications for alerts/withdrawal status | P1 |
+| Observability | 🟡 Request-ID + access log, `/healthz` + dependency-checked `/readyz`, graceful shutdown, per-IP rate limiting, Prometheus `/metrics`, **request tracing (`internal/tracing`, `X-Trace-Id` propagation)**, and a tested circuit-breaker package. Remaining: alerting, distributed tracing export (OTel), wire breaker into `httpadapter` | P1 |
+| Mobile hardening | 🟡 **Server error messages now surface on failed screens** (axios→`toCryptoError`, preserves `quote_expired`). Remaining: biometric auth (not just PIN); push notifications | P1 |
 | Tests | API contract tests, integration tests (KYC→trade, funding→order), security tests (idempotency replay, webhook spoofing, balance tamper) per `acceptance.md` | P1 |
 | DevOps | ✅ Dockerfile (distroless nonroot) + CI (vet/test/build/govulncheck + image/Trivy scan) + compose done. Remaining: env/secrets management, staging→prod promotion, deploy + rollback | P1 |
 
@@ -61,15 +61,15 @@ The docs describe a multi-asset product; crypto is one vertical. Largely **not s
 
 | Module | Status | Notes |
 |---|---|---|
-| Stock trading | 0% | Entire parallel surface: discovery, detail, market/limit orders, public offers, rights issues, dividends, corporate actions, settlement |
-| Onboarding / KYC / suitability / agreements | 0% | Invest-specific onboarding, suitability questionnaire, agreement versioning + acceptance logs |
+| Stock trading | 🟡 **mobile module (~20 screens) + Go backend** both built. Mobile: home, list+search+filter, detail, market+limit buy/sell, orders (cancel/timeline), portfolio, public offers; tsc-clean; flip `EXPO_PUBLIC_STOCKS_USE_MOCK=false` to go live. Backend: `internal/stocks` Service (assets/chart/news/dividends/corp-actions/portfolio/orders/cancel/offers/apply) + estimate engine + pre-trade checks + idempotency + tests, wired at `/api/v1/stocks/*` and `/portfolio?assetType=stock`. Remaining: real broker adapter, US-stock FX, Postgres persistence (in-memory today) |
+| Onboarding / KYC / suitability / agreements | 🟡 mobile module built (`app/invest-onboarding`): intro, eligibility, KYC (personal/ID/selfie/review/submitted), suitability questionnaire→riskCategory, agreements accept, complete. Mock-first, tsc-clean. Remaining: real KYC provider + agreement versioning/acceptance logs + gate trading on it |
 | Wallet & funding | ~0% | Ledger-based invest wallet, deposits/withdrawals to bank, FX, virtual accounts (crypto reuses a stubbed `investableBalance`) |
-| Learn Center | 0% | Lessons, quizzes, paths, glossary, risk simulator, demo trading |
-| AI education assistant | 0% | Guardrailed explain-asset/order/portfolio |
-| Spotlight Wealth | 0% | Creator finance content, learn-and-earn, campaigns |
-| Security / support / settings (invest) | ~0% | Change PIN, device mgmt, disputes, fee schedule, statements, close account |
-| Admin console (~224 screens) | 0% | Separate Vue/Quasar app: asset control, order monitoring, KYC/AML review, fees/limits, provider health, reconciliation, audit, RBAC + maker-checker |
-| Backend services (~26) | ~5% | Today: one consolidated mock crypto service. Needs the full service split + real data stores + Kafka/NATS |
+| Learn Center | 🟡 mobile module built (`app/learn`): paths, lesson reader, quizzes, glossary, progress. Mock-first, tsc-clean. Remaining: real content CMS, video, demo trading, risk simulator |
+| AI education assistant | 🟡 mobile module built (`app/invest-ai`): guardrailed chat (refuses advice/predictions/guarantees, disclaimers), suggested questions, explain-asset. Mock-first, tsc-clean. Remaining: wire to a real guarded LLM + compliance logging |
+| Spotlight Wealth | 🟡 mobile module built (`app/spotlight-wealth`): creator finance videos, literacy challenges (reward = wallet credit), learning leaderboard (not profit), reward wallet, campaigns + disclaimers. Mock-first, tsc-clean. Remaining: real content + campaign backend |
+| Security / support / settings (invest) | 🟡 mobile module built (`app/invest-settings`): profile, KYC details, risk profile, linked banks, fee schedule, statements, security center (PIN/devices/sessions), support (FAQ/tickets). Mock-first, tsc-clean. Remaining: backend wiring |
+| Admin console | 🟡 **built IN the monolith + LIVE**. Backend `internal/admin`: RBAC (8 roles × permission matrix), audit log, **maker-checker** approvals, reads across crypto+stocks+recon; 23 endpoints under `/api/v1/admin/*` (RBAC via `X-Admin-Role`). Mobile/web console (`app/admin`, runs on Expo web): dashboard, users+detail, KYC queue+review, asset controls (crypto+stock enable/disable/fees/limits), orders, withdrawal review, reconciliation, providers, risk limits, fees, feature flags, approvals, audit, settings/RBAC roster — ~17 screens, role-switcher, client+server permission gating, tsc-clean, `EXPO_PUBLIC_ADMIN_USE_MOCK`. Remaining: Postgres persistence of admin state, real admin auth (role from JWT not header) |
+| Architecture | ✅ **monolith, built to scale** (per project intent): one Go service with clean internal packages (domain, store/pg, stocks, admin, auth, recon, metrics, tracing, ratelimit, circuitbreaker, httpadapter) + one Expo app with per-module feature folders. No microservice split / Kafka — intentionally a scalable monolith |
 
 ---
 

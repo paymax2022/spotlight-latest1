@@ -34,7 +34,43 @@ const (
 	SourceMapbox Source = "mapbox"
 	// SourceOwn — derived from our own PostGIS records (always safe).
 	SourceOwn Source = "own"
+	// SourceHere — HERE Technologies (accuracy fallback alongside Google).
+	// NOT cacheable on the OSM cache; treated like Google for license coherence.
+	SourceHere Source = "here"
+	// SourceGazetteer — our verified PrivateGazetteer points (always safe, zero cost).
+	SourceGazetteer Source = "gazetteer"
+	// SourceCache — served from the AddressCache (OSM-licensed write-through).
+	SourceCache Source = "cache"
+	// SourcePrediction — predicted from the user's own history (zero external cost).
+	SourcePrediction Source = "prediction"
 )
+
+// Confidence is a normalized 0..1 quality signal comparable across providers.
+// Each adapter maps its native quality signal (Nominatim importance/place_rank,
+// Google location_type/partial_match, HERE scoring.queryScore) into this range
+// so the orchestrator can compare apples to apples (MAPSERVICE.md §3).
+type Confidence = float64
+
+// CoverageTier classifies how well-mapped an H3 area is. It decides whether the
+// cheap OSM path or the accuracy (Google/HERE) path goes first (MAPSERVICE.md §5).
+type CoverageTier string
+
+const (
+	TierGood CoverageTier = "GOOD" // well-mapped → OSM first
+	TierFair CoverageTier = "FAIR" // mixed → OSM first, escalate readily
+	TierLow  CoverageTier = "LOW"  // informal/low-coverage → accuracy (Google/HERE) first
+)
+
+// Capset declares which primitives a provider can serve, so the orchestrator can
+// skip providers that cannot serve a request type (MAPSERVICE.md §3).
+type Capset struct {
+	Geocode      bool
+	Reverse      bool
+	Autocomplete bool
+	Route        bool
+	Matrix       bool
+	TrafficAware bool // google/here yes; osrm no
+}
 
 // Primitive is one of the MapService capabilities. The config map routes each
 // primitive (optionally per surface) to a provider.
@@ -71,6 +107,13 @@ type GeoResult struct {
 	// Cacheable is false for Google-sourced results. The cache writer refuses
 	// to persist any result where Cacheable is false (license coherence).
 	Cacheable bool `json:"cacheable"`
+	// --- MapService v2 (additive; zero value = legacy behavior) ---
+	// Confidence is the normalized 0..1 quality signal (set by the adapter).
+	Confidence Confidence `json:"confidence,omitempty"`
+	// H3Cell is the spatial cell key for this coordinate (coverage/gazetteer/cache).
+	H3Cell string `json:"h3_cell,omitempty"`
+	// Partial is true when the provider reports an approximate / partial match.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // Point returns the coordinate carried by a GeoResult, tagged with its source.
@@ -86,6 +129,8 @@ type Suggestion struct {
 	Source      Source  `json:"source"`
 	// HasCoords is true when the suggestion already carries a usable pin.
 	HasCoords bool `json:"has_coords"`
+	// Confidence is the normalized 0..1 quality signal (v2; additive).
+	Confidence Confidence `json:"confidence,omitempty"`
 }
 
 // Place is one external (world) POI from a third-party place search.
@@ -152,6 +197,10 @@ type OwnEntity struct {
 // RouteOptions tunes a routing request.
 type RouteOptions struct {
 	Profile string `json:"profile,omitempty"` // driving|cycling|walking; default driving
+	// TrafficAware (v2) requests a live, traffic-aware ETA. OSRM/Valhalla ignore
+	// it (batch/planning); the orchestrator routes traffic-aware requests to
+	// Google/HERE on active trips/deliveries (MAPSERVICE.md §4).
+	TrafficAware bool `json:"traffic_aware,omitempty"`
 }
 
 // PlusCodec encodes/decodes Open Location Codes (Plus Codes).

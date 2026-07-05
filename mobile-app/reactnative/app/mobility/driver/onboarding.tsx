@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Check, FileUp, CheckCircle2, Clock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -14,6 +14,7 @@ import TextInputField from '@/components/TextInputField';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { useDriverMe, useDriverOnboarding } from '@/features/mobility/hooks/useMobility';
+import { pickFileForField } from '@/features/registration/utils/filePicker';
 import { SERVICE_TYPES, REQUIRED_DOCUMENTS } from '@/features/mobility/constants/mobility.constants';
 import type { ServiceType, DocType } from '@/features/mobility/types/mobility.types';
 
@@ -23,7 +24,10 @@ const STEP_TITLE: Record<Step, string> = { details: 'Your details', documents: '
 
 export default function DriverOnboardingScreen() {
   const me = useDriverMe();
-  const { submit, uploadDoc, addVehicle } = useDriverOnboarding();
+  const { submit, uploadDocFile, addVehicle } = useDriverOnboarding();
+  const { service } = useLocalSearchParams<{ service?: string }>();
+  const isTowing = service === 'towing';
+  const flowTitle = isTowing ? 'Towing partner onboarding' : 'Driver onboarding';
 
   const [step, setStep] = useState<Step>('details');
 
@@ -66,9 +70,17 @@ export default function DriverOnboardingScreen() {
     );
   };
 
-  const onUploadDoc = (docType: DocType) => {
-    // Real impl uses the shared document picker → R2 presigned URL. Mock uses a stub URL.
-    uploadDoc.mutate({ docType, fileUrl: `mock://doc/${docType}-${Date.now()}.jpg` });
+  const onUploadDoc = async (docType: DocType) => {
+    // Real flow: shared registration file picker → backend R2 presign → PUT the
+    // file → submit the object key. Reuses features/registration/utils/filePicker
+    // (image or document) and features/mobility uploadDriverDocumentFile — no new
+    // storage backend. Accept a photo or a PDF for any document.
+    const picked = await pickFileForField('.jpg,.jpeg,.png,.pdf');
+    if (!picked) return;
+    uploadDocFile.mutate(
+      { docType, file: { uri: picked.uri, name: picked.name, mimeType: picked.mimeType } },
+      { onError: () => Alert.alert('Upload failed', 'Could not upload that document. Please try again.') },
+    );
   };
 
   const onAddVehicle = () => {
@@ -85,7 +97,7 @@ export default function DriverOnboardingScreen() {
   if (me.isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title="Driver onboarding" />
+        <ScreenHeader title={flowTitle} />
         <StateView kind="loading" message="Loading…" />
       </SafeAreaView>
     );
@@ -93,7 +105,7 @@ export default function DriverOnboardingScreen() {
   if (me.isError || !profile) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title="Driver onboarding" />
+        <ScreenHeader title={flowTitle} />
         <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => me.refetch()} />
       </SafeAreaView>
     );
@@ -115,6 +127,12 @@ export default function DriverOnboardingScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
         {step === 'details' && (
           <>
+            {isTowing && (
+              <View style={styles.towBanner}>
+                <Text style={styles.towBannerTitle}>Towing van service</Text>
+                <Text style={styles.towBannerText}>Register your tow truck and documents to start receiving tow & roadside jobs on Paymax.</Text>
+              </View>
+            )}
             <TextInputField label="Phone number" placeholder="+234…" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
             <TextInputField label="Email" placeholder="you@email.com" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
             <Text style={styles.fieldLabel}>Service categories</Text>
@@ -139,13 +157,19 @@ export default function DriverOnboardingScreen() {
             {REQUIRED_DOCUMENTS.map((doc) => {
               const uploaded = uploadedDocs.has(doc.docType);
               return (
-                <Pressable key={doc.docType} style={[styles.docRow, uploaded && styles.docRowDone]} onPress={() => !uploaded && onUploadDoc(doc.docType)} disabled={uploaded || uploadDoc.isPending}>
+                <Pressable key={doc.docType} style={[styles.docRow, uploaded && styles.docRowDone]} onPress={() => !uploaded && onUploadDoc(doc.docType)} disabled={uploaded || uploadDocFile.isPending}>
                   <View style={[styles.docIcon, uploaded && styles.docIconDone]}>
                     {uploaded ? <Check size={18} color={Colors.tertiaryContainer} strokeWidth={2.5} /> : <FileUp size={18} color={Colors.secondary} strokeWidth={2} />}
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.docLabel}>{doc.label}</Text>
-                    <Text style={styles.docHint}>{uploaded ? 'Uploaded' : doc.hint}</Text>
+                    <Text style={styles.docHint}>
+                      {uploaded
+                        ? 'Uploaded'
+                        : uploadDocFile.isPending && uploadDocFile.variables?.docType === doc.docType
+                        ? 'Uploading…'
+                        : doc.hint}
+                    </Text>
                   </View>
                   {!uploaded && <Text style={styles.docAction}>Upload</Text>}
                 </Pressable>
@@ -222,6 +246,9 @@ const styles = StyleSheet.create({
   progressSeg: { flex: 1, height: 4, borderRadius: 2, backgroundColor: Colors.surfaceContainerHigh },
   progressSegActive: { backgroundColor: Colors.primary },
   scroll: { padding: Spacing.containerMargin, gap: Spacing.xs, paddingBottom: Spacing.lg },
+  towBanner: { backgroundColor: Colors.primaryFixed, borderRadius: Radius.lg, padding: Spacing.md, marginBottom: Spacing.sm, gap: 3 },
+  towBannerTitle: { ...Typography.labelLg, color: Colors.primary, fontWeight: '700' as const },
+  towBannerText: { ...Typography.labelSm, color: Colors.onSurfaceVariant, lineHeight: 18 },
   fieldLabel: { ...Typography.labelMd, color: Colors.onSurface, marginBottom: Spacing.sm, marginTop: Spacing.xs },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderRadius: Radius.full, backgroundColor: Colors.surfaceContainerLow, borderWidth: 1.5, borderColor: Colors.transparent },

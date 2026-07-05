@@ -19,7 +19,8 @@ import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1, shadow2 } from '@/constants/shadows';
-import { getDataNetworks, getDataPlans, initiateDataPaystack, purchaseData } from '@/api/billing.api';
+import { getDataNetworks, getDataPlans, initiateDataPaystack, purchaseData, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
+import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
@@ -52,6 +53,12 @@ export default function DataScreen() {
   const { data: networks = [], isLoading: netsLoading } = useQuery({
     queryKey: ['data-networks'],
     queryFn:  getDataNetworks,
+  });
+
+  const { data: providerLogos = [] } = useQuery({
+    queryKey: ['provider-logos', 'data'],
+    queryFn:  () => getProviderLogos('data'),
+    staleTime: 60 * 60 * 1000,
   });
 
   const { data: plans = [], isLoading: plansLoading, refetch: refetchPlans } = useQuery({
@@ -181,9 +188,7 @@ export default function DataScreen() {
                 const active = selectedNetwork?.id === net.id;
                 return (
                   <Pressable key={net.id} onPress={() => { setSelectedNetwork(net); setSelectedPlan(null); }} style={[styles.providerCard, active && styles.providerCardActive]}>
-                    <View style={[styles.providerIcon, { backgroundColor: net.bg ?? Colors.iconBgBlue }]}>
-                      <Text style={[styles.providerInitial, { color: net.accent ?? Colors.secondary }]}>{net.name.slice(0, 1)}</Text>
-                    </View>
+                    <ProviderLogo code={net.code} name={net.name} logoUri={resolveProviderImage(providerLogos, net.code, net.name)} />
                     <Text style={[styles.providerName, active && styles.providerNameActive]} numberOfLines={1}>{net.name}</Text>
                     {active && <CheckCircle2 size={16} color={Colors.primary} strokeWidth={2.2} />}
                   </Pressable>

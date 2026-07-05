@@ -1,6 +1,6 @@
 // ── Parcel delivery — API wrapper ────────────────────────────────────────────
 // Typed data layer the parcel screens code against. Mirrors mobility.api.ts:
-// mock-flagged, BASE = '/api/finance', Idempotency-Key on money mutations.
+// mock-flagged, BASE = '/api/v1', Idempotency-Key on money mutations.
 // Flip EXPO_PUBLIC_MOBILITY_USE_MOCK=false (or EXPO_PUBLIC_PARCEL_USE_MOCK) once
 // the Go endpoints land.
 //
@@ -28,7 +28,7 @@ import {
 const USE_MOCK =
   (process.env.EXPO_PUBLIC_PARCEL_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
 
-const BASE = '/api/finance';
+const BASE = '/api/v1';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });
@@ -128,8 +128,14 @@ export async function cancelParcel(id: string): Promise<Parcel> {
   return unwrap<Parcel>(await api.post(`${BASE}/mobility/parcels/${id}/cancel`, {}));
 }
 
-// ─── Rating (reuses the shared trip-ratings service) ───────────────────────────
-export async function rateParcel(id: string, stars: number, comment?: string): Promise<void> {
+// ─── Rating (money mutation when tipping → Idempotency-Key; mirrors rateTrip) ───
+export async function rateParcel(
+  id: string,
+  stars: number,
+  idempotencyKey: string,
+  comment?: string,
+  tipKobo?: number,
+): Promise<void> {
   if (USE_MOCK) {
     await delay(500);
     if (parcelStore.active?.id === id) parcelStore.active.rated = true;
@@ -137,7 +143,11 @@ export async function rateParcel(id: string, stars: number, comment?: string): P
     if (h) h.rated = true;
     return;
   }
-  await api.post(`${BASE}/mobility/parcels/${id}/rate`, { stars, comment });
+  await api.post(
+    `${BASE}/mobility/parcels/${id}/rate`,
+    { stars, comment, tip_kobo: tipKobo },
+    idemHeader(idempotencyKey),
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

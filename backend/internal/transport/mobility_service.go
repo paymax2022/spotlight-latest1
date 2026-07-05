@@ -58,6 +58,11 @@ func (s *Service) RequestRide(ctx context.Context, riderID string, req RequestRi
 		paymentMethod = "wallet"
 	}
 
+	// Fail-closed tier/spending-limit gate BEFORE any wallet escrow.
+	if err := s.enforceTierLimit(ctx, riderID, escrowKobo); err != nil {
+		return nil, err
+	}
+
 	tripID := uuid.New().String()
 	ref := "trip:" + tripID
 	sett, err := s.settlement.Escrow(ctx, riderID, ref, idempotencyKey, "transport", escrowKobo)
@@ -189,12 +194,41 @@ func (s *Service) adjustEscrow(ctx context.Context, t *tripRow, newFare int64) e
 	if delta <= 0 {
 		return nil
 	}
-	deltaRef := fmt.Sprintf("trip:%s:delta:%d", t.ID, time.Now().UnixNano())
-	idem := deltaRef // natural uniqueness
+	// IRON RULE (idempotency): the delta-escrow key MUST be stable across retries.
+	// Previously this used time.Now().UnixNano(), so a retried RiderOffer/AcceptCounter
+	// with the SAME target fare would mint a NEW key and double-charge the rider.
+	// Derive the key from the trip id + the target fare instead: a retry aiming at
+	// the same fare produces the same key and is a safe no-op at the ledger layer
+	// (unique idempotency key → ErrDuplicate), while a genuinely higher fare yields
+	// a distinct key and a distinct delta escrow. We key on newFare (the absolute
+	// target held amount) rather than delta so that two independent raises that
+	// happen to have equal deltas do not collide.
+	// Fail-closed tier/spending-limit gate on the additional wallet debit (the
+	// positive delta). Covers both RiderOffer and AcceptCounter, which are the only
+	// callers of adjustEscrow.
+	if err := s.enforceTierLimit(ctx, t.RiderID, delta); err != nil {
+		return err
+	}
+	deltaRef := deltaEscrowKey(t.ID, newFare)
+	idem := deltaRef // stable, derived from trip id + target fare
 	if _, err := s.settlement.Escrow(ctx, t.RiderID, deltaRef, idem, "transport", delta); err != nil {
 		return fmt.Errorf("transport: escrow delta: %w", err)
 	}
 	return nil
+}
+
+// deltaEscrowKey derives the STABLE idempotency key (and settlement reference) for
+// a delta-escrow toward a target held amount. It is keyed on the trip id + the
+// absolute target fare (newFare) — NOT the delta — so that:
+//   - a retried RiderOffer/AcceptCounter aiming at the SAME target fare produces
+//     the SAME key (a safe ledger no-op via unique idempotency key), and
+//   - a genuinely higher target fare produces a DIFFERENT key (a distinct escrow).
+//
+// This is the fix for the original double-charge bug (the key used to embed
+// time.Now().UnixNano(), minting a fresh key on every retry). Extracted as a pure
+// function so the invariant is provable in a unit test without a database.
+func deltaEscrowKey(tripID string, newFare int64) string {
+	return fmt.Sprintf("trip:%s:delta:%d", tripID, newFare)
 }
 
 // CancelRide refunds escrow and moves the trip to cancelled (guarded).
@@ -268,7 +302,7 @@ type tripDetail struct {
 	Trip      map[string]any `json:"trip"`
 	Driver    map[string]any `json:"driver,omitempty"`
 	Vehicle   map[string]any `json:"vehicle,omitempty"`
-	FareOffer *FareOffer     `json:"fare_offer,omitempty"`
+	FareOffer *FareOffer     `json:"fareOffer,omitempty"`
 }
 
 // TripDetail returns the full trip view. When includePin is true (rider view),
@@ -307,14 +341,14 @@ func (s *Service) TripDetail(ctx context.Context, tripID, callerID string, inclu
 	}
 
 	trip := map[string]any{
-		"id": id, "rider_id": riderID, "pickup_address": pickup, "dest_address": dest,
-		"phase": phase, "status": status, "service_type": svc, "pricing_mode": mode,
-		"payment_method": pay, "fare_kobo": fare, "fare_estimate_kobo": estimate,
-		"final_fare_kobo": finalFare, "distance_m": distM, "duration_s": durS,
-		"route_polyline": polyline, "safety_status": safety, "created_at": createdAt,
+		"id": id, "riderId": riderID, "pickupAddress": pickup, "destAddress": dest,
+		"phase": phase, "status": status, "serviceType": svc, "pricingMode": mode,
+		"paymentMethod": pay, "fareKobo": fare, "fareEstimateKobo": estimate,
+		"finalFareKobo": finalFare, "distanceM": distM, "durationS": durS,
+		"routePolyline": polyline, "safetyStatus": safety, "createdAt": createdAt,
 	}
 	if includePin && callerID == riderID && pin != nil {
-		trip["trip_pin"] = *pin
+		trip["tripPin"] = *pin
 	}
 
 	detail := &tripDetail{Trip: trip}
@@ -328,13 +362,13 @@ func (s *Service) TripDetail(ctx context.Context, tripID, callerID string, inclu
 		dm["name"] = dname
 		dm["rating"] = drating
 		dm["phone"] = dphone
-		dm["photo_url"] = dphoto
+		dm["photoUrl"] = dphoto
 		detail.Driver = dm
 
 		vm := map[string]any{}
 		var plate, vmake, vmodel, vcolor, vcat *string
 		if err := s.db.QueryRow(ctx, `SELECT plate_number, make, model, color, category FROM vehicles WHERE driver_id=$1 ORDER BY created_at DESC LIMIT 1`, *driverID).Scan(&plate, &vmake, &vmodel, &vcolor, &vcat); err == nil {
-			vm["plate_number"] = plate
+			vm["plateNumber"] = plate
 			vm["make"] = vmake
 			vm["model"] = vmodel
 			vm["color"] = vcolor
@@ -381,8 +415,8 @@ func (s *Service) History(ctx context.Context, riderID string) ([]map[string]any
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "pickup_address": pickup, "dest_address": dest, "phase": phase,
-			"status": status, "fare_kobo": fare, "final_fare_kobo": finalFare, "created_at": createdAt,
+			"id": id, "pickupAddress": pickup, "destAddress": dest, "phase": phase,
+			"status": status, "fareKobo": fare, "finalFareKobo": finalFare, "createdAt": createdAt,
 		})
 	}
 	return out, nil

@@ -1,7 +1,7 @@
 // ── Association — Member profile API wrapper (C) ──────────────────────────────
 
 import { api } from '@/api/client';
-import { USE_MOCK } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
 import type {
   MyProfile, ProfileEdit, PrivacySettings, ProfileCompletion, ActivityEntry,
 } from '../types/profile.types';
@@ -15,7 +15,7 @@ let privacy: PrivacySettings = { ...MOCK_PRIVACY };
 
 export async function getMyProfile(): Promise<MyProfile> {
   if (USE_MOCK) { await delay(); return current; }
-  const { data } = await api.get('/associations/me/profile');
+  const { data } = await api.get(`${BASE}/me/profile`);
   return data;
 }
 
@@ -25,7 +25,7 @@ export async function updateMyProfile(edit: ProfileEdit): Promise<MyProfile> {
     current = { ...current, ...edit };
     return current;
   }
-  const { data } = await api.put('/associations/me/profile', edit);
+  const { data } = await api.put(`${BASE}/me/profile`, edit);
   return data;
 }
 
@@ -45,18 +45,18 @@ export function computeCompletion(p: MyProfile, priv: PrivacySettings): ProfileC
 
 export async function getPrivacy(): Promise<PrivacySettings> {
   if (USE_MOCK) { await delay(150); return privacy; }
-  const { data } = await api.get('/associations/me/privacy');
+  const { data } = await api.get(`${BASE}/me/privacy`);
   return data;
 }
 
 export async function updatePrivacy(next: PrivacySettings): Promise<PrivacySettings> {
   if (USE_MOCK) { await delay(200); privacy = { ...next }; return privacy; }
-  const { data } = await api.put('/associations/me/privacy', next);
+  const { data } = await api.put(`${BASE}/me/privacy`, next);
   return data;
 }
 
 export async function getActivity(): Promise<ActivityEntry[]> {
   if (USE_MOCK) { await delay(); return MOCK_ACTIVITY; }
-  const { data } = await api.get('/associations/me/activity');
+  const { data } = await api.get(`${BASE}/me/activity`);
   return data;
 }

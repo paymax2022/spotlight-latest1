@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "skipLibCheck": true },
+  "include": [
+    "src/features/estateadmin/**/*.ts", "app/estate-admin/**/*.tsx",
+    "src/features/vendors/**/*.ts", "app/vendors/**/*.tsx", "app/vendor-portal/**/*.tsx",
+    "src/features/properties/**/*.ts", "app/properties/**/*.tsx"
+  ]
+}

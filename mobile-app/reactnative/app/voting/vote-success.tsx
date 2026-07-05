@@ -24,7 +24,7 @@ export default function VoteSuccessScreen() {
           contestantPhoto={contestant?.photo}
           votesCast={Number(votes ?? 0)}
           newRank={contestant?.rank}
-          newVoteTotal={contestant?.votes}
+          newVoteTotal={contestant?.votes ?? undefined}
         />
 
         <View style={styles.actions}>

@@ -26,6 +26,8 @@ import {
   UserRound,
   Store,
   ChevronRight,
+  LineChart,
+  KeyRound,
 } from 'lucide-react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import TextInputField from '@/components/TextInputField';
@@ -219,9 +221,20 @@ export default function ProfileScreen() {
   });
 
   useEffect(() => {
-    if (profileQuery.data) {
-      setProfileForm(formFromProfile(profileQuery.data));
-    }
+    if (!profileQuery.data) return;
+    // Merge server values into the form instead of replacing it: an empty/omitted
+    // field from the server must never clear a detail the user already provided, so
+    // previously-entered information stays populated and editable (and the Tier 0
+    // checklist keeps seeing e.g. the date of birth that was saved).
+    const incoming = formFromProfile(profileQuery.data);
+    setProfileForm((current) => {
+      const merged = { ...current };
+      (Object.keys(incoming) as (keyof ProfileForm)[]).forEach((key) => {
+        const value = incoming[key];
+        if (value && value.trim()) merged[key] = value;
+      });
+      return merged;
+    });
   }, [profileQuery.data]);
 
   useEffect(() => {
@@ -687,6 +700,38 @@ export default function ProfileScreen() {
             <ChevronRight size={18} color={Colors.onPrimary} strokeWidth={2} />
           </Pressable>
 
+          <Pressable
+            onPress={() => router.push('/security/set-pin?mode=manage')}
+            style={({ pressed }) => [styles.settingsRow, shadow1, pressed && { opacity: 0.9 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Security and transaction PIN"
+          >
+            <View style={styles.settingsIcon}>
+              <KeyRound size={20} color={Colors.primary} strokeWidth={2} />
+            </View>
+            <View style={styles.merchantBody}>
+              <Text style={styles.settingsTitle}>Security · Transaction PIN</Text>
+              <Text style={styles.settingsSub}>Set or change the 4-digit PIN used to authorise payments</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
+          </Pressable>
+
+          <Pressable
+            onPress={() => router.push('/invest-settings')}
+            style={({ pressed }) => [styles.settingsRow, shadow1, pressed && { opacity: 0.9 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Investment settings"
+          >
+            <View style={styles.settingsIcon}>
+              <LineChart size={20} color={Colors.primary} strokeWidth={2} />
+            </View>
+            <View style={styles.merchantBody}>
+              <Text style={styles.settingsTitle}>Investment Settings</Text>
+              <Text style={styles.settingsSub}>Risk profile, linked banks, fees, statements & security</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
+          </Pressable>
+
           <View style={[styles.signOutCard, shadow1]}>
             <Pressable onPress={handleLogout} style={styles.signOutButton}>
               <LogOut size={19} color={Colors.error} strokeWidth={2.2} />
@@ -705,6 +750,10 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   merchantCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.primary, borderRadius: Radius.lg, padding: Spacing.md, marginHorizontal: Spacing.containerMargin, marginTop: Spacing.md, marginBottom: Spacing.sm },
   merchantIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' },
+  settingsRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, marginHorizontal: Spacing.containerMargin, marginTop: Spacing.sm, marginBottom: Spacing.sm, borderWidth: 1, borderColor: Colors.outlineVariant },
+  settingsIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
+  settingsTitle: { ...Typography.labelLg, color: Colors.onSurface },
+  settingsSub: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   merchantBody: { flex: 1, gap: 2 },
   merchantTitle: { ...Typography.labelLg, color: Colors.onPrimary },
   merchantSub: { ...Typography.labelSm, color: Colors.inverseOnSurface },

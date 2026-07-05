@@ -19,7 +19,8 @@ import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1, shadow2 } from '@/constants/shadows';
-import { getCableProviders, getCablePackages, initiateCablePaystack, validateSmartCard, payCable } from '@/api/billing.api';
+import { getCableProviders, getCablePackages, initiateCablePaystack, validateSmartCard, payCable, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
+import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
@@ -59,6 +60,12 @@ export default function CableTvScreen() {
   const { data: providers = [], isLoading: providersLoading } = useQuery({
     queryKey: ['cable-providers'],
     queryFn:  getCableProviders,
+  });
+
+  const { data: providerLogos = [] } = useQuery({
+    queryKey: ['provider-logos', 'cable_tv'],
+    queryFn:  () => getProviderLogos('cable_tv'),
+    staleTime: 60 * 60 * 1000,
   });
 
   const { data: packages = [], isLoading: packagesLoading, refetch: refetchPackages } = useQuery({
@@ -202,12 +209,9 @@ export default function CableTvScreen() {
             <View style={styles.providerGrid}>
               {providers.filter((p) => p.isActive).map((prov) => {
                 const active = selectedProvider?.id === prov.id;
-                const clr    = PROVIDER_COLORS[prov.code.toUpperCase()] ?? { accent: Colors.teal, bg: Colors.iconBgTeal };
                 return (
                   <Pressable key={prov.id} onPress={() => { setSelectedProvider(prov); setSelectedPackage(null); setValidation(null); }} style={[styles.providerCard, active && styles.providerCardActive]}>
-                    <View style={[styles.providerIcon, { backgroundColor: clr.bg }]}>
-                      <Text style={[styles.providerInitial, { color: clr.accent }]}>{prov.name.slice(0, 2)}</Text>
-                    </View>
+                    <ProviderLogo code={prov.code} name={prov.name} logoUri={resolveProviderImage(providerLogos, prov.code, prov.name)} />
                     <Text style={[styles.providerName, active && styles.providerNameActive]} numberOfLines={1}>{prov.name}</Text>
                     {active && <CheckCircle2 size={16} color={Colors.primary} strokeWidth={2.2} />}
                   </Pressable>

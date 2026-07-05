@@ -60,14 +60,52 @@ export async function handlePaystackWebhook(
 
   const logId = (logRow as { id?: string } | null)?.id;
 
-  // 4. Only handle charge.success
-  if (event.event !== 'charge.success') {
+  const markLogProcessed = async () => {
     if (logId) {
       await supabase
         .from('payment_webhook_logs')
         .update({ processed: true })
         .eq('id', logId);
     }
+  };
+
+  // 4a. Failed / abandoned charges — resolve stale 'pending' vote_transactions.
+  // This is idempotent: we only flip a still-pending row to 'failed' and never
+  // touch a row that already settled successfully/refunded.
+  if (event.event === 'charge.failed' || event.event === 'charge.abandoned') {
+    const { data: failedTx } = await supabase
+      .from('vote_transactions')
+      .select('id, payment_status')
+      .eq('payment_reference', reference)
+      .maybeSingle();
+
+    const ft = failedTx as { id?: string; payment_status?: string } | null;
+    if (ft?.id && ft.payment_status === 'pending') {
+      await supabase
+        .from('vote_transactions')
+        .update({ payment_status: 'failed', updated_at: new Date().toISOString() })
+        .eq('id', ft.id)
+        // Guard against a concurrent success-credit: only flip if still pending.
+        .eq('payment_status', 'pending');
+
+      await appendAuditLog({
+        actorId: 'system:webhook',
+        actorRole: 'system',
+        action: 'paid_vote_payment_failed',
+        entityType: 'vote_transaction',
+        entityId: ft.id,
+        newValue: { event: event.event, reference, payment_status: 'failed' },
+      });
+    }
+
+    await markLogProcessed();
+    return { processed: true, duplicate: false };
+  }
+
+  // 4b. Only credit votes on charge.success; all other event types are logged
+  // and acknowledged.
+  if (event.event !== 'charge.success') {
+    await markLogProcessed();
     return { processed: true, duplicate: false };
   }
 

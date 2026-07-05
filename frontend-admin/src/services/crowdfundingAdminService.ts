@@ -1,7 +1,8 @@
 // ── Admin — Crowdfunding service ─────────────────────────────────────────────
-// Mock-backed for now (no backend endpoints yet). Mirrors fintechService shape:
-// flip USE_MOCK to false and the fetch branches hit /api/crowdfunding/admin/...
-// All money is integer kobo.
+// Live Go endpoints exist under /api/crowdfunding/admin/* (review queue, finance,
+// disputes, withdrawals, fraud, KYC, compliance, users, and config/settings).
+// Mirrors fintechService shape: flip USE_MOCK to false and the fetch branches hit
+// the live backend. All money is integer kobo.
 
 import { env } from '@/config/env';
 import type {

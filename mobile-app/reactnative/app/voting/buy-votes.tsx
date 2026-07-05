@@ -2,13 +2,14 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft } from 'lucide-react-native';
+import { ArrowLeft, Lock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useVotePackages } from '@/features/voting/hooks/useVotePackages';
+import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import VotePackageCard from '@/features/voting/components/VotePackageCard';
 import { formatAmount } from '@/features/voting/utils/voteFormatters';
 import type { VotePackage } from '@/features/voting/types/voting.types';
@@ -16,9 +17,14 @@ import type { VotePackage } from '@/features/voting/types/voting.types';
 export default function BuyVotesScreen() {
   const { contestantId, contestId } = useLocalSearchParams<{ contestantId: string; contestId: string }>();
   const { data: packages } = useVotePackages(contestId);
+  const { data: contest } = useContestDetails(contestId ?? '');
   const [selected, setSelected] = useState<VotePackage | null>(null);
 
   const pkgs = packages ?? [];
+  // Only gate on a known non-live status so a pending contest query doesn't
+  // wrongly block a voter before the data lands.
+  const votingClosed =
+    !!contest && (contest.status !== 'LIVE' || contest.paidVotingEnabled === false);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -32,6 +38,13 @@ export default function BuyVotesScreen() {
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         <Text style={styles.sub}>Select a package and vote for your favourite contestant</Text>
+
+        {votingClosed && (
+          <View style={styles.closedBanner}>
+            <Lock size={16} color={Colors.error} strokeWidth={2} />
+            <Text style={styles.closedText}>Voting is closed for this contest.</Text>
+          </View>
+        )}
 
         <View style={styles.grid}>
           {pkgs.map((pkg) => (
@@ -62,14 +75,20 @@ export default function BuyVotesScreen() {
 
       <View style={styles.footer}>
         <PrimaryButton
-          label={selected ? `Continue · ${formatAmount(selected.amount)}` : 'Select a package'}
+          label={
+            votingClosed
+              ? 'Voting is closed'
+              : selected
+                ? `Continue · ${formatAmount(selected.amount)}`
+                : 'Select a package'
+          }
           onPress={() => {
-            if (!selected) return;
+            if (!selected || votingClosed) return;
             router.push(
               `/voting/payment-method?contestantId=${contestantId}&contestId=${contestId}&votes=${selected.votes + (selected.bonusVotes ?? 0)}&amount=${selected.amount}&packageId=${selected.id}`,
             );
           }}
-          disabled={!selected}
+          disabled={!selected || votingClosed}
         />
       </View>
     </SafeAreaView>
@@ -90,5 +109,7 @@ const styles = StyleSheet.create({
   summaryValue: { ...Typography.labelLg, color: Colors.onSurface, fontWeight: '700' as const },
   divider:  { height: 1, backgroundColor: Colors.surfaceContainerHigh },
   secureNote: { ...Typography.labelSm, color: Colors.onSurfaceVariant, textAlign: 'center' },
+  closedBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.errorContainer, borderRadius: Radius.lg, padding: Spacing.md },
+  closedText: { ...Typography.labelSm, color: Colors.error, flex: 1, lineHeight: 18 },
   footer:   { position: 'absolute', bottom: 0, left: 0, right: 0, padding: Spacing.containerMargin, paddingBottom: Platform.OS === 'ios' ? 34 : Spacing.lg, backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.surfaceContainerHigh },
 });

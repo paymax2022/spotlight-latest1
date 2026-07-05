@@ -75,6 +75,8 @@ const TABS: { label: string; href: string }[] = [
   { label: 'Orders', href: '/admin/invest/orders' },
   { label: 'Settlement', href: '/admin/invest/settlement' },
   { label: 'Reconciliation', href: '/admin/invest/reconciliation' },
+  { label: 'Corp Actions', href: '/admin/invest/corporate-actions' },
+  { label: 'Providers', href: '/admin/invest/providers' },
   { label: 'Fees & Limits', href: '/admin/invest/fees' },
   { label: 'Audit', href: '/admin/invest/audit' },
 ];

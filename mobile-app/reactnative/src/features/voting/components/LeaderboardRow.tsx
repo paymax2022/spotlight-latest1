@@ -8,7 +8,7 @@ import { Spacing } from '@/constants/spacing';
 import RankBadge from './RankBadge';
 import RankMovementBadge from './RankMovementBadge';
 import VoteButton from './VoteButton';
-import { formatVoteCount, resolveMovement } from '../utils/voteFormatters';
+import { formatVoteCount } from '../utils/voteFormatters';
 import type { LeaderboardEntry } from '../types/voting.types';
 
 interface Props {
@@ -20,8 +20,6 @@ interface Props {
 
 export default function LeaderboardRow({ entry, onPress, onVote, isVoting }: Props) {
   const { contestant, rank, movement, previousRank, rankChange } = entry;
-  // Prefer the endpoint's rankChange signal; fall back to legacy movement, then 'SAME'.
-  const resolvedMovement = resolveMovement(rankChange, movement);
 
   return (
     <Pressable
@@ -55,7 +53,7 @@ export default function LeaderboardRow({ entry, onPress, onVote, isVoting }: Pro
       </View>
 
       <View style={styles.right}>
-        <RankMovementBadge movement={resolvedMovement} previousRank={previousRank} currentRank={rank} />
+        <RankMovementBadge movement={movement} rankChange={rankChange} previousRank={previousRank} currentRank={rank} />
         <VoteButton onPress={onVote} label="Vote" size="sm" variant="outline" loading={isVoting} />
       </View>
     </Pressable>

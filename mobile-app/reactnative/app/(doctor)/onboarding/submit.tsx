@@ -28,6 +28,7 @@ const STATE_ICON: Record<AccountState, LucideIcon> = {
   approved:     CheckCircle2,
   rejected:     XCircle,
   under_review: Eye,
+  needs_info:   Eye,
   suspended:    Ban,
 };
 
@@ -37,6 +38,7 @@ const STATE_TONE: Record<AccountState, StatusTone> = {
   approved:     'success',
   rejected:     'danger',
   under_review: 'warning',
+  needs_info:   'warning',
   suspended:    'danger',
 };
 
@@ -46,6 +48,7 @@ const STATE_BG: Record<AccountState, string> = {
   approved:     Colors.iconBgTeal,
   rejected:     Colors.errorContainer,
   under_review: Colors.iconBgBlue,
+  needs_info:   Colors.iconBgBlue,
   suspended:    Colors.errorContainer,
 };
 

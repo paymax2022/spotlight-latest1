@@ -35,9 +35,14 @@ type Store struct {
 	ledger     []domain.LedgerEntry
 	quotes     map[string]domain.Quote
 	swapQuotes map[string]domain.SwapQuote
+	consumed   map[string]bool // quote ids already executed (consume-on-execute)
 	idem       map[string]any
 
 	investableMinor int64
+
+	// eligibility holds the demo user's compliance facts. The trading gate is
+	// computed from these via engine.EvaluateEligibility (fail-closed).
+	eligibility domain.EligibilityFacts
 }
 
 // New builds a Store seeded with demo data mirroring the mobile mock fixtures.
@@ -46,8 +51,21 @@ func New() *Store {
 		watch:           map[string]bool{"ast_btc": true, "ast_sol": true},
 		quotes:          map[string]domain.Quote{},
 		swapQuotes:      map[string]domain.SwapQuote{},
+		consumed:        map[string]bool{},
 		idem:            map[string]any{},
 		investableMinor: ngn(842_500),
+		// Demo user is fully onboarded: Full KYC (tier 2), suitability complete &
+		// current, all agreements accepted, crypto product enabled — so the mock
+		// behaves like a cleared user. Tests construct ineligible stores via
+		// SetEligibility to exercise the fail-closed path.
+		eligibility: domain.EligibilityFacts{
+			UserActive:          true,
+			KycTier:             2,
+			CryptoEnabled:       true,
+			SuitabilityComplete: true,
+			SuitabilityExpired:  false,
+			AgreementsAccepted:  true,
+		},
 	}
 	s.seedAssets()
 	s.seedPositions()
@@ -265,6 +283,23 @@ func (s *Store) seedAddresses() {
 	}
 }
 
+// ── Eligibility ───────────────────────────────────────────────────────────────
+
+// Eligibility returns the demo user's compliance facts.
+func (s *Store) Eligibility() domain.EligibilityFacts {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.eligibility
+}
+
+// SetEligibility overrides the demo user's compliance facts. It exists so tests
+// (and a future admin path) can exercise the fail-closed gate without a database.
+func (s *Store) SetEligibility(f domain.EligibilityFacts) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.eligibility = f
+}
+
 // ── Assets ────────────────────────────────────────────────────────────────────
 
 // Assets returns a copy of the whitelisted assets.
@@ -298,11 +333,18 @@ func (s *Store) PutQuote(q domain.Quote) {
 	s.quotes[q.ID] = q
 }
 
+// GetQuote returns a persisted trade quote only if it exists, has not been
+// consumed by a prior execution, and has not expired — mirroring the
+// non-consumed/non-expired SQL predicate in PgRepository.GetQuote. This is the
+// quote-integrity contract: execution runs strictly against a stored quote_id.
 func (s *Store) GetQuote(id string) (domain.Quote, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	q, ok := s.quotes[id]
-	return q, ok
+	if !ok || s.consumed[id] || quoteExpired(q.ExpiresAt) {
+		return domain.Quote{}, false
+	}
+	return q, true
 }
 
 func (s *Store) PutSwapQuote(q domain.SwapQuote) {
@@ -311,11 +353,26 @@ func (s *Store) PutSwapQuote(q domain.SwapQuote) {
 	s.swapQuotes[q.ID] = q
 }
 
+// GetSwapQuote returns a persisted swap quote only if it exists, is unconsumed,
+// and is unexpired (see GetQuote).
 func (s *Store) GetSwapQuote(id string) (domain.SwapQuote, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	q, ok := s.swapQuotes[id]
-	return q, ok
+	if !ok || s.consumed[id] || quoteExpired(q.ExpiresAt) {
+		return domain.SwapQuote{}, false
+	}
+	return q, true
+}
+
+// quoteExpired reports whether an RFC3339 expiry has passed. An unparseable or
+// empty timestamp is treated as expired (fail-closed).
+func quoteExpired(expiresAt string) bool {
+	t, err := time.Parse(time.RFC3339, expiresAt)
+	if err != nil {
+		return true
+	}
+	return !time.Now().Before(t)
 }
 
 // ── Idempotency ───────────────────────────────────────────────────────────────
@@ -445,6 +502,20 @@ func (s *Store) Transactions(side string) []domain.TxSummary {
 		out = append(out, t.TxSummary)
 	}
 	return out
+}
+
+// UpdateTransactionStatus advances a transaction's status + appends a status event.
+func (s *Store) UpdateTransactionStatus(reference, status string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.txns {
+		if s.txns[i].Reference == reference {
+			s.txns[i].Status = status
+			s.txns[i].StatusHistory = append(s.txns[i].StatusHistory, domain.StatusEvent{Status: status, At: engine.Now()})
+			return true
+		}
+	}
+	return false
 }
 
 // Transaction returns one full receipt by id or reference.
@@ -620,6 +691,7 @@ func (s *Store) ExecuteBuy(q domain.Quote) (domain.Order, *ExecError) {
 		s.positions = append(s.positions, posState{AssetID: a.ID, QtyMinor: q.Crypto.Amount, CostBasisMinor: q.Fiat.Amount})
 	}
 	s.appendLedger(txID, "user_cash", "user_crypto:"+a.Symbol, q.TotalFiat.Amount, "NGN", "buy", ref, provRef)
+	s.consumed[q.ID] = true // single-use: the quote_id cannot be replayed
 
 	order := domain.Order{
 		ID: engine.NewID("co"), Reference: ref, AssetID: a.ID, Symbol: a.Symbol, Side: "buy",
@@ -657,6 +729,7 @@ func (s *Store) ExecuteSell(q domain.Quote) (domain.Order, *ExecError) {
 	p.QtyMinor -= q.Crypto.Amount
 	s.investableMinor += q.TotalFiat.Amount
 	s.appendLedger(txID, "user_crypto:"+a.Symbol, "user_cash", q.TotalFiat.Amount, "NGN", "sell", ref, provRef)
+	s.consumed[q.ID] = true // single-use: the quote_id cannot be replayed
 
 	order := domain.Order{
 		ID: engine.NewID("co"), Reference: ref, AssetID: a.ID, Symbol: a.Symbol, Side: "sell",
@@ -698,6 +771,7 @@ func (s *Store) ExecuteSwap(q domain.SwapQuote) (domain.SwapResult, *ExecError) 
 		s.positions = append(s.positions, posState{AssetID: to.ID, QtyMinor: q.To.Amount, CostBasisMinor: q.FiatValue.Amount})
 	}
 	s.appendLedger(txID, "user_crypto:"+from.Symbol, "user_crypto:"+to.Symbol, q.FiatValue.Amount, "NGN", "swap", ref, provRef)
+	s.consumed[q.ID] = true // single-use: the quote_id cannot be replayed
 
 	res := domain.SwapResult{
 		ID: engine.NewID("so"), Reference: ref, FromSymbol: from.Symbol, ToSymbol: to.Symbol,
@@ -716,6 +790,104 @@ func (s *Store) ExecuteSwap(q domain.SwapQuote) (domain.SwapResult, *ExecError) 
 		StatusHistory: []domain.StatusEvent{{Status: "QuoteAccepted", At: res.CreatedAt}, {Status: "Filled", At: res.CreatedAt}},
 	})
 	return res, nil
+}
+
+// RecordWithdrawal debits the holding and persists a pending-review withdrawal.
+func (s *Store) RecordWithdrawal(symbol, networkName, address string, cryptoAmount, networkFee, fiatValue int64) (domain.WithdrawalResult, *ExecError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.findAsset(symbol)
+	if !ok {
+		return domain.WithdrawalResult{}, &ExecError{Type: "asset_unavailable", Message: "Asset not found."}
+	}
+	p, _ := s.position(a.ID)
+	if p == nil || p.QtyMinor < cryptoAmount {
+		return domain.WithdrawalResult{}, &ExecError{Type: "insufficient_balance", Message: "You don't hold enough to withdraw."}
+	}
+	p.CostBasisMinor -= int64(math.Round(float64(p.CostBasisMinor) * (float64(cryptoAmount) / float64(p.QtyMinor))))
+	p.QtyMinor -= cryptoAmount
+
+	txID, ref, provRef, now := engine.NewID("cx"), engine.NewRef("PMX-WD"), engine.NewRef("CU")+"-WD", engine.Now()
+	s.appendLedger(txID, "user_crypto:"+symbol, "external:"+address, fiatValue, "NGN", "withdraw", ref, provRef)
+	s.txns = append(s.txns, domain.TxDetail{
+		TxSummary: domain.TxSummary{
+			ID: txID, Reference: ref, Side: "withdraw", Symbol: symbol, AssetName: a.Name, IconColor: a.IconColor,
+			Status: "WithdrawalPendingReview", Fiat: domain.Money{Amount: fiatValue, Currency: "NGN"},
+			Crypto: domain.CryptoAmount{Amount: cryptoAmount, Symbol: symbol}, CreatedAt: now,
+		},
+		AllInRate: a.Price, Fees: []domain.Fee{}, TotalFiat: domain.Money{Amount: fiatValue, Currency: "NGN"},
+		Provider: "mock-custody", ProviderReference: provRef, LiquidityProvider: "mock-liquidity", CustodyProvider: "mock-custody",
+		StatusHistory: []domain.StatusEvent{{Status: "WithdrawalPendingReview", At: now}},
+	})
+	return domain.WithdrawalResult{
+		ID: engine.NewID("wd"), Reference: ref, Symbol: symbol, Status: "WithdrawalPendingReview",
+		Amount: domain.CryptoAmount{Amount: cryptoAmount, Symbol: symbol}, NetworkFee: domain.CryptoAmount{Amount: networkFee, Symbol: symbol},
+		Address: address, NetworkName: networkName, ProviderReference: provRef, EstimatedReviewMin: 30, CreatedAt: now,
+	}, nil
+}
+
+// ReverseWithdrawal re-credits a failed withdrawal's crypto and marks it failed.
+func (s *Store) ReverseWithdrawal(reference string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.txns {
+		t := &s.txns[i]
+		if t.Reference != reference || t.Side != "withdraw" {
+			continue
+		}
+		if t.Status == "WithdrawalFailed" || t.Status == "WithdrawalConfirmed" {
+			return false // terminal already
+		}
+		// Re-credit the holding (qty + the withdrawn fiat value as cost basis).
+		a, ok := s.findAsset(t.Symbol)
+		if !ok {
+			return false
+		}
+		if p, _ := s.position(a.ID); p != nil {
+			p.QtyMinor += t.Crypto.Amount
+			p.CostBasisMinor += t.TotalFiat.Amount
+		} else {
+			s.positions = append(s.positions, posState{AssetID: a.ID, QtyMinor: t.Crypto.Amount, CostBasisMinor: t.TotalFiat.Amount})
+		}
+		s.appendLedger(t.ID, "external:reversal", "user_crypto:"+t.Symbol, t.TotalFiat.Amount, "NGN", "reversal", t.Reference, t.ProviderReference)
+		t.Status = "WithdrawalFailed"
+		t.StatusHistory = append(t.StatusHistory, domain.StatusEvent{Status: "WithdrawalFailed", At: engine.Now()})
+		return true
+	}
+	return false
+}
+
+// CreditDeposit credits the holding and persists a confirmed deposit.
+func (s *Store) CreditDeposit(symbol string, cryptoAmount, fiatValue int64, providerRef string) (domain.TxDetail, *ExecError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.findAsset(symbol)
+	if !ok {
+		return domain.TxDetail{}, &ExecError{Type: "asset_unavailable", Message: "Asset not found."}
+	}
+	if p, _ := s.position(a.ID); p != nil {
+		p.QtyMinor += cryptoAmount
+		p.CostBasisMinor += fiatValue
+	} else {
+		s.positions = append(s.positions, posState{AssetID: a.ID, QtyMinor: cryptoAmount, CostBasisMinor: fiatValue})
+	}
+	if providerRef == "" {
+		providerRef = engine.NewRef("CU") + "-DP"
+	}
+	txID, ref, now := engine.NewID("cx"), engine.NewRef("PMX-DP"), engine.Now()
+	s.appendLedger(txID, "external", "user_crypto:"+symbol, fiatValue, "NGN", "deposit", ref, providerRef)
+	d := domain.TxDetail{
+		TxSummary: domain.TxSummary{
+			ID: txID, Reference: ref, Side: "deposit", Symbol: symbol, AssetName: a.Name, IconColor: a.IconColor,
+			Status: "DepositConfirmed", Fiat: domain.Money{Amount: fiatValue, Currency: "NGN"},
+			Crypto: domain.CryptoAmount{Amount: cryptoAmount, Symbol: symbol}, CreatedAt: now,
+		},
+		AllInRate: a.Price, Fees: []domain.Fee{}, TotalFiat: domain.Money{Amount: fiatValue, Currency: "NGN"},
+		Provider: "mock-custody", ProviderReference: providerRef, LiquidityProvider: "mock-liquidity", CustodyProvider: "mock-custody",
+		StatusHistory: []domain.StatusEvent{{Status: "DepositDetected", At: now}, {Status: "DepositConfirmed", At: now}},
+	}
+	s.txns = append(s.txns, d)
+	return d, nil
 }
 
 // recordTx appends an order to the unified history (caller holds the lock).

@@ -1,0 +1,136 @@
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - backend/.env
+    environment:
+      APP_PORT: "8080"
+      # Point at the host-side local Supabase Postgres (supabase start → port 54322).
+      # Override in CI/prod with a real DATABASE_URL.
+      DATABASE_URL: postgres://postgres:postgres@host.docker.internal:54322/postgres?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      # Local Supabase REST API
+      SUPABASE_URL: http://host.docker.internal:54321
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/v1/public/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Marketplace search read model (Agent B) ──────────────────────────────────
+  # Single-node Elasticsearch 8.x. The search client (backend/internal/marketplace/
+  # search/client.go) is dependency-free net/http and targets composable index
+  # templates (_index_template, ES 7.8+) + function_score ranking — both native to
+  # 8.x. Security is disabled for local/dev only; a managed cluster with TLS + auth
+  # is expected in staging/prod (see docs/prd/marketplace/RUNBOOK.md).
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
+  # ── Marketplace ES indexer (Agent B) — drains mkt_listings_outbox → ES ────────
+  # Feature-flag gated: only starts under the `marketplace` compose profile so it
+  # never runs unless the marketplace is being exercised (mirrors
+  # FEATURE_MARKETPLACE_ENABLED). Reuses the same immutable ./backend image build.
+  marketplace-indexer:
+    profiles: ["marketplace"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["/app/marketplace-indexer"]
+    environment:
+      FEATURE_MARKETPLACE_ENABLED: "true"
+      DATABASE_URL: postgres://postgres:postgres@host.docker.internal:54322/postgres?sslmode=disable
+      # The indexer binary reads ES_URL (cmd/marketplace-indexer/main.go).
+      ES_URL: http://elasticsearch:9200
+      MARKETPLACE_INDEXER_INTERVAL_MS: "2000"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Marketplace cron (Agent B) — auto-expire / auto-release / reconciliation ──
+  # The hourly escrow-reconciliation job asserts the §2.2 invariant
+  # SUM(escrow ledger balance) == SUM(open-escrow orders) and logs drift loudly.
+  marketplace-cron:
+    profiles: ["marketplace"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["/app/marketplace-cron"]
+    environment:
+      FEATURE_MARKETPLACE_ENABLED: "true"
+      DATABASE_URL: postgres://postgres:postgres@host.docker.internal:54322/postgres?sslmode=disable
+    restart: unless-stopped
+
+  # ── Transport Trip Scheduling worker ─────────────────────────────────────────
+  # Materializes user-scheduled future rides/parcels/bus at lead time, sends 24h/1h
+  # reminders, and safety-net-expires past-due bookings — every 60s runLoops
+  # (dispatch-due / reminders / expire-stale), mirroring marketplace-cron.
+  #
+  # Feature-flag gated two ways: (1) only starts under the `transport-scheduling`
+  # compose profile so it never runs unless the feature is being exercised, and
+  # (2) the binary itself exits immediately unless FEATURE_TRANSPORT_SCHEDULING_ENABLED
+  # is true (cmd/transport-scheduler/main.go). Reuses the SAME immutable ./backend
+  # image build. Redis is NOT required: the worker passes a nil redis client to the
+  # ledger (idempotency is keyed on the DB-unique settlements/ledger keys), the same
+  # graceful-degradation contract marketplace-cron uses — REDIS_URL is passed only so
+  # config validation matches the api service and future redis-backed features work.
+  transport-scheduler:
+    profiles: ["transport-scheduling"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["/app/transport-scheduler"]
+    environment:
+      FEATURE_TRANSPORT_SCHEDULING_ENABLED: "true"
+      DATABASE_URL: postgres://postgres:postgres@host.docker.internal:54322/postgres?sslmode=disable
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  es_data:

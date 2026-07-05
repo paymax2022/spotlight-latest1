@@ -25,8 +25,8 @@ type APIError struct {
 	Code        string    `json:"code"`
 	Message     string    `json:"message"`
 	Param       *string   `json:"param,omitempty"`
-	ProviderRef *string   `json:"provider_ref,omitempty"`
-	RequestID   string    `json:"request_id,omitempty"`
+	ProviderRef *string   `json:"providerRef,omitempty"`
+	RequestID   string    `json:"requestId,omitempty"`
 }
 
 func (e *APIError) Error() string { return e.Message }

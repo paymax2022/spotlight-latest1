@@ -17,7 +17,18 @@ export interface CreateRepairInput { category: RepairCategory; description: stri
 export interface AddRepairUpdateInput { status: RepairStatus; note?: string; idempotencyKey: string; }
 
 export const USE_MOCK = (process.env.EXPO_PUBLIC_REPAIRS_USE_MOCK ?? 'true') !== 'false';
-export const REPAIRS_API_BASE = '/api/v1/estate/repairs';
+
+// Repairs/maintenance are NOT a standalone backend module — they are nested
+// under the Estate module (backend/internal/app/finance_routes.go: estGroup :=
+// finance.Group("/estate"); backend/internal/estate/handler.go:
+// ListRepairs/CreateRepair/ListRepairUpdates/AddRepairUpdate all take :id
+// (estate)). There is no flat /repairs namespace and no frontend-web proxy
+// for /api/v1/estate/repairs — the blanket rewrite only covers
+// /api/finance/:path*.
+// MISSING: a shared estate-context provider; DEFAULT_ESTATE_ID is a stopgap
+// (mirrors the election/meetings convention) until multi-estate selection ships.
+export const DEFAULT_ESTATE_ID = 'est_amber_court';
+export const REPAIRS_API_BASE = `/api/finance/estate/${DEFAULT_ESTATE_ID}/repairs`;
 
 export const CATEGORY_META: Record<RepairCategory, { label: string; icon: string }> = {
   plumbing:  { label: 'Plumbing',  icon: 'Droplets' },
@@ -63,9 +74,22 @@ export async function listRepairs(): Promise<RepairRequest[]> {
   if (USE_MOCK) { await latency(); return repairs.slice().sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)).map((r) => ({ ...r, updates: undefined })); }
   const { data } = await api.get<RepairRequest[]>(REPAIRS_API_BASE); return data;
 }
+// NOTE: the backend route table has no GET /:id/repairs/:repairId (single
+// read) — only GET /:id/repairs (list) and GET .../:repairId/updates exist.
+// Derive the single repair from the list, then merge its update history
+// (mirrors events.api.ts getTicket() / tasks.api.ts getTask()).
 export async function getRepair(id: string): Promise<RepairRequest> {
   if (USE_MOCK) { await latency(250); const r = repairs.find((x) => x.id === id); if (!r) throw new Error('Not found'); return { ...r, updates: (r.updates ?? []).slice() }; }
-  const { data } = await api.get<RepairRequest>(`${REPAIRS_API_BASE}/${id}`); return data;
+  const all = await listRepairs();
+  const r = all.find((x) => x.id === id);
+  if (!r) throw new Error('Repair not found');
+  const updates = await listRepairUpdates(id);
+  return { ...r, updates };
+}
+
+export async function listRepairUpdates(id: string): Promise<RepairUpdate[]> {
+  if (USE_MOCK) { await latency(200); const r = repairs.find((x) => x.id === id); return (r?.updates ?? []).slice(); }
+  const { data } = await api.get<RepairUpdate[]>(`${REPAIRS_API_BASE}/${id}/updates`); return data;
 }
 export async function createRepair(input: CreateRepairInput): Promise<RepairRequest> {
   if (USE_MOCK) {

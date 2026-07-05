@@ -19,13 +19,21 @@ import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1, shadow2 } from '@/constants/shadows';
-import { getElectricityDiscos, initiateElectricityPaystack, validateMeter, payElectricity } from '@/api/billing.api';
+import { getElectricityDiscos, initiateElectricityPaystack, validateMeter, payElectricity, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
+import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { Disco, MeterValidation, MeterType } from '@/types/billing';
 
 const AMOUNTS = [1000, 2000, 5000, 10000, 20000];
+
+// VTPass sandbox test meters (https://vtpass.com/documentation/eko-electricity-ekedc-payment-api/).
+// Prefilled in DEV builds only for ease of testing; production starts blank.
+const TEST_METERS: Record<MeterType, string> = {
+  PREPAID: '1111111111111',
+  POSTPAID: '1010101010101',
+};
 
 const schema = z.object({
   meterNumber:   z.string().min(6, 'Enter a valid meter number'),
@@ -69,6 +77,12 @@ export default function ElectricityScreen() {
     queryFn:  getElectricityDiscos,
   });
 
+  const { data: providerLogos = [] } = useQuery({
+    queryKey: ['provider-logos', 'electricity'],
+    queryFn:  () => getProviderLogos('electricity'),
+    staleTime: 60 * 60 * 1000,
+  });
+
   const { data: wallet } = useQuery({
     queryKey: ['wallet'],
     queryFn:  getWallet,
@@ -76,9 +90,11 @@ export default function ElectricityScreen() {
 
   const { control, handleSubmit, watch, setValue, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(schema),
+    defaultValues: { meterNumber: __DEV__ ? TEST_METERS.PREPAID : '' },
   });
 
   const meterNumber = watch('meterNumber');
+  const amountValue = watch('amount'); // live amount so the summary updates on select, like the DISCO
 
   const { mutate: doValidate, isPending: validating } = useMutation({
     mutationFn: validateMeter,
@@ -212,12 +228,9 @@ export default function ElectricityScreen() {
             <View style={styles.providerGrid}>
               {discos.filter((d) => d.isActive).map((disco) => {
                 const active = selectedDisco?.id === disco.id;
-                const clr    = DISCO_COLORS[disco.code] ?? { accent: Colors.primary, bg: Colors.iconBgPurple };
                 return (
                   <Pressable key={disco.id} onPress={() => { setSelectedDisco(disco); setValidation(null); }} style={[styles.providerCard, active && styles.providerCardActive]}>
-                    <View style={[styles.providerIcon, { backgroundColor: clr.bg }]}>
-                      <Text style={[styles.providerInitial, { color: clr.accent }]}>{disco.name.slice(0, 2)}</Text>
-                    </View>
+                    <ProviderLogo code={disco.code} name={disco.name} logoUri={resolveProviderImage(providerLogos, disco.code, disco.name)} />
                     <Text style={[styles.providerName, active && styles.providerNameActive]} numberOfLines={1}>{disco.name}</Text>
                     {active && <CheckCircle2 size={16} color={Colors.primary} strokeWidth={2.2} />}
                   </Pressable>
@@ -230,7 +243,7 @@ export default function ElectricityScreen() {
           <Text style={[styles.sectionTitle, { marginBottom: Spacing.sm }]}>Meter Type</Text>
           <View style={styles.typeRow}>
             {METER_TYPES.map((t) => (
-              <Pressable key={t.value} onPress={() => { setMeterType(t.value); setValidation(null); }} style={[styles.typePill, meterType === t.value && styles.typePillActive]}>
+              <Pressable key={t.value} onPress={() => { setMeterType(t.value); setValidation(null); if (__DEV__) setValue('meterNumber', TEST_METERS[t.value]); }} style={[styles.typePill, meterType === t.value && styles.typePillActive]}>
                 <Text style={[styles.typeText, meterType === t.value && styles.typeTextActive]}>{t.label}</Text>
               </Pressable>
             ))}
@@ -314,7 +327,7 @@ export default function ElectricityScreen() {
           <SummaryRow label="DISCO"      value={selectedDisco?.name ?? '—'} />
           <SummaryRow label="Meter Type" value={meterType} />
           <SummaryRow label="Customer"   value={validation?.customerName ?? '—'} />
-          <SummaryRow label="Amount"     value={pendingForm?.amount ? `₦${pendingForm.amount.toLocaleString()}` : '—'} />
+          <SummaryRow label="Amount"     value={amountValue ? `₦${Number(amountValue).toLocaleString()}` : '—'} />
           {meterType === 'PREPAID' && <SummaryRow label="Token"   value="Instant delivery" />}
           <PaymentMethodSelector
             selected={paymentMethod}
@@ -418,6 +431,8 @@ const styles = StyleSheet.create({
   providerCard:{ width: '48%', minHeight: 82, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.md, gap: Spacing.sm },
   providerCardActive:{ borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
   providerIcon:{ width: 34, height: 34, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
+  providerLogoWrap:{ backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: Colors.surfaceContainerHigh, overflow: 'hidden' },
+  providerLogo:{ width: 28, height: 28, borderRadius: 4 },
   providerInitial:{ ...Typography.labelMd, fontWeight: '800' },
   providerName:{ ...Typography.labelMd, color: Colors.onSurface },
   providerNameActive:{ color: Colors.onPrimaryFixed },

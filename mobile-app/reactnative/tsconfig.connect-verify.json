@@ -1,0 +1,22 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["src/*"] }
+  },
+  "include": [
+    "app/connect/discover/**/*",
+    "app/connect/networking/**/*",
+    "app/connect/profile/**/*",
+    "app/connect/messaging/**/*",
+    "src/features/connect/discovery/**/*",
+    "src/features/connect/networking/**/*",
+    "src/features/connect/messaging/**/*",
+    "src/features/connect/profile/**/*",
+    "src/features/connect/components/**/*"
+  ]
+}

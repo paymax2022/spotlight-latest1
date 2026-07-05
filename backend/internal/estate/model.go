@@ -23,30 +23,30 @@ type Resident struct {
 
 // VisitorPass is a one-time or time-bounded entry permit issued by a resident.
 type VisitorPass struct {
-	ID         string     `json:"id"`
-	EstateID   string     `json:"estate_id"`
-	IssuedBy   string     `json:"issued_by"`
-	VisitorName string    `json:"visitor_name"`
-	Purpose    string     `json:"purpose,omitempty"`
-	QRCode     string     `json:"qr_code"`
-	ValidFrom  time.Time  `json:"valid_from"`
-	ValidUntil time.Time  `json:"valid_until"`
-	UsedAt     *time.Time `json:"used_at,omitempty"`
-	Status     string     `json:"status"` // active | used | expired | revoked
-	CreatedAt  time.Time  `json:"created_at"`
+	ID          string     `json:"id"`
+	EstateID    string     `json:"estate_id"`
+	IssuedBy    string     `json:"issued_by"`
+	VisitorName string     `json:"visitor_name"`
+	Purpose     string     `json:"purpose,omitempty"`
+	QRCode      string     `json:"qr_code"`
+	ValidFrom   time.Time  `json:"valid_from"`
+	ValidUntil  time.Time  `json:"valid_until"`
+	UsedAt      *time.Time `json:"used_at,omitempty"`
+	Status      string     `json:"status"` // active | used | expired | revoked
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 // Election is a private vote within an estate (e.g. AGM, committee election).
 type Election struct {
-	ID         string    `json:"id"`
-	EstateID   string    `json:"estate_id"`
-	Title      string    `json:"title"`
-	Description string   `json:"description,omitempty"`
-	StartsAt   time.Time `json:"starts_at"`
-	EndsAt     time.Time `json:"ends_at"`
-	Status     string    `json:"status"` // draft | open | closed | tallied
-	CreatedBy  string    `json:"created_by"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID          string    `json:"id"`
+	EstateID    string    `json:"estate_id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description,omitempty"`
+	StartsAt    time.Time `json:"starts_at"`
+	EndsAt      time.Time `json:"ends_at"`
+	Status      string    `json:"status"` // draft | open | closed | tallied
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Candidate is a choice in an election.
@@ -72,22 +72,22 @@ type Vote struct {
 
 // ResidentProfile holds extended personal data for a resident.
 type ResidentProfile struct {
-	ID               string          `json:"id"`
-	ResidentID       string          `json:"resident_id"`
-	Bio              string          `json:"bio,omitempty"`
-	ProfilePhotoURL  string          `json:"profile_photo_url,omitempty"`
-	Phone            string          `json:"phone,omitempty"`
-	AltPhone         string          `json:"alt_phone,omitempty"`
-	EmergencyContact ContactInfo     `json:"emergency_contact,omitempty"`
-	NextOfKin        ContactInfo     `json:"next_of_kin,omitempty"`
-	OccupancyType    string          `json:"occupancy_type"` // resident|tenant|homeowner|landlord
-	LeaseStart       *string         `json:"lease_start,omitempty"`
-	LeaseEnd         *string         `json:"lease_end,omitempty"`
-	AgreementURL     string          `json:"agreement_url,omitempty"`
-	OwnershipDocURL  string          `json:"ownership_doc_url,omitempty"`
-	Visibility       string          `json:"visibility"` // public|members|admin_only
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
+	ID               string      `json:"id"`
+	ResidentID       string      `json:"resident_id"`
+	Bio              string      `json:"bio,omitempty"`
+	ProfilePhotoURL  string      `json:"profile_photo_url,omitempty"`
+	Phone            string      `json:"phone,omitempty"`
+	AltPhone         string      `json:"alt_phone,omitempty"`
+	EmergencyContact ContactInfo `json:"emergency_contact,omitempty"`
+	NextOfKin        ContactInfo `json:"next_of_kin,omitempty"`
+	OccupancyType    string      `json:"occupancy_type"` // resident|tenant|homeowner|landlord
+	LeaseStart       *string     `json:"lease_start,omitempty"`
+	LeaseEnd         *string     `json:"lease_end,omitempty"`
+	AgreementURL     string      `json:"agreement_url,omitempty"`
+	OwnershipDocURL  string      `json:"ownership_doc_url,omitempty"`
+	Visibility       string      `json:"visibility"` // public|members|admin_only
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
 }
 
 // ContactInfo is a reusable embedded contact.
@@ -199,15 +199,15 @@ type Gate struct {
 
 // GuardShift is an active or completed security shift at a gate.
 type GuardShift struct {
-	ID             string     `json:"id"`
-	GuardID        string     `json:"guard_id"`
-	GateID         string     `json:"gate_id"`
-	EstateID       string     `json:"estate_id"`
-	StartedAt      time.Time  `json:"started_at"`
-	EndedAt        *time.Time `json:"ended_at,omitempty"`
-	HandoverNotes  string     `json:"handover_notes,omitempty"`
-	RelievedBy     *string    `json:"relieved_by,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
+	ID            string     `json:"id"`
+	GuardID       string     `json:"guard_id"`
+	GateID        string     `json:"gate_id"`
+	EstateID      string     `json:"estate_id"`
+	StartedAt     time.Time  `json:"started_at"`
+	EndedAt       *time.Time `json:"ended_at,omitempty"`
+	HandoverNotes string     `json:"handover_notes,omitempty"`
+	RelievedBy    *string    `json:"relieved_by,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 // IncidentReport is a gate security incident submitted by a guard.
@@ -274,35 +274,35 @@ type SyncRequest struct {
 
 // AccessCode is a typed entry permit with numeric + QR code.
 type AccessCode struct {
-	ID           string     `json:"id"`
-	EstateID     string     `json:"estate_id"`
-	IssuedBy     string     `json:"issued_by"`
-	VisitorName  string     `json:"visitor_name"`
-	VisitorPhone string     `json:"visitor_phone,omitempty"`
-	VehiclePlate string     `json:"vehicle_plate,omitempty"`
-	Purpose      string     `json:"purpose,omitempty"`
-	CodeType     string     `json:"code_type"`
-	NumericCode  string     `json:"numeric_code"`
-	QRCode       string     `json:"qr_code"`
-	ValidFrom    time.Time  `json:"valid_from"`
-	ValidUntil   time.Time  `json:"valid_until"`
-	Recurrence   *string    `json:"recurrence,omitempty"` // raw JSONB
-	UsedCount    int        `json:"used_count"`
-	MaxUses      int        `json:"max_uses"`
-	Status       string     `json:"status"`
-	Blacklisted  bool       `json:"blacklisted"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID           string    `json:"id"`
+	EstateID     string    `json:"estate_id"`
+	IssuedBy     string    `json:"issued_by"`
+	VisitorName  string    `json:"visitor_name"`
+	VisitorPhone string    `json:"visitor_phone,omitempty"`
+	VehiclePlate string    `json:"vehicle_plate,omitempty"`
+	Purpose      string    `json:"purpose,omitempty"`
+	CodeType     string    `json:"code_type"`
+	NumericCode  string    `json:"numeric_code"`
+	QRCode       string    `json:"qr_code"`
+	ValidFrom    time.Time `json:"valid_from"`
+	ValidUntil   time.Time `json:"valid_until"`
+	Recurrence   *string   `json:"recurrence,omitempty"` // raw JSONB
+	UsedCount    int       `json:"used_count"`
+	MaxUses      int       `json:"max_uses"`
+	Status       string    `json:"status"`
+	Blacklisted  bool      `json:"blacklisted"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // Checkin is a gate arrival or checkout event for a visitor.
 type Checkin struct {
-	ID         string     `json:"id"`
-	CodeID     string     `json:"code_id"`
-	GuardID    *string    `json:"guard_id,omitempty"`
-	GateID     string     `json:"gate_id,omitempty"`
-	Event      string     `json:"event"` // arrived | checked_out
-	CapturedAt time.Time  `json:"captured_at"`
-	PhotoURL   string     `json:"photo_url,omitempty"`
+	ID         string    `json:"id"`
+	CodeID     string    `json:"code_id"`
+	GuardID    *string   `json:"guard_id,omitempty"`
+	GateID     string    `json:"gate_id,omitempty"`
+	Event      string    `json:"event"` // arrived | checked_out
+	CapturedAt time.Time `json:"captured_at"`
+	PhotoURL   string    `json:"photo_url,omitempty"`
 }
 
 // CreateAccessCodeRequest is the body for POST /estate/:id/access-codes.
@@ -408,7 +408,51 @@ type EstateProperty struct {
 	OccupancyStatus string    `json:"occupancy_status"` // vacant | occupied | reserved
 	LandlordID      *string   `json:"landlord_id,omitempty"`
 	TenantID        *string   `json:"tenant_id,omitempty"`
+	Archived        bool      `json:"archived"`
 	CreatedAt       time.Time `json:"created_at"`
+}
+
+// UpdatePropertyRequest is the body for PATCH /estate/:id/properties/:pid.
+// Only non-nil fields are applied (partial update).
+type UpdatePropertyRequest struct {
+	UnitLabel    *string `json:"unit_label"`
+	PropertyType *string `json:"property_type"`
+	Floor        *string `json:"floor"`
+	Block        *string `json:"block"`
+}
+
+// PropertyAnalytics is the per-property summary returned by the analytics route.
+type PropertyAnalytics struct {
+	PropertyID       string `json:"property_id"`
+	OccupancyStatus  string `json:"occupancy_status"`
+	OpenRepairs      int    `json:"open_repairs"`
+	TotalRepairs     int    `json:"total_repairs"`
+	InvoicedKobo     int64  `json:"invoiced_kobo"`
+	CollectedKobo    int64  `json:"collected_kobo"`
+	OutstandingKobo  int64  `json:"outstanding_kobo"`
+	OpenTransferReqs int    `json:"open_transfer_requests"`
+}
+
+// PropertyTransferRequest is a request to change a property's owner/tenant.
+type PropertyTransferRequest struct {
+	ID           string     `json:"id"`
+	EstateID     string     `json:"estate_id"`
+	PropertyID   string     `json:"property_id"`
+	RequestedBy  string     `json:"requested_by"`
+	ToUserID     string     `json:"to_user_id"`
+	TransferType string     `json:"transfer_type"` // ownership | tenancy
+	Reason       string     `json:"reason,omitempty"`
+	Status       string     `json:"status"` // pending | approved | rejected
+	ReviewedBy   *string    `json:"reviewed_by,omitempty"`
+	ReviewedAt   *time.Time `json:"reviewed_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
+
+// RequestPropertyTransferBody is the body for POST .../properties/:pid/transfer-request.
+type RequestPropertyTransferBody struct {
+	ToUserID     string `json:"to_user_id" binding:"required"`
+	TransferType string `json:"transfer_type" binding:"required"` // ownership | tenancy
+	Reason       string `json:"reason"`
 }
 
 // OwnershipClaim is a resident's application to prove they own a property.
@@ -501,4 +545,19 @@ type CreateElectionRequest struct {
 // CastVoteRequest is the body for POST /estate/:id/elections/:electionId/vote.
 type CastVoteRequest struct {
 	CandidateID string `json:"candidate_id" binding:"required"`
+}
+
+// ResidentCard is the payload returned by GET /estate/:id/profile/id-card.
+// The QR value encodes "<estate_id>:<resident_id>" for gate scanner verification.
+type ResidentCard struct {
+	ResidentID      string `json:"resident_id"`
+	EstateID        string `json:"estate_id"`
+	EstateName      string `json:"estate_name"`
+	FullName        string `json:"full_name"`
+	Unit            string `json:"unit"`
+	Role            string `json:"role"`
+	OccupancyType   string `json:"occupancy_type"`
+	ProfilePhotoURL string `json:"profile_photo_url,omitempty"`
+	QRValue         string `json:"qr_value"` // "<estate_id>:<resident_id>"
+	IssuedAt        string `json:"issued_at"`
 }

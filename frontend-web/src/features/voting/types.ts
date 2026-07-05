@@ -433,6 +433,10 @@ export interface CastFreeVoteResponse {
   freeVotesRemaining: number;
   newTotalVotes: number;
   fraudStatus: FraudStatus;
+  /** ISO timestamp when this contestant's free votes reset (24h cycle). */
+  resetAt?: string;
+  /** The contestant the per-day free-vote cap was applied to. */
+  contestantId?: string;
 }
 
 export interface InitiatePaidVoteRequest {
@@ -472,6 +476,9 @@ export interface VerifyPaidVoteResponse {
 
 export interface RemainingFreeVotesResponse {
   contestId: string;
+  /** Set when the cap is scoped to a single contestant (per-contestant cap). */
+  contestantId?: string;
+  /** The applicable daily cap (per contestant when contestantId is set). */
   freeVotesPerDay: number;
   freeVotesUsed: number;
   freeVotesRemaining: number;

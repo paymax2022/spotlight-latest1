@@ -11,10 +11,12 @@ interface Props {
   value?:       string;
   onChangeText?: (text: string) => void;
   onPress?:     () => void;          // if readonly (navigates to search screen)
+  onSubmit?:    (text: string) => void;  // fired on keyboard "search" action
   editable?:    boolean;
+  autoFocus?:   boolean;
 }
 
-export default function SearchBar({ placeholder = 'Search services, payments, bookings...', value, onChangeText, onPress, editable = true }: Props) {
+export default function SearchBar({ placeholder = 'Search services, payments, bookings...', value, onChangeText, onPress, onSubmit, editable = true, autoFocus = false }: Props) {
   const inputRef = useRef<TextInput>(null);
   const [focused, setFocused] = useState(false);
 
@@ -34,7 +36,9 @@ export default function SearchBar({ placeholder = 'Search services, payments, bo
         onChangeText={onChangeText}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
+        onSubmitEditing={(e) => onSubmit?.(e.nativeEvent.text)}
         editable={editable}
+        autoFocus={autoFocus}
         returnKeyType="search"
       />
       {value ? (

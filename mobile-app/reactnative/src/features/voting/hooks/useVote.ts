@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { castFreeVotes, initiatePaidVote, verifyPaidVote, getFreeVoteAllocation } from '../api/voting.api';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import type { VotePaidInitiatePayload, PaymentMethod } from '../types/voting.types';
+import type { VotePaidInitiatePayload } from '../types/voting.types';
 
-export function useFreeVoteAllocation(contestId: string) {
+// Per-contestant free-vote allocation. Pass contestantId so the cap + reset
+// countdown are scoped to that contestant.
+export function useFreeVoteAllocation(contestId: string, contestantId?: string) {
   return useQuery({
-    queryKey: ['voting', 'free-votes', contestId],
-    queryFn:  () => getFreeVoteAllocation(contestId),
+    queryKey: ['voting', 'free-votes', contestId, contestantId ?? null],
+    queryFn:  () => getFreeVoteAllocation(contestId, contestantId),
     enabled:  !!contestId,
     staleTime: 30_000,
   });
@@ -18,6 +20,7 @@ export function useCastFreeVotes() {
     mutationFn: (payload: { contestantId: string; contestId: string; votes: number }) =>
       castFreeVotes({ ...payload, idempotencyKey: generateIdempotencyKey() }),
     onSuccess: (_, vars) => {
+      // Invalidate every per-contestant allocation key for this contest.
       qc.invalidateQueries({ queryKey: ['voting', 'free-votes', vars.contestId] });
       qc.invalidateQueries({ queryKey: ['voting', 'leaderboard', vars.contestId] });
       qc.invalidateQueries({ queryKey: ['voting', 'contestants', vars.contestId] });

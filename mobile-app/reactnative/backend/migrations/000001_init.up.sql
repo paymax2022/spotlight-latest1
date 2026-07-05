@@ -65,6 +65,16 @@ CREATE TABLE positions (
     PRIMARY KEY (user_id, asset_id)
 );
 
+-- ── Wallet (investable cash; debited on buy, credited on sell) ────────────────
+CREATE TABLE wallet_balances (
+    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    currency        TEXT NOT NULL DEFAULT 'NGN',
+    available_minor BIGINT NOT NULL DEFAULT 0,  -- spendable now
+    locked_minor    BIGINT NOT NULL DEFAULT 0,  -- held for in-flight orders
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, currency)
+);
+
 -- ── Orders / transactions (buy · sell · swap) ─────────────────────────────────
 CREATE TABLE crypto_transactions (
     id                  TEXT PRIMARY KEY,         -- transaction id (cx_…)

@@ -210,9 +210,50 @@ components:
         title: { type: string }
         category: { type: string }
         fileUrl: { type: string, format: uri }
+        objectKey: { type: string, description: Server-controlled R2 object key (present for documents uploaded via the presign flow). }
         uploaderName: { type: string, nullable: true }
         restricted: { type: boolean }
         createdAt: { type: string, format: date-time }
+
+    DownloadUrl:
+      type: object
+      properties:
+        downloadUrl: { type: string, format: uri, description: Presigned GET URL (or the stored URL for legacy documents). }
+        expiresIn: { type: integer, description: Seconds until the URL expires; 0 for legacy passthrough. }
+        method: { type: string, enum: [GET] }
+        legacy: { type: boolean, description: True when the document predates server-controlled keys. }
+
+    PresignUpload:
+      type: object
+      properties:
+        uploadUrl: { type: string, format: uri, description: Presigned PUT URL (short-lived). }
+        objectKey: { type: string, description: Server-chosen key; echo back when recording metadata. }
+        bucket: { type: string }
+        contentType: { type: string, description: The exact Content-Type the client MUST send on the PUT. }
+        expiresIn: { type: integer, description: Seconds until the URL expires. }
+        method: { type: string, enum: [PUT] }
+
+    EligibilityRules:
+      type: object
+      properties:
+        electionId: { type: string, format: uuid, readOnly: true }
+        require_kyc: { type: boolean, description: Require KYC-verified status to vote. }
+        require_payment: { type: boolean, description: Require cleared dues (no overdue/past-due invoices). }
+        resident_types:
+          type: array
+          items: { type: string }
+          description: If non-empty, only these occupancy types may vote (e.g. homeowner, landlord, tenant, resident).
+
+    Eligibility:
+      type: object
+      properties:
+        eligible: { type: boolean }
+        reasons:
+          type: array
+          items:
+            type: string
+            enum: [kyc_required, kyc_unavailable, outstanding_dues, resident_type_ineligible]
+          description: Present only when not eligible.
 
     # ── Vendors (Block 37) ──
     Vendor:
@@ -262,20 +303,104 @@ components:
         properties:
           type: array
           items: { $ref: '#/components/schemas/Property' }
+    AdminDashboard:
+      type: object
+      properties:
+        estate_id: { type: string, format: uuid }
+        residents: { type: integer }
+        banned_residents: { type: integer }
+        open_repairs: { type: integer }
+        open_incidents: { type: integer }
+        defaulters: { type: integer }
+        outstanding_dues_kobo: { type: integer }
+        verified_vendors: { type: integer }
+        pending_transfers: { type: integer }
+    AdminResident:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        unit: { type: string }
+        role: { type: string }
+        banned: { type: boolean }
+        deleted: { type: boolean }
+        created_at: { type: string, format: date-time }
+    EstateConfig:
+      type: object
+      properties:
+        estate_id: { type: string, format: uuid }
+        rules: { type: object, additionalProperties: true }
+        subscription_plan: { type: object, additionalProperties: true }
+        updated_at: { type: string, format: date-time, nullable: true }
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        actor_id: { type: string, format: uuid, nullable: true }
+        action: { type: string }
+        subject_type: { type: string }
+        subject_id: { type: string }
+        metadata: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+    AnalyticsResult:
+      type: object
+      properties:
+        type: { type: string }
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              label: { type: string }
+              value: { type: number }
+        summary: { type: object, additionalProperties: true }
+    PropertyAnalytics:
+      type: object
+      properties:
+        property_id: { type: string, format: uuid }
+        occupancy_status: { type: string, enum: [vacant, occupied, reserved] }
+        open_repairs: { type: integer }
+        total_repairs: { type: integer }
+        invoiced_kobo: { type: integer }
+        collected_kobo: { type: integer }
+        outstanding_kobo: { type: integer }
+        open_transfer_requests: { type: integer }
+    PropertyTransferRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        estate_id: { type: string, format: uuid }
+        property_id: { type: string, format: uuid }
+        requested_by: { type: string, format: uuid }
+        to_user_id: { type: string, format: uuid }
+        transfer_type: { type: string, enum: [ownership, tenancy] }
+        reason: { type: string }
+        status: { type: string, enum: [pending, approved, rejected] }
+        reviewed_by: { type: string, format: uuid, nullable: true }
+        reviewed_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
 
     # ── AI notes (Block 39) ──
     AiNote:
       type: object
+      description: Snake_case keys match the API.
       properties:
         id: { type: string, format: uuid }
-        meetingId: { type: string, format: uuid, nullable: true }
-        meetingTitle: { type: string, nullable: true }
+        estate_id: { type: string, format: uuid }
+        meeting_id: { type: string, format: uuid, nullable: true }
         title: { type: string }
+        transcript: { type: string }
         summary: { type: string }
-        actionItems: { type: array, items: { type: string } }
-        source: { type: string, enum: [generated, manual] }
-        createdByName: { type: string, nullable: true }
-        createdAt: { type: string, format: date-time }
+        action_items: { type: array, items: { type: object, additionalProperties: true } }
+        decisions: { type: array, items: { type: string } }
+        status: { type: string, enum: [processing, complete, failed] }
+        model: { type: string }
+        created_by: { type: string, format: uuid }
+        approved_by: { type: string, format: uuid, nullable: true }
+        approved_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
 
     # ── Finance dashboard (Block 40) ──
     FinanceDashboard:
@@ -355,15 +480,23 @@ components:
     # ── Settings (Block 45) ──
     MemberSettings:
       type: object
+      description: Snake_case keys match the API. On PATCH, omit a field to leave it unchanged.
       properties:
-        pushEnabled: { type: boolean }
-        emailEnabled: { type: boolean }
-        notifyPayments: { type: boolean }
-        notifyMeetings: { type: boolean }
-        notifyElections: { type: boolean }
-        notifySecurity: { type: boolean }
-        notifyMaintenance: { type: boolean }
-        notifyAnnouncements: { type: boolean }
+        push_enabled: { type: boolean }
+        email_enabled: { type: boolean }
+        notify_payments: { type: boolean }
+        notify_meetings: { type: boolean }
+        notify_elections: { type: boolean }
+        notify_security: { type: boolean }
+        notify_maintenance: { type: boolean }
+        notify_announcements: { type: boolean }
+        privacy_show_unit: { type: boolean }
+        privacy_show_vehicle: { type: boolean }
+        privacy_show_profile: { type: boolean }
+        biometric_enabled: { type: boolean }
+        two_factor_enabled: { type: boolean }
+        default_visitor_hours: { type: integer }
+        default_code_type: { type: string }
         language: { type: string }
 
 security:
@@ -475,6 +608,121 @@ paths:
                     content: { type: string }
                     decisions: { type: array, items: { type: string } }
                     createdAt: { type: string, format: date-time }
+    post:
+      operationId: uploadMeetingMinutes
+      summary: Create/replace a meeting's minutes (estate admin only)
+      tags: [Meetings]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content: { type: string }
+                decisions: { type: array, items: { type: object } }
+                action_items: { type: array, items: { type: object } }
+      responses:
+        '200': { description: Minutes saved }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /estate/meetings/{id}/minutes/approve:
+    post:
+      operationId: approveMeetingMinutes
+      summary: Approve a meeting's minutes (estate admin only)
+      tags: [Meetings]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Approved }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /estate/meetings/{id}/checkin:
+    post:
+      operationId: checkInMeeting
+      summary: Record the caller's attendance (QR or manual)
+      tags: [Meetings]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, properties: { method: { type: string, enum: [qr, manual] } } }
+      responses:
+        '200': { description: Checked in }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /estate/meetings/{id}/start:
+    post:
+      operationId: startMeeting
+      summary: Move a scheduled meeting to live (estate admin only)
+      tags: [Meetings]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Live }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /estate/meetings/{id}/end:
+    post:
+      operationId: endMeeting
+      summary: Move a live meeting to ended (estate admin only)
+      tags: [Meetings]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Ended }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /estate/meetings/{id}/cancel:
+    post:
+      operationId: cancelMeeting
+      summary: Cancel a scheduled/live meeting (estate admin only)
+      tags: [Meetings]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Cancelled }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /estate/meetings/{id}/reschedule:
+    post:
+      operationId: rescheduleMeeting
+      summary: Change a meeting's time (estate admin only)
+      tags: [Meetings]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [starts_at]
+              properties:
+                starts_at: { type: string, format: date-time }
+                ends_at: { type: string, format: date-time }
+      responses:
+        '200': { description: Rescheduled, content: { application/json: { schema: { $ref: '#/components/schemas/Meeting' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /estate/meetings/{id}/documents:
+    get:
+      operationId: listMeetingDocuments
+      summary: A meeting's documents
+      tags: [Meetings]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Documents }
+    post:
+      operationId: addMeetingDocument
+      summary: Attach a document to a meeting (estate admin only)
+      tags: [Meetings]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, file_url]
+              properties:
+                name: { type: string }
+                file_url: { type: string, format: uri }
+                object_key: { type: string }
+                size_bytes: { type: integer }
+      responses:
+        '201': { description: Added }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   # ── Tasks (Block 31) ──
   /estate/tasks:
@@ -732,10 +980,119 @@ paths:
                 title: { type: string }
                 category: { type: string }
                 fileUrl: { type: string, format: uri }
+                objectKey: { type: string, description: Server-chosen R2 key returned by POST /estate/uploads/presign. Stored so the document can be served via a presigned GET. }
                 restricted: { type: boolean }
       responses:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Document' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /estate/documents/{id}/download-url:
+    get:
+      operationId: getDocumentDownloadUrl
+      summary: Mint a short-lived (60-min) presigned GET URL for a document
+      description: >
+        Returns a presigned Cloudflare R2 GET URL valid for 60 minutes. The caller
+        must be an estate member; restricted documents are admin-only. Legacy
+        documents without a server-controlled object key return their stored URL
+        unchanged (expiresIn=0, legacy=true). Returns 503 when R2 is not configured.
+      tags: [Documents]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200':
+          description: Presigned download URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DownloadUrl' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { description: Object storage (R2) is not configured }
+
+  # ── Uploads (Blocks 25/28/35/39) ──
+  /estate/uploads/presign:
+    post:
+      operationId: presignUpload
+      summary: Mint a short-lived presigned R2 PUT URL for a media upload
+      description: >
+        Returns a presigned Cloudflare R2 PUT URL (valid 10 minutes) plus a
+        server-controlled object key. The caller must be a member of the estate.
+        The binary is PUT directly to R2 by the client; the API never receives it.
+        The Content-Type is bound into the signature, and content type/extension
+        are allowlisted (png, jpeg, webp, pdf). Returns 503 when R2 is not configured.
+      tags: [Uploads]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, fileName, contentType]
+              properties:
+                kind:
+                  type: string
+                  enum: [profile_photo, vehicle_doc, incident_evidence, repair_evidence, document]
+                  description: Upload category — determines the object-key prefix.
+                fileName: { type: string, description: Used only for its extension. }
+                contentType:
+                  type: string
+                  enum: [image/png, image/jpeg, image/webp, application/pdf]
+      responses:
+        '200':
+          description: Presigned upload URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PresignUpload' }
+        '400': { description: Unsupported kind, content type, or extension }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { description: Object storage (R2) is not configured }
+
+  # ── Elections eligibility (Block 31) ──
+  /estate/elections/{id}/eligibility:
+    get:
+      operationId: getVoterEligibility
+      summary: Whether the caller may vote in this election
+      description: >
+        Evaluates the caller against the election's eligibility rules (KYC,
+        cleared dues, resident type). Returns the decision and machine-readable
+        block reasons so the client can explain ineligibility up front.
+      tags: [Elections]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200':
+          description: Eligibility decision
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Eligibility' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: setEligibilityRules
+      summary: Configure an election's voter eligibility rules (estate admin only)
+      tags: [Elections]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EligibilityRules' }
+      responses:
+        '200':
+          description: Rules saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/EligibilityRules' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ── Vendors (Block 37) ──
   /estate/vendors:
@@ -767,14 +1124,356 @@ paths:
         '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/VendorJob' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  # ── Properties (Block 38) ──
+  # ── Admin panel & configuration (Block 41) ──
+  /estate/admin/dashboard:
+    get:
+      operationId: getAdminDashboard
+      summary: Operator KPIs (estate admin only)
+      tags: [Admin]
+      responses:
+        '200': { description: Dashboard, content: { application/json: { schema: { $ref: '#/components/schemas/AdminDashboard' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /estate/admin/residents:
+    get:
+      operationId: adminListResidents
+      summary: List residents (optional ?role=)
+      tags: [Admin]
+      responses:
+        '200': { description: Residents, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/AdminResident' } } } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /estate/admin/residents/{id}/ban:
+    post:
+      operationId: banResident
+      summary: Ban a resident (estate admin only)
+      tags: [Admin]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody: { required: false, content: { application/json: { schema: { type: object, properties: { reason: { type: string } } } } } }
+      responses: { '200': { description: Banned }, '400': { $ref: '#/components/responses/BadRequest' } }
+  /estate/admin/residents/{id}/restore:
+    post:
+      operationId: restoreResident
+      summary: Lift a resident's ban (estate admin only)
+      tags: [Admin]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses: { '200': { description: Restored }, '400': { $ref: '#/components/responses/BadRequest' } }
+  /estate/admin/config:
+    get:
+      operationId: getEstateConfig
+      summary: Estate rules + subscription plan (estate admin only)
+      tags: [Admin]
+      responses:
+        '200': { description: Config, content: { application/json: { schema: { $ref: '#/components/schemas/EstateConfig' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /estate/admin/rules:
+    put:
+      operationId: setEstateRules
+      summary: Replace the estate rules JSON (estate admin only)
+      tags: [Admin]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses:
+        '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/EstateConfig' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /estate/admin/subscription-plan:
+    put:
+      operationId: configureSubscriptionPlan
+      summary: Replace the subscription-plan JSON (estate admin only)
+      tags: [Admin]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses:
+        '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/EstateConfig' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /estate/admin/audit-log:
+    get:
+      operationId: getAuditLog
+      summary: Recent immutable audit entries (estate admin only)
+      tags: [Admin]
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, required: false, schema: { type: integer, default: 0 } }
+      responses:
+        '200': { description: Audit entries, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } } } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /estate/admin/run-maintenance:
+    post:
+      operationId: runEstateMaintenance
+      summary: Run maintenance jobs for this estate (estate admin only)
+      description: Marks overdue invoices, auto-applies soft restrictions for defaulters, and expires stale visitor codes. Idempotent. Returns per-job counts.
+      tags: [Admin]
+      responses:
+        '200':
+          description: Per-job counts
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: object, additionalProperties: { type: integer } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── Vendor / contractor app (Block 42) ──
+  /estate/vendor/onboard:
+    post:
+      operationId: onboardVendor
+      summary: Register the caller as a vendor (status pending)
+      tags: [Vendors]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [business_name]
+              properties:
+                business_name: { type: string }
+                category: { type: string }
+                phone: { type: string }
+                specialties: { type: array, items: { type: string } }
+                bank_account: { type: object, additionalProperties: true }
+      responses:
+        '201': { description: Onboarded, content: { application/json: { schema: { $ref: '#/components/schemas/Vendor' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /estate/vendor/profile:
+    get:
+      operationId: getVendorProfile
+      summary: The caller's vendor profile
+      tags: [Vendors]
+      responses:
+        '200': { description: Vendor, content: { application/json: { schema: { $ref: '#/components/schemas/Vendor' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /estate/vendor/earnings:
+    get:
+      operationId: getVendorEarnings
+      summary: The caller's vendor earnings summary
+      tags: [Vendors]
+      responses:
+        '200': { description: Earnings, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /estate/vendor/jobs:
+    get:
+      operationId: listMyVendorJobs
+      summary: Jobs assigned to the caller's vendor (optional ?status=)
+      tags: [Vendors]
+      responses:
+        '200': { description: Jobs, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/VendorJob' } } } } } } }
+  /estate/vendor/assign-job:
+    post:
+      operationId: assignVendorJob
+      summary: Assign a job to a vendor (estate admin only)
+      tags: [Vendors]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vendor_id]
+              properties:
+                vendor_id: { type: string, format: uuid }
+                repair_request_id: { type: string, format: uuid }
+                title: { type: string }
+                amount_kobo: { type: integer }
+      responses:
+        '201': { description: Assigned, content: { application/json: { schema: { $ref: '#/components/schemas/VendorJob' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /estate/vendor/jobs/{id}/accept:
+    post: { operationId: acceptVendorJob, summary: Accept an assigned job, tags: [Vendors], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/VendorJob' } } } }, '400': { $ref: '#/components/responses/BadRequest' } } }
+  /estate/vendor/jobs/{id}/reject:
+    post: { operationId: rejectVendorJob, summary: Reject an assigned job, tags: [Vendors], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { '200': { description: Updated }, '400': { $ref: '#/components/responses/BadRequest' } } }
+  /estate/vendor/jobs/{id}/checkin:
+    post: { operationId: vendorJobCheckin, summary: Check in at the gate (en route), tags: [Vendors], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { '200': { description: Updated }, '400': { $ref: '#/components/responses/BadRequest' } } }
+  /estate/vendor/jobs/{id}/start:
+    post: { operationId: startVendorJob, summary: Start work (in progress), tags: [Vendors], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { '200': { description: Updated }, '400': { $ref: '#/components/responses/BadRequest' } } }
+  /estate/vendor/jobs/{id}/complete:
+    post: { operationId: completeVendorJob, summary: Mark the job complete, tags: [Vendors], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { '200': { description: Updated }, '400': { $ref: '#/components/responses/BadRequest' } } }
+  /estate/vendor/jobs/{id}/quote:
+    post:
+      operationId: submitVendorQuote
+      summary: Submit a quote/agreed amount for the job
+      tags: [Vendors]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [amount_kobo], properties: { amount_kobo: { type: integer } } } } } }
+      responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/VendorJob' } } } } }
+  /estate/vendor/jobs/{id}/invoice:
+    post:
+      operationId: submitVendorInvoice
+      summary: Attach an invoice URL
+      tags: [Vendors]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [url], properties: { url: { type: string, format: uri } } } } } }
+      responses: { '200': { description: Updated } }
+  /estate/vendor/jobs/{id}/evidence:
+    post:
+      operationId: submitVendorEvidence
+      summary: Attach completion-evidence URL
+      tags: [Vendors]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [url], properties: { url: { type: string, format: uri } } } } } }
+      responses: { '200': { description: Updated } }
+  /estate/vendor/jobs/{id}/payout:
+    post:
+      operationId: requestVendorPayout
+      summary: Pay a completed job to the vendor's wallet (idempotent)
+      description: Requires an Idempotency-Key header. Posts a balanced ledger entry (debit estate settlement → credit vendor wallet) and marks the job paid.
+      tags: [Vendors]
+      parameters:
+        - { $ref: '#/components/parameters/PathId' }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Paid, content: { application/json: { schema: { $ref: '#/components/schemas/VendorJob' } } } }
+        '400': { description: Missing key or job not payable }
+        '503': { description: Ledger not configured }
+
+  # ── Properties (Block 29/38) ──
   /estate/properties:
     get:
       operationId: listProperties
-      summary: Property directory + occupancy summary
+      summary: Property directory + occupancy summary (excludes archived)
       tags: [Properties]
       responses:
         '200': { description: Properties, content: { application/json: { schema: { $ref: '#/components/schemas/PropertiesResponse' } } } }
+
+  /estate/properties/{id}:
+    get:
+      operationId: getProperty
+      summary: Property detail
+      tags: [Properties]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Property, content: { application/json: { schema: { $ref: '#/components/schemas/Property' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateProperty
+      summary: Update property details (estate admin only)
+      tags: [Properties]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                unit_label: { type: string }
+                property_type: { type: string, enum: [apartment, house, commercial, land, other] }
+                floor: { type: string }
+                block: { type: string }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Property' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /estate/properties/{id}/landlord:
+    post:
+      operationId: assignLandlord
+      summary: Assign a property's landlord (estate admin only)
+      tags: [Properties]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [user_id], properties: { user_id: { type: string, format: uuid } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Property' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /estate/properties/{id}/tenant:
+    post:
+      operationId: assignTenant
+      summary: Assign a property's tenant and mark it occupied (estate admin only)
+      tags: [Properties]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [user_id], properties: { user_id: { type: string, format: uuid } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Property' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /estate/properties/{id}/occupancy:
+    post:
+      operationId: setOccupancyStatus
+      summary: Set a property's occupancy status (estate admin only)
+      tags: [Properties]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [status], properties: { status: { type: string, enum: [vacant, occupied, reserved] } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Property' } } } }
+        '400': { description: Invalid status }
+
+  /estate/properties/{id}/archive:
+    post:
+      operationId: archiveProperty
+      summary: Soft-retire a property (estate admin only)
+      tags: [Properties]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Archived }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /estate/properties/{id}/transfer-request:
+    post:
+      operationId: requestPropertyTransfer
+      summary: File a property transfer (ownership/tenancy) request
+      tags: [Properties]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to_user_id, transfer_type]
+              properties:
+                to_user_id: { type: string, format: uuid }
+                transfer_type: { type: string, enum: [ownership, tenancy] }
+                reason: { type: string }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/PropertyTransferRequest' } } } }
+        '400': { description: Invalid request }
+
+  /estate/properties/{id}/analytics:
+    get:
+      operationId: getPropertyAnalytics
+      summary: Per-property analytics (estate admin only)
+      tags: [Properties]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Analytics, content: { application/json: { schema: { $ref: '#/components/schemas/PropertyAnalytics' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /estate/property-transfers:
+    get:
+      operationId: listPropertyTransfers
+      summary: List property transfer requests (estate admin only)
+      tags: [Properties]
+      responses:
+        '200':
+          description: Transfer requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/PropertyTransferRequest' } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /estate/property-transfers/{id}/review:
+    post:
+      operationId: reviewPropertyTransfer
+      summary: Approve/reject a property transfer (estate admin only)
+      tags: [Properties]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [decision], properties: { decision: { type: string, enum: [approved, rejected] } } }
+      responses:
+        '200': { description: Reviewed, content: { application/json: { schema: { $ref: '#/components/schemas/PropertyTransferRequest' } } } }
+        '400': { description: Invalid decision or already reviewed }
 
   # ── AI notes (Block 39) ──
   /estate/ai-notes:
@@ -786,19 +1485,71 @@ paths:
         '200': { description: Notes, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AiNote' } } } } }
   /estate/ai-notes/generate:
     post:
-      operationId: generateAiNote
-      summary: Generate an extractive summary from a meeting's minutes (admin only)
+      operationId: generateAiNoteFromMeeting
+      summary: Generate an AI meeting-note summary from a meeting's recorded minutes (admin only)
+      description: >
+        Concatenates all recorded minutes for the given meeting and produces a structured
+        summary plus action items via the deterministic extractive summariser, persisting
+        the result as a 'generated' note. Admin-only; 409 when no minutes exist yet.
       tags: [AINotes]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { type: object, required: [meetingId], properties: { meetingId: { type: string, format: uuid } } }
+            schema:
+              type: object
+              required: [meetingId]
+              properties:
+                meetingId: { type: string, format: uuid }
       responses:
         '201': { description: Generated, content: { application/json: { schema: { $ref: '#/components/schemas/AiNote' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: No minutes recorded for this meeting }
+        '409': { description: No minutes have been recorded for the meeting yet }
+  /estate/meetings/{id}/ai-notes:
+    post:
+      operationId: generateAiNote
+      summary: Generate structured minutes from a transcript via claude-sonnet-4-6 (admin only)
+      description: >
+        Creates a processing session, sends the transcript to the model, and stores
+        the returned summary, action items and decisions. Fails closed (503) when the
+        LLM is not configured; the session is marked 'failed' on any model error.
+      tags: [AINotes]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transcript]
+              properties:
+                title: { type: string }
+                transcript: { type: string, minLength: 20 }
+      responses:
+        '201': { description: Generated, content: { application/json: { schema: { $ref: '#/components/schemas/AiNote' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { description: AI note-taking is not configured }
+  /estate/ai-notes/{id}:
+    get:
+      operationId: getAiNote
+      summary: One AI-note session
+      tags: [AINotes]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Note, content: { application/json: { schema: { $ref: '#/components/schemas/AiNote' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /estate/ai-notes/{id}/approve:
+    post:
+      operationId: approveAiNote
+      summary: Approve a completed AI-note session (admin only)
+      tags: [AINotes]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Approved }
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   # ── Finance dashboard (Block 40) ──
   /estate/finance:
@@ -855,6 +1606,29 @@ paths:
         '200': { description: Reports, content: { application/json: { schema: { $ref: '#/components/schemas/ReportsResponse' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /estate/analytics/{type}:
+    get:
+      operationId: getAnalytics
+      summary: Date-filtered, chart-ready analytics (estate admin only)
+      description: >
+        Returns a chart-ready series plus summary stats for the given analytics
+        type. Window defaults to the last 30 days; override with from/to
+        (YYYY-MM-DD, `to` inclusive).
+      tags: [Reports]
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [visitors, gate, payments, repairs, facilities, meetings, elections, security, vendors]
+        - { name: from, in: query, required: false, schema: { type: string, format: date } }
+        - { name: to, in: query, required: false, schema: { type: string, format: date } }
+      responses:
+        '200': { description: Analytics, content: { application/json: { schema: { $ref: '#/components/schemas/AnalyticsResult' } } } }
+        '400': { description: Unknown analytics type }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   # ── Member settings (Block 45) ──
   /estate/settings:
     get:
@@ -874,3 +1648,17 @@ paths:
             schema: { $ref: '#/components/schemas/MemberSettings' }
       responses:
         '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/MemberSettings' } } } }
+
+  /estate/account:
+    delete:
+      operationId: deleteEstateAccount
+      summary: Soft-delete the caller's account — anonymises PII, keeps membership history
+      description: >
+        Scrubs the caller's personal data (profile bio/photo/contacts, household
+        members, domestic staff, vehicles), sets profile visibility to admin_only,
+        and marks the membership deleted. Auth credentials are managed by Supabase
+        Auth and are not affected here. Audited.
+      tags: [EstateSettings]
+      responses:
+        '200': { description: Account soft-deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }

@@ -122,7 +122,139 @@ func (c *Client) InitiatePayout(ctx context.Context, req provider.PayoutRequest)
 		TransferCode: resp.Data.TransferCode,
 		Status:       resp.Data.Status,
 		Reference:    resp.Data.Reference,
+		ProviderRef:  resp.Data.TransferCode, // Paystack routes webhooks by transfer_code
 	}, nil
+}
+
+// --- DisbursementProvider ---
+
+// ListBanks fetches Paystack's supported NGN banks (GET /bank).
+func (c *Client) ListBanks(ctx context.Context) ([]provider.Bank, error) {
+	var resp struct {
+		Status bool `json:"status"`
+		Data   []struct {
+			Code string `json:"code"`
+			Name string `json:"name"`
+			Slug string `json:"slug"`
+		} `json:"data"`
+		Message string `json:"message"`
+	}
+	if err := c.get(ctx, "/bank?currency=NGN", &resp); err != nil {
+		return nil, err
+	}
+	if !resp.Status {
+		return nil, fmt.Errorf("paystack: list banks: %s", resp.Message)
+	}
+	banks := make([]provider.Bank, 0, len(resp.Data))
+	for _, b := range resp.Data {
+		banks = append(banks, provider.Bank{Code: b.Code, Name: b.Name, Slug: b.Slug})
+	}
+	return banks, nil
+}
+
+// ResolveAccount performs a NUBAN name enquiry (GET /bank/resolve).
+func (c *Client) ResolveAccount(ctx context.Context, bankCode, accountNumber string) (*provider.AccountResolution, error) {
+	var resp struct {
+		Status bool `json:"status"`
+		Data   struct {
+			AccountNumber string `json:"account_number"`
+			AccountName   string `json:"account_name"`
+		} `json:"data"`
+		Message string `json:"message"`
+	}
+	path := fmt.Sprintf("/bank/resolve?account_number=%s&bank_code=%s", accountNumber, bankCode)
+	if err := c.get(ctx, path, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.Status {
+		return nil, fmt.Errorf("paystack: resolve account: %s", resp.Message)
+	}
+	return &provider.AccountResolution{
+		AccountName:   resp.Data.AccountName,
+		AccountNumber: resp.Data.AccountNumber,
+		BankCode:      bankCode,
+	}, nil
+}
+
+// CreateTransferRecipient registers a payout recipient (POST /transferrecipient).
+func (c *Client) CreateTransferRecipient(ctx context.Context, req provider.RecipientRequest) (*provider.Recipient, error) {
+	currency := req.Currency
+	if currency == "" {
+		currency = "NGN"
+	}
+	body := map[string]any{
+		"type":           "nuban",
+		"name":           req.AccountName,
+		"account_number": req.AccountNumber,
+		"bank_code":      req.BankCode,
+		"currency":       currency,
+	}
+	var resp struct {
+		Status bool `json:"status"`
+		Data   struct {
+			RecipientCode string `json:"recipient_code"`
+		} `json:"data"`
+		Message string `json:"message"`
+	}
+	if err := c.post(ctx, "/transferrecipient", body, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.Status {
+		return nil, fmt.Errorf("paystack: create recipient: %s", resp.Message)
+	}
+	return &provider.Recipient{Code: resp.Data.RecipientCode}, nil
+}
+
+// GetTransferStatus polls a transfer by its code (GET /transfer/:id).
+func (c *Client) GetTransferStatus(ctx context.Context, providerRef string) (*provider.PayoutStatus, error) {
+	var resp struct {
+		Status bool `json:"status"`
+		Data   struct {
+			Status string `json:"status"`
+		} `json:"data"`
+		Message string `json:"message"`
+	}
+	if err := c.get(ctx, "/transfer/"+providerRef, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.Status {
+		return nil, fmt.Errorf("paystack: get transfer status: %s", resp.Message)
+	}
+	return &provider.PayoutStatus{Status: resp.Data.Status}, nil
+}
+
+// ParseWebhook normalizes a Paystack transfer/charge webhook envelope.
+func (c *Client) ParseWebhook(payload []byte) (*provider.WebhookEvent, error) {
+	var env struct {
+		Event string `json:"event"`
+		Data  struct {
+			Reference    string `json:"reference"`
+			TransferCode string `json:"transfer_code"`
+			Amount       int64  `json:"amount"`
+			Status       string `json:"status"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(payload, &env); err != nil {
+		return nil, fmt.Errorf("paystack: parse webhook: %w", err)
+	}
+	ev := &provider.WebhookEvent{
+		ProviderRef: env.Data.TransferCode,
+		Reference:   env.Data.Reference,
+		AmountKobo:  env.Data.Amount,
+	}
+	switch env.Event {
+	case "transfer.success":
+		ev.Type, ev.Status = "transfer", "successful"
+	case "transfer.failed":
+		ev.Type, ev.Status = "transfer", "failed"
+	case "transfer.reversed":
+		ev.Type, ev.Status = "transfer", "reversed"
+	case "charge.success":
+		ev.Type, ev.Status = "collection", "successful"
+	default:
+		ev.Type, ev.Status = "", "pending"
+	}
+	return ev, nil
 }
 
 // VerifyWebhookSignature validates HMAC-SHA512 signatures from Paystack.
@@ -167,6 +299,7 @@ func (c *Client) ProvisionVirtualAccount(ctx context.Context, req provider.Provi
 		AccountNumber: resp.Data.AccountNumber,
 		AccountName:   resp.Data.AccountName,
 		BankName:      resp.Data.Bank.Name,
+		BankCode:      resp.Data.Bank.Slug, // Paystack returns a bank slug, not a numeric code
 	}, nil
 }
 

@@ -44,6 +44,14 @@ function getR2Config(): R2Config {
       region: 'auto',
       endpoint,
       credentials: { accessKeyId, secretAccessKey },
+      // Cloudflare R2 does not support the default request checksums that
+      // @aws-sdk/client-s3 >= ~3.729 adds to PutObject (x-amz-checksum-crc32).
+      // With presigned PUTs consumed by a raw fetch, that default makes the
+      // signed request fail against R2 (signature/`not implemented` errors, seen
+      // as a 500 on our upload route). Only compute checksums when the operation
+      // actually requires them so presigned PUT/GET stay R2-compatible.
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
     }),
   };
 }

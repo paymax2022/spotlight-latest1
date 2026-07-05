@@ -1,7 +1,15 @@
 import React from 'react';
-import { StyleSheet, View, ViewStyle } from 'react-native';
-import MapLibreGL from '@maplibre/maplibre-react-native';
+import { NativeModules, StyleSheet, View, ViewStyle } from 'react-native';
 import MapView from './MapView';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let MapLibreGL: any = null;
+if (!!NativeModules.MLRNModule) {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    MapLibreGL = require('@maplibre/maplibre-react-native').default;
+  } catch { /* native binary absent */ }
+}
 import { useTripTracking } from '../hooks/useTripTracking';
 
 export interface LiveTripMapProps {
@@ -55,7 +63,7 @@ export default function LiveTripMap({ tripId, style }: LiveTripMapProps) {
 
   return (
     <MapView surface="default" center={center} zoom={15} style={style}>
-      {coords.length >= 2 && (
+      {coords.length >= 2 && MapLibreGL && (
         <MapLibreGL.ShapeSource
           id="trip-track"
           shape={{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } }}
@@ -66,7 +74,7 @@ export default function LiveTripMap({ tripId, style }: LiveTripMapProps) {
           />
         </MapLibreGL.ShapeSource>
       )}
-      {last && (
+      {last && MapLibreGL && (
         <MapLibreGL.PointAnnotation id="trip-pos" coordinate={last}>
           <View style={[styles.dot, { backgroundColor: connected ? '#16a34a' : '#9ca3af' }]} />
         </MapLibreGL.PointAnnotation>

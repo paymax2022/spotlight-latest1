@@ -64,6 +64,63 @@ func (p *PgRepository) ForUser(userID string) *PgRepository {
 // Compile-time assertion that PgRepository satisfies the Repository interface.
 var _ Repository = (*PgRepository)(nil)
 
+// ── Eligibility ───────────────────────────────────────────────────────────────
+
+// Eligibility returns the user's compliance facts for the trading gate.
+// KYC tier + crypto flag come from the users row; suitability and agreement
+// acceptance come from the eligibility tables added in 000004_eligibility.up.sql.
+// Missing rows yield zero-value (false) facts — the gate fails closed.
+func (p *PgRepository) Eligibility() domain.EligibilityFacts {
+	ctx := context.Background()
+	var f domain.EligibilityFacts
+
+	// users: tier + per-user crypto product flag + active status.
+	var status string
+	err := p.db.QueryRow(ctx,
+		`SELECT kyc_tier, crypto_enabled, COALESCE(status,'active') FROM users WHERE id=$1`,
+		p.userID,
+	).Scan(&f.KycTier, &f.CryptoEnabled, &status)
+	if err != nil {
+		return domain.EligibilityFacts{} // unknown user → blocked
+	}
+	f.UserActive = status == "active"
+
+	// suitability: a non-expired profile whose eligible_products include 'crypto'.
+	var expiresAt *time.Time
+	var includesCrypto bool
+	serr := p.db.QueryRow(ctx,
+		`SELECT (eligible_products ? 'crypto'), expires_at
+		   FROM suitability_profiles
+		  WHERE user_id=$1
+		  ORDER BY created_at DESC
+		  LIMIT 1`,
+		p.userID,
+	).Scan(&includesCrypto, &expiresAt)
+	if serr == nil {
+		f.SuitabilityComplete = includesCrypto
+		f.SuitabilityExpired = expiresAt != nil && !time.Now().Before(*expiresAt)
+	}
+
+	// agreements: every currently-required agreement has an acceptance for this user.
+	var required, accepted int
+	aerr := p.db.QueryRow(ctx, `
+		WITH req AS (
+		  SELECT code, version FROM required_agreements WHERE active=TRUE
+		)
+		SELECT
+		  (SELECT count(*) FROM req),
+		  (SELECT count(*) FROM req r
+		     WHERE EXISTS (
+		       SELECT 1 FROM agreement_acceptances aa
+		        WHERE aa.user_id=$1 AND aa.code=r.code AND aa.version=r.version))`,
+		p.userID,
+	).Scan(&required, &accepted)
+	if aerr == nil {
+		f.AgreementsAccepted = required > 0 && accepted == required
+	}
+	return f
+}
+
 // ── Market data ───────────────────────────────────────────────────────────────
 
 // Assets returns the full admin-whitelisted asset catalogue (global, not per-user).
@@ -1093,4 +1150,183 @@ func (p *PgRepository) insertStatusEvents(ctx context.Context, tx pgx.Tx, txID s
 			txID, s, t,
 		)
 	}
+}
+
+// insertMovementTx writes a deposit/withdraw transaction row with an explicit
+// status (deposits/withdrawals don't fit the 'Filled'-only insertCryptoTx path).
+func (p *PgRepository) insertMovementTx(
+	ctx context.Context, tx pgx.Tx,
+	txID, ref, side, assetID, symbol, name, iconColor, status string,
+	fiatValue, cryptoAmount, allInRate int64,
+	provRef, now string,
+) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO crypto_transactions
+		  (id, user_id, reference, side, asset_id, symbol, asset_name, icon_color,
+		   status, fiat_amount, fiat_currency, crypto_amount,
+		   all_in_rate_amount, total_fiat_amount,
+		   provider, provider_reference, liquidity_provider, custody_provider, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'NGN',$11,$12,$13,
+		        'paymax-custody',$14,'paymax-liquidity','paymax-custody',$15)`,
+		txID, p.userID, ref, side, assetID, symbol, name, iconColor,
+		status, fiatValue, cryptoAmount, allInRate, fiatValue, provRef, now,
+	)
+	return err
+}
+
+// ── On-chain movements + status mutation (Repository additions) ───────────────
+
+// UpdateTransactionStatus advances a transaction's status (e.g. from a webhook).
+func (p *PgRepository) UpdateTransactionStatus(reference, status string) bool {
+	ctx := context.Background()
+	tx, err := p.db.Begin(ctx)
+	if err != nil {
+		return false
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	var id string
+	if err := tx.QueryRow(ctx,
+		`UPDATE crypto_transactions SET status=$1 WHERE reference=$2 AND user_id=$3 RETURNING id`,
+		status, reference, p.userID,
+	).Scan(&id); err != nil {
+		return false
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO crypto_transaction_status_events (transaction_id, status, at) VALUES ($1,$2,now())`,
+		id, status,
+	); err != nil {
+		return false
+	}
+	return tx.Commit(ctx) == nil
+}
+
+// RecordWithdrawal debits the holding and persists a pending-review withdrawal.
+func (p *PgRepository) RecordWithdrawal(symbol, networkName, address string, cryptoAmount, networkFee, fiatValue int64) (domain.WithdrawalResult, *ExecError) {
+	ctx := context.Background()
+	tx, err := p.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return domain.WithdrawalResult{}, &ExecError{Type: "internal", Message: "Failed to start transaction."}
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var assetID, name, iconColor string
+	var priceAmt int64
+	if err := tx.QueryRow(ctx, `SELECT id, name, icon_color, price_amount FROM assets WHERE UPPER(symbol)=UPPER($1)`, symbol).
+		Scan(&assetID, &name, &iconColor, &priceAmt); err != nil {
+		return domain.WithdrawalResult{}, &ExecError{Type: "asset_unavailable", Message: "Asset not found."}
+	}
+	qty, cost, ok := p.positionTx(ctx, tx, assetID)
+	if !ok || qty < cryptoAmount {
+		return domain.WithdrawalResult{}, &ExecError{Type: "insufficient_balance", Message: "You don't hold enough to withdraw."}
+	}
+	var movedCost int64
+	if qty > 0 {
+		movedCost = int64(math.Round(float64(cost) * float64(cryptoAmount) / float64(qty)))
+	}
+	if err := p.updatePositionSell(ctx, tx, assetID, cryptoAmount, movedCost); err != nil {
+		return domain.WithdrawalResult{}, &ExecError{Type: "internal", Message: "Failed to update position."}
+	}
+
+	txID := engine.NewID("cx")
+	ref := engine.NewRef("PMX-WD")
+	provRef := engine.NewRef("CU") + "-WD"
+	now := engine.Now()
+	if err := p.insertMovementTx(ctx, tx, txID, ref, "withdraw", assetID, symbol, name, iconColor, "WithdrawalPendingReview", fiatValue, cryptoAmount, priceAmt, provRef, now); err != nil {
+		return domain.WithdrawalResult{}, &ExecError{Type: "internal", Message: "Failed to record withdrawal."}
+	}
+	if err := p.insertLedger(ctx, tx, txID, "user_crypto:"+symbol, "external:"+address, fiatValue, "NGN", "withdraw", ref, provRef); err != nil {
+		return domain.WithdrawalResult{}, &ExecError{Type: "internal", Message: "Failed to write ledger."}
+	}
+	p.insertStatusEvents(ctx, tx, txID, []string{"WithdrawalPendingReview"}, now)
+	if err := tx.Commit(ctx); err != nil {
+		return domain.WithdrawalResult{}, &ExecError{Type: "internal", Message: "Failed to commit."}
+	}
+
+	return domain.WithdrawalResult{
+		ID: engine.NewID("wd"), Reference: ref, Symbol: symbol, Status: "WithdrawalPendingReview",
+		Amount: domain.CryptoAmount{Amount: cryptoAmount, Symbol: symbol}, NetworkFee: domain.CryptoAmount{Amount: networkFee, Symbol: symbol},
+		Address: address, NetworkName: networkName, ProviderReference: provRef, EstimatedReviewMin: 30, CreatedAt: now,
+	}, nil
+}
+
+// CreditDeposit credits the holding and persists a confirmed deposit.
+func (p *PgRepository) CreditDeposit(symbol string, cryptoAmount, fiatValue int64, providerRef string) (domain.TxDetail, *ExecError) {
+	ctx := context.Background()
+	tx, err := p.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return domain.TxDetail{}, &ExecError{Type: "internal", Message: "Failed to start transaction."}
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var assetID, name, iconColor string
+	var priceAmt int64
+	if err := tx.QueryRow(ctx, `SELECT id, name, icon_color, price_amount FROM assets WHERE UPPER(symbol)=UPPER($1)`, symbol).
+		Scan(&assetID, &name, &iconColor, &priceAmt); err != nil {
+		return domain.TxDetail{}, &ExecError{Type: "asset_unavailable", Message: "Asset not found."}
+	}
+	if err := p.upsertPositionBuy(ctx, tx, assetID, cryptoAmount, fiatValue); err != nil {
+		return domain.TxDetail{}, &ExecError{Type: "internal", Message: "Failed to update position."}
+	}
+	if providerRef == "" {
+		providerRef = engine.NewRef("CU") + "-DP"
+	}
+	txID := engine.NewID("cx")
+	ref := engine.NewRef("PMX-DP")
+	now := engine.Now()
+	if err := p.insertMovementTx(ctx, tx, txID, ref, "deposit", assetID, symbol, name, iconColor, "DepositConfirmed", fiatValue, cryptoAmount, priceAmt, providerRef, now); err != nil {
+		return domain.TxDetail{}, &ExecError{Type: "internal", Message: "Failed to record deposit."}
+	}
+	if err := p.insertLedger(ctx, tx, txID, "external", "user_crypto:"+symbol, fiatValue, "NGN", "deposit", ref, providerRef); err != nil {
+		return domain.TxDetail{}, &ExecError{Type: "internal", Message: "Failed to write ledger."}
+	}
+	p.insertStatusEvents(ctx, tx, txID, []string{"DepositDetected", "DepositConfirmed"}, now)
+	if err := tx.Commit(ctx); err != nil {
+		return domain.TxDetail{}, &ExecError{Type: "internal", Message: "Failed to commit."}
+	}
+
+	return domain.TxDetail{
+		TxSummary: domain.TxSummary{
+			ID: txID, Reference: ref, Side: "deposit", Symbol: symbol, AssetName: name, IconColor: iconColor,
+			Status: "DepositConfirmed", Fiat: domain.Money{Amount: fiatValue, Currency: "NGN"},
+			Crypto: domain.CryptoAmount{Amount: cryptoAmount, Symbol: symbol}, CreatedAt: now,
+		},
+		AllInRate: domain.Money{Amount: priceAmt, Currency: "NGN"}, Fees: []domain.Fee{}, TotalFiat: domain.Money{Amount: fiatValue, Currency: "NGN"},
+		Provider: "paymax-custody", ProviderReference: providerRef, LiquidityProvider: "paymax-liquidity", CustodyProvider: "paymax-custody",
+		StatusHistory: []domain.StatusEvent{{Status: "DepositDetected", At: now}, {Status: "DepositConfirmed", At: now}},
+	}, nil
+}
+
+// ReverseWithdrawal re-credits a failed withdrawal's crypto and marks it failed.
+func (p *PgRepository) ReverseWithdrawal(reference string) bool {
+	ctx := context.Background()
+	tx, err := p.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return false
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var id, symbol, status, assetID string
+	var cryptoAmount, fiatValue int64
+	if err := tx.QueryRow(ctx,
+		`SELECT id, symbol, status, asset_id, crypto_amount, total_fiat_amount
+		 FROM crypto_transactions
+		 WHERE reference=$1 AND side='withdraw' AND user_id=$2 FOR UPDATE`,
+		reference, p.userID,
+	).Scan(&id, &symbol, &status, &assetID, &cryptoAmount, &fiatValue); err != nil {
+		return false
+	}
+	if status == "WithdrawalFailed" || status == "WithdrawalConfirmed" {
+		return false // terminal already
+	}
+	if err := p.upsertPositionBuy(ctx, tx, assetID, cryptoAmount, fiatValue); err != nil {
+		return false
+	}
+	if _, err := tx.Exec(ctx, `UPDATE crypto_transactions SET status='WithdrawalFailed' WHERE id=$1`, id); err != nil {
+		return false
+	}
+	if err := p.insertLedger(ctx, tx, id, "external:reversal", "user_crypto:"+symbol, fiatValue, "NGN", "reversal", reference, ""); err != nil {
+		return false
+	}
+	p.insertStatusEvents(ctx, tx, id, []string{"WithdrawalFailed"}, engine.Now())
+	return tx.Commit(ctx) == nil
 }

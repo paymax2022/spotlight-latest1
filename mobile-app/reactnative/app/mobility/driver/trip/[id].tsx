@@ -11,13 +11,14 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import MapPlaceholder from '@/features/mobility/components/MapPlaceholder';
+import MobilityMap from '@/features/mobility/components/MobilityMap';
 import TripRouteCard from '@/features/mobility/components/TripRouteCard';
 import TripPinInput from '@/features/mobility/components/TripPinInput';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import SafetyButton from '@/features/mobility/components/SafetyButton';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { useTrip, useDriverTrip } from '@/features/mobility/hooks/useMobility';
+import { useTripRealtime } from '@/features/mobility/hooks/useTripRealtime';
 import { driverSos } from '@/features/mobility/api/mobility.api';
 import { toMobilityError, formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import type { TripPhase } from '@/features/mobility/types/mobility.types';
@@ -36,6 +37,9 @@ export default function DriverTripScreen() {
   const [completedFare, setCompletedFare] = useState<number | null>(null);
 
   const t = trip.data;
+  // Live position over the trip WebSocket (the driver app feeds GPS upstream).
+  // Polling/local phase remains the fallback when realtime is unavailable.
+  const realtime = useTripRealtime(id, { phase });
 
   const onArrive = () => id && arrive.mutate(id, { onSuccess: () => setPhase('driver_arriving') });
   const onVerify = () => {
@@ -100,7 +104,15 @@ export default function DriverTripScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Active trip" showBack={false} />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-        <MapPlaceholder height={200} showRoute caption={phase === 'in_progress' ? 'Heading to destination' : 'Navigate to pickup'} />
+        <MobilityMap
+          height={200}
+          showRoute
+          pickup={t.pickup}
+          dropoff={t.dest}
+          driver={realtime.driver}
+          route={realtime.route}
+          caption={phase === 'in_progress' ? 'Heading to destination' : 'Navigate to pickup'}
+        />
 
         <StatusBadge phase={displayPhase} />
 

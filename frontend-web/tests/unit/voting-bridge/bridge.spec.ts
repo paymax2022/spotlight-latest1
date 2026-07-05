@@ -14,10 +14,22 @@ vi.mock('@/src/server/voting/paid-vote.service', () => ({
   verifyAndCreditPaidVote: vi.fn(),
 }));
 
-vi.mock('@/src/server/voting-bridge/idempotency', () => ({
-  checkAndClaimIdempotencyKey: vi.fn(),
-  storeIdempotencyResult: vi.fn(),
-}));
+vi.mock('@/src/server/voting-bridge/idempotency', () => {
+  const checkAndClaimIdempotencyKey = vi.fn();
+  return {
+    checkAndClaimIdempotencyKey,
+    storeIdempotencyResult: vi.fn(),
+    // Mirrors the real anchor: the bridge now routes idempotency through the
+    // shared core `resolveIdempotency(key, bridgeIdempotencyAnchor())`. The
+    // real anchor's `claim` delegates to checkAndClaimIdempotencyKey (cached
+    // value → 'cached', null → 'fresh'), so the mock does the same and the
+    // per-test checkAndClaimIdempotencyKey stubs keep their semantics.
+    bridgeIdempotencyAnchor: () => ({
+      lookupCached: async () => null,
+      claim: (key: string) => checkAndClaimIdempotencyKey(key),
+    }),
+  };
+});
 
 vi.mock('@/src/server/voting-bridge/kyc-gate', () => ({
   assertKycGate: vi.fn(),

@@ -15,6 +15,7 @@ import type {
   LatLng,
   OnboardingSubmitDraft,
   DocumentDraft,
+  DocType,
   VehicleDraft,
 } from '../types/mobility.types';
 
@@ -190,12 +191,22 @@ export function useDriverOnboarding() {
     mutationFn: (draft: DocumentDraft) => mob.uploadDriverDocument(draft),
     onSuccess: invalidate,
   });
+  // Real upload: pick → R2 presign → PUT → submit object key. Prefer this over
+  // uploadDoc (which takes an already-hosted fileUrl) from the onboarding screen.
+  const uploadDocFile = useMutation({
+    mutationFn: (input: {
+      docType: DocType;
+      file: { uri: string; name: string; mimeType: string };
+      expiryDate?: string;
+    }) => mob.uploadDriverDocumentFile(input),
+    onSuccess: invalidate,
+  });
   const addVehicle = useMutation({
     mutationFn: (draft: VehicleDraft) => mob.addDriverVehicle(draft),
     onSuccess: invalidate,
   });
 
-  return { submit, uploadDoc, addVehicle };
+  return { submit, uploadDoc, uploadDocFile, addVehicle };
 }
 
 export function useDriverRequests(options?: { poll?: boolean; enabled?: boolean }) {

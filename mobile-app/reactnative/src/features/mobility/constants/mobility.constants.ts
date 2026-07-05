@@ -38,6 +38,27 @@ export const SERVICE_TYPE_LABEL: Record<ServiceType, string> = {
   xl: 'XL / SUV',
 };
 
+// ─── Quick-tile registry ───────────────────────────────────────────────────────
+// The backend home payload sends quickTiles as plain string keys
+// (e.g. ['ride', 'schedule', 'parcel', 'airport']). The client maps each key to
+// its display metadata + destination here. Unknown keys are skipped by the
+// screen. `route` (when present) is pushed on tap; otherwise the tile opens the
+// ride estimate flow.
+export interface QuickTileMeta {
+  id: string;
+  label: string;
+  icon: string;              // lucide name
+  route?: string;            // explicit destination; falls back to estimate flow
+  enabled: boolean;
+}
+
+export const QUICK_TILE_REGISTRY: Record<string, QuickTileMeta> = {
+  ride:     { id: 'ride',     label: 'Ride now',    icon: 'Car',           enabled: true },
+  schedule: { id: 'schedule', label: 'Schedule',    icon: 'CalendarClock', enabled: false },
+  parcel:   { id: 'parcel',   label: 'Send parcel', icon: 'Package',       route: '/mobility/parcel', enabled: true },
+  airport:  { id: 'airport',  label: 'Airport',     icon: 'Plane',         enabled: true },
+};
+
 // ─── Trip phase → human label ──────────────────────────────────────────────────
 export const PHASE_LABEL: Record<string, string> = {
   requested: 'Finding your driver',

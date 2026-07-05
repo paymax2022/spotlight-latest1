@@ -32,7 +32,7 @@ func (s *Service) GetAvailability(ctx context.Context, doctorID string) ([]Slot,
 
 	rows, err := s.db.Query(ctx, `
 		SELECT id, slot_date, slot_time, is_available
-		FROM doctor_availability
+		FROM doctor_availability_slots
 		WHERE doctor_id = $1 AND slot_date >= CURRENT_DATE
 		ORDER BY slot_date, slot_time`, doctorID)
 	if err != nil {

@@ -5,7 +5,7 @@
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import { USE_MOCK } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
 import type {
   Announcement,
   AnnouncementSummary,
@@ -39,7 +39,7 @@ const toAnnSummary = (a: Announcement): AnnouncementSummary => {
 
 export async function getAnnouncements(): Promise<AnnouncementSummary[]> {
   if (USE_MOCK) { await delay(); return MOCK_ANNOUNCEMENTS.map(toAnnSummary); }
-  const { data } = await api.get('/associations/announcements');
+  const { data } = await api.get(`${BASE}/announcements`);
   return data;
 }
 
@@ -50,13 +50,13 @@ export async function getAnnouncement(id: string): Promise<Announcement> {
     if (!found) throw new Error('Announcement not found');
     return found;
   }
-  const { data } = await api.get(`/associations/announcements/${id}`);
+  const { data } = await api.get(`${BASE}/announcements/${id}`);
   return data;
 }
 
 export async function acknowledgeAnnouncement(id: string): Promise<{ ok: true }> {
   if (USE_MOCK) { await delay(); return { ok: true }; }
-  const { data } = await api.post(`/associations/announcements/${id}/acknowledge`, {}, {
+  const { data } = await api.post(`${BASE}/announcements/${id}/acknowledge`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
   return data;
@@ -66,13 +66,13 @@ export async function acknowledgeAnnouncement(id: string): Promise<{ ok: true }>
 
 export async function getNotifications(): Promise<AppNotification[]> {
   if (USE_MOCK) { await delay(); return MOCK_NOTIFICATIONS; }
-  const { data } = await api.get('/associations/notifications');
+  const { data } = await api.get(`${BASE}/notifications`);
   return data;
 }
 
 export async function markNotificationsRead(): Promise<{ ok: true }> {
   if (USE_MOCK) { await delay(150); return { ok: true }; }
-  const { data } = await api.post('/associations/notifications/read', {});
+  const { data } = await api.post(`${BASE}/notifications/read`, {});
   return data;
 }
 
@@ -85,7 +85,7 @@ const toMeetingSummary = (m: Meeting): MeetingSummary => {
 
 export async function getMeetings(): Promise<MeetingSummary[]> {
   if (USE_MOCK) { await delay(); return MOCK_MEETINGS.map(toMeetingSummary); }
-  const { data } = await api.get('/associations/meetings');
+  const { data } = await api.get(`${BASE}/meetings`);
   return data;
 }
 
@@ -96,19 +96,19 @@ export async function getMeeting(id: string): Promise<Meeting> {
     if (!found) throw new Error('Meeting not found');
     return found;
   }
-  const { data } = await api.get(`/associations/meetings/${id}`);
+  const { data } = await api.get(`${BASE}/meetings/${id}`);
   return data;
 }
 
 export async function rsvpMeeting(id: string, status: RsvpStatus): Promise<{ ok: true }> {
   if (USE_MOCK) { await delay(); return { ok: true }; }
-  const { data } = await api.post(`/associations/meetings/${id}/rsvp`, { status });
+  const { data } = await api.post(`${BASE}/meetings/${id}/rsvp`, { status });
   return data;
 }
 
 export async function checkInMeeting(id: string): Promise<{ ok: true }> {
   if (USE_MOCK) { await delay(); return { ok: true }; }
-  const { data } = await api.post(`/associations/meetings/${id}/attendance`, {}, {
+  const { data } = await api.post(`${BASE}/meetings/${id}/attendance`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
   return data;
@@ -130,7 +130,7 @@ export async function getTasks(scope: TaskScope = 'mine'): Promise<TaskSummary[]
     else if (scope === 'mine' || scope === 'assigned') list = list.filter((t) => t.status !== 'COMPLETED');
     return list.map(toTaskSummary);
   }
-  const { data } = await api.get('/associations/tasks', { params: { scope } });
+  const { data } = await api.get(`${BASE}/tasks`, { params: { scope } });
   return data;
 }
 
@@ -141,13 +141,13 @@ export async function getTask(id: string): Promise<Task> {
     if (!found) throw new Error('Task not found');
     return found;
   }
-  const { data } = await api.get(`/associations/tasks/${id}`);
+  const { data } = await api.get(`${BASE}/tasks/${id}`);
   return data;
 }
 
 export async function updateTaskStatus(id: string, status: TaskStatus): Promise<{ ok: true }> {
   if (USE_MOCK) { await delay(); return { ok: true }; }
-  const { data } = await api.patch(`/associations/tasks/${id}`, { status });
+  const { data } = await api.patch(`${BASE}/tasks/${id}`, { status });
   return data;
 }
 
@@ -160,7 +160,7 @@ const toDocSummary = (d: DocumentDetail): DocumentSummary => {
 
 export async function getDocuments(): Promise<DocumentSummary[]> {
   if (USE_MOCK) { await delay(); return MOCK_DOCUMENTS.map(toDocSummary); }
-  const { data } = await api.get('/associations/documents');
+  const { data } = await api.get(`${BASE}/documents`);
   return data;
 }
 
@@ -171,13 +171,13 @@ export async function getDocument(id: string): Promise<DocumentDetail> {
     if (!found) throw new Error('Document not found');
     return found;
   }
-  const { data } = await api.get(`/associations/documents/${id}`);
+  const { data } = await api.get(`${BASE}/documents/${id}`);
   return data;
 }
 
 export async function acknowledgeDocument(id: string): Promise<{ ok: true }> {
   if (USE_MOCK) { await delay(); return { ok: true }; }
-  const { data } = await api.post(`/associations/documents/${id}/acknowledge`, {}, {
+  const { data } = await api.post(`${BASE}/documents/${id}/acknowledge`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
   return data;

@@ -15,6 +15,13 @@ var ErrIdempotencyRequired = errors.New("estate: Idempotency-Key required")
 // Service that was not wired with a ledger (defence-in-depth).
 var ErrLedgerUnavailable = errors.New("estate: ledger not configured")
 
+// ErrDocumentNotFound is returned when a document does not exist in the estate.
+var ErrDocumentNotFound = errors.New("estate: document not found in this estate")
+
+// ErrDocumentForbidden is returned when the caller may not access a (restricted)
+// document.
+var ErrDocumentForbidden = errors.New("estate: not authorised to access this document")
+
 // ── Block 29: Dues / Rent / Subscriptions ────────────────────────────────────
 
 // DuesInvoice is a billed obligation against a resident (service charge, rent…).
@@ -250,6 +257,7 @@ type Document struct {
 	Title      string    `json:"title"`
 	Category   string    `json:"category"`
 	FileURL    string    `json:"file_url"`
+	ObjectKey  string    `json:"object_key,omitempty"` // server-controlled R2 key (presigned downloads)
 	UploadedBy string    `json:"uploaded_by"`
 	Restricted bool      `json:"restricted"`
 	CreatedAt  time.Time `json:"created_at"`
@@ -274,6 +282,7 @@ type CreateDocumentRequest struct {
 	Title       string `json:"title" binding:"required,min=2,max=200"`
 	Category    string `json:"category"`
 	FileURL     string `json:"file_url" binding:"required,url"`
+	ObjectKey   string `json:"object_key"` // optional: server-chosen R2 key from the presign step (enables presigned GET downloads)
 	Restricted  bool   `json:"restricted"`
 	ContentType string `json:"content_type"`
 	SizeBytes   int64  `json:"size_bytes"`

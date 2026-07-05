@@ -94,27 +94,27 @@ const BaseFareKobo int64 = 150000 // ₦1,500
 // Driver is a registered ride-hailing driver.
 type Driver struct {
 	ID         string       `json:"id"`
-	UserID     string       `json:"user_id"`
+	UserID     string       `json:"userId"`
 	Name       string       `json:"name"`
-	VehicleReg string       `json:"vehicle_reg"`
-	VehicleType string      `json:"vehicle_type"` // car | bike | tricycle
+	VehicleReg string       `json:"vehicleReg"`
+	VehicleType string      `json:"vehicleType"` // car | bike | tricycle
 	Status     DriverStatus `json:"status"`
 	Rating     float64      `json:"rating"`
-	CreatedAt  time.Time    `json:"created_at"`
+	CreatedAt  time.Time    `json:"createdAt"`
 }
 
 // Trip is a ride from pickup to destination.
 type Trip struct {
 	ID              string     `json:"id"`
-	RiderID         string     `json:"rider_id"`
-	DriverID        *string    `json:"driver_id,omitempty"`
-	PickupAddress   string     `json:"pickup_address"`
-	DestAddress     string     `json:"dest_address"`
-	FareKobo        int64      `json:"fare_kobo"`
+	RiderID         string     `json:"riderId"`
+	DriverID        *string    `json:"driverId,omitempty"`
+	PickupAddress   string     `json:"pickupAddress"`
+	DestAddress     string     `json:"destAddress"`
+	FareKobo        int64      `json:"fareKobo"`
 	Status          TripStatus `json:"status"`
-	IdempotencyKey  string     `json:"idempotency_key"`
-	SettlementID    string     `json:"settlement_id"`
-	CreatedAt       time.Time  `json:"created_at"`
+	IdempotencyKey  string     `json:"idempotencyKey"`
+	SettlementID    string     `json:"settlementId"`
+	CreatedAt       time.Time  `json:"createdAt"`
 }
 
 // RegisterDriverRequest is the body for POST /transport/drivers.
@@ -137,131 +137,131 @@ type RequestTripRequest struct {
 // MobilityProfile is the rider's trust + saved data layer.
 type MobilityProfile struct {
 	ID             string    `json:"id"`
-	UserID         string    `json:"user_id"`
-	TrustLevel     string    `json:"trust_level"`
-	DefaultPayment string    `json:"default_payment"`
-	HomeAddress    *string   `json:"home_address,omitempty"`
-	WorkAddress    *string   `json:"work_address,omitempty"`
+	UserID         string    `json:"userId"`
+	TrustLevel     string    `json:"trustLevel"`
+	DefaultPayment string    `json:"defaultPayment"`
+	HomeAddress    *string   `json:"homeAddress,omitempty"`
+	WorkAddress    *string   `json:"workAddress,omitempty"`
 	Rating         float64   `json:"rating"`
-	CompletedTrips int       `json:"completed_trips"`
+	CompletedTrips int       `json:"completedTrips"`
 	Status         string    `json:"status"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 // Vehicle is a driver's registered vehicle + compliance record.
 type Vehicle struct {
 	ID               string    `json:"id"`
-	DriverID         string    `json:"driver_id"`
-	PlateNumber      string    `json:"plate_number"`
+	DriverID         string    `json:"driverId"`
+	PlateNumber      string    `json:"plateNumber"`
 	Make             *string   `json:"make,omitempty"`
 	Model            *string   `json:"model,omitempty"`
 	Year             *int      `json:"year,omitempty"`
 	Color            *string   `json:"color,omitempty"`
 	Category         string    `json:"category"`
 	Capacity         int       `json:"capacity"`
-	InspectionStatus string    `json:"inspection_status"`
-	InsuranceStatus  string    `json:"insurance_status"`
+	InspectionStatus string    `json:"inspectionStatus"`
+	InsuranceStatus  string    `json:"insuranceStatus"`
 	Status           string    `json:"status"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 // DriverDocument is an uploaded onboarding document with expiry tracking.
 type DriverDocument struct {
 	ID         string     `json:"id"`
-	DriverID   string     `json:"driver_id"`
-	DocType    string     `json:"doc_type"`
-	FileURL    string     `json:"file_url"`
+	DriverID   string     `json:"driverId"`
+	DocType    string     `json:"docType"`
+	FileURL    string     `json:"fileUrl"`
 	Status     string     `json:"status"`
-	ExpiryDate *time.Time `json:"expiry_date,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
+	ExpiryDate *time.Time `json:"expiryDate,omitempty"`
+	CreatedAt  time.Time  `json:"createdAt"`
 }
 
 // PricingConfig drives system-fare and negotiation bounds per zone+service_type.
 type PricingConfig struct {
 	ID                    string  `json:"id"`
 	Zone                  string  `json:"zone"`
-	ServiceType           string  `json:"service_type"`
+	ServiceType           string  `json:"serviceType"`
 	Currency              string  `json:"currency"`
-	BaseFareKobo          int64   `json:"base_fare_kobo"`
-	PerKMKobo             int64   `json:"per_km_kobo"`
-	PerMinKobo            int64   `json:"per_min_kobo"`
-	MinFareKobo           int64   `json:"min_fare_kobo"`
-	FareFloorPct          float64 `json:"fare_floor_pct"`
-	FareCeilingPct        float64 `json:"fare_ceiling_pct"`
-	DriverProfitFloorKobo int64   `json:"driver_profit_floor_kobo"`
-	SurgeMultiplier       float64 `json:"surge_multiplier"`
-	CancellationFeeKobo   int64   `json:"cancellation_fee_kobo"`
-	WaitingFeePerMinKobo  int64   `json:"waiting_fee_per_min_kobo"`
+	BaseFareKobo          int64   `json:"baseFareKobo"`
+	PerKMKobo             int64   `json:"perKmKobo"`
+	PerMinKobo            int64   `json:"perMinKobo"`
+	MinFareKobo           int64   `json:"minFareKobo"`
+	FareFloorPct          float64 `json:"fareFloorPct"`
+	FareCeilingPct        float64 `json:"fareCeilingPct"`
+	DriverProfitFloorKobo int64   `json:"driverProfitFloorKobo"`
+	SurgeMultiplier       float64 `json:"surgeMultiplier"`
+	CancellationFeeKobo   int64   `json:"cancellationFeeKobo"`
+	WaitingFeePerMinKobo  int64   `json:"waitingFeePerMinKobo"`
 	Active                bool    `json:"active"`
 }
 
 // CommissionConfig is a commission tier split.
 type CommissionConfig struct {
 	Tier        string  `json:"tier"`
-	ProviderPct float64 `json:"provider_pct"`
-	PlatformPct float64 `json:"platform_pct"`
+	ProviderPct float64 `json:"providerPct"`
+	PlatformPct float64 `json:"platformPct"`
 	Active      bool    `json:"active"`
 }
 
 // FareOffer is a single hybrid-negotiation record.
 type FareOffer struct {
 	ID                string     `json:"id"`
-	TripID            string     `json:"trip_id"`
-	SystemFareKobo    int64      `json:"system_fare_kobo"`
-	RiderOfferKobo    *int64     `json:"rider_offer_kobo,omitempty"`
-	DriverCounterKobo *int64     `json:"driver_counter_kobo,omitempty"`
-	AcceptedFareKobo  *int64     `json:"accepted_fare_kobo,omitempty"`
+	TripID            string     `json:"tripId"`
+	SystemFareKobo    int64      `json:"systemFareKobo"`
+	RiderOfferKobo    *int64     `json:"riderOfferKobo,omitempty"`
+	DriverCounterKobo *int64     `json:"driverCounterKobo,omitempty"`
+	AcceptedFareKobo  *int64     `json:"acceptedFareKobo,omitempty"`
 	Status            string     `json:"status"`
-	ExpiresAt         *time.Time `json:"expires_at,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
+	ExpiresAt         *time.Time `json:"expiresAt,omitempty"`
+	CreatedAt         time.Time  `json:"createdAt"`
 }
 
 // SafetyIncident is a routed safety case.
 type SafetyIncident struct {
 	ID             string    `json:"id"`
-	UserID         string    `json:"user_id"`
-	TripID         *string   `json:"trip_id,omitempty"`
+	UserID         string    `json:"userId"`
+	TripID         *string   `json:"tripId,omitempty"`
 	Type           string    `json:"type"`
 	Severity       string    `json:"severity"`
 	Lat            *float64  `json:"lat,omitempty"`
 	Lng            *float64  `json:"lng,omitempty"`
 	Description    *string   `json:"description,omitempty"`
 	Status         string    `json:"status"`
-	AssignedAdmin  *string   `json:"assigned_admin,omitempty"`
-	ResolutionNote *string   `json:"resolution_note,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	AssignedAdmin  *string   `json:"assignedAdmin,omitempty"`
+	ResolutionNote *string   `json:"resolutionNote,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 // TrustedContact is an emergency contact for a rider.
 type TrustedContact struct {
 	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
+	UserID    string    `json:"userId"`
 	Name      string    `json:"name"`
 	Phone     string    `json:"phone"`
-	CreatedAt time.Time `json:"created_at"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // TripRating is a bidirectional rating + optional tip.
 type TripRating struct {
 	ID       string `json:"id"`
-	TripID   string `json:"trip_id"`
-	RaterID  string `json:"rater_id"`
-	RateeID  string `json:"ratee_id"`
+	TripID   string `json:"tripId"`
+	RaterID  string `json:"raterId"`
+	RateeID  string `json:"rateeId"`
 	Role     string `json:"role"`
 	Stars    int    `json:"stars"`
 	Comment  string `json:"comment,omitempty"`
-	TipKobo  int64  `json:"tip_kobo"`
+	TipKobo  int64  `json:"tipKobo"`
 }
 
 // FareEstimate is returned by the estimate endpoint.
 type FareEstimate struct {
-	DistanceM      int    `json:"distance_m"`
-	DurationS      int    `json:"duration_s"`
-	SystemFareKobo int64  `json:"system_fare_kobo"`
-	OfferMinKobo   int64  `json:"offer_min_kobo"`
-	OfferMaxKobo   int64  `json:"offer_max_kobo"`
+	DistanceM      int    `json:"distanceM"`
+	DurationS      int    `json:"durationS"`
+	SystemFareKobo int64  `json:"systemFareKobo"`
+	OfferMinKobo   int64  `json:"offerMinKobo"`
+	OfferMaxKobo   int64  `json:"offerMaxKobo"`
 	Polyline       string `json:"polyline"`
 }
 

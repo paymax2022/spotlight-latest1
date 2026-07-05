@@ -8,6 +8,8 @@ import { VotingColors } from '../constants/voting.constants';
 interface Props {
   rank: number;
   size?: 'sm' | 'md' | 'lg';
+  /** When false (admin hid ranks), render nothing. Defaults to visible. */
+  show?: boolean;
 }
 
 function getRankStyle(rank: number) {
@@ -17,7 +19,8 @@ function getRankStyle(rank: number) {
   return { bg: Colors.surfaceContainerHigh, color: Colors.onSurfaceVariant };
 }
 
-export default function RankBadge({ rank, size = 'md' }: Props) {
+export default function RankBadge({ rank, size = 'md', show = true }: Props) {
+  if (!show) return null;
   const { bg, color } = getRankStyle(rank);
   const isLg = size === 'lg';
   const isSm = size === 'sm';

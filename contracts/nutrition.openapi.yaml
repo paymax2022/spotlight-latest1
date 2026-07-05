@@ -1,0 +1,382 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight — Nutrition Resolution Engine API
+  version: 2.0.0
+  description: >
+    Nutrition Resolution Engine (onboarding-first): at menu upload the engine
+    auto-estimates every dish and AUTO-PUBLISHES it as an AI_ESTIMATE — nutrition
+    is live from Day 1 with zero vendor action. The vendor only approves or lightly
+    edits, asynchronously. Resolves a restaurant dish to a per-serving nutrient
+    profile plus allergen declarations, with an estimation band, a grounding source
+    and a confidence level. Covers the member surface (buyer read-only view and
+    vendor approve/edit/attest on their own dishes) and the admin reference/
+    resolution surface.
+
+    Conventions:
+      - Nutrient quantities are NUMBERS (grams / kcal / mg), NOT integers (kobo).
+        Each value carries low/high bounds expressing estimation uncertainty.
+      - Auth: Bearer JWT issued by Supabase Auth. Admin routes additionally
+        require nutrition-admin RBAC, enforced server-side.
+      - The buyer profile view is READ-ONLY; unattested allergens default to a
+        MAY_CONTAIN declaration (fail-safe) and must never be read as FREE_FROM.
+    Module spec — mirrors contracts/placement.openapi.yaml. Served under /api/v1
+    via Next.js route handlers that proxy to the Go backend.
+
+servers:
+  - url: /api/v1
+    description: Nutrition module routes (Next.js route handlers)
+
+tags:
+  - { name: Nutrition, description: Buyer view + vendor declarations }
+  - { name: NutritionAdmin, description: Composition/library reference and resolution (RBAC) }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+
+  parameters:
+    DishId:
+      name: dishId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MenuId:
+      name: menuId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthorized: { description: Missing or invalid bearer token }
+    Forbidden: { description: Admin role required }
+    NotFound: { description: Resource not found }
+    BadRequest: { description: Validation failed }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        status: { type: integer }
+
+    NutrientValue:
+      type: object
+      required: [value, low, high]
+      properties:
+        value: { type: number }
+        low: { type: number }
+        high: { type: number }
+
+    DishNutritionProfile:
+      type: object
+      description: >
+        Resolved nutrition output bound to a menu item. Auto-published as
+        AI_ESTIMATE at menu upload (zero vendor action). Vendor approval moves it
+        to RESTAURANT_CONFIRMED — higher trust but STILL an estimate (approval ≠
+        exact). EXACT is label-only (packaged/barcoded). `grounding` records which
+        knowledge source the AI used.
+      required: [dish_id, grounding, confidence, status, portion_label, portion_size_g, per_serving, composition_version, display, disclaimer]
+      properties:
+        dish_id: { type: string, format: uuid }
+        grounding:
+          type: string
+          description: >
+            Knowledge source the AI grounded the estimate in. LABEL = barcode/label
+            fast-path; LIBRARY_MATCHED = Nigerian grounding library (WAFCT/NFCT);
+            FREE_ESTIMATED = no library match; RECIPE = optional power-user path.
+          enum: [LABEL, LIBRARY_MATCHED, FREE_ESTIMATED, RECIPE]
+        confidence: { type: string, enum: [EXACT, MEDIUM, LOW] }
+        status:
+          type: string
+          description: >
+            Honesty state. AI_ESTIMATE = auto-published estimate; RESTAURANT_CONFIRMED
+            = vendor approved but still an estimate; EXACT = label-only; STALE =
+            invalidated by edit/version bump, pending re-estimate.
+          enum: [AI_ESTIMATE, RESTAURANT_CONFIRMED, EXACT, STALE]
+        portion_label:
+          type: string
+          description: Selected portion size; rescales all per-serving values.
+          enum: [small, regular, large]
+        portion_size_g: { type: number }
+        per_serving:
+          type: object
+          required: [energy_kcal, protein_g, carb_g, sugar_g, fat_g, sat_fat_g, fiber_g, sodium_mg]
+          properties:
+            energy_kcal: { $ref: '#/components/schemas/NutrientValue' }
+            protein_g: { $ref: '#/components/schemas/NutrientValue' }
+            carb_g: { $ref: '#/components/schemas/NutrientValue' }
+            sugar_g: { $ref: '#/components/schemas/NutrientValue' }
+            fat_g: { $ref: '#/components/schemas/NutrientValue' }
+            sat_fat_g: { $ref: '#/components/schemas/NutrientValue' }
+            fiber_g: { $ref: '#/components/schemas/NutrientValue' }
+            sodium_mg: { $ref: '#/components/schemas/NutrientValue' }
+        composition_version: { type: integer }
+        display:
+          type: object
+          required: [band, traffic_lights]
+          properties:
+            band: { type: string, enum: [Light, Balanced, Heavy] }
+            traffic_lights:
+              type: object
+              required: [sodium_mg, sugar_g, sat_fat_g]
+              properties:
+                sodium_mg: { type: string, enum: [green, amber, red] }
+                sugar_g: { type: string, enum: [green, amber, red] }
+                sat_fat_g: { type: string, enum: [green, amber, red] }
+        allergens:
+          type: array
+          items: { $ref: '#/components/schemas/AllergenDeclaration' }
+        badges:
+          type: array
+          items: { type: string }
+        disclaimer: { type: string }
+
+    AllergenDeclaration:
+      type: object
+      required: [dish_id, allergen, declaration_type, source, cross_contamination_ack]
+      properties:
+        dish_id: { type: string, format: uuid }
+        allergen:
+          type: string
+          enum: [peanut, tree_nut, milk, egg, fish, crustacean_shellfish, soy, wheat_gluten, sesame, mustard, celery, sulphites, lupin]
+        declaration_type: { type: string, enum: [CONTAINS, MAY_CONTAIN, FREE_FROM] }
+        source: { type: string, enum: [VENDOR, AI] }
+        attested_by: { type: string }
+        attested_at: { type: string, format: date-time }
+        cross_contamination_ack: { type: boolean }
+
+    AllergenAttest:
+      type: object
+      required: [allergen, declaration_type, cross_contamination_ack]
+      properties:
+        allergen:
+          type: string
+          enum: [peanut, tree_nut, milk, egg, fish, crustacean_shellfish, soy, wheat_gluten, sesame, mustard, celery, sulphites, lupin]
+        declaration_type: { type: string, enum: [CONTAINS, MAY_CONTAIN, FREE_FROM] }
+        cross_contamination_ack: { type: boolean }
+
+    RecipeDeclare:
+      type: object
+      required: [ingredients, portion_size_g]
+      properties:
+        ingredients:
+          type: array
+          items:
+            type: object
+            required: [food_code, source, quantity_g]
+            properties:
+              food_code: { type: string }
+              source: { type: string }
+              quantity_g: { type: number }
+              prep_method: { type: string }
+        portion_size_g: { type: number }
+        cook_method: { type: string }
+
+    CartNutritionSummary:
+      type: object
+      required: [total, items, disclaimer]
+      properties:
+        total:
+          type: object
+          required: [energy_kcal, protein_g, carb_g, sugar_g, fat_g, sat_fat_g, fiber_g, sodium_mg]
+          properties:
+            energy_kcal: { $ref: '#/components/schemas/NutrientValue' }
+            protein_g: { $ref: '#/components/schemas/NutrientValue' }
+            carb_g: { $ref: '#/components/schemas/NutrientValue' }
+            sugar_g: { $ref: '#/components/schemas/NutrientValue' }
+            fat_g: { $ref: '#/components/schemas/NutrientValue' }
+            sat_fat_g: { $ref: '#/components/schemas/NutrientValue' }
+            fiber_g: { $ref: '#/components/schemas/NutrientValue' }
+            sodium_mg: { $ref: '#/components/schemas/NutrientValue' }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DishNutritionProfile' }
+        worst_traffic_lights:
+          type: object
+          properties:
+            sodium_mg: { type: string, enum: [green, amber, red] }
+            sugar_g: { type: string, enum: [green, amber, red] }
+            sat_fat_g: { type: string, enum: [green, amber, red] }
+        disclaimer: { type: string }
+
+    CompositionReferenceInput:
+      type: object
+      required: [food_code, per_100g]
+      properties:
+        food_code: { type: string }
+        name: { type: string }
+        source: { type: string }
+        per_100g:
+          type: object
+          additionalProperties: { type: number }
+        composition_version: { type: integer }
+
+    DishLibraryInput:
+      type: object
+      required: [name, per_serving]
+      properties:
+        name: { type: string }
+        category: { type: string }
+        portion_size_g: { type: number }
+        per_serving:
+          type: object
+          additionalProperties: { type: number }
+        default_allergens:
+          type: array
+          items: { type: string }
+
+    ReresolveRequest:
+      type: object
+      properties:
+        dish_ids:
+          type: array
+          items: { type: string, format: uuid }
+        reason: { type: string }
+        force: { type: boolean }
+
+    EditNutritionRequest:
+      type: object
+      description: >
+        Lightweight vendor edit — portion selector and/or direct macro nudge only.
+        NEVER asks for ingredients (that is the optional hidden recipe path).
+        Editing then approving moves the profile to RESTAURANT_CONFIRMED.
+      properties:
+        portion_label:
+          type: string
+          description: Rescales all per-serving values automatically.
+          enum: [small, regular, large]
+        macros:
+          type: array
+          description: Direct macro nudges if the vendor knows better.
+          items:
+            type: object
+            required: [nutrient, value]
+            properties:
+              nutrient:
+                type: string
+                enum: [energy_kcal, protein_g, carb_g, sugar_g, fat_g, sat_fat_g, fiber_g, sodium_mg]
+              value: { type: number }
+
+    AutoSuggestResponse:
+      type: object
+      description: >
+        Result of batch auto-estimating + auto-publishing a restaurant's whole menu
+        at upload. Each dish is published as AI_ESTIMATE with zero vendor action.
+      required: [published, dishes]
+      properties:
+        published: { type: integer }
+        dishes:
+          type: array
+          items: { $ref: '#/components/schemas/DishNutritionProfile' }
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ── Member: buyer view + vendor declarations ──
+  /nutrition/dishes/{dishId}:
+    get:
+      operationId: nutritionGetDishProfile
+      summary: Get the resolved nutrition profile for a dish (buyer view)
+      description: >
+        Read-only buyer view of the resolved per-serving profile, allergens and
+        display hints. Allergens not explicitly attested default to MAY_CONTAIN
+        (fail-safe); absence of an attestation must never be read as FREE_FROM.
+      tags: [Nutrition]
+      parameters: [{ $ref: '#/components/parameters/DishId' }]
+      responses:
+        '200': { description: Resolved dish nutrition profile, content: { application/json: { schema: { $ref: '#/components/schemas/DishNutritionProfile' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /nutrition/dishes/{dishId}/recipe:
+    post:
+      operationId: nutritionDeclareRecipe
+      summary: Declare a dish recipe (optional hidden power-user path; not part of onboarding)
+      description: >
+        OPTIONAL hidden power-user path for maximum accuracy. Never required, never
+        shown during onboarding. Resolves the profile with grounding=RECIPE. The
+        standard edit path NEVER asks for ingredients.
+      tags: [Nutrition]
+      parameters: [{ $ref: '#/components/parameters/DishId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RecipeDeclare' } } }
+      responses:
+        '200': { description: Recipe accepted; dish re-resolved (grounding=RECIPE), content: { application/json: { schema: { $ref: '#/components/schemas/DishNutritionProfile' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /nutrition/dishes/{dishId}/approve:
+    post:
+      operationId: nutritionApproveDish
+      summary: Vendor approves the AI-suggested nutrition profile for a dish
+      description: >
+        One-tap approval of the auto-published AI estimate. Moves the profile to
+        RESTAURANT_CONFIRMED — higher trust but STILL an estimate (approval ≠
+        exact). Grants the Nutrition-Verified badge. Own dishes only.
+      tags: [Nutrition]
+      parameters: [{ $ref: '#/components/parameters/DishId' }]
+      responses:
+        '200': { description: Profile approved (status → RESTAURANT_CONFIRMED, still an estimate), content: { application/json: { schema: { $ref: '#/components/schemas/DishNutritionProfile' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /nutrition/dishes/{dishId}/edit:
+    post:
+      operationId: nutritionEditDish
+      summary: Lightweight vendor edit — portion + macro nudge (NEVER ingredients)
+      description: >
+        Adjust the portion selector (small/regular/large, rescales all values) or
+        nudge individual macros. NEVER asks for ingredients. Editing then approving
+        moves the profile to RESTAURANT_CONFIRMED. Own dishes only.
+      tags: [Nutrition]
+      parameters: [{ $ref: '#/components/parameters/DishId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/EditNutritionRequest' } } }
+      responses:
+        '200': { description: Profile edited and re-scaled, content: { application/json: { schema: { $ref: '#/components/schemas/DishNutritionProfile' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /nutrition/dishes/{dishId}/allergens:
+    post:
+      operationId: nutritionAttestAllergen
+      summary: Attest an allergen declaration for a dish (vendor)
+      tags: [Nutrition]
+      parameters: [{ $ref: '#/components/parameters/DishId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AllergenAttest' } } }
+      responses:
+        '200': { description: Allergen declaration recorded, content: { application/json: { schema: { $ref: '#/components/schemas/AllergenDeclaration' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /nutrition/cart/summary:
+    get:
+      operationId: nutritionCartSummary
+      summary: Aggregate nutrition + worst-case allergens across cart items
+      tags: [Nutrition]
+      parameters:
+        - { name: ids, in: query, required: true, description: 'Comma-separated dish ids in the cart.', schema: { type: string } }
+      responses:
+        '200': { description: Aggregated cart nutrition summary, content: { application/json: { schema: { $ref: '#/components/schemas/CartNutritionSummary' } } } }
+  /nutrition/menus/{menuId}/auto-suggest:
+    post:
+      operationId: nutritionAutoSuggestMenu
+      summary: Batch auto-estimate + auto-publish a restaurant's whole menu (onboarding)
+      description: >
+        Onboarding-first entrypoint. Auto-estimates every dish on a menu from the
+        names/photos the vendor uploads anyway, grounds each estimate in the
+        Nigerian composition library, and AUTO-PUBLISHES each as AI_ESTIMATE — zero
+        vendor action, nutrition live from Day 1. Never blocks onboarding.
+      tags: [Nutrition]
+      parameters: [{ $ref: '#/components/parameters/MenuId' }]
+      responses:
+        '200': { description: Menu auto-estimated and published, content: { application/json: { schema: { $ref: '#/components/schemas/AutoSuggestResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /nutrition/menus/{menuId}/approve-all:
+    post:
+      operationId: nutritionApproveAllMenu
+      summary: Approve all AI_ESTIMATE dishes on a menu (one-tap)
+      description: >
+        One-tap "Approve all" — moves every AI_ESTIMATE dish on the menu to
+        RESTAURANT_CONFIRMED (still estimates) and grants the Nutrition-Verified
+        badge. Own menu only.
+      tags: [Nutrition]
+      parameters: [{ $ref: '#/components/parameters/MenuId' }]
+      responses:
+        '200': { description: All AI_ESTIMATE dishes approved, content: { application/json: { schema: { $ref: '#/components/schemas/AutoSuggestResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }

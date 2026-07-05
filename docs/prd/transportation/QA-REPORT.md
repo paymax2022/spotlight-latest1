@@ -1,5 +1,14 @@
 # Paymax Mobility — QA & Verification Report (ride-hailing vertical)
 
+> **UPDATE 2026-07-10 — STALE SCOPE NOTE.** This report predates the multi-modal
+> build. The statement below (line ~49) that "other service modes (parcel, bus,
+> towing, movers) are intentionally not built" is **no longer true**: all 8 modes
+> (parcel · bus · towing · movers · car hire · business logistics · event
+> transport) are now built end-to-end and route-registered in
+> `backend/internal/app/finance_routes.go` (behind `FEATURE_TRANSPORT_MODES_ENABLED`).
+> See `QA-REPORT-MODES.md` and `DELIVERY-INDEX.md` for the current, authoritative
+> status. Treat this file as the ride-hailing-only acceptance record.
+
 Date: 2026-06-20 · Scope: ride-hailing end-to-end (backend + mobile + admin), built on existing auth/wallet/settlement.
 
 ## Verification status

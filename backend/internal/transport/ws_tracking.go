@@ -23,12 +23,12 @@ const fanoutChannel = "ws:trip:fanout"
 
 // PositionUpdate is the real-time payload pushed to a trip's participants.
 type PositionUpdate struct {
-	TripID          string   `json:"trip_id"`
+	TripID          string   `json:"tripId"`
 	Lat             float64  `json:"lat"`
 	Lng             float64  `json:"lng"`
 	Heading         *float64 `json:"heading,omitempty"`
-	SpeedMPS        *float64 `json:"speed_mps,omitempty"`
-	SnappedPolyline string   `json:"snapped_polyline,omitempty"` // encoded; client decodes for the path
+	SpeedMPS        *float64 `json:"speedMps,omitempty"`
+	SnappedPolyline string   `json:"snappedPolyline,omitempty"` // encoded; client decodes for the path
 	TS              int64    `json:"ts"`
 }
 

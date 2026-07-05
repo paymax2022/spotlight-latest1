@@ -1,0 +1,250 @@
+// Paymax Marketplace admin console — domain types.
+// snake_case mirrors the Go backend / contracts/openapi.yaml (Marketplace* schemas,
+// tag MarketplaceAdmin). Admin routes are mounted at Gin engine root /v1/marketplace/admin
+// (NOT under /api — marketplace_routes.go groups directly off *gin.Engine, per
+// docs/prd/marketplace/SWARM_INTEGRATION_CONTRACT.md "Base API path: /v1/marketplace").
+// Backend RBAC (guard("marketplace.admin.<perm>")) is authoritative — the UI's
+// permission gates here are UX-only.
+//
+// Money: every *_kobo field is an integer (kobo). NEVER do math on these in
+// floats — format-only via formatKobo() in the service layer.
+
+export type MktListingStatus =
+  | 'draft'
+  | 'pending_review'
+  | 'active'
+  | 'paused'
+  | 'expired'
+  | 'sold'
+  | 'removed_policy'
+  | 'removed_user';
+
+export type MktOrderStatus =
+  | 'initiated'
+  | 'funded'
+  | 'seller_accepted'
+  | 'in_delivery'
+  | 'delivered'
+  | 'inspection_window'
+  | 'released'
+  | 'cancelled'
+  | 'disputed'
+  | 'refunded'
+  | 'split_settled';
+
+export type MktDisputeStatus =
+  | 'opened'
+  | 'evidence_window'
+  | 'under_review'
+  | 'decided'
+  | 'executed'
+  | 'closed'
+  | 'appealed';
+
+export type MktBoostStatus =
+  | 'purchased'
+  | 'active'
+  | 'completed'
+  | 'rejected_with_reason'
+  | 'auto_refunded';
+
+export interface MktMedia {
+  id: string;
+  url_thumb: string;
+  url_card: string;
+  url_full: string;
+  blurhash?: string;
+  sort_order?: number;
+}
+
+export interface MktSellerSummary {
+  id: string;
+  trust_score: number;
+  verified_id_badge: boolean;
+  verified_business_badge: boolean;
+  tenure_label: string;
+  response_time_minutes: number | null;
+}
+
+export interface MktFairPriceBand {
+  p25_kobo: number;
+  p50_kobo: number;
+  p75_kobo: number;
+}
+
+// GET /admin/moderation/queue item + GET listing detail — the queue page needs
+// enough context (media, price-band) to review without navigating away, but the
+// detail page fetches the fuller MktListingDetail-shaped record.
+export interface MktListing {
+  id: string;
+  market_id: string;
+  seller_id: string;
+  category_id: string;
+  category_name?: string;
+  title: string;
+  description: string;
+  price_kobo: number;
+  currency?: string;
+  condition: 'new' | 'used' | 'foreign_used' | 'local_used' | 'refurbished';
+  attrs?: Record<string, unknown>;
+  status: MktListingStatus;
+  quality_score?: number;
+  escrow_eligible: boolean;
+  state?: string;
+  lga?: string | null;
+  view_count?: number;
+  save_count?: number;
+  moderation_reason_code?: string | null;
+  created_at: string;
+  updated_at: string;
+  expires_at?: string;
+  // detail-only, present when returned by the moderation queue/detail endpoint
+  seller?: MktSellerSummary;
+  media?: MktMedia[];
+  fair_price_band?: MktFairPriceBand | null;
+}
+
+export interface MktAdminReasonCodeRequest {
+  reason_code?: string;
+}
+
+export interface MktOrder {
+  id: string;
+  market_id: string;
+  listing_id: string;
+  buyer_id: string;
+  seller_id: string;
+  offer_id?: string | null;
+  amount_kobo: number;
+  escrow_fee_kobo: number;
+  delivery_fee_kobo: number;
+  status: MktOrderStatus;
+  ledger_fund_ref?: string | null;
+  ledger_release_ref?: string | null;
+  delivery_ref?: string | null;
+  inspection_deadline?: string | null;
+  created_at: string;
+  updated_at: string;
+  funded_at?: string | null;
+  delivered_at?: string | null;
+  released_at?: string | null;
+  cancelled_at?: string | null;
+  // orders-aging convenience fields (server may include for the dashboard)
+  listing_title?: string;
+  age_hours?: number;
+}
+
+export type MktDisputeReasonCode =
+  | 'item_not_as_described'
+  | 'item_not_received'
+  | 'item_damaged'
+  | 'counterfeit'
+  | 'other';
+
+export type MktDisputeDecision = 'refund_buyer' | 'release_seller' | 'split';
+
+export interface MktEvidenceItem {
+  type: 'photo' | 'chat_excerpt' | 'document';
+  url_or_text: string;
+  submitted_by?: string;
+  created_at?: string;
+}
+
+// GET /admin/disputes/:id — side-by-side evidence view. Server may enrich the
+// base MktDispute schema with order + party context for the workbench.
+export interface MktDispute {
+  id: string;
+  order_id: string;
+  opened_by: string;
+  reason_code: string;
+  status: MktDisputeStatus;
+  decision: MktDisputeDecision | null;
+  decision_notes?: string | null;
+  decided_by?: string | null;
+  requires_dual_approval: boolean;
+  second_approver_id?: string | null;
+  evidence_deadline: string;
+  created_at: string;
+  decided_at?: string | null;
+  executed_at?: string | null;
+  // enrichment for the workbench (order + evidence context)
+  order?: MktOrder;
+  buyer_evidence?: MktEvidenceItem[];
+  seller_evidence?: MktEvidenceItem[];
+  evidence?: MktEvidenceItem[];
+  listing_title?: string;
+}
+
+export interface MktDisputeDecideRequest {
+  decision: MktDisputeDecision;
+  reason_code: string;
+  notes?: string;
+}
+
+export type MktFlagTargetType = 'listing' | 'user' | 'review' | 'chat_message';
+export type MktFlagStatus = 'open' | 'actioned' | 'dismissed';
+
+export interface MktFlag {
+  id: string;
+  target_type: MktFlagTargetType;
+  target_id: string;
+  reporter_id: string;
+  reason_code: string;
+  notes?: string | null;
+  status: MktFlagStatus;
+  reviewed_by?: string | null;
+  created_at: string;
+  reviewed_at?: string | null;
+}
+
+export interface MktFlagActionRequest {
+  action: 'actioned' | 'dismissed';
+  reason_code: string;
+}
+
+export interface MktAdminAuditLogEntry {
+  id: number;
+  admin_id: string;
+  admin_role?: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  reason_code: string;
+  before_state?: Record<string, unknown> | null;
+  after_state?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export type MktBoostTierName = 'start' | 'vip' | 'vip_gold' | 'diamond' | 'enterprise';
+
+export interface MktBoost {
+  id: string;
+  listing_id: string;
+  seller_id: string;
+  tier: MktBoostTierName;
+  duration_days: number;
+  price_kobo: number;
+  ledger_charge_ref?: string;
+  status: MktBoostStatus;
+  rejection_reason_code?: string | null;
+  refund_ref?: string | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  listing_title?: string;
+}
+
+export interface MktPageResult<T> {
+  data: T[];
+  next_cursor: string | null;
+}
+
+// Marketplace uniform error shape (SWARM_INTEGRATION_CONTRACT.md — distinct from
+// the legacy { success, error } shape used elsewhere in this admin console).
+export interface MarketplaceErrorBody {
+  error: {
+    code: string;
+    message: string;
+    field?: string | null;
+    request_id?: string | null;
+  };
+}

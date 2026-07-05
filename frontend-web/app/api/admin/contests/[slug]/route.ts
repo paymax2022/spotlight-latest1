@@ -6,6 +6,7 @@ import {
   updateRegistrationContest,
 } from '@/src/server/registration/store';
 import type { ContestCategory, ContestRegistrationDefinition, ContestType } from '@/src/features/registration/types';
+import { sanitizeContestFormSchema } from '@/src/features/registration/field-catalog';
 
 const allowedCategories: ContestCategory[] = [
   'music',
@@ -63,7 +64,7 @@ function normalizeContestPayload(body: Record<string, unknown>): Partial<Contest
     throw new Error('Registration fee must be a valid number for paid contests.');
   }
 
-  return {
+  const normalized: Partial<ContestRegistrationDefinition> = {
     slug,
     title,
     contestCategory,
@@ -88,6 +89,15 @@ function normalizeContestPayload(body: Record<string, unknown>): Partial<Contest
       : [],
     categoryQuestionSet: contestCategory,
   };
+
+  // Only touch the form schema when the caller actually sends one, so a partial
+  // edit that omits `formSchema` preserves the existing mapping instead of
+  // wiping it. Sending an explicit (empty/invalid) schema clears it.
+  if ('formSchema' in body) {
+    normalized.formSchema = sanitizeContestFormSchema(body.formSchema);
+  }
+
+  return normalized;
 }
 
 export async function GET(request: Request, { params }: { params: { slug: string } }) {

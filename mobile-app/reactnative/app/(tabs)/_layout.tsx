@@ -1,15 +1,20 @@
+import React from 'react';
 import { Tabs } from 'expo-router';
-import { View, Platform, StyleSheet } from 'react-native';
-import { Home, Wallet, LayoutGrid, Activity, User } from 'lucide-react-native';
+import { View, Text, Platform, StyleSheet } from 'react-native';
+import { Home, Wallet, LayoutGrid, User } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Radius } from '@/constants/radius';
 
-function TabIcon({ icon: Icon, focused }: { icon: React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>; focused: boolean }) {
+type IconType = React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
+
+/** Material-3 style tab item: icon only when inactive; expands to an
+ *  icon + label pill when active. Keeps the bar calm and uncluttered. */
+function TabItem({ icon: Icon, label, focused }: { icon: IconType; label: string; focused: boolean }) {
   return (
-    <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
-      <Icon size={22} color={focused ? Colors.primary : Colors.outline} strokeWidth={focused ? 2.2 : 1.8} />
-      {focused && <View style={styles.activeDot} />}
+    <View style={[styles.item, focused && styles.itemActive]}>
+      <Icon size={21} color={focused ? Colors.primary : Colors.onSurfaceVariant} strokeWidth={focused ? 2.3 : 1.9} />
+      {focused ? <Text style={styles.itemLabel} numberOfLines={1}>{label}</Text> : null}
     </View>
   );
 }
@@ -19,87 +24,72 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
+        tabBarShowLabel: false,
+        tabBarHideOnKeyboard: true,
         tabBarStyle: styles.tabBar,
-        tabBarShowLabel: true,
-        tabBarActiveTintColor: Colors.primary,
-        tabBarInactiveTintColor: Colors.outline,
-        tabBarLabelStyle: styles.label,
+        tabBarItemStyle: styles.tabItem,
       }}
     >
       <Tabs.Screen
         name="home"
-        options={{
-          title: 'Home',
-          tabBarIcon: ({ focused }) => <TabIcon icon={Home} focused={focused} />,
-        }}
+        options={{ title: 'Home', tabBarIcon: ({ focused }) => <TabItem icon={Home} label="Home" focused={focused} /> }}
       />
       <Tabs.Screen
         name="wallet"
-        options={{
-          title: 'Wallet',
-          tabBarIcon: ({ focused }) => <TabIcon icon={Wallet} focused={focused} />,
-        }}
+        options={{ title: 'Wallet', tabBarIcon: ({ focused }) => <TabItem icon={Wallet} label="Wallet" focused={focused} /> }}
       />
       <Tabs.Screen
         name="services"
-        options={{
-          title: 'Services',
-          tabBarIcon: ({ focused }) => <TabIcon icon={LayoutGrid} focused={focused} />,
-        }}
-      />
-      <Tabs.Screen
-        name="notifications"
-        options={{
-          title: 'Activity',
-          tabBarIcon: ({ focused }) => <TabIcon icon={Activity} focused={focused} />,
-        }}
+        options={{ title: 'Services', tabBarIcon: ({ focused }) => <TabItem icon={LayoutGrid} label="Services" focused={focused} /> }}
       />
       <Tabs.Screen
         name="profile"
-        options={{
-          title: 'Profile',
-          tabBarIcon: ({ focused }) => <TabIcon icon={User} focused={focused} />,
-        }}
+        options={{ title: 'Profile', tabBarIcon: ({ focused }) => <TabItem icon={User} label="Profile" focused={focused} /> }}
       />
+      {/* Notifications stays reachable via the header bell (AppHeader) — kept out
+          of the bottom bar to avoid a redundant, crowded 5th tab. */}
+      <Tabs.Screen name="notifications" options={{ href: null }} />
     </Tabs>
   );
 }
 
 const styles = StyleSheet.create({
   tabBar: {
-    position:        'absolute',
-    height:          Platform.OS === 'ios' ? 88 : 68,
-    paddingBottom:   Platform.OS === 'ios' ? 24 : 8,
-    paddingTop:      8,
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    borderTopWidth:  1,
-    borderTopColor:  Colors.surfaceContainerHigh,
-    // Glassmorphism hint
+    position: 'absolute',
+    height: Platform.OS === 'ios' ? 84 : 66,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 8,
+    paddingTop: 8,
+    paddingHorizontal: 8,
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.outlineVariant,
     ...Platform.select({
-      ios: {
-        shadowColor:   Colors.primary,
-        shadowOffset:  { width: 0, height: -4 },
-        shadowOpacity: 0.06,
-        shadowRadius:  12,
-      },
-      android: { elevation: 12 },
+      ios: { shadowColor: '#0B1C30', shadowOffset: { width: 0, height: -6 }, shadowOpacity: 0.06, shadowRadius: 16 },
+      android: { elevation: 10 },
+      default: {},
     }),
   },
-  label: {
-    ...Typography.labelSm,
-    marginTop: -2,
+  tabItem: {
+    // Vertically centre the pill within the bar.
+    height: '100%',
+    paddingVertical: 4,
   },
-  iconWrap: {
-    alignItems:     'center',
+  item: {
+    flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'center',
-    paddingTop:     2,
+    gap: 6,
+    height: 38,
+    paddingHorizontal: 10,
+    borderRadius: Radius.full,
   },
-  iconWrapActive: {},
-  activeDot: {
-    width:           4,
-    height:          4,
-    borderRadius:    Radius.full,
-    backgroundColor: Colors.primary,
-    marginTop:       3,
+  itemActive: {
+    backgroundColor: Colors.primaryFixed,
+    paddingHorizontal: 13,
+  },
+  itemLabel: {
+    ...Typography.labelSm,
+    color: Colors.primary,
+    fontWeight: '700' as const,
   },
 });

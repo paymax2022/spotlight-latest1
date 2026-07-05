@@ -19,6 +19,7 @@ type Service struct {
 	book      QuoteStore
 	store     Store
 	emitter   *WebhookEmitter
+	screener  ComplianceScreener
 	now       func() time.Time
 }
 
@@ -27,7 +28,8 @@ type Options struct {
 	Spread     *SpreadEngine
 	Router     *Router
 	Treasury   *Treasury
-	QuoteStore QuoteStore // optional; defaults to in-memory QuoteBook
+	QuoteStore QuoteStore         // optional; defaults to in-memory QuoteBook
+	Screener   ComplianceScreener // optional; defaults to AllowAllScreener (no-op)
 	LockWindow time.Duration
 	Now        func() time.Time
 }
@@ -52,6 +54,9 @@ func NewService(providers []Provider, store Store, opts Options) *Service {
 	if opts.QuoteStore == nil {
 		opts.QuoteStore = NewQuoteBook(opts.LockWindow)
 	}
+	if opts.Screener == nil {
+		opts.Screener = AllowAllScreener{} // fail-open default until a vendor is injected
+	}
 	m := map[string]Provider{}
 	for _, p := range providers {
 		m[p.Name()] = p
@@ -59,7 +64,7 @@ func NewService(providers []Provider, store Store, opts Options) *Service {
 	return &Service{
 		providers: m, order: providers,
 		spread: opts.Spread, router: opts.Router, treasury: opts.Treasury,
-		book: opts.QuoteStore, store: store, now: opts.Now,
+		book: opts.QuoteStore, store: store, screener: opts.Screener, now: opts.Now,
 	}
 }
 
@@ -104,6 +109,13 @@ func (s *Service) CreateQuote(ctx context.Context, customerID, tier string, req 
 		rail = defaultRail(req.Intent)
 	}
 	corridor := Corridor(source, dest)
+
+	// 0. Compliance screening (KYC/AML/sanctions) is a first-class, server-side
+	//    gate: a blocked or errored screen returns compliance_block and we do NOT
+	//    price the request. Fail-closed on screener error.
+	if apiErr := s.screen(ctx, customerID, corridor, req.Amount); apiErr != nil {
+		return nil, apiErr
+	}
 
 	// 1. Fan out to provider adapters (parallel in production; sequential is fine
 	//    for deterministic adapters).
@@ -253,6 +265,13 @@ func (s *Service) ExecuteConversion(ctx context.Context, customerID, idemKey str
 		return nil, apiErr
 	}
 
+	// Compliance gate (fail-closed) before any debit/execution. Defense-in-depth:
+	// the quote was screened at creation, but we re-screen at execution so a
+	// blocked/errored screen halts a held quote and nothing moves.
+	if apiErr := s.screen(ctx, customerID, q.Route.Corridor, q.Source.AmountMinor); apiErr != nil {
+		return nil, apiErr
+	}
+
 	sourceTotal := q.Source.AmountMinor + feeAmount(q.Fees, FeeProvider) + feeAmount(q.Fees, FeeRail)
 	if bal, _ := s.store.Balance(ctx, customerID, q.Source.Currency); bal < sourceTotal {
 		return nil, NewError(ErrInsufficientBalance, "insufficient_balance", "Insufficient "+q.Source.Currency+" balance.")
@@ -314,6 +333,15 @@ func (s *Service) ExecuteTransfer(ctx context.Context, customerID, idemKey strin
 			Fees: []Fee{{Type: FeeProvider, Amount: NewMoney(0, cur)}, {Type: FeeRail, Amount: NewMoney(0, cur)}},
 			ExpiresAt: s.now().Add(s.book.LockWindow()),
 		}
+	}
+
+	// Compliance gate (fail-closed) on the execution path. Cross-currency
+	// transfers were screened at quote time, but same-currency transfers
+	// synthesize their quote here and would otherwise bypass screening — so we
+	// screen unconditionally before any balance debit or provider execution. A
+	// blocked/errored screen returns compliance_block and nothing moves.
+	if apiErr := s.screen(ctx, customerID, q.Route.Corridor, q.Source.AmountMinor); apiErr != nil {
+		return nil, apiErr
 	}
 
 	sourceTotal := q.Source.AmountMinor + feeAmount(q.Fees, FeeProvider) + feeAmount(q.Fees, FeeRail)

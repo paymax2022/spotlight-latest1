@@ -33,7 +33,11 @@ export interface Contest {
   status: ContestStatus;
   bannerImage?: string;
   contestantCount: number;
-  totalVotes: number;
+  /**
+   * Total votes for the contest. May be `null` when the admin has hidden vote
+   * counts for this contest/phase (`showVoteCount === false`).
+   */
+  totalVotes: number | null;
   startsAt?: string;
   endsAt?: string;
   freeVotesPerDay: number;
@@ -42,6 +46,18 @@ export interface Contest {
   sponsorLogo?: string;
   prizes?: string[];
   rules?: string[];
+  /**
+   * Admin visibility flags. All default to `true` when undefined so existing
+   * contests are unaffected. Resolve with `resolveContestVisibility`.
+   */
+  /** When false, hide ALL vote-count numbers for this contest. */
+  showVoteCount?: boolean;
+  /** When false, hide the leaderboard surface entirely. */
+  showLeaderboard?: boolean;
+  /** When false, hide rank/position badges. */
+  showRank?: boolean;
+  /** Optional label (e.g. "Auditions") explaining why something is hidden. */
+  activePhaseLabel?: string | null;
 }
 
 export interface Contestant {
@@ -54,7 +70,11 @@ export interface Contestant {
   photo?: string;
   mediaUrl?: string;
   rank: number;
-  votes: number;
+  /**
+   * Contestant vote count. May be `null` when vote counts are hidden for the
+   * contest (`showVoteCount === false`).
+   */
+  votes: number | null;
   bio?: string;
   isVerified?: boolean;
   status: ContestantStatus;
@@ -112,6 +132,16 @@ export interface LeaderboardEntry {
   rankChange?: RankChange;
 }
 
+/**
+ * Leaderboard payload that also carries whether the admin has hidden the board.
+ * When `hidden` is true, `entries` is empty and `reason` may explain why.
+ */
+export interface LeaderboardState {
+  hidden: boolean;
+  reason?: string | null;
+  entries: LeaderboardEntry[];
+}
+
 export interface VotingNotification {
   id: string;
   type:
@@ -141,16 +171,34 @@ export interface VotePaidInitiatePayload {
   contestantId: string;
   contestId: string;
   packageId?: string;
+  /** Sent as `customVoteQuantity` when no packageId is supplied. */
   votes: number;
   amount: number;
   paymentMethod: PaymentMethod;
+  /** Required by the backend; sourced from the authenticated user's profile. */
+  voterEmail: string;
+  voterName: string;
   idempotencyKey: string;
 }
 
 export type PaymentMethod = 'WALLET' | 'CARD' | 'BANK_TRANSFER' | 'USSD';
 
 export interface VotePaidInitiateResult {
+  /** Backend transaction id used for verification. */
+  transactionId: string;
+  /** Paystack payment reference used for verification. */
   reference: string;
+  /** Paystack-hosted checkout URL (opened for non-wallet methods). */
   authorizationUrl?: string;
+  amountExpected?: number;
+  votesToCredit?: number;
+  bonusVotes?: number;
   status: VoteTransactionStatus;
+}
+
+export interface VotePaidVerifyResult {
+  status: VoteTransactionStatus;
+  votes?: number;
+  newTotalVotes?: number;
+  receiptNumber?: string | null;
 }

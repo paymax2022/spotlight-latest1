@@ -1000,6 +1000,14 @@ func (s *Service) receipt(o *Order) *Receipt {
 	return &Receipt{Order: *o, RiskDisclosure: riskDisclosure, SettlementNote: settlementNote(o)}
 }
 
+// SetPINVerifier swaps the PIN verifier (defaults to MockPINVerifier; the
+// router installs the DB-backed verifier in production).
+func (s *Service) SetPINVerifier(v PINVerifier) {
+	if v != nil {
+		s.pin = v
+	}
+}
+
 // feeSchedule loads the admin-configurable fee schedule, falling back to the
 // built-in default when no config row exists (fees are never hard-coded client-side).
 func (s *Service) feeSchedule(ctx context.Context) FeeSchedule {

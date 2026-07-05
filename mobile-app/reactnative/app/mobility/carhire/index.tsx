@@ -12,10 +12,13 @@ import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import SelectableCard from '@/features/mobility/components/SelectableCard';
+import VehicleClassCard from '@/features/mobility/components/VehicleClassCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { useCarHireQuote, useBookCarHire } from '@/features/mobility/hooks/useModes';
+import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { HIRE_TYPES, VEHICLE_CLASSES, CARHIRE_ENABLED } from '@/features/mobility/constants/modes.constants';
-import { formatNairaWhole, toMobilityError } from '@/features/mobility/utils/mobilityFormatters';
+import { VEHICLE_CLASS_META, VEHICLE_CLASS_GALLERY } from '@/features/mobility/constants/carhireCatalog';
+import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import type { HireType, VehicleClass, CarHireQuote } from '@/features/mobility/types/modes.types';
 
 export default function CarHireHomeScreen() {
@@ -29,6 +32,8 @@ export default function CarHireHomeScreen() {
   const quote = useCarHireQuote();
   const book = useBookCarHire();
   const q: CarHireQuote | undefined = quote.data;
+  // Shared chooser: wallet OR card (Paystack top-up) → then the booking charge.
+  const pay = usePurchasePayment<Awaited<ReturnType<typeof book.mutateAsync>>>();
 
   useEffect(() => {
     setSubmitError(null);
@@ -48,16 +53,17 @@ export default function CarHireHomeScreen() {
   const onBook = () => {
     if (!q) return;
     setSubmitError(null);
-    book.mutate(
-      { hireType, vehicleClass, startAt: new Date(startDate).toISOString(), durationHours, chauffeur, paymentMethod: 'wallet' },
-      {
-        onSuccess: (booking) => router.replace(`/mobility/carhire/${booking.id}`),
-        onError: (e) => {
-          const me = toMobilityError(e);
-          setSubmitError(me.code === 'PAYMENT_FAILED' ? 'Payment could not be authorised. Top up or try another method.' : me.message);
-        },
-      },
-    );
+    pay.start({
+      amountKobo: q.totalKobo,
+      title: 'Pay for car hire',
+      // Existing wallet booking charge (with its Idempotency-Key) runs unchanged.
+      charge: () =>
+        book.mutateAsync({
+          hireType, vehicleClass, startAt: new Date(startDate).toISOString(),
+          durationHours, chauffeur, paymentMethod: 'wallet',
+        }),
+      onPaid: (booking) => router.replace(`/mobility/carhire/${booking.id}`),
+    });
   };
 
   return (
@@ -77,10 +83,19 @@ export default function CarHireHomeScreen() {
               ))}
             </View>
 
-            <Text style={styles.section}>Vehicle class</Text>
-            <View style={styles.list}>
+            <Text style={styles.section}>Choose your vehicle</Text>
+            <Text style={styles.sectionHint}>Starting rates shown — your final quote appears below.</Text>
+            <View style={styles.vehicleList}>
               {VEHICLE_CLASSES.map((v) => (
-                <SelectableCard key={v.value} title={v.label} subtitle={v.hint} selected={vehicleClass === v.value} onPress={() => setVehicleClass(v.value)} />
+                <VehicleClassCard
+                  key={v.value}
+                  label={v.label}
+                  meta={VEHICLE_CLASS_META[v.value]}
+                  selected={vehicleClass === v.value}
+                  onPress={() => setVehicleClass(v.value)}
+                  galleryCount={VEHICLE_CLASS_GALLERY[v.value].length}
+                  onViewGallery={() => router.push(`/mobility/carhire/gallery?class=${v.value}`)}
+                />
               ))}
             </View>
 
@@ -135,6 +150,8 @@ export default function CarHireHomeScreen() {
           </View>
         </>
       )}
+      {/* Shared wallet/card chooser — drives the booking charge above. */}
+      <PaymentSheet controller={pay} />
     </SafeAreaView>
   );
 }
@@ -143,6 +160,8 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.lg, gap: Spacing.sm },
   section: { ...Typography.labelLg, color: Colors.onSurface, marginTop: Spacing.md },
+  sectionHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: -2 },
+  vehicleList: { gap: Spacing.md, marginTop: Spacing.xs },
   grid2: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   gridHalf: { width: '48.5%' },
   list: { gap: Spacing.sm },

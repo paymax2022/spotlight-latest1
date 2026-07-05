@@ -3,12 +3,17 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"paymax/crypto-backend/internal/api"
+	"paymax/crypto-backend/internal/pgstore"
 	"paymax/crypto-backend/internal/store"
 )
 
@@ -18,7 +23,22 @@ func main() {
 		port = "8080"
 	}
 
-	srv := api.NewServer(store.New())
+	// Storage engine: Postgres when DATABASE_URL is set, else the in-memory mock.
+	var repo store.Repository
+	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
+		pg, err := pgstore.New(context.Background(), dsn)
+		if err != nil {
+			log.Fatalf("postgres: %v", err)
+		}
+		defer pg.Close()
+		repo = pg
+		log.Printf("storage: postgres")
+	} else {
+		repo = store.New()
+		log.Printf("storage: in-memory (set DATABASE_URL to use postgres)")
+	}
+
+	srv := api.NewServer(repo)
 	httpServer := &http.Server{
 		Addr:         ":" + port,
 		Handler:      srv.Handler(),
@@ -26,8 +46,22 @@ func main() {
 		WriteTimeout: 15 * time.Second,
 	}
 
-	log.Printf("Paymax Invest · Crypto API listening on :%s", port)
-	if err := httpServer.ListenAndServe(); err != nil {
-		log.Fatal(err)
+	// Graceful shutdown: stop accepting on SIGINT/SIGTERM, drain in-flight requests.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		log.Printf("Paymax Invest · Crypto API listening on :%s", port)
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Printf("shutting down…")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("graceful shutdown failed: %v", err)
 	}
 }

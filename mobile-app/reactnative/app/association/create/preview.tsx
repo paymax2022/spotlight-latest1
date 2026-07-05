@@ -58,13 +58,26 @@ export default function WizardPreview() {
 
         <SummaryRow label="Group type" value={groupTypeLabel} onEdit={() => router.push('/association/create/branding')} />
         <SummaryRow label="Approval rule" value={approvalLabel} onEdit={() => router.push('/association/create/structure')} />
+        <SummaryRow
+          label="Structure"
+          value={draft.structureType === 'STATEWIDE' ? `State chapters · ${draft.stateLeaders.length} state${draft.stateLeaders.length === 1 ? '' : 's'}` : 'Single structure'}
+          onEdit={() => router.push('/association/create/structure')}
+        />
         <SummaryRow label="Registration fee" value={draft.registrationFeeKobo ? formatNaira(draft.registrationFeeKobo) : 'Free'} onEdit={() => router.push('/association/create/access')} />
 
-        {/* Chapters */}
-        <Section title={`Chapters (${draft.chapters.length})`} onEdit={() => router.push('/association/create/structure')}>
-          {draft.chapters.length === 0 ? <Text style={styles.empty}>None added</Text> :
-            draft.chapters.map((c) => <Text key={c.id} style={styles.listItem}>• {c.name}</Text>)}
-        </Section>
+        {/* State leaders (only when statewide) */}
+        {draft.structureType === 'STATEWIDE' ? (
+          <Section title={`State leaders (${draft.stateLeaders.length})`} onEdit={() => router.push('/association/create/structure')}>
+            {draft.stateLeaders.length === 0 ? <Text style={styles.empty}>No states selected</Text> :
+              draft.stateLeaders.map((l) => (
+                <Text key={l.id} style={styles.listItem}>
+                  • {l.state}{l.leaderName ? ` — ${l.leaderName}` : ''}{l.canApproveMembers ? ' (can approve)' : ''}
+                </Text>
+              ))}
+          </Section>
+        ) : null}
+
+        {/* Committees */}
 
         {/* Committees */}
         {draft.committees.length > 0 ? (

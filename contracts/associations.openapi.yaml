@@ -62,7 +62,9 @@ paths:
         '201':
           description: Created
           content: { application/json: { schema: { $ref: '#/components/schemas/PublishResult' } } }
-  /associations/{id}:
+  /associations/orgs/{id}:
+    # Served at /orgs/{id} rather than a bare /{id}: gin cannot route a root path
+    # param alongside the many static siblings (/me, /members, /meetings, …).
     get:
       tags: [Discovery]
       summary: Organisation detail
@@ -84,7 +86,9 @@ paths:
       summary: Validate a group/chapter access code
       requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { code: { type: string } }, required: [code] } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CodeValidation' } } } } }
-  /associations/members/apply:
+  /associations/apply:
+    # Served at /apply rather than /members/apply: /members is a static collection
+    # route with a /{id} param sibling, which conflicts with /members/apply in gin.
     post:
       tags: [Join]
       summary: Submit a membership application
@@ -272,6 +276,13 @@ paths:
       parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
       requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { body: { type: string } }, required: [body] } } } }
       responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/ChatMessage' } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/chat/threads/{id}/mute:
+    post:
+      tags: [Chat]
+      summary: Mute or unmute a chat thread (persists per-member preference)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { muted: { type: boolean } }, required: [muted] } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' } }
 
   # ── AI notes (L) ──────────────────────────────────────────────────────────
   /associations/ai-notes:
@@ -422,6 +433,21 @@ paths:
     post:
       tags: [Admin]
       summary: Preview a bulk member import file
+      description: >
+        Upload the CSV (multipart field `file`; columns
+        name,email,phone,member_code,category_label,chapter_label). Returns parsed
+        rows classified valid / duplicate / invalid. org_id is optional (resolved
+        from the caller's membership when omitted).
+      parameters:
+        - { name: org_id, in: query, required: false, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties: { file: { type: string, format: binary } }
+              required: [file]
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ImportPreview' } } } } }
   /associations/admin/import/confirm:
     post:

@@ -1,0 +1,108 @@
+name: Stays CI
+
+# Formal verification gate for the Paymax Hotel Booking / Stays module (Property
+# Suite): supply-gateway + bedbank/direct adapters, ari-svc, prebook→book saga,
+# hotelier extranet, settlement/reconciliation. The authoring sandbox has no Go
+# toolchain (proxy blocked), so the Go packages were verified static-only
+# (gofmt-form + structural checks). This workflow is the real gate: full
+# go build/vet/test, mobile + admin + web typecheck, and an additive-only
+# migration guard. Blocks merges on red.
+
+on:
+  push:
+    paths:
+      - 'backend/internal/stays/**'
+      - 'backend/internal/app/stays_routes.go'
+      - 'backend/internal/app/stays_extranet_routes.go'
+      - 'backend/internal/app/finance_routes.go'
+      - 'backend/internal/config/config.go'
+      - 'supabase/migrations/*stays*.sql'
+      - 'frontend-admin/app/admin/stays/**'
+      - 'frontend-admin/app/extranet/**'
+      - 'frontend-admin/src/services/staysAdminService.ts'
+      - 'frontend-admin/src/services/staysExtranetService.ts'
+      - 'frontend-admin/src/types/staysAdmin.ts'
+      - 'frontend-admin/src/types/staysExtranet.ts'
+      - 'frontend-admin/src/components/layouts/AdminSidebar.tsx'
+      - 'frontend-web/app/api/v1/stays/**'
+      - 'frontend-web/src/lib/feature-flags.ts'
+      - 'mobile-app/reactnative/app/stays/**'
+      - 'mobile-app/reactnative/src/features/stays/**'
+      - 'mobile-app/reactnative/src/constants/modules.ts'
+      - '.github/workflows/stays-ci.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+      - name: Build (whole backend — catches wiring/import breaks)
+        run: go build ./...
+      - name: Vet (stays module)
+        run: go vet ./internal/stays/...
+      - name: Test (stays — booking saga, auto-release, row-locked allotment, review gating)
+        run: go test ./internal/stays/... -count=1 -v
+      - name: Test (all — regression)
+        run: go test ./... -count=1
+
+  admin-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck admin + extranet (tsc --noEmit)
+        run: npm run type-check
+
+  web-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck web (stays proxy + feature flag)
+        run: npx tsc --noEmit
+
+  mobile-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app/reactnative
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck whole app (stays surface + property hub)
+        run: npx tsc --noEmit -p tsconfig.json
+
+  migration-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject destructive DDL in stays migrations (additive-only)
+        run: |
+          set -e
+          FILES=$(ls supabase/migrations/*stays*.sql 2>/dev/null || true)
+          if [ -z "$FILES" ]; then echo "no stays migrations"; exit 0; fi
+          if echo "$FILES" | xargs sed 's/--.*$//' | grep -iEn '\b(drop\s+(table|column|type)|alter\s+[a-z_."]+\s+drop|drop\s+not\s+null|rename\s+(column|to))\b' | grep -ivE 'drop\s+(policy|trigger)\s+if\s+exists'; then
+            echo "::error::Destructive DDL found in stays migration (must be additive-only)"; exit 1;
+          fi
+          echo "Additive-only guard passed for: $FILES"

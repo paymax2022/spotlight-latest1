@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  ScrollView, View, Text, StyleSheet, Pressable, ActivityIndicator, Image, Platform,
+  ScrollView, View, Text, StyleSheet, Pressable, ActivityIndicator, Image, Platform, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -13,11 +13,13 @@ import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useContestantProfile } from '@/features/voting/hooks/useContestantProfile';
+import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import { useFreeVoteAllocation, useCastFreeVotes } from '@/features/voting/hooks/useVote';
 import { useVotePackages } from '@/features/voting/hooks/useVotePackages';
 import RankBadge from '@/features/voting/components/RankBadge';
 import RankMovementBadge from '@/features/voting/components/RankMovementBadge';
 import FreeVoteBadge from '@/features/voting/components/FreeVoteBadge';
+import FreeVoteResetCountdown from '@/features/voting/components/FreeVoteResetCountdown';
 import ContestantStatsCard from '@/features/voting/components/ContestantStatsCard';
 import VoteConfirmationSheet from '@/features/voting/components/VoteConfirmationSheet';
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
@@ -31,8 +33,13 @@ export default function ContestantProfileScreen() {
   const [shareOpen, setShareOpen] = useState(false);
 
   const { data: contestant, isLoading } = useContestantProfile(contestantId ?? '');
-  const { data: freeVotes }  = useFreeVoteAllocation(contestId ?? '');
+  const { data: parentContest } = useContestDetails(contestId ?? '');
+  const { data: freeVotes }  = useFreeVoteAllocation(contestId ?? '', contestantId ?? '');
   const { data: packages }   = useVotePackages(contestId);
+
+  // Organiser visibility (per-contest / per-phase). Default visible.
+  const showVoteCount = parentContest?.showVoteCount !== false;
+  const showRank      = parentContest?.showRank !== false;
   const castFree = useCastFreeVotes();
   const qc = useQueryClient();
 
@@ -42,8 +49,11 @@ export default function ContestantProfileScreen() {
       await castFree.mutateAsync({ contestantId: contestant.id, contestId: contestId ?? '', votes });
       setVoteOpen(false);
       router.push(`/voting/vote-success?contestantId=${contestant.id}&contestId=${contestId}&votes=${votes}&voteType=FREE`);
-    } catch {
-      router.push('/voting/vote-failed');
+    } catch (e: any) {
+      setVoteOpen(false);
+      const msg =
+        e?.response?.data?.error ?? e?.response?.data?.message ?? 'We could not cast your vote. Please try again.';
+      Alert.alert('Vote failed', msg);
     }
   };
 
@@ -92,12 +102,14 @@ export default function ContestantProfileScreen() {
               <Text style={styles.heroInitial}>{contestant.name.charAt(0)}</Text>
             </View>
           )}
-          <View style={styles.heroOverlay}>
-            <View style={styles.heroRank}>
-              <RankBadge rank={contestant.rank} size="lg" />
-              <RankMovementBadge movement={contestant.movement} />
+          {showRank && (
+            <View style={styles.heroOverlay}>
+              <View style={styles.heroRank}>
+                <RankBadge rank={contestant.rank} size="lg" />
+                <RankMovementBadge movement={contestant.movement} />
+              </View>
             </View>
-          </View>
+          )}
         </View>
 
         <View style={styles.body}>
@@ -128,10 +140,20 @@ export default function ContestantProfileScreen() {
 
           {/* Vote stats strip */}
           <View style={[styles.voteStrip, shadow1]}>
-            <Text style={styles.voteCount}>{formatVoteCount(contestant.votes)}</Text>
+            <Text style={styles.voteCount}>{showVoteCount ? formatVoteCount(contestant.votes ?? 0) : '—'}</Text>
             <Text style={styles.voteLabel}>Total Votes</Text>
             <View style={styles.stripDivider} />
-            <FreeVoteBadge remaining={displayFreeVotes.remaining} total={displayFreeVotes.total} />
+            {displayFreeVotes.remaining === 0 ? (
+              <FreeVoteResetCountdown
+                resetAt={displayFreeVotes.resetsAt}
+                size="sm"
+                onReset={() =>
+                  qc.invalidateQueries({ queryKey: ['voting', 'free-votes', contestId] })
+                }
+              />
+            ) : (
+              <FreeVoteBadge remaining={displayFreeVotes.remaining} total={displayFreeVotes.total} />
+            )}
           </View>
 
           {/* Bio */}

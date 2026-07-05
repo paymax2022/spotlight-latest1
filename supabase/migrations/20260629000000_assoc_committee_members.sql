@@ -28,7 +28,8 @@ create index if not exists idx_assoc_committee_members_status
 -- chairs can see all members of their committees.
 alter table assoc_committee_members enable row level security;
 
-create policy if not exists "member: own committee memberships"
+drop policy if exists "member: own committee memberships" on assoc_committee_members;
+create policy "member: own committee memberships"
   on assoc_committee_members for select
   using (
     membership_id in (
@@ -36,6 +37,7 @@ create policy if not exists "member: own committee memberships"
     )
   );
 
-create policy if not exists "service role: full access"
+drop policy if exists "service role: full access" on assoc_committee_members;
+create policy "service role: full access"
   on assoc_committee_members for all
   using (auth.role() = 'service_role');

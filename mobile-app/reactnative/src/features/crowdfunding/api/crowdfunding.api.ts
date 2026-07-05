@@ -182,7 +182,7 @@ export async function getSavedCampaigns(): Promise<CampaignSummary[]> {
     await delay();
     return MOCK_CAMPAIGNS.filter((c) => c.saved).map(toSummary);
   }
-  const res = await api.get('/crowdfunding/campaigns/saved');
+  const res = await api.get('/api/v1/crowdfunding/saved-campaigns');
   return (res.data?.data ?? res.data) as CampaignSummary[];
 }
 
@@ -194,7 +194,7 @@ export async function getRecentlyViewed(): Promise<CampaignSummary[]> {
       .filter((c): c is Campaign => Boolean(c))
       .map(toSummary);
   }
-  const res = await api.get('/crowdfunding/campaigns/recently-viewed');
+  const res = await api.get('/api/v1/crowdfunding/recently-viewed');
   return (res.data?.data ?? res.data) as CampaignSummary[];
 }
 
@@ -207,8 +207,8 @@ export async function toggleSaveCampaign(id: string, saved: boolean): Promise<{ 
     return { id, saved };
   }
   const res = saved
-    ? await api.post(`/crowdfunding/campaigns/${id}/save`)
-    : await api.delete(`/crowdfunding/campaigns/${id}/save`);
+    ? await api.post(`/api/v1/crowdfunding/campaigns/${id}/save`)
+    : await api.delete(`/api/v1/crowdfunding/campaigns/${id}/save`);
   return res.data?.data ?? res.data;
 }
 
@@ -247,7 +247,7 @@ export async function getCampaignContributors(id: string): Promise<Contributor[]
       };
     });
   }
-  const res = await api.get(`/crowdfunding/campaigns/${id}/contributors`);
+  const res = await api.get(`/api/v1/crowdfunding/campaigns/${id}/contributors`);
   return (res.data?.data ?? res.data) as Contributor[];
 }
 
@@ -260,7 +260,7 @@ export async function getContributions(params?: { status?: string }): Promise<Co
     if (params?.status) list = list.filter((c) => c.status === params.status);
     return list.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
-  const res = await api.get('/crowdfunding/contributions', { params });
+  const res = await api.get('/api/v1/crowdfunding/contributions', { params });
   return (res.data?.data ?? res.data) as Contribution[];
 }
 
@@ -271,7 +271,7 @@ export async function getContribution(id: string): Promise<Contribution> {
     if (!found) throw new Error('Contribution not found');
     return found;
   }
-  const res = await api.get(`/crowdfunding/contributions/${id}`);
+  const res = await api.get(`/api/v1/crowdfunding/contributions/${id}`);
   return (res.data?.data ?? res.data) as Contribution;
 }
 
@@ -322,7 +322,7 @@ export async function verifyContribution(reference: string): Promise<Contributio
       refundEligible: true,
     };
   }
-  const res = await api.post('/crowdfunding/contributions/verify', { reference });
+  const res = await api.post('/api/v1/crowdfunding/contributions/verify', { reference });
   return res.data?.data ?? res.data;
 }
 
@@ -333,7 +333,7 @@ export async function requestRefund(contributionId: string, reason: string): Pro
     if (found) found.status = 'REFUND_REQUESTED';
     return { status: 'REFUND_REQUESTED' };
   }
-  const res = await api.post(`/crowdfunding/contributions/${contributionId}/refund-request`, { reason });
+  const res = await api.post(`/api/v1/crowdfunding/contributions/${contributionId}/refund-request`, { reason });
   return res.data?.data ?? res.data;
 }
 
@@ -341,7 +341,7 @@ export async function requestRefund(contributionId: string, reason: string): Pro
 
 export async function getCreatorStats(): Promise<CreatorStats> {
   if (USE_MOCK) { await delay(200); return MOCK_CREATOR_STATS; }
-  const res = await api.get('/crowdfunding/creator/stats');
+  const res = await api.get('/api/v1/crowdfunding/creator/stats');
   return (res.data?.data ?? res.data) as CreatorStats;
 }
 
@@ -350,13 +350,13 @@ export async function getMyCampaigns(status?: string): Promise<Campaign[]> {
     await delay();
     return status ? MOCK_MY_CAMPAIGNS.filter((c) => c.status === status) : MOCK_MY_CAMPAIGNS;
   }
-  const res = await api.get('/crowdfunding/creator/campaigns', { params: { status } });
+  const res = await api.get('/api/v1/crowdfunding/creator/campaigns', { params: { status } });
   return (res.data?.data ?? res.data) as Campaign[];
 }
 
 export async function getCreatorContributions(): Promise<CreatorContribution[]> {
   if (USE_MOCK) { await delay(220); return MOCK_CREATOR_CONTRIBUTIONS; }
-  const res = await api.get('/crowdfunding/creator/contributions');
+  const res = await api.get('/api/v1/crowdfunding/creator/contributions');
   return (res.data?.data ?? res.data) as CreatorContribution[];
 }
 
@@ -365,13 +365,13 @@ export async function getCreatorWithdrawals(): Promise<CreatorWithdrawal[]> {
     await delay();
     return [...MOCK_CREATOR_WITHDRAWALS].sort((a, b) => +new Date(b.requestedAt) - +new Date(a.requestedAt));
   }
-  const res = await api.get('/crowdfunding/creator/withdrawals');
+  const res = await api.get('/api/v1/crowdfunding/creator/withdrawals');
   return (res.data?.data ?? res.data) as CreatorWithdrawal[];
 }
 
 export async function getCreatorNotifications(): Promise<CreatorNotification[]> {
   if (USE_MOCK) { await delay(200); return MOCK_CREATOR_NOTIFICATIONS; }
-  const res = await api.get('/crowdfunding/creator/notifications');
+  const res = await api.get('/api/v1/crowdfunding/creator/notifications');
   return (res.data?.data ?? res.data) as CreatorNotification[];
 }
 
@@ -381,7 +381,7 @@ export async function getCampaignAnalytics(id: string): Promise<CampaignAnalytic
     const campaign = MOCK_MY_CAMPAIGNS.find((c) => c.id === id) ?? MOCK_MY_CAMPAIGNS[0];
     return buildAnalytics(campaign);
   }
-  const res = await api.get(`/crowdfunding/creator/campaigns/${id}/analytics`);
+  const res = await api.get(`/api/v1/crowdfunding/creator/campaigns/${id}/analytics`);
   return (res.data?.data ?? res.data) as CampaignAnalytics;
 }
 

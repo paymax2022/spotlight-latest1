@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Wallet, CreditCard, Building2, Hash, ChevronRight, ShieldCheck } from 'lucide-react-native';
+import { ArrowLeft, ShieldCheck, Lock, Wallet, CreditCard } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -10,37 +10,54 @@ import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useInitiatePaidVote } from '@/features/voting/hooks/useVote';
+import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import { formatAmount } from '@/features/voting/utils/voteFormatters';
-import { PAYMENT_METHODS } from '@/features/voting/constants/voting.constants';
-import type { PaymentMethod } from '@/features/voting/types/voting.types';
-
-const ICON_MAP: Record<string, React.ComponentType<any>> = {
-  Wallet, CreditCard, Building2, Hash,
-};
+import type { VotePaidInitiateResult } from '@/features/voting/types/voting.types';
+import { useAuthStore } from '@/store/authStore';
+import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 
 export default function PaymentMethodScreen() {
   const { contestantId, contestId, votes, amount, packageId } =
     useLocalSearchParams<{ contestantId: string; contestId: string; votes: string; amount: string; packageId: string }>();
-  const [selected, setSelected] = useState<PaymentMethod>('WALLET');
   const initiate = useInitiatePaidVote();
+  const checkout = usePurchasePayment<VotePaidInitiateResult>();
+  const user = useAuthStore((s) => s.user);
+  const { data: contest } = useContestDetails(contestId ?? '');
 
   const totalAmount = Number(amount ?? 0);
   const totalVotes  = Number(votes ?? 0);
 
-  const handlePay = async () => {
-    try {
-      const result = await initiate.mutateAsync({
+  // Block purchases when the contest is not actively accepting votes. We only
+  // gate on a *known* non-live status so a slow/absent contest query doesn't
+  // wrongly lock out a paying voter.
+  const votingClosed =
+    !!contest && (contest.status !== 'LIVE' || contest.paidVotingEnabled === false);
+
+  const goToProcessing = (result: VotePaidInitiateResult) => {
+    const params = `transactionId=${encodeURIComponent(result.transactionId)}&reference=${encodeURIComponent(result.reference)}&contestantId=${contestantId}&contestId=${contestId}&votes=${votes}`;
+    router.push(`/voting/payment-processing?${params}`);
+  };
+
+  const handlePay = () => {
+    if (votingClosed) return;
+    // Open the two-option modal: Wallet pays from balance; Card/Transfer charges
+    // on the Paystack gateway. Either way the votes are credited on confirmation.
+    checkout.start({
+      amountKobo: totalAmount,
+      title: `${totalVotes} votes`,
+      domain: 'vote_purchase',
+      charge: (method) => initiate.mutateAsync({
         contestantId: contestantId ?? '',
         contestId: contestId ?? '',
         votes: totalVotes,
         amount: totalAmount,
-        packageId: packageId ?? '',
-        paymentMethod: selected,
-      });
-      router.push(`/voting/payment-processing?reference=${result.reference}&contestantId=${contestantId}&contestId=${contestId}&votes=${votes}`);
-    } catch {
-      router.push('/voting/vote-failed');
-    }
+        packageId: packageId || undefined,
+        paymentMethod: method === 'wallet' ? 'WALLET' : 'CARD',
+        voterEmail: user?.email ?? '',
+        voterName:  user?.fullName ?? '',
+      }),
+      onPaid: goToProcessing,
+    });
   };
 
   return (
@@ -68,32 +85,27 @@ export default function PaymentMethodScreen() {
           </View>
         </View>
 
-        {/* Payment options */}
-        <Text style={styles.sectionLabel}>Select Payment Method</Text>
-        <View style={styles.methodsList}>
-          {PAYMENT_METHODS.map((m) => {
-            const Icon = ICON_MAP[m.icon];
-            const isSelected = selected === m.id;
-            return (
-              <Pressable
-                key={m.id}
-                onPress={() => setSelected(m.id as PaymentMethod)}
-                style={[styles.methodCard, isSelected && styles.methodCardActive, shadow1]}
-              >
-                <View style={[styles.methodIcon, { backgroundColor: isSelected ? Colors.iconBgPurple : Colors.surfaceContainerHigh }]}>
-                  {Icon && <Icon size={20} color={isSelected ? Colors.primary : Colors.onSurfaceVariant} strokeWidth={1.8} />}
-                </View>
-                <View style={styles.methodInfo}>
-                  <Text style={[styles.methodLabel, isSelected && { color: Colors.primary }]}>{m.label}</Text>
-                  <Text style={styles.methodDesc}>{m.description}</Text>
-                </View>
-                <View style={[styles.radio, isSelected && styles.radioActive]}>
-                  {isSelected && <View style={styles.radioDot} />}
-                </View>
-              </Pressable>
-            );
-          })}
+        {/* How you pay is chosen on the next step. */}
+        <View style={styles.methodHint}>
+          <View style={styles.methodHintRow}>
+            <Wallet size={18} color={Colors.primary} strokeWidth={2} />
+            <Text style={styles.methodHintText}>Pay with Wallet</Text>
+          </View>
+          <View style={styles.methodHintRow}>
+            <CreditCard size={18} color={Colors.primary} strokeWidth={2} />
+            <Text style={styles.methodHintText}>Pay with Card / Transfer</Text>
+          </View>
+          <Text style={styles.methodHintNote}>You'll choose how to pay after tapping Pay.</Text>
         </View>
+
+        {votingClosed && (
+          <View style={styles.closedBanner}>
+            <Lock size={16} color={Colors.error} strokeWidth={2} />
+            <Text style={styles.closedText}>
+              Voting is closed for this contest. Payments are temporarily unavailable.
+            </Text>
+          </View>
+        )}
 
         {/* Security note */}
         <View style={styles.secureRow}>
@@ -104,11 +116,14 @@ export default function PaymentMethodScreen() {
 
       <View style={styles.footer}>
         <PrimaryButton
-          label={`Pay ${formatAmount(totalAmount)}`}
+          label={votingClosed ? 'Voting is closed' : `Pay ${formatAmount(totalAmount)}`}
           onPress={handlePay}
           loading={initiate.isPending}
+          disabled={votingClosed}
         />
       </View>
+      {/* Two-option payment modal (wallet / card-transfer via Paystack). */}
+      <PaymentSheet controller={checkout} />
     </SafeAreaView>
   );
 }
@@ -128,17 +143,13 @@ const styles = StyleSheet.create({
   totalAmount:  { ...Typography.titleLg, color: Colors.primary, fontWeight: '700' as const },
   divider:      { height: 1, backgroundColor: Colors.surfaceContainerHigh },
   sectionLabel: { ...Typography.labelMd, color: Colors.onSurface },
-  methodsList:  { gap: Spacing.sm },
-  methodCard:   { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.md, borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh },
-  methodCardActive: { borderColor: Colors.primary },
-  methodIcon:   { width: 44, height: 44, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
-  methodInfo:   { flex: 1, gap: 2 },
-  methodLabel:  { ...Typography.labelMd, color: Colors.onSurface },
-  methodDesc:   { ...Typography.labelSm, color: Colors.onSurfaceVariant },
-  radio:        { width: 20, height: 20, borderRadius: 10, borderWidth: 1.5, borderColor: Colors.outlineVariant, alignItems: 'center', justifyContent: 'center' },
-  radioActive:  { borderColor: Colors.primary },
-  radioDot:     { width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.primary },
+  methodHint:   { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.md, gap: Spacing.sm, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
+  methodHintRow:  { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  methodHintText: { ...Typography.labelMd, color: Colors.onSurface },
+  methodHintNote: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
   secureRow:    { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
   secureText:   { ...Typography.labelSm, color: Colors.onSurfaceVariant, flex: 1 },
+  closedBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.errorContainer, borderRadius: Radius.lg, padding: Spacing.md },
+  closedText:   { ...Typography.labelSm, color: Colors.error, flex: 1, lineHeight: 18 },
   footer:       { position: 'absolute', bottom: 0, left: 0, right: 0, padding: Spacing.containerMargin, paddingBottom: Platform.OS === 'ios' ? 34 : Spacing.lg, backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.surfaceContainerHigh },
 });

@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "app/crypto/**/*.ts",
+    "app/crypto/**/*.tsx",
+    "app/fractionalre/**/*.ts",
+    "app/fractionalre/**/*.tsx",
+    "app/services/**/*.ts",
+    "app/services/**/*.tsx",
+    "app/stocks/**/*.ts",
+    "app/stocks/**/*.tsx",
+    "app/social/**/*.ts",
+    "app/social/**/*.tsx",
+    "app/voting/**/*.ts",
+    "app/voting/**/*.tsx",
+    "app/events/**/*.ts",
+    "app/events/**/*.tsx"
+  ]
+}

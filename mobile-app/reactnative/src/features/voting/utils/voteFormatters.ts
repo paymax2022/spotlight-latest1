@@ -1,5 +1,11 @@
-// Format vote count: 1000 → "1K", 1500000 → "1.5M"
-export function formatVoteCount(votes: number): string {
+/** Neutral placeholder shown wherever a real vote count is hidden by an admin. */
+export const HIDDEN_VOTE_PLACEHOLDER = '—';
+
+// Format vote count: 1000 → "1K", 1500000 → "1.5M".
+// `null`/`undefined` (vote count hidden) renders the neutral placeholder so we
+// never show `0` as if it were a real total.
+export function formatVoteCount(votes: number | null | undefined): string {
+  if (votes == null) return HIDDEN_VOTE_PLACEHOLDER;
   if (votes >= 1_000_000) return `${(votes / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
   if (votes >= 1_000)     return `${(votes / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
   return votes.toLocaleString('en-NG');
@@ -71,4 +77,36 @@ export function resolveMovement(
   }
   if (movement === 'UP' || movement === 'DOWN' || movement === 'SAME') return movement;
   return 'SAME';
+}
+
+/**
+ * Resolved admin visibility flags for a contest. Each flag defaults to `true`
+ * when the contest omits it (undefined), so contests without the new fields
+ * behave exactly as before.
+ */
+export interface ContestVisibility {
+  showVoteCount: boolean;
+  showLeaderboard: boolean;
+  showRank: boolean;
+  activePhaseLabel: string | null;
+}
+
+/**
+ * Normalise a contest's admin visibility flags. Treats any non-`false` value
+ * (including `undefined`) as visible — only an explicit `false` hides a surface.
+ */
+export function resolveContestVisibility(
+  contest?: {
+    showVoteCount?: boolean;
+    showLeaderboard?: boolean;
+    showRank?: boolean;
+    activePhaseLabel?: string | null;
+  } | null,
+): ContestVisibility {
+  return {
+    showVoteCount:   contest?.showVoteCount !== false,
+    showLeaderboard: contest?.showLeaderboard !== false,
+    showRank:        contest?.showRank !== false,
+    activePhaseLabel: contest?.activePhaseLabel ?? null,
+  };
 }

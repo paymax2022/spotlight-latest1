@@ -51,6 +51,21 @@ const USE_MOCK = (process.env.EXPO_PUBLIC_CRYPTO_USE_MOCK ?? 'true').toLowerCase
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 
+/**
+ * Normalise a thrown axios error into an Error carrying the Go backend's real
+ * message + error `type`. The Go API returns `{ type, code, message }` with a
+ * non-2xx status; surface `message` to the screens and preserve `type` (e.g.
+ * 'quote_expired') on `cryptoType` so the special-case path still works.
+ */
+function toCryptoError(err: unknown): Error {
+  const e = err as { response?: { data?: { type?: string; message?: string } }; message?: string };
+  const data = e?.response?.data;
+  const msg = data?.message ?? e?.message ?? 'Something went wrong. Please try again.';
+  const out = new Error(msg) as Error & { cryptoType?: string };
+  if (data?.type) out.cryptoType = data.type;       // e.g. 'quote_expired'
+  return out;
+}
+
 function requireAsset(assetId: string): CryptoAsset {
   const asset = MOCK_ASSETS.find((a) => a.id === assetId || a.symbol === assetId);
   if (!asset) throw new Error('Asset not found');
@@ -81,9 +96,14 @@ export async function getAssets(): Promise<CryptoAsset[]> {
   return unwrap<CryptoAsset[]>(await api.get('/api/v1/crypto/assets'));
 }
 
+// MISSING backend endpoint: GET /crypto/assets/:symbol (single-asset detail).
+// The backend only exposes the list route; find the asset client-side.
 export async function getAsset(symbol: string): Promise<CryptoAsset> {
   if (USE_MOCK) { await delay(220); return requireAsset(symbol); }
-  return unwrap<CryptoAsset>(await api.get(`/api/v1/crypto/assets/${symbol}`));
+  const assets = await getAssets();
+  const found = assets.find((a) => a.id === symbol || a.symbol === symbol);
+  if (!found) throw new Error('Asset not found');
+  return found;
 }
 
 /** Deterministic mock price history for the asset chart. */
@@ -108,14 +128,17 @@ export async function getChart(symbol: string, range: ChartRange): Promise<Candl
       };
     });
   }
+  // MISSING backend endpoint: GET /crypto/assets/:symbol/chart (price history).
   return unwrap<CandlePoint[]>(await api.get(`/api/v1/crypto/assets/${symbol}/chart`, { params: { range } }));
 }
 
-// ─── Quote (POST /crypto/quote) ───────────────────────────────────────────────
+// ─── Quote (GET /crypto/assets/:id/quote) ─────────────────────────────────────
+// NOTE: the backend quote route is a GET on the asset (no swap/side inputs);
+// it re-prices server-side at execution time regardless, so this is display-only.
 
 export async function createQuote(req: QuoteRequest): Promise<CryptoQuote> {
   if (USE_MOCK) { await delay(380); return buildQuote(requireAsset(req.assetId), req); }
-  return unwrap<CryptoQuote>(await api.post('/api/v1/crypto/quote', req));
+  return unwrap<CryptoQuote>(await api.get(`/api/v1/crypto/assets/${req.assetId}/quote`));
 }
 
 // ─── Execute buy / sell (POST /crypto/buy, /crypto/sell) ──────────────────────
@@ -152,22 +175,41 @@ async function executeMock(quote: CryptoQuote, idempotencyKey: string): Promise<
 
 export async function executeBuy(quote: CryptoQuote, idempotencyKey: string): Promise<CryptoOrder> {
   if (USE_MOCK) return executeMock(quote, idempotencyKey);
-  // The server re-prices from the quote's asset/side/basis (never trusts the
-  // client's price or fees), executes the pre-trade check + ledger, and returns
-  // the authoritative order. Idempotency-Key makes the POST safely retryable.
-  return unwrap<CryptoOrder>(
-    await api.post('/api/v1/crypto/buy', quote, { headers: { 'Idempotency-Key': idempotencyKey } }),
-  );
+  // The server re-prices from asset_id/cash_kobo (never trusts the client's
+  // price or fees), executes the pre-trade check + ledger, and returns the
+  // authoritative order. Idempotency-Key makes the POST safely retryable.
+  try {
+    const res = await api.post(
+      '/api/v1/crypto/orders/buy',
+      { asset_id: quote.assetId, cash_kobo: quote.totalFiat.amount },
+      { headers: { 'Idempotency-Key': idempotencyKey } },
+    );
+    const body = unwrap<{ order: CryptoOrder }>(res);
+    return (body as unknown as { order?: CryptoOrder }).order ?? (body as unknown as CryptoOrder);
+  } catch (err) {
+    throw toCryptoError(err);
+  }
 }
 
 export async function executeSell(quote: CryptoQuote, idempotencyKey: string): Promise<CryptoOrder> {
   if (USE_MOCK) return executeMock(quote, idempotencyKey);
-  return unwrap<CryptoOrder>(
-    await api.post('/api/v1/crypto/sell', quote, { headers: { 'Idempotency-Key': idempotencyKey } }),
-  );
+  try {
+    const res = await api.post(
+      '/api/v1/crypto/orders/sell',
+      { asset_id: quote.assetId, units: quote.crypto.amount },
+      { headers: { 'Idempotency-Key': idempotencyKey } },
+    );
+    const body = unwrap<{ order: CryptoOrder }>(res);
+    return (body as unknown as { order?: CryptoOrder }).order ?? (body as unknown as CryptoOrder);
+  } catch (err) {
+    throw toCryptoError(err);
+  }
 }
 
-// ─── Swap (POST /crypto/swap) ─────────────────────────────────────────────────
+// ─── Swap ──────────────────────────────────────────────────────────────────────
+// MISSING backend endpoints: no crypto-to-crypto swap route exists at all
+// (only /orders/buy and /orders/sell against fiat). Swap stays mock-only until
+// the backend ships POST /crypto/quote (side=swap) + POST /crypto/swap.
 
 export async function createSwapQuote(draft: SwapDraft): Promise<SwapQuote> {
   if (USE_MOCK) {
@@ -201,9 +243,13 @@ export async function executeSwap(quote: SwapQuote, idempotencyKey: string): Pro
       createdAt: new Date().toISOString(),
     };
   }
-  return unwrap<SwapResult>(
-    await api.post('/api/v1/crypto/swap', quote, { headers: { 'Idempotency-Key': idempotencyKey } }),
-  );
+  try {
+    return unwrap<SwapResult>(
+      await api.post('/api/v1/crypto/swap', quote, { headers: { 'Idempotency-Key': idempotencyKey } }),
+    );
+  } catch (err) {
+    throw toCryptoError(err);
+  }
 }
 
 // ─── Portfolio (GET /portfolio, /portfolio/positions) ─────────────────────────
@@ -231,15 +277,19 @@ export async function getPortfolio(): Promise<CryptoPortfolio> {
       positions,
     };
   }
-  return unwrap<CryptoPortfolio>(await api.get('/api/v1/portfolio', { params: { assetType: 'crypto' } }));
+  return unwrap<CryptoPortfolio>(await api.get('/api/v1/crypto/portfolio'));
 }
 
 export async function getPositions(): Promise<Position[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_POSITIONS]; }
-  return unwrap<Position[]>(await api.get('/api/v1/portfolio/positions', { params: { assetType: 'crypto' } }));
+  return unwrap<Position[]>(await api.get('/api/v1/crypto/portfolio/holdings'));
 }
 
-// ─── Transactions (GET /crypto/transactions[/:id]) ────────────────────────────
+// ─── Transactions ──────────────────────────────────────────────────────────────
+// MISSING backend endpoints: no /crypto/transactions list/detail route — only
+// GET /crypto/orders (own order history) exists. Reusing it as the closest
+// live analogue; per-transaction detail (id lookup) stays mock until the
+// backend ships GET /crypto/transactions/:id.
 
 export async function getTransactions(side?: 'buy' | 'sell'): Promise<CryptoTransactionSummary[]> {
   if (USE_MOCK) {
@@ -250,7 +300,11 @@ export async function getTransactions(side?: 'buy' | 'sell'): Promise<CryptoTran
       .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
       .map(({ allInRate, fees, totalFiat, provider, providerReference, liquidityProvider, custodyProvider, statusHistory, failureReason, ...summary }) => summary);
   }
-  return unwrap<CryptoTransactionSummary[]>(await api.get('/api/v1/crypto/transactions', { params: { side } }));
+  const res = await api.get('/api/v1/crypto/orders');
+  const body = unwrap<{ orders: CryptoTransactionSummary[] }>(res);
+  let list = (body as unknown as { orders?: CryptoTransactionSummary[] }).orders ?? (body as unknown as CryptoTransactionSummary[]);
+  if (side) list = list.filter((t) => t.side === side);
+  return list;
 }
 
 export async function getTransaction(id: string): Promise<CryptoTransactionDetail> {
@@ -260,12 +314,17 @@ export async function getTransaction(id: string): Promise<CryptoTransactionDetai
     if (!found) throw new Error('Transaction not found');
     return found;
   }
-  return unwrap<CryptoTransactionDetail>(await api.get(`/api/v1/crypto/transactions/${id}`));
+  const list = await getTransactions();
+  const found = (list as unknown as CryptoTransactionDetail[]).find((t) => t.id === id || t.reference === id);
+  if (!found) throw new Error('Transaction not found');
+  return found;
 }
 
 // ─── Deposit address (GET /crypto/deposit-address) ────────────────────────────
 // A custody-provider address per asset+network. Deterministic mock so the same
 // asset/network always renders the same address + QR.
+// MISSING backend endpoint: GET /crypto/deposit-address — the backend has no
+// custody/deposit surface yet (buy/sell against fiat only). Stays mock-only.
 
 export async function getDepositAddress(symbol: string, networkId: string): Promise<DepositAddress> {
   if (USE_MOCK) {
@@ -294,6 +353,10 @@ export async function getDepositAddress(symbol: string, networkId: string): Prom
 // ─── Watchlist (GET/POST/DELETE /watchlists) ──────────────────────────────────
 // Mock keeps a single default watchlist as a set of asset ids. Reads return the
 // resolved assets so the screens can render rows without a second round-trip.
+// The only live watchlist surface on the backend is invest's shared
+// /invest/watchlists (list container + POST/DELETE …/stocks entries); crypto
+// reuses the "default" list id as its container. Shape differs slightly
+// (symbol-keyed here vs asset-id there) so this maps through best-effort.
 
 const MOCK_WATCHLIST = new Set<string>(['ast_btc', 'ast_sol']);
 
@@ -302,20 +365,21 @@ export async function getWatchlist(): Promise<CryptoAsset[]> {
     await delay(200);
     return MOCK_ASSETS.filter((a) => MOCK_WATCHLIST.has(a.id));
   }
-  return unwrap<CryptoAsset[]>(await api.get('/api/v1/watchlists', { params: { assetType: 'crypto' } }));
+  return unwrap<CryptoAsset[]>(await api.get('/api/v1/invest/watchlists'));
 }
 
 export async function addToWatchlist(assetId: string): Promise<void> {
   if (USE_MOCK) { await delay(180); MOCK_WATCHLIST.add(assetId); return; }
-  await api.post('/api/v1/watchlists/default/assets', { assetId });
+  await api.post('/api/v1/invest/watchlists/default/stocks', { symbol: assetId });
 }
 
 export async function removeFromWatchlist(assetId: string): Promise<void> {
   if (USE_MOCK) { await delay(180); MOCK_WATCHLIST.delete(assetId); return; }
-  await api.delete(`/api/v1/watchlists/default/assets/${assetId}`);
+  await api.delete(`/api/v1/invest/watchlists/default/stocks/${assetId}`);
 }
 
 // ─── Price alerts (GET/POST/PATCH/DELETE /alerts) ─────────────────────────────
+// Reuses invest's shared /invest/alerts surface (cross-asset price alerts).
 
 const ngn = (major: number) => Math.round(major * 100);
 const MOCK_ALERTS: PriceAlert[] = [
@@ -338,7 +402,7 @@ export async function getAlerts(): Promise<PriceAlert[]> {
     await delay();
     return [...MOCK_ALERTS].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
-  return unwrap<PriceAlert[]>(await api.get('/api/v1/alerts', { params: { assetType: 'crypto' } }));
+  return unwrap<PriceAlert[]>(await api.get('/api/v1/invest/alerts'));
 }
 
 export async function createAlert(draft: NewPriceAlertDraft): Promise<PriceAlert> {
@@ -355,7 +419,7 @@ export async function createAlert(draft: NewPriceAlertDraft): Promise<PriceAlert
     MOCK_ALERTS.unshift(created);
     return created;
   }
-  return unwrap<PriceAlert>(await api.post('/api/v1/alerts', draft));
+  return unwrap<PriceAlert>(await api.post('/api/v1/invest/alerts', draft));
 }
 
 export async function deleteAlert(id: string): Promise<void> {
@@ -365,12 +429,16 @@ export async function deleteAlert(id: string): Promise<void> {
     if (i >= 0) MOCK_ALERTS.splice(i, 1);
     return;
   }
-  await api.delete(`/api/v1/alerts/${id}`);
+  await api.delete(`/api/v1/invest/alerts/${id}`);
 }
 
 // ─── Withdrawal address book (Phase-4; docs/crypto/compliance.md) ─────────────
 // Every destination is whitelisted + screened before first use. Addresses are
 // masked in the UI; the full value is only shown on the detail/confirm screens.
+// MISSING backend endpoints: no address-book / withdrawal surface exists on
+// the crypto backend at all (buy/sell against fiat only, no custody yet).
+// getAddresses/screenAddress/addAddress/deleteAddress/getWithdrawalEligibility/
+// quoteWithdrawal/initiateWithdrawal below all stay mock-only pending Phase-4.
 
 const MOCK_ADDRESSES: CryptoAddress[] = [
   {
@@ -513,11 +581,15 @@ export async function initiateWithdrawal(
       createdAt: new Date().toISOString(),
     };
   }
-  return unwrap<WithdrawalResult>(
-    await api.post(
-      '/api/v1/crypto/withdraw',
-      { ...draft, quote_id: quote, otp },
-      { headers: { 'Idempotency-Key': idempotencyKey } },
-    ),
-  );
+  try {
+    return unwrap<WithdrawalResult>(
+      await api.post(
+        '/api/v1/crypto/withdraw',
+        { ...draft, quote_id: quote, otp },
+        { headers: { 'Idempotency-Key': idempotencyKey } },
+      ),
+    );
+  } catch (err) {
+    throw toCryptoError(err);
+  }
 }

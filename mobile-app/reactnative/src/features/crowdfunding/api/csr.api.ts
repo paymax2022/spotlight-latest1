@@ -13,7 +13,7 @@ import type {
   EmployeeGivingCampaign,
 } from '../types/csr.types';
 
-const USE_MOCK = true;
+const USE_MOCK = process.env.EXPO_PUBLIC_CF_USE_MOCK !== 'false';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 
 const PROFILE: CsrProfile = {
@@ -52,13 +52,13 @@ const EMPLOYEE_GIVING: EmployeeGivingCampaign = {
 
 export async function getCsrProfile(): Promise<CsrProfile> {
   if (USE_MOCK) { await delay(180); return { ...PROFILE }; }
-  const res = await api.get('/crowdfunding/csr/profile');
+  const res = await api.get('/api/v1/crowdfunding/csr/profile');
   return res.data?.data ?? res.data;
 }
 
 export async function getMatchableCampaigns(): Promise<MatchableCampaign[]> {
   if (USE_MOCK) { await delay(); return CAMPAIGNS; }
-  const res = await api.get('/crowdfunding/csr/campaigns');
+  const res = await api.get('/api/v1/crowdfunding/csr/campaigns');
   return res.data?.data ?? res.data;
 }
 
@@ -69,13 +69,13 @@ export async function getMatchableCampaign(id: string): Promise<MatchableCampaig
     if (!c) throw new Error('Campaign not found');
     return c;
   }
-  const res = await api.get(`/crowdfunding/csr/campaigns/${id}`);
+  const res = await api.get(`/api/v1/crowdfunding/csr/campaigns/${id}`);
   return res.data?.data ?? res.data;
 }
 
 export async function getMatches(): Promise<CsrMatch[]> {
   if (USE_MOCK) { await delay(); return [...MATCHES].sort((a, b) => +new Date(b.startedAt) - +new Date(a.startedAt)); }
-  const res = await api.get('/crowdfunding/csr/matches');
+  const res = await api.get('/api/v1/crowdfunding/csr/matches');
   return res.data?.data ?? res.data;
 }
 
@@ -90,18 +90,18 @@ export async function setupMatch(input: MatchSetupInput): Promise<CsrMatch> {
     MATCHES = [match, ...MATCHES];
     return match;
   }
-  const res = await api.post('/crowdfunding/csr/matches', input, { headers: { 'Idempotency-Key': generateIdempotencyKey() } });
+  const res = await api.post('/api/v1/crowdfunding/csr/matches', input, { headers: { 'Idempotency-Key': generateIdempotencyKey() } });
   return res.data?.data ?? res.data;
 }
 
 export async function approveMatch(matchId: string): Promise<void> {
   if (USE_MOCK) { await delay(500); const m = MATCHES.find((x) => x.id === matchId); if (m) m.status = 'ACTIVE'; return; }
-  await api.post(`/crowdfunding/csr/matches/${matchId}/approve`);
+  await api.post(`/api/v1/crowdfunding/csr/matches/${matchId}/approve`);
 }
 
 export async function getInvoices(): Promise<CsrInvoice[]> {
   if (USE_MOCK) { await delay(); return INVOICES; }
-  const res = await api.get('/crowdfunding/csr/invoices');
+  const res = await api.get('/api/v1/crowdfunding/csr/invoices');
   return res.data?.data ?? res.data;
 }
 
@@ -128,12 +128,12 @@ export async function getImpactSummary(): Promise<CsrImpactSummary> {
       ],
     };
   }
-  const res = await api.get('/crowdfunding/csr/impact');
+  const res = await api.get('/api/v1/crowdfunding/csr/impact');
   return res.data?.data ?? res.data;
 }
 
 export async function getEmployeeGiving(): Promise<EmployeeGivingCampaign> {
   if (USE_MOCK) { await delay(); return EMPLOYEE_GIVING; }
-  const res = await api.get('/crowdfunding/csr/employee-giving');
+  const res = await api.get('/api/v1/crowdfunding/csr/employee-giving');
   return res.data?.data ?? res.data;
 }

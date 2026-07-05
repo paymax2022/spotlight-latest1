@@ -59,9 +59,9 @@ type TowingBookRequest struct {
 
 // TowingEstimate is the estimate response.
 type TowingEstimate struct {
-	DistanceM   int   `json:"distance_m"`
-	CalloutKobo int64 `json:"callout_kobo"`
-	FareKobo    int64 `json:"fare_kobo"`
+	DistanceM   int   `json:"distanceM"`
+	CalloutKobo int64 `json:"calloutKobo"`
+	FareKobo    int64 `json:"fareKobo"`
 }
 
 // towingRow is the internal projection of a towing job.
@@ -143,6 +143,12 @@ func (s *Service) BookTowing(ctx context.Context, userID string, req TowingBookR
 		serviceType = "tow"
 	}
 
+	// Fail-closed tier/spending-limit gate BEFORE any wallet escrow (same contract
+	// as RequestRide): a Tier0/over-limit user cannot move money.
+	if err := s.enforceTierLimit(ctx, userID, fare); err != nil {
+		return nil, err
+	}
+
 	jobID := uuid.New().String()
 	ref := "towing:" + jobID
 	sett, err := s.settlement.Escrow(ctx, userID, ref, idempotencyKey, "transport", fare)
@@ -201,9 +207,9 @@ func (s *Service) TowingDetail(ctx context.Context, id, callerID string) (map[st
 		}
 	}
 	out := map[string]any{
-		"id": jid, "user_id": uid, "operator_id": operatorID, "service_type": serviceType,
-		"vehicle_type": vtype, "issue_type": issue, "pickup_address": pickup, "dest_address": dest,
-		"fare_kobo": fare, "status": status, "created_at": createdAt,
+		"id": jid, "userId": uid, "operatorId": operatorID, "serviceType": serviceType,
+		"vehicleType": vtype, "issueType": issue, "pickupAddress": pickup, "destAddress": dest,
+		"fareKobo": fare, "status": status, "createdAt": createdAt,
 	}
 	if isUser {
 		out["pin"] = pin
@@ -231,8 +237,8 @@ func (s *Service) ListTowing(ctx context.Context, userID string) ([]map[string]a
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "service_type": serviceType, "pickup_address": pickup, "dest_address": dest,
-			"fare_kobo": fare, "status": status, "created_at": createdAt,
+			"id": id, "serviceType": serviceType, "pickupAddress": pickup, "destAddress": dest,
+			"fareKobo": fare, "status": status, "createdAt": createdAt,
 		})
 	}
 	return out, nil
@@ -303,8 +309,8 @@ func (s *Service) OpenTowingRequests(ctx context.Context, driverUserID string) (
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "service_type": serviceType, "vehicle_type": vtype, "issue_type": issue,
-			"pickup_address": pickup, "fare_kobo": fare, "created_at": createdAt,
+			"id": id, "serviceType": serviceType, "vehicleType": vtype, "issueType": issue,
+			"pickupAddress": pickup, "fareKobo": fare, "createdAt": createdAt,
 		})
 	}
 	return out, nil

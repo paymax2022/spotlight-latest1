@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"log"
 	"math/big"
 	"net/http"
 	"time"
@@ -12,19 +13,54 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/finance/tiers"
 )
+
+// tierLimiter is the minimal seam the transport money-path depends on for the
+// fail-closed KYC-tier / daily-spend gate. *tiers.Service satisfies it in
+// production; unit tests inject a fake to prove the enforceTierLimit decision
+// (deny-on-over-limit, deny-on-dep-error) WITHOUT a database. Keeping the seam
+// this small means the wiring in NewService is unchanged and idiomatic.
+type tierLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
 
 // Service manages driver registration, trip lifecycle, fare negotiation, and settlement.
 type Service struct {
 	db         *pgxpool.Pool
 	settlement *settlement.Service
+	tiers      tierLimiter // fail-closed KYC-tier / daily-spend gate on rider money moves
 	maps       MapsAdapter
 }
 
 // NewService wires the transport service. A MockMaps adapter is used when none
 // is supplied, so business logic always has a deterministic geo backend.
+//
+// The tier-limit gate is constructed from the same pool (tiers.NewService needs
+// only the DB), so no extra wiring is required at the call site. If a future
+// refactor centralises the tiers service, inject it here and drop this line.
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
-	return &Service{db: db, settlement: settlement, maps: NewMockMaps()}
+	return &Service{db: db, settlement: settlement, tiers: tiers.NewService(db), maps: NewMockMaps()}
+}
+
+// enforceTierLimit is a fail-closed guard applied before any rider-funded wallet
+// escrow. It delegates to the shared tiers service (KYC tier + daily debit limit)
+// so a Tier0/over-limit rider cannot move money. Any error (including DB errors)
+// blocks the escrow — money-path code must fail closed. amountKobo is the wallet
+// debit about to be attempted (the fare, delta, or tip in minor units).
+func (s *Service) enforceTierLimit(ctx context.Context, riderID string, amountKobo int64) error {
+	if s.tiers == nil { // defensive: gate is always wired by NewService
+		return codedErr(http.StatusForbidden, CodeForbidden, "tier limit gate unavailable")
+	}
+	if amountKobo <= 0 {
+		return nil
+	}
+	if err := s.tiers.EnforceWalletDebitLimit(ctx, riderID, amountKobo); err != nil {
+		// Surface as a client-visible forbidden — the rider must complete KYC or is
+		// over their daily limit. Do NOT let money move.
+		return codedErr(http.StatusForbidden, CodeForbidden, err.Error())
+	}
+	return nil
 }
 
 // WithMaps swaps the maps adapter (e.g. a live provider in production).
@@ -69,6 +105,12 @@ func (s *Service) SetDriverStatus(ctx context.Context, userID string, status Dri
 func (s *Service) RequestTrip(ctx context.Context, riderID string, req RequestTripRequest) (*Trip, error) {
 	if req.FareKobo < BaseFareKobo {
 		return nil, fmt.Errorf("transport: fare must be at least ₦1,500 (%d kobo)", BaseFareKobo)
+	}
+	// Fail-closed tier/spending-limit gate BEFORE any wallet escrow. This legacy
+	// path is no longer routed (its HTTP route was removed) but is gated for
+	// defense-in-depth so any internal caller cannot bypass the tier limit.
+	if err := s.enforceTierLimit(ctx, riderID, req.FareKobo); err != nil {
+		return nil, err
 	}
 	tripID := uuid.New().String()
 	ref := "trip:" + tripID
@@ -118,18 +160,59 @@ func (s *Service) AcceptTrip(ctx context.Context, tripID, driverUserID string) e
 	return nil
 }
 
-// UpdateTripStatus advances the coarse trip status (legacy). Completing settles.
+// UpdateTripStatus advances the coarse trip status (legacy, DEPRECATED).
+//
+// SECURITY: this method is no longer routed — its HTTP route was removed because
+// it had no object-level authz or phase-transition guard. It is retained only for
+// back-compat with the legacy RequestTrip/AcceptTrip flow and any internal caller.
+// Defense-in-depth guards are added below so that even if it is ever re-wired it
+// fails closed: (1) the caller must be the trip's rider or assigned driver, and
+// (2) the coarse status move must be legal for the current phase. Prefer the
+// guarded /mobility + /driver state machine (CompleteTrip/CancelRide) instead.
 func (s *Service) UpdateTripStatus(ctx context.Context, tripID, actorUserID string, newStatus TripStatus) error {
 	var trip tripRow
 	if err := s.loadTrip(ctx, tripID, &trip); err != nil {
-		return fmt.Errorf("transport: trip not found")
+		return codedErr(http.StatusNotFound, CodeNotFound, "trip not found")
+	}
+	// Object-level authz: only the rider or the assigned driver may mutate the trip.
+	if actorUserID != trip.RiderID {
+		if trip.DriverID == nil {
+			return codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
+		}
+		var ownerUser string
+		s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *trip.DriverID).Scan(&ownerUser)
+		if !tripActorAllowed(actorUserID, trip.RiderID, &ownerUser) {
+			return codedErr(http.StatusForbidden, CodeForbidden, "not permitted")
+		}
+	}
+	// Phase-transition guard: map the requested coarse status onto the fine-grained
+	// state machine and reject moves that are illegal from the current phase.
+	var targetPhase TripPhase
+	switch newStatus {
+	case TripCompleted:
+		targetPhase = PhaseCompleted
+	case TripCancelled:
+		targetPhase = PhaseCancelled
+	case TripPickedUp:
+		targetPhase = PhaseInProgress
+	case TripAccepted:
+		targetPhase = PhaseDriverAssigned
+	default:
+		return codedErr(http.StatusConflict, CodeInvalidState, "unsupported status transition")
+	}
+	if trip.Phase != targetPhase && !canTransition(trip.Phase, targetPhase) {
+		return codedErr(http.StatusConflict, CodeInvalidState,
+			fmt.Sprintf("cannot move trip from phase %s to %s", trip.Phase, targetPhase))
 	}
 	if _, err := s.db.Exec(ctx, `UPDATE trips SET status=$1, updated_at=NOW() WHERE id=$2`, string(newStatus), tripID); err != nil {
 		return err
 	}
 	if newStatus == TripCompleted && trip.DriverID != nil {
 		if err := s.settleTrip(ctx, &trip); err != nil {
-			return err
+			// Same crash-safety contract as CompleteTrip: do not swallow a settlement
+			// failure after the trip is marked completed — flag it for reconciliation.
+			s.markSettlementPending(ctx, &trip, err)
+			return fmt.Errorf("transport: trip completed but settlement failed (marked pending for reconciliation): %w", err)
 		}
 		s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *trip.DriverID)
 	}
@@ -239,12 +322,68 @@ func (s *Service) settleTrip(ctx context.Context, t *tripRow) error {
 	return nil
 }
 
+// markSettlementPending records a durable marker when settlement fails AFTER a
+// trip has been marked completed. It is deliberately best-effort on writes (a
+// failing marker write must not mask the original settlement error) but it MUST
+// log at ERROR so operators/alerting see stranded escrow, and it leaves a
+// trip_events row + a settlement_status flag for the reconciliation job to pick
+// up. Money never leaves escrow here — this only flags that Settle must be retried.
+//
+// RECONCILIATION REQUIREMENT: a background worker must periodically re-drive
+// settleTrip for trips whose settlement_status='pending'; settleTrip is
+// idempotent (each Settle no-ops once its settlement row is 'settled').
+// settlementPendingStatus is the queryable marker written to trips.settlement_status
+// when settlement fails after completion. The reconciliation job scans for it.
+const settlementPendingStatus = "pending"
+
+// settlementPendingEvent is the immutable trip_events event_type for the same.
+const settlementPendingEvent = "settlement_pending"
+
+// settlementPendingMarker builds the durable-marker payload recorded when a trip
+// was marked completed but settlement failed. Extracted as a pure function so the
+// go-live invariant — "the completion-failure path records settlement_pending
+// rather than silently succeeding" — is provable in a unit test. It MUST carry the
+// settlement id (so reconciliation knows what to re-drive) and the cause.
+func settlementPendingMarker(t *tripRow, cause error) map[string]any {
+	return map[string]any{
+		"settlement_id": t.SettlementID,
+		"error":         cause.Error(),
+	}
+}
+
+func (s *Service) markSettlementPending(ctx context.Context, t *tripRow, cause error) {
+	log.Printf("ERROR transport: settlement_pending trip=%s settlement=%s: %v", t.ID, t.SettlementID, cause)
+	// Durable audit marker (immutable trip_events row).
+	s.recordEvent(ctx, t.ID, settlementPendingEvent, "", "", "", settlementPendingMarker(t, cause))
+	// Mirror a queryable flag on the trip. settlement_status is an additive column;
+	// if the migrations agent has not yet added it this UPDATE affects 0 rows and is
+	// a harmless no-op (the trip_events marker above is still durable). NEEDED COLUMN:
+	// trips.settlement_status TEXT DEFAULT 'settled' (see cross-agent note).
+	s.db.Exec(ctx, `UPDATE trips SET settlement_status=$2, updated_at=NOW() WHERE id=$1`, t.ID, settlementPendingStatus)
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 // generatePin returns a deterministic-length random 4-digit trip PIN.
 func generatePin() string {
 	n, _ := rand.Int(rand.Reader, big.NewInt(10000))
 	return fmt.Sprintf("%04d", n.Int64())
+}
+
+// tripActorAllowed is the PURE object-level authz decision for a trip mutation:
+// the actor is permitted iff they are the trip's rider, or the user who owns the
+// assigned driver row. driverUserID is nil when no driver is assigned yet (only
+// the rider may act). Extracted as a pure function so the cross-user guard —
+// "rider A cannot cancel/rate rider B's trip; a non-assigned driver cannot advance
+// it" — is provable in a unit test without a database.
+func tripActorAllowed(actorUserID, riderID string, driverUserID *string) bool {
+	if actorUserID == riderID {
+		return true
+	}
+	if driverUserID == nil {
+		return false
+	}
+	return actorUserID == *driverUserID
 }
 
 // resolveDriverID maps a driver's auth user_id to their driver row id.

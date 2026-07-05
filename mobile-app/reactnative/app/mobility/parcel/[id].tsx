@@ -11,7 +11,7 @@ import { shadow1 } from '@/constants/shadows';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import ScreenHeader from '@/components/ScreenHeader';
-import MapPlaceholder from '@/features/mobility/components/MapPlaceholder';
+import MobilityMap from '@/features/mobility/components/MobilityMap';
 import TripRouteCard from '@/features/mobility/components/TripRouteCard';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
@@ -63,7 +63,9 @@ export default function ParcelTrackScreen() {
           <Text style={styles.fare}>{formatNairaWhole(p.fareKobo)}</Text>
         </View>
 
-        {isActive && <MapPlaceholder height={150} showRoute caption={PARCEL_PHASE_LABEL[p.phase]} />}
+        {isActive && (
+          <MobilityMap height={150} showRoute pickup={p.pickup} dropoff={p.dropoff} caption={PARCEL_PHASE_LABEL[p.phase]} />
+        )}
 
         <TripRouteCard pickup={p.pickup} dest={p.dropoff} />
 

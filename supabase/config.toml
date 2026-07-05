@@ -62,7 +62,12 @@ schema_paths = []
 enabled = true
 # Specifies an ordered list of seed files to load during db reset.
 # Supports glob patterns relative to supabase directory: "./seeds/*.sql"
-sql_paths = ["./seed.sql"]
+# DEV/LOCAL ONLY — seeds run on `supabase db reset`, NOT on `db push`, so nothing
+# here reaches production. Bootstrap data the app requires (RBAC roles/permissions)
+# is seeded idempotently by migrations (e.g. 20260527100000_enterprise_auth_rbac.sql),
+# so prod gets it via `db push`. rbac_seed.sql below is redundant-but-idempotent
+# convenience; seed_voting_engine.sql is demo data for local development only.
+sql_paths = ["./seeds/rbac_seed.sql", "./seed_voting_engine.sql"]
 
 [db.network_restrictions]
 # Enable management of network restrictions.

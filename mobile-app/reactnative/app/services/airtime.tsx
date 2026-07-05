@@ -20,7 +20,8 @@ import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1, shadow2 } from '@/constants/shadows';
-import { getAirtimeNetworks, initiateAirtimePaystack, purchaseAirtime } from '@/api/billing.api';
+import { getAirtimeNetworks, initiateAirtimePaystack, purchaseAirtime, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
+import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
@@ -58,6 +59,12 @@ export default function AirtimeScreen() {
   const { data: networks = [], isLoading: netsLoading, isError: netsError, refetch: refetchNets } = useQuery({
     queryKey: ['airtime-networks'],
     queryFn:  getAirtimeNetworks,
+  });
+
+  const { data: providerLogos = [] } = useQuery({
+    queryKey: ['provider-logos', 'airtime'],
+    queryFn:  () => getProviderLogos('airtime'),
+    staleTime: 60 * 60 * 1000,
   });
 
   const { data: wallet } = useQuery({
@@ -209,11 +216,7 @@ export default function AirtimeScreen() {
                     onPress={() => setSelectedNetwork(net)}
                     style={[styles.providerCard, active && styles.providerCardActive]}
                   >
-                    <View style={[styles.providerIcon, { backgroundColor: net.bg ?? Colors.iconBgPurple }]}>
-                      <Text style={[styles.providerInitial, { color: net.accent ?? Colors.primary }]}>
-                        {net.name.slice(0, 1)}
-                      </Text>
-                    </View>
+                    <ProviderLogo code={net.code} name={net.name} logoUri={resolveProviderImage(providerLogos, net.code, net.name)} />
                     <Text style={[styles.providerName, active && styles.providerNameActive]} numberOfLines={1}>
                       {net.name}
                     </Text>

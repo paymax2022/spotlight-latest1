@@ -2,11 +2,13 @@
 // Phase A: every function resolves demo data so screens render without a live
 // API. `DEMO_*` exports are also used as `placeholderData` in useQuery.
 //
-// TODO(Phase C): replace each function body with the live endpoint, e.g.
-//   const res = await api.get('/api/v1/telemedicine/doctors'); return res.data.data;
-// and pass the Idempotency-Key header on bookAppointment().
+// Phase C: a live branch has been added to every exported function, following
+// the doctor.client.ts / fx.api.ts convention. Flip to live by setting
+// `EXPO_PUBLIC_TELEMEDICINE_USE_MOCK=false`.
 
 import { Colors } from '@/constants/colors';
+import { api } from '@/api/client';
+import { generateIdempotencyKey } from '@/utils/idempotency';
 import type {
   Specialty,
   Doctor,
@@ -23,6 +25,21 @@ import type {
 // Simulate network latency so loading states are exercised in the UI.
 const wait = <T>(value: T, ms = 350): Promise<T> =>
   new Promise((resolve) => setTimeout(() => resolve(value), ms));
+
+// ─── Feature flag: flip to false once the Go backend is ready ─────────────────
+// Mock by default; flip with EXPO_PUBLIC_TELEMEDICINE_USE_MOCK=false to hit the
+// live /api/v1/telemedicine/* routes (see backend/internal/app/finance_routes.go).
+const TELEMEDICINE_USE_MOCK = (process.env.EXPO_PUBLIC_TELEMEDICINE_USE_MOCK ?? 'true') !== 'false';
+
+// All live telemedicine endpoints live under this prefix on the API base URL.
+const BASE = '/api/v1/telemedicine';
+
+// Response envelope: the backend may wrap payloads as `{ data: <payload> }` or
+// return the payload directly. Both are accepted (`res.data.data ?? res.data`).
+function unwrap<T>(res: { data?: unknown }): T {
+  const body = res.data as { data?: unknown } | undefined;
+  return ((body && typeof body === 'object' && 'data' in body ? body.data : body) ?? body) as T;
+}
 
 // ─── Demo data ───────────────────────────────────────────────────────────────
 
@@ -136,57 +153,119 @@ const DEMO_SUMMARY: VisitSummary = {
 // ─── Read endpoints ──────────────────────────────────────────────────────────
 
 export async function getSpecialties(): Promise<Specialty[]> {
-  return wait(DEMO_SPECIALTIES);
+  if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_SPECIALTIES); }
+  return unwrap<Specialty[]>(await api.get(`${BASE}/specialties`));
 }
 
 export async function getDoctors(specialtyId?: string): Promise<Doctor[]> {
-  const list = specialtyId ? DEMO_DOCTORS.filter((d) => d.specialtyId === specialtyId) : DEMO_DOCTORS;
-  return wait(list);
+  if (TELEMEDICINE_USE_MOCK) {
+    const list = specialtyId ? DEMO_DOCTORS.filter((d) => d.specialtyId === specialtyId) : DEMO_DOCTORS;
+    return wait(list);
+  }
+  return unwrap<Doctor[]>(await api.get(`${BASE}/doctors`, { params: specialtyId ? { specialtyId } : undefined }));
 }
 
 export async function getDoctor(id: string): Promise<Doctor | undefined> {
-  return wait(DEMO_DOCTORS.find((d) => d.id === id));
+  if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_DOCTORS.find((d) => d.id === id)); }
+  return unwrap<Doctor | undefined>(await api.get(`${BASE}/doctors/${id}`));
 }
 
-export async function getDoctorAvailability(_doctorId: string): Promise<Slot[]> {
-  return wait(buildSlots());
+export async function getDoctorAvailability(doctorId: string): Promise<Slot[]> {
+  if (TELEMEDICINE_USE_MOCK) { return wait(buildSlots()); }
+  return unwrap<Slot[]>(await api.get(`${BASE}/doctors/${doctorId}/availability`));
+}
+
+export async function getDoctorReviews(doctorId: string): Promise<Review[]> {
+  // Not previously present in the mock file; mock branch returns an empty list
+  // so callers can adopt this without needing new demo fixtures.
+  if (TELEMEDICINE_USE_MOCK) { return wait([]); }
+  return unwrap<Review[]>(await api.get(`${BASE}/doctors/${doctorId}/reviews`));
 }
 
 export async function getAppointments(): Promise<Appointment[]> {
-  return wait(DEMO_APPOINTMENTS);
+  if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_APPOINTMENTS); }
+  return unwrap<Appointment[]>(await api.get(`${BASE}/appointments`));
 }
 
 export async function getAppointment(id: string): Promise<Appointment | undefined> {
-  return wait(DEMO_APPOINTMENTS.find((a) => a.id === id));
+  if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_APPOINTMENTS.find((a) => a.id === id)); }
+  return unwrap<Appointment | undefined>(await api.get(`${BASE}/appointments/${id}`));
 }
 
-export async function getPrescription(_appointmentId: string): Promise<Prescription> {
-  return wait(DEMO_PRESCRIPTION);
+export async function getPrescription(appointmentId: string): Promise<Prescription> {
+  // Closest live route: POST /appointments/:id/prescription is how a doctor
+  // issues one; there's no dedicated GET in the route list, so we read it back
+  // via the visit summary endpoint's appointment id and fall back to the same
+  // path pattern (backend may accept GET on this path for the patient view).
+  if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_PRESCRIPTION); }
+  return unwrap<Prescription>(await api.get(`${BASE}/appointments/${appointmentId}/prescription`));
 }
 
-export async function getVisitSummary(_appointmentId: string): Promise<VisitSummary> {
-  return wait(DEMO_SUMMARY);
+export async function getVisitSummary(appointmentId: string): Promise<VisitSummary> {
+  if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_SUMMARY); }
+  return unwrap<VisitSummary>(await api.get(`${BASE}/appointments/${appointmentId}/summary`));
 }
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
 export async function bookAppointment(input: BookAppointmentInput): Promise<BookAppointmentResult> {
-  // TODO(Phase C): POST /api/v1/telemedicine/appointments with
-  //   headers: { 'Idempotency-Key': input.idempotencyKey }
-  const ref = `TM-${input.idempotencyKey.slice(-6).toUpperCase()}`;
-  const result: BookAppointmentResult = { appointmentId: `apt-${Date.now()}`, ref, status: 'upcoming' as ConsultStatus };
-  return wait(result, 600);
+  if (TELEMEDICINE_USE_MOCK) {
+    const ref = `TM-${input.idempotencyKey.slice(-6).toUpperCase()}`;
+    const result: BookAppointmentResult = { appointmentId: `apt-${Date.now()}`, ref, status: 'upcoming' as ConsultStatus };
+    return wait(result, 600);
+  }
+  // MONEY PATH: requires Idempotency-Key.
+  const idempotencyKey = input.idempotencyKey || generateIdempotencyKey();
+  return unwrap<BookAppointmentResult>(
+    await api.post(`${BASE}/appointments`, input, { headers: { 'Idempotency-Key': idempotencyKey } }),
+  );
 }
 
-export async function cancelAppointment(_appointmentId: string): Promise<{ status: ConsultStatus }> {
-  // TODO(Phase C): POST /api/v1/telemedicine/appointments/:id/cancel
-  return wait({ status: 'cancelled' as ConsultStatus }, 500);
+export async function confirmAppointment(appointmentId: string): Promise<{ status: ConsultStatus }> {
+  if (TELEMEDICINE_USE_MOCK) { return wait({ status: 'confirmed' as ConsultStatus }, 400); }
+  return unwrap<{ status: ConsultStatus }>(await api.post(`${BASE}/appointments/${appointmentId}/confirm`, {}));
+}
+
+export async function rescheduleAppointment(
+  appointmentId: string,
+  input: { slotDate: string; slotTime: string },
+): Promise<Appointment> {
+  if (TELEMEDICINE_USE_MOCK) {
+    const found = DEMO_APPOINTMENTS.find((a) => a.id === appointmentId);
+    const updated: Appointment = { ...(found as Appointment), slotDate: input.slotDate, slotTime: input.slotTime };
+    return wait(updated, 500);
+  }
+  return unwrap<Appointment>(await api.post(`${BASE}/appointments/${appointmentId}/reschedule`, input));
+}
+
+export async function completeAppointment(appointmentId: string): Promise<{ status: ConsultStatus }> {
+  if (TELEMEDICINE_USE_MOCK) { return wait({ status: 'completed' as ConsultStatus }, 400); }
+  return unwrap<{ status: ConsultStatus }>(await api.post(`${BASE}/appointments/${appointmentId}/complete`, {}));
+}
+
+export async function cancelAppointment(appointmentId: string): Promise<{ status: ConsultStatus }> {
+  if (TELEMEDICINE_USE_MOCK) { return wait({ status: 'cancelled' as ConsultStatus }, 500); }
+  return unwrap<{ status: ConsultStatus }>(await api.post(`${BASE}/appointments/${appointmentId}/cancel`, {}));
 }
 
 export async function submitReview(input: { appointmentId: string; rating: number; comment: string }): Promise<Review> {
-  // TODO(Phase C): POST /api/v1/telemedicine/appointments/:id/review
-  const review: Review = { id: `rev-${Date.now()}`, appointmentId: input.appointmentId, rating: input.rating, comment: input.comment, createdAt: new Date().toISOString() };
-  return wait(review, 500);
+  if (TELEMEDICINE_USE_MOCK) {
+    const review: Review = { id: `rev-${Date.now()}`, appointmentId: input.appointmentId, rating: input.rating, comment: input.comment, createdAt: new Date().toISOString() };
+    return wait(review, 500);
+  }
+  return unwrap<Review>(await api.post(`${BASE}/appointments/${input.appointmentId}/review`, input));
+}
+
+export async function issuePrescription(
+  appointmentId: string,
+  input: { items: Prescription['items']; notes?: string },
+): Promise<Prescription> {
+  // Doctor-facing action (POST /appointments/:id/prescription).
+  if (TELEMEDICINE_USE_MOCK) {
+    const rx: Prescription = { id: `rx-${Date.now()}`, appointmentId, doctorName: DEMO_PRESCRIPTION.doctorName, issuedAt: new Date().toISOString(), items: input.items };
+    return wait(rx, 500);
+  }
+  return unwrap<Prescription>(await api.post(`${BASE}/appointments/${appointmentId}/prescription`, input));
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

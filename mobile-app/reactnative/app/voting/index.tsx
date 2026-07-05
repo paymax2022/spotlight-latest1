@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Bell, ChevronRight, Trophy } from 'lucide-react-native';
+import { Bell, ChevronRight, Trophy, UserPlus } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -51,12 +51,29 @@ export default function VotingHomeScreen() {
         <View style={styles.header}>
           <View>
             <Text style={styles.greeting}>Hey {firstName} 👋</Text>
-            <Text style={styles.headerTitle}>Spotlight Voting</Text>
+            <Text style={styles.headerTitle}>Spotlight Contest</Text>
           </View>
           <Pressable onPress={() => router.push('/voting/notifications')} style={styles.bellBtn}>
             <Bell size={22} color={Colors.onSurface} strokeWidth={1.8} />
           </Pressable>
         </View>
+
+        {/* Register / Apply to compete */}
+        <Pressable
+          onPress={() => router.push('/registration')}
+          style={({ pressed }) => [styles.registerCard, shadow1, pressed && { opacity: 0.9 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Register or apply to compete in a contest"
+        >
+          <View style={styles.registerIcon}>
+            <UserPlus size={20} color={Colors.onPrimary} strokeWidth={2} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.registerTitle}>Register / Apply to Compete</Text>
+            <Text style={styles.registerSub}>Enter an open contest as a contestant</Text>
+          </View>
+          <ChevronRight size={18} color={Colors.onPrimary} strokeWidth={2} />
+        </Pressable>
 
         {/* Free votes strip */}
         {freeVotes && (
@@ -115,8 +132,8 @@ export default function VotingHomeScreen() {
           )}
         </ScrollView>
 
-        {/* Leaderboard preview */}
-        {topEntries.length > 0 && (
+        {/* Leaderboard preview — hidden when the organiser disables it */}
+        {featuredContest?.showLeaderboard !== false && topEntries.length > 0 && (
           <>
             <SectionHeader
               title="Leaderboard Preview"
@@ -160,6 +177,10 @@ const styles = StyleSheet.create({
   safe:    { flex: 1, backgroundColor: Colors.background },
   scroll:  { flex: 1 },
   content: { paddingBottom: Spacing.xl },
+  registerCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.primary, borderRadius: Radius.lg, padding: Spacing.md, marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.sm },
+  registerIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' },
+  registerTitle: { ...Typography.labelLg, color: Colors.onPrimary },
+  registerSub: { ...Typography.labelSm, color: Colors.inversePrimary },
   header:  {
     flexDirection:    'row',
     alignItems:       'center',

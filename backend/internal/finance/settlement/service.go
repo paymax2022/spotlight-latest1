@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/finance/ledger"
 )
@@ -23,12 +24,29 @@ func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
 
 // Escrow holds funds when a payment is made, before the provider fulfils the order.
 // Called by every marketplace vertical after a successful payment.
+//
+// ATOMICITY (money invariant): this posts TWO effects — a ledger DEBIT (the money
+// move) and a settlements-row insert (the tracking record). The ledger API exposes
+// no tx-aware Debit, so the debit runs on the ledger's own connection and cannot
+// share a tx with the settlements insert here. We therefore make the pair
+// crash-safe by (1) keying both effects idempotently on idempotencyKey and (2)
+// ordering + retry-hardening them so a caller replay converges to exactly one
+// debit and exactly one row:
+//   - ledger Debit is idempotent on "<key>:escrow" (duplicate → ErrDuplicate).
+//   - settlements.idempotency_key is UNIQUE; the insert is ON CONFLICT DO NOTHING.
+// If the debit succeeds but the process dies before the insert, a retry with the
+// SAME idempotencyKey sees ErrDuplicate from the ledger (funds already held) and
+// falls through to ensure the tracking row exists — so escrow is never stranded
+// without a row, and money is never debited twice.
 func (s *Service) Escrow(ctx context.Context, payerID, reference, idempotencyKey, moduleType string, totalKobo int64) (*Settlement, error) {
 	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ledger.Debit(ctx, payerID, "escrow:"+reference, idempotencyKey+":escrow", escrowAcc.ID, totalKobo); err != nil {
+	// Post the money move first (funds-checked, idempotent). A duplicate means the
+	// debit already happened on an earlier attempt — treat as success and proceed
+	// to (re)ensure the tracking row below, rather than erroring the retry.
+	if err := s.ledger.Debit(ctx, payerID, "escrow:"+reference, idempotencyKey+":escrow", escrowAcc.ID, totalKobo); err != nil && err != ledger.ErrDuplicate {
 		return nil, fmt.Errorf("settlement: escrow debit: %w", err)
 	}
 	now := time.Now()
@@ -42,11 +60,24 @@ func (s *Service) Escrow(ctx context.Context, payerID, reference, idempotencyKey
 		EscrowedAt:     now,
 		IdempotencyKey: idempotencyKey,
 	}
+	// Idempotent insert: on a retry the row already exists (unique idempotency_key),
+	// so DO NOTHING keeps this a safe no-op. We then re-load the canonical row so
+	// callers always get the real settlement id (not the fresh uuid we just minted).
 	const insert = `
 		INSERT INTO settlements (id, reference, module_type, payer_id, total_kobo, status, escrowed_at, idempotency_key)
-		VALUES ($1,$2,$3,$4,$5,'escrowed',$6,$7)`
-	_, err = s.db.Exec(ctx, insert, sett.ID, sett.Reference, sett.ModuleType, sett.PayerID, sett.TotalKobo, sett.EscrowedAt, sett.IdempotencyKey)
-	return sett, err
+		VALUES ($1,$2,$3,$4,$5,'escrowed',$6,$7)
+		ON CONFLICT (idempotency_key) DO NOTHING`
+	if _, err = s.db.Exec(ctx, insert, sett.ID, sett.Reference, sett.ModuleType, sett.PayerID, sett.TotalKobo, sett.EscrowedAt, sett.IdempotencyKey); err != nil {
+		return nil, fmt.Errorf("settlement: insert escrow row: %w", err)
+	}
+	// Resolve the authoritative id/status (handles the retry case where the row was
+	// inserted by a prior attempt).
+	if err = s.db.QueryRow(ctx,
+		`SELECT id, status FROM settlements WHERE idempotency_key=$1`, idempotencyKey,
+	).Scan(&sett.ID, &sett.Status); err != nil {
+		return nil, fmt.Errorf("settlement: resolve escrow row: %w", err)
+	}
+	return sett, nil
 }
 
 // Settle releases the escrowed funds, applying the split and deducting commission.
@@ -83,6 +114,22 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 	}
 	providerKobo := sett.TotalKobo - platformKobo - riderKobo
 
+	// ATOMICITY FIX (money invariant): previously the provider/rider credits went
+	// through s.ledger.Credit (which posts on the ledger's OWN connection), while the
+	// commission entries and the settlement-row status update ran on this tx. That
+	// split meant a crash between the provider credit and tx.Commit could pay the
+	// provider without ever marking the settlement 'settled' — and because the ledger
+	// Credit is a plain INSERT (no ON CONFLICT), a retry then errored on the UNIQUE
+	// idempotency_key, wedging the settlement.
+	//
+	// The ledger.Service still exposes no tx-aware Credit/Debit (documented gap — a
+	// future refactor should add ledger.CreditTx(tx, ...) so wallet balance
+	// projections and settlement rows commit as one unit). Until then, we post EVERY
+	// leg of this settlement as raw balanced ledger_entries pairs on THIS tx, so all
+	// money movement + the status flip commit atomically. Wallet account rows are
+	// resolved (get-or-create) OUTSIDE the tx — that only ensures the account exists
+	// and moves no money — then every posting is on the tx and idempotent via
+	// ON CONFLICT (idempotency_key) DO NOTHING, making the whole Settle safe to retry.
 	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
 	if err != nil {
 		return err
@@ -91,26 +138,36 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 	if err != nil {
 		return err
 	}
+	providerWallet, err := s.ledger.GetOrCreateUserWallet(ctx, split.ProviderID)
+	if err != nil {
+		return fmt.Errorf("settlement: resolve provider wallet: %w", err)
+	}
 
 	ref := "settle:" + sett.Reference
 	idem := "settle:" + settlementID
 
-	// Escrow → provider wallet
-	if err := s.ledger.Credit(ctx, split.ProviderID, ref+":provider", idem+":provider", escrowAcc.ID, providerKobo); err != nil {
-		return fmt.Errorf("settlement: credit provider: %w", err)
+	// Escrow → provider wallet: DEBIT escrow, CREDIT provider wallet (balanced pair).
+	if providerKobo > 0 {
+		if err := postPairTx(ctx, tx, escrowAcc.ID, providerWallet.ID, providerKobo,
+			ref+":provider", idem+":provider"); err != nil {
+			return fmt.Errorf("settlement: credit provider: %w", err)
+		}
 	}
-	// Escrow → platform revenue (commission)
-	const insertCommEntry = `INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key) VALUES ($1,'DEBIT',$2,$3,$4)`
-	if _, err := tx.Exec(ctx, insertCommEntry, escrowAcc.ID, platformKobo, ref+":commission", idem+":commission"); err != nil {
-		return fmt.Errorf("settlement: debit escrow for commission: %w", err)
+	// Escrow → platform revenue (commission): DEBIT escrow, CREDIT revenue.
+	if platformKobo > 0 {
+		if err := postPairTx(ctx, tx, escrowAcc.ID, revAcc.ID, platformKobo,
+			ref+":commission", idem+":commission"); err != nil {
+			return fmt.Errorf("settlement: post commission: %w", err)
+		}
 	}
-	const insertRevEntry = `INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key) VALUES ($1,'CREDIT',$2,$3,$4)`
-	if _, err := tx.Exec(ctx, insertRevEntry, revAcc.ID, platformKobo, ref+":commission", idem+":commission:credit"); err != nil {
-		return fmt.Errorf("settlement: credit revenue: %w", err)
-	}
-	// Escrow → rider wallet (if applicable)
+	// Escrow → rider wallet (if applicable): DEBIT escrow, CREDIT rider wallet.
 	if split.RiderID != nil && riderKobo > 0 {
-		if err := s.ledger.Credit(ctx, *split.RiderID, ref+":rider", idem+":rider", escrowAcc.ID, riderKobo); err != nil {
+		riderWallet, err := s.ledger.GetOrCreateUserWallet(ctx, *split.RiderID)
+		if err != nil {
+			return fmt.Errorf("settlement: resolve rider wallet: %w", err)
+		}
+		if err := postPairTx(ctx, tx, escrowAcc.ID, riderWallet.ID, riderKobo,
+			ref+":rider", idem+":rider"); err != nil {
 			return fmt.Errorf("settlement: credit rider: %w", err)
 		}
 	}
@@ -121,6 +178,26 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 		return fmt.Errorf("settlement: update status: %w", err)
 	}
 	return tx.Commit(ctx)
+}
+
+// postPairTx posts a balanced double-entry pair (DEBIT debitAccountID,
+// CREDIT creditAccountID) for amountKobo on the given tx. Both legs share the
+// reference and derive a distinct-but-stable idempotency key, and both use
+// ON CONFLICT (idempotency_key) DO NOTHING so a retried Settle is a safe no-op
+// rather than a UNIQUE-constraint failure. Money invariant: exactly one DEBIT and
+// one CREDIT of equal magnitude, both inside the caller's transaction.
+func postPairTx(ctx context.Context, tx pgx.Tx, debitAccountID, creditAccountID string, amountKobo int64, reference, idempotencyKey string) error {
+	const insertEntry = `
+		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
+		VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (idempotency_key) DO NOTHING`
+	if _, err := tx.Exec(ctx, insertEntry, debitAccountID, "DEBIT", amountKobo, reference, idempotencyKey+":debit"); err != nil {
+		return fmt.Errorf("settlement: post debit leg: %w", err)
+	}
+	if _, err := tx.Exec(ctx, insertEntry, creditAccountID, "CREDIT", amountKobo, reference, idempotencyKey+":credit"); err != nil {
+		return fmt.Errorf("settlement: post credit leg: %w", err)
+	}
+	return nil
 }
 
 // Refund releases escrowed funds back to the payer.

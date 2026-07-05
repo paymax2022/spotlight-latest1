@@ -7,7 +7,7 @@
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { getRestrictionStatus } from '@/features/visitor/api/visitor.api';
-import { ELECTION_API_BASE as B, USE_MOCK } from '../constants/election.constants';
+import { ELECTION_API_BASE as B, DEFAULT_ESTATE_ID, USE_MOCK } from '../constants/election.constants';
 import type {
   CastVoteInput,
   CreateElectionInput,
@@ -33,37 +33,33 @@ export class ElectionApiError extends Error {
   }
 }
 
-/** The election whose window is open right now (or null). Drives the banner. */
+// MISSING BACKEND ENDPOINT: no GET /estate/:id/elections/active exists (the
+// estate handler only exposes create/vote/results/eligibility — no list or
+// "currently open" read). Falls back to the mock store so the banner still
+// derives from the window client-side.
 export async function getActiveElection(): Promise<Election | null> {
-  if (USE_MOCK) {
-    await latency(200);
-    const live = elections.find((e) => isLiveNow(e));
-    return live ? JSON.parse(JSON.stringify(live)) : null;
-  }
-  const { data } = await api.get<Election | null>(`${B}/active`);
-  return data ?? null;
+  await latency(200);
+  const live = elections.find((e) => isLiveNow(e));
+  return live ? JSON.parse(JSON.stringify(live)) : null;
 }
 
+// MISSING BACKEND ENDPOINT: no GET /estate/:id/elections (list) exists.
 export async function listElections(): Promise<Election[]> {
-  if (USE_MOCK) {
-    await latency();
-    return JSON.parse(JSON.stringify(elections));
-  }
-  const { data } = await api.get<Election[]>(B);
-  return data;
+  await latency();
+  return JSON.parse(JSON.stringify(elections));
 }
 
+// MISSING BACKEND ENDPOINT: no GET /estate/:id/elections/:electionId (single
+// election read) exists — the backend only exposes GetResults (post-close).
 export async function getElection(id: string): Promise<Election> {
-  if (USE_MOCK) {
-    await latency(250);
-    const e = elections.find((x) => x.id === id);
-    if (!e) throw new ElectionApiError('NOT_FOUND', 'Election not found.');
-    return JSON.parse(JSON.stringify(e));
-  }
-  const { data } = await api.get<Election>(`${B}/${id}`);
-  return data;
+  await latency(250);
+  const e = elections.find((x) => x.id === id);
+  if (!e) throw new ElectionApiError('NOT_FOUND', 'Election not found.');
+  return JSON.parse(JSON.stringify(e));
 }
 
+// Backend: GET /api/finance/estate/:id/elections/:electionId/eligibility →
+// { data: { eligible, reason? } }.
 export async function getVoterEligibility(electionId: string): Promise<VoterEligibility> {
   if (USE_MOCK) {
     // Wired to payment standing: residents under a hard payment ban are
@@ -79,17 +75,18 @@ export async function getVoterEligibility(electionId: string): Promise<VoterElig
     }
     return { eligible: true };
   }
-  const { data } = await api.get<VoterEligibility>(`${B}/${electionId}/eligibility`);
-  return data;
+  const { data } = await api.get<{ data: VoterEligibility }>(
+    `${B}/${DEFAULT_ESTATE_ID}/elections/${electionId}/eligibility`,
+  );
+  return (data as unknown as { data?: VoterEligibility }).data ?? (data as unknown as VoterEligibility);
 }
 
+// MISSING BACKEND ENDPOINT: no GET .../ballot (the resident's own picks so
+// far) exists — CastVote is write-only server-side. Falls back to the local
+// ballot cache so the UI can still show "already voted" state client-side.
 export async function getMyBallot(electionId: string): Promise<MyBallot> {
-  if (USE_MOCK) {
-    await latency(150);
-    return ballots[electionId] ?? { electionId, choices: {} };
-  }
-  const { data } = await api.get<MyBallot>(`${B}/${electionId}/ballot`);
-  return data;
+  await latency(150);
+  return ballots[electionId] ?? { electionId, choices: {} };
 }
 
 export async function castVote(input: CastVoteInput): Promise<MyBallot> {
@@ -120,12 +117,22 @@ export async function castVote(input: CastVoteInput): Promise<MyBallot> {
     ballots[input.electionId] = ballot;
     return JSON.parse(JSON.stringify(ballot));
   }
-  const { data } = await api.post<MyBallot>(
-    `${B}/${input.electionId}/vote`,
-    { positionId: input.positionId, candidateId: input.candidateId },
+  // MODEL MISMATCH: the backend's estate election is single-position (one
+  // flat candidate list per election — CastVoteRequest only carries
+  // candidate_id, no position_id) while the mobile Election/MyBallot model is
+  // multi-position (a ballot with one choice per ElectionPosition). Until the
+  // backend supports multi-position elections, we send candidate_id only and
+  // record the choice against the given positionId purely client-side so the
+  // multi-position UI still renders a per-position "voted" state.
+  await api.post(
+    `${B}/${DEFAULT_ESTATE_ID}/elections/${input.electionId}/vote`,
+    { candidate_id: input.candidateId },
     idem(input.idempotencyKey),
   );
-  return data;
+  const ballot = ballots[input.electionId] ?? { electionId: input.electionId, choices: {} };
+  ballot.choices[input.positionId] = input.candidateId;
+  ballots[input.electionId] = ballot;
+  return { ...ballot, choices: { ...ballot.choices } };
 }
 
 // Admin: create/schedule an election. Status is derived from the window on read.
@@ -169,23 +176,68 @@ export async function createElection(input: CreateElectionInput): Promise<Electi
     elections = [election, ...elections];
     return JSON.parse(JSON.stringify(election));
   }
-  const { data } = await api.post<Election>(B, input, idem(input.idempotencyKey));
-  return data;
+  // MODEL MISMATCH: backend CreateElectionRequest is single-position
+  // (title/description/starts_at/ends_at/candidates: Candidate[] — no nested
+  // "positions"). We flatten the mobile's first position's candidates into
+  // the single candidate list the backend supports; multi-position elections
+  // are NOT representable server-side yet (MISSING: multi-position election
+  // support). The response is also just the created election row, not the
+  // full nested-positions shape, so we keep constructing the local shape.
+  const firstPosition = input.positions[0];
+  const candidateNames = firstPosition?.candidateNames ?? [];
+  const res = await api.post<Record<string, unknown>>(
+    `${B}/${DEFAULT_ESTATE_ID}/elections`,
+    {
+      title: input.title,
+      description: input.description ?? '',
+      starts_at: input.startsAt,
+      ends_at: input.endsAt,
+      candidates: candidateNames.map((name) => ({ name })),
+    },
+    idem(input.idempotencyKey),
+  );
+  const created = res.data ?? {};
+  const id = String(created.id ?? `elec_${Date.now()}`);
+  const election: Election = {
+    id,
+    estateId: DEFAULT_ESTATE_ID,
+    title: input.title,
+    description: input.description,
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+    status: 'scheduled',
+    totalEligibleVoters: 0,
+    votesCast: 0,
+    resultsPublished: false,
+    positions: [
+      {
+        id: `pos_${id}_0`,
+        title: firstPosition?.title ?? 'Position',
+        seats: Math.max(1, firstPosition?.seats ?? 1),
+        candidates: candidateNames.map((name, ci) => ({
+          id: `cand_${id}_0_${ci}`,
+          positionId: `pos_${id}_0`,
+          name,
+          votes: 0,
+        })),
+      },
+    ],
+  };
+  elections = [election, ...elections];
+  return election;
 }
 
-// Admin: publish results once the election has ended (results announcement).
+// MISSING BACKEND ENDPOINT: no POST /elections/:id/publish exists — the
+// backend only exposes GetResults (a read), with no "publish" state
+// transition. Falls back to the mock store's publish behaviour.
 export async function publishResults(electionId: string): Promise<Election> {
-  if (USE_MOCK) {
-    await latency(400);
-    const e = elections.find((x) => x.id === electionId);
-    if (!e) throw new ElectionApiError('NOT_FOUND', 'Election not found.');
-    if (!hasEnded(e)) throw new ElectionApiError('NOT_ENDED', 'Results can only be published after the election closes.');
-    e.resultsPublished = true;
-    e.status = 'results_published';
-    return JSON.parse(JSON.stringify(e));
-  }
-  const { data } = await api.post<Election>(`${B}/${electionId}/publish`, {}, idem());
-  return data;
+  await latency(400);
+  const e = elections.find((x) => x.id === electionId);
+  if (!e) throw new ElectionApiError('NOT_FOUND', 'Election not found.');
+  if (!hasEnded(e)) throw new ElectionApiError('NOT_ENDED', 'Results can only be published after the election closes.');
+  e.resultsPublished = true;
+  e.status = 'results_published';
+  return JSON.parse(JSON.stringify(e));
 }
 
 /** Test helper — reset the in-memory stores (mock mode). */

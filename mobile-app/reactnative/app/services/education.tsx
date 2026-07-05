@@ -12,7 +12,8 @@ import BillReviewSecurityPanel, { calculateBillReview, formatNaira } from '@/com
 import PaymentMethodSelector, { type PaymentMethod } from '@/components/PaymentMethodSelector';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
-import { getEducationProducts, getEducationProviders, initiateEducationPaystack, payEducation } from '@/api/billing.api';
+import { getEducationProducts, getEducationProviders, initiateEducationPaystack, payEducation, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
+import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -51,6 +52,12 @@ export default function EducationScreen() {
   const { data: providers = [], isLoading: providersLoading, isError: providersError, refetch: refetchProviders } = useQuery({
     queryKey: ['education-providers'],
     queryFn: getEducationProviders,
+  });
+
+  const { data: providerLogos = [] } = useQuery({
+    queryKey: ['provider-logos', 'education'],
+    queryFn:  () => getProviderLogos('education'),
+    staleTime: 60 * 60 * 1000,
   });
 
   const { data: products = [], isLoading: productsLoading, refetch: refetchProducts } = useQuery({
@@ -213,11 +220,7 @@ export default function EducationScreen() {
                     }}
                     style={[styles.providerCard, active && styles.providerCardActive]}
                   >
-                    <View style={[styles.providerIcon, { backgroundColor: provider.bg ?? Colors.iconBgPurple }]}>
-                      <Text style={[styles.providerInitial, { color: provider.accent ?? Colors.primary }]}>
-                        {provider.name.slice(0, 1)}
-                      </Text>
-                    </View>
+                    <ProviderLogo code={provider.code} name={provider.name} logoUri={resolveProviderImage(providerLogos, provider.code, provider.name)} />
                     <Text style={[styles.providerName, active && styles.providerNameActive]} numberOfLines={1}>
                       {provider.name}
                     </Text>

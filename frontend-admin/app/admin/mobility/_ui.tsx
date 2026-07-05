@@ -106,6 +106,7 @@ export function MobilityTabs({ active }: { active: string }) {
     { href: '/admin/mobility/car-hire', label: 'Car Hire', key: 'car-hire' },
     { href: '/admin/mobility/business', label: 'Business', key: 'business' },
     { href: '/admin/mobility/events', label: 'Events', key: 'events' },
+    { href: '/admin/mobility/scheduled', label: 'Scheduled', key: 'scheduled' },
   ];
   return (
     <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>

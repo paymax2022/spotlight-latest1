@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	platformRedis "spotlight/backend/internal/platform/redis"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,8 +146,9 @@ func (s *Service) SetNotifier(n Notifier) {
 }
 
 // StartAlertWorker periodically evaluates price alerts. Like the settlement
-// worker, triggering is idempotent (only active alerts transition).
-func StartAlertWorker(ctx context.Context, svc *Service, interval time.Duration) {
+// worker, triggering is idempotent (only active alerts transition) and guarded
+// by a Redlock so only one node evaluates per tick.
+func StartAlertWorker(ctx context.Context, svc *Service, rc *platformRedis.Client, interval time.Duration) {
 	if svc == nil {
 		return
 	}
@@ -160,16 +163,18 @@ func StartAlertWorker(ctx context.Context, svc *Service, interval time.Duration)
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				n, err := svc.EvaluateAlerts(ctx)
-				if err != nil {
-					log.Printf("[invest] alert worker error: %v", err)
-					continue
-				}
-				if n > 0 {
-					log.Printf("[invest] alert worker triggered %d alert(s)", n)
-				}
+				withLock(ctx, rc, "invest:alerts", 90*time.Second, func() {
+					n, err := svc.EvaluateAlerts(ctx)
+					if err != nil {
+						log.Printf("[invest] alert worker error: %v", err)
+						return
+					}
+					if n > 0 {
+						log.Printf("[invest] alert worker triggered %d alert(s)", n)
+					}
+				})
 			}
 		}
 	}()
-	log.Printf("[invest] price-alert worker started (interval=%s)", interval)
+	log.Printf("[invest] price-alert worker started (interval=%s, redlock=%v)", interval, rc != nil)
 }

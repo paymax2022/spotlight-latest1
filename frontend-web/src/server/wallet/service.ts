@@ -433,3 +433,33 @@ async function initializePaystackPayment(input: {
 
   return authorizationUrl;
 }
+
+// ---------------------------------------------------------------------------
+// Topup status — polled by the app after the user returns from Paystack so a
+// module checkout can proceed once the wallet has actually been credited (the
+// webhook flips the intent to 'completed' on charge.success).
+// ---------------------------------------------------------------------------
+
+export interface TopupStatusResult {
+  reference: string;
+  status: string; // 'pending' | 'completed' | 'failed'
+  amountKobo: number;
+  completed: boolean;
+}
+
+export async function getTopupStatus(reference: string, userId: string): Promise<TopupStatusResult | null> {
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from('wallet_topup_intents')
+    .select('payment_reference, status, amount_kobo, user_id')
+    .eq('payment_reference', reference)
+    .maybeSingle();
+  if (!data || data.user_id !== userId) return null;
+  const status = String(data.status ?? 'pending');
+  return {
+    reference: String(data.payment_reference ?? reference),
+    status,
+    amountKobo: Number(data.amount_kobo ?? 0),
+    completed: status === 'completed',
+  };
+}

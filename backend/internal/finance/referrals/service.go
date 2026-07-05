@@ -22,7 +22,7 @@ func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
 
 // GetOrCreateCode returns the user's referral code, creating one if needed.
 func (s *Service) GetOrCreateCode(ctx context.Context, userID string) (*Code, error) {
-	const q = `SELECT code, created_at FROM referral_codes WHERE user_id = $1`
+	const q = `SELECT code, created_at FROM finance_referral_codes WHERE user_id = $1`
 	var c Code
 	c.UserID = userID
 	err := s.db.QueryRow(ctx, q, userID).Scan(&c.Code, &c.CreatedAt)
@@ -35,7 +35,7 @@ func (s *Service) GetOrCreateCode(ctx context.Context, userID string) (*Code, er
 		return nil, fmt.Errorf("referrals: generate code: %w", err)
 	}
 	const insert = `
-		INSERT INTO referral_codes (user_id, code)
+		INSERT INTO finance_referral_codes (user_id, code)
 		VALUES ($1, $2)
 		ON CONFLICT (user_id) DO NOTHING
 		RETURNING code, created_at`
@@ -70,7 +70,7 @@ func (s *Service) GetSummary(ctx context.Context, userID string) (*Summary, erro
 
 // ResolveCodeToReferrer returns the user ID that owns a referral code.
 func (s *Service) ResolveCodeToReferrer(ctx context.Context, code string) (string, error) {
-	const q = `SELECT user_id FROM referral_codes WHERE code = $1`
+	const q = `SELECT user_id FROM finance_referral_codes WHERE code = $1`
 	var referrerID string
 	if err := s.db.QueryRow(ctx, q, code).Scan(&referrerID); err != nil {
 		return "", fmt.Errorf("referrals: resolve code %q: %w", code, err)

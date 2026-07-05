@@ -3,7 +3,7 @@
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import { USE_MOCK } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
 import type {
   ChatThread,
   ChatThreadSummary,
@@ -20,7 +20,7 @@ const toSummary = (t: ChatThread): ChatThreadSummary => {
 
 export async function getThreads(): Promise<ChatThreadSummary[]> {
   if (USE_MOCK) { await delay(); return MOCK_THREADS.map(toSummary); }
-  const { data } = await api.get('/associations/chat/threads');
+  const { data } = await api.get(`${BASE}/chat/threads`);
   return data;
 }
 
@@ -31,7 +31,7 @@ export async function getThread(id: string): Promise<ChatThread> {
     if (!found) throw new Error('Thread not found');
     return found;
   }
-  const { data } = await api.get(`/associations/chat/threads/${id}`);
+  const { data } = await api.get(`${BASE}/chat/threads/${id}`);
   return data;
 }
 
@@ -54,7 +54,7 @@ export async function sendMessage(threadId: string, body: string, imageUrl?: str
     };
   }
   const { data } = await api.post(
-    `/associations/chat/threads/${threadId}/messages`,
+    `${BASE}/chat/threads/${threadId}/messages`,
     { body, imageUrl: imageUrl ?? null },
     { headers: { 'Idempotency-Key': generateIdempotencyKey() } },
   );
@@ -63,12 +63,12 @@ export async function sendMessage(threadId: string, body: string, imageUrl?: str
 
 export async function muteThread(threadId: string, muted: boolean): Promise<{ ok: true }> {
   if (USE_MOCK) { await delay(120); return { ok: true }; }
-  const { data } = await api.post(`/associations/chat/threads/${threadId}/mute`, { muted });
+  const { data } = await api.post(`${BASE}/chat/threads/${threadId}/mute`, { muted });
   return data;
 }
 
 export async function reactToMessage(threadId: string, messageId: string, emoji: string): Promise<{ ok: true }> {
   if (USE_MOCK) { await delay(80); return { ok: true }; }
-  const { data } = await api.post(`/associations/chat/threads/${threadId}/messages/${messageId}/react`, { emoji });
+  const { data } = await api.post(`${BASE}/chat/threads/${threadId}/messages/${messageId}/react`, { emoji });
   return data;
 }

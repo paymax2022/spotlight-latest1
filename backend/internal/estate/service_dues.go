@@ -18,6 +18,9 @@ import (
 type LedgerPoster interface {
 	GetOrCreateStandingAccount(ctx context.Context, accountType ledger.AccountType) (*ledger.Account, error)
 	Debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error
+	// Credit posts a balanced entry that increases the user's wallet, debiting the
+	// given standing account. Used for vendor payouts (Block 42).
+	Credit(ctx context.Context, userID, reference, idempotencyKey, debitAccountID string, amountKobo int64) error
 }
 
 // TierEnforcer fail-closes a wallet debit against the payer's KYC tier limit.
@@ -68,6 +71,10 @@ func (s *Service) CreateInvoice(ctx context.Context, estateID, adminID string, r
 	if _, err := s.db.Exec(ctx, q, inv.ID, inv.EstateID, inv.PropertyID, inv.ResidentID, inv.Category, inv.AmountKobo, inv.DueDate); err != nil {
 		return nil, fmt.Errorf("estate: insert invoice: %w", err)
 	}
+	// Block 30/43: notify the billed resident. Fire-and-forget.
+	s.notify(ctx, estateID, req.ResidentID, NotifPaymentDue, "New invoice",
+		fmt.Sprintf("You have a new %s invoice of ₦%.2f", inv.Category, float64(inv.AmountKobo)/100),
+		map[string]any{"invoice_id": inv.ID, "amount_kobo": inv.AmountKobo})
 	return inv, nil
 }
 
@@ -257,6 +264,10 @@ func (s *Service) ApplyRestriction(ctx context.Context, estateID, adminID string
 		return nil, fmt.Errorf("estate: apply restriction: %w", err)
 	}
 	_ = s.audit(ctx, estateID, adminID, "RESTRICTION_APPLY", "resident", req.ResidentID, map[string]any{"level": req.Level})
+	// Block 30/43: tell the resident a restriction was applied. Fire-and-forget.
+	s.notify(ctx, estateID, req.ResidentID, NotifRestrictionApplied, "Account restricted",
+		"A "+req.Level+" restriction was applied to your account. Clear outstanding dues to restore access.",
+		map[string]any{"level": req.Level})
 	return r, nil
 }
 
@@ -272,11 +283,14 @@ func (s *Service) LiftRestriction(ctx context.Context, estateID, adminID, reside
 		return err
 	}
 	_ = s.audit(ctx, estateID, adminID, "RESTRICTION_LIFT", "resident", residentID, nil)
+	// Block 30/43: tell the resident their restriction was lifted. Fire-and-forget.
+	s.notify(ctx, estateID, residentID, NotifRestrictionLifted, "Access restored",
+		"Your account restriction has been lifted.", nil)
 	return nil
 }
 
 // activeRestriction returns the active restriction level for a resident
-// ("" if none). Used to enforce hard restrictions on gated actions.
+// ("" if none). Used to enforce dues restrictions on gated actions.
 func (s *Service) activeRestriction(ctx context.Context, estateID, residentID string) (string, error) {
 	var level string
 	err := s.db.QueryRow(ctx,
@@ -287,6 +301,48 @@ func (s *Service) activeRestriction(ctx context.Context, estateID, residentID st
 		return "", nil
 	}
 	return level, err
+}
+
+// restrictionBlocks reports whether an active dues restriction at the given
+// level blocks the named action. This is the Block 30 soft/hard matrix:
+//
+//   - "hard": blocks every gated estate action (visitor codes, voting,
+//     facility booking) — a fully banned defaulter.
+//   - "soft": blocks voting and facility booking, but visitor codes STILL work
+//     (a soft defaulter can still let guests in, but loses community privileges).
+//   - "" (no active restriction): blocks nothing.
+//
+// Pure function (no DB) so the policy is exhaustively unit-testable.
+func restrictionBlocks(level, action string) bool {
+	switch level {
+	case "hard":
+		return true
+	case "soft":
+		return action == ActionVote || action == ActionFacility
+	default:
+		return false
+	}
+}
+
+// Gated-action identifiers for the dues-restriction matrix.
+const (
+	ActionVisitor  = "visitor"
+	ActionVote     = "vote"
+	ActionFacility = "facility"
+)
+
+// enforceNotRestricted fail-closes a gated action against the resident's active
+// dues restriction. A DB lookup error blocks the action (fail-closed). Returns a
+// descriptive error when the action is blocked, nil when allowed.
+func (s *Service) enforceNotRestricted(ctx context.Context, estateID, residentID, action string) error {
+	level, err := s.activeRestriction(ctx, estateID, residentID)
+	if err != nil {
+		return fmt.Errorf("estate: restriction check failed: %w", err)
+	}
+	if restrictionBlocks(level, action) {
+		return fmt.Errorf("estate: %s blocked by active %s dues restriction — clear outstanding dues first", action, level)
+	}
+	return nil
 }
 
 // ── Audit helpers (immutable estate_audit_log) ───────────────────────────────

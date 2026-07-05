@@ -119,6 +119,60 @@ func TestExecuteSwapMovesBetweenAssets(t *testing.T) {
 	}
 }
 
+func TestUpdateTransactionStatus(t *testing.T) {
+	s := New()
+	usdc, _ := s.Asset("ast_usdc")
+	order, ee := s.ExecuteBuy(engine.BuildQuote(usdc, "buy", "fiat", 1_000_00, "NGN", true))
+	if ee != nil {
+		t.Fatalf("ExecuteBuy error: %v", ee)
+	}
+
+	if !s.UpdateTransactionStatus(order.Reference, "Reversed") {
+		t.Fatal("UpdateTransactionStatus returned false for a real reference")
+	}
+	tx, ok := s.Transaction(order.Reference)
+	if !ok || tx.Status != "Reversed" {
+		t.Fatalf("status = %q ok=%v, want Reversed", tx.Status, ok)
+	}
+	last := tx.StatusHistory[len(tx.StatusHistory)-1]
+	if last.Status != "Reversed" {
+		t.Errorf("last status event = %q, want Reversed", last.Status)
+	}
+	if s.UpdateTransactionStatus("PMX-CR-does-not-exist", "Filled") {
+		t.Error("expected false for unknown reference")
+	}
+}
+
+func TestWithdrawalAndReversal(t *testing.T) {
+	s := New()
+	usdt, _ := s.Asset("ast_usdt")
+	before, _ := findPos(s.Positions(), "USDT")
+
+	res, ee := s.RecordWithdrawal("USDT", "Tron (TRC-20)", "TXyz", 100_000_000, 50_000, 160_500_00)
+	if ee != nil {
+		t.Fatalf("RecordWithdrawal error: %v", ee)
+	}
+	afterWd, _ := findPos(s.Positions(), "USDT")
+	if afterWd.Quantity.Amount != before.Quantity.Amount-100_000_000 {
+		t.Fatalf("post-withdraw qty = %d, want %d", afterWd.Quantity.Amount, before.Quantity.Amount-100_000_000)
+	}
+
+	if !s.ReverseWithdrawal(res.Reference) {
+		t.Fatal("ReverseWithdrawal returned false")
+	}
+	afterRev, _ := findPos(s.Positions(), "USDT")
+	if afterRev.Quantity.Amount != before.Quantity.Amount {
+		t.Errorf("post-reversal qty = %d, want restored %d", afterRev.Quantity.Amount, before.Quantity.Amount)
+	}
+	tx, _ := s.Transaction(res.Reference)
+	if tx.Status != "WithdrawalFailed" {
+		t.Errorf("status = %q, want WithdrawalFailed", tx.Status)
+	}
+	if s.ReverseWithdrawal(res.Reference) {
+		t.Error("double reversal should be rejected")
+	}
+}
+
 func TestPortfolioAggregationConsistent(t *testing.T) {
 	s := New()
 	p := s.Portfolio()

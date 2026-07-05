@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -10,18 +10,16 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import PaymentMethodSelector, { PaymentMethod } from '@/components/PaymentMethodSelector';
 import { useDues, usePayInvoice } from '@/features/association/hooks/useAssociation';
 import { formatNaira } from '@/features/association/utils/associationFormatters';
-
-// Mock wallet balance (naira) for the preview build. Real build reads the wallet API.
-const MOCK_WALLET_NAIRA = 15_000;
+import type { PayInvoiceResult } from '@/features/association/types/association.types';
+import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 
 export default function PayInvoiceScreen() {
   const { invoiceId } = useLocalSearchParams<{ invoiceId: string }>();
   const dues = useDues();
   const pay = usePayInvoice();
-  const [method, setMethod] = useState<PaymentMethod>('WALLET');
+  const checkout = usePurchasePayment<PayInvoiceResult>();
 
   const invoice = dues.data?.invoices.find((i) => i.id === invoiceId);
 
@@ -42,20 +40,17 @@ export default function PayInvoiceScreen() {
     );
   }
 
-  const amountNaira = invoice.amountKobo / 100;
-
   const onPay = () => {
-    pay.mutate(
-      { invoiceId: invoice.id, method },
-      {
-        onSuccess: (res) => {
-          if (res.status === 'SUCCESS') router.replace(`/association/receipt/${res.receiptId}`);
-          else if (res.status === 'PENDING') router.replace('/association/edge/payment-required');
-          else Alert.alert('Payment failed', 'Your payment could not be completed. Please try again.');
-        },
-        onError: () => Alert.alert('Payment failed', 'Something went wrong. Please try again.'),
+    checkout.start({
+      amountKobo: invoice.amountKobo,
+      title: invoice.title,
+      charge: () => pay.mutateAsync({ invoiceId: invoice.id, method: 'WALLET' }),
+      onPaid: (res) => {
+        if (res.status === 'SUCCESS') router.replace(`/association/receipt/${res.receiptId}`);
+        else if (res.status === 'PENDING') router.replace('/association/edge/payment-required');
+        else Alert.alert('Payment failed', 'Your payment could not be completed. Please try again.');
       },
-    );
+    });
   };
 
   return (
@@ -71,13 +66,6 @@ export default function PayInvoiceScreen() {
             <Text style={styles.amount}>{formatNaira(invoice.amountKobo)}</Text>
           </View>
         </View>
-
-        <PaymentMethodSelector
-          selected={method}
-          onSelect={setMethod}
-          walletBalance={MOCK_WALLET_NAIRA}
-          amount={amountNaira}
-        />
 
         {/* Revenue split explainer */}
         <View style={styles.splitCard}>
@@ -99,6 +87,7 @@ export default function PayInvoiceScreen() {
       <View style={styles.footer}>
         <PrimaryButton label={`Pay ${formatNaira(invoice.amountKobo)}`} onPress={onPay} loading={pay.isPending} />
       </View>
+      <PaymentSheet controller={checkout} />
     </SafeAreaView>
   );
 }

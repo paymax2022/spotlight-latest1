@@ -51,6 +51,7 @@ export const MOVERS_ENABLED = flag(process.env.EXPO_PUBLIC_MOVERS_ENABLED);
 export const CARHIRE_ENABLED = flag(process.env.EXPO_PUBLIC_CARHIRE_ENABLED);
 export const LOGISTICS_ENABLED = flag(process.env.EXPO_PUBLIC_LOGISTICS_ENABLED);
 export const EVENT_ENABLED = flag(process.env.EXPO_PUBLIC_EVENT_ENABLED);
+export const SCHEDULED_ENABLED = flag(process.env.EXPO_PUBLIC_SCHEDULED_ENABLED);
 
 // ─── Mobility-home service tiles (the new modes appear alongside Ride) ─────────
 export interface ModeTile {
@@ -63,6 +64,7 @@ export interface ModeTile {
 }
 
 export const MODE_TILES: ModeTile[] = [
+  { id: 'scheduled', label: 'Schedule a trip',   description: 'Book ahead for later',       icon: 'CalendarClock', route: '/mobility/scheduled', enabled: SCHEDULED_ENABLED },
   { id: 'parcel',  label: 'Send parcel', description: 'Door-to-door courier', icon: 'Package',     route: '/mobility/parcel',  enabled: PARCEL_ENABLED },
   { id: 'bus',     label: 'Book a bus',  description: 'Intercity & intracity', icon: 'BusFront',   route: '/mobility/bus',     enabled: BUS_ENABLED },
   { id: 'towing',  label: 'Tow & rescue', description: 'Roadside assistance',   icon: 'Truck',      route: '/mobility/towing',  enabled: TOWING_ENABLED },
@@ -71,6 +73,38 @@ export const MODE_TILES: ModeTile[] = [
   { id: 'business', label: 'Business logistics', description: 'Bulk & tracked deliveries', icon: 'PackageCheck', route: '/mobility/business', enabled: LOGISTICS_ENABLED },
   { id: 'events',   label: 'Event transport',    description: 'Rides, fan bus & shuttles',  icon: 'Ticket',       route: '/mobility/events',   enabled: EVENT_ENABLED },
 ];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCHEDULED (advance booking: ride/parcel/airport/bus)
+// ═══════════════════════════════════════════════════════════════════════════════
+export const SCHEDULED_KEY = 'scheduled';
+
+export const SCHEDULED_MODE_META: {
+  value: 'ride_hail' | 'ride_share' | 'parcel_intra' | 'parcel_inter' | 'airport_pickup' | 'bus';
+  label: string;
+  hint: string;
+  icon: string;
+}[] = [
+  { value: 'ride_hail',      label: 'Ride',          hint: 'Book a private ride ahead of time', icon: 'CarFront' },
+  { value: 'ride_share',     label: 'Shared Ride',   hint: 'Split the fare on your route',       icon: 'Users' },
+  { value: 'parcel_intra',   label: 'Parcel',        hint: 'Door-to-door, same city',            icon: 'Package' },
+  { value: 'parcel_inter',   label: 'Parcel',        hint: 'Inter-state courier',                icon: 'PackageCheck' },
+  { value: 'airport_pickup', label: 'Airport Pickup', hint: 'Meet your flight',                  icon: 'Plane' },
+  { value: 'bus',            label: 'Bus',           hint: 'Reserve a seat in advance',           icon: 'BusFront' },
+];
+
+export const SCHEDULED_STATUS_LABEL: Record<
+  'scheduled' | 'dispatch_pending' | 'dispatched' | 'completed' | 'cancelled' | 'failed_no_driver' | 'expired',
+  string
+> = {
+  scheduled: 'Scheduled',
+  dispatch_pending: 'Preparing dispatch',
+  dispatched: 'On the way',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+  failed_no_driver: 'No driver found',
+  expired: 'Expired',
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PARCEL

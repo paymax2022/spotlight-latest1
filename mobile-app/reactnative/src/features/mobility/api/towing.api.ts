@@ -1,5 +1,5 @@
 // ── Towing — API wrapper ─────────────────────────────────────────────────────
-// Mock-flagged, BASE = '/api/finance'. Booking is a money mutation (escrow →
+// Mock-flagged, BASE = '/api/v1'. Booking is a money mutation (escrow →
 // settle on completion) and carries an Idempotency-Key. Callout/distance fares
 // come from the SERVER.
 
@@ -21,7 +21,7 @@ import {
 const USE_MOCK =
   (process.env.EXPO_PUBLIC_TOWING_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
 
-const BASE = '/api/finance';
+const BASE = '/api/v1';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });
@@ -101,7 +101,13 @@ export async function cancelTowing(id: string): Promise<TowingJob> {
   return unwrap<TowingJob>(await api.post(`${BASE}/mobility/towing/${id}/cancel`, {}));
 }
 
-export async function rateTowing(id: string, stars: number, comment?: string): Promise<void> {
+export async function rateTowing(
+  id: string,
+  stars: number,
+  idempotencyKey: string,
+  comment?: string,
+  tipKobo?: number,
+): Promise<void> {
   if (USE_MOCK) {
     await delay(500);
     if (towingStore.active?.id === id) towingStore.active.rated = true;
@@ -109,7 +115,11 @@ export async function rateTowing(id: string, stars: number, comment?: string): P
     if (h) h.rated = true;
     return;
   }
-  await api.post(`${BASE}/mobility/towing/${id}/rate`, { stars, comment });
+  await api.post(
+    `${BASE}/mobility/towing/${id}/rate`,
+    { stars, comment, tip_kobo: tipKobo },
+    idemHeader(idempotencyKey),
+  );
 }
 
 export function clearMockActiveTowing(): void {

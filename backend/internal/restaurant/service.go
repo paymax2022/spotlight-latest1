@@ -2,13 +2,24 @@ package restaurant
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/finance/settlement"
 )
+
+// lagosTZ is the delivery locale used to decide the night-fee window. Loaded once;
+// if the tzdata is unavailable the service falls back to the process-local zone.
+var lagosTZ = func() *time.Location {
+	if loc, err := time.LoadLocation("Africa/Lagos"); err == nil {
+		return loc
+	}
+	return time.Local
+}()
 
 // AddressGeocoder resolves a typed address to a pin + Plus Code. Satisfied by
 // maps.LocationGeocoder (the provider-agnostic MapService). Optional: when nil,
@@ -18,15 +29,34 @@ type AddressGeocoder interface {
 	Geocode(ctx context.Context, address string) (lat, lng float64, plusCode string, err error)
 }
 
+// RouteDistancer returns real driving distance (km) + ETA (minutes) between two
+// pins. Satisfied by maps.LocationGeocoder (Google Distance Matrix when
+// configured). Optional: when nil or erroring, the delivery fee falls back to
+// straight-line haversine distance.
+type RouteDistancer interface {
+	RouteDistanceKmEta(ctx context.Context, oLat, oLng, dLat, dLng float64) (km, etaMin float64, err error)
+}
+
 // Service manages restaurants, menus, and orders.
 type Service struct {
 	db         *pgxpool.Pool
 	settlement *settlement.Service
 	geocoder   AddressGeocoder
+	distancer  RouteDistancer      // optional; nil → haversine straight-line distance
+	feeRepo    *DeliveryConfigRepo // distance-based delivery-fee config (nil-safe → defaults)
+	notifier   Notifier            // nil-safe via s.notify; defaults to LogNotifier
+	rt         *Realtime           // optional; nil → no WS fan-out
 }
 
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
-	return &Service{db: db, settlement: settlement}
+	return &Service{db: db, settlement: settlement, notifier: LogNotifier{}, feeRepo: NewDeliveryConfigRepo(db)}
+}
+
+// WithRealtime attaches the WS fan-out used to push status/location/chat updates
+// to an order's connected participants. nil-safe (fan-out becomes a no-op).
+func (s *Service) WithRealtime(rt *Realtime) *Service {
+	s.rt = rt
+	return s
 }
 
 // WithGeocoder attaches an address geocoder so new restaurants get a pin
@@ -34,6 +64,24 @@ func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
 func (s *Service) WithGeocoder(g AddressGeocoder) *Service {
 	s.geocoder = g
 	return s
+}
+
+// WithDistancer attaches a routing-distance provider (Google Distance Matrix) so
+// delivery fees use real driving distance + ETA instead of straight-line.
+func (s *Service) WithDistancer(d RouteDistancer) *Service {
+	s.distancer = d
+	return s
+}
+
+// computeDeliveryFee prices a delivery using real driving distance + ETA when a
+// routing provider is available, falling back to straight-line haversine.
+func (s *Service) computeDeliveryFee(ctx context.Context, rLat, rLng, dLat, dLng float64, night, weather bool, cfg DeliveryFeeConfig) DeliveryFeeBreakdown {
+	if s.distancer != nil {
+		if km, eta, err := s.distancer.RouteDistanceKmEta(ctx, rLat, rLng, dLat, dLng); err == nil && km > 0 {
+			return ComputeDeliveryFeeFromRoute(km, eta, night, weather, cfg)
+		}
+	}
+	return ComputeDeliveryFee(HaversineKm(rLat, rLng, dLat, dLng), night, weather, cfg)
 }
 
 // CreateRestaurant registers a new restaurant.
@@ -64,12 +112,58 @@ func (s *Service) CreateRestaurant(ctx context.Context, ownerID string, req Crea
 	return r, err
 }
 
+// DeliveryQuote is the previewed fee for a prospective order. FlatFallback is true
+// when distance pricing could not be applied (missing restaurant pin or delivery
+// coords) and the flat DeliveryFeeKobo would be charged instead.
+type DeliveryQuote struct {
+	DeliveryFeeKobo int64                 `json:"delivery_fee_kobo"`
+	FlatFallback    bool                  `json:"flat_fallback"`
+	Breakdown       *DeliveryFeeBreakdown `json:"breakdown,omitempty"`
+}
+
+// QuoteDelivery previews the delivery fee for a destination, without placing an
+// order. nightOverride/weatherOverride force the respective surcharge flags when
+// non-nil (the app may pass them; otherwise night is derived from the Lagos clock
+// and weather defaults off). Falls back to the flat fee when coords are missing.
+func (s *Service) QuoteDelivery(ctx context.Context, restaurantID string, dLat, dLng float64, nightOverride, weatherOverride *bool) (*DeliveryQuote, error) {
+	var rLat, rLng *float64
+	if err := s.db.QueryRow(ctx, `SELECT geo_lat, geo_lng FROM restaurants WHERE id=$1`, restaurantID).Scan(&rLat, &rLng); err != nil {
+		return nil, fmt.Errorf("restaurant: not found")
+	}
+	if rLat == nil || rLng == nil {
+		return &DeliveryQuote{DeliveryFeeKobo: DeliveryFeeKobo, FlatFallback: true}, nil
+	}
+	cfg := s.feeRepo.LoadDeliveryConfig(ctx, restaurantID)
+	night := IsNightAt(time.Now().In(lagosTZ).Hour(), cfg)
+	if nightOverride != nil {
+		night = *nightOverride
+	}
+	weather := false
+	if weatherOverride != nil {
+		weather = *weatherOverride
+	}
+	b := s.computeDeliveryFee(ctx, *rLat, *rLng, dLat, dLng, night, weather, cfg)
+	return &DeliveryQuote{DeliveryFeeKobo: b.TotalKobo, Breakdown: &b}, nil
+}
+
+// GetDeliveryConfig returns the stored/effective delivery-fee config for the admin
+// console (per-restaurant when restaurantID set, else the global default).
+func (s *Service) GetDeliveryConfig(ctx context.Context, restaurantID *string) (*DeliveryConfigRow, error) {
+	return s.feeRepo.GetDeliveryConfig(ctx, restaurantID)
+}
+
+// SetDeliveryConfig upserts the delivery-fee config (global when restaurantID nil).
+func (s *Service) SetDeliveryConfig(ctx context.Context, restaurantID *string, cfg DeliveryFeeConfig, active bool) (*DeliveryConfigRow, error) {
+	return s.feeRepo.UpsertDeliveryConfig(ctx, restaurantID, cfg, active)
+}
+
 // PlaceOrder validates items, computes totals, escrows payment, and creates the order.
 func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID string, req PlaceOrderRequest) (*Order, error) {
-	// Verify restaurant is open.
+	// Verify restaurant is open and grab its pin for distance-based pricing.
 	var isOpen bool
 	var ownerID string
-	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&isOpen, &ownerID); err != nil {
+	var rLat, rLng *float64
+	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng FROM restaurants WHERE id=$1`, restaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng); err != nil {
 		return nil, fmt.Errorf("restaurant: not found")
 	}
 	if !isOpen {
@@ -100,7 +194,25 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		subtotal += lineTotal
 	}
 
-	total := subtotal + DeliveryFeeKobo
+	// Delivery fee: distance-based when BOTH the restaurant pin AND the delivery
+	// coordinates are available; otherwise fall back to the flat DeliveryFeeKobo
+	// (back-compat for clients that don't send coords yet).
+	deliveryKobo := DeliveryFeeKobo
+	var breakdown *DeliveryFeeBreakdown
+	var distanceMeters, etaMinutes *float64
+	if dLat, dLng, ok := req.DeliveryCoords(); ok && rLat != nil && rLng != nil {
+		cfg := s.feeRepo.LoadDeliveryConfig(ctx, restaurantID)
+		night := IsNightAt(time.Now().In(lagosTZ).Hour(), cfg)
+		b := s.computeDeliveryFee(ctx, *rLat, *rLng, dLat, dLng, night, false /* weather: no live feed in v1 */, cfg)
+		deliveryKobo = b.TotalKobo
+		breakdown = &b
+		dm := math.Round(b.DistanceKm*1000*10) / 10 // numeric(10,1) meters
+		em := b.EtaMinutes
+		distanceMeters = &dm
+		etaMinutes = &em
+	}
+
+	total := subtotal + deliveryKobo
 	orderID := uuid.New().String()
 	ref := "order:" + orderID
 
@@ -111,17 +223,29 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	}
 
 	order := &Order{
-		ID:              orderID,
-		CustomerID:      customerID,
-		RestaurantID:    restaurantID,
-		SubtotalKobo:    subtotal,
-		DeliveryKobo:    DeliveryFeeKobo,
-		TotalKobo:       total,
-		Status:          OrderPending,
-		IdempotencyKey:  req.IdempotencyKey,
-		SettlementID:    sett.ID,
-		DeliveryAddress: req.DeliveryAddress,
-		CreatedAt:       time.Now(),
+		ID:                orderID,
+		CustomerID:        customerID,
+		RestaurantID:      restaurantID,
+		SubtotalKobo:      subtotal,
+		DeliveryKobo:      deliveryKobo,
+		TotalKobo:         total,
+		Status:            OrderPending,
+		IdempotencyKey:    req.IdempotencyKey,
+		SettlementID:      sett.ID,
+		DeliveryAddress:   req.DeliveryAddress,
+		DistanceMeters:    distanceMeters,
+		EtaMinutes:        etaMinutes,
+		DeliveryBreakdown: breakdown,
+		CreatedAt:         time.Now(),
+	}
+
+	// delivery_breakdown is a NOT NULL jsonb column (default '{}'); marshal the
+	// breakdown when present, else store an empty object.
+	breakdownJSON := []byte("{}")
+	if breakdown != nil {
+		if bj, mErr := json.Marshal(breakdown); mErr == nil {
+			breakdownJSON = bj
+		}
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -131,12 +255,13 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	defer tx.Rollback(ctx)
 
 	const insertOrder = `
-		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address)
-		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9)`
+		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown)
+		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12)`
 	if _, err := tx.Exec(ctx, insertOrder,
 		order.ID, order.CustomerID, order.RestaurantID,
 		order.SubtotalKobo, order.DeliveryKobo, order.TotalKobo,
 		order.IdempotencyKey, order.SettlementID, order.DeliveryAddress,
+		order.DistanceMeters, order.EtaMinutes, breakdownJSON,
 	); err != nil {
 		return nil, fmt.Errorf("restaurant: insert order: %w", err)
 	}
@@ -152,7 +277,63 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		}
 	}
 	order.Items = items
-	return order, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	// Notify the restaurant owner of the new order; broadcast over the order WS.
+	s.notify(ctx, Notification{
+		UserID: ownerID,
+		Event:  EventOrderPlaced,
+		Title:  "New order received",
+		Body:   "You have a new food order to confirm.",
+		Data:   map[string]any{"order_id": order.ID, "total_kobo": order.TotalKobo},
+	})
+	s.broadcastStatus(order.ID, OrderPending)
+	return order, nil
+}
+
+// OrderParties is the exported form of orderParties, used to wire the Realtime
+// participant resolver from the app package.
+func (s *Service) OrderParties(ctx context.Context, orderID string) (customer, owner, rider string, err error) {
+	return s.orderParties(ctx, orderID)
+}
+
+// orderParties returns the three participant user-ids for an order: the
+// customer, the restaurant owner, and the assigned rider (rider may be empty).
+func (s *Service) orderParties(ctx context.Context, orderID string) (customer, owner, rider string, err error) {
+	var restaurantID string
+	var riderPtr *string
+	const q = `SELECT customer_id, restaurant_id, rider_id FROM orders WHERE id=$1`
+	if err = s.db.QueryRow(ctx, q, orderID).Scan(&customer, &restaurantID, &riderPtr); err != nil {
+		return "", "", "", fmt.Errorf("restaurant: order not found")
+	}
+	if err = s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&owner); err != nil {
+		return "", "", "", fmt.Errorf("restaurant: restaurant not found")
+	}
+	if riderPtr != nil {
+		rider = *riderPtr
+	}
+	return customer, owner, rider, nil
+}
+
+// isParticipant reports whether userID is the customer, owner, or assigned rider.
+func (s *Service) isParticipant(ctx context.Context, orderID, userID string) (bool, string, error) {
+	customer, owner, rider, err := s.orderParties(ctx, orderID)
+	if err != nil {
+		return false, "", err
+	}
+	switch userID {
+	case customer:
+		return true, "customer", nil
+	case owner:
+		return true, "restaurant", nil
+	case rider:
+		if rider != "" {
+			return true, "rider", nil
+		}
+	}
+	return false, "", nil
 }
 
 // UpdateStatus advances an order's status. Restaurant owner confirms/prepares;
@@ -162,6 +343,10 @@ func (s *Service) UpdateStatus(ctx context.Context, orderID, actorID string, new
 	const q = `SELECT id, restaurant_id, status, settlement_id FROM orders WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&order.ID, &order.RestaurantID, &order.Status, &order.SettlementID); err != nil {
 		return fmt.Errorf("restaurant: order not found")
+	}
+
+	if !canTransition(order.Status, newStatus) {
+		return fmt.Errorf("restaurant: cannot move order from %s to %s", order.Status, newStatus)
 	}
 
 	if _, err := s.db.Exec(ctx, `UPDATE orders SET status=$1 WHERE id=$2`, string(newStatus), orderID); err != nil {
@@ -192,7 +377,66 @@ func (s *Service) UpdateStatus(ctx context.Context, orderID, actorID string, new
 			return fmt.Errorf("restaurant: settle order: %w", err)
 		}
 	}
+
+	// When the restaurant marks the order ready, auto-dispatch to nearby
+	// available riders (unless one is already assigned). This is precisely what
+	// "ready for pickup" activates — rider sourcing, no manual assignment.
+	if newStatus == OrderReady {
+		var assigned *string
+		s.db.QueryRow(ctx, `SELECT rider_id FROM orders WHERE id=$1`, orderID).Scan(&assigned)
+		if assigned == nil {
+			if derr := s.DispatchOrder(ctx, orderID); derr != nil {
+				// A dispatch hiccup must not roll back the ready transition; the
+				// restaurant can re-trigger dispatch. Surface it to logs via notify.
+				s.notify(ctx, Notification{UserID: "", Event: EventOrderNoRiders,
+					Title: "Dispatch error", Body: derr.Error(),
+					Data: map[string]any{"order_id": orderID}})
+			}
+		}
+	}
+
+	// Notify the relevant party and broadcast over the order WS channel.
+	customer, _, rider, _ := s.orderParties(ctx, orderID)
+	switch newStatus {
+	case OrderConfirmed:
+		s.notify(ctx, Notification{UserID: customer, Event: EventOrderConfirmed, Title: "Order confirmed", Body: "The restaurant confirmed your order.", Data: map[string]any{"order_id": orderID}})
+	case OrderPreparing:
+		s.notify(ctx, Notification{UserID: customer, Event: EventOrderPreparing, Title: "Order being prepared", Body: "Your food is being prepared.", Data: map[string]any{"order_id": orderID}})
+	case OrderReady:
+		s.notify(ctx, Notification{UserID: customer, Event: EventOrderReady, Title: "Order ready", Body: "Your order is ready for pickup.", Data: map[string]any{"order_id": orderID}})
+		if rider != "" {
+			s.notify(ctx, Notification{UserID: rider, Event: EventOrderReady, Title: "Order ready for pickup", Body: "The order is ready — head to the restaurant.", Data: map[string]any{"order_id": orderID}})
+		}
+	case OrderPickedUp:
+		s.notify(ctx, Notification{UserID: customer, Event: EventOrderPickedUp, Title: "Order picked up", Body: "Your order is on the way.", Data: map[string]any{"order_id": orderID}})
+	case OrderDelivered:
+		s.notify(ctx, Notification{UserID: customer, Event: EventOrderDelivered, Title: "Order delivered", Body: "Enjoy your meal!", Data: map[string]any{"order_id": orderID}})
+	}
+	s.broadcastStatus(orderID, newStatus)
 	return nil
+}
+
+// canTransition guards the order lifecycle. Returns true for legal forward
+// moves (and the cancel terminal). Pure logic — unit-tested.
+func canTransition(from, to OrderStatus) bool {
+	if from == to {
+		return false
+	}
+	switch from {
+	case OrderPending:
+		return to == OrderConfirmed || to == OrderCancelled
+	case OrderConfirmed:
+		return to == OrderPreparing || to == OrderCancelled
+	case OrderPreparing:
+		return to == OrderReady || to == OrderCancelled
+	case OrderReady:
+		return to == OrderPickedUp || to == OrderCancelled
+	case OrderPickedUp:
+		return to == OrderDelivered
+	default:
+		// delivered / cancelled are terminal.
+		return false
+	}
 }
 
 // CancelOrder refunds the customer if the order has not yet been picked up.
@@ -207,6 +451,18 @@ func (s *Service) CancelOrder(ctx context.Context, orderID, actorID string) erro
 	if err := s.settlement.Refund(ctx, settlementID, "order_cancelled"); err != nil {
 		return fmt.Errorf("restaurant: refund order: %w", err)
 	}
-	_, err := s.db.Exec(ctx, `UPDATE orders SET status='cancelled' WHERE id=$1`, orderID)
-	return err
+	if _, err := s.db.Exec(ctx, `UPDATE orders SET status='cancelled' WHERE id=$1`, orderID); err != nil {
+		return err
+	}
+
+	// Notify the customer + rider (if assigned) and broadcast cancellation.
+	customer, _, rider, _ := s.orderParties(ctx, orderID)
+	if customer != "" && customer != actorID {
+		s.notify(ctx, Notification{UserID: customer, Event: EventOrderCancelled, Title: "Order cancelled", Body: "Your order was cancelled and refunded.", Data: map[string]any{"order_id": orderID}})
+	}
+	if rider != "" && rider != actorID {
+		s.notify(ctx, Notification{UserID: rider, Event: EventOrderCancelled, Title: "Order cancelled", Body: "An assigned order was cancelled.", Data: map[string]any{"order_id": orderID}})
+	}
+	s.broadcastStatus(orderID, OrderCancelled)
+	return nil
 }

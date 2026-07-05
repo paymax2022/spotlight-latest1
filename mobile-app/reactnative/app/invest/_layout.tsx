@@ -19,6 +19,7 @@ export default function InvestLayout() {
       <Stack.Screen name="portfolio" />
       <Stack.Screen name="orders" />
       <Stack.Screen name="wallet" />
+      <Stack.Screen name="security/pin" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
     </Stack>
   );
 }

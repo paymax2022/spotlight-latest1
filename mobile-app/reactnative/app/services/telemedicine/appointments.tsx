@@ -11,6 +11,8 @@ import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { getAppointments, DEMO_APPOINTMENTS } from '@/api/telemedicine.api';
 import { TeleHeader, DoctorAvatar, ConsultStatusBadge } from '@/features/telemedicine/components';
+import { IntakeStatusBadge } from '@/features/health/components';
+import { useApptIntake } from '@/features/health/hooks';
 import type { Appointment, ConsultType } from '@/types/telemedicine';
 
 const TYPE_ICON: Record<ConsultType, typeof Video> = { video: Video, audio: Phone, chat: MessageCircle };
@@ -70,9 +72,14 @@ export default function AppointmentsScreen() {
   );
 }
 
+const UPCOMING_FOR_INTAKE = ['upcoming', 'confirmed', 'in_progress'];
+
 function AppointmentRow({ appointment }: { appointment: Appointment }) {
   const TypeIcon = TYPE_ICON[appointment.consultType];
   const dateLabel = new Date(`${appointment.slotDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  // M1 — surface the intake status on the appointment card (upcoming only).
+  const showIntake = UPCOMING_FOR_INTAKE.includes(appointment.status);
+  const intakeQ = useApptIntake(showIntake ? appointment.id : undefined);
   return (
     <Pressable style={[styles.card, shadow1]} onPress={() => router.push(`/services/telemedicine/appointment/${appointment.id}`)}>
       <DoctorAvatar initials={appointment.doctor.initials} color={appointment.doctor.avatarColor} size={48} />
@@ -83,6 +90,11 @@ function AppointmentRow({ appointment }: { appointment: Appointment }) {
           <TypeIcon size={13} color={Colors.secondary} strokeWidth={2} />
           <Text style={styles.metaText}>{dateLabel} · {appointment.slotTime}</Text>
         </View>
+        {showIntake ? (
+          <View style={styles.intakeRow}>
+            <IntakeStatusBadge status={intakeQ.data?.intake.status} />
+          </View>
+        ) : null}
       </View>
       <View style={styles.cardRight}>
         <ConsultStatusBadge status={appointment.status} />
@@ -106,6 +118,7 @@ const styles = StyleSheet.create({
   docSpec:      { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   metaRow:      { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
   metaText:     { ...Typography.caption, color: Colors.onSurfaceVariant },
+  intakeRow:    { flexDirection: 'row', marginTop: 6 },
   cardRight:    { alignItems: 'flex-end', gap: Spacing.sm },
   emptyWrap:    { alignItems: 'center', gap: Spacing.sm, marginTop: 80, paddingHorizontal: Spacing.xl },
   emptyTitle:   { ...Typography.titleLg, color: Colors.onSurface, marginTop: Spacing.sm },

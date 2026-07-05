@@ -15,6 +15,7 @@ import TripRouteCard from '@/features/mobility/components/TripRouteCard';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { useMoverJob, useMoverActions } from '@/features/mobility/hooks/useModes';
+import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { MOVER_PHASE_LABEL, TRUCK_SIZES } from '@/features/mobility/constants/modes.constants';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import type { MoverBid } from '@/features/mobility/types/modes.types';
@@ -26,6 +27,9 @@ export default function MoverJobScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const job = useMoverJob(id, { poll: true });
   const { acceptBid, confirmCompletion } = useMoverActions();
+  // Shared chooser: fund the escrow from wallet OR top up the bid amount via
+  // card (Paystack) first. The accept (escrow-fund) charge runs inside `charge`.
+  const pay = usePurchasePayment<Awaited<ReturnType<typeof acceptBid.mutateAsync>>>();
   const j = job.data;
 
   if (job.isLoading) {
@@ -35,7 +39,16 @@ export default function MoverJobScreen() {
     return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your move" /><MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => job.refetch()} /></SafeAreaView>;
   }
 
-  const onAccept = (bidId: string) => id && acceptBid.mutate({ id, bidId });
+  const onAccept = (bid: MoverBid) => {
+    if (!id) return;
+    pay.start({
+      amountKobo: bid.amountKobo,
+      title: 'Fund escrow',
+      // Existing accept-bid escrow charge (with its Idempotency-Key) runs unchanged.
+      charge: () => acceptBid.mutateAsync({ id, bidId: bid.id }),
+      // Job auto-refreshes via polling; nothing else to do on success.
+    });
+  };
   const onConfirm = () => id && confirmCompletion.mutate(id, {
     onSuccess: () => { if (!j.rated) router.replace(`/mobility/movers/${j.id}/rate`); else router.replace('/mobility'); },
   });
@@ -82,7 +95,7 @@ export default function MoverJobScreen() {
                   <Text style={styles.bidAmount}>{formatNairaWhole(bid.amountKobo)}</Text>
                 </View>
                 <Text style={styles.bidNote}>{bid.etaNote}</Text>
-                <PrimaryButton label="Accept & fund escrow" onPress={() => onAccept(bid.id)} loading={acceptBid.isPending} />
+                <PrimaryButton label="Accept & fund escrow" onPress={() => onAccept(bid)} loading={acceptBid.isPending} />
               </View>
             ))}
           </>
@@ -117,6 +130,9 @@ export default function MoverJobScreen() {
           <PrimaryButton label="Done" onPress={() => router.replace('/mobility')} />
         ) : null}
       </View>
+
+      {/* Shared wallet/card chooser — funds the escrow on bid acceptance. */}
+      <PaymentSheet controller={pay} />
     </SafeAreaView>
   );
 }

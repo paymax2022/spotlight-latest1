@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, FlatList, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, FlatList, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Icons from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -13,28 +13,28 @@ import { useInvoices, usePayInvoice } from '@/features/dues/hooks';
 import { CATEGORY_META, STATUS_META } from '@/features/dues/api';
 import { formatNairaFromKobo } from '@/features/visitor/utils/visitorFormatters';
 import type { DuesInvoice, DuesCategory } from '@/features/dues/api';
+import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 
 export default function DuesScreen() {
   const { data, isLoading, isError, refetch, isRefetching } = useInvoices();
   const pay = usePayInvoice();
+  const checkout = usePurchasePayment();
 
   const outstanding = useMemo(() => (data ?? []).filter((i) => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + i.amountKobo, 0), [data]);
 
-  const onPay = (inv: DuesInvoice) => Alert.alert(
-    'Pay from wallet?',
-    `${CATEGORY_META[inv.category as DuesCategory]?.label ?? 'Dues'} — ${formatNairaFromKobo(inv.amountKobo)}`,
-    [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Pay now', onPress: () => pay.mutate(inv.id, { onError: (e) => Alert.alert('Payment failed', e instanceof Error ? e.message : 'Please try again.') }) },
-    ],
-  );
+  const onPay = (inv: DuesInvoice) => checkout.start({
+    amountKobo: inv.amountKobo,
+    title: `${CATEGORY_META[inv.category as DuesCategory]?.label ?? 'Dues'}`,
+    charge: () => pay.mutateAsync(inv.id),
+    onPaid: () => {},
+  });
 
   const renderItem = ({ item }: { item: DuesInvoice }) => {
     const cat = CATEGORY_META[item.category as DuesCategory] ?? CATEGORY_META.other;
     const st = STATUS_META[item.status];
     const Icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[cat.icon] ?? Icons.Receipt;
     const payable = item.status === 'pending' || item.status === 'overdue';
-    const isPaying = pay.isPending && pay.variables === item.id;
+    const isPaying = pay.isPending && pay.variables === item.id || (checkout.visible && checkout.request?.amountKobo === item.amountKobo);
     return (
       <View style={styles.card}>
         <View style={styles.iconBox}><Icon size={20} color={Colors.primary} strokeWidth={1.8} /></View>
@@ -68,6 +68,7 @@ export default function DuesScreen() {
           <FlatList data={data ?? []} keyExtractor={(i) => i.id} renderItem={renderItem} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false} refreshing={isRefetching} onRefresh={refetch} ItemSeparatorComponent={() => <View style={{ height: Spacing.sm }} />}
             ListEmptyComponent={<StateView kind="empty" icon="ReceiptText" title="No dues" message="You're all settled up." />} />
         )}
+      <PaymentSheet controller={checkout} />
     </SafeAreaView>
   );
 }

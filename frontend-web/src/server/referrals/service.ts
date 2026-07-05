@@ -42,7 +42,7 @@ export async function getOrCreateCode(userId: string): Promise<string> {
   const supabase = createAdminClient();
 
   const { data: existing } = await supabase
-    .from('referral_codes')
+    .from('finance_referral_codes')
     .select('code')
     .eq('user_id', userId)
     .maybeSingle();
@@ -53,7 +53,7 @@ export async function getOrCreateCode(userId: string): Promise<string> {
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = generateCode();
     const { error } = await supabase
-      .from('referral_codes')
+      .from('finance_referral_codes')
       .insert({ user_id: userId, code });
 
     if (!error) return code;
@@ -61,7 +61,7 @@ export async function getOrCreateCode(userId: string): Promise<string> {
     // 23505 on user_id UNIQUE = concurrent insert won the race
     if (error.code === '23505' && error.message.includes('user_id')) {
       const { data: raced } = await supabase
-        .from('referral_codes')
+        .from('finance_referral_codes')
         .select('code')
         .eq('user_id', userId)
         .maybeSingle();
@@ -111,7 +111,7 @@ export async function getReferralSummary(userId: string): Promise<ReferralSummar
 export async function resolveCodeToReferrer(code: string): Promise<string | null> {
   const supabase = createAdminClient();
   const { data } = await supabase
-    .from('referral_codes')
+    .from('finance_referral_codes')
     .select('user_id')
     .eq('code', code.toUpperCase().trim())
     .maybeSingle();

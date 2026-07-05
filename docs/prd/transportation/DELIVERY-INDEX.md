@@ -11,12 +11,14 @@ ride-hailing · parcel delivery · bus booking · towing/roadside · mover truck
 | Backend (Go/Gin) | `backend/internal/transport/` (36 files, package `transport`) |
 | Route wiring | `backend/internal/app/finance_routes.go` (transport + modes blocks) |
 | Config flags | `backend/internal/config/config.go` (`FeatureTransportEnabled`, `FeatureTransportModesEnabled`) |
-| Migrations (additive) | `supabase/migrations/2026062{3,4,5}*.sql` |
+| Migrations (additive) | `supabase/migrations/2026062{3,4,5}*.sql` + `20260710000000_transport_dispatch_geo_and_shares.sql` (drivers.geog PostGIS radius search, trips.settlement_status crash marker, trip_shares tokens) + `20260830000000_transport_mode_idempotency_default.sql` (BEFORE INSERT trigger defaults NULL `idempotency_key` → UUID on all 7 mode tables, closing the NULL-bypass gap; audit #15) |
 | Mobile (RN/Expo) | `mobile-app/reactnative/src/features/mobility/` + `app/mobility/` |
 | Admin (Next.js) | `frontend-admin/app/admin/mobility/` + `src/services/mobility*Service.ts` |
-| API contract | `contracts/openapi.yaml` (103 mobility/driver/admin paths) |
+| API contract | `contracts/openapi.yaml` (142 mobility/driver/admin/transport paths + 13 maps paths; camelCase responses, snake_case requests) |
 
 ## Docs
+- **`GO-LIVE.md` — the definitive, ordered production cutover runbook** (pre-flight gate, ledger-auditor review, migrations, env/RBAC matrix, staged flag rollout, per-mode smoke tests, observability/reconciliation/rollback, residual risks). Follow this at go-live.
+- `PRODUCTION-READINESS-AUDIT.md` — blocking/high/medium findings + swarm fix status (cross-referenced by GO-LIVE).
 - `BUILD-CONTRACT.md` — ride-hailing endpoints, money invariants, trip state machine.
 - `BUILD-CONTRACT-MODES.md` — parcel/bus/towing/movers/car-hire.
 - `BUILD-CONTRACT-LOGISTICS-EVENT.md` — business logistics + event transport.
@@ -38,7 +40,7 @@ Integer kobo only · idempotency key on every money mutation · escrow via the s
 ## To go live (host)
 1. `cd backend && go build ./... && go vet ./... && go test ./internal/transport/...`
 2. `npm run contract:check`
-3. `supabase db push`
+3. `supabase migration up` (local-first; `supabase db reset` to replay in dev). `supabase db push` is human-DBA, go-live-only.
 4. Set `FEATURE_TRANSPORT_ENABLED=true`, `FEATURE_TRANSPORT_MODES_ENABLED=true` (+ `FEATURE_MAPS_ENABLED` and a provider key for real routing); add the frontend-web `GO_BACKEND_URL` gateway rewrite; flip the mobile/admin `*_USE_MOCK` flags. See `INTEGRATION-RUNBOOK.md`.
 
 ## Deliberate follow-ups (not blocking; require host/decisions, not code I can verify here)
@@ -48,3 +50,6 @@ Integer kobo only · idempotency key on every money mutation · escrow via the s
 
 ## Out of scope (PRD hard exclusions — correctly unbuilt)
 Autonomous vehicles · helicopter/air/maritime cargo · cross-border freight · customs · dangerous-goods · unlicensed public transport · in-app transport credit without lending compliance.
+
+## Bus marketplace (interstate provider self-service) — ADR-020
+The bus mode gained a **provider marketplace** on top of the legacy admin catalog: operators self-register (active on register, `verification_status = pending`, verified badge), publish interstate routes (`from_state <> to_state`, enforced at UI + service `400` + DB CHECK), self-schedule specific departures, and take seat bookings that settle to the route's provider owner via the existing escrow/settle money path (kobo, `Idempotency-Key`, tier gate). Endpoints under `/mobility/bus/search`, `/mobility/bus/providers*`, `/mobility/bus/provider/*` (tag `Mobility Bus`). Backend: `backend/internal/transport/bus_provider.go` + `bus_handler.go` + `bus.go`. Migration: `supabase/migrations/20260907000000_bus_provider_marketplace.sql` (additive). Details + go-live gates: `docs/prd/transportation/BUS-MARKETPLACE.md`; decisions: `docs/adr/ADR-020-bus-provider-marketplace.md`. Go-live gates include admin verification/RBAC and mobile `EXPO_PUBLIC_BUS_USE_MOCK=false`. Deferred: recurring templates, fare-approval enforcement, ratings write path.

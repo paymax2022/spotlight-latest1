@@ -253,6 +253,7 @@ export const ACCOUNT_STATE_LABELS: Record<AccountState, string> = {
   approved:     'Approved',
   rejected:     'Rejected',
   under_review: 'Under review',
+  needs_info:   'Needs more info',
   suspended:    'Suspended',
 };
 
@@ -262,5 +263,6 @@ export const ACCOUNT_STATE_TONES: Record<AccountState, string> = {
   approved:     '#10B981',
   rejected:     '#EF4444',
   under_review: '#F97316',
+  needs_info:   '#F97316',
   suspended:    '#EF4444',
 };

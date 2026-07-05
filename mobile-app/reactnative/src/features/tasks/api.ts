@@ -5,7 +5,17 @@ import { generateIdempotencyKey } from '@/utils/idempotency';
 import type { CreateTaskInput, EstateTask, TaskPriority, TaskStatus, UpdateTaskStatusInput } from './types';
 
 export const USE_MOCK = (process.env.EXPO_PUBLIC_TASKS_USE_MOCK ?? 'true') !== 'false';
-export const TASKS_API_BASE = '/api/v1/estate/tasks';
+
+// Tasks are NOT a standalone backend module — they are nested under the
+// Estate module (backend/internal/app/finance_routes.go: estGroup :=
+// finance.Group("/estate"); backend/internal/estate/handler.go:
+// ListTasks/CreateTask/UpdateTaskStatus all take :id (estate)). There is no
+// flat /tasks namespace and no frontend-web proxy for /api/v1/estate/tasks —
+// the blanket rewrite only covers /api/finance/:path*.
+// MISSING: a shared estate-context provider; DEFAULT_ESTATE_ID is a stopgap
+// (mirrors the election/meetings convention) until multi-estate selection ships.
+export const DEFAULT_ESTATE_ID = 'est_amber_court';
+export const TASKS_API_BASE = `/api/finance/estate/${DEFAULT_ESTATE_ID}/tasks`;
 
 export const TaskColors: Record<TaskStatus, { color: string; bg: string }> = {
   todo:        { color: Colors.outline,   bg: 'rgba(123,116,131,0.12)' },
@@ -32,9 +42,16 @@ export async function listTasks(): Promise<EstateTask[]> {
   if (USE_MOCK) { await latency(); return tasks.slice().sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)); }
   const { data } = await api.get<EstateTask[]>(TASKS_API_BASE); return data;
 }
+// NOTE: the backend route table has no GET /:id/tasks/:taskId (single-task
+// read) — only GET /:id/tasks (list) and PATCH .../status exist. Derive the
+// single task from the list response rather than hitting a 404 endpoint
+// (mirrors events.api.ts getTicket()); see report for the missing endpoint.
 export async function getTask(id: string): Promise<EstateTask> {
   if (USE_MOCK) { await latency(200); const t = tasks.find((x) => x.id === id); if (!t) throw new Error('Task not found'); return { ...t }; }
-  const { data } = await api.get<EstateTask>(`${TASKS_API_BASE}/${id}`); return data;
+  const all = await listTasks();
+  const t = all.find((x) => x.id === id);
+  if (!t) throw new Error('Task not found');
+  return t;
 }
 export async function createTask(input: CreateTaskInput): Promise<EstateTask> {
   if (USE_MOCK) {

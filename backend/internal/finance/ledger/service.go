@@ -39,6 +39,17 @@ func (s *Service) GetBalance(ctx context.Context, userID string) (int64, error) 
 	return s.repo.GetBalance(ctx, acc.ID)
 }
 
+// Posted reports whether the balanced pair for baseIdempotencyKey has been durably
+// written. It checks the CREDIT side (":credit"), which every posting — Credit,
+// Debit, and PostJournal — always writes. Redis-independent (reads the ledger of
+// record), so a caller can use it to decide crash-recovery/compensation after a
+// process death without trusting the optional Redis idempotency cache. Pass the
+// SAME base key you passed to Credit/Debit/PostJournal (the ":credit" suffix is
+// applied here).
+func (s *Service) Posted(ctx context.Context, baseIdempotencyKey string) (bool, error) {
+	return s.repo.EntryExists(ctx, baseIdempotencyKey+":credit")
+}
+
 // Credit posts a CREDIT journal entry to the user's wallet (money in).
 // The counterpart debit is posted to the specified standing account.
 // idempotencyKey must be globally unique per event.
@@ -70,6 +81,15 @@ func (s *Service) Credit(ctx context.Context, userID, reference, idempotencyKey,
 
 // Debit posts a DEBIT journal entry from the user's wallet (money out).
 // Fails with ErrInsufficientFunds if balance < amountKobo.
+//
+// TOCTOU-safe: the balance sufficiency check and the balanced insert now run inside
+// ONE transaction under the wallet's advisory lock (see
+// Repository.DebitWithBalanceCheck). Previously GetBalance and PostJournal ran on
+// separate pooled connections with no lock, so two concurrent debits could both
+// read the pre-debit balance, both pass the check, and together overdraw the wallet.
+// The Redis fast-path below is preserved as the cheap common-case dedup; the DB
+// unique idempotency_key (with ON CONFLICT in the repo) remains the durable fallback
+// when Redis is unavailable. Public signature is UNCHANGED — no caller edits needed.
 func (s *Service) Debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error {
 	if amountKobo <= 0 {
 		return fmt.Errorf("ledger: debit amount must be positive, got %d", amountKobo)
@@ -87,21 +107,15 @@ func (s *Service) Debit(ctx context.Context, userID, reference, idempotencyKey, 
 		return err
 	}
 
-	balance, err := s.repo.GetBalance(ctx, acc.ID)
-	if err != nil {
-		return err
-	}
-	if balance < amountKobo {
-		return ErrInsufficientFunds
-	}
-
-	return s.repo.PostJournal(ctx, JournalEntry{
+	// Check + insert as one atomic, wallet-serialised unit. userID is the advisory
+	// lock key (the wallet being drawn down), and acc.ID is the debited account.
+	return s.repo.DebitWithBalanceCheck(ctx, userID, JournalEntry{
 		Reference:       reference,
 		IdempotencyKey:  idempotencyKey,
 		AmountKobo:      amountKobo,
 		DebitAccountID:  acc.ID,
 		CreditAccountID: creditAccountID,
-	})
+	}, amountKobo)
 }
 
 // PostJournal posts a balanced entry between two existing account IDs.

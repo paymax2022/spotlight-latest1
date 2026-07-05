@@ -1,8 +1,12 @@
+// PRIVACY: This screen shows the doctor only a COARSE verification status plus
+// guidance copy. It must NEVER render MDCN/register data, reviewer identity,
+// internal reviewer notes, or matched-field detail — Paymax verifies out-of-band
+// (assisted Mode B) and the doctor never sees the MDCN portal.
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Clock, CheckCircle2, XCircle, FileCheck2 } from 'lucide-react-native';
+import { Clock, CheckCircle2, XCircle, FileCheck2, AlertCircle, PauseCircle } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -16,9 +20,11 @@ import type { VerificationStatus } from '@/types/doctor';
 
 const STATUS_CONFIG: Record<VerificationStatus, { icon: LucideIcon; color: string; bg: string; title: string; sub: string }> = {
   unsubmitted: { icon: FileCheck2,   color: Colors.onSurfaceVariant, bg: Colors.surfaceContainerLow, title: 'Not submitted',        sub: 'Submit your documents to begin verification.' },
-  pending:     { icon: Clock,        color: Colors.secondary,        bg: Colors.iconBgBlue,          title: 'Verification pending', sub: 'Your documents are under review. This usually takes 24–48 hours.' },
+  pending:     { icon: Clock,        color: Colors.secondary,        bg: Colors.iconBgBlue,          title: 'Verification pending', sub: 'Your documents are under review. This usually takes 24–48 hours. You do not need to visit any external portal — Paymax handles verification for you.' },
+  needs_info:  { icon: AlertCircle,  color: Colors.secondary,        bg: Colors.iconBgBlue,          title: 'More information needed', sub: 'We need a little more from you to finish verification. Please re-upload the requested documents.' },
   approved:    { icon: CheckCircle2, color: Colors.teal,             bg: Colors.iconBgTeal,          title: 'Verified',             sub: 'You are verified and can accept consultations.' },
   rejected:    { icon: XCircle,      color: Colors.error,            bg: Colors.errorContainer,      title: 'Verification rejected', sub: 'Please review the reason below and resubmit.' },
+  suspended:   { icon: PauseCircle,  color: Colors.error,            bg: Colors.errorContainer,      title: 'Verification suspended', sub: 'Your licence has expired and your verification is suspended. Please renew your licence to continue practising.' },
 };
 
 export default function VerificationPendingScreen() {
@@ -76,6 +82,10 @@ export default function VerificationPendingScreen() {
             <PrimaryButton label="View verification result" onPress={() => router.push('/(doctor)/profile/verification/approved')} style={styles.btn} />
           ) : submission.status === 'rejected' ? (
             <PrimaryButton label="View details & resubmit" onPress={() => router.push('/(doctor)/profile/verification/failed')} style={styles.btn} />
+          ) : submission.status === 'needs_info' ? (
+            <PrimaryButton label="Provide more information" onPress={() => router.push('/(doctor)/profile/verification/resubmit')} style={styles.btn} />
+          ) : submission.status === 'suspended' ? (
+            <PrimaryButton label="Renew licence" onPress={() => router.push('/(doctor)/profile/licence/renew')} style={styles.btn} />
           ) : submission.status === 'unsubmitted' ? (
             <PrimaryButton label="Resubmit documents" onPress={() => router.replace('/(doctor)/signup')} style={styles.btn} />
           ) : (

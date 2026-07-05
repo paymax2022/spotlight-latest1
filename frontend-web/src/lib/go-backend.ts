@@ -14,7 +14,7 @@ const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 export async function proxyToGoBackend(
   request: Request,
   goPath: string,
-  options?: { method?: string; body?: unknown },
+  options?: { method?: string; body?: unknown; headers?: Record<string, string> },
 ): Promise<Response> {
   const url = new URL(request.url);
   const targetUrl = `${GO_BACKEND_URL}${goPath}${url.search}`;
@@ -30,6 +30,18 @@ export async function proxyToGoBackend(
   // Forward the Authorization header so Go backend can validate the JWT.
   const auth = request.headers.get('Authorization') || request.headers.get('authorization');
   if (auth) headers['Authorization'] = auth;
+
+  // Forward the Idempotency-Key VERBATIM — every money mutation requires it
+  // (CLAUDE.md iron rule). Dropping it here would silently break idempotent
+  // retries for all proxied transfers/charges. Also forward a request id for tracing.
+  const idem = request.headers.get('Idempotency-Key') || request.headers.get('idempotency-key');
+  if (idem) headers['Idempotency-Key'] = idem;
+  const reqId = request.headers.get('X-Request-Id') || request.headers.get('x-request-id');
+  if (reqId) headers['X-Request-Id'] = reqId;
+
+  // Route-specific extra headers (explicit allow-list — never blanket-forward
+  // the incoming request's headers to the Go backend).
+  if (options?.headers) Object.assign(headers, options.headers);
 
   let body: BodyInit | undefined;
   if (hasBody) {

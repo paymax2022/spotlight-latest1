@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { createAnonClient, createServiceClient, formatUser } from '../_supabase';
+import { attributeSignup } from '@/src/server/referrals/attribution';
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { fullName, email, phone, password } = body ?? {};
+    const { fullName, email, phone, password, referralCode } = body ?? {};
 
     if (!fullName || !email || !password) {
       return NextResponse.json({ error: 'Full name, email, and password are required' }, { status: 400 });
@@ -32,6 +33,14 @@ export async function POST(request: Request) {
       { id: user.id, email, full_name: fullName, phone: phone ?? '' },
       { onConflict: 'id' },
     );
+
+    // §7A: attribute the signup (valid code → referrer; else → house). Never
+    // block signup on attribution failure.
+    try {
+      await attributeSignup(user.id, { referralCode: referralCode ?? null });
+    } catch (attribErr) {
+      console.error('[register] referral attribution failed (non-fatal):', attribErr);
+    }
 
     const { data: profile } = await admin
       .from('user_profiles')

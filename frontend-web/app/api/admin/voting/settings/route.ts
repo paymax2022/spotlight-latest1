@@ -52,6 +52,7 @@ export async function POST(request: Request) {
           show_public_vote_count: body.showPublicVoteCount ?? true,
           show_public_leaderboard: body.showPublicLeaderboard ?? true,
           show_public_rank: body.showPublicRank ?? true,
+          active_phase_key: body.activePhaseKey ?? null,
           allow_vote_sharing: body.allowVoteSharing ?? true,
           voting_starts_at: body.votingStartsAt ?? null,
           voting_ends_at: body.votingEndsAt ?? null,

@@ -1,10 +1,10 @@
 package app
 
 import (
-	"context"
 	"log"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/config"
 	connectconfig "spotlight/backend/internal/connect/config"
@@ -12,7 +12,6 @@ import (
 	connectsafety "spotlight/backend/internal/connect/safety"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
-	platformDB "spotlight/backend/internal/platform/db"
 	"spotlight/backend/internal/services"
 )
 
@@ -23,7 +22,7 @@ import (
 // Gated behind FeatureConnectEnabled; skipped entirely if DATABASE_URL is unset.
 // Reuses the existing auth + RBAC middleware and the pgx pool. See
 // docs/prd/dating/{architecture.md, PHASE-0-PLAN.md §P0-B}.
-func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService) {
+func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool) {
 	if !cfg.FeatureConnectEnabled {
 		log.Println("[connect] FEATURE_CONNECT_ENABLED is off — skipping Connect routes")
 		return
@@ -32,11 +31,8 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		log.Println("[connect] DATABASE_URL not set — skipping Connect routes")
 		return
 	}
-
-	ctx := context.Background()
-	pool, err := platformDB.New(ctx, cfg.DatabaseURL)
-	if err != nil {
-		log.Printf("[connect] WARN: could not connect to database: %v — Connect routes disabled", err)
+	if pool == nil {
+		log.Println("[connect] no database pool — skipping Connect routes")
 		return
 	}
 
@@ -52,17 +48,9 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// Auth wrapper: runs RequireAuthContext then mirrors the user id into
 	// c.Set("user_id", ...) (same pattern finance routes use).
 	connectAuth := func() gin.HandlerFunc {
-		base := middleware.RequireAuthContext(supabase, rbac)
-		return func(c *gin.Context) {
-			base(c)
-			if c.IsAborted() {
-				return
-			}
-			if au, ok := middleware.GetAuthenticatedUser(c); ok {
-				c.Set("user_id", au.ID)
-			}
-			c.Next()
-		}
+		// RequireAuthContext validates the token and sets user_id/user_email before
+		// it calls c.Next(); handlers read those directly, so no post-base mirror.
+		return middleware.RequireAuthContext(supabase, rbac)
 	}
 
 	// --- Public/member routes ---
@@ -97,5 +85,16 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		middleware.RequirePermission(rbac, "connect.audit.view"),
 		safetyHandler.ListAudit)
 
-	log.Println("[connect] routes registered — config + safety (audit/cases) live")
+	// --- Phases 1–6 (built as owned sub-packages; wired here) ---
+	// member already has connectAuth() applied; adminCg too. Each register fn
+	// adds per-route RBAC on its admin endpoints.
+	registerConnectPhase1Routes(member, adminCg, pool, rbac)  // profiles, verification, matching, discovery, search
+	registerConnectSafetyRoutes(member, adminCg, pool, rbac)  // chat, blocks, date-safety, moderation, AI trust
+	registerConnectGrowthRoutes(member, adminCg, pool, rbac)  // professional, events, creator, monetization
+
+	// --- Super-app money + engagement (Connect PRD v2) ---
+	RegisterConnectMoney(member, adminCg, pool, rbac)    // gifting (wallet→wallet), paid voting, AML/NFIU, payouts
+	RegisterConnectLiveGame(member, adminCg, pool, rbac) // live streaming sessions/co-host/PK + gamification (non-cash)
+
+	log.Println("[connect] routes registered — config + safety + phases 1–6 + money + live/game live")
 }

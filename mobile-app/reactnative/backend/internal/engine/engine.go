@@ -82,6 +82,55 @@ func charSum(s string) int {
 	return sum
 }
 
+// ── Eligibility gate ──────────────────────────────────────────────────────────
+
+// EvaluateEligibility maps a user's compliance facts to a trading-gate decision.
+// It is the single source of truth for the gate (Rule 2: server-authoritative)
+// and is FAIL-CLOSED: every requirement must be affirmatively satisfied or the
+// user is blocked with a stable machine-readable reason + a CTA route the client
+// can deep-link to. The order of checks mirrors the onboarding funnel so the user
+// is always sent to the earliest unmet step.
+func EvaluateEligibility(f domain.EligibilityFacts) domain.Eligibility {
+	base := domain.Eligibility{KycTier: f.KycTier, CryptoEnabled: f.CryptoEnabled}
+
+	switch {
+	case !f.UserActive:
+		base.State = "restricted"
+		base.Reason = "user_inactive"
+		base.Message = "Your account is not active. Contact support to continue."
+		base.CtaRoute = "/support"
+	case f.KycTier < domain.MinCryptoKycTier:
+		base.State = "kyc_required"
+		base.Reason = "kyc_required"
+		base.Message = "Complete identity verification (KYC) to trade crypto."
+		base.CtaRoute = "/invest-onboarding/kyc"
+	case f.SuitabilityExpired:
+		base.State = "restricted"
+		base.Reason = "suitability_expired"
+		base.Message = "Your suitability assessment has expired. Please retake it."
+		base.CtaRoute = "/invest-onboarding/suitability"
+	case !f.SuitabilityComplete:
+		base.State = "restricted"
+		base.Reason = "suitability_required"
+		base.Message = "Complete the suitability questionnaire to trade crypto."
+		base.CtaRoute = "/invest-onboarding/suitability"
+	case !f.AgreementsAccepted:
+		base.State = "restricted"
+		base.Reason = "agreements_required"
+		base.Message = "Review and accept the required agreements to continue."
+		base.CtaRoute = "/invest-onboarding/agreements"
+	case !f.CryptoEnabled:
+		base.State = "product_unavailable"
+		base.Reason = "crypto_disabled"
+		base.Message = "Crypto trading is not available on your account yet."
+		base.CtaRoute = "/support"
+	default:
+		base.State = "eligible"
+		base.Message = "You're verified and cleared to trade crypto."
+	}
+	return base
+}
+
 // ── Buy / sell quote ──────────────────────────────────────────────────────────
 
 // BuildQuote builds a buy/sell quote. Buys cost a touch more, sells pay a touch

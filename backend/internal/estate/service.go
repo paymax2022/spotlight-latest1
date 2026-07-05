@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +26,9 @@ type Service struct {
 	geocoder AddressGeocoder
 	ledger   LedgerPoster // optional; required only for the dues money path
 	tiers    TierEnforcer // optional; fail-closed tier-limit check on money out
+	kyc      KYCVerifier  // optional; required only when an election requires KYC
+	notifier Notifier     // optional; push delivery (in-app feed works without it)
+	llm      LLMGenerator // optional; required only for AI note-taking (Block 33)
 }
 
 func NewService(db *pgxpool.Pool, redis *goredis.Client) *Service {
@@ -198,6 +202,19 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 	if err := s.assertResident(ctx, estateID, voterID); err != nil {
 		return nil, err
 	}
+	// Dues-gating: a resident under a soft or hard dues restriction may not vote
+	// (Block 30 matrix + Block 31 payment-gated voting). Fail-closed.
+	if err := s.enforceNotRestricted(ctx, estateID, voterID, ActionVote); err != nil {
+		return nil, err
+	}
+	// Per-election eligibility gate (Block 31): KYC / payment / resident-type rules.
+	elig, err := s.CheckVoterEligibility(ctx, estateID, electionID, voterID)
+	if err != nil {
+		return nil, err
+	}
+	if !elig.Eligible {
+		return nil, fmt.Errorf("estate: not eligible to vote in this election: %s", strings.Join(elig.Reasons, ", "))
+	}
 	// Verify election is open.
 	var status string
 	var startsAt, endsAt time.Time
@@ -370,6 +387,13 @@ func (s *Service) CheckInVisitor(ctx context.Context, estateID, guardID string, 
 		return nil, err
 	}
 
+	// Block 47: immutable audit of the gate scan/admission.
+	if err := s.auditTx(ctx, tx, estateID, guardID, "GATE_CHECKIN", "access_code", payload.Code.ID, map[string]any{
+		"checkin_id": checkinID, "gate_id": req.GateID,
+	}); err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -536,6 +560,11 @@ func (s *Service) CreateAccessCode(ctx context.Context, estateID, userID string,
 	if _, err := s.getResidentID(ctx, estateID, userID); err != nil {
 		return nil, err
 	}
+	// Dues-restriction enforcement: only a HARD restriction blocks issuing visitor
+	// codes; a soft-restricted resident may still let guests in (Block 30 matrix).
+	if err := s.enforceNotRestricted(ctx, estateID, userID, ActionVisitor); err != nil {
+		return nil, err
+	}
 	if req.MaxUses < 1 {
 		req.MaxUses = 1
 	}
@@ -696,8 +725,26 @@ func (s *Service) GetCheckinHistory(ctx context.Context, estateID, userID, codeI
 
 // ── Block 26: Resident home dashboard ─────────────────────────────────────────
 
-// GetDashboard returns the aggregated estate dashboard for a resident.
+// alertSeverity maps an emergency-alert kind to a dashboard severity bucket.
+// Pure (no DB) so the mapping is unit-testable.
+func alertSeverity(kind string) string {
+	switch kind {
+	case "fire", "medical", "panic":
+		return "critical"
+	case "security", "theft", "domestic":
+		return "high"
+	default:
+		return "medium"
+	}
+}
+
+// GetDashboard returns the aggregated estate dashboard for a resident in a
+// SINGLE database round-trip (Block 26 acceptance: no N+1). All scalar counts
+// and the property/payment summary are scalar subqueries; the meeting,
+// announcement and security-alert lists are aggregated as JSON in the same query.
 func (s *Service) GetDashboard(ctx context.Context, estateID, userID string) (*EstateDashboard, error) {
+	// $2 = estate_residents.id (membership check + resident-keyed counts),
+	// $3 = auth user id (user-keyed counts). getResidentID fails if not a member.
 	resID, err := s.getResidentID(ctx, estateID, userID)
 	if err != nil {
 		return nil, err
@@ -710,43 +757,83 @@ func (s *Service) GetDashboard(ctx context.Context, estateID, userID string) (*E
 		SecurityAlerts:   []DashboardSecurityAlert{},
 	}
 
-	// Estate name + resident unit.
-	_ = s.db.QueryRow(ctx, `
-		SELECT e.name, COALESCE(er.unit,'')
-		FROM estates e
-		JOIN estate_residents er ON er.estate_id = e.id
-		WHERE e.id=$1 AND er.id=$2`, estateID, resID,
-	).Scan(&dash.EstateName, &dash.ResidentUnit)
+	const q = `
+SELECT
+  COALESCE((SELECT name FROM estates WHERE id=$1),'')                                                                       AS estate_name,
+  COALESCE((SELECT unit FROM estate_residents WHERE id=$2),'')                                                              AS resident_unit,
+  (SELECT COUNT(*) FROM visitor_passes WHERE estate_id=$1 AND issued_by=$3 AND status='active' AND valid_until > NOW())     AS active_visitor_codes,
+  (SELECT COUNT(*) FROM elections WHERE estate_id=$1 AND status='open')                                                     AS open_elections,
+  (SELECT COUNT(*) FROM estate_repair_requests WHERE estate_id=$1 AND reporter_id=$3 AND status NOT IN ('completed','cancelled')) AS open_repairs,
+  (SELECT COUNT(*) FROM resident_vehicles WHERE resident_id=$2)                                                             AS vehicle_count,
+  (SELECT COUNT(*) FROM household_members WHERE resident_id=$2)                                                             AS household_count,
+  COALESCE((SELECT occupancy_status FROM estate_properties WHERE estate_id=$1 AND (landlord_id=$3 OR tenant_id=$3) LIMIT 1),'') AS property_status,
+  (SELECT amount_kobo FROM estate_dues_invoices WHERE estate_id=$1 AND resident_id=$3 AND status IN ('pending','overdue') ORDER BY due_date LIMIT 1) AS pending_amount,
+  (SELECT to_char(due_date AT TIME ZONE 'UTC','YYYY-MM-DD') FROM estate_dues_invoices WHERE estate_id=$1 AND resident_id=$3 AND status IN ('pending','overdue') ORDER BY due_date LIMIT 1) AS pending_due,
+  (SELECT category FROM estate_dues_invoices WHERE estate_id=$1 AND resident_id=$3 AND status IN ('pending','overdue') ORDER BY due_date LIMIT 1) AS pending_label,
+  COALESCE((SELECT json_agg(m) FROM (
+      SELECT id::text AS id, title,
+             to_char(starts_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS starts_at,
+             COALESCE(location,'') AS location
+      FROM estate_meetings WHERE estate_id=$1 AND status='scheduled' AND starts_at > NOW()
+      ORDER BY starts_at LIMIT 2) m), '[]'::json)                                                                          AS meetings,
+  COALESCE((SELECT json_agg(a) FROM (
+      SELECT id::text AS id, title, body,
+             to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
+      FROM estate_announcements WHERE estate_id=$1
+      ORDER BY created_at DESC LIMIT 3) a), '[]'::json)                                                                     AS announcements,
+  COALESCE((SELECT json_agg(s) FROM (
+      SELECT id::text AS id, COALESCE(description, kind) AS description, kind,
+             to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
+      FROM estate_emergency_alerts WHERE estate_id=$1 AND created_at > NOW() - INTERVAL '24 hours'
+      ORDER BY created_at DESC LIMIT 5) s), '[]'::json)                                                                     AS security_alerts`
 
-	// Active visitor passes.
-	_ = s.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM visitor_passes WHERE estate_id=$1 AND issued_by=$2 AND status='active' AND valid_until > NOW()`,
-		estateID, userID,
-	).Scan(&dash.ActiveVisitorCodes)
+	var (
+		pendingAmount              *int64
+		pendingDue, pendingLabel   *string
+		meetingsJSON, announceJSON []byte
+		alertsJSON                 []byte
+	)
+	if err := s.db.QueryRow(ctx, q, estateID, resID, userID).Scan(
+		&dash.EstateName, &dash.ResidentUnit, &dash.ActiveVisitorCodes, &dash.OpenElections,
+		&dash.OpenRepairs, &dash.VehicleCount, &dash.HouseholdCount, &dash.PropertyStatus,
+		&pendingAmount, &pendingDue, &pendingLabel,
+		&meetingsJSON, &announceJSON, &alertsJSON,
+	); err != nil {
+		return nil, fmt.Errorf("estate: dashboard query: %w", err)
+	}
 
-	// Open elections.
-	_ = s.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM elections WHERE estate_id=$1 AND status='open'`,
-		estateID,
-	).Scan(&dash.OpenElections)
-
-	// Vehicles registered by this resident.
-	_ = s.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM resident_vehicles WHERE resident_id=$1`, resID,
-	).Scan(&dash.VehicleCount)
-
-	// Household members.
-	_ = s.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM household_members WHERE resident_id=$1`, resID,
-	).Scan(&dash.HouseholdCount)
-
-	// Property occupancy status.
-	_ = s.db.QueryRow(ctx, `
-		SELECT ep.occupancy_status
-		FROM estate_properties ep
-		WHERE ep.estate_id=$1 AND (ep.landlord_id=$2 OR ep.tenant_id=$2)
-		LIMIT 1`, estateID, userID,
-	).Scan(&dash.PropertyStatus)
+	if pendingAmount != nil {
+		p := &DashboardPayment{AmountKobo: *pendingAmount}
+		if pendingDue != nil {
+			p.DueDate = *pendingDue
+		}
+		if pendingLabel != nil {
+			p.Label = *pendingLabel
+		}
+		dash.PendingPayment = p
+	}
+	if len(meetingsJSON) > 0 {
+		_ = json.Unmarshal(meetingsJSON, &dash.UpcomingMeetings)
+	}
+	if len(announceJSON) > 0 {
+		_ = json.Unmarshal(announceJSON, &dash.Announcements)
+	}
+	// Security alerts carry a kind we map to a severity bucket in Go.
+	if len(alertsJSON) > 0 {
+		var raw []struct {
+			ID          string `json:"id"`
+			Description string `json:"description"`
+			Kind        string `json:"kind"`
+			CreatedAt   string `json:"created_at"`
+		}
+		if json.Unmarshal(alertsJSON, &raw) == nil {
+			for _, a := range raw {
+				dash.SecurityAlerts = append(dash.SecurityAlerts, DashboardSecurityAlert{
+					ID: a.ID, Description: a.Description, Severity: alertSeverity(a.Kind), CreatedAt: a.CreatedAt,
+				})
+			}
+		}
+	}
 
 	return dash, nil
 }
@@ -989,6 +1076,30 @@ func (s *Service) VerifyVehicle(ctx context.Context, estateID, adminID, vehicleI
 	return err
 }
 
+// GetResidentCard assembles the resident ID card payload.
+// The QR value encodes "<estate_id>:<resident_id>" for gate scanner verification.
+func (s *Service) GetResidentCard(ctx context.Context, estateID, userID string) (*ResidentCard, error) {
+	var card ResidentCard
+	const q = `
+		SELECT r.id, r.estate_id, e.name, r.unit, r.role,
+		       COALESCE(rp.occupancy_type,'resident'), COALESCE(rp.profile_photo_url,''),
+		       COALESCE(au.raw_user_meta_data->>'full_name', au.email, '')
+		FROM estate_residents r
+		JOIN estates e ON e.id = r.estate_id
+		LEFT JOIN resident_profiles rp ON rp.resident_id = r.id
+		JOIN auth.users au ON au.id = r.user_id::uuid
+		WHERE r.estate_id = $1 AND r.user_id = $2`
+	if err := s.db.QueryRow(ctx, q, estateID, userID).Scan(
+		&card.ResidentID, &card.EstateID, &card.EstateName, &card.Unit, &card.Role,
+		&card.OccupancyType, &card.ProfilePhotoURL, &card.FullName,
+	); err != nil {
+		return nil, fmt.Errorf("estate: resident not found in this estate")
+	}
+	card.QRValue = card.EstateID + ":" + card.ResidentID
+	card.IssuedAt = time.Now().UTC().Format(time.RFC3339)
+	return &card, nil
+}
+
 // marshalJSON serialises a value to JSON bytes for JSONB columns.
 func marshalJSON(v any) ([]byte, error) {
 	return json.Marshal(v)
@@ -1226,8 +1337,8 @@ func (s *Service) ListProperties(ctx context.Context, estateID, memberID string)
 		return nil, err
 	}
 	const q = `
-		SELECT id, estate_id, unit_label, property_type, floor, block, occupancy_status, landlord_id, tenant_id, created_at
-		FROM estate_properties WHERE estate_id=$1 ORDER BY block, floor, unit_label`
+		SELECT id, estate_id, unit_label, property_type, COALESCE(floor,''), COALESCE(block,''), occupancy_status, landlord_id, tenant_id, archived, created_at
+		FROM estate_properties WHERE estate_id=$1 AND archived=FALSE ORDER BY block, floor, unit_label`
 	rows, err := s.db.Query(ctx, q, estateID)
 	if err != nil {
 		return nil, err
@@ -1236,7 +1347,7 @@ func (s *Service) ListProperties(ctx context.Context, estateID, memberID string)
 	var out []EstateProperty
 	for rows.Next() {
 		var p EstateProperty
-		if err := rows.Scan(&p.ID, &p.EstateID, &p.UnitLabel, &p.PropertyType, &p.Floor, &p.Block, &p.OccupancyStatus, &p.LandlordID, &p.TenantID, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.EstateID, &p.UnitLabel, &p.PropertyType, &p.Floor, &p.Block, &p.OccupancyStatus, &p.LandlordID, &p.TenantID, &p.Archived, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -1246,6 +1357,9 @@ func (s *Service) ListProperties(ctx context.Context, estateID, memberID string)
 
 // ClaimOwnership submits a document-backed ownership claim for a property.
 func (s *Service) ClaimOwnership(ctx context.Context, propertyID, userID, docURL string) (*OwnershipClaim, error) {
+	if strings.TrimSpace(docURL) == "" {
+		return nil, fmt.Errorf("estate: ownership_doc_url is required")
+	}
 	c := &OwnershipClaim{
 		ID:              uuid.New().String(),
 		PropertyID:      propertyID,
@@ -1327,12 +1441,25 @@ func (s *Service) ReviewTenancyRequest(ctx context.Context, requestID, landlordI
 		return nil, fmt.Errorf("estate: tenancy request not found, not your request, or already reviewed")
 	}
 
-	// On approval, set tenant on property and mark occupied.
+	// On approval: mark property occupied and upsert a resident record for the tenant.
 	if decision == "approved" {
 		_, _ = s.db.Exec(ctx,
 			`UPDATE estate_properties SET tenant_id=$1, occupancy_status='occupied' WHERE id=$2`,
 			tr.TenantID, tr.PropertyID,
 		)
+		// Resolve estate_id for the property so we can upsert a resident row.
+		var estateIDForProp string
+		_ = s.db.QueryRow(ctx,
+			`SELECT estate_id FROM estate_properties WHERE id=$1`, tr.PropertyID,
+		).Scan(&estateIDForProp)
+		if estateIDForProp != "" {
+			_, _ = s.db.Exec(ctx,
+				`INSERT INTO estate_residents (id, estate_id, user_id, unit, role)
+				 VALUES ($1,$2,$3,'','tenant')
+				 ON CONFLICT (estate_id, user_id) DO UPDATE SET role='tenant'`,
+				uuid.New().String(), estateIDForProp, tr.TenantID,
+			)
+		}
 	}
 	return tr, nil
 }
@@ -1346,10 +1473,17 @@ func (s *Service) assertResident(ctx context.Context, estateID, userID string) e
 }
 
 func (s *Service) assertRoles(ctx context.Context, estateID, userID string, roles ...string) error {
-	const q = `SELECT role FROM estate_residents WHERE estate_id=$1 AND user_id=$2`
+	const q = `SELECT role, banned_at IS NOT NULL, deleted_at IS NOT NULL FROM estate_residents WHERE estate_id=$1 AND user_id=$2`
 	var role string
-	if err := s.db.QueryRow(ctx, q, estateID, userID).Scan(&role); err != nil {
+	var banned, deleted bool
+	if err := s.db.QueryRow(ctx, q, estateID, userID).Scan(&role, &banned, &deleted); err != nil {
 		return fmt.Errorf("estate: not a member of this estate")
+	}
+	if deleted {
+		return fmt.Errorf("estate: this account has been deleted")
+	}
+	if banned {
+		return fmt.Errorf("estate: this account is banned from the estate")
 	}
 	for _, r := range roles {
 		if role == r {

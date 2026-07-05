@@ -1,27 +1,27 @@
 -- Block 8: Referral codes and reward events
 -- Additive-only. No DROP, no RENAME, no type narrowing.
 
--- ── referral_codes ────────────────────────────────────────────────────────────
+-- ── finance_referral_codes ────────────────────────────────────────────────────────────
 -- One code per user. Auto-generated as SPOT-XXXXXX.
 
-CREATE TABLE IF NOT EXISTS referral_codes (
+CREATE TABLE IF NOT EXISTS finance_referral_codes (
   id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id    UUID        NOT NULL UNIQUE REFERENCES auth.users(id),
   code       TEXT        NOT NULL UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS referral_codes_code_idx ON referral_codes(code);
+CREATE INDEX IF NOT EXISTS finance_referral_codes_code_idx ON finance_referral_codes(code);
 
-ALTER TABLE referral_codes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE finance_referral_codes ENABLE ROW LEVEL SECURITY;
 
 -- Users can read their own code; service_role manages inserts
-CREATE POLICY "referral_codes_owner_select"
-  ON referral_codes FOR SELECT
+CREATE POLICY "finance_referral_codes_owner_select"
+  ON finance_referral_codes FOR SELECT
   USING (auth.uid() = user_id);
 
-CREATE POLICY "referral_codes_service_role"
-  ON referral_codes FOR ALL
+CREATE POLICY "finance_referral_codes_service_role"
+  ON finance_referral_codes FOR ALL
   USING (auth.role() = 'service_role')
   WITH CHECK (auth.role() = 'service_role');
 

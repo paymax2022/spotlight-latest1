@@ -49,7 +49,7 @@ API source of truth: `contracts/openapi.yaml`.
 ## Stack & layout
 - **Frontend web:** `frontend-web/` — Next.js 14.2, TypeScript, Tailwind CSS, Supabase SSR;
   served on cPanel Passenger (Node 20 + `frontend-web/server.js` entrypoint).
-- **Admin dashboard:** `frontend-admin/` — Next.js 15.1, port 4030. No Refine.
+- **Admin dashboard:** `frontend-admin/` — Next.js 15.1, port 3001 (console at http://localhost:3001/admin). No Refine.
 - **Backend API:** `backend/` — Go 1.23, Gin v1.10; module `spotlight/backend`.
 - **Mobile:** `mobile-app/reactnative/` (React Native/Expo), `mobile-app/vue-quasar/` (Vue 3).
 - **Database:** PostgreSQL 17 via Supabase (cloud-hosted). No ORM — raw Supabase JS client

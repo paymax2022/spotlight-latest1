@@ -1,5 +1,5 @@
 // ── Car hire — API wrapper ───────────────────────────────────────────────────
-// Mock-flagged, BASE = '/api/finance'. Book escrows fare+deposit; extend
+// Mock-flagged, BASE = '/api/v1'. Book escrows fare+deposit; extend
 // escrows the delta; complete settles the driver split and releases the deposit.
 // Money mutations carry an Idempotency-Key. Fare + deposit come from the SERVER.
 
@@ -21,7 +21,7 @@ import {
 const USE_MOCK =
   (process.env.EXPO_PUBLIC_CARHIRE_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
 
-const BASE = '/api/finance';
+const BASE = '/api/v1';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });

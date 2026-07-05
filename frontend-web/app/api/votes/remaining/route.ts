@@ -28,15 +28,21 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const contestId = searchParams.get('contestId');
     if (!contestId) return errorResponse('contestId is required', 400);
+    // Optional: scope the cap to a single contestant (per-contestant free votes).
+    const contestantId = searchParams.get('contestantId') || undefined;
 
     const userId = await tryGetUserId(request);
     const ip = getIp(request);
 
-    const result = await getRemainingFreeVotes(contestId, {
-      userId,
-      ipAddress: ip,
-      deviceFingerprint: request.headers.get('x-device-fingerprint') || undefined,
-    });
+    const result = await getRemainingFreeVotes(
+      contestId,
+      {
+        userId,
+        ipAddress: ip,
+        deviceFingerprint: request.headers.get('x-device-fingerprint') || undefined,
+      },
+      contestantId,
+    );
 
     return successResponse({ ...result });
   } catch (error) {

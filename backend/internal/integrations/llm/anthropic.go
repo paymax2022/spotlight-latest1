@@ -51,6 +51,15 @@ func NewAnthropicClient(apiKey string) *Client {
 	}
 }
 
+// WithModel overrides the completion model (e.g. "claude-sonnet-4-6"). An empty
+// value keeps the current model. Returns the client for chaining.
+func (c *Client) WithModel(model string) *Client {
+	if model != "" {
+		c.model = model
+	}
+	return c
+}
+
 // Enabled reports whether an API key is configured. When false, callers MUST NOT
 // fabricate model output — they should surface a clearly-marked "not configured"
 // state to the user.

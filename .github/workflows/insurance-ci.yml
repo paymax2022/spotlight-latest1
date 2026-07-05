@@ -1,0 +1,106 @@
+name: Insurance CI
+
+# Formal verification gate for the Paymax Micro-Insurance / Protection module
+# (underwriter-gateway + MyCover/Octamile adapters + policy/claims lifecycle).
+# The authoring sandbox has no Go toolchain (proxy blocked), so the Go packages
+# were verified static-only (gofmt-form + structural checks). This workflow is
+# the real gate: full go build/vet/test, mobile + admin + web typecheck, and an
+# additive-only migration guard. Blocks merges on red.
+
+on:
+  push:
+    paths:
+      - 'backend/internal/insurance/**'
+      - 'backend/internal/provider/mycover/**'
+      - 'backend/internal/provider/octamile/**'
+      - 'backend/internal/app/insurance_routes.go'
+      - 'backend/internal/app/insurance_claims_routes.go'
+      - 'backend/internal/app/finance_routes.go'
+      - 'backend/internal/config/config.go'
+      - 'supabase/migrations/*insurance*.sql'
+      - 'frontend-admin/app/admin/insurance/**'
+      - 'frontend-admin/src/services/insuranceAdminService.ts'
+      - 'frontend-admin/src/types/insuranceAdmin.ts'
+      - 'frontend-admin/src/components/layouts/AdminSidebar.tsx'
+      - 'frontend-web/app/api/v1/insurance/**'
+      - 'frontend-web/src/lib/feature-flags.ts'
+      - 'mobile-app/reactnative/app/insurance/**'
+      - 'mobile-app/reactnative/src/features/insurance/**'
+      - 'mobile-app/reactnative/src/constants/modules.ts'
+      - '.github/workflows/insurance-ci.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+      - name: Build (whole backend — catches wiring/import breaks)
+        run: go build ./...
+      - name: Vet (insurance module + adapters)
+        run: go vet ./internal/insurance/... ./internal/provider/mycover/... ./internal/provider/octamile/...
+      - name: Test (insurance — state machines, saga auto-reverse, idempotency)
+        run: go test ./internal/insurance/... -count=1 -v
+      - name: Test (all — regression)
+        run: go test ./... -count=1
+
+  admin-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck admin (tsc --noEmit)
+        run: npm run type-check
+
+  web-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck web (insurance proxy + feature flag)
+        run: npx tsc --noEmit
+
+  mobile-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app/reactnative
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck whole app (insurance Protection surface + module registry)
+        run: npx tsc --noEmit -p tsconfig.json
+
+  migration-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject destructive DDL in insurance migrations (additive-only)
+        run: |
+          set -e
+          FILES=$(ls supabase/migrations/*insurance*.sql 2>/dev/null || true)
+          if [ -z "$FILES" ]; then echo "no insurance migrations"; exit 0; fi
+          if echo "$FILES" | xargs sed 's/--.*$//' | grep -iEn '\b(drop\s+(table|column|type)|alter\s+[a-z_."]+\s+drop|drop\s+not\s+null|rename\s+(column|to))\b' | grep -ivE 'drop\s+(policy|trigger)\s+if\s+exists'; then
+            echo "::error::Destructive DDL found in insurance migration (must be additive-only)"; exit 1;
+          fi
+          echo "Additive-only guard passed for: $FILES"

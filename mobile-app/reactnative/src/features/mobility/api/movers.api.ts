@@ -1,5 +1,5 @@
 // ── Movers — API wrapper ─────────────────────────────────────────────────────
-// Mock-flagged, BASE = '/api/finance'. Accepting a bid is a money mutation
+// Mock-flagged, BASE = '/api/v1'. Accepting a bid is a money mutation
 // (escrow fund) and carries an Idempotency-Key; escrow releases only on
 // completion confirmation. Bid amounts come from providers via the SERVER.
 
@@ -15,7 +15,7 @@ import {
 const USE_MOCK =
   (process.env.EXPO_PUBLIC_MOVERS_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
 
-const BASE = '/api/finance';
+const BASE = '/api/v1';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });
@@ -96,7 +96,13 @@ export async function confirmCompletion(id: string, idempotencyKey: string): Pro
   );
 }
 
-export async function rateMover(id: string, stars: number, comment?: string): Promise<void> {
+export async function rateMover(
+  id: string,
+  stars: number,
+  idempotencyKey: string,
+  comment?: string,
+  tipKobo?: number,
+): Promise<void> {
   if (USE_MOCK) {
     await delay(500);
     if (moverStore.active?.id === id) moverStore.active.rated = true;
@@ -104,7 +110,11 @@ export async function rateMover(id: string, stars: number, comment?: string): Pr
     if (h) h.rated = true;
     return;
   }
-  await api.post(`${BASE}/mobility/movers/${id}/rate`, { stars, comment });
+  await api.post(
+    `${BASE}/mobility/movers/${id}/rate`,
+    { stars, comment, tip_kobo: tipKobo },
+    idemHeader(idempotencyKey),
+  );
 }
 
 export function clearMockActiveMover(): void {

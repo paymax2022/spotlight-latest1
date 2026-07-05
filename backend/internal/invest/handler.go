@@ -33,6 +33,10 @@ func httpErr(c *gin.Context, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrInvalidPIN):
 		c.JSON(http.StatusForbidden, gin.H{"error": "invalid PIN"})
+	case errors.Is(err, ErrPINNotSet):
+		c.JSON(http.StatusForbidden, gin.H{"error": "set a transaction PIN before trading", "code": "pin_not_set"})
+	case errors.Is(err, ErrPINLocked):
+		c.JSON(http.StatusForbidden, gin.H{"error": "transaction PIN locked — try again later", "code": "pin_locked"})
 	case errors.Is(err, ErrInsufficientCash), errors.Is(err, ErrInsufficientShares):
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrTradingDisabled), errors.Is(err, ErrNotEligible),

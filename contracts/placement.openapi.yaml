@@ -1,0 +1,378 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight — Featured Placement Module API
+  version: 1.0.0
+  description: >
+    Featured Placement vertical: merchants pay to promote a subject (listing,
+    event, profile, …) into curated zones across the app's surfaces. Covers the
+    member campaign lifecycle, the admin moderation queue, and the public
+    serving surface (landing resolver + impression/tap event ingest).
+
+    Conventions:
+      - All monetary amounts are integers in minor units (kobo). Never floats.
+      - Money mutations (submit, pay) require an Idempotency-Key header and post
+        a balanced, tier-checked ledger entry server-side.
+      - Auth: Bearer JWT issued by Supabase Auth. Admin routes additionally
+        require placement-moderator RBAC, enforced server-side.
+      - The landing resolver (/landing/placements) is PUBLIC and unauthenticated.
+    Module spec — mirrors contracts/estate.openapi.yaml. Served under /api/v1
+    via Next.js route handlers that proxy to the Go backend.
+
+servers:
+  - url: /api/v1
+    description: Placement module routes (Next.js route handlers)
+
+tags:
+  - { name: Placement, description: Member campaign lifecycle (money-path on submit/pay) }
+  - { name: PlacementAdmin, description: Moderation queue and decisions (RBAC) }
+  - { name: PlacementServing, description: Public serving surface (resolver + events) }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 128 }
+      description: Client-generated unique key; identical replays are no-ops.
+    PathId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthorized: { description: Missing or invalid bearer token }
+    Forbidden: { description: Admin/moderator role required }
+    NotFound: { description: Resource not found or not owned by caller }
+    BadRequest: { description: Validation failed }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        status: { type: integer }
+
+    PlacementZone:
+      type: object
+      required: [code, label, layout_type, capacity, base_daily_rate_kobo, tier_multiplier, position]
+      properties:
+        code: { type: string }
+        label: { type: string }
+        layout_type: { type: string, enum: [EXCLUSIVE, POOLED] }
+        capacity: { type: integer }
+        base_daily_rate_kobo: { type: integer, format: int64 }
+        tier_multiplier: { type: number, format: double }
+        position: { type: integer }
+        creative_spec: { type: object, additionalProperties: true }
+
+    Creative:
+      type: object
+      required: [headline]
+      properties:
+        headline: { type: string }
+        image_ref: { type: string }
+        cta: { type: string }
+        deep_link: { type: string }
+
+    FeaturedCampaign:
+      type: object
+      required: [id, merchant_id, subject_type, subject_id, zone_code, window_start, window_end, duration_days, state, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        merchant_id: { type: string, format: uuid }
+        subject_type: { type: string }
+        subject_id: { type: string }
+        zone_code: { type: string }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        duration_days: { type: integer }
+        creative: { $ref: '#/components/schemas/Creative' }
+        quoted_price_kobo: { type: integer, format: int64 }
+        rate_version: { type: string }
+        state:
+          type: string
+          enum: [DRAFT, SUBMITTED, UNDER_REVIEW, NEEDS_MORE_INFO, REJECTED, PENDING_PAYMENT, SCHEDULED, ACTIVE, PAUSED, SUSPENDED, CANCELLED, CANCELLED_EARLY, COMPLETED]
+        payment_ref: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PlacementQuote:
+      type: object
+      required: [quoted_price_kobo, rate_version, breakdown]
+      properties:
+        quoted_price_kobo: { type: integer, format: int64 }
+        rate_version: { type: string }
+        breakdown:
+          type: object
+          required: [base_daily_rate_kobo, duration_days, tier_multiplier]
+          properties:
+            base_daily_rate_kobo: { type: integer, format: int64 }
+            duration_days: { type: integer }
+            tier_multiplier: { type: number, format: double }
+            duration_discount_pct: { type: number, format: double }
+            fees_kobo: { type: integer, format: int64 }
+
+    CampaignCreate:
+      type: object
+      required: [subject_type, subject_id, zone_code, window_start, duration_days]
+      properties:
+        subject_type: { type: string }
+        subject_id: { type: string }
+        zone_code: { type: string }
+        window_start: { type: string, format: date-time }
+        duration_days: { type: integer }
+        creative: { $ref: '#/components/schemas/Creative' }
+
+    ServedPlacement:
+      type: object
+      required: [campaign_id, placement_token, subject_type, subject_id]
+      properties:
+        campaign_id: { type: string, format: uuid }
+        placement_token: { type: string }
+        subject_type: { type: string }
+        subject_id: { type: string }
+        creative: { $ref: '#/components/schemas/Creative' }
+        label: { type: string }
+
+    LandingPlacements:
+      type: object
+      required: [zones]
+      properties:
+        zones:
+          type: array
+          items:
+            type: object
+            required: [zone_code, layout_type, items]
+            properties:
+              zone_code: { type: string }
+              layout_type: { type: string, enum: [EXCLUSIVE, POOLED] }
+              items:
+                type: array
+                items: { $ref: '#/components/schemas/ServedPlacement' }
+
+    PlacementEventsBatch:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items:
+            type: object
+            required: [campaign_id, type, placement_token]
+            properties:
+              campaign_id: { type: string, format: uuid }
+              type: { type: string, enum: [impression, tap] }
+              placement_token: { type: string }
+              session_id: { type: string }
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ── Member: zones + campaign lifecycle ──
+  /placement/zones:
+    get:
+      operationId: placementListZones
+      summary: List bookable placement zones and their rate cards
+      tags: [Placement]
+      responses:
+        '200': { description: Zones, content: { application/json: { schema: { type: object, properties: { zones: { type: array, items: { $ref: '#/components/schemas/PlacementZone' } } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /placement/campaigns:
+    get:
+      operationId: placementListCampaigns
+      summary: List the caller's campaigns
+      tags: [Placement]
+      responses:
+        '200': { description: Campaigns, content: { application/json: { schema: { type: object, properties: { campaigns: { type: array, items: { $ref: '#/components/schemas/FeaturedCampaign' } } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: placementCreateCampaign
+      summary: Create a draft featured-placement campaign
+      tags: [Placement]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CampaignCreate' } } }
+      responses:
+        '201': { description: Draft created, content: { application/json: { schema: { $ref: '#/components/schemas/FeaturedCampaign' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /placement/campaigns/{id}:
+    get:
+      operationId: placementGetCampaign
+      summary: Get one of the caller's campaigns
+      tags: [Placement]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Campaign, content: { application/json: { schema: { $ref: '#/components/schemas/FeaturedCampaign' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /placement/campaigns/{id}/quote:
+    post:
+      operationId: placementQuoteCampaign
+      summary: Compute a price quote for the campaign's current parameters
+      tags: [Placement]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Quote, content: { application/json: { schema: { $ref: '#/components/schemas/PlacementQuote' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /placement/campaigns/{id}/submit:
+    post:
+      operationId: placementSubmitCampaign
+      summary: Submit a draft campaign for review
+      tags: [Placement]
+      parameters:
+        - { $ref: '#/components/parameters/PathId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200': { description: Submitted, content: { application/json: { schema: { $ref: '#/components/schemas/FeaturedCampaign' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /placement/campaigns/{id}/pay:
+    post:
+      operationId: placementPayCampaign
+      summary: Pay for an approved campaign (money-path — posts a ledger entry)
+      tags: [Placement]
+      parameters:
+        - { $ref: '#/components/parameters/PathId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200': { description: Paid; scheduled, content: { application/json: { schema: { $ref: '#/components/schemas/FeaturedCampaign' } } } }
+        '402': { description: Payment required / insufficient funds }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /placement/campaigns/{id}/cancel:
+    post:
+      operationId: placementCancelCampaign
+      summary: Cancel a campaign
+      tags: [Placement]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Cancelled, content: { application/json: { schema: { $ref: '#/components/schemas/FeaturedCampaign' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /placement/campaigns/{id}/pause:
+    post:
+      operationId: placementPauseCampaign
+      summary: Pause an active campaign
+      tags: [Placement]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Paused, content: { application/json: { schema: { $ref: '#/components/schemas/FeaturedCampaign' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /placement/campaigns/{id}/resume:
+    post:
+      operationId: placementResumeCampaign
+      summary: Resume a paused campaign
+      tags: [Placement]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Resumed, content: { application/json: { schema: { $ref: '#/components/schemas/FeaturedCampaign' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /placement/campaigns/{id}/analytics:
+    get:
+      operationId: placementCampaignAnalytics
+      summary: Impression/tap analytics for a campaign
+      tags: [Placement]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200':
+          description: Analytics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  campaign_id: { type: string, format: uuid }
+                  impressions: { type: integer, format: int64 }
+                  taps: { type: integer, format: int64 }
+                  ctr: { type: number, format: double }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Admin moderation (RBAC enforced server-side) ──
+  /placement/admin/review-queue:
+    get:
+      operationId: placementAdminReviewQueue
+      summary: List campaigns awaiting moderation
+      tags: [PlacementAdmin]
+      responses:
+        '200': { description: Queue, content: { application/json: { schema: { type: object, properties: { campaigns: { type: array, items: { $ref: '#/components/schemas/FeaturedCampaign' } } } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /placement/admin/campaigns/{id}:
+    get:
+      operationId: placementAdminGetCampaign
+      summary: Get any campaign for moderation
+      tags: [PlacementAdmin]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Campaign, content: { application/json: { schema: { $ref: '#/components/schemas/FeaturedCampaign' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /placement/admin/campaigns/{id}/approve:
+    post:
+      operationId: placementAdminApprove
+      summary: Approve a campaign
+      tags: [PlacementAdmin]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/FeaturedCampaign' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /placement/admin/campaigns/{id}/reject:
+    post:
+      operationId: placementAdminReject
+      summary: Reject a campaign
+      tags: [PlacementAdmin]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: false
+        content: { application/json: { schema: { type: object, properties: { reason: { type: string } } } } }
+      responses:
+        '200': { description: Rejected, content: { application/json: { schema: { $ref: '#/components/schemas/FeaturedCampaign' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /placement/admin/campaigns/{id}/request-info:
+    post:
+      operationId: placementAdminRequestInfo
+      summary: Request more info from the merchant
+      tags: [PlacementAdmin]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: false
+        content: { application/json: { schema: { type: object, properties: { message: { type: string } } } } }
+      responses:
+        '200': { description: Moved to NEEDS_MORE_INFO, content: { application/json: { schema: { $ref: '#/components/schemas/FeaturedCampaign' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /placement/admin/campaigns/{id}/suspend:
+    post:
+      operationId: placementAdminSuspend
+      summary: Suspend a live campaign
+      tags: [PlacementAdmin]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: false
+        content: { application/json: { schema: { type: object, properties: { reason: { type: string } } } } }
+      responses:
+        '200': { description: Suspended, content: { application/json: { schema: { $ref: '#/components/schemas/FeaturedCampaign' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── Public serving surface ──
+  /landing/placements:
+    get:
+      operationId: placementGetLanding
+      summary: Public placement resolver for a surface (unauthenticated, cacheable)
+      tags: [PlacementServing]
+      security: []
+      parameters:
+        - { name: surface, in: query, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Served placements grouped by zone, content: { application/json: { schema: { $ref: '#/components/schemas/LandingPlacements' } } } }
+  /placement/events:
+    post:
+      operationId: placementIngestEvents
+      summary: Ingest a batch of impression/tap events
+      tags: [PlacementServing]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PlacementEventsBatch' } } }
+      responses:
+        '202': { description: Events accepted for processing }
+        '401': { $ref: '#/components/responses/Unauthorized' }

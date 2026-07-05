@@ -32,12 +32,9 @@ func TestBuyIsIdempotent(t *testing.T) {
 	s := store.New()
 	h := NewServer(s).Handler()
 
-	body, _ := json.Marshal(domain.Quote{
-		AssetID: "ast_usdc", Side: "buy", Basis: "fiat",
-		Fiat:      domain.Money{Amount: 1_000_00, Currency: "NGN"},
-		Crypto:    domain.CryptoAmount{Amount: 0, Symbol: "USDC"},
-		TotalFiat: domain.Money{Amount: 1_000_00, Currency: "NGN"},
-	})
+	// Execution runs strictly against a persisted quote id; request one first.
+	q := requestQuote(t, h, "buy", "ast_usdc", 1_000_00)
+	body, _ := json.Marshal(map[string]string{"quoteId": q.ID})
 
 	buy := func() domain.Order {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/crypto/buy", bytes.NewReader(body))

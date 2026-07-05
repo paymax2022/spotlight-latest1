@@ -66,6 +66,13 @@ export async function getVotingSettings(contestId: string): Promise<VotingSettin
   return mapSettingsRow(data);
 }
 
+// The per-contestant daily free-vote cap. Each voter gets this many free votes
+// for EACH contestant per day. Falls back to the legacy per-day value so the
+// default behaviour (e.g. 3 per contestant) works without extra config.
+export function perContestantCap(settings: VotingSettings): number {
+  return settings.freeVotesPerContestant ?? settings.freeVotesPerDay;
+}
+
 export async function getRemainingFreeVotes(
   contestId: string,
   voterOpts: {
@@ -75,11 +82,13 @@ export async function getRemainingFreeVotes(
     deviceFingerprint?: string;
     ipAddress?: string;
   },
+  contestantId?: string,
 ): Promise<RemainingFreeVotesResponse> {
   const settings = await getVotingSettings(contestId);
   if (!settings.freeVotingEnabled) {
     return {
       contestId,
+      contestantId,
       freeVotesPerDay: 0,
       freeVotesUsed: 0,
       freeVotesRemaining: 0,
@@ -91,7 +100,36 @@ export async function getRemainingFreeVotes(
   const { identifier, type } = resolveVoterIdentifier(settings.freeVoteLimitScope, voterOpts);
   const voteDate = getVoteDateUTC();
   const supabase = createAdminClient();
+  const resetAt = nextResetAt(settings.freeVoteResetTime, settings.timezone);
 
+  // Per-contestant remaining: how many free votes the voter has left for THIS
+  // contestant today. This is the cap the user watches reset.
+  if (contestantId) {
+    const cap = perContestantCap(settings);
+    const { data } = await supabase
+      .from('voter_contestant_daily_limits')
+      .select('free_votes_used, free_votes_limit')
+      .eq('contest_id', contestId)
+      .eq('contestant_id', contestantId)
+      .eq('voter_identifier', identifier)
+      .eq('voter_identifier_type', type)
+      .eq('vote_date', voteDate)
+      .maybeSingle();
+
+    const used = data?.free_votes_used ?? 0;
+    const limit = data?.free_votes_limit ?? cap;
+    return {
+      contestId,
+      contestantId,
+      freeVotesPerDay: limit,
+      freeVotesUsed: used,
+      freeVotesRemaining: Math.max(0, limit - used),
+      resetAt,
+      nextResetHours: hoursUntil(resetAt),
+    };
+  }
+
+  // Contest-wide tally (no contestant scope requested).
   const { data } = await supabase
     .from('voter_daily_limits')
     .select('free_votes_used, free_votes_limit')
@@ -104,7 +142,6 @@ export async function getRemainingFreeVotes(
   const used = data?.free_votes_used ?? 0;
   const limit = data?.free_votes_limit ?? settings.freeVotesPerDay;
   const remaining = Math.max(0, limit - used);
-  const resetAt = nextResetAt(settings.freeVoteResetTime, settings.timezone);
 
   return {
     contestId,
@@ -148,7 +185,41 @@ export async function castFreeVote(
 
   const voteDate = getVoteDateUTC();
 
-  // --- Upsert daily limit row (atomic) ---
+  const resetAt = nextResetAt(settings.freeVoteResetTime, settings.timezone);
+
+  // --- Per-contestant daily limit (the BINDING cap) ---
+  // Each voter gets `perContestantCap` free votes for THIS contestant per day.
+  // Once reached, free voting for this contestant is disabled until reset.
+  const cap = perContestantCap(settings);
+  const { data: cRow, error: cErr } = await supabase
+    .from('voter_contestant_daily_limits')
+    .upsert(
+      {
+        contest_id: req.contestId,
+        contestant_id: req.contestantId,
+        voter_identifier: identifier,
+        voter_identifier_type: type,
+        vote_date: voteDate,
+        free_votes_limit: cap,
+      },
+      { onConflict: 'contest_id,contestant_id,voter_identifier,voter_identifier_type,vote_date' },
+    )
+    .select('free_votes_used, free_votes_limit')
+    .single();
+
+  if (cErr || !cRow) throw new ApiError('Failed to check vote limit', 500);
+
+  const cUsed = cRow.free_votes_used as number;
+  const cLimit = cRow.free_votes_limit as number;
+
+  if (cUsed >= cLimit) {
+    throw new ApiError(
+      `You have used all ${cLimit} free votes for this contestant today. Free votes reset in 24h — buy votes to keep supporting them.`,
+      429,
+    );
+  }
+
+  // --- Contest-wide tally (only blocks when an explicit per-contest cap is set) ---
   const { data: limitRow, error: limitErr } = await supabase
     .from('voter_daily_limits')
     .upsert(
@@ -157,7 +228,7 @@ export async function castFreeVote(
         voter_identifier: identifier,
         voter_identifier_type: type,
         vote_date: voteDate,
-        free_votes_limit: settings.freeVotesPerDay,
+        free_votes_limit: settings.freeVotesPerContest ?? settings.freeVotesPerDay,
       },
       { onConflict: 'contest_id,voter_identifier,voter_identifier_type,vote_date' },
     )
@@ -166,17 +237,16 @@ export async function castFreeVote(
 
   if (limitErr || !limitRow) throw new ApiError('Failed to check vote limit', 500);
 
-  const used = limitRow.free_votes_used;
-  const limit = limitRow.free_votes_limit;
-
-  if (used >= limit) {
+  const used = limitRow.free_votes_used as number;
+  if (settings.freeVotesPerContest != null && used >= settings.freeVotesPerContest) {
     throw new ApiError(
-      `You have used all ${limit} free votes for today. Come back tomorrow or buy votes to continue.`,
+      `You have used all your free votes for this contest today. Free votes reset in 24h.`,
       429,
     );
   }
 
-  let canAdd = Math.min(voteQuantity, limit - used);
+  // Bound by the per-contestant remaining (the binding cap).
+  let canAdd = Math.min(voteQuantity, cLimit - cUsed);
 
   // --- Global daily cap check (admin-set ceiling across all voters) ---
   if (settings.dailyFreeVoteCapEnabled && settings.dailyFreeVoteCap !== null) {
@@ -246,7 +316,21 @@ export async function castFreeVote(
 
   if (voteErr || !voteRow) throw new ApiError('Failed to record vote', 500);
 
-  // --- Increment daily limit counter ---
+  // --- Increment per-contestant counter (binding cap) ---
+  await supabase
+    .from('voter_contestant_daily_limits')
+    .update({
+      free_votes_used: cUsed + canAdd,
+      last_vote_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('contest_id', req.contestId)
+    .eq('contestant_id', req.contestantId)
+    .eq('voter_identifier', identifier)
+    .eq('voter_identifier_type', type)
+    .eq('vote_date', voteDate);
+
+  // --- Increment contest-wide tally ---
   await supabase
     .from('voter_daily_limits')
     .update({
@@ -279,10 +363,13 @@ export async function castFreeVote(
   return {
     success: true,
     votesAdded: canAdd,
-    totalFreeVotesUsed: used + canAdd,
-    freeVotesRemaining: Math.max(0, limit - used - canAdd),
+    totalFreeVotesUsed: cUsed + canAdd,
+    // Remaining for THIS contestant today (the cap the user watches reset).
+    freeVotesRemaining: Math.max(0, cLimit - cUsed - canAdd),
     newTotalVotes: 0, // caller can fetch from totals
     fraudStatus,
+    resetAt,
+    contestantId: req.contestantId,
   };
 }
 

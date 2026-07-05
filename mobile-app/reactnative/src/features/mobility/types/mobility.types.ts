@@ -176,15 +176,25 @@ export interface QuickTile {
   enabled: boolean;
 }
 
+/** Lightweight rider profile the backend returns on the mobility home payload. */
+export interface MobilityProfile {
+  name: string;
+  photoUrl: string | null;
+  rating?: number;
+}
+
+/**
+ * Mobility home payload. Mirrors the Go backend exactly:
+ *   { activeTrip, profile, quickTiles: string[], safetyReminder }
+ * Wallet balance, saved/recent places and city-availability are NOT part of this
+ * payload — the home screen reads the wallet balance from the shared wallet
+ * feature instead. `quickTiles` are plain string keys the client maps to tiles.
+ */
 export interface MobilityHome {
-  walletBalanceKobo: Kobo;
-  currency: 'NGN';
   activeTrip: Trip | null;
-  quickTiles: QuickTile[];
-  savedPlaces: SavedPlace[];
-  recentPlaces: Place[];
+  profile: MobilityProfile | null;
+  quickTiles: string[];
   safetyReminder: string;
-  serviceAvailable: boolean;      // city-level availability
 }
 
 // ─── Rating ───────────────────────────────────────────────────────────────────

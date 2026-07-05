@@ -18,14 +18,14 @@ func TestDefaultSurfaceConfigRouting(t *testing.T) {
 		want    string
 	}{
 		{PrimBasemap, "default", "maptiler"},
-		{PrimGeocode, "default", "geoapify"},
-		{PrimReverse, "default", "geoapify"},
-		{PrimAutocomplete, "default", "geoapify"}, // OpenStack by default
+		{PrimGeocode, "default", "google"},        // address lookup standardized on Google
+		{PrimReverse, "default", "google"},
+		{PrimAutocomplete, "default", "google"},   // Google across all surfaces
 		{PrimAutocomplete, "checkout", "google"},  // consumer surface uses Google
 		{PrimAutocomplete, "delivery", "google"},
 		{PrimPlaces, "default", "google"}, // external POIs are Google
-		{PrimRoute, "default", "osrm"},
-		{PrimMatrix, "default", "osrm"},
+		{PrimRoute, "default", "osrm"},    // single-route polyline stays OSRM
+		{PrimMatrix, "default", "google"}, // Google Distance Matrix for delivery-fee distance/ETA
 		{PrimMatchToRoad, "default", "osrm"},
 	}
 	for _, c := range cases {
@@ -54,8 +54,8 @@ func TestLoadSurfaceConfigEmptyPathReturnsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("empty path should not error: %v", err)
 	}
-	if p, _ := cfg.providerFor(PrimGeocode, "default"); p != "geoapify" {
-		t.Fatalf("default geocode provider = %q; want geoapify", p)
+	if p, _ := cfg.providerFor(PrimGeocode, "default"); p != "google" {
+		t.Fatalf("default geocode provider = %q; want google", p)
 	}
 }
 

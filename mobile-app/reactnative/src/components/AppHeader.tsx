@@ -13,11 +13,17 @@ interface Props {
   notifCount?:   number;
 }
 
+// Time-of-day greeting based on the device's local hour:
+//   05:00–11:59 → Good Morning
+//   12:00–16:59 → Good Afternoon
+//   17:00–20:59 → Good Evening
+//   21:00–04:59 → Good Night
 function getGreeting(): string {
   const h = new Date().getHours();
-  if (h < 12) return 'Good Morning';
+  if (h >= 5 && h < 12) return 'Good Morning';
   if (h < 17) return 'Good Afternoon';
-  return 'Good Evening';
+  if (h < 21) return 'Good Evening';
+  return 'Good Night';
 }
 
 export default function AppHeader({ name, greeting, avatarUri, notifCount = 0 }: Props) {

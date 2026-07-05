@@ -3,7 +3,7 @@
 
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
-import { USE_MOCK } from '../constants/association.constants';
+import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
 import type {
   AiNote,
   AiNoteSummary,
@@ -21,7 +21,7 @@ const toSummary = (n: AiNote): AiNoteSummary => {
 
 export async function getAiNotes(): Promise<AiNoteSummary[]> {
   if (USE_MOCK) { await delay(); return MOCK_AI_NOTES.map(toSummary); }
-  const { data } = await api.get('/associations/ai-notes');
+  const { data } = await api.get(`${BASE}/ai-notes`);
   return data;
 }
 
@@ -33,7 +33,7 @@ export async function getAiNote(id: string): Promise<AiNote> {
     if (found) return found;
     return synthReadyNote(id);
   }
-  const { data } = await api.get(`/associations/ai-notes/${id}`);
+  const { data } = await api.get(`${BASE}/ai-notes/${id}`);
   return data;
 }
 
@@ -42,7 +42,7 @@ export async function createAiNote(input: CreateAiNoteInput): Promise<{ id: stri
     await delay(400);
     return { id: `ai_${Date.now()}`, status: 'PROCESSING' };
   }
-  const { data } = await api.post('/associations/ai-notes', input, {
+  const { data } = await api.post(`${BASE}/ai-notes`, input, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
   return data;
@@ -51,7 +51,7 @@ export async function createAiNote(input: CreateAiNoteInput): Promise<{ id: stri
 /** Poll/await processing completion. Mock resolves to READY after a short delay. */
 export async function awaitProcessing(id: string): Promise<{ status: AiNoteStatus }> {
   if (USE_MOCK) { await delay(2200); return { status: 'READY' }; }
-  const { data } = await api.get(`/associations/ai-notes/${id}/status`);
+  const { data } = await api.get(`${BASE}/ai-notes/${id}/status`);
   return data;
 }
 
@@ -60,7 +60,7 @@ export async function regenerateSummary(id: string): Promise<{ summary: string }
     await delay(900);
     return { summary: 'Regenerated executive summary: the meeting addressed routine business, ratified the key decisions, and assigned follow-up actions with owners and due dates. Unresolved items were carried forward for the next sitting.' };
   }
-  const { data } = await api.post(`/associations/ai-notes/${id}/regenerate-summary`, {}, {
+  const { data } = await api.post(`${BASE}/ai-notes/${id}/regenerate-summary`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
   return data;
@@ -68,7 +68,7 @@ export async function regenerateSummary(id: string): Promise<{ summary: string }
 
 export async function approveAiNote(id: string): Promise<{ ok: true }> {
   if (USE_MOCK) { await delay(); return { ok: true }; }
-  const { data } = await api.post(`/associations/ai-notes/${id}/approve`, {}, {
+  const { data } = await api.post(`${BASE}/ai-notes/${id}/approve`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
   return data;
@@ -76,7 +76,7 @@ export async function approveAiNote(id: string): Promise<{ ok: true }> {
 
 export async function publishAiNote(id: string): Promise<{ ok: true }> {
   if (USE_MOCK) { await delay(); return { ok: true }; }
-  const { data } = await api.post(`/associations/ai-notes/${id}/publish`, {}, {
+  const { data } = await api.post(`${BASE}/ai-notes/${id}/publish`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
   return data;
@@ -85,7 +85,7 @@ export async function publishAiNote(id: string): Promise<{ ok: true }> {
 export async function convertActionItem(noteId: string, actionItemId: string): Promise<{ taskId: string }> {
   if (USE_MOCK) { await delay(); return { taskId: `tk_${actionItemId}` }; }
   const { data } = await api.post(
-    `/associations/ai-notes/${noteId}/action-items/${actionItemId}/convert`,
+    `${BASE}/ai-notes/${noteId}/action-items/${actionItemId}/convert`,
     {},
     { headers: { 'Idempotency-Key': generateIdempotencyKey() } },
   );

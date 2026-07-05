@@ -82,6 +82,9 @@ export type ChartRange = '1H' | '1D' | '1W' | '1M' | '1Y';
 // ─── Quote (docs/crypto/data-model.md → CryptoQuote) ──────────────────────────
 
 export type OrderSide = 'buy' | 'sell';
+
+/** A history row's kind: trades (buy/sell) plus on-chain movements. */
+export type TxKind = OrderSide | 'deposit' | 'withdraw';
 export type QuoteStatus = 'quoted' | 'locked' | 'consumed' | 'expired';
 export type CryptoFeeType = 'paymax_fee' | 'provider_fee' | 'spread' | 'network_fee';
 
@@ -139,6 +142,11 @@ export type CryptoTxStatus =
   | 'Reversed'
   | 'ComplianceHold';
 
+export type DepositStatus = 'DepositDetected' | 'DepositConfirmed';
+
+/** Any status a history row can carry: trades + deposit/withdrawal lifecycles. */
+export type TxStatus = CryptoTxStatus | WithdrawalStatus | DepositStatus;
+
 export type CryptoErrorType =
   | 'quote_expired'
   | 'insufficient_balance'
@@ -173,11 +181,11 @@ export interface CryptoOrder {
 export interface CryptoTransactionSummary {
   id: string;
   reference: string;
-  side: OrderSide;
+  side: TxKind;
   symbol: string;
   assetName: string;
   iconColor: string;
-  status: CryptoTxStatus;
+  status: TxStatus;
   fiat: FiatMoney;
   crypto: CryptoAmount;
   createdAt: string;
@@ -191,7 +199,7 @@ export interface CryptoTransactionDetail extends CryptoTransactionSummary {
   providerReference: string;
   liquidityProvider: string;
   custodyProvider: string;
-  statusHistory: { status: CryptoTxStatus; at: string }[];
+  statusHistory: { status: TxStatus; at: string }[];
   failureReason?: string;
 }
 

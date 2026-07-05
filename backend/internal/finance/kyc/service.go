@@ -2,18 +2,37 @@ package kyc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"log"
 
+	"golang.org/x/crypto/argon2"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// VAProvisioner provisions a user's virtual account on tier upgrade. Kept as a
+// narrow interface so the kyc package stays decoupled from the va package
+// (satisfied by *va.Service.ProvisionForUser).
+type VAProvisioner interface {
+	ProvisionForUser(ctx context.Context, userID string) error
+}
 
 // Service manages KYC tier transitions.
 type Service struct {
 	db *pgxpool.Pool
+	va VAProvisioner // optional; set via WithVAProvisioner
 }
 
 func NewService(db *pgxpool.Pool) *Service {
 	return &Service{db: db}
+}
+
+// WithVAProvisioner wires virtual-account provisioning so that approving a user
+// to Tier 1+ automatically creates their NGN virtual account with the provider.
+func (s *Service) WithVAProvisioner(p VAProvisioner) *Service {
+	s.va = p
+	return s
 }
 
 // GetProfile returns the current KYC profile for a user.
@@ -113,6 +132,16 @@ func (s *Service) Approve(ctx context.Context, userID string, newTier int, actor
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("kyc: commit approve: %w", err)
 	}
+
+	// On upgrade to Tier 1+, provision the user's NGN virtual account with the
+	// provider (idempotent). Non-fatal: the tier upgrade stands even if the
+	// provider call fails — GetOrProvision via GET /finance/va/me self-heals.
+	if newTier >= 1 && s.va != nil {
+		if err := s.va.ProvisionForUser(ctx, userID); err != nil {
+			log.Printf("kyc: VA provisioning after tier-%d approval for user=%s failed (will self-heal on next /va/me): %v", newTier, userID, err)
+		}
+	}
+
 	return s.GetProfile(ctx, userID)
 }
 
@@ -161,14 +190,16 @@ func (s *Service) Fail(ctx context.Context, userID string, actorID *string) erro
 	return err
 }
 
-// hashIfPresent returns a 64-char hex hash of the value if non-nil.
-// In production, use argon2id. Here we use SHA-256 as a placeholder.
-// The actual KYC service hashes BVN/NIN before storing.
+// hashIfPresent returns a deterministic argon2id hash of the value if non-nil.
+// Uses a SHA-256-derived salt so the same input always produces the same hash,
+// allowing lookups by hash. argon2id params: time=1, memory=64MiB, threads=4, keyLen=32.
 func hashIfPresent(v *string) *string {
 	if v == nil || *v == "" {
 		return nil
 	}
-	// Placeholder — real impl uses argon2id via golang.org/x/crypto/argon2
-	hashed := fmt.Sprintf("sha256:%s", *v)
+	_ = fmt.Sprintf // keep fmt import used elsewhere in the file
+	salt := sha256.Sum256([]byte(*v))
+	key := argon2.IDKey([]byte(*v), salt[:], 1, 64*1024, 4, 32)
+	hashed := "argon2id:" + hex.EncodeToString(key)
 	return &hashed
 }

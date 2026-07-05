@@ -1,0 +1,420 @@
+openapi: 3.0.3
+info:
+  title: Paymax Connect — Phase 1 Safety + Phase 5 Trust
+  version: 0.1.0
+  description: >
+    Chat (mutual-match-gated), report/block, the date-safety center, the
+    guardrailed AI assistant, scam-shield, and admin moderation queues. This is
+    an additive fragment to contracts/openapi.yaml; it does not redefine the
+    Phase-0 routes. All routes require a Bearer JWT (RequireAuthContext) and are
+    behind FeatureConnectEnabled + the 18+/consent onboarding gate. Admin routes
+    additionally require the listed connect.* RBAC permission (deny-by-default).
+servers:
+  - url: /api/v1/connect
+    description: Member surface
+  - url: /api/connect/admin
+    description: Admin surface (RBAC-gated)
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    Message:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        sender_id: { type: string, format: uuid }
+        body: { type: string }
+        kind: { type: string, enum: [text, voice, icebreaker] }
+        flagged: { type: boolean }
+        reason_codes:
+          type: array
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+    SendResult:
+      type: object
+      properties:
+        message: { $ref: '#/components/schemas/Message' }
+        warning:
+          type: string
+          description: Inline safety warning shown to the sender when flagged (never shaming).
+        flagged: { type: boolean }
+        escalated:
+          type: boolean
+          description: True when the conversation was routed to moderation / a case opened.
+    AIRequest:
+      type: object
+      required: [feature, prompt]
+      properties:
+        feature:
+          type: string
+          enum: [profile_coach, conversation_assistant, match_explanation]
+        prompt: { type: string }
+    AIResponse:
+      type: object
+      properties:
+        output: { type: string }
+        blocked:
+          type: boolean
+          description: True when the safety guardrail refused (output is a safe refusal).
+        reason_codes:
+          type: array
+          items: { type: string }
+    TrustedContact:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        phone: { type: string, description: Sensitive PII; owner-only, never logged. }
+        relationship: { type: string }
+        created_at: { type: string, format: date-time }
+    DatePlan:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        match_id: { type: string, format: uuid }
+        owner_id: { type: string, format: uuid }
+        idea: { type: string }
+        venue: { type: string }
+        scheduled_at: { type: string, format: date-time }
+        shared_with_contact: { type: boolean }
+        shared_contact_id: { type: string, format: uuid }
+        checkin_state:
+          type: string
+          enum: [planned, shared, checked_in, completed, missed]
+        feedback: { type: object, additionalProperties: true }
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ── Chat — available ONLY after a mutual match (server-enforced) ─────────────
+  /matches/{matchId}/conversation:
+    post:
+      summary: Open (or fetch) the conversation for a mutual match
+      description: >
+        403 if the caller is not a participant of an active mutual match
+        (deny-by-default). Lazily creates the conversation on first open.
+      parameters:
+        - in: path
+          name: matchId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Conversation id + safety state
+        '403': { description: Not a participant of an active match }
+        '409': { description: Conversation not open }
+  /conversations/{id}/messages:
+    get:
+      summary: List messages (participant-only)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: limit
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Message' }
+        '403': { description: Not a participant }
+    post:
+      summary: Send a message
+      description: >
+        Blocked unless matched + conversation open + no active block. Runs the
+        inline safety hook (scam/money/off-platform/harassment detection); a
+        flagged message is persisted, the sender receives a warning, and the
+        conversation is routed to moderation (case opened per config threshold).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string }
+                kind: { type: string, enum: [text, voice, icebreaker] }
+      responses:
+        '201':
+          description: Created (possibly flagged)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SendResult' }
+        '403': { description: No mutual match / blocked }
+        '409': { description: Conversation not open }
+
+  # ── Report / block ──────────────────────────────────────────────────────────
+  /safety/block:
+    post:
+      summary: Block a user (prevents further contact/visibility)
+      description: Idempotent; never fails silently. Optionally opens a connect_case.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [blocked_id]
+              properties:
+                blocked_id: { type: string, format: uuid }
+                reason: { type: string }
+                open_case: { type: boolean }
+      responses:
+        '201': { description: Block applied }
+  /safety/block/{blockedId}:
+    delete:
+      summary: Remove a block
+      parameters:
+        - in: path
+          name: blockedId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Unblocked }
+
+  # ── Date-safety center ──────────────────────────────────────────────────────
+  /safety/trusted-contacts:
+    get:
+      summary: List trusted contacts (owner-only)
+      responses:
+        '200':
+          description: Contacts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/TrustedContact' }
+    post:
+      summary: Add a trusted contact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, phone]
+              properties:
+                name: { type: string }
+                phone: { type: string }
+                relationship: { type: string }
+      responses:
+        '201': { description: Created }
+  /safety/trusted-contacts/{id}:
+    delete:
+      summary: Delete a trusted contact
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Deleted }
+  /date-plans:
+    post:
+      summary: Create a date plan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [match_id]
+              properties:
+                match_id: { type: string, format: uuid }
+                idea: { type: string }
+                venue: { type: string }
+                scheduled_at: { type: string, format: date-time }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DatePlan' }
+  /date-plans/{id}/share:
+    post:
+      summary: Share a plan with a trusted contact (planned → shared)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contact_id]
+              properties:
+                contact_id: { type: string, format: uuid }
+      responses:
+        '200': { description: Shared }
+  /date-plans/{id}/checkin:
+    post:
+      summary: Check in (→ checked_in)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Checked in }
+  /date-plans/{id}/feedback:
+    post:
+      summary: Post-date feedback (→ completed); may open a safety case
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rating: { type: integer }
+                notes: { type: string }
+                safety_report:
+                  type: boolean
+                  description: When true, also opens a connect_case (never fails silently).
+      responses:
+        '200': { description: Completed }
+
+  # ── Phase 5 — guardrailed AI assistant ──────────────────────────────────────
+  /ai/assist:
+    post:
+      summary: Guardrailed AI coach/assistant
+      description: >
+        Input + output are screened against a fixed safety policy. Unsafe
+        requests are blocked (200 with blocked=true and a safe refusal — never a
+        leak). Every call is audited with its policy verdict + reason codes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AIRequest' }
+      responses:
+        '200':
+          description: AI response (or safe refusal)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AIResponse' }
+
+  # ── Admin moderation (RBAC-gated) ───────────────────────────────────────────
+  /moderation/conversations:
+    get:
+      summary: List flagged conversations
+      description: 'RBAC: connect.moderation.view'
+      responses:
+        '200': { description: Flagged conversations }
+  /moderation/conversations/{id}:
+    patch:
+      summary: Set a conversation safety state
+      description: 'RBAC: connect.moderation.manage'
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [safety_state]
+              properties:
+                safety_state:
+                  type: string
+                  enum: [open, flagged, under_review, restricted, closed]
+                reason: { type: string }
+      responses:
+        '200': { description: Updated }
+  /moderation/messages:
+    get:
+      summary: List flagged messages (with reason codes)
+      description: 'RBAC: connect.moderation.view'
+      parameters:
+        - in: query
+          name: conversation_id
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Flagged messages }
+  /moderation/decisions:
+    get:
+      summary: List moderation decisions
+      description: 'RBAC: connect.moderation.view'
+      responses:
+        '200': { description: Decisions }
+    post:
+      summary: Record a moderation decision (reason codes stored)
+      description: 'RBAC: connect.moderation.manage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_type, target_id, decision]
+              properties:
+                target_type:
+                  type: string
+                  enum: [message, conversation, profile, media, user]
+                target_id: { type: string }
+                decision:
+                  type: string
+                  enum: [flagged, warned, cleared, restricted, escalated, removed]
+                reason_codes:
+                  type: array
+                  items: { type: string }
+                case_id: { type: string, format: uuid }
+      responses:
+        '201': { description: Recorded }
+  /scam-shield:
+    get:
+      summary: List scam-shield flags surfaced to moderators
+      description: 'RBAC: connect.moderation.view — reason codes per invariant 10.'
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer }
+      responses:
+        '200': { description: Scam-shield flags }

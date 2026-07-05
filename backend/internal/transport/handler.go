@@ -6,13 +6,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/platform/ws"
 )
 
 type Handler struct {
-	svc     *Service
-	tracker *TripTracker
-	hub     *ws.Hub
+	svc           *Service
+	tracker       *TripTracker
+	hub           *ws.Hub
+	presigner     *r2.Presigner // optional; nil/unconfigured disables presigned uploads
+	presignBucket string
 }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }

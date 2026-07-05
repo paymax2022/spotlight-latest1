@@ -102,6 +102,33 @@ export interface RegistrationStep {
   conditional?: (draft: RegistrationDraft) => boolean;
 }
 
+// Steps whose fields an admin may configure per-contest. Account login, contest
+// selection, and the legal/consent + submit steps are fixed by the platform and
+// are NOT part of the configurable schema.
+export type ConfigurableStepKey = 'personal_information' | 'category_specific';
+
+// A single custom (admin-authored) question added on top of the catalog.
+export interface ContestCustomField {
+  key: string;            // always namespaced 'custom.<slug>'
+  label: string;
+  type: FieldType;
+  step: ConfigurableStepKey;
+  required?: boolean;
+  options?: string[];     // for select / multi_select
+  accept?: string;        // for file
+  helpText?: string;
+}
+
+// Admin-defined mapping of which inputs a contest collects. When a contest has a
+// schema, the contestant sees EXACTLY the catalog fields in `includedFields`
+// (plus any custom fields and the fixed platform steps) — nothing else.
+export interface ContestFormSchema {
+  version: 1;
+  includedFields: string[];                    // allow-list of catalog field keys
+  requiredOverrides?: Record<string, boolean>; // catalog key -> required?
+  customFields?: ContestCustomField[];
+}
+
 export interface ContestRegistrationDefinition {
   slug: string;
   title: string;
@@ -122,6 +149,10 @@ export interface ContestRegistrationDefinition {
   auditionStates?: string[];
   applicantCategories?: string[];
   categoryQuestionSet: ContestCategory;
+  // Optional admin-defined form mapping. When present the contestant form is
+  // built from this schema; when absent the contest falls back to its tailored
+  // code template (forms/<slug>.ts) or the capability-driven default.
+  formSchema?: ContestFormSchema;
 }
 
 export interface RegistrationDraft {

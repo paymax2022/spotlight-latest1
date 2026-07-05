@@ -1,0 +1,92 @@
+name: Crowdfunding CI
+
+# Runs the environment-blocked verification for the crowdfunding module on a
+# Go-enabled, Node-enabled runner. The authoring sandbox had no networked Go
+# module cache (proxy.golang.org blocked), so the Go packages were verified
+# static-only (gofmt -e clean + pure-logic unit tests under go1.25). This
+# workflow is the formal gate: full `go build`/`vet`/`test`, mobile + admin
+# typecheck, and an additive-only migration guard.
+
+on:
+  push:
+    paths:
+      - 'backend/internal/crowdfunding/**'
+      - 'backend/internal/app/finance_routes.go'
+      - 'supabase/migrations/*crowdfunding*.sql'
+      - 'frontend-web/app/api/v1/crowdfunding/**'
+      - 'mobile-app/reactnative/src/features/crowdfunding/**'
+      - 'mobile-app/reactnative/app/crowdfunding/**'
+      - 'mobile-app/reactnative/tsconfig.crowdfunding.json'
+      - 'frontend-admin/src/services/crowdfundingAdminService.ts'
+      - 'frontend-admin/src/types/crowdfunding.ts'
+      - 'frontend-admin/app/admin/crowdfunding/**'
+      - '.github/workflows/crowdfunding-ci.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+      - name: Build (whole backend — catches route wiring / import breaks)
+        run: go build ./...
+      - name: Vet (crowdfunding module + all sub-packages)
+        run: go vet ./internal/crowdfunding/...
+      - name: Test (crowdfunding — state machine + query builder + handlers)
+        run: go test ./internal/crowdfunding/... -count=1 -v
+      - name: Test (all — regression)
+        run: go test ./... -count=1
+
+  mobile-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app/reactnative
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci || npm install
+      - name: Typecheck crowdfunding screens + feature
+        run: npx tsc -p tsconfig.crowdfunding.json
+
+  admin-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci || npm install
+      - name: Typecheck admin
+        run: npx tsc --noEmit
+
+  migration-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Additive-only guard on crowdfunding migrations
+        run: |
+          set -e
+          FILES=$(ls supabase/migrations/*crowdfunding*.sql 2>/dev/null || true)
+          if [ -z "$FILES" ]; then echo "no crowdfunding migrations"; exit 0; fi
+          # Destructive only: dropping tables/columns/types/constraints/schemas, renames,
+          # or column-type changes. DROP POLICY/INDEX/TRIGGER IF EXISTS (idempotent
+          # re-create) is allowed and used throughout the codebase. SQL comments are
+          # stripped first so doc lines like "-- no RENAME" don't trip the guard.
+          if sed 's/--.*$//' $FILES | grep -inE 'DROP[[:space:]]+(TABLE|COLUMN|SCHEMA|DATABASE|TYPE|CONSTRAINT|VIEW)|\bRENAME[[:space:]]|ALTER[[:space:]]+COLUMN[^;]*[[:space:]]TYPE[[:space:]]'; then
+            echo "❌ Forbidden DROP/RENAME/type-narrowing in an additive migration."; exit 1
+          fi
+          echo "✅ crowdfunding migrations are additive-only"

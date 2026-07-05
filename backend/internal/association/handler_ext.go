@@ -191,6 +191,22 @@ func (h *Handler) SendChatMessage(c *gin.Context) {
 	c.JSON(http.StatusCreated, m)
 }
 
+// POST /associations/chat/threads/:id/mute — persist mute preference.
+func (h *Handler) MuteChatThread(c *gin.Context) {
+	var b struct {
+		Muted bool `json:"muted"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.MuteThread(c.Request.Context(), c.GetString("user_id"), c.Param("id"), b.Muted); err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // ─── AI notes ─────────────────────────────────────────────────────────────────
 
 func (h *Handler) ListAiNotes(c *gin.Context) {
@@ -296,7 +312,21 @@ func (h *Handler) SubmitApplication(c *gin.Context) {
 // ─── Bulk import (admin) ──────────────────────────────────────────────────────
 
 func (h *Handler) ImportPreview(c *gin.Context) {
-	v, err := h.svc.ImportPreview(c.Request.Context(), c.GetString("user_id"))
+	// Parse the uploaded CSV (multipart form field "file"). org_id is taken from
+	// the query param when supplied, otherwise resolved from the caller's primary
+	// membership inside the service. Mirrors BulkImportMembers' parsing.
+	orgID := c.Query("org_id")
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "multipart file 'file' required"})
+		return
+	}
+	defer file.Close()
+	fileName := ""
+	if header != nil {
+		fileName = header.Filename
+	}
+	v, err := h.svc.ImportPreview(c.Request.Context(), c.GetString("user_id"), orgID, fileName, file)
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return
