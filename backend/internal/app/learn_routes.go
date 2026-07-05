@@ -34,5 +34,14 @@ func RegisterLearnRoutes(r *gin.Engine, supabase *integrations.SupabaseRestClien
 	g.Use(middleware.RequireAuthContext(supabase, rbac))
 	learn.RegisterLearn(g, h)
 
-	log.Println("[learn] routes registered — paths / lessons / quiz / glossary live under /api/v1/learn")
+	// Content admin (RBAC-gated): create/update/delete paths, lessons, quizzes,
+	// glossary. Requires the "learn.admin.manage" permission (grant via RBAC).
+	adminSvc := learn.NewAdminService(pool, nil)
+	adminH := learn.NewAdminHandler(adminSvc)
+	ag := r.Group("/api/v1/learn/admin")
+	ag.Use(middleware.RequireAuthContext(supabase, rbac))
+	ag.Use(middleware.RequirePermission(rbac, "learn.admin.manage"))
+	learn.RegisterLearnAdmin(ag, adminH)
+
+	log.Println("[learn] routes registered — member GET surface + content admin under /api/v1/learn[/admin]")
 }
