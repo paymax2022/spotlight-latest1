@@ -350,6 +350,10 @@ const navItemsBase: NavItem[] = [
   // ── Groups (Community group savings — read-only; backend has no admin route group) ──
   { label: 'Groups Overview', href: '/admin/groups/dashboard', section: 'Community', permissions: ['savings.admin.dashboard', 'savings.admin.view'] },
   { label: 'Groups & Members', href: '/admin/groups/groups', section: 'Community', permissions: ['savings.admin.view'] },
+  // ── Learn Center (Paymax Invest — content admin; RBAC learn.admin.manage) ──
+  { label: 'Learn Center', href: '/admin/learn', section: 'Academy', permissions: ['learn.admin.manage'] },
+  // ── Spotlight Wealth (education-first Spotlight ⇄ Invest surface; RBAC spotlight.admin.manage) ──
+  { label: 'Spotlight Wealth', href: '/admin/spotlight', section: 'Academy', permissions: ['spotlight.admin.manage'] },
   // ── Associations (Community — real admin surface: approvals, dues, member ops) ──
   { label: 'Associations Overview', href: '/admin/association/dashboard', section: 'Community', permissions: ['savings.admin.dashboard', 'savings.admin.view'] },
   { label: 'Membership Approvals', href: '/admin/association/approvals', section: 'Community', permissions: ['savings.admin.view'] },
