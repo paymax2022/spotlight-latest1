@@ -27,6 +27,16 @@ func NewWebhookEmitter(endpoint, secret string) *WebhookEmitter {
 	return &WebhookEmitter{endpoint: endpoint, secret: secret, client: &http.Client{Timeout: 10 * time.Second}}
 }
 
+// OutboundEndpoint returns the configured outbound webhook URL, or "" when no
+// emitter is configured (nil-safe). Used by the business-admin webhooks
+// settings read (handler_business.go) to surface the current subscription.
+func (e *WebhookEmitter) OutboundEndpoint() string {
+	if e == nil {
+		return ""
+	}
+	return e.endpoint
+}
+
 // SignPayload returns the hex HMAC-SHA256 of `t.payload` under secret.
 func SignPayload(secret string, t int64, payload []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))

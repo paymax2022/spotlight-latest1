@@ -1,7 +1,20 @@
 // ── Spotlight Wealth — API wrapper ───────────────────────────────────────────
-// Typed data layer the screens code against. Mock-flagged like crypto.api.ts —
-// flip EXPO_PUBLIC_SPOTLIGHT_USE_MOCK=false once the real Paymax Spotlight
-// growth endpoints land.
+// Typed data layer the screens code against. Mock-flagged like crypto.api.ts.
+//
+// GO-LIVE (2026-07): the real backend module now EXISTS —
+// backend/internal/spotlightwealth (service+handler+routes) is registered on the
+// Go router under /api/v1/spotlight/* (see
+// backend/internal/app/spotlightwealth_routes.go), backed by the spotlight_*
+// tables (migration 20260912000100_spotlightwealth.sql). Content matches these
+// mock fixtures. Challenge completion (POST /challenges/:id/complete, not yet
+// surfaced in this wrapper) pays WALLET CREDIT via the finance ledger under an
+// Idempotency-Key — never a guaranteed return.
+//
+// REMAINING DEPENDENCY before flipping EXPO_PUBLIC_SPOTLIGHT_USE_MOCK=false: the
+// Next gateway only rewrites /api/finance/* to Go; /api/v1/* needs a frontend-web
+// proxy. Add frontend-web/app/api/v1/spotlight/[...path]/route.ts (mirror the
+// app/api/v1/invest proxy) forwarding to the Go backend's /api/v1/spotlight/*.
+// Once it lands, flip the flag — the live paths below already match the Go routes.
 //
 // STRICT RULES honoured here (docs/crypto/product.md → strict rules):
 //  • Leaderboard returns LEARNING points, never profit.

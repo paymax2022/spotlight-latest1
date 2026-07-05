@@ -360,6 +360,17 @@ func (h *Handler) ListCircles(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "circles": circles})
 }
 
+// DiscoverCircles returns public FORMING circles the caller can join (not
+// already a member of). Read-only; no PII/balance exposure.
+func (h *Handler) DiscoverCircles(c *gin.Context) {
+	circles, err := h.ajo.DiscoverCircles(c.Request.Context(), userID(c))
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "circles": circles})
+}
+
 // ContributeCircle lets a member prepay the current cycle's contribution.
 func (h *Handler) ContributeCircle(c *gin.Context) {
 	key, ok := requireIdem(c)
@@ -422,6 +433,7 @@ func (h *Handler) Register(member *gin.RouterGroup, admin *gin.RouterGroup, guar
 	g.POST("/vaults/:id/autosave", h.EnableAutoSave)
 	// Ajo / Esusu
 	g.GET("/circles", h.ListCircles)
+	g.GET("/circles/discover", h.DiscoverCircles)
 	g.POST("/circles", h.CreateCircle)
 	g.POST("/circles/:id/join", h.JoinCircle)
 	g.POST("/circles/:id/activate", h.ActivateCircle)

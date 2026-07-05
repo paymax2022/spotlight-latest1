@@ -61,6 +61,29 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		// Portfolio / holdings (read → crypto.view).
 		member.GET("/portfolio", rp(PermView), h.Portfolio)
 		member.GET("/portfolio/holdings", rp(PermView), h.Holdings)
+
+		// ── Swap (asset→asset atomic order; write → crypto.trade) ─────────────
+		member.POST("/swap/quote", rp(PermTrade), h.SwapQuote) // pre-trade estimate
+		member.POST("/swap", rp(PermTrade), h.Swap)            // Idempotency-Key required
+		member.GET("/swap/orders", rp(PermView), h.SwapOrders)
+
+		// ── Address allow-list (whitelisted withdrawal destinations) ──────────
+		member.GET("/addresses", rp(PermView), h.ListAddresses)
+		member.POST("/addresses", rp(PermTrade), h.AddAddress)
+		member.POST("/addresses/screen", rp(PermView), h.ScreenAddress) // pre-save check
+		member.DELETE("/addresses/:id", rp(PermTrade), h.DeleteAddress)
+
+		// ── Deposit address (per-user, per-asset; persisted) ──────────────────
+		member.GET("/deposit-address", rp(PermView), h.DepositAddress)
+
+		// ── Withdrawals (state machine; write → crypto.trade) ─────────────────
+		// Static preview routes declared before the /:id param to avoid collision.
+		member.GET("/withdrawals/eligibility", rp(PermView), h.WithdrawalEligibility)
+		member.POST("/withdrawals/quote", rp(PermView), h.WithdrawalQuote) // fee preview
+		member.POST("/withdrawals", rp(PermTrade), h.Withdraw)             // Idempotency-Key required
+		member.GET("/withdrawals", rp(PermView), h.Withdrawals)
+		member.GET("/withdrawals/:id", rp(PermView), h.Withdrawal)
+		member.POST("/withdrawals/:id/confirm", rp(PermTrade), h.ConfirmWithdrawal)
 	}
 
 	// ── Admin control plane (RBAC crypto.admin) ───────────────────────────────

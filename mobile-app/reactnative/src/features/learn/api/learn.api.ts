@@ -7,15 +7,18 @@
 // getGlossary are GETs; submitQuiz is the only mutation and is scored server-side
 // in production (the client never decides pass/fail authoritatively).
 //
-// GO-LIVE AUDIT (2026-07): there is NO "learn" backend module anywhere under
-// backend/internal — grepped the whole tree (only unrelated matches: nutrition,
-// academy/tutor, finance/transfers). No Go route registers /learn/* under any
-// base (not /api/finance/learn, not a bare /learn group). There is also no
-// frontend-web proxy route for /api/v1/learn. This module stays MOCK-ONLY
-// (USE_MOCK effectively always true in practice) until a real backend + proxy
-// exist — do not flip EXPO_PUBLIC_LEARN_USE_MOCK=false yet; every call below
-// would 404. See go-live report: MISSING backend module entirely (not just a
-// missing route).
+// GO-LIVE (2026-07): the real backend module now EXISTS —
+// backend/internal/learn (service+handler+routes) is registered on the Go router
+// under /api/v1/learn/* (see backend/internal/app/learn_routes.go), backed by the
+// learn_* tables (migration 20260912000000_learn_center.sql). Content matches
+// these mock fixtures, so a flipped client renders identical copy.
+//
+// REMAINING DEPENDENCY before flipping EXPO_PUBLIC_LEARN_USE_MOCK=false: the Next
+// gateway only rewrites /api/finance/* to Go; /api/v1/* paths need a frontend-web
+// proxy. Add a catch-all at frontend-web/app/api/v1/learn/[...path]/route.ts (a
+// thin mirror of the existing app/api/v1/invest proxy) that forwards to the Go
+// backend's /api/v1/learn/*. Once that proxy lands, flip the flag — the live
+// paths below already match the Go routes exactly.
 
 import { api } from '@/api/client';
 import { QUIZ_PASS_RATIO } from '../constants/learn.constants';

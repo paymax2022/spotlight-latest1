@@ -575,6 +575,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		og.GET("/rate-alerts", orchHandler.ListRateAlerts)
 		og.POST("/rate-alerts", orchHandler.CreateRateAlert)
 		og.DELETE("/rate-alerts/:id", orchHandler.DeleteRateAlert)
+		// --- FX business-admin reads (handler_business.go). Team/approvals/activity/
+		// api-keys/settings/notifications are honest stubs pending their subsystems;
+		// limits + webhooks read real config. None are money-path.
+		og.GET("/team", orchHandler.ListTeam)
+		og.GET("/approvals", orchHandler.ListApprovals)
+		og.GET("/approvals/thresholds", orchHandler.ListApprovalThresholds)
+		og.GET("/activity", orchHandler.ListActivity)
+		og.GET("/api-keys", orchHandler.ListAPIKeys)
+		og.GET("/webhooks", orchHandler.ListWebhookSettings)
+		og.GET("/settings", orchHandler.GetSettings)
+		og.GET("/limits", orchHandler.GetLimits)
+		og.GET("/notifications", orchHandler.ListNotifications)
 		// --- FX virtual cards (handler_cards.go) — STUBS, no issuer wired yet.
 		// Consistent :id param across all card sub-routes (gin requires it).
 		og.GET("/cards", orchHandler.ListCards)
@@ -1255,6 +1267,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		v1Tele.POST("/appointments/:id/review", telemedHandler.AddReview)
 		v1Tele.DELETE("/appointments/:id", telemedHandler.CancelAppointment)
 		v1Tele.POST("/appointments/:id/prescription", telemedHandler.IssuePrescription)
+		v1Tele.GET("/appointments/:id/prescription", telemedHandler.GetPrescription)
 		// Doctor-facing
 		v1Tele.POST("/doctor/register", telemedHandler.RegisterDoctorV2)
 		v1Tele.GET("/doctor/dashboard", telemedHandler.GetDoctorDashboard)
@@ -1520,6 +1533,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			mob.POST("/towing/:id/rate", transportHandler.TowingRate)
 
 			mob.POST("/movers/quote", transportHandler.MoverQuote)
+			mob.GET("/movers", transportHandler.MoverList)
 			mob.GET("/movers/:id", transportHandler.MoverGet)
 			mob.POST("/movers/:id/accept-bid", transportHandler.MoverAcceptBid)
 			mob.POST("/movers/:id/confirm-completion", transportHandler.MoverConfirmCompletion)

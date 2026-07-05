@@ -17,11 +17,12 @@ import (
 // event. All amounts are integer minor units (kobo for cash; asset minor units
 // for holdings) — no float math anywhere.
 type Service struct {
-	db    *pgxpool.Pool
-	repo  *Repository
-	led   *ledger.Service
-	price PriceProvider
-	audit *auditLogger
+	db       *pgxpool.Pool
+	repo     *Repository
+	led      *ledger.Service
+	price    PriceProvider
+	audit    *auditLogger
+	withdraw WithdrawalProvider // pluggable on-chain broadcast seam (mock default)
 }
 
 // NewService builds the crypto service. If price is nil the deterministic
@@ -31,11 +32,12 @@ func NewService(db *pgxpool.Pool, led *ledger.Service, price PriceProvider) *Ser
 		price = NewMockPriceProvider()
 	}
 	return &Service{
-		db:    db,
-		repo:  NewRepository(db),
-		led:   led,
-		price: price,
-		audit: newAuditLogger(db),
+		db:       db,
+		repo:     NewRepository(db),
+		led:      led,
+		price:    price,
+		audit:    newAuditLogger(db),
+		withdraw: NewMockWithdrawalProvider(),
 	}
 }
 

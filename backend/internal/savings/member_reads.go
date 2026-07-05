@@ -184,6 +184,42 @@ func (s *AjoService) ListCircles(ctx context.Context, userID string) ([]CircleVi
 	return out, rows.Err()
 }
 
+// DiscoverCircles returns public, joinable circles: FORMING circles the caller
+// is not already a member of. Read-only, no object-level ownership check needed
+// since only non-sensitive summary fields are exposed (name, contribution,
+// interval, member count) — no member identities or balances.
+func (s *AjoService) DiscoverCircles(ctx context.Context, userID string) ([]CircleView, error) {
+	const q = `SELECT c.id, c.creator_user_id, c.name, c.contribution_kobo, c.interval_secs,
+	                  c.state, c.current_cycle, c.total_cycles, c.cycle_job_id, c.created_at, c.updated_at,
+	                  (SELECT COUNT(*) FROM ajo_members mm WHERE mm.circle_id=c.id) AS member_count
+	           FROM ajo_circles c
+	           WHERE c.state = 'FORMING'
+	             AND NOT EXISTS (
+	                 SELECT 1 FROM ajo_members m WHERE m.circle_id=c.id AND m.user_id=$1
+	             )
+	           ORDER BY c.created_at DESC
+	           LIMIT 100`
+	rows, err := s.db.Query(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CircleView
+	for rows.Next() {
+		var cv CircleView
+		var state string
+		if err := rows.Scan(&cv.ID, &cv.CreatorUserID, &cv.Name, &cv.ContributionKobo, &cv.IntervalSecs,
+			&state, &cv.CurrentCycle, &cv.TotalCycles, &cv.CycleJobID, &cv.CreatedAt, &cv.UpdatedAt,
+			&cv.MemberCount); err != nil {
+			return nil, err
+		}
+		cv.State = CircleState(state)
+		cv.MyState = "" // caller is not a member — not applicable
+		out = append(out, cv)
+	}
+	return out, rows.Err()
+}
+
 // Contribute lets a member proactively fund the current cycle's pot outside the
 // scheduled auto-debit (e.g. paying ahead). Funds move wallet→escrow and are
 // credited to the current PENDING cycle's collected pot. Idempotent (NL-9). This

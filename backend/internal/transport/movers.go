@@ -339,6 +339,43 @@ func (s *Service) moverSetStatus(ctx context.Context, id, from, to string) error
 	return nil
 }
 
+// ListMoverJobs returns the caller's own mover jobs (customer history/active
+// list), newest first. Object-level authZ: scoped to user_id (the caller can
+// never see another customer's jobs via this endpoint — distinct from
+// OpenMoverJobs below, which is the provider-facing open-bidding feed).
+func (s *Service) ListMoverJobs(ctx context.Context, userID string) ([]map[string]any, error) {
+	const q = `
+		SELECT id, provider_id, pickup_address, dropoff_address, property_type, truck_size,
+		       helpers, fragile, move_at, accepted_bid_id, quote_amount_kobo, status, escrow_status, created_at
+		FROM mover_jobs WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100`
+	rows, err := s.db.Query(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []map[string]any
+	for rows.Next() {
+		var id, pickup, dropoff, truckSize, status, escrowStatus string
+		var providerID, propType, acceptedBid *string
+		var helpers int
+		var fragile bool
+		var moveAt *time.Time
+		var quoteAmount *int64
+		var createdAt time.Time
+		if err := rows.Scan(&id, &providerID, &pickup, &dropoff, &propType, &truckSize,
+			&helpers, &fragile, &moveAt, &acceptedBid, &quoteAmount, &status, &escrowStatus, &createdAt); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]any{
+			"id": id, "providerId": providerID, "pickupAddress": pickup, "dropoffAddress": dropoff,
+			"propertyType": propType, "truckSize": truckSize, "helpers": helpers, "fragile": fragile,
+			"moveAt": moveAt, "acceptedBidId": acceptedBid, "quoteAmountKobo": quoteAmount,
+			"status": status, "escrowStatus": escrowStatus, "createdAt": createdAt,
+		})
+	}
+	return out, rows.Err()
+}
+
 // ─── Provider (driver) flows ─────────────────────────────────────────────────
 
 // OpenMoverJobs returns jobs open for bidding (quote_requested / bids_received).

@@ -478,6 +478,34 @@ func (s *Service) IssuePrescription(ctx context.Context, appointmentID, doctorUs
 	return p, err
 }
 
+// GetPrescription returns the prescription issued for an appointment.
+// Object-level authZ: only the patient or the assigned doctor of that
+// appointment may read it back.
+func (s *Service) GetPrescription(ctx context.Context, appointmentID, callerUserID string) (*Prescription, error) {
+	var patientID, doctorID string
+	if err := s.db.QueryRow(ctx,
+		`SELECT patient_id, doctor_id FROM appointments WHERE id=$1`,
+		appointmentID).Scan(&patientID, &doctorID); err != nil {
+		return nil, fmt.Errorf("telemedicine: appointment not found")
+	}
+	var dbDoctorUserID string
+	if err := s.db.QueryRow(ctx, `SELECT user_id FROM doctors WHERE id=$1`, doctorID).Scan(&dbDoctorUserID); err != nil {
+		return nil, fmt.Errorf("telemedicine: doctor not found")
+	}
+	if callerUserID != patientID && callerUserID != dbDoctorUserID {
+		return nil, fmt.Errorf("telemedicine: not permitted to view this prescription")
+	}
+	p := &Prescription{}
+	const q = `SELECT id, appointment_id, doctor_id, patient_id, medications, instructions, issued_at
+	            FROM prescriptions WHERE appointment_id=$1 ORDER BY issued_at DESC LIMIT 1`
+	if err := s.db.QueryRow(ctx, q, appointmentID).Scan(
+		&p.ID, &p.AppointmentID, &p.DoctorID, &p.PatientID, &p.Medications, &p.Instructions, &p.IssuedAt,
+	); err != nil {
+		return nil, fmt.Errorf("telemedicine: prescription not found")
+	}
+	return p, nil
+}
+
 // ─── SOAP Notes ──────────────────────────────────────────────────────────────
 
 // SubmitSOAPNote saves a SOAP consultation note for a completed appointment.

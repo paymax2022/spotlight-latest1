@@ -23,6 +23,11 @@ type Service struct {
 	now       func() time.Time
 }
 
+// WebhookOutURL returns the configured outbound webhook endpoint, or "" when
+// no emitter is attached. Read-only accessor for the business-admin webhooks
+// settings view (handler_business.go).
+func (s *Service) WebhookOutURL() string { return s.emitter.OutboundEndpoint() }
+
 // Options configures the Service.
 type Options struct {
 	Spread     *SpreadEngine

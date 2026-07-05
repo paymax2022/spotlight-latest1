@@ -207,16 +207,28 @@ export async function executeSell(quote: CryptoQuote, idempotencyKey: string): P
 }
 
 // ─── Swap ──────────────────────────────────────────────────────────────────────
-// MISSING backend endpoints: no crypto-to-crypto swap route exists at all
-// (only /orders/buy and /orders/sell against fiat). Swap stays mock-only until
-// the backend ships POST /crypto/quote (side=swap) + POST /crypto/swap.
+// LIVE: crypto-to-crypto swap is now backed by Go — POST /crypto/swap/quote for
+// the pre-trade estimate and POST /crypto/swap for the atomic two-leg order
+// (sell A → buy B under one Idempotency-Key). The server re-prices at execution;
+// the client quote is display-only. Amounts are integer asset minor units.
 
 export async function createSwapQuote(draft: SwapDraft): Promise<SwapQuote> {
   if (USE_MOCK) {
     await delay(360);
     return buildSwapQuote(requireAsset(draft.fromAssetId), requireAsset(draft.toAssetId), draft.fromAmount);
   }
-  return unwrap<SwapQuote>(await api.post('/api/v1/crypto/quote', { ...draft, side: 'swap' }));
+  // POST /crypto/swap/quote → { from_asset_id, to_asset_id, from_units }.
+  try {
+    return unwrap<SwapQuote>(
+      await api.post('/api/v1/crypto/swap/quote', {
+        from_asset_id: draft.fromAssetId,
+        to_asset_id: draft.toAssetId,
+        from_units: draft.fromAmount,
+      }),
+    );
+  } catch (err) {
+    throw toCryptoError(err);
+  }
 }
 
 export async function executeSwap(quote: SwapQuote, idempotencyKey: string): Promise<SwapResult> {
@@ -243,9 +255,20 @@ export async function executeSwap(quote: SwapQuote, idempotencyKey: string): Pro
       createdAt: new Date().toISOString(),
     };
   }
+  // POST /crypto/swap → { from_asset_id, to_asset_id, from_units }. The server
+  // re-prices from these inputs (never trusts the client fee/rate) and returns the
+  // authoritative filled swap order. Idempotency-Key makes the POST retry-safe.
   try {
     return unwrap<SwapResult>(
-      await api.post('/api/v1/crypto/swap', quote, { headers: { 'Idempotency-Key': idempotencyKey } }),
+      await api.post(
+        '/api/v1/crypto/swap',
+        {
+          from_asset_id: quote.fromAssetId,
+          to_asset_id: quote.toAssetId,
+          from_units: quote.from.amount,
+        },
+        { headers: { 'Idempotency-Key': idempotencyKey } },
+      ),
     );
   } catch (err) {
     throw toCryptoError(err);
@@ -321,10 +344,10 @@ export async function getTransaction(id: string): Promise<CryptoTransactionDetai
 }
 
 // ─── Deposit address (GET /crypto/deposit-address) ────────────────────────────
-// A custody-provider address per asset+network. Deterministic mock so the same
-// asset/network always renders the same address + QR.
-// MISSING backend endpoint: GET /crypto/deposit-address — the backend has no
-// custody/deposit surface yet (buy/sell against fiat only). Stays mock-only.
+// LIVE: GET /crypto/deposit-address?asset=<symbol>&network=<net> returns the
+// caller's per-asset deposit address, generated + persisted on first request via
+// the custody provider seam (stable across calls). Mock keeps a deterministic
+// address so the same asset/network always renders the same QR offline.
 
 export async function getDepositAddress(symbol: string, networkId: string): Promise<DepositAddress> {
   if (USE_MOCK) {
@@ -435,10 +458,11 @@ export async function deleteAlert(id: string): Promise<void> {
 // ─── Withdrawal address book (Phase-4; docs/crypto/compliance.md) ─────────────
 // Every destination is whitelisted + screened before first use. Addresses are
 // masked in the UI; the full value is only shown on the detail/confirm screens.
-// MISSING backend endpoints: no address-book / withdrawal surface exists on
-// the crypto backend at all (buy/sell against fiat only, no custody yet).
-// getAddresses/screenAddress/addAddress/deleteAddress/getWithdrawalEligibility/
-// quoteWithdrawal/initiateWithdrawal below all stay mock-only pending Phase-4.
+// LIVE: the address allow-list + withdrawal state machine are now backed by Go —
+// GET/POST/DELETE /crypto/addresses (whitelist) and POST/GET /crypto/withdrawals
+// (requested→pending→broadcast→confirmed|failed via a pluggable provider seam).
+// screenAddress + getWithdrawalEligibility remain mock (compliance surfaces the
+// backend does not expose yet); the whitelist itself is enforced server-side.
 
 const MOCK_ADDRESSES: CryptoAddress[] = [
   {
@@ -496,7 +520,20 @@ export async function addAddress(draft: NewAddressDraft): Promise<CryptoAddress>
     MOCK_ADDRESSES.unshift(created);
     return created;
   }
-  return unwrap<CryptoAddress>(await api.post('/api/v1/crypto/addresses', draft));
+  // POST /crypto/addresses → { symbol, label, network, address }. Server whitelists
+  // the destination (allow-list) and screens it; withdrawals must target a saved one.
+  try {
+    return unwrap<CryptoAddress>(
+      await api.post('/api/v1/crypto/addresses', {
+        symbol: draft.symbol,
+        label: draft.label,
+        network: draft.networkId,
+        address: draft.address,
+      }),
+    );
+  } catch (err) {
+    throw toCryptoError(err);
+  }
 }
 
 export async function deleteAddress(id: string): Promise<void> {
@@ -552,7 +589,15 @@ export async function quoteWithdrawal(draft: WithdrawalDraft): Promise<Withdrawa
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     };
   }
-  return unwrap<WithdrawalQuote>(await api.post('/api/v1/crypto/withdrawals/quote', draft));
+  // POST /crypto/withdrawals/quote → { symbol, network, units }. Returns the
+  // in-asset network fee + net receive preview (server re-computes at fill time).
+  return unwrap<WithdrawalQuote>(
+    await api.post('/api/v1/crypto/withdrawals/quote', {
+      symbol: draft.symbol,
+      network: draft.networkId,
+      units: draft.amount,
+    }),
+  );
 }
 
 /** Initiate a withdrawal — server-side pre-check + Idempotency-Key + provider ref. */
@@ -581,11 +626,23 @@ export async function initiateWithdrawal(
       createdAt: new Date().toISOString(),
     };
   }
+  // POST /crypto/withdrawals → { symbol, address_id, units, fee_kobo }. The server
+  // validates the address is a saved, active, whitelisted destination (allow-list),
+  // debits+parks the holding units (no mint), charges the fiat fee to revenue, and
+  // drives the state machine requested→pending→broadcast via the provider seam.
+  // Idempotency-Key makes the POST retry-safe. (otp is a client-side confirmation
+  // gate; the backend authorises via the whitelist + session identity.)
+  void otp;
   try {
     return unwrap<WithdrawalResult>(
       await api.post(
-        '/api/v1/crypto/withdraw',
-        { ...draft, quote_id: quote, otp },
+        '/api/v1/crypto/withdrawals',
+        {
+          symbol: quote.symbol,
+          address_id: draft.addressId,
+          units: draft.amount,
+          fee_kobo: quote.paymaxFee.amount,
+        },
         { headers: { 'Idempotency-Key': idempotencyKey } },
       ),
     );

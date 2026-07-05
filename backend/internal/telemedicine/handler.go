@@ -189,6 +189,19 @@ func (h *Handler) IssuePrescription(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"data": p})
 }
 
+// GetPrescription reads back the prescription issued for an appointment
+// (GET /appointments/:id/prescription). Object-level authZ enforced in the
+// service layer (patient or assigned doctor only).
+func (h *Handler) GetPrescription(c *gin.Context) {
+	userID := c.GetString("user_id")
+	p, err := h.svc.GetPrescription(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": p})
+}
+
 // ─── SOAP Notes ──────────────────────────────────────────────────────────────
 
 func (h *Handler) SubmitSOAPNote(c *gin.Context) {

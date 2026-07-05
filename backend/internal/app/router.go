@@ -364,5 +364,12 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		RegisterMarketplace(r, cfg, supabase, rbacService, sharedPool, sharedRedis, referralRewardsSvc)
 	}
 
+	// Paymax Invest · Learn Center (education-first literacy) under /api/v1/learn/*
+	// and Spotlight Wealth (learn-and-earn growth surface) under /api/v1/spotlight/*
+	// — the exact base paths the mobile learn / spotlightwealth features call.
+	// Both are wired only when the shared pool is present (each is a no-op otherwise).
+	RegisterLearnRoutes(r, supabase, rbacService, sharedPool)
+	RegisterSpotlightwealthRoutes(r, supabase, rbacService, sharedPool)
+
 	return r
 }
