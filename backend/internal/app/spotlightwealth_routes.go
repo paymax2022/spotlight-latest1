@@ -40,5 +40,14 @@ func RegisterSpotlightwealthRoutes(r *gin.Engine, supabase *integrations.Supabas
 	g.Use(middleware.RequireAuthContext(supabase, rbac))
 	spotlightwealth.RegisterSpotlightwealth(g, h)
 
-	log.Println("[spotlightwealth] routes registered — videos / challenges / leaderboard / reward-wallet / campaigns live under /api/v1/spotlight")
+	// Content admin (RBAC-gated): create/update/delete videos, challenges,
+	// campaigns. Requires the "spotlight.admin.manage" permission (grant via RBAC).
+	adminSvc := spotlightwealth.NewAdminService(pool, nil)
+	adminH := spotlightwealth.NewAdminHandler(adminSvc)
+	ag := r.Group("/api/v1/spotlight/admin")
+	ag.Use(middleware.RequireAuthContext(supabase, rbac))
+	ag.Use(middleware.RequirePermission(rbac, "spotlight.admin.manage"))
+	spotlightwealth.RegisterSpotlightwealthAdmin(ag, adminH)
+
+	log.Println("[spotlightwealth] routes registered — videos / challenges / leaderboard / reward-wallet / campaigns live under /api/v1/spotlight[/admin]")
 }
