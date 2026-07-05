@@ -86,7 +86,7 @@ func seedChallenge(t *testing.T, ctx context.Context, pool *pgxpool.Pool, reward
 	id := uuid.New().String()
 	_, err := pool.Exec(ctx, `
 		INSERT INTO spotlight_challenges (id, title, description, reward_kobo, currency, ends_at, kind, published)
-		VALUES ($1, 'Test Challenge', 'desc', $2, 'NGN', now() + interval '30 days', 'learn', true)`,
+		VALUES ($1, 'Test Challenge', 'desc', $2, 'NGN', now() + interval '30 days', 'literacy', true)`,
 		id, rewardKobo)
 	if err != nil {
 		t.Fatalf("seed challenge: %v", err)
@@ -100,7 +100,7 @@ func seedEndedChallenge(t *testing.T, ctx context.Context, pool *pgxpool.Pool, r
 	id := uuid.New().String()
 	_, err := pool.Exec(ctx, `
 		INSERT INTO spotlight_challenges (id, title, description, reward_kobo, currency, ends_at, kind, published)
-		VALUES ($1, 'Ended Challenge', 'desc', $2, 'NGN', now() - interval '1 day', 'learn', true)`,
+		VALUES ($1, 'Ended Challenge', 'desc', $2, 'NGN', now() - interval '1 day', 'literacy', true)`,
 		id, rewardKobo)
 	if err != nil {
 		t.Fatalf("seed ended challenge: %v", err)
