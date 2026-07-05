@@ -11,6 +11,7 @@ import (
 type Handler struct {
 	svc *Service
 	sec SecondaryStore // beneficiaries + rate alerts; nil → handlers fall back to stubs
+	biz BusinessStore  // FX business-admin console; nil → handlers fall back to honest defaults
 }
 
 // NewHandler builds the orchestration HTTP handler.
@@ -19,6 +20,12 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 // WithSecondary attaches the persistence store for beneficiaries + rate alerts.
 // Returns the handler for chaining. When nil, those handlers stay in stub mode.
 func (h *Handler) WithSecondary(s SecondaryStore) *Handler { h.sec = s; return h }
+
+// WithBusiness attaches the persistence store for the FX business-admin console
+// (team, approvals, activity, api-keys, webhooks, settings, notifications).
+// Returns the handler for chaining. When nil, those handlers fall back to honest
+// contract-shaped defaults so the app still renders in a DB-less dev setup.
+func (h *Handler) WithBusiness(s BusinessStore) *Handler { h.biz = s; return h }
 
 func customerID(c *gin.Context) string { return c.GetString("user_id") }
 

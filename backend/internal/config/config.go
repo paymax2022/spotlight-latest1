@@ -208,6 +208,12 @@ type Config struct {
 	// (internal/crypto): mock-first price feed, reuses the finance ledger.
 	FeatureCryptoEnabled bool
 
+	// Learn Center (education). DEFAULT OFF. Gates /api/v1/learn (internal/learn).
+	FeatureLearnEnabled bool
+	// Spotlight Wealth (learn-to-earn challenges + reward wallet). DEFAULT OFF.
+	// Gates /api/v1/spotlight (internal/spotlightwealth); rewards via finance ledger.
+	FeatureSpotlightwealthEnabled bool
+
 	// Micro-insurance / Protection module (Partnering Insurtech: MyCover + Octamile
 	// via underwriter-gateway). DEFAULT OFF. Gates /api/finance/insurance[/admin]
 	// and /internal/webhooks/{mycover,octamile} (internal/insurance).
@@ -552,6 +558,8 @@ func Load() Config {
 		FeaturePropertySuiteEnabled:           getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
 		FeatureFractionalREEnabled:            getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
 		FeatureCryptoEnabled:                  getEnvBool("FEATURE_CRYPTO_ENABLED", false),
+		FeatureLearnEnabled:                   getEnvBool("FEATURE_LEARN_ENABLED", false),
+		FeatureSpotlightwealthEnabled:         getEnvBool("FEATURE_SPOTLIGHTWEALTH_ENABLED", false),
 		FeatureInsuranceEnabled:               getEnvBool("FEATURE_INSURANCE_ENABLED", false),
 		FeatureStaysEnabled:                   getEnvBool("FEATURE_STAYS_ENABLED", false),
 		FeaturePlacementEnabled:               getEnvBool("FEATURE_PLACEMENT_ENABLED", false),

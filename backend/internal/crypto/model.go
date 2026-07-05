@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"fmt"
+	"math/big"
 	"time"
 )
 
@@ -77,8 +78,15 @@ func unitsForCash(cashKobo, priceKobo, scale int64) int64 {
 	if priceKobo <= 0 || scale <= 0 {
 		return 0
 	}
-	// units = cashKobo * scale / priceKobo
-	return cashKobo * scale / priceKobo
+	// units = cashKobo * scale / priceKobo — big.Int intermediate so the
+	// cashKobo*scale product cannot silently overflow int64. Fail closed
+	// (return 0) on absurd magnitudes rather than wrapping to a wrong value.
+	r := new(big.Int).Mul(big.NewInt(cashKobo), big.NewInt(scale))
+	r.Quo(r, big.NewInt(priceKobo))
+	if !r.IsInt64() {
+		return 0
+	}
+	return r.Int64()
 }
 
 // cashForUnits converts asset minor units to a NGN cash amount (kobo) at the
@@ -87,8 +95,14 @@ func cashForUnits(units, priceKobo, scale int64) int64 {
 	if scale <= 0 {
 		return 0
 	}
-	// cash = units * priceKobo / scale
-	return units * priceKobo / scale
+	// cash = units * priceKobo / scale — big.Int intermediate so units*priceKobo
+	// cannot silently overflow int64. Fail closed (return 0) on absurd magnitudes.
+	r := new(big.Int).Mul(big.NewInt(units), big.NewInt(priceKobo))
+	r.Quo(r, big.NewInt(scale))
+	if !r.IsInt64() {
+		return 0
+	}
+	return r.Int64()
 }
 
 // Sentinel errors.

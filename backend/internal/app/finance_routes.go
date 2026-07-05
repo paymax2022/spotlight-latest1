@@ -538,7 +538,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Secondary store persists beneficiaries + rate alerts (orch_beneficiaries,
 		// orch_rate_alerts). Not money-path; scoped by customer_id in the handlers.
 		orchHandler := orchestration.NewHandler(orchSvc).
-			WithSecondary(orchestration.NewSecondaryStore(pool))
+			WithSecondary(orchestration.NewSecondaryStore(pool)).
+			WithBusiness(orchestration.NewBusinessStore(pool))
 
 		og := r.Group("/api/v1/fx")
 		// RequireAuthContext validates the bearer token and mirrors user_id into the
@@ -575,18 +576,36 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		og.GET("/rate-alerts", orchHandler.ListRateAlerts)
 		og.POST("/rate-alerts", orchHandler.CreateRateAlert)
 		og.DELETE("/rate-alerts/:id", orchHandler.DeleteRateAlert)
-		// --- FX business-admin reads (handler_business.go). Team/approvals/activity/
-		// api-keys/settings/notifications are honest stubs pending their subsystems;
-		// limits + webhooks read real config. None are money-path.
+		// --- FX business-admin console (handler_business.go / business_store.go).
+		// Team, approvals+thresholds, activity/audit, api-keys, webhooks, settings,
+		// and notifications persist to the orch_fx_* tables (scoped by business_id =
+		// customer id). limits reads real tier config. NOT money-path: no ledger, no
+		// idempotency; approvals persist a DECISION only (money stays on the transfer
+		// path). Mutations write an immutable audit row; api-keys store a hash only.
 		og.GET("/team", orchHandler.ListTeam)
+		og.PATCH("/team/:id", orchHandler.UpdateMemberRole)
 		og.GET("/approvals", orchHandler.ListApprovals)
+		og.POST("/approvals/:id/approve", orchHandler.ApproveApproval)
+		og.POST("/approvals/:id/reject", orchHandler.RejectApproval)
 		og.GET("/approvals/thresholds", orchHandler.ListApprovalThresholds)
+		og.PATCH("/approvals/thresholds/:id", orchHandler.UpdateThreshold)
 		og.GET("/activity", orchHandler.ListActivity)
 		og.GET("/api-keys", orchHandler.ListAPIKeys)
+		og.POST("/api-keys", orchHandler.CreateAPIKey)
+		og.POST("/api-keys/:id/rotate", orchHandler.RotateAPIKey)
 		og.GET("/webhooks", orchHandler.ListWebhookSettings)
+		og.POST("/webhooks", orchHandler.CreateWebhook)
+		og.PATCH("/webhooks/:id", orchHandler.UpdateWebhook)
+		og.DELETE("/webhooks/:id", orchHandler.DeleteWebhook)
 		og.GET("/settings", orchHandler.GetSettings)
+		og.PATCH("/settings", orchHandler.UpdateSettings)
+		og.PATCH("/settings/notifications", orchHandler.UpdateNotificationPrefs)
+		og.POST("/settings/stablecoin-addresses", orchHandler.AddStablecoinAddress)
+		og.DELETE("/settings/stablecoin-addresses/:id", orchHandler.RemoveStablecoinAddress)
 		og.GET("/limits", orchHandler.GetLimits)
 		og.GET("/notifications", orchHandler.ListNotifications)
+		og.PATCH("/notifications/:id", orchHandler.MarkNotificationRead)
+		og.POST("/notifications/read-all", orchHandler.MarkAllNotificationsRead)
 		// --- FX virtual cards (handler_cards.go) — STUBS, no issuer wired yet.
 		// Consistent :id param across all card sub-routes (gin requires it).
 		og.GET("/cards", orchHandler.ListCards)
