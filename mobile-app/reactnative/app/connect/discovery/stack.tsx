@@ -21,6 +21,7 @@ import StateView from '@/components/StateView';
 import SegmentedControl from '@/components/SegmentedControl';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { useDiscoveryStack, useSwipe } from '@/features/connect/discovery/hooks';
+import { ProfileRequiredError } from '@/features/connect/discovery/api';
 import DiscoveryVerifiedBadges from '@/features/connect/components/discovery-VerifiedBadges';
 import type {
   DiscoveryFilters,
@@ -126,6 +127,15 @@ export default function DiscoveryStackScreen() {
 
       {stackQuery.isLoading ? (
         <StateView kind="loading" message="Finding people near you…" />
+      ) : stackQuery.error instanceof ProfileRequiredError ? (
+        <StateView
+          kind="empty"
+          title="Set up your Connect profile"
+          message="Create your profile to start discovering people. It only takes a minute."
+          icon="Sparkles"
+          actionLabel="Get started"
+          onAction={() => router.push('/connect/onboarding/welcome')}
+        />
       ) : stackQuery.isError ? (
         <StateView
           kind="error"

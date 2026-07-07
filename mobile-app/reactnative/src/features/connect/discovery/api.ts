@@ -24,6 +24,25 @@ import type {
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 
+// Thrown when the backend rejects a discovery read because the signed-in user has
+// no Connect profile yet (HTTP 400 "create your profile first", stack.go ErrNoProfile).
+// The UI catches this to route into onboarding rather than showing a generic error.
+export class ProfileRequiredError extends Error {
+  constructor() {
+    super('connect: profile required');
+    this.name = 'ProfileRequiredError';
+  }
+}
+
+// Detects the "no Connect profile" rejection from an axios error. The backend
+// returns { error: "create your profile first" } with status 400.
+function isProfileRequired(err: unknown): boolean {
+  const e = err as { response?: { status?: number; data?: { error?: string } } };
+  const status = e?.response?.status;
+  const msg = (e?.response?.data?.error ?? '').toLowerCase();
+  return status === 400 && msg.includes('profile');
+}
+
 function unwrap<T>(res: { data?: { data?: T } & T }): T {
   return (res.data?.data ?? res.data) as T;
 }
@@ -140,10 +159,15 @@ export async function getDiscoveryStack(filters: DiscoveryFilters): Promise<Disc
       return true;
     }).map((p) => ({ ...p }));
   }
-  const res = await api.get(`${CONNECT_API_BASE}/discovery/stack`, {
-    params: { limit: DISCOVERY_STACK_LIMIT },
-  });
-  return unwrapProfiles(res);
+  try {
+    const res = await api.get(`${CONNECT_API_BASE}/discovery/stack`, {
+      params: { limit: DISCOVERY_STACK_LIMIT },
+    });
+    return unwrapProfiles(res);
+  } catch (err) {
+    if (isProfileRequired(err)) throw new ProfileRequiredError();
+    throw err;
+  }
 }
 
 // Default page size for the swipe stack (server caps this).

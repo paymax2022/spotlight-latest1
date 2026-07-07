@@ -19,6 +19,14 @@ export function useDiscoveryStack(filters: DiscoveryFilters) {
   return useQuery({
     queryKey: discoveryKeys.stack(filters),
     queryFn: () => discoveryApi.getDiscoveryStack(filters),
+    // A missing-profile (or any 4xx) rejection is deterministic — retrying just
+    // wastes calls and delays the onboarding CTA. Only retry transient errors.
+    retry: (failureCount, error) => {
+      if (error instanceof discoveryApi.ProfileRequiredError) return false;
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status && status >= 400 && status < 500) return false;
+      return failureCount < 2;
+    },
   });
 }
 
