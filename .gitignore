@@ -57,6 +57,10 @@ yarn-error.log*
 **/.history/
 .agentwork/
 **/.agentwork/
+# Claude Code agent worktrees: committed as gitlinks by accident; their gitdirs
+# get pruned, leaving dangling refs that break `git status`. Never track these.
+.claude/worktrees/
+**/.claude/worktrees/
 
 # Catch underscore/timestamp env snapshot variants the .env.* rule misses
 # (e.g. .env_20260601180248.local written by the Local History extension).
