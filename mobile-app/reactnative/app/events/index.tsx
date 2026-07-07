@@ -20,7 +20,7 @@ export default function EventsDiscovery() {
   const { data, isLoading, isError, refetch } = useEvents(cat !== 'all' ? { category: cat } : undefined);
 
   const filtered = useMemo(() => {
-    let list = data ?? [];
+    let list = Array.isArray(data) ? data : [];
     if (query.trim()) {
       const q = query.toLowerCase();
       list = list.filter((e) => e.title.toLowerCase().includes(q) || e.venue.toLowerCase().includes(q));

@@ -27,6 +27,19 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
   return (res.data?.data ?? res.data) as T;
 }
 
+// Backend list endpoints return the array under a named key, e.g.
+// { success: true, events: [...] } or { success: true, tickets: [...] }.
+// pickList digs the array out whatever the envelope shape, and ALWAYS returns an
+// array so callers can safely .map/.filter (never crashes on an object body).
+function pickList<T>(res: { data?: unknown }, key: string): T[] {
+  const body = res?.data as Record<string, unknown> | unknown[] | undefined;
+  if (Array.isArray(body)) return body as T[];
+  const b = (body ?? {}) as Record<string, unknown>;
+  const inner = (b.data ?? {}) as Record<string, unknown>;
+  const list = b[key] ?? inner[key] ?? b.data ?? body;
+  return Array.isArray(list) ? (list as T[]) : [];
+}
+
 // Every money mutation carries an Idempotency-Key (NL-9).
 function idempotencyKey(): string {
   return `evt-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -151,7 +164,7 @@ export async function listEvents(params?: { category?: string; state?: string })
   const query: Record<string, string> = {};
   if (params?.category && params.category !== 'all') query.category = params.category;
   if (params?.state) query.state = params.state;
-  return unwrap(await api.get(`${API_BASE}`, { params: query }));
+  return pickList<EventSummary>(await api.get(`${API_BASE}`, { params: query }), 'events');
 }
 
 export async function getEvent(id: string): Promise<EventDetail> {
@@ -166,7 +179,7 @@ export async function getEvent(id: string): Promise<EventDetail> {
 
 export async function listMyTickets(): Promise<Ticket[]> {
   if (USE_MOCK) { await delay(); return MOCK_TICKETS; }
-  return unwrap(await api.get(`${API_BASE}/my/tickets`));
+  return pickList<Ticket>(await api.get(`${API_BASE}/my/tickets`), 'tickets');
 }
 
 // The backend has no GET /tickets/:id — my/tickets is the only ticket read
