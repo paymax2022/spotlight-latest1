@@ -113,6 +113,11 @@ func seedActiveMembership(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	t.Helper()
 	userID = uuid.New().String()
 	membershipID = uuid.New().String()
+	// The member's ledger wallet account FKs auth.users(id); seed the user first
+	// (email required by the handle_new_user trigger → user_profiles.email NOT NULL).
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, userID, userID+"@seed.test"); err != nil {
+		t.Fatalf("seed auth.users: %v", err)
+	}
 	_, err := pool.Exec(ctx, `
 		INSERT INTO assoc_memberships (id, organisation_id, user_id, member_code, status, payment_standing)
 		VALUES ($1, $2, $3, $4, 'ACTIVE', 'DUE')`,

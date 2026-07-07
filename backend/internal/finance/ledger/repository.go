@@ -2,11 +2,21 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// isUniqueViolation reports whether err is a Postgres unique-constraint
+// violation (SQLSTATE 23505) — used to translate a duplicate idempotency_key
+// into the typed ErrDuplicate that callers catch via errors.Is.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
 
 // Repository handles all ledger DB operations over a pgx pool.
 // All writes are INSERT-only — never UPDATE or DELETE.
@@ -197,16 +207,24 @@ func (r *Repository) PostJournal(ctx context.Context, j JournalEntry) error {
 		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key)
 		VALUES ($1, $2, $3, $4, $5)`
 
-	// debit side
+	// debit side. A duplicate idempotency_key means this exact journal was already
+	// posted (replay) — surface the typed ErrDuplicate so callers can treat the
+	// retry as a no-op instead of a hard failure.
 	_, err = tx.Exec(ctx, insertEntry,
 		j.DebitAccountID, string(EntryDebit), j.AmountKobo, j.Reference, j.IdempotencyKey+":debit")
 	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrDuplicate
+		}
 		return fmt.Errorf("ledger: insert debit entry: %w", err)
 	}
 	// credit side
 	_, err = tx.Exec(ctx, insertEntry,
 		j.CreditAccountID, string(EntryCredit), j.AmountKobo, j.Reference, j.IdempotencyKey+":credit")
 	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrDuplicate
+		}
 		return fmt.Errorf("ledger: insert credit entry: %w", err)
 	}
 

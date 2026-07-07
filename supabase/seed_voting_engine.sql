@@ -15,9 +15,13 @@ DECLARE
   v_settings_id  uuid;
 BEGIN
 
+  -- contest_status enum is ('draft','active','upcoming','ended'); a contest that
+  -- is live/open for voting is 'active' (or 'upcoming'). The earlier literals
+  -- ('published'/'voting_live'/'registration_open') are not valid enum values and
+  -- made the enum comparison raise 22P02, aborting `supabase db reset`.
   SELECT id INTO v_contest_id
   FROM public.contests
-  WHERE status IN ('published','voting_live','registration_open')
+  WHERE status IN ('active','upcoming')
   ORDER BY created_at DESC
   LIMIT 1;
 

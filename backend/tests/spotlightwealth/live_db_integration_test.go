@@ -140,7 +140,8 @@ func seedWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	t.Helper()
 	id := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id) VALUES ($1) ON CONFLICT DO NOTHING`, id); err != nil {
+	// email is required by the handle_new_user trigger (user_profiles.email NOT NULL).
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	return id
