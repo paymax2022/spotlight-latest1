@@ -264,8 +264,11 @@ func (s *Service) CreateScheduled(ctx context.Context, userID string, req Schedu
 	if err != nil {
 		// ON CONFLICT DO NOTHING → no row returned means the idempotency key was
 		// already used. Return the existing booking (idempotent create).
-		var existing *ScheduledBooking
-		if existing, err = s.byIdempotencyKey(ctx, idempotencyKey); err == nil && existing != nil {
+		// ON CONFLICT DO NOTHING → no row returned means the idempotency key was
+		// already used. Return the existing booking (idempotent create). Use a
+		// separate error var so a genuine insert failure (e.g. an FK violation)
+		// surfaces its real cause instead of being masked as "no rows".
+		if existing, lookupErr := s.byIdempotencyKey(ctx, idempotencyKey); lookupErr == nil && existing != nil {
 			return existing, nil
 		}
 		return nil, fmt.Errorf("transport: insert scheduled booking: %w", err)
@@ -569,8 +572,11 @@ func intFromPayload(m map[string]any, key string) int {
 // SQL fragment for an explicit (lng,lat) placeholder pair. It nulls the geo when
 // either coordinate is NULL (e.g. a bus booking with no pickup point).
 func geogArgAt(lng, lat int) string {
+	// The params are cast to double precision so Postgres can resolve the
+	// overloaded ST_MakePoint signature — without the casts an untyped $n yields
+	// "could not determine data type of parameter" (42P08).
 	return fmt.Sprintf(
-		`CASE WHEN $%d IS NULL OR $%d IS NULL THEN NULL ELSE ST_SetSRID(ST_MakePoint($%d,$%d),4326)::geography END`,
+		`CASE WHEN $%d::double precision IS NULL OR $%d::double precision IS NULL THEN NULL ELSE ST_SetSRID(ST_MakePoint($%d::double precision,$%d::double precision),4326)::geography END`,
 		lng, lat, lng, lat)
 }
 

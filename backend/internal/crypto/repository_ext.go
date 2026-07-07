@@ -31,7 +31,7 @@ func (r *Repository) RecordSwapFill(ctx context.Context, o SwapOrder) (string, b
 		(user_id, from_asset_id, to_asset_id, status, from_units, to_units,
 		 from_price_kobo, to_price_kobo, cash_kobo, spread_kobo, spread_bps, idempotency_key, reference)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-		ON CONFLICT (idempotency_key) DO NOTHING
+		ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
 		RETURNING id`
 	var orderID string
 	err = tx.QueryRow(ctx, insOrder,
@@ -51,16 +51,26 @@ func (r *Repository) RecordSwapFill(ctx context.Context, o SwapOrder) (string, b
 		return "", false, fmt.Errorf("crypto: insert swap order: %w", err)
 	}
 
-	const upHolding = `INSERT INTO crypto_holdings (user_id, asset_id, units)
+	// Decrement the `from` holding via UPDATE — NOT INSERT ... ON CONFLICT: Postgres
+	// evaluates CHECK(units>=0) against the proposed insert tuple (a negative delta)
+	// before ON CONFLICT resolves to UPDATE, so an upsert spuriously fails the check
+	// even when the resulting balance is non-negative. UPDATE checks the final row,
+	// so it fail-closes only on a real oversell.
+	const debitFrom = `UPDATE crypto_holdings SET units = units - $3, updated_at=now()
+		WHERE user_id=$1 AND asset_id=$2`
+	ct, err := tx.Exec(ctx, debitFrom, o.UserID, o.FromAssetID, o.FromUnits)
+	if err != nil {
+		return "", false, fmt.Errorf("crypto: swap debit holding: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return "", false, ErrInsufficient
+	}
+	// … and credit the `to` holding (upsert: positive delta, row may not exist yet).
+	const creditTo = `INSERT INTO crypto_holdings (user_id, asset_id, units)
 		VALUES ($1,$2,$3)
 		ON CONFLICT (user_id, asset_id) DO UPDATE
 		  SET units = crypto_holdings.units + EXCLUDED.units, updated_at=now()`
-	// Decrement the `from` holding (CHECK units>=0 rejects an oversell) …
-	if _, err := tx.Exec(ctx, upHolding, o.UserID, o.FromAssetID, -o.FromUnits); err != nil {
-		return "", false, fmt.Errorf("crypto: swap debit holding: %w", err)
-	}
-	// … and credit the `to` holding.
-	if _, err := tx.Exec(ctx, upHolding, o.UserID, o.ToAssetID, o.ToUnits); err != nil {
+	if _, err := tx.Exec(ctx, creditTo, o.UserID, o.ToAssetID, o.ToUnits); err != nil {
 		return "", false, fmt.Errorf("crypto: swap credit holding: %w", err)
 	}
 
@@ -269,7 +279,7 @@ func (r *Repository) CreateWithdrawal(ctx context.Context, w Withdrawal) (string
 		(user_id, asset_id, address_id, status, units, network_fee_units, fee_kobo,
 		 price_kobo, provider, idempotency_key, reference)
 		VALUES ($1,$2,$3,'requested',$4,$5,$6,$7,$8,$9,$10)
-		ON CONFLICT (idempotency_key) DO NOTHING
+		ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
 		RETURNING id`
 	var wid string
 	err = tx.QueryRow(ctx, ins,
@@ -288,13 +298,17 @@ func (r *Repository) CreateWithdrawal(ctx context.Context, w Withdrawal) (string
 		return "", false, fmt.Errorf("crypto: insert withdrawal: %w", err)
 	}
 
-	// Park the units: decrement the holding. CHECK (units>=0) rejects an over-withdrawal.
-	const debit = `INSERT INTO crypto_holdings (user_id, asset_id, units)
-		VALUES ($1,$2,$3)
-		ON CONFLICT (user_id, asset_id) DO UPDATE
-		  SET units = crypto_holdings.units + EXCLUDED.units, updated_at=now()`
-	if _, err := tx.Exec(ctx, debit, w.UserID, w.AssetID, -w.Units); err != nil {
+	// Park the units: decrement the holding via UPDATE (not upsert) so the negative
+	// delta doesn't trip CHECK(units>=0) on the proposed insert tuple before it
+	// applies. CHECK fail-closes a real over-withdrawal on the resulting row.
+	const debit = `UPDATE crypto_holdings SET units = units - $3, updated_at=now()
+		WHERE user_id=$1 AND asset_id=$2`
+	ct, err := tx.Exec(ctx, debit, w.UserID, w.AssetID, w.Units)
+	if err != nil {
 		return "", false, fmt.Errorf("crypto: park withdrawal units: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return "", false, ErrInsufficient
 	}
 
 	// Record the opening transition (requested).

@@ -169,7 +169,7 @@ func (r *Repository) RecordFill(ctx context.Context, o Order, deltaUnits int64) 
 	const insOrder = `INSERT INTO crypto_orders
 		(user_id, asset_id, side, status, cash_kobo, units, price_kobo, idempotency_key, reference)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		ON CONFLICT (idempotency_key) DO NOTHING
+		ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
 		RETURNING id`
 	var orderID string
 	err = tx.QueryRow(ctx, insOrder,
@@ -189,12 +189,29 @@ func (r *Repository) RecordFill(ctx context.Context, o Order, deltaUnits int64) 
 	}
 
 	// Move the holding projection. CHECK (units >= 0) fail-closes an oversell.
-	const upHolding = `INSERT INTO crypto_holdings (user_id, asset_id, units)
-		VALUES ($1,$2,$3)
-		ON CONFLICT (user_id, asset_id) DO UPDATE
-		  SET units = crypto_holdings.units + EXCLUDED.units, updated_at=now()`
-	if _, err := tx.Exec(ctx, upHolding, o.UserID, o.AssetID, deltaUnits); err != nil {
-		return "", false, fmt.Errorf("crypto: move holding: %w", err)
+	// A credit (buy, deltaUnits >= 0) upserts because the row may not exist yet.
+	// A debit (sell, deltaUnits < 0) MUST use UPDATE: Postgres evaluates the CHECK
+	// against the proposed INSERT tuple (the negative delta) BEFORE ON CONFLICT
+	// resolves to UPDATE, so an upsert spuriously fails the check even when the
+	// resulting balance is non-negative.
+	if deltaUnits >= 0 {
+		const upHolding = `INSERT INTO crypto_holdings (user_id, asset_id, units)
+			VALUES ($1,$2,$3)
+			ON CONFLICT (user_id, asset_id) DO UPDATE
+			  SET units = crypto_holdings.units + EXCLUDED.units, updated_at=now()`
+		if _, err := tx.Exec(ctx, upHolding, o.UserID, o.AssetID, deltaUnits); err != nil {
+			return "", false, fmt.Errorf("crypto: move holding: %w", err)
+		}
+	} else {
+		const debit = `UPDATE crypto_holdings SET units = units + $3, updated_at=now()
+			WHERE user_id=$1 AND asset_id=$2`
+		ct, err := tx.Exec(ctx, debit, o.UserID, o.AssetID, deltaUnits)
+		if err != nil {
+			return "", false, fmt.Errorf("crypto: move holding: %w", err)
+		}
+		if ct.RowsAffected() == 0 {
+			return "", false, ErrInsufficient
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

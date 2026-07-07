@@ -126,7 +126,7 @@ func (s *Service) PayInvoice(ctx context.Context, userID, invoiceID string, req 
 	const insPayment = `
 		INSERT INTO assoc_payments (id, invoice_id, membership_id, amount_kobo, method, reference, status, offline, idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,$6,'SUCCESS',false,$7)
-		ON CONFLICT (idempotency_key) DO NOTHING`
+		ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
 	if _, err := tx.Exec(ctx, insPayment, paymentID, invoiceID, membership, amount, req.Method, ref, req.IdempotencyKey); err != nil {
 		return nil, fmt.Errorf("association: insert payment: %w", err)
 	}

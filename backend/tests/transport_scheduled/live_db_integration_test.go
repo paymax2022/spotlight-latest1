@@ -91,6 +91,34 @@ func newIdemKey(t *testing.T, label string) string {
 	return label + "-" + uuid.New().String()
 }
 
+// seedUser inserts a synthetic auth.users row so the booking's user_id FK
+// (transport_scheduled_bookings.user_id -> auth.users(id)) is satisfied on a
+// fresh DB. email is required by the handle_new_user trigger (user_profiles.email
+// is NOT NULL). Mirrors the seed helpers in the crypto/association/learn suites.
+func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
+	t.Helper()
+	id := uuid.New().String()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
+		t.Fatalf("seed auth.users: %v", err)
+	}
+	return id
+}
+
+// seedWallet credits userID's wallet with amountKobo via a direct ledger credit
+// from the settlement standing account, so the dispatch escrow debit has funds
+// to draw down. Mirrors the seedWallet helpers in the crypto/association suites.
+func seedWallet(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID string, amountKobo int64) {
+	t.Helper()
+	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
+	settle, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
+	if err != nil {
+		t.Fatalf("seed wallet: standing account: %v", err)
+	}
+	if err := led.Credit(ctx, userID, "test-seed:"+uuid.New().String(), "test-seed-idem:"+uuid.New().String(), settle.ID, amountKobo); err != nil {
+		t.Fatalf("seed wallet: credit: %v", err)
+	}
+}
+
 // checkWalletSeeded verifies the test rider has a usable wallet balance before
 // attempting a dispatch (which escrows real kobo). If not seeded, later steps
 // SKIP rather than fail, per the bring-up note.
@@ -116,7 +144,7 @@ func TestLiveDB_CreateScheduled_ThenGet_OLA_Enforced(t *testing.T) {
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
-	owner := uuid.New().String()
+	owner := seedUser(t, ctx, pool)
 	stranger := uuid.New().String()
 
 	req := transport.ScheduledCreateRequest{
@@ -226,7 +254,7 @@ func TestLiveDB_CreateScheduled_IdempotentOnRetry(t *testing.T) {
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
-	rider := uuid.New().String()
+	rider := seedUser(t, ctx, pool)
 	key := newIdemKey(t, "retry")
 	req := transport.ScheduledCreateRequest{
 		Mode:              "parcel_intra",
@@ -266,7 +294,7 @@ func TestLiveDB_CancelScheduled_BeforeDispatch_NoRefundNeeded(t *testing.T) {
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
-	rider := uuid.New().String()
+	rider := seedUser(t, ctx, pool)
 	req := transport.ScheduledCreateRequest{
 		Mode:              "ride_hail",
 		ScheduledPickupAt: time.Now().Add(4 * time.Hour).Format(time.RFC3339),
@@ -316,11 +344,15 @@ func TestLiveDB_DispatchScheduled_IdempotentSingleCharge(t *testing.T) {
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
-	rider := uuid.New().String()
-	if seeded, err := checkWalletSeeded(ctx, pool, rider); err != nil {
-		t.Fatalf("checkWalletSeeded: %v", err)
-	} else if !seeded {
-		t.Skip("test rider has no seeded wallet balance — seed one per the bring-up note before running this dispatch test")
+	rider := seedUser(t, ctx, pool)
+	// Fund the rider's wallet so the dispatch escrow debit has balance to draw
+	// down (escrow fails closed otherwise). Seeds via a direct ledger credit from
+	// a standing account — the same pattern the crypto/association suites use.
+	seedWallet(t, ctx, pool, rider, 5_000_000_00)
+	// Activate a wallet-enabled KYC tier (tier 0 disables the wallet). Tier 3 is
+	// unlimited, so the escrow debit passes the tier-limit gate.
+	if _, err := pool.Exec(ctx, `UPDATE user_profiles SET kyc_tier = 3 WHERE id = $1`, rider); err != nil {
+		t.Fatalf("seed rider KYC tier: %v", err)
 	}
 
 	req := transport.ScheduledCreateRequest{
@@ -388,7 +420,7 @@ func TestLiveDB_DueForDispatch_OnlySelectsWithinLeadWindow(t *testing.T) {
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
-	rider := uuid.New().String()
+	rider := seedUser(t, ctx, pool)
 
 	farFuture, err := svc.CreateScheduled(ctx, rider, transport.ScheduledCreateRequest{
 		Mode:              "ride_hail",
@@ -448,7 +480,7 @@ func TestLiveDB_ExpireStale_OnlyExpiresPastDueScheduled(t *testing.T) {
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
-	rider := uuid.New().String()
+	rider := seedUser(t, ctx, pool)
 	stale, err := svc.CreateScheduled(ctx, rider, transport.ScheduledCreateRequest{
 		Mode:              "ride_hail",
 		ScheduledPickupAt: time.Now().Add(2 * time.Hour).Format(time.RFC3339), // must be future at create time
@@ -513,7 +545,7 @@ func TestLiveDB_SendDueReminders_FiresOnceUnderConcurrentInvocation(t *testing.T
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
-	rider := uuid.New().String()
+	rider := seedUser(t, ctx, pool)
 	b, err := svc.CreateScheduled(ctx, rider, transport.ScheduledCreateRequest{
 		Mode:              "ride_hail",
 		ScheduledPickupAt: time.Now().Add(50 * time.Minute).Format(time.RFC3339), // inside 1h window
