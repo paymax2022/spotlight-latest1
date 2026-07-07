@@ -32,6 +32,42 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
   return (res.data?.data ?? res.data) as T;
 }
 
+// Several Connect read endpoints (the whole /me/* family, catalogs, settings) are
+// not yet implemented on the Go backend and return 404. For DISPLAY-ONLY data we
+// degrade gracefully to a safe default instead of throwing, so a missing endpoint
+// never breaks the screen. Real auth failures (401/403) and server errors (5xx)
+// still surface. Money/write paths never use this.
+async function liveOrDefault<T>(run: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    const status = (e as { response?: { status?: number } })?.response?.status;
+    if (status === undefined || status === 404 || status === 405 || status === 501) {
+      return fallback;
+    }
+    throw e;
+  }
+}
+
+// Honest zero-state defaults for money-facing displays (never fabricate a balance).
+const DEFAULT_TIER_STATUS: TierStatus = {
+  tier: 0,
+  label: 'Tier 0',
+  dailyLimitKobo: 0,
+  remainingKobo: 0,
+  canSend: false,
+  canReceive: true,
+  canWithdraw: false,
+  canGoLive: false,
+  nextTier: 1,
+  nextTierUnlocks: 'Verify your identity to unlock gifting and higher limits.',
+};
+const DEFAULT_WALLET: WalletSummary = {
+  balanceKobo: 0,
+  currency: 'NGN',
+  tier: DEFAULT_TIER_STATUS,
+};
+
 // Mirrors the public.connect_config seed (visibility='public' rows only).
 const MOCK_CONFIG: ConnectConfig = {
   'feature.connect.enabled': true,
@@ -76,8 +112,10 @@ export async function getTierStatus(): Promise<TierStatus> {
     await delay();
     return { ...MOCK_TIER_STATUS };
   }
-  const res = await api.get(`${CONNECT_API_BASE}/me/tier`);
-  return unwrap<TierStatus>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/me/tier`);
+    return unwrap<TierStatus>(res);
+  }, DEFAULT_TIER_STATUS);
 }
 
 export async function getTierBenefits(): Promise<TierBenefit[]> {
@@ -85,8 +123,10 @@ export async function getTierBenefits(): Promise<TierBenefit[]> {
     await delay(150);
     return TIER_BENEFITS.map((t) => ({ ...t }));
   }
-  const res = await api.get(`${CONNECT_API_BASE}/tiers`);
-  return unwrap<TierBenefit[]>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/tiers`);
+    return unwrap<TierBenefit[]>(res);
+  }, TIER_BENEFITS.map((t) => ({ ...t })));
 }
 
 const MOCK_WALLET: WalletSummary = {
@@ -100,8 +140,10 @@ export async function getWalletSummary(): Promise<WalletSummary> {
     await delay();
     return { ...MOCK_WALLET, tier: { ...MOCK_WALLET.tier } };
   }
-  const res = await api.get(`${CONNECT_API_BASE}/me/wallet`);
-  return unwrap<WalletSummary>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/me/wallet`);
+    return unwrap<WalletSummary>(res);
+  }, { ...DEFAULT_WALLET, tier: { ...DEFAULT_TIER_STATUS } });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -255,8 +297,17 @@ export async function getMeSummary(): Promise<MeProfileSummary> {
     await delay();
     return { ...MOCK_ME, wallet: { ...MOCK_ME.wallet, tier: { ...MOCK_ME.wallet.tier } } };
   }
-  const res = await api.get(`${CONNECT_API_BASE}/me`);
-  return unwrap<MeProfileSummary>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/me`);
+    return unwrap<MeProfileSummary>(res);
+  }, {
+    id: 'me',
+    displayName: 'You',
+    intents: [],
+    verification: { liveness: 'not_started', identity: 'not_started' },
+    wallet: { ...DEFAULT_WALLET, tier: { ...DEFAULT_TIER_STATUS } },
+    gamification: { level: 1, points: 0, streakDays: 0, badges: 0 },
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -280,8 +331,10 @@ export async function getNotificationPrefs(): Promise<NotificationPrefs> {
     await delay(160);
     return { ...mockNotifPrefs };
   }
-  const res = await api.get(`${CONNECT_API_BASE}/me/notifications`);
-  return unwrap<NotificationPrefs>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/me/notifications`);
+    return unwrap<NotificationPrefs>(res);
+  }, { ...mockNotifPrefs });
 }
 
 export async function updateNotificationPrefs(
@@ -315,8 +368,10 @@ export async function getPrivacyPrefs(): Promise<PrivacyPrefs> {
     await delay(160);
     return { ...mockPrivacy };
   }
-  const res = await api.get(`${CONNECT_API_BASE}/me/privacy`);
-  return unwrap<PrivacyPrefs>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/me/privacy`);
+    return unwrap<PrivacyPrefs>(res);
+  }, { ...mockPrivacy });
 }
 
 export async function updatePrivacyPrefs(patch: Partial<PrivacyPrefs>): Promise<PrivacyPrefs> {
@@ -336,8 +391,10 @@ export async function getBlockedUsers(): Promise<BlockedUser[]> {
       { id: 'b1', displayName: 'Hidden user', blockedAt: '2026-06-12T10:00:00Z' },
     ];
   }
-  const res = await api.get(`${CONNECT_API_BASE}/me/blocked`);
-  return unwrap<BlockedUser[]>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/me/blocked`);
+    return unwrap<BlockedUser[]>(res);
+  }, []);
 }
 
 export async function unblockUser(id: string): Promise<void> {
@@ -367,8 +424,10 @@ export async function getReportReasons(): Promise<ReportReason[]> {
     await delay(120);
     return REPORT_REASONS.map((r) => ({ ...r }));
   }
-  const res = await api.get(`${CONNECT_API_BASE}/safety/report-reasons`);
-  return unwrap<ReportReason[]>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/safety/report-reasons`);
+    return unwrap<ReportReason[]>(res);
+  }, REPORT_REASONS.map((r) => ({ ...r })));
 }
 
 export async function getSafetyCases(): Promise<SafetyCase[]> {
@@ -385,8 +444,10 @@ export async function getSafetyCases(): Promise<SafetyCase[]> {
       },
     ];
   }
-  const res = await api.get(`${CONNECT_API_BASE}/safety/cases`);
-  return unwrap<SafetyCase[]>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/safety/cases`);
+    return unwrap<SafetyCase[]>(res);
+  }, []);
 }
 
 export async function submitReport(input: {
@@ -448,8 +509,10 @@ export async function getDateSafetyState(): Promise<DateSafetyState> {
     await delay(160);
     return { ...mockSafety, contacts: mockSafety.contacts.map((c) => ({ ...c })) };
   }
-  const res = await api.get(`${CONNECT_API_BASE}/safety/date`);
-  return unwrap<DateSafetyState>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/safety/date`);
+    return unwrap<DateSafetyState>(res);
+  }, { contacts: [], checkInEnabled: false, tripSharingEnabled: false });
 }
 
 export async function updateDateSafetyState(
@@ -496,8 +559,10 @@ export async function getLanguage(): Promise<LanguageOption['code']> {
     await delay(120);
     return mockLanguage;
   }
-  const res = await api.get(`${CONNECT_API_BASE}/me/language`);
-  return unwrap<{ code: LanguageOption['code'] }>(res).code;
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/me/language`);
+    return unwrap<{ code: LanguageOption['code'] }>(res).code;
+  }, 'en');
 }
 
 export async function setLanguage(code: LanguageOption['code']): Promise<LanguageOption['code']> {
@@ -517,8 +582,10 @@ export async function getDataSaverPrefs(): Promise<DataSaverPrefs> {
     await delay(120);
     return { ...mockDataSaver };
   }
-  const res = await api.get(`${CONNECT_API_BASE}/me/data-saver`);
-  return unwrap<DataSaverPrefs>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/me/data-saver`);
+    return unwrap<DataSaverPrefs>(res);
+  }, { ...mockDataSaver });
 }
 
 export async function updateDataSaverPrefs(patch: Partial<DataSaverPrefs>): Promise<DataSaverPrefs> {
@@ -553,8 +620,10 @@ export async function getPremiumStatus(): Promise<PremiumStatus> {
     await delay(160);
     return { active: false };
   }
-  const res = await api.get(`${CONNECT_API_BASE}/me/premium`);
-  return unwrap<PremiumStatus>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/me/premium`);
+    return unwrap<PremiumStatus>(res);
+  }, { active: false });
 }
 
 export async function getPremiumPlans(): Promise<PremiumPlan[]> {
@@ -562,8 +631,10 @@ export async function getPremiumPlans(): Promise<PremiumPlan[]> {
     await delay(160);
     return PREMIUM_PLANS.map((p) => ({ ...p }));
   }
-  const res = await api.get(`${CONNECT_API_BASE}/premium/plans`);
-  return unwrap<PremiumPlan[]>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/premium/plans`);
+    return unwrap<PremiumPlan[]>(res);
+  }, PREMIUM_PLANS.map((p) => ({ ...p })));
 }
 
 export async function getHelpArticles(): Promise<HelpArticle[]> {
@@ -576,8 +647,10 @@ export async function getHelpArticles(): Promise<HelpArticle[]> {
       { id: 'h4', question: 'How do I delete my account?', answer: 'Settings → Delete account. This starts a data-deletion flow; some records are retained where law requires.' },
     ];
   }
-  const res = await api.get(`${CONNECT_API_BASE}/help/articles`);
-  return unwrap<HelpArticle[]>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/help/articles`);
+    return unwrap<HelpArticle[]>(res);
+  }, []);
 }
 
 export async function getLegalDocs(): Promise<LegalDoc[]> {
@@ -589,8 +662,10 @@ export async function getLegalDocs(): Promise<LegalDoc[]> {
       { id: 'guidelines', title: 'Community Guidelines', url: 'https://paymax.example/legal/guidelines', updatedAt: '2026-05-01' },
     ];
   }
-  const res = await api.get(`${CONNECT_API_BASE}/legal`);
-  return unwrap<LegalDoc[]>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/legal`);
+    return unwrap<LegalDoc[]>(res);
+  }, []);
 }
 
 // Account deletion (ST-16) — starts a data-deletion flow server-side.

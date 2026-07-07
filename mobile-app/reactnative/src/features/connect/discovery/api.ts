@@ -43,6 +43,21 @@ function isProfileRequired(err: unknown): boolean {
   return status === 400 && msg.includes('profile');
 }
 
+// Some secondary discovery reads (tier, daily-picks) are not yet implemented on the
+// Go backend and 404. For these DISPLAY-ONLY reads, degrade to a safe default rather
+// than throwing so the screen still renders. Auth/5xx errors still surface.
+async function liveOrDefault<T>(run: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    const status = (e as { response?: { status?: number } })?.response?.status;
+    if (status === undefined || status === 404 || status === 405 || status === 501) {
+      return fallback;
+    }
+    throw e;
+  }
+}
+
 function unwrap<T>(res: { data?: { data?: T } & T }): T {
   return (res.data?.data ?? res.data) as T;
 }
@@ -265,8 +280,10 @@ export async function getDailyPicks(): Promise<DailyPick[]> {
       reason: ['Shared 4 interests', 'Near you & verified', 'Active recently'][i] ?? 'Recommended for you',
     }));
   }
-  const res = await api.get(`${CONNECT_API_BASE}/discovery/daily-picks`);
-  return unwrap<DailyPick[]>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/discovery/daily-picks`);
+    return unwrap<DailyPick[]>(res);
+  }, []);
 }
 
 // ── Map nearby (DC-04) ───────────────────────────────────────────────────────
@@ -303,8 +320,10 @@ export async function getDiscoveryTier(): Promise<DiscoveryTierStatus> {
     await delay(140);
     return { ...MOCK_TIER };
   }
-  const res = await api.get(`${CONNECT_API_BASE}/me/tier`);
-  return unwrap<DiscoveryTierStatus>(res);
+  return liveOrDefault(async () => {
+    const res = await api.get(`${CONNECT_API_BASE}/me/tier`);
+    return unwrap<DiscoveryTierStatus>(res);
+  }, { tier: 0, label: 'Tier 0', dailyLimitKobo: 0, remainingKobo: 0 });
 }
 
 // Wallet-funded purchase (DC-08). CHARGES the wallet in kobo, so it MUST carry a
