@@ -100,12 +100,6 @@ export default function MeTab() {
               state={data.verification.liveness}
               onPress={() => router.push('/connect/onboarding/liveness')}
             />
-            <VerifRow
-              icon="BadgeCheck"
-              label="BVN / NIN linked"
-              state={data.verification.identity}
-              onPress={() => router.push('/connect/onboarding/bvn-nin')}
-            />
           </View>
 
           {/* Gamification entry */}

@@ -1,30 +1,60 @@
-import React, { useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { View, Text, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
 import OnboardingStep from '@/features/connect/components/OnboardingStep';
 import TextInputField from '@/components/TextInputField';
+import SelectField from '@/components/SelectField';
 import {
   useSaveOnboardingDraft,
   useSubmitDob,
 } from '@/features/connect/hooks/useConnect';
 
-// ON-07 — Profile wizard, basics. Name, DOB, gender, location.
+// ON-07 — Profile wizard, basics. Name, DOB (date widget), gender, location.
 // HARD 18+ AGE GATE (SAFETY INVARIANT §1): DOB is validated; suspected minors are
-// flagged server-side and routed to the underage block screen. The backend owns
-// the authoritative decision + admin-queue write.
-const GENDERS = ['Woman', 'Man', 'Non-binary', 'Prefer not to say'];
+// flagged and routed to the underage block screen.
+const GENDERS = ['Female', 'Male'];
 
-function isValidDob(s: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(s).getTime());
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+// 36 states + FCT.
+const NIGERIAN_STATES = [
+  'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
+  'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT - Abuja', 'Gombe',
+  'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos',
+  'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto',
+  'Taraba', 'Yobe', 'Zamfara',
+];
+
+const pad = (n: number) => String(n).padStart(2, '0');
+const DAYS = Array.from({ length: 31 }, (_, i) => String(i + 1));
+const CURRENT_YEAR = new Date().getFullYear();
+// Earliest selectable birth year is 18 years ago (hard 18+ gate); span 100 years.
+const YEARS = Array.from({ length: 100 }, (_, i) => String(CURRENT_YEAR - 18 - i));
+
+// Builds a valid yyyy-mm-dd or '' when the parts don't form a real calendar date
+// (e.g. 31 February). Guards the rollover that `new Date()` would otherwise allow.
+function composeDob(day: string, monthName: string, year: string): string {
+  if (!day || !monthName || !year) return '';
+  const m = MONTHS.indexOf(monthName) + 1;
+  const d = Number(day);
+  const y = Number(year);
+  if (m < 1 || d < 1 || !y) return '';
+  const dt = new Date(y, m - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return '';
+  return `${y}-${pad(m)}-${pad(d)}`;
 }
 
 export default function ProfileBasics() {
   const [name, setName] = useState('');
-  const [dob, setDob] = useState('');
+  const [day, setDay] = useState('');
+  const [month, setMonth] = useState('');
+  const [year, setYear] = useState('');
   const [gender, setGender] = useState('');
   const [location, setLocation] = useState('');
   const [dobError, setDobError] = useState<string | undefined>();
@@ -32,24 +62,25 @@ export default function ProfileBasics() {
   const save = useSaveOnboardingDraft();
   const submitDob = useSubmitDob();
 
+  const dob = useMemo(() => composeDob(day, month, year), [day, month, year]);
+  const dobTouched = !!(day && month && year);
   const canContinue =
-    name.trim().length >= 2 && isValidDob(dob) && gender.length > 0 && location.trim().length >= 2;
+    name.trim().length >= 2 && !!dob && gender.length > 0 && location.length > 0;
 
   const onNext = () => {
-    if (!isValidDob(dob)) {
-      setDobError('Enter your date of birth as YYYY-MM-DD.');
+    if (!dob) {
+      setDobError('Please choose a valid date of birth.');
       return;
     }
     setDobError(undefined);
     submitDob.mutate(dob, {
       onSuccess: (res) => {
         if (res.underage) {
-          // Routed to the underage block; the api already recorded the flag.
           router.replace('/connect/onboarding/underage');
           return;
         }
         save.mutate(
-          { displayName: name.trim(), dob, gender, location: location.trim() },
+          { displayName: name.trim(), dob, gender, location },
           { onSuccess: () => router.push('/connect/onboarding/photos') },
         );
       },
@@ -60,7 +91,7 @@ export default function ProfileBasics() {
   return (
     <OnboardingStep
       step={2}
-      totalSteps={9}
+      totalSteps={8}
       title="The basics"
       subtitle="This helps people find the real you. You must be 18 or older."
       primaryLabel="Continue"
@@ -77,44 +108,60 @@ export default function ProfileBasics() {
         autoCapitalize="words"
       />
 
-      <TextInputField
-        label="Date of birth"
-        value={dob}
-        onChangeText={(t) => {
-          setDob(t);
-          if (dobError) setDobError(undefined);
-        }}
-        placeholder="YYYY-MM-DD"
-        keyboardType="numbers-and-punctuation"
-        error={dobError}
-      />
-
       <View>
-        <Text style={styles.label}>Gender</Text>
-        <View style={styles.chips}>
-          {GENDERS.map((g) => {
-            const active = gender === g;
-            return (
-              <Pressable
-                key={g}
-                style={[styles.chip, active && styles.chipActive]}
-                onPress={() => setGender(g)}
-                accessibilityRole="radio"
-                accessibilityState={{ selected: active }}
-              >
-                <Text style={[styles.chipText, active && styles.chipTextActive]}>{g}</Text>
-              </Pressable>
-            );
-          })}
+        <Text style={styles.label}>Date of birth</Text>
+        <View style={styles.dobRow}>
+          <View style={styles.dobCol}>
+            <SelectField
+              placeholder="Day"
+              value={day}
+              options={DAYS}
+              onChange={setDay}
+              searchable={false}
+            />
+          </View>
+          <View style={styles.dobCol}>
+            <SelectField
+              placeholder="Month"
+              value={month}
+              options={MONTHS}
+              onChange={setMonth}
+              searchable={false}
+            />
+          </View>
+          <View style={styles.dobCol}>
+            <SelectField
+              placeholder="Year"
+              value={year}
+              options={YEARS}
+              onChange={setYear}
+              searchable
+            />
+          </View>
         </View>
+        {dobTouched && !dob ? (
+          <Text style={styles.error}>That date isn’t valid — please check the day.</Text>
+        ) : dobError ? (
+          <Text style={styles.error}>{dobError}</Text>
+        ) : null}
       </View>
 
-      <TextInputField
+      <SelectField
+        label="Gender"
+        placeholder="Select gender"
+        value={gender}
+        options={GENDERS}
+        onChange={setGender}
+        searchable={false}
+      />
+
+      <SelectField
         label="Location"
+        placeholder="Select your state"
         value={location}
-        onChangeText={setLocation}
-        placeholder="e.g. Lagos, Nigeria"
-        autoCapitalize="words"
+        options={NIGERIAN_STATES}
+        onChange={setLocation}
+        searchable
       />
     </OnboardingStep>
   );
@@ -122,16 +169,7 @@ export default function ProfileBasics() {
 
 const styles = StyleSheet.create({
   label: { ...Typography.labelMd, color: Colors.onSurface, marginBottom: Spacing.xs },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
-  chip: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: Radius.full,
-    borderWidth: 1.5,
-    borderColor: Colors.surfaceContainerHigh,
-    backgroundColor: Colors.surfaceContainerLowest,
-  },
-  chipActive: { borderColor: Colors.primary, backgroundColor: Colors.iconBgPurple },
-  chipText: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
-  chipTextActive: { color: Colors.primary },
+  dobRow: { flexDirection: 'row', gap: Spacing.sm },
+  dobCol: { flex: 1 },
+  error: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.xs },
 });

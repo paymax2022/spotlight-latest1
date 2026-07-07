@@ -19,8 +19,8 @@ export default function TierIntro() {
 
   return (
     <OnboardingStep
-      step={9}
-      totalSteps={9}
+      step={8}
+      totalSteps={8}
       title="Your tiers & limits"
       subtitle="Each tier unlocks more — gifting, withdrawals and going live. Limits are checked on our servers."
       primaryLabel="Finish"

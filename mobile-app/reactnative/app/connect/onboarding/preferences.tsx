@@ -28,7 +28,7 @@ export default function Preferences() {
   return (
     <OnboardingStep
       step={5}
-      totalSteps={9}
+      totalSteps={8}
       title="Discovery preferences"
       subtitle="Fine-tune who you see. You can change these anytime in settings."
       primaryLabel="Continue"

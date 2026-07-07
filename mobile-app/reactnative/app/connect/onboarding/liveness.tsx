@@ -21,21 +21,19 @@ export default function Liveness() {
 
   const onCapture = () => {
     submit.mutate(undefined, {
-      onSuccess: () => router.push('/connect/onboarding/bvn-nin'),
+      onSuccess: () => router.push('/connect/onboarding/tier-intro'),
     });
   };
 
   return (
     <OnboardingStep
       step={7}
-      totalSteps={9}
+      totalSteps={8}
       title="Liveness check"
-      subtitle="A quick selfie confirms you’re a real, live person. It takes about 10 seconds."
+      subtitle="A quick selfie confirms you’re a real, live person. This is required to activate your profile — it takes about 10 seconds."
       primaryLabel={passed ? 'Continue' : 'Start liveness check'}
-      onPrimary={passed ? () => router.push('/connect/onboarding/bvn-nin') : onCapture}
+      onPrimary={passed ? () => router.push('/connect/onboarding/tier-intro') : onCapture}
       primaryLoading={submit.isPending}
-      secondaryLabel="Do this later"
-      onSecondary={() => router.push('/connect/onboarding/bvn-nin')}
       footerNote="Your selfie is encrypted and used only for verification. It is never shown on your profile."
     >
       <View style={styles.frameWrap}>

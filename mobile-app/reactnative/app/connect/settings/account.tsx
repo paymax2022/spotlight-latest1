@@ -20,7 +20,6 @@ export default function AccountSettings() {
       title: 'Identity',
       rows: [
         { icon: 'ScanFace', label: 'Liveness verification', sub: data?.verification.liveness === 'passed' ? 'Verified' : 'Not verified', href: '/connect/onboarding/liveness' },
-        { icon: 'BadgeCheck', label: 'BVN / NIN', sub: data?.verification.identity === 'passed' ? 'Linked' : 'Not linked', href: '/connect/onboarding/bvn-nin' },
       ],
     },
     {
