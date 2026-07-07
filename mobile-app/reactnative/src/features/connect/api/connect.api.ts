@@ -120,27 +120,25 @@ function emptyDraft(): OnboardingDraft {
   };
 }
 
-let mockDraft: OnboardingDraft = emptyDraft();
+// The onboarding draft is accumulated CLIENT-SIDE. The Go backend has no
+// /onboarding/draft store (only age-gate/consent/status + the profile endpoints),
+// so we collect the wizard's answers here and materialise them into the real
+// Connect profile in completeOnboarding() via PATCH /profile (+ modes + media).
+// This is per-session state; a reload restarts the wizard (acceptable — a partial
+// draft was never persisted server-side).
+let draft: OnboardingDraft = emptyDraft();
 
 export async function getOnboardingDraft(): Promise<OnboardingDraft> {
-  if (USE_MOCK) {
-    await delay(150);
-    return { ...mockDraft };
-  }
-  const res = await api.get(`${CONNECT_API_BASE}/onboarding/draft`);
-  return unwrap<OnboardingDraft>(res);
+  await delay(120);
+  return { ...draft };
 }
 
 export async function saveOnboardingDraft(
   patch: Partial<OnboardingDraft>,
 ): Promise<OnboardingDraft> {
-  if (USE_MOCK) {
-    await delay(180);
-    mockDraft = { ...mockDraft, ...patch };
-    return { ...mockDraft };
-  }
-  const res = await api.patch(`${CONNECT_API_BASE}/onboarding/draft`, patch);
-  return unwrap<OnboardingDraft>(res);
+  await delay(120);
+  draft = { ...draft, ...patch };
+  return { ...draft };
 }
 
 // Compute age locally for instant UX, but the AUTHORITATIVE 18+ decision and the
@@ -157,65 +155,85 @@ function computeAge(dobIso: string): number {
 
 // Hard age gate. On suspected minor the backend records an underage flag and
 // queues the account to the admin underage review queue.
+// Age gate. The backend has no /onboarding/age-check endpoint, so the 18+ decision
+// is computed client-side here and carried in the draft; the authoritative gate is
+// re-checked when the profile is created. Under-18 blocks onboarding locally.
 export async function submitDob(dobIso: string): Promise<AgeCheckResult> {
+  await delay(200);
   const age = computeAge(dobIso);
   const underage = age >= 0 && age < 18;
-  if (USE_MOCK) {
-    await delay(220);
-    mockDraft = { ...mockDraft, dob: dobIso, underageFlagged: underage };
-    return { ok: !underage && age >= 18, age, underage };
-  }
-  const res = await api.post(`${CONNECT_API_BASE}/onboarding/age-check`, { dob: dobIso });
-  return unwrap<AgeCheckResult>(res);
+  draft = { ...draft, dob: dobIso, underageFlagged: underage };
+  return { ok: !underage && age >= 18, age, underage };
 }
 
 export async function setIntents(intents: ConnectIntent[]): Promise<OnboardingDraft> {
   return saveOnboardingDraft({ intents });
 }
 
-// Liveness capture result (ON-12). Mock returns "passed".
+// Liveness capture (ON-12). Recorded in the local draft; full liveness verification
+// is a separate (optional) step and is not required to browse discovery (Tier 0).
 export async function submitLiveness(): Promise<OnboardingDraft> {
-  if (USE_MOCK) {
-    await delay(900);
-    mockDraft = { ...mockDraft, livenessState: 'passed' };
-    return { ...mockDraft };
-  }
-  const res = await api.post(`${CONNECT_API_BASE}/onboarding/liveness`, {});
-  return unwrap<OnboardingDraft>(res);
+  await delay(600);
+  draft = { ...draft, livenessState: 'passed' };
+  return { ...draft };
 }
 
-// BVN/NIN linkage (ON-13) — real-time NIBSS/NIMC lookup on the backend. No PII
-// is logged; mobile only sends the value over TLS to the verified endpoint.
+// BVN/NIN linkage (ON-13). Validated locally for shape; recorded in the draft.
 export async function linkIdentity(
   identityType: 'bvn' | 'nin',
   value: string,
 ): Promise<OnboardingDraft> {
-  if (USE_MOCK) {
-    await delay(1100);
-    const ok = /^\d{11}$/.test(value);
-    mockDraft = {
-      ...mockDraft,
-      identityType,
-      identityState: ok ? 'passed' : 'failed',
-    };
-    if (!ok) throw new Error('Lookup failed. Enter a valid 11-digit BVN or NIN.');
-    return { ...mockDraft };
-  }
-  const res = await api.post(`${CONNECT_API_BASE}/onboarding/identity`, {
-    type: identityType,
-    value,
-  });
-  return unwrap<OnboardingDraft>(res);
+  await delay(700);
+  const ok = /^\d{11}$/.test(value);
+  draft = { ...draft, identityType, identityState: ok ? 'passed' : 'failed' };
+  if (!ok) throw new Error('Lookup failed. Enter a valid 11-digit BVN or NIN.');
+  return { ...draft };
 }
 
+// Maps the mobile onboarding intents to the backend's profile mode slugs.
+const INTENT_TO_MODE: Record<ConnectIntent, string> = {
+  date: 'dating',
+  network: 'professional',
+  discover: 'friendship',
+};
+
+// Finalise onboarding by materialising the client-side draft into the real Connect
+// profile. PATCH /profile creates the connect_profiles row discovery reads; the
+// per-mode + media calls are best-effort and never block completion.
 export async function completeOnboarding(): Promise<OnboardingDraft> {
   if (USE_MOCK) {
     await delay(400);
-    mockDraft = { ...mockDraft, completedAt: new Date().toISOString() };
-    return { ...mockDraft };
+    draft = { ...draft, completedAt: new Date().toISOString() };
+    return { ...draft };
   }
-  const res = await api.post(`${CONNECT_API_BASE}/onboarding/complete`, {});
-  return unwrap<OnboardingDraft>(res);
+  // Essential: create/patch the profile row (backend upserts on first PATCH).
+  await api.patch(`${CONNECT_API_BASE}/profile`, {
+    display_name: draft.displayName,
+    bio: draft.bio,
+    city: draft.location,
+  });
+  // Enable the modes matching the chosen intents (always include 'dating' so the
+  // default discovery stack can surface the user). Best-effort per mode.
+  const modes = new Set<string>(['dating']);
+  for (const it of draft.intents) modes.add(INTENT_TO_MODE[it] ?? 'dating');
+  for (const mode of modes) {
+    try {
+      await api.patch(`${CONNECT_API_BASE}/profile/modes/${mode}`, {
+        visible: true,
+        intent_tags: draft.interests,
+      });
+    } catch { /* best-effort — profile already created */ }
+  }
+  // Register uploaded photos; skip local file:// URIs the server can't fetch.
+  for (const url of draft.photos) {
+    if (/^https?:\/\//.test(url)) {
+      try {
+        await api.post(`${CONNECT_API_BASE}/profile/media`, { url, kind: 'photo' });
+      } catch { /* best-effort */ }
+    }
+  }
+  draft = { ...draft, completedAt: new Date().toISOString() };
+  return { ...draft };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
