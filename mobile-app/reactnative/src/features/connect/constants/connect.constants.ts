@@ -1,4 +1,5 @@
 import { Colors } from '@/constants/colors';
+import { getDevUrl } from '@/lib/devUrl';
 import type { TierBenefit } from '../types/connect.types';
 
 // Flip to false once the live Go-backend /connect endpoints are reachable from
@@ -6,10 +7,18 @@ import type { TierBenefit } from '../types/connect.types';
 // mock-first convention.
 export const USE_MOCK = (process.env.EXPO_PUBLIC_CONNECT_USE_MOCK ?? 'true') !== 'false';
 
-// Connect REST namespace. NOTE: Connect lives on the Go backend (:8080), not the
-// frontend-web host the shared axios client points at — Phase 1 wires the correct
-// base; Phase 0 stays mock-first.
-export const CONNECT_API_BASE = '/api/v1/connect';
+// Connect talks DIRECTLY to the Go backend, bypassing the frontend-web :3000
+// gateway so the app does NOT depend on that server being up. The shared axios
+// `api` client still runs (attaching the Supabase Bearer token) — axios uses an
+// absolute URL as-is, ignoring the client's :3000 baseURL. The backend allows the
+// Expo web origin (:8083) via CORS_ALLOW_ORIGINS.
+//
+// Default host is the local backend (:8091, matching backend/.env APP_PORT).
+// getDevUrl() rewrites localhost → the dev-machine LAN IP so physical devices and
+// emulators still reach it. Override with EXPO_PUBLIC_CONNECT_API_HOST if the
+// backend runs elsewhere (e.g. a staging URL).
+const CONNECT_API_HOST = process.env.EXPO_PUBLIC_CONNECT_API_HOST ?? 'http://localhost:8091';
+export const CONNECT_API_BASE = getDevUrl(`${CONNECT_API_HOST}/api/v1/connect`);
 
 // Module-scoped colors built on the base design tokens (never hardcode hex).
 export const ConnectColors = {
