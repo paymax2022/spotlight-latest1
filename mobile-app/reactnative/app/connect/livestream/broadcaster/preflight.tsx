@@ -11,7 +11,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
-import { useBroadcastPreflight } from '@/features/connect/live/hooks';
+import { useBroadcastPreflight } from '@/features/connect/livestream/hooks';
 
 /**
  * Go-live preflight (PRD §10.7 LB-02). Tier 2+ KYC gate + device permissions.
@@ -63,7 +63,7 @@ export default function BroadcastPreflightScreen() {
 
       <View style={styles.footer}>
         {p.canGoLive ? (
-          <PrimaryButton label="Continue to setup" onPress={() => router.push('/connect/live/broadcaster/setup')} disabled={!allReady} />
+          <PrimaryButton label="Continue to setup" onPress={() => router.push('/connect/livestream/broadcaster/setup')} disabled={!allReady} />
         ) : (
           <PrimaryButton label="Upgrade to Tier 2" variant="secondary" onPress={() => router.push('/connect/me' as never)} />
         )}

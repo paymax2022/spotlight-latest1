@@ -42,7 +42,7 @@ export default function LikesYouScreen() {
         accessibilityLabel={`View ${item.profile.displayName}`}
         onPress={() =>
           router.push({
-            pathname: '/connect/discover/profile-detail',
+            pathname: '/connect/discovery/profile-detail',
             params: { id: item.profile.id },
           })
         }

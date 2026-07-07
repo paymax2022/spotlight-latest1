@@ -66,7 +66,7 @@ export default function PkInviteScreen() {
 
       <View style={styles.footer}>
         {matched ? (
-          <PrimaryButton label="Start battle" onPress={() => router.replace({ pathname: '/connect/live/pk-battle-view', params: { id: 'pk_1' } })} />
+          <PrimaryButton label="Start battle" onPress={() => router.replace({ pathname: '/connect/livestream/pk-battle-view', params: { id: 'pk_1' } })} />
         ) : (
           <PrimaryButton label={matching ? 'Finding opponent…' : 'Find opponent'} onPress={findOpponent} loading={matching} disabled={matching} />
         )}

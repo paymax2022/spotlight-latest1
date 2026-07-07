@@ -11,7 +11,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
-import { useStartBroadcast } from '@/features/connect/live/hooks';
+import { useStartBroadcast } from '@/features/connect/livestream/hooks';
 
 const CATEGORIES = ['music', 'talk', 'gaming', 'lifestyle', 'dance', 'events'];
 
@@ -27,7 +27,7 @@ export default function BroadcastSetupScreen() {
     if (!title.trim()) return;
     start.mutate(
       { title: title.trim(), category, tags: tags.split(',').map((t) => t.trim()).filter(Boolean), shareLocation },
-      { onSuccess: () => router.replace('/connect/live/broadcaster/live-console') },
+      { onSuccess: () => router.replace('/connect/livestream/broadcaster/live-console') },
     );
   }
 

@@ -11,7 +11,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { formatKobo } from '@/features/connect/constants/format';
-import { usePkBattle } from '@/features/connect/live/hooks';
+import { usePkBattle } from '@/features/connect/livestream/hooks';
 
 /** Split-screen PK battle progress (PRD §10.6 LV-05). Scores are gift-revenue (kobo). */
 export default function PkBattleViewScreen() {

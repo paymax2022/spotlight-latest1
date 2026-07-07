@@ -10,7 +10,7 @@ import { Radius } from '@/constants/radius';
 import StateView from '@/components/StateView';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { formatKobo } from '@/features/connect/constants/format';
-import { useBroadcastSession } from '@/features/connect/live/hooks';
+import { useBroadcastSession } from '@/features/connect/livestream/hooks';
 
 /** Broadcaster live console (PRD §10.7 LB-03/06/07): viewer count, co-host, controls, earnings. */
 export default function LiveConsoleScreen() {
@@ -23,7 +23,7 @@ export default function LiveConsoleScreen() {
   const mins = Math.floor(s.elapsedSec / 60);
 
   function endStream() {
-    router.replace('/connect/live/broadcaster/ended-summary');
+    router.replace('/connect/livestream/broadcaster/ended-summary');
   }
 
   return (
@@ -35,7 +35,7 @@ export default function LiveConsoleScreen() {
           <View style={styles.liveBadge}><View style={styles.liveDot} /><Text style={styles.liveText}>LIVE · {mins}m</Text></View>
           <View style={styles.metricsRow}>
             <View style={styles.metric}><Eye size={13} color={Colors.onPrimary} strokeWidth={2.2} /><Text style={styles.metricText}>{s.viewerCount.toLocaleString('en-NG')}</Text></View>
-            <Pressable style={styles.earningsPill} onPress={() => router.push('/connect/live/broadcaster/earnings')} accessibilityLabel="View earnings">
+            <Pressable style={styles.earningsPill} onPress={() => router.push('/connect/livestream/broadcaster/earnings')} accessibilityLabel="View earnings">
               <Gift size={13} color={Colors.onPrimary} strokeWidth={2.2} />
               <Text style={styles.earningsText}>{formatKobo(s.earningsKobo)}</Text>
             </Pressable>
@@ -53,15 +53,15 @@ export default function LiveConsoleScreen() {
               {muted ? <MicOff size={22} color={Colors.error} strokeWidth={2.2} /> : <Mic size={22} color={Colors.onPrimary} strokeWidth={2.2} />}
               <Text style={styles.ctrlLabel}>{muted ? 'Muted' : 'Mute'}</Text>
             </Pressable>
-            <Pressable style={styles.ctrl} onPress={() => router.push('/connect/live/broadcaster/invite-cohost')} accessibilityLabel="Invite co-host">
+            <Pressable style={styles.ctrl} onPress={() => router.push('/connect/livestream/broadcaster/invite-cohost')} accessibilityLabel="Invite co-host">
               <Users size={22} color={Colors.onPrimary} strokeWidth={2.2} />
               <Text style={styles.ctrlLabel}>Co-host</Text>
             </Pressable>
-            <Pressable style={styles.ctrl} onPress={() => router.push('/connect/live/broadcaster/pk-invite')} accessibilityLabel="Start PK battle">
+            <Pressable style={styles.ctrl} onPress={() => router.push('/connect/livestream/broadcaster/pk-invite')} accessibilityLabel="Start PK battle">
               <Swords size={22} color={Colors.onPrimary} strokeWidth={2.2} />
               <Text style={styles.ctrlLabel}>PK</Text>
             </Pressable>
-            <Pressable style={styles.ctrl} onPress={() => router.push('/connect/live/broadcaster/moderation')} accessibilityLabel="Moderation">
+            <Pressable style={styles.ctrl} onPress={() => router.push('/connect/livestream/broadcaster/moderation')} accessibilityLabel="Moderation">
               <ShieldAlert size={22} color={Colors.onPrimary} strokeWidth={2.2} />
               <Text style={styles.ctrlLabel}>Mod</Text>
             </Pressable>

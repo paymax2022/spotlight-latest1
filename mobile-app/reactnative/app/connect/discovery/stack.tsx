@@ -66,7 +66,7 @@ export default function DiscoveryStackScreen() {
           hitSlop={8}
           accessibilityRole="button"
           accessibilityLabel="Likes you"
-          onPress={() => router.push('/connect/discover/likes-you')}
+          onPress={() => router.push('/connect/discovery/likes-you')}
         >
           <Heart size={22} color={ConnectColors.brand} strokeWidth={2} />
         </Pressable>
@@ -74,7 +74,7 @@ export default function DiscoveryStackScreen() {
           hitSlop={8}
           accessibilityRole="button"
           accessibilityLabel="Filters"
-          onPress={() => router.push('/connect/discover/filters')}
+          onPress={() => router.push('/connect/discovery/filters')}
         >
           <SlidersHorizontal size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
@@ -97,7 +97,7 @@ export default function DiscoveryStackScreen() {
         onSuccess: (result) => {
           if (result.matched) {
             router.push({
-              pathname: '/connect/discover/match-modal',
+              pathname: '/connect/discovery/match-modal',
               params: {
                 matchId: result.matchId ?? '',
                 threadId: result.threadId ?? '',
@@ -142,7 +142,7 @@ export default function DiscoveryStackScreen() {
           message="No more profiles right now. Check your daily picks or widen your filters."
           icon="Sparkles"
           actionLabel="View daily picks"
-          onAction={() => router.push('/connect/discover/daily-picks')}
+          onAction={() => router.push('/connect/discovery/daily-picks')}
         />
       ) : (
         <View style={styles.body}>
@@ -152,7 +152,7 @@ export default function DiscoveryStackScreen() {
               accessibilityLabel={`View ${current.displayName}'s profile`}
               onPress={() =>
                 router.push({
-                  pathname: '/connect/discover/profile-detail',
+                  pathname: '/connect/discovery/profile-detail',
                   params: { id: current.id },
                 })
               }
@@ -180,7 +180,7 @@ export default function DiscoveryStackScreen() {
 
             <Pressable
               accessibilityRole="button"
-              onPress={() => router.push('/connect/discover/daily-picks')}
+              onPress={() => router.push('/connect/discovery/daily-picks')}
               style={styles.dailyPicksBtn}
             >
               <Sparkles size={16} color={ConnectColors.brand} strokeWidth={2} />
@@ -191,7 +191,7 @@ export default function DiscoveryStackScreen() {
           <View style={styles.actionBar}>
             <ActionButton
               label="Rewind"
-              onPress={() => router.push('/connect/discover/rewind')}
+              onPress={() => router.push('/connect/discovery/rewind')}
               icon={<RotateCcw size={22} color={Colors.gold} strokeWidth={2.2} />}
               size="sm"
             />
@@ -216,7 +216,7 @@ export default function DiscoveryStackScreen() {
             />
             <ActionButton
               label="Boost"
-              onPress={() => router.push('/connect/discover/boost')}
+              onPress={() => router.push('/connect/discovery/boost')}
               icon={<Zap size={22} color={Colors.gold} strokeWidth={2.2} />}
               size="sm"
             />

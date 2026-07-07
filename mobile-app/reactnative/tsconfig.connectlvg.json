@@ -2,8 +2,8 @@
   "extends": "./tsconfig.json",
   "compilerOptions": { "skipLibCheck": true, "noEmit": true, "jsx": "react-jsx" },
   "include": [
-    "app/connect/live/**/*.ts",
-    "app/connect/live/**/*.tsx",
+    "app/connect/livestream/**/*.ts",
+    "app/connect/livestream/**/*.tsx",
     "app/connect/voting/**/*.ts",
     "app/connect/voting/**/*.tsx",
     "app/connect/gamification/**/*.ts",

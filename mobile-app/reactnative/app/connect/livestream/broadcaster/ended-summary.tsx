@@ -12,14 +12,14 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { formatKobo } from '@/features/connect/constants/format';
-import { useStreamSummary } from '@/features/connect/live/hooks';
+import { useStreamSummary } from '@/features/connect/livestream/hooks';
 
 /** End-of-stream summary (PRD §10.7 LB-08): earnings, viewers, new followers. */
 export default function EndedSummaryScreen() {
   const q = useStreamSummary();
 
   if (q.isLoading) return <SafeAreaView style={styles.safe}><ScreenHeader title="Stream ended" showBack={false} /><StateView kind="loading" message="Wrapping up…" /></SafeAreaView>;
-  if (q.isError || !q.data) return <SafeAreaView style={styles.safe}><ScreenHeader title="Stream ended" showBack={false} /><StateView kind="error" title="Couldn't load summary" actionLabel="Done" onAction={() => router.replace('/connect/live/discover')} /></SafeAreaView>;
+  if (q.isError || !q.data) return <SafeAreaView style={styles.safe}><ScreenHeader title="Stream ended" showBack={false} /><StateView kind="error" title="Couldn't load summary" actionLabel="Done" onAction={() => router.replace('/connect/livestream/discover')} /></SafeAreaView>;
   const s = q.data;
   const mins = Math.floor(s.durationSec / 60);
 
@@ -55,9 +55,9 @@ export default function EndedSummaryScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <PrimaryButton label="View earnings" variant="secondary" onPress={() => router.replace('/connect/live/broadcaster/earnings')} />
+        <PrimaryButton label="View earnings" variant="secondary" onPress={() => router.replace('/connect/livestream/broadcaster/earnings')} />
         <View style={{ height: Spacing.sm }} />
-        <PrimaryButton label="Done" onPress={() => router.replace('/connect/live/discover')} />
+        <PrimaryButton label="Done" onPress={() => router.replace('/connect/livestream/discover')} />
       </View>
     </SafeAreaView>
   );

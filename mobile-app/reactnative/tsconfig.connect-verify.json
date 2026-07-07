@@ -9,7 +9,7 @@
     "paths": { "@/*": ["src/*"] }
   },
   "include": [
-    "app/connect/discover/**/*",
+    "app/connect/discovery/**/*",
     "app/connect/networking/**/*",
     "app/connect/profile/**/*",
     "app/connect/messaging/**/*",

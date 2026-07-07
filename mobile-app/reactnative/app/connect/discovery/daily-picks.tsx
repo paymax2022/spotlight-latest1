@@ -31,7 +31,7 @@ export default function DailyPicksScreen() {
         onSuccess: (result) => {
           if (result.matched) {
             router.push({
-              pathname: '/connect/discover/match-modal',
+              pathname: '/connect/discovery/match-modal',
               params: {
                 matchId: result.matchId ?? '',
                 threadId: result.threadId ?? '',
@@ -53,7 +53,7 @@ export default function DailyPicksScreen() {
           accessibilityLabel={`View ${item.profile.displayName}`}
           onPress={() =>
             router.push({
-              pathname: '/connect/discover/profile-detail',
+              pathname: '/connect/discovery/profile-detail',
               params: { id: item.profile.id },
             })
           }
@@ -81,7 +81,7 @@ export default function DailyPicksScreen() {
                 variant="secondary"
                 onPress={() =>
                   router.push({
-                    pathname: '/connect/discover/profile-detail',
+                    pathname: '/connect/discovery/profile-detail',
                     params: { id: item.profile.id },
                   })
                 }

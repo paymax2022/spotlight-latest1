@@ -11,8 +11,8 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import SegmentedControl from '@/components/SegmentedControl';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
-import { useLiveStreams } from '@/features/connect/live/hooks';
-import type { LiveCategory, LiveStream } from '@/features/connect/live/types';
+import { useLiveStreams } from '@/features/connect/livestream/hooks';
+import type { LiveCategory, LiveStream } from '@/features/connect/livestream/types';
 
 const CATS: { value: LiveCategory; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -43,7 +43,7 @@ export default function LiveDiscoverScreen() {
         style={styles.card}
         accessibilityRole="button"
         accessibilityLabel={`Watch ${item.title} by ${item.hostName}`}
-        onPress={() => router.push({ pathname: '/connect/live/viewer', params: { id: item.id } })}
+        onPress={() => router.push({ pathname: '/connect/livestream/viewer', params: { id: item.id } })}
       >
         <Image source={{ uri: item.coverUrl }} style={styles.cover} resizeMode="cover" />
         <View style={styles.liveBadge}>
@@ -76,7 +76,7 @@ export default function LiveDiscoverScreen() {
           <Pressable
             hitSlop={10}
             accessibilityLabel="Leaderboard"
-            onPress={() => router.push('/connect/live/leaderboard')}
+            onPress={() => router.push('/connect/livestream/leaderboard')}
           >
             <Trophy size={20} color={Colors.onSurface} strokeWidth={2} />
           </Pressable>
@@ -90,7 +90,7 @@ export default function LiveDiscoverScreen() {
       <Pressable
         style={styles.replayRow}
         accessibilityRole="button"
-        onPress={() => router.push('/connect/live/replay')}
+        onPress={() => router.push('/connect/livestream/replay')}
       >
         <Play size={15} color={Colors.secondary} strokeWidth={2.4} />
         <Text style={styles.replayText}>Watch replays</Text>
@@ -101,7 +101,7 @@ export default function LiveDiscoverScreen() {
       ) : q.isError ? (
         <StateView kind="error" title="Couldn't load live" message="Check your connection and try again." actionLabel="Retry" onAction={() => q.refetch()} />
       ) : streams.length === 0 ? (
-        <StateView kind="empty" icon="Radio" title="No live streams" message="Nothing live in this category right now. Be the first to go live." actionLabel="Go live" onAction={() => router.push('/connect/live/broadcaster/preflight')} />
+        <StateView kind="empty" icon="Radio" title="No live streams" message="Nothing live in this category right now. Be the first to go live." actionLabel="Go live" onAction={() => router.push('/connect/livestream/broadcaster/preflight')} />
       ) : (
         <FlatList
           data={streams}
@@ -119,7 +119,7 @@ export default function LiveDiscoverScreen() {
         style={styles.fab}
         accessibilityRole="button"
         accessibilityLabel="Go live"
-        onPress={() => router.push('/connect/live/broadcaster/preflight')}
+        onPress={() => router.push('/connect/livestream/broadcaster/preflight')}
       >
         <Radio size={18} color={Colors.onPrimary} strokeWidth={2.4} />
         <Text style={styles.fabText}>Go live</Text>

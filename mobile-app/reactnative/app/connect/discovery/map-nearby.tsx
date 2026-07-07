@@ -69,7 +69,7 @@ export default function MapNearbyScreen() {
         accessibilityRole="button"
         accessibilityLabel={`View ${item.displayName}`}
         onPress={() =>
-          router.push({ pathname: '/connect/discover/profile-detail', params: { id: item.id } })
+          router.push({ pathname: '/connect/discovery/profile-detail', params: { id: item.id } })
         }
         style={styles.row}
       >

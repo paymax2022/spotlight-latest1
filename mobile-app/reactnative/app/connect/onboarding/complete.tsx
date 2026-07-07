@@ -21,7 +21,7 @@ export default function Complete() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const goDiscover = () => router.replace('/connect/(tabs)/discover');
+  const goDiscover = () => router.replace('/connect/discover');
 
   return (
     <SafeAreaView style={styles.safe}>

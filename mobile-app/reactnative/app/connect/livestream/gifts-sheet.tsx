@@ -16,9 +16,9 @@ import LiveMoneyNotice from '@/features/connect/components/live-MoneyNotice';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { formatKobo } from '@/features/connect/constants/format';
 import { useTierStatus } from '@/features/connect/hooks/useConnect';
-import { useGifts, useSendGift } from '@/features/connect/live/hooks';
-import { makeIdempotencyKey } from '@/features/connect/live/api';
-import type { LiveGift } from '@/features/connect/live/types';
+import { useGifts, useSendGift } from '@/features/connect/livestream/hooks';
+import { makeIdempotencyKey } from '@/features/connect/livestream/api';
+import type { LiveGift } from '@/features/connect/livestream/types';
 
 /**
  * Gift drawer (PRD §10.6 LV-06/07/08). Gifts are REAL Naira wallet money:

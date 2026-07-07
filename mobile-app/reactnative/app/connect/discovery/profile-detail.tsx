@@ -45,7 +45,7 @@ export default function ProfileDetailScreen() {
         onSuccess: (result) => {
           if (result.matched) {
             router.push({
-              pathname: '/connect/discover/match-modal',
+              pathname: '/connect/discovery/match-modal',
               params: {
                 matchId: result.matchId ?? '',
                 threadId: result.threadId ?? '',

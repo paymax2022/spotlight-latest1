@@ -11,8 +11,8 @@ import StateView from '@/components/StateView';
 import SegmentedControl from '@/components/SegmentedControl';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { formatKobo } from '@/features/connect/constants/format';
-import { useLiveLeaderboard } from '@/features/connect/live/hooks';
-import type { LiveLeaderboardEntry } from '@/features/connect/live/types';
+import { useLiveLeaderboard } from '@/features/connect/livestream/hooks';
+import type { LiveLeaderboardEntry } from '@/features/connect/livestream/types';
 
 /** Stream leaderboard — top gifters / streamers (PRD §10.6 LV-09). */
 export default function LiveLeaderboardScreen() {

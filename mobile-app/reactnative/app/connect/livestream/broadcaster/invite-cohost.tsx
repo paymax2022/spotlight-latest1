@@ -11,7 +11,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import SearchBar from '@/components/SearchBar';
 import StateView from '@/components/StateView';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
-import { useCoHostRequests, useRespondCoHost } from '@/features/connect/live/hooks';
+import { useCoHostRequests, useRespondCoHost } from '@/features/connect/livestream/hooks';
 
 const SUGGESTIONS = [
   { id: 'su_1', name: 'Femi', avatar: 'https://i.pravatar.cc/160?u=femi' },

@@ -10,7 +10,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { formatKobo } from '@/features/connect/constants/format';
-import { useStreamSummary } from '@/features/connect/live/hooks';
+import { useStreamSummary } from '@/features/connect/livestream/hooks';
 
 /** Live earnings overlay / summary (PRD §10.7 LB-07). All amounts in kobo. */
 export default function EarningsScreen() {

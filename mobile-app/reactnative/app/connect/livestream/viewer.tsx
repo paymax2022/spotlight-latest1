@@ -9,8 +9,8 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import StateView from '@/components/StateView';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
-import { useLiveStream, useLiveChat, useSendLiveChat } from '@/features/connect/live/hooks';
-import type { LiveChatMessage } from '@/features/connect/live/types';
+import { useLiveStream, useLiveChat, useSendLiveChat } from '@/features/connect/livestream/hooks';
+import type { LiveChatMessage } from '@/features/connect/livestream/types';
 
 /** Single-stream viewer with chat + gift action (PRD §10.6 LV-04). */
 export default function LiveViewerScreen() {
@@ -87,7 +87,7 @@ export default function LiveViewerScreen() {
           <Pressable
             style={styles.pkChip}
             accessibilityRole="button"
-            onPress={() => router.push({ pathname: '/connect/live/pk-battle-view', params: { id: s.id } })}
+            onPress={() => router.push({ pathname: '/connect/livestream/pk-battle-view', params: { id: s.id } })}
           >
             <Swords size={13} color={Colors.onPrimary} strokeWidth={2.4} />
             <Text style={styles.pkChipText}>PK battle — tap to view scores</Text>
@@ -125,14 +125,14 @@ export default function LiveViewerScreen() {
             <Pressable
               style={styles.iconAction}
               accessibilityLabel="Request to co-host"
-              onPress={() => router.push({ pathname: '/connect/live/co-host-request', params: { id: s.id } })}
+              onPress={() => router.push({ pathname: '/connect/livestream/co-host-request', params: { id: s.id } })}
             >
               <UserPlus size={20} color={Colors.onPrimary} strokeWidth={2.2} />
             </Pressable>
             <Pressable
               style={styles.iconAction}
               accessibilityLabel="Leaderboard"
-              onPress={() => router.push('/connect/live/leaderboard')}
+              onPress={() => router.push('/connect/livestream/leaderboard')}
             >
               <Trophy size={20} color={Colors.onPrimary} strokeWidth={2.2} />
             </Pressable>
@@ -140,7 +140,7 @@ export default function LiveViewerScreen() {
               style={styles.giftBtn}
               accessibilityRole="button"
               accessibilityLabel="Send a gift (real money)"
-              onPress={() => router.push({ pathname: '/connect/live/gifts-sheet', params: { id: s.id } })}
+              onPress={() => router.push({ pathname: '/connect/livestream/gifts-sheet', params: { id: s.id } })}
             >
               <Gift size={20} color={Colors.onPrimary} strokeWidth={2.2} />
               <Text style={styles.giftText}>Gift</Text>
@@ -149,7 +149,7 @@ export default function LiveViewerScreen() {
           <Pressable
             style={styles.reportRow}
             accessibilityRole="button"
-            onPress={() => router.push({ pathname: '/connect/live/report-stream', params: { id: s.id } })}
+            onPress={() => router.push({ pathname: '/connect/livestream/report-stream', params: { id: s.id } })}
           >
             <Flag size={12} color={Colors.inverseOnSurface} strokeWidth={2} />
             <Text style={styles.reportText}>Report stream</Text>
