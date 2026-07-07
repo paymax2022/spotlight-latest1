@@ -11,7 +11,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
-import { useBroadcastPreflight } from '@/features/connect/livestream/hooks';
+import { useBroadcastPreflight } from '@/features/connect/live/hooks';
 
 /**
  * Go-live preflight (PRD §10.7 LB-02). Tier 2+ KYC gate + device permissions.

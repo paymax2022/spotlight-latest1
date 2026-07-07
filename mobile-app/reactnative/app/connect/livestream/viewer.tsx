@@ -9,8 +9,8 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import StateView from '@/components/StateView';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
-import { useLiveStream, useLiveChat, useSendLiveChat } from '@/features/connect/livestream/hooks';
-import type { LiveChatMessage } from '@/features/connect/livestream/types';
+import { useLiveStream, useLiveChat, useSendLiveChat } from '@/features/connect/live/hooks';
+import type { LiveChatMessage } from '@/features/connect/live/types';
 
 /** Single-stream viewer with chat + gift action (PRD §10.6 LV-04). */
 export default function LiveViewerScreen() {

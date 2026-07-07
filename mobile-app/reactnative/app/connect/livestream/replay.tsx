@@ -10,8 +10,8 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { formatKobo } from '@/features/connect/constants/format';
-import { useReplays } from '@/features/connect/livestream/hooks';
-import type { StreamReplay } from '@/features/connect/livestream/types';
+import { useReplays } from '@/features/connect/live/hooks';
+import type { StreamReplay } from '@/features/connect/live/types';
 
 /** Past streams / replays — moderated VOD (PRD §10.6 LV-10). */
 export default function ReplayScreen() {

@@ -12,7 +12,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { formatKobo } from '@/features/connect/constants/format';
-import { useStreamSummary } from '@/features/connect/livestream/hooks';
+import { useStreamSummary } from '@/features/connect/live/hooks';
 
 /** End-of-stream summary (PRD §10.7 LB-08): earnings, viewers, new followers. */
 export default function EndedSummaryScreen() {

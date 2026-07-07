@@ -11,8 +11,8 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import SegmentedControl from '@/components/SegmentedControl';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
-import { useLiveStreams } from '@/features/connect/livestream/hooks';
-import type { LiveCategory, LiveStream } from '@/features/connect/livestream/types';
+import { useLiveStreams } from '@/features/connect/live/hooks';
+import type { LiveCategory, LiveStream } from '@/features/connect/live/types';
 
 const CATS: { value: LiveCategory; label: string }[] = [
   { value: 'all', label: 'All' },

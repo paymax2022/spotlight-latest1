@@ -11,7 +11,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
-import { useStartBroadcast } from '@/features/connect/livestream/hooks';
+import { useStartBroadcast } from '@/features/connect/live/hooks';
 
 const CATEGORIES = ['music', 'talk', 'gaming', 'lifestyle', 'dance', 'events'];
 

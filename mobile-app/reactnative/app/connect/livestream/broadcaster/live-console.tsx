@@ -10,7 +10,7 @@ import { Radius } from '@/constants/radius';
 import StateView from '@/components/StateView';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { formatKobo } from '@/features/connect/constants/format';
-import { useBroadcastSession } from '@/features/connect/livestream/hooks';
+import { useBroadcastSession } from '@/features/connect/live/hooks';
 
 /** Broadcaster live console (PRD §10.7 LB-03/06/07): viewer count, co-host, controls, earnings. */
 export default function LiveConsoleScreen() {

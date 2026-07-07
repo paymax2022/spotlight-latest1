@@ -11,7 +11,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
-import { useStreamReportReasons, useReportStream } from '@/features/connect/livestream/hooks';
+import { useStreamReportReasons, useReportStream } from '@/features/connect/live/hooks';
 
 /**
  * Report a stream (PRD §10.6 LV-13). SAFETY §7: a report ALWAYS creates a case;

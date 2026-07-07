@@ -9,8 +9,8 @@ import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
-import { useLiveViewers, useModerateViewer } from '@/features/connect/livestream/hooks';
-import type { LiveViewer } from '@/features/connect/livestream/types';
+import { useLiveViewers, useModerateViewer } from '@/features/connect/live/hooks';
+import type { LiveViewer } from '@/features/connect/live/types';
 
 /** Host moderation — mute/kick/ban viewers (PRD §10.7 LB-06). */
 export default function ModerationScreen() {
