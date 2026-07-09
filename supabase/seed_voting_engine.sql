@@ -149,7 +149,7 @@ BEGIN
   WITH contestants AS (
     SELECT id, ROW_NUMBER() OVER (ORDER BY created_at) AS rn
     FROM public.competition_enrollments
-    WHERE contest_id = v_contest_id
+    WHERE competition_id = v_contest_id
     LIMIT 10
   )
   INSERT INTO public.vote_totals
