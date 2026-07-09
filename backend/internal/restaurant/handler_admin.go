@@ -106,17 +106,81 @@ func (h *Handler) AdminDecideApplication(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// AdminPayoutRuns → GET /api/restaurant/admin/payouts (restaurant.admin.payouts).
-// READ-ONLY reconciliation of settled food-delivery escrows by period. Moves no
-// money (see report: no payout-run/disbursement service exists yet).
-func (h *Handler) AdminPayoutRuns(c *gin.Context) {
-	runs, err := h.svc.AdminPayoutRuns(c.Request.Context())
+// AdminListPayoutRuns → GET /api/restaurant/admin/payouts (restaurant.admin.payouts).
+// Real disbursement runs (restaurant + rider), newest first. Each row is an
+// auditable payout run whose net was (or will be) posted to the provider wallet
+// via a balanced ledger transfer.
+func (h *Handler) AdminListPayoutRuns(c *gin.Context) {
+	runs, err := h.svc.ListRuns(c.Request.Context(), 100)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	if runs == nil {
-		runs = []AdminPayoutRun{}
+		runs = []PayoutRun{}
 	}
 	c.JSON(http.StatusOK, runs)
+}
+
+// AdminGetPayoutRun → GET /api/restaurant/admin/payouts/:id (restaurant.admin.payouts).
+// A single run plus its append-only provenance lines.
+func (h *Handler) AdminGetPayoutRun(c *gin.Context) {
+	run, err := h.svc.GetRun(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if err == ErrPayoutRunNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, run)
+}
+
+// AdminBuildPayoutRun → POST /api/restaurant/admin/payouts/build
+// (restaurant.admin.payouts)  body {period_key, provider_type, provider_id}.
+// Aggregates settled-but-unpaid settlements for the provider/period into a draft
+// run + lines. Idempotent per (provider, period). No money moves at build time.
+func (h *Handler) AdminBuildPayoutRun(c *gin.Context) {
+	var body struct {
+		PeriodKey    string `json:"period_key" binding:"required"`
+		ProviderType string `json:"provider_type" binding:"required"`
+		ProviderID   string `json:"provider_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	run, err := h.svc.BuildRun(c.Request.Context(), body.PeriodKey, body.ProviderType, body.ProviderID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, run)
+}
+
+// AdminProcessPayoutRun → POST /api/restaurant/admin/payouts/:id/process
+// (restaurant.admin.payouts). Disburses a draft run: posts ONE balanced ledger
+// transfer (DR settlement account, CR provider wallet) keyed on the run's
+// idempotency_key and flips draft->processing->paid. REQUIRES an Idempotency-Key
+// header (money mutation). Idempotent + fail-closed: a duplicate never double-pays.
+func (h *Handler) AdminProcessPayoutRun(c *gin.Context) {
+	idem := c.GetHeader("Idempotency-Key")
+	if idem == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": ErrPayoutMissingIdem.Error()})
+		return
+	}
+	run, err := h.svc.ProcessRun(c.Request.Context(), c.Param("id"), idem)
+	if err != nil {
+		switch err {
+		case ErrPayoutRunNotFound:
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		case ErrPayoutMissingIdem, ErrPayoutNothingDue:
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, run)
 }

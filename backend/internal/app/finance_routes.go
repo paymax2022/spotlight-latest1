@@ -1154,7 +1154,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Restaurant & Delivery routes ---
 	if cfg.FeatureRestaurantEnabled {
 		settlementSvcR := settlement.NewService(pool, ledgerSvc)
-		restaurantSvc := restaurant.NewService(pool, settlementSvcR)
+		restaurantSvc := restaurant.NewService(pool, settlementSvcR).WithLedger(ledgerSvc)
 		if mapSvc != nil {
 			locGeo := maps.NewLocationGeocoder(mapSvc)
 			restaurantSvc = restaurantSvc.WithGeocoder(locGeo)
@@ -1268,7 +1268,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Registering both a static "decision" and a ":decision" param at the same
 		// position would panic in Gin, so the handler resolves the literal below.
 		restAdmin.POST("/onboarding/:id/:decision", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideApplication)
-		restAdmin.GET("/payouts", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminPayoutRuns)
+		// Real restaurant/rider payout-run DISBURSEMENT subsystem (money path). List
+		// + detail are reads; build aggregates unpaid settlements into a draft run;
+		// process posts ONE balanced ledger transfer (DR settlement acct → CR provider
+		// wallet) keyed on the run's idempotency_key and requires an Idempotency-Key
+		// header. Every route fail-closed behind restaurant.admin.payouts. Static
+		// "payouts/build" is a sibling of the ":id" param (allowed in Gin v1.10).
+		restAdmin.GET("/payouts", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminListPayoutRuns)
+		restAdmin.POST("/payouts/build", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminBuildPayoutRun)
+		restAdmin.GET("/payouts/:id", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminGetPayoutRun)
+		restAdmin.POST("/payouts/:id/process", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminProcessPayoutRun)
 
 		// Crash-recovery settlement reconciliation (money-path durability): an order
 		// marked delivered whose escrow never released (process died / Settle errored

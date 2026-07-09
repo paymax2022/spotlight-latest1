@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 )
 
@@ -41,6 +42,7 @@ type RouteDistancer interface {
 type Service struct {
 	db         *pgxpool.Pool
 	settlement *settlement.Service
+	ledger     *ledger.Service // money path for payout-run disbursement (nil → payouts disabled)
 	geocoder   AddressGeocoder
 	distancer  RouteDistancer      // optional; nil → haversine straight-line distance
 	feeRepo    *DeliveryConfigRepo // distance-based delivery-fee config (nil-safe → defaults)
@@ -50,6 +52,14 @@ type Service struct {
 
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
 	return &Service{db: db, settlement: settlement, notifier: LogNotifier{}, feeRepo: NewDeliveryConfigRepo(db)}
+}
+
+// WithLedger attaches the finance ledger used by the payout-run disbursement
+// subsystem (BuildRun/ProcessRun). Without it, payout runs are disabled (the
+// service returns an error rather than moving money through a shadow path).
+func (s *Service) WithLedger(l *ledger.Service) *Service {
+	s.ledger = l
+	return s
 }
 
 // WithRealtime attaches the WS fan-out used to push status/location/chat updates

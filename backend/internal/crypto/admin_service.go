@@ -134,18 +134,25 @@ func (s *Service) AdminDecideAddress(ctx context.Context, actorID, id, decision,
 
 // ── Reconciliation (on-chain vs ledger drift) ────────────────────────────────
 
-// AdminReconciliation summarises, per asset, the drift between the on-chain
+// AdminReconciliation summarises, per asset, the drift between the STORED on-chain
 // custodial balance and the ledger-side units the platform owes (holdings + parked
-// withdrawals). There is NO custody/on-chain integration in this build, so
-// onchain_units is reported EQUAL to ledger_units (drift 0, status "ok") — the shape
-// is real and console-ready, and the moment a custody provider is wired the onchain
-// leg replaces this identity.
+// withdrawals). The on-chain side is now REAL: it reads the custodian-reported total
+// from crypto_onchain_balances (fed by the custody-webhook seam, see onchain.go), so
+// drift is meaningful rather than a forced identity.
 //
-// TODO(crypto-admin): source onchain_units from the custody provider (Fireblocks/
-// BitGo balances) instead of mirroring ledger_units, so drift becomes meaningful.
-// This intentionally does NOT import the finance ledger: the "ledger side" here is
-// the crypto holding projections (which ARE the ledger's asset-unit legs) summed
-// from crypto tables, keeping the module self-contained per the file scope.
+// Per-asset status:
+//   - no_feed → no custody row for this asset yet (absent from the on-chain store).
+//     onchain_units is reported as 0 but this is NOT counted as a break — it means
+//     "we have no on-chain data to reconcile against", which the console shows
+//     distinctly so a missing feed is never mistaken for a healthy "ok".
+//   - drift   → a custody row exists AND onchain_units != ledger_units. Counted as a
+//     break to investigate.
+//   - ok      → a custody row exists AND onchain_units == ledger_units.
+//
+// This is READ-ONLY: it reports drift, it never moves money. It intentionally does
+// NOT import the finance ledger — the "ledger side" here is the crypto holding
+// projections (which ARE the ledger's asset-unit legs) plus parked withdrawal units,
+// summed from crypto tables (AdminHeldUnitsByAsset), keeping the module self-contained.
 func (s *Service) AdminReconciliation(ctx context.Context) (*ReconSummary, error) {
 	assets, err := s.repo.ListAssets(ctx, false)
 	if err != nil {
@@ -155,24 +162,43 @@ func (s *Service) AdminReconciliation(ctx context.Context) (*ReconSummary, error
 	if err != nil {
 		return nil, err
 	}
+	onchain, err := s.repo.OnchainUnitsByAsset(ctx)
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now().UTC()
 	rows := make([]ReconRow, 0, len(assets))
 	breaks := 0
 	for _, a := range assets {
 		ledgerUnits := held[a.ID]
-		onchainUnits := ledgerUnits // TODO: replace with custody-provider balance.
-		drift := onchainUnits - ledgerUnits
-		status := "ok"
-		if drift != 0 {
-			status = "break"
-			breaks++
-		}
 		priceKobo, _ := s.price.PriceKobo(ctx, a.Symbol)
-		rows = append(rows, ReconRow{
+
+		row := ReconRow{
 			AssetID: a.ID, Symbol: a.Symbol, MinorUnitScale: a.MinorUnitScale,
-			LedgerUnits: ledgerUnits, OnchainUnits: onchainUnits, DriftUnits: drift,
-			PriceKobo: priceKobo, Status: status, LastCheckedAt: now,
-		})
+			LedgerUnits: ledgerUnits, PriceKobo: priceKobo, LastCheckedAt: now,
+		}
+
+		bal, ok := onchain[a.ID]
+		if !ok {
+			// No custody feed for this asset — report distinctly, do NOT count as a break.
+			row.OnchainUnits = 0
+			row.DriftUnits = 0
+			row.Status = ReconStatusNoFeed
+			rows = append(rows, row)
+			continue
+		}
+
+		row.OnchainUnits = bal.OnchainUnits
+		row.OnchainSource = bal.Source
+		row.OnchainAsOf = &bal.AsOf
+		row.DriftUnits = bal.OnchainUnits - ledgerUnits
+		if row.DriftUnits != 0 {
+			row.Status = ReconStatusDrift
+			breaks++
+		} else {
+			row.Status = ReconStatusOK
+		}
+		rows = append(rows, row)
 	}
 	return &ReconSummary{Rows: rows, Breaks: breaks, AsOf: now}, nil
 }

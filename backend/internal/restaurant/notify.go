@@ -73,4 +73,6 @@ const (
 	EventNewMessage     = "restaurant.chat.message"
 	// Admin ops-console onboarding decision (approve/reject) delivered to the owner.
 	EventOnboardingDecision = "restaurant.onboarding.decision"
+	// Payout run disbursed to a restaurant owner / rider wallet.
+	EventPayoutDisbursed = "restaurant.payout.disbursed"
 )

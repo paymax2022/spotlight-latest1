@@ -275,6 +275,9 @@ let compRewards = MOCK_COMP_REWARDS.map((r) => ({ ...r }));
 // ═══════════════════════════════════════════════════════════════════════════════
 export async function getChildren(): Promise<FeesChild[]> {
   if (USE_MOCK) { await delay(); return children; }
+  // TODO(no backend route): the fees backend has no guardian "children" list endpoint.
+  // Student rows are school-scoped member routes (GET /schools/:schoolId/students), not a
+  // guardian-facing child roster. Left pointing at the mock path until one is added.
   const res = await api.get(`${B}/fees/children`);
   return unwrap<FeesChild[]>(res);
 }
@@ -284,6 +287,8 @@ export async function getInvoices(childId?: string): Promise<Invoice[]> {
     await delay();
     return childId ? invoices.filter((i) => i.childId === childId) : invoices;
   }
+  // TODO(no backend route): invoices are exposed per-id (GET /invoices/:id) or per-student
+  // (GET /students/:studentId/invoices) — there is no list-by-child / list-all invoice route.
   const res = await api.get(`${B}/fees/invoices`, { params: { childId } });
   return unwrap<Invoice[]>(res);
 }
@@ -295,12 +300,15 @@ export async function getInvoice(id: string): Promise<Invoice> {
     if (!inv) throw new Error('Invoice not found');
     return inv;
   }
-  const res = await api.get(`${B}/fees/invoices/${id}`);
+  // feesinvoice member: GET /invoices/:id (derived balance SF-2). Envelope {data}.
+  const res = await api.get(`${B}/invoices/${id}`);
   return unwrap<Invoice>(res);
 }
 
 export async function getInstallmentPlan(invoiceId: string): Promise<InstallmentPlan | null> {
   if (USE_MOCK) { await delay(); return plans.get(invoiceId) ?? null; }
+  // TODO(no backend route): there is no installment-plan read endpoint. The backend models
+  // installments only as payment intents (POST /payments/installment), not a fetchable plan.
   const res = await api.get(`${B}/fees/invoices/${invoiceId}/installment-plan`);
   return unwrap<InstallmentPlan | null>(res);
 }
@@ -324,6 +332,9 @@ export async function linkChild(input: LinkChildInput): Promise<FeesChild> {
     children = [...children, child];
     return child;
   }
+  // TODO(no backend route): guardian linking is a school-scoped member action
+  // (POST /schools/:schoolId/students/:studentId/guardians {guardianUserId}), not a
+  // by-admission-number "link child" endpoint. Shapes differ; left mocked.
   const res = await api.post(`${B}/fees/children/link`, input);
   return unwrap<FeesChild>(res);
 }
@@ -367,8 +378,12 @@ export async function payInvoice(invoiceId: string, amountKobo: number, method: 
     if (amountKobo > inv.totalKobo - inv.paidKobo) throw new Error('Amount exceeds the outstanding balance');
     return applyPayment(inv, amountKobo, method);
   }
+  // feesinvoice member: POST /invoices/:id/payments (record payment, Idempotency-Key required).
+  // Envelope {data}. NOTE(payload): the backend RecordPaymentRequest uses amountMinor (+ optional
+  // gatewayRef/ledgerReference); the amountKobo/method body here is a types-owned follow-up — the
+  // path + idempotency header + envelope are aligned.
   const res = await api.post(
-    `${B}/fees/invoices/${invoiceId}/pay`,
+    `${B}/invoices/${invoiceId}/payments`,
     { amountKobo, method },
     { headers: { 'Idempotency-Key': idempotencyKey ?? generateIdempotencyKey() } },
   );
@@ -398,6 +413,8 @@ export async function createInstallmentPlan(invoiceId: string, count: number): P
     invoices = invoices.map((i) => (i.id === invoiceId ? { ...i, hasInstallmentPlan: true } : i));
     return plan;
   }
+  // TODO(no backend route): there is no create-installment-plan endpoint. The backend expresses
+  // installments only as per-payment intents (POST /payments/installment) — no persisted plan resource.
   const res = await api.post(`${B}/fees/invoices/${invoiceId}/installment-plan`, { count });
   return unwrap<InstallmentPlan>(res);
 }
@@ -412,6 +429,9 @@ export async function acceptInstallmentDisclosure(invoiceId: string): Promise<In
     plans.set(invoiceId, next);
     return next;
   }
+  // TODO(no backend route): there is no accept-disclosure endpoint. The SF-6 disclosure gate lives
+  // inside POST /payments/installment (returns disclosureRequired=true; re-submit with Acknowledged),
+  // not as a standalone plan-acknowledgement call.
   const res = await api.post(`${B}/fees/invoices/${invoiceId}/installment-plan/accept-disclosure`, {});
   return unwrap<InstallmentPlan>(res);
 }
@@ -435,6 +455,10 @@ export async function payInstallment(invoiceId: string, installmentId: string, m
     plans.set(invoiceId, next);
     return next;
   }
+  // TODO(no backend route as-shaped): the backend installment path is a body-based payment intent
+  // (POST /payments/installment {invoiceId, …}), not a per-installment path
+  // (/invoices/:id/installments/:installmentId/pay). It also returns a payment intent, not an
+  // InstallmentPlan. Path + response shape both differ; left mocked pending a types/screen change.
   const res = await api.post(
     `${B}/fees/invoices/${invoiceId}/installments/${installmentId}/pay`,
     { method },
@@ -448,6 +472,8 @@ export async function payInstallment(invoiceId: string, installmentId: string, m
 // ═══════════════════════════════════════════════════════════════════════════════
 export async function getReceipts(): Promise<Receipt[]> {
   if (USE_MOCK) { await delay(); return receipts; }
+  // TODO(no backend route): there is no receipts endpoint. Payments are listed per-invoice
+  // (GET /invoices/:id/payments), not as a guardian-wide receipt history.
   const res = await api.get(`${B}/fees/receipts`);
   return unwrap<Receipt[]>(res);
 }
@@ -457,7 +483,8 @@ export async function getReceipts(): Promise<Receipt[]> {
 // ═══════════════════════════════════════════════════════════════════════════════
 export async function getVaults(): Promise<FeesVault[]> {
   if (USE_MOCK) { await delay(); return vaults; }
-  const res = await api.get(`${B}/fees/vaults`);
+  // feesvault member: GET /vaults (list my vaults). Envelope {data}.
+  const res = await api.get(`${B}/vaults`);
   return unwrap<FeesVault[]>(res);
 }
 
@@ -475,7 +502,8 @@ export async function createVault(input: CreateVaultInput): Promise<FeesVault> {
     vaults = [vault, ...vaults];
     return vault;
   }
-  const res = await api.post(`${B}/fees/vaults`, input);
+  // feesvault member: POST /vaults (create vault). Envelope {data}.
+  const res = await api.post(`${B}/vaults`, input);
   return unwrap<FeesVault>(res);
 }
 
@@ -489,8 +517,11 @@ export async function fundVault(vaultId: string, amountKobo: number, idempotency
     vaults = vaults.map((v) => (v.id === vaultId ? updated : v));
     return updated;
   }
+  // feesvault member: POST /vaults/:id/contribute (fund, Idempotency-Key required — SF-5).
+  // Envelope {data}. NOTE(payload): backend ContributeRequest uses amountMinor; amountKobo body
+  // is a types-owned follow-up — path + idempotency header + envelope are aligned.
   const res = await api.post(
-    `${B}/fees/vaults/${vaultId}/fund`,
+    `${B}/vaults/${vaultId}/contribute`,
     { amountKobo },
     { headers: { 'Idempotency-Key': idempotencyKey ?? generateIdempotencyKey() } },
   );
@@ -510,6 +541,8 @@ export async function updateAutoSave(vaultId: string, rule: Omit<AutoSaveRule, '
     vaults = vaults.map((v) => (v.id === vaultId ? updated : v));
     return updated;
   }
+  // TODO(no backend route): feesvault exposes contribute/apply-to-invoice/withdraw/lock/unlock,
+  // but no auto-save-rule endpoint. Auto-save is a mock-only convenience today.
   const res = await api.put(`${B}/fees/vaults/${vaultId}/auto-save`, rule);
   return unwrap<FeesVault>(res);
 }
@@ -519,6 +552,9 @@ export async function updateAutoSave(vaultId: string, rule: Omit<AutoSaveRule, '
 // ═══════════════════════════════════════════════════════════════════════════════
 export async function getHardshipRequests(): Promise<HardshipRequest[]> {
   if (USE_MOCK) { await delay(); return hardship; }
+  // TODO(no backend route): the member hardship surface is submit (POST /hardship) + get one
+  // (GET /hardship/:id). There is no guardian list-my-requests endpoint (the list is admin-only:
+  // GET /hardship/admin under the admin group). Left mocked.
   const res = await api.get(`${B}/fees/hardship`);
   return unwrap<HardshipRequest[]>(res);
 }
@@ -536,7 +572,9 @@ export async function submitHardship(input: HardshipInput): Promise<HardshipRequ
     hardship = [req, ...hardship];
     return req;
   }
-  const res = await api.post(`${B}/fees/hardship`, input);
+  // feeshardship member: POST /hardship (submit a hardship/freeze request → pending, SF-9).
+  // Envelope {data}.
+  const res = await api.post(`${B}/hardship`, input);
   return unwrap<HardshipRequest>(res);
 }
 
@@ -545,6 +583,8 @@ export async function submitHardship(input: HardshipInput): Promise<HardshipRequ
 // ═══════════════════════════════════════════════════════════════════════════════
 export async function getSponsorships(): Promise<SponsorshipOpportunity[]> {
   if (USE_MOCK) { await delay(); return sponsorships; }
+  // TODO(no backend route): feesscholarship exposes pledge CRUD (POST /scholarship/pledges,
+  // /:id/fund, /:id/apply, GET /:id, /:id/awards) but no browsable "opportunities" list.
   const res = await api.get(`${B}/fees/sponsorships`);
   return unwrap<SponsorshipOpportunity[]>(res);
 }
@@ -563,6 +603,9 @@ export async function pledgeSponsorship(opportunityId: string, amountKobo: numbe
       ts: new Date().toISOString(), receiptUrl: `mock://receipts/pld_${Date.now()}.pdf`,
     };
   }
+  // TODO(no backend route as-shaped): the backend is a two-step pledge (POST /scholarship/pledges
+  // to create, then POST /scholarship/pledges/:id/fund to move money), not a one-shot
+  // /sponsorships/:opportunityId/pledge. The request/response shapes differ; left mocked.
   const res = await api.post(
     `${B}/fees/sponsorships/${opportunityId}/pledge`,
     { amountKobo },
@@ -580,7 +623,10 @@ export async function getDirectory(query?: string): Promise<DirectorySchool[]> {
     const q = query?.trim().toLowerCase();
     return q ? directory.filter((d) => d.name.toLowerCase().includes(q) || d.state.toLowerCase().includes(q) || d.lga.toLowerCase().includes(q)) : directory;
   }
-  const res = await api.get(`${B}/fees/schools`, { params: { q: query } });
+  // feesschool member: GET /schools (list my schools). Envelope {data}.
+  // NOTE: the backend returns the caller's own schools, not a public verified directory, and
+  // ignores the q filter — the closest real member route until a directory endpoint exists.
+  const res = await api.get(`${B}/schools`, { params: { q: query } });
   return unwrap<DirectorySchool[]>(res);
 }
 
@@ -600,6 +646,8 @@ function serializeEntries(raw: (CompetitionLeaderboardEntry & { fullName: string
 
 export async function getCompetitionProfile(): Promise<CompetitionProfile> {
   if (USE_MOCK) { await delay(); return compProfile; }
+  // TODO(no backend route): the member competition surface is a single leaderboard read
+  // (GET /competitions/:id/leaderboard); there is no per-student competition profile endpoint.
   const res = await api.get(`${B}/competition/me`);
   return unwrap<CompetitionProfile>(res);
 }
@@ -614,12 +662,18 @@ export async function getLeaderboard(scope: LeaderboardScope = 'national'): Prom
       minorSafe: true,
     };
   }
+  // TODO(no backend route as-shaped): the backend leaderboard is keyed by competition id
+  // (GET /competitions/:id/leaderboard?scope=…) and responds with {scope, entries} (no {data}
+  // envelope, no scopeLabel/period/myRank/minorSafe). This scope-only call has no competition
+  // id and expects a richer CompetitionLeaderboard shape; left mocked.
   const res = await api.get(`${B}/competition/leaderboards/${scope}`);
   return unwrap<CompetitionLeaderboard>(res);
 }
 
 export async function getTournaments(): Promise<Tournament[]> {
   if (USE_MOCK) { await delay(); return tournaments; }
+  // TODO(no backend route): "tournaments" are backend Competitions, but there is no
+  // list-competitions endpoint (only create/transition/register/scores + leaderboard read).
   const res = await api.get(`${B}/competition/tournaments`);
   return unwrap<Tournament[]>(res);
 }
@@ -634,12 +688,15 @@ export async function joinTournament(id: string): Promise<Tournament> {
     compProfile = { ...compProfile, tournamentsJoined: compProfile.tournamentsJoined + 1 };
     return updated;
   }
+  // TODO(no backend route): registration is an admin/school action (POST /competitions/:id/register,
+  // RBAC-gated) — there is no member/student "join tournament" endpoint.
   const res = await api.post(`${B}/competition/tournaments/${id}/join`, {});
   return unwrap<Tournament>(res);
 }
 
 export async function getChallenges(): Promise<CompetitionChallenge[]> {
   if (USE_MOCK) { await delay(); return challenges; }
+  // TODO(no backend route): the fees competition backend has no challenges surface.
   const res = await api.get(`${B}/competition/challenges`);
   return unwrap<CompetitionChallenge[]>(res);
 }
@@ -660,18 +717,21 @@ export async function playChallenge(id: string): Promise<ChallengeResult> {
       pointsEarned: chl.rewardPoints, badgeUnlocked: scorePct === 100 ? 'Perfect Round' : undefined,
     };
   }
+  // TODO(no backend route): no challenge-play endpoint on the fees competition backend.
   const res = await api.post(`${B}/competition/challenges/${id}/play`, {});
   return unwrap<ChallengeResult>(res);
 }
 
 export async function getBadges(): Promise<CompetitionBadge[]> {
   if (USE_MOCK) { await delay(); return badges; }
+  // TODO(no backend route): no badges surface on the fees competition backend.
   const res = await api.get(`${B}/competition/badges`);
   return unwrap<CompetitionBadge[]>(res);
 }
 
 export async function getCompetitionRewards(): Promise<CompetitionReward[]> {
   if (USE_MOCK) { await delay(); return compRewards; }
+  // TODO(no backend route): no competition-rewards surface on the fees competition backend.
   const res = await api.get(`${B}/competition/rewards`);
   return unwrap<CompetitionReward[]>(res);
 }
@@ -687,6 +747,7 @@ export async function redeemCompetitionReward(id: string): Promise<CompetitionRe
     compRewards = compRewards.map((r) => (r.id === id ? updated : r));
     return updated;
   }
+  // TODO(no backend route): no reward-redeem endpoint on the fees competition backend.
   const res = await api.post(`${B}/competition/rewards/${id}/redeem`, {});
   return unwrap<CompetitionReward>(res);
 }
@@ -699,6 +760,8 @@ export async function setCompetitionConsent(consentGiven: boolean): Promise<Comp
     compProfile = { ...compProfile, consentGiven };
     return compProfile;
   }
+  // TODO(no backend route): consent is read server-side from academy_consent_records by the
+  // SF-7 serializer; there is no member endpoint to set competition consent from the app.
   const res = await api.post(`${B}/competition/consent`, { consentGiven });
   return unwrap<CompetitionProfile>(res);
 }

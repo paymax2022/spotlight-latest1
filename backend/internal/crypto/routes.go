@@ -84,6 +84,14 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		member.GET("/withdrawals", rp(PermView), h.Withdrawals)
 		member.GET("/withdrawals/:id", rp(PermView), h.Withdrawal)
 		member.POST("/withdrawals/:id/confirm", rp(PermTrade), h.ConfirmWithdrawal)
+
+		// ── Custody webhook stub (machine caller; NOT member/admin RBAC) ──────
+		// Integration seam a custody provider (Fireblocks/BitGo/Anchorage) calls to
+		// report on-chain balances, feeding reconciliation. Guarded ONLY by the
+		// shared-secret header (fail-closed when CRYPTO_CUSTODY_WEBHOOK_SECRET is
+		// unset). Mounted under the member group as
+		// /api/v1/crypto/internal/onchain-balance. See onchain.go.
+		registerCustodyWebhook(member, h)
 	}
 
 	// ── Admin control plane (RBAC crypto.admin) ───────────────────────────────

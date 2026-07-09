@@ -86,21 +86,37 @@ func deriveAddressReview(isActive bool, verifiedAt *time.Time) string {
 	return AddressReviewPending
 }
 
+// Reconciliation per-asset statuses.
+//   - ok      : a custody feed exists AND onchain_units == ledger_units.
+//   - drift   : a custody feed exists AND onchain_units != ledger_units (a break).
+//   - no_feed : no custody row stored for this asset yet — reported distinctly so a
+//               missing feed is never mistaken for a healthy "ok", and NOT counted
+//               as a break.
+const (
+	ReconStatusOK     = "ok"
+	ReconStatusDrift  = "drift"
+	ReconStatusNoFeed = "no_feed"
+)
+
 // ReconRow is one asset's on-chain-vs-ledger drift line. ledger_units is the sum
 // of the holding projections PLUS units parked in non-terminal withdrawals (both
-// are "owed" on-chain). onchain_units is the custodial balance — there is no
-// custody integration in this build, so it is currently reported EQUAL to
-// ledger_units (drift 0) with an explicit TODO. Drift ≠ 0 is a break to investigate.
+// are "owed" on-chain). onchain_units is the STORED custodian-reported balance from
+// crypto_onchain_balances (fed by the custody-webhook seam). When no custody row
+// exists the status is "no_feed" (onchain_units 0, drift 0, not a break); when it
+// exists, drift = onchain_units − ledger_units and any non-zero drift is a break.
+// onchain_source / onchain_as_of carry the custody provenance for the console.
 type ReconRow struct {
-	AssetID        string    `json:"asset_id"`
-	Symbol         string    `json:"symbol"`
-	MinorUnitScale int64     `json:"minor_unit_scale"`
-	LedgerUnits    int64     `json:"ledger_units"`
-	OnchainUnits   int64     `json:"onchain_units"`
-	DriftUnits     int64     `json:"drift_units"`
-	PriceKobo      int64     `json:"price_kobo"`
-	Status         string    `json:"status"` // ok|break
-	LastCheckedAt  time.Time `json:"last_checked_at"`
+	AssetID        string     `json:"asset_id"`
+	Symbol         string     `json:"symbol"`
+	MinorUnitScale int64      `json:"minor_unit_scale"`
+	LedgerUnits    int64      `json:"ledger_units"`
+	OnchainUnits   int64      `json:"onchain_units"`
+	DriftUnits     int64      `json:"drift_units"`
+	PriceKobo      int64      `json:"price_kobo"`
+	Status         string     `json:"status"` // ok|drift|no_feed
+	OnchainSource  string     `json:"onchain_source,omitempty"`
+	OnchainAsOf    *time.Time `json:"onchain_as_of,omitempty"`
+	LastCheckedAt  time.Time  `json:"last_checked_at"`
 }
 
 // ReconSummary is the reconciliation response envelope (matches the frontend
