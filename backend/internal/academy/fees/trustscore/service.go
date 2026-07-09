@@ -56,9 +56,13 @@ const (
 func ComputeFromInputs(schoolID string, in TrustInputs) TrustScore {
 	collection := ratioScore(in.TotalCollectedMinor, in.TotalBilledMinor)
 	onTime := ratioScore(in.InvoicesPaidOnTime, in.InvoicesDue)
-	// Dispute is a BAD signal → invert: score = 100 − dispute_rate%.
-	disputeRate := ratioScore(in.DisputedCount, in.PaymentsCount) // = disputed/payments * 100
-	disputeScore := 100.0 - disputeRate
+	// Dispute is a BAD signal → invert. With NO payments there are no disputes, so the
+	// dispute component is neutral 100 (ratioScore's zero-denominator=100 would wrongly
+	// invert to 0 here) — invert the rate only when payments exist.
+	disputeScore := 100.0
+	if in.PaymentsCount > 0 {
+		disputeScore = 100.0 - ratioScore(in.DisputedCount, in.PaymentsCount)
+	}
 
 	comps := []Component{
 		{

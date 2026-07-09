@@ -88,7 +88,7 @@ func (r *Repository) Get(ctx context.Context, id string) (*HardshipRequest, erro
 // ListPendingBySchool returns the school's pending review queue, resolving the invoice's
 // school via the student spine (academy_invoices → academy_students.school_id).
 func (r *Repository) ListPendingBySchool(ctx context.Context, schoolID string) ([]HardshipRequest, error) {
-	const q = `SELECT ` + prefixCols("h") + `
+	q := `SELECT ` + prefixCols("h") + `
 	           FROM academy_hardship_requests h
 	           JOIN academy_invoices i ON i.id = h.invoice_id
 	           JOIN academy_students s ON s.id = i.student_id

@@ -274,7 +274,7 @@ func (s *Service) Apply(ctx context.Context, actorID, promotionID string) (*Prom
 		return nil, ErrApproversMustDiffer
 	}
 	// (c) Run the rollover FIRST (idempotent) then commit the terminal state.
-	if err := s.rollover.Execute(ctx, actorID, cur); err != nil {
+	if err := s.rollover.Execute(ctx, actorID, *cur); err != nil {
 		return nil, err
 	}
 	if err := s.guardedAdvance(ctx, actorID, promotionID, cur.State, feesstatemachine.EvAdminApply); err != nil {

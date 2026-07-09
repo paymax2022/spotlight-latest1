@@ -344,7 +344,7 @@ func TestConfirm_FailsClosedOnUnsuccessfulCharge(t *testing.T) {
 
 // Amount mismatch between gateway and intent aborts before any money moves.
 func TestConfirm_AmountMismatchAborts(t *testing.T) {
-	svc, gw, led, inv, _ := newTestService(t, 40000) // gateway reports 40000...
+	svc, _, led, inv, _ := newTestService(t, 40000) // gateway reports 40000...
 	ctx := context.Background()
 	intent, _ := svc.CreatePaymentIntent(ctx, "g", CreatePaymentIntentRequest{InvoiceID: "inv-1", AmountMinor: 50000}, "idem-mm") // ...intent is 50000
 	if _, err := svc.OnChargeSuccess(ctx, intent.Reference, "gw-ref"); !errors.Is(err, ErrAmountMismatch) {

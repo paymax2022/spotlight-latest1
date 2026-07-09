@@ -97,20 +97,6 @@ func (f *fakeStore) Lock(_ context.Context, id string) (*FeeSchedule, error) {
 
 func (f *fakeStore) WriteAudit(_ context.Context, _, _, _, _, _ string, _ any) error { return nil }
 
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
-}
-
 // helper: seed a schedule directly into the fake and return its id.
 func seed(f *fakeStore) string {
 	fs := f.insert(FeeSchedule{SchoolID: "school-1", Name: "Term 1", AmountMinor: 5000000,
