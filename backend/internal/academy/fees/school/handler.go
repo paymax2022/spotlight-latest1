@@ -89,15 +89,15 @@ func RegisterFeesSchool(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac
 		mg := member.Group("/schools")
 		mg.POST("", h.Create)
 		mg.GET("", h.ListMine)
-		mg.GET("/:id", h.Get)
-		mg.PATCH("/:id", h.Update)
-		mg.GET("/:id/export", h.Export)
+		mg.GET("/:schoolId", h.Get)
+		mg.PATCH("/:schoolId", h.Update)
+		mg.GET("/:schoolId/export", h.Export)
 	}
 
 	if admin != nil {
 		ag := admin.Group("/schools/admin")
 		ag.Use(middleware.RequirePermission(rbac, "academy.fees.school.verify"))
-		ag.POST("/:id/verify", h.Verify)
+		ag.POST("/:schoolId/verify", h.Verify)
 		ag.GET("", h.AdminList)
 	}
 	return h
@@ -137,7 +137,7 @@ func (h *Handler) ListMine(c *gin.Context) {
 }
 
 func (h *Handler) Get(c *gin.Context) {
-	out, err := h.svc.Get(c.Request.Context(), c.Param("id"))
+	out, err := h.svc.Get(c.Request.Context(), c.Param("schoolId"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -155,7 +155,7 @@ func (h *Handler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.Update(c.Request.Context(), u, c.Param("id"), req)
+	out, err := h.svc.Update(c.Request.Context(), u, c.Param("schoolId"), req)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -168,7 +168,7 @@ func (h *Handler) Export(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := h.svc.Export(c.Request.Context(), u, c.Param("id"))
+	out, err := h.svc.Export(c.Request.Context(), u, c.Param("schoolId"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -188,7 +188,7 @@ func (h *Handler) Verify(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
 		return
 	}
-	out, err := h.svc.Verify(c.Request.Context(), u, c.Param("id"), VerificationTier(req.Tier))
+	out, err := h.svc.Verify(c.Request.Context(), u, c.Param("schoolId"), VerificationTier(req.Tier))
 	if err != nil {
 		h.fail(c, err)
 		return
