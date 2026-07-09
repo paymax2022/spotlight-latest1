@@ -450,16 +450,49 @@ func (c feesConsentChecker) HasActiveConsent(ctx context.Context, minorUserID, s
 	return exists, nil
 }
 
-// feesTrustMetrics backs fees/trustscore.MetricsReader with pre-aggregated inputs.
-// TODO(fees-trustscore): the real metric aggregation (on-time collection rate,
-// disbursement latency, dispute rate) must be sourced from public.audit_logs +
-// academy_disbursements once the fees team publishes the aggregation query. Until then
-// this returns zeroed inputs (a deterministic, non-fabricated neutral score) so the
-// admin surface is live and never invents trust numbers.
+// feesTrustMetrics backs fees/trustscore.MetricsReader with inputs aggregated from
+// the real invoice + payment tables (academy_invoices / academy_invoice_payments),
+// joined to the school via the student spine. All money is int64 minor units.
+// On-time is approximated by invoices in terminal 'paid' status that are not overdue;
+// disputes are payments in 'reversed' status. A school with no activity yields zeroed
+// inputs → a deterministic neutral score (never fabricated).
 type feesTrustMetrics struct{ pool *pgxpool.Pool }
 
 func (m feesTrustMetrics) TrustInputs(ctx context.Context, schoolID string) (feestrustscore.TrustInputs, error) {
-	return feestrustscore.TrustInputs{}, nil
+	var in feestrustscore.TrustInputs
+	if m.pool == nil {
+		return in, nil
+	}
+	const q = `
+	SELECT
+	  (SELECT COALESCE(SUM(i.total_amount_minor),0)
+	     FROM public.academy_invoices i JOIN public.academy_students s ON s.id = i.student_id
+	     WHERE s.school_id = $1 AND i.status <> 'draft'),
+	  (SELECT COALESCE(SUM(p.amount_minor),0)
+	     FROM public.academy_invoice_payments p
+	     JOIN public.academy_invoices i ON i.id = p.invoice_id
+	     JOIN public.academy_students s ON s.id = i.student_id
+	     WHERE s.school_id = $1 AND p.status = 'succeeded'),
+	  (SELECT COUNT(*) FROM public.academy_invoices i JOIN public.academy_students s ON s.id = i.student_id
+	     WHERE s.school_id = $1 AND i.status <> 'draft' AND i.due_date IS NOT NULL AND i.due_date < now()),
+	  (SELECT COUNT(*) FROM public.academy_invoices i JOIN public.academy_students s ON s.id = i.student_id
+	     WHERE s.school_id = $1 AND i.status = 'paid'),
+	  (SELECT COUNT(*) FROM public.academy_invoice_payments p
+	     JOIN public.academy_invoices i ON i.id = p.invoice_id
+	     JOIN public.academy_students s ON s.id = i.student_id
+	     WHERE s.school_id = $1),
+	  (SELECT COUNT(*) FROM public.academy_invoice_payments p
+	     JOIN public.academy_invoices i ON i.id = p.invoice_id
+	     JOIN public.academy_students s ON s.id = i.student_id
+	     WHERE s.school_id = $1 AND p.status = 'reversed')`
+	if err := m.pool.QueryRow(ctx, q, schoolID).Scan(
+		&in.TotalBilledMinor, &in.TotalCollectedMinor,
+		&in.InvoicesDue, &in.InvoicesPaidOnTime,
+		&in.PaymentsCount, &in.DisputedCount,
+	); err != nil {
+		return feestrustscore.TrustInputs{}, err
+	}
+	return in, nil
 }
 
 // feesTrustOverrides backs fees/trustscore.OverrideStore against an additive table
