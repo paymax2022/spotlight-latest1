@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -45,18 +46,38 @@ type transferData struct {
 	Reason       string `json:"reason"`
 }
 
+// FeesChargeConfirmer is the confirm-and-record entry point for EdTech fee
+// payments. On a charge.success whose reference carries the fees prefix
+// ("feespay:") the webhook routes here instead of the wallet/VA path. The
+// concrete impl is *academy/fees/payment.Service.OnChargeSuccess, wired at the
+// composition root and injected via SetFeesConfirmer. When nil (fees module off)
+// the fees branch is a no-op. This is the ONLY fees webhook seam — no new receiver.
+type FeesChargeConfirmer interface {
+	OnChargeSuccess(ctx context.Context, reference, gatewayRef string) (any, error)
+}
+
+// FeesReferencePrefix is the reference prefix fees payment intents use
+// (academy/fees/payment.referenceFor → "feespay:"+idempotencyKey).
+const FeesReferencePrefix = "feespay:"
+
 // PaystackHandler dispatches inbound Paystack webhooks to the appropriate
 // finance sub-handlers.
 type PaystackHandler struct {
-	payment    provider.PaymentProvider
-	vaSvc      *va.Service
-	xferSvc    *transfers.Service
-	walletSvc  *wallet.Service
+	payment      provider.PaymentProvider
+	vaSvc        *va.Service
+	xferSvc      *transfers.Service
+	walletSvc    *wallet.Service
+	feesConfirmer FeesChargeConfirmer // optional; nil ⇒ fees module off (no-op)
 }
 
 func NewPaystackHandler(payment provider.PaymentProvider, vaSvc *va.Service, xferSvc *transfers.Service, walletSvc *wallet.Service) *PaystackHandler {
 	return &PaystackHandler{payment: payment, vaSvc: vaSvc, xferSvc: xferSvc, walletSvc: walletSvc}
 }
+
+// SetFeesConfirmer injects the EdTech-fees confirm-and-record service. Called from
+// the composition root only when FEATURE_ACADEMY_FEES_ENABLED and the fees payment
+// service is assembled. Idempotent + safe to leave unset.
+func (h *PaystackHandler) SetFeesConfirmer(c FeesChargeConfirmer) { h.feesConfirmer = c }
 
 // Handle handles POST /api/webhooks/paystack
 func (h *PaystackHandler) Handle(c *gin.Context) {
@@ -104,6 +125,19 @@ func (h *PaystackHandler) handleChargeSuccess(ctx context.Context, data json.Raw
 	var d chargeData
 	if err := json.Unmarshal(data, &d); err != nil {
 		return fmt.Errorf("paystack webhook: unmarshal charge: %w", err)
+	}
+
+	// EdTech fees payment — reference carries the "feespay:" prefix. Route to the
+	// fees confirm-and-record path (verify → guardian wallet → school settlement
+	// ledger move → invoice payment record, all idempotent). No new receiver; this
+	// is a minimal branch on the existing charge.success pipeline. When the fees
+	// module is off (feesConfirmer nil) this is a benign no-op.
+	if strings.HasPrefix(d.Reference, FeesReferencePrefix) {
+		if h.feesConfirmer == nil {
+			return nil
+		}
+		_, err := h.feesConfirmer.OnChargeSuccess(ctx, d.Reference, d.Reference)
+		return err
 	}
 
 	// DVA inbound transfer — credit wallet via VA service.

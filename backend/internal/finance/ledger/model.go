@@ -34,6 +34,13 @@ const (
 	// (auto-created on first GetOrCreateStandingAccount; no seed row required).
 	AccountPlacementEscrow  AccountType = "placement_escrow"
 	AccountPlacementRevenue AccountType = "placement_revenue"
+	// EdTech Fees segregated vault (SF-5). All FeesVault (savings-pot) funds route
+	// through a standing account of this type so vault balances reconcile separately
+	// from general float. Auto-created on first GetOrCreateStandingAccount; no seed
+	// row required. Segregation is by dedicated AccountType (the ledger has no
+	// free-form purpose column); the reference string carries the human-readable
+	// purpose.
+	AccountEdtechFeesVault AccountType = "edtech_fees_vault"
 )
 
 // Account is a logical wallet / standing account in the ledger.

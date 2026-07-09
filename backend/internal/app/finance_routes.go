@@ -63,6 +63,7 @@ import (
 	"spotlight/backend/internal/provider/monnify"
 	"spotlight/backend/internal/provider/paystack"
 	"spotlight/backend/internal/realtor"
+	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/restaurant"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/telemedicine"
@@ -94,6 +95,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// threaded into the revenue modules that emit purchase events (PRD §2.5/§7.1).
 	// Stays nil when FEATURE_REFERRAL_REWARDS_ENABLED is off — every emit is nil-safe.
 	var rewardSvc *referrals.RewardService
+
+	// Shared immutable-audit sink (NL-12 / SC-12 / HL-12). Built once here from the
+	// same Supabase-backed audit repository the router uses, then threaded into the
+	// money-path + health modules whose Register* previously passed a nil Auditor.
+	// The concrete auditService satisfies each module's minimal Auditor interface
+	// (identical LogAction signature). Every module remains nil-safe, but wiring the
+	// real sink means their audit events actually persist in production.
+	auditSink := services.NewAuditService(repositories.NewAuditSupabaseRepository(supabase))
 
 	ctx := context.Background()
 
@@ -393,7 +402,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		RegisterCreators(finance.Group("/creators"), adminGroupTop5(r, "/api/creators/admin"), pool, rbac)
 	}
 	if cfg.FeatureP2PMarketEnabled && pool != nil {
-		RegisterP2PMarket(finance.Group("/p2p"), adminGroupTop5(r, "/api/p2p/admin"), pool, rbac)
+		RegisterP2PMarket(finance.Group("/p2p"), adminGroupTop5(r, "/api/p2p/admin"), pool, rbac, auditSink)
 	}
 
 	// --- Health verticals (marketplace; licensed partners deliver care) ---
@@ -403,7 +412,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// admin /api/health/<vertical>/admin/* (RBAC health.<vertical>.*). Reuses
 	// escrow (HELD→RELEASE→REFUND), scheduler, transport last-mile, wallet/ledger.
 	if cfg.FeatureHealthEnabled && pool != nil {
-		RegisterHealth(finance, adminGroupTop5(r, "/api/health/admin"), pool, rbac, cfg) // shared platform
+		RegisterHealth(finance, adminGroupTop5(r, "/api/health/admin"), pool, rbac, cfg, auditSink) // shared platform
 		if cfg.FeatureHealthPharmacyEnabled {
 			pharmacySvc := RegisterHealthPharmacy(finance, adminGroupTop5(r, "/api/health/pharmacy/admin"), pool, rbac)
 			// Symptom-based medication search addon — its own flag AND'd with
@@ -418,7 +427,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			}
 		}
 		if cfg.FeatureHealthLabEnabled {
-			RegisterHealthLab(finance, adminGroupTop5(r, "/api/health/lab/admin"), pool, rbac)
+			RegisterHealthLab(finance, adminGroupTop5(r, "/api/health/lab/admin"), pool, rbac, auditSink)
 		}
 		if cfg.FeatureHealthVetEnabled {
 			RegisterHealthVet(finance, adminGroupTop5(r, "/api/health/vet/admin"), pool, rbac)
@@ -433,7 +442,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if cfg.FeatureHealthTriageEnabled {
 			RegisterHealthTriage(r, finance, pool, rbac, ledgerSvc, mapSvc,
 				cfg.AnthropicAPIKey, cfg.RedisURL, cfg.TriageEngine, cfg.InfermedicaAppID,
-				cfg.InfermedicaAppKey, cfg.TriageWhatsAppSecret, cfg.FeatureHealthTriageWhatsAppEnabled)
+				cfg.InfermedicaAppKey, cfg.TriageWhatsAppSecret, cfg.FeatureHealthTriageWhatsAppEnabled, auditSink)
 		}
 	}
 
@@ -452,7 +461,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// unbacked academy rails (BNPL/payout/disburse/billing). nil per-rail ⇒ that
 		// package keeps its in-process dev stub (academy_rails_external.go).
 		academyBNPL, academyDisburse, academyBilling, academyPayout := academyRails(cfg)
-		RegisterAcademy(r, finance, pool, rbac, ledgerSvc, academyRTC, academyBNPL, academyDisburse, academyBilling, academyPayout, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled)
+		RegisterAcademy(r, finance, pool, rbac, ledgerSvc, academyRTC, academyBNPL, academyDisburse, academyBilling, academyPayout, paymentProvider, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled, cfg.FeatureAcademyFeesEnabled)
 
 		// Inbound academy rail webhooks (signature-verified, idempotent), mounted on
 		// the unauthenticated /internal/webhooks group. Only when RAILS_MODE is active.
@@ -1133,7 +1142,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		cfAdmin.GET("/campaigns", cfHandler.AdminListPending)
 		cfAdmin.GET("/campaigns/:id", cfHandler.AdminGetCampaign)
 		cfAdmin.POST("/campaigns/:id/decision", cfHandler.AdminDecide)
-		cfadminext.RegisterAdmin(cfAdmin, pool)
+		cfadminext.RegisterAdmin(cfAdmin, pool, ledgerSvc)
 	}
 
 	// --- Restaurant & Delivery routes ---
@@ -1235,6 +1244,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.Use(mapsAuth())
 		restAdmin.GET("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.GetDeliveryConfig)
 		restAdmin.PUT("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.PutDeliveryConfig)
+
+		// Crash-recovery settlement reconciliation (money-path durability): an order
+		// marked delivered whose escrow never released (process died / Settle errored
+		// after the status flip) is re-driven through the SAME idempotent settleOrder
+		// path. Idempotent + multi-instance safe (Settle guards on status='escrowed' +
+		// ON CONFLICT ledger legs + FOR UPDATE lock). Cadence 5m, grace 10m by default;
+		// ops-tunable via env.
+		restaurant.StartStuckSettlementReconciler(
+			ctx, restaurantSvc,
+			time.Duration(envInt("FOOD_RECONCILE_INTERVAL_MINUTES", 5))*time.Minute,
+			time.Duration(envInt("FOOD_SETTLE_GRACE_MINUTES", 10))*time.Minute,
+		)
 	}
 
 	// --- Nutrition Resolution Engine (NRE) routes ---
@@ -1657,6 +1678,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 			log.Println("[finance] transport modes (parcel/bus/towing/movers/car-hire/logistics/event) routes registered")
 		}
+
+		// Crash-recovery settlement reconciliation (money-path durability): a trip
+		// marked completed whose escrow never released (process died / Settle errored
+		// after the completion commit) is re-driven through the SAME idempotent
+		// settleTrip path. Idempotent + multi-instance safe (Settle guards on
+		// status='escrowed' + ON CONFLICT ledger legs + FOR UPDATE lock). Cadence 5m,
+		// grace 10m by default; ops-tunable via env.
+		transport.StartStuckSettlementReconciler(
+			ctx, transportSvc,
+			time.Duration(envInt("TRANSPORT_RECONCILE_INTERVAL_MINUTES", 5))*time.Minute,
+			time.Duration(envInt("TRANSPORT_SETTLE_GRACE_MINUTES", 10))*time.Minute,
+		)
 	}
 
 	// --- Disputes routes ---

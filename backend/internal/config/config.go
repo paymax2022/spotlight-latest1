@@ -193,6 +193,7 @@ type Config struct {
 	FeatureAcademyLiveEnabled             bool // Academy Phase 3: live classes + community + moderation
 	FeatureAcademySchoolsEnabled          bool // Academy Phase 4: B2B2C institutions + licences + enrolment
 	FeatureAcademyTutorEnabled            bool // Academy Phase 4: tutor marketplace + payouts
+	FeatureAcademyFeesEnabled             bool // Academy EdTech Fees: invoices, vault, promotion, competition, scholarship, trust-score, compliance export
 	FeatureConnectEnabled                 bool // Paymax Connect (dating/networking) module
 	// Property Management suite (unification umbrella over estate + realtor):
 	// role context, rent passport, stay→gate-pass bridge. DEFAULT OFF. The estate
@@ -558,6 +559,7 @@ func Load() Config {
 		FeatureAcademyLiveEnabled:             getEnvBool("FEATURE_ACADEMY_LIVE_ENABLED", false),
 		FeatureAcademySchoolsEnabled:          getEnvBool("FEATURE_ACADEMY_SCHOOLS_ENABLED", false),
 		FeatureAcademyTutorEnabled:            getEnvBool("FEATURE_ACADEMY_TUTOR_ENABLED", false),
+		FeatureAcademyFeesEnabled:             getEnvBool("FEATURE_ACADEMY_FEES_ENABLED", false),
 		FeatureConnectEnabled:                 getEnvBool("FEATURE_CONNECT_ENABLED", false),
 		FeaturePropertySuiteEnabled:           getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
 		FeatureFractionalREEnabled:            getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
