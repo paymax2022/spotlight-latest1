@@ -42,6 +42,7 @@ import (
 	"spotlight/backend/internal/middleware"
 	providerInterfaces "spotlight/backend/internal/provider"
 	"spotlight/backend/internal/services"
+	"spotlight/backend/internal/webhooks"
 )
 
 // academyKYC adapts finance/kyc to the tutor package's KYCChecker (tutor
@@ -100,7 +101,7 @@ func (g academyApprovalGate) Authorize(ctx context.Context, userID, orderID stri
 // Admin base (RBAC per-route via guard):
 //   - identity/curriculum/commerce embed "/academy" → base = /api.
 //   - gamification/rewards/assessment/exam → base = /api/academy/admin.
-func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, ledgerSvc *ledger.Service, rtcIssuer *rtc.Issuer, bnplRail commerce.BNPLRail, disburseRail edupay.DisburseRail, billingRail schools.BillingRail, payoutRail tutor.PayoutRail, paymentProvider providerInterfaces.PaymentProvider, examEnabled, spineEnabled, eduPayEnabled, credentialsEnabled, liveEnabled, schoolsEnabled, tutorEnabled, feesEnabled bool) {
+func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, ledgerSvc *ledger.Service, rtcIssuer *rtc.Issuer, bnplRail commerce.BNPLRail, disburseRail edupay.DisburseRail, billingRail schools.BillingRail, payoutRail tutor.PayoutRail, paymentProvider providerInterfaces.PaymentProvider, examEnabled, spineEnabled, eduPayEnabled, credentialsEnabled, liveEnabled, schoolsEnabled, tutorEnabled, feesEnabled bool, webhookHandler *webhooks.PaystackHandler) {
 	if pool == nil {
 		return
 	}
@@ -209,7 +210,7 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 	// — no shadow ledger. Member routes → /api/finance/academy/*; admin routes →
 	// /api/academy/admin/* gated per-group by RBAC academy.fees.* slugs.
 	if feesEnabled {
-		registerAcademyFees(memberAcad, adminAcad, pool, rbac, ledgerSvc, paymentProvider)
+		registerAcademyFees(memberAcad, adminAcad, pool, rbac, ledgerSvc, paymentProvider, webhookHandler)
 	}
 }
 
@@ -220,7 +221,7 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 // an assembled *Service (vault/payment/scholarship/trustscore/competition) get their
 // money/gamification/identity collaborators wired here as thin inline adapters over
 // the existing Paymax rails (finance/ledger, academy/gamification, the pgx pool).
-func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, ledgerSvc *ledger.Service, paymentProvider providerInterfaces.PaymentProvider) {
+func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, ledgerSvc *ledger.Service, paymentProvider providerInterfaces.PaymentProvider, webhookHandler *webhooks.PaystackHandler) {
 	if pool == nil {
 		return
 	}
@@ -301,15 +302,12 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 			feespayment.NewIntentStore(pool),
 		)
 		feespayment.RegisterFeesPayment(member, paySvc)
-		// Webhook confirm-and-record: the "feespay:" charge.success must route to
-		// paySvc.OnChargeSuccess. The PaystackHandler is NOT in scope here (it is built
-		// in the finance composition root, not the academy one), and this task is
-		// scoped to academy_routes.go only, so the seam cannot be wired from here.
-		// TODO(fees-payment/webhook): in the finance root where the *webhooks.PaystackHandler
-		// is constructed, call: paystackHandler.SetFeesConfirmer(paySvc)
-		// (paySvc.OnChargeSuccess satisfies webhooks.FeesChargeConfirmer — its (*ConfirmResult, error)
-		// return is assignable to the interface's (any, error)). Requires threading paySvc
-		// (or the RegisterAcademy call) to that root; do NOT edit webhooks/paystack.go.
+		// Webhook confirm-and-record: route the "feespay:" charge.success to
+		// paySvc.OnChargeSuccess via the injected PaystackHandler seam. A thin wrapper
+		// adapts paySvc's (*ConfirmResult, error) to the interface's (any, error).
+		if webhookHandler != nil {
+			webhookHandler.SetFeesConfirmer(feesPaymentConfirmer{svc: paySvc})
+		}
 	}
 }
 
@@ -326,6 +324,15 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 // ledger.Service.Debit). Per the ledger audit there is a single global settlement
 // standing account (AccountSettlement); per-school attribution rides the reference +
 // the invoice→fee-schedule→school chain, matching the vault/scholarship adapters above.
+// feesPaymentConfirmer adapts *feespayment.Service to webhooks.FeesChargeConfirmer.
+// paySvc.OnChargeSuccess returns (*ConfirmResult, error); the webhook seam expects
+// (any, error), so this thin wrapper widens the return type.
+type feesPaymentConfirmer struct{ svc *feespayment.Service }
+
+func (c feesPaymentConfirmer) OnChargeSuccess(ctx context.Context, reference, gatewayRef string) (any, error) {
+	return c.svc.OnChargeSuccess(ctx, reference, gatewayRef)
+}
+
 type feesPaymentLedger struct{ ledger *ledger.Service }
 
 func (a feesPaymentLedger) MoveGuardianToSchool(ctx context.Context, guardianUserID, schoolID, reference, idempotencyKey string, amountMinor int64) (ledgerRef string, err error) {
