@@ -288,22 +288,124 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	compHandler.Register(member, admin, guard)
 
 	// Payment (T3.x): guardian checkout via the existing PaymentProvider + confirm-and-
-	// record over finance/ledger + fees/invoice. BLOCKED on a package-internal
-	// dependency (see TODO below) — cannot be assembled from this package.
-	//
-	// TODO(fees-payment): feespayment.NewService requires an IntentStore, whose method
-	// set references the UNEXPORTED type feespayment.intentRecord — so a concrete pgx
-	// IntentStore CANNOT be implemented from the app package. The fees team must add the
-	// pgx IntentStore repo INSIDE the feespayment package (repository.go, explicitly
-	// out-of-scope per payment/service.go:71). Once present, wire:
-	//   invSvc := feesinvoice.NewService(pool)
-	//   paySvc := feespayment.NewService(paymentProvider, feesPaymentLedger{ledger: ledgerSvc},
-	//               feesPaymentInvoice{pool: pool, inv: invSvc}, feespayment.NewIntentStore(pool))
-	//   feespayment.RegisterFeesPayment(member, paySvc)
-	// and route the "feespay:" charge.success webhook to paySvc.OnChargeSuccess
-	// (already hooked in webhooks/paystack.go via the FeesChargeConfirmer seam).
-	_ = paymentProvider
-	_ = feespayment.RegisterFeesPayment // referenced so the import is used pending wiring
+	// record over finance/ledger + fees/invoice. Wire only when both the ledger and the
+	// payment provider are available (a nil ledger would silently drop the real money leg;
+	// a nil provider has no gateway to initialize/verify) — fail-closed by simply not
+	// registering the payment money surface.
+	if ledgerSvc != nil && paymentProvider != nil {
+		invSvc := feesinvoice.NewService(pool)
+		paySvc := feespayment.NewService(
+			paymentProvider, // provider.PaymentProvider satisfies feespayment.Gateway as-is
+			feesPaymentLedger{ledger: ledgerSvc},
+			feesPaymentInvoice{pool: pool, inv: invSvc},
+			feespayment.NewIntentStore(pool),
+		)
+		feespayment.RegisterFeesPayment(member, paySvc)
+		// Webhook confirm-and-record: the "feespay:" charge.success must route to
+		// paySvc.OnChargeSuccess. The PaystackHandler is NOT in scope here (it is built
+		// in the finance composition root, not the academy one), and this task is
+		// scoped to academy_routes.go only, so the seam cannot be wired from here.
+		// TODO(fees-payment/webhook): in the finance root where the *webhooks.PaystackHandler
+		// is constructed, call: paystackHandler.SetFeesConfirmer(paySvc)
+		// (paySvc.OnChargeSuccess satisfies webhooks.FeesChargeConfirmer — its (*ConfirmResult, error)
+		// return is assignable to the interface's (any, error)). Requires threading paySvc
+		// (or the RegisterAcademy call) to that root; do NOT edit webhooks/paystack.go.
+	}
+}
+
+// ── Fees payment (T3.x) money/invoice adapters ────────────────────────────────────
+// Thin shims over the EXISTING Paymax rails: finance/ledger for the real double-entry
+// money move (guardian wallet → school settlement), fees/invoice.Service for the
+// idempotent invoice-side record (SF-2: record a payment, never write a balance), and
+// direct pgx reads for the invoice→school / installment-policy / prior-payment lookups.
+// All monetary amounts are integers in minor units (kobo).
+
+// feesPaymentLedger adapts finance/ledger.Service to feespayment.LedgerMover: on a
+// confirmed charge it posts the balanced guardian-wallet → school-settlement move,
+// idempotent on idempotencyKey (TOCTOU-safe, fail-closed on insufficient funds via
+// ledger.Service.Debit). Per the ledger audit there is a single global settlement
+// standing account (AccountSettlement); per-school attribution rides the reference +
+// the invoice→fee-schedule→school chain, matching the vault/scholarship adapters above.
+type feesPaymentLedger struct{ ledger *ledger.Service }
+
+func (a feesPaymentLedger) MoveGuardianToSchool(ctx context.Context, guardianUserID, schoolID, reference, idempotencyKey string, amountMinor int64) (ledgerRef string, err error) {
+	settlement, err := a.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
+	if err != nil {
+		return "", err
+	}
+	// Debit the guardian wallet, crediting the settlement standing account.
+	if err := a.ledger.Debit(ctx, guardianUserID, reference, idempotencyKey, settlement.ID, amountMinor); err != nil {
+		return "", err
+	}
+	// The ledger reference posted is the same reference the confirmation carries, so the
+	// money leg and the invoice record share one identity.
+	return reference, nil
+}
+
+// feesPaymentInvoice adapts fees/invoice.Service (+ direct pgx reads) to
+// feespayment.InvoiceRecorder. RecordPayment delegates to feesinvoice.Service.RecordPayment
+// (whose full signature is RecordPayment(ctx, actorID, invoiceID, guardianUserID, amountMinor,
+// gatewayRef, ledgerReference, idempotencyKey) (*RecordPaymentResult, error)); the guardian is
+// used as the actor for the invoice-payment audit. The three read methods are direct pgx
+// queries over the invoice → student → school / fee-schedule chain.
+type feesPaymentInvoice struct {
+	pool *pgxpool.Pool
+	inv  *feesinvoice.Service
+}
+
+func (a feesPaymentInvoice) RecordPayment(ctx context.Context, invoiceID, guardianUserID string, amountMinor int64, gatewayRef, ledgerReference, idempotencyKey string) (invoiceStatus string, replayed bool, err error) {
+	// The guardian is the acting party for the invoice-side payment record (audit actor).
+	res, err := a.inv.RecordPayment(ctx, guardianUserID, invoiceID, guardianUserID, amountMinor, gatewayRef, ledgerReference, idempotencyKey)
+	if err != nil {
+		return "", false, err
+	}
+	if res == nil {
+		return "", false, nil
+	}
+	// Map the real result fields: Invoice.Status is the derived invoice status after the
+	// payment; Replayed is the money-path idempotency signal.
+	if res.Invoice != nil {
+		invoiceStatus = string(res.Invoice.Status)
+	}
+	return invoiceStatus, res.Replayed, nil
+}
+
+func (a feesPaymentInvoice) SchoolIDForInvoice(ctx context.Context, invoiceID string) (string, error) {
+	var schoolID string
+	err := a.pool.QueryRow(ctx,
+		`SELECT s.school_id
+		   FROM public.academy_invoices i
+		   JOIN public.academy_students s ON s.id = i.student_id
+		  WHERE i.id = $1`, invoiceID).Scan(&schoolID)
+	if err != nil {
+		return "", err
+	}
+	return schoolID, nil
+}
+
+func (a feesPaymentInvoice) InstallmentPolicyForInvoice(ctx context.Context, invoiceID string) (bool, error) {
+	var hasPolicy bool
+	err := a.pool.QueryRow(ctx,
+		`SELECT (f.installment_policy IS NOT NULL
+		         AND f.installment_policy::text NOT IN ('', '{}', 'null'))
+		   FROM public.academy_invoices i
+		   JOIN public.academy_fee_schedules f ON f.id = i.fee_schedule_id
+		  WHERE i.id = $1`, invoiceID).Scan(&hasPolicy)
+	if err != nil {
+		return false, err
+	}
+	return hasPolicy, nil
+}
+
+func (a feesPaymentInvoice) HasAnyPayment(ctx context.Context, invoiceID string) (bool, error) {
+	var exists bool
+	err := a.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM public.academy_invoice_payments WHERE invoice_id = $1)`,
+		invoiceID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 // ── Inline money/gamification/identity adapters for the fees Group-B services ─────
