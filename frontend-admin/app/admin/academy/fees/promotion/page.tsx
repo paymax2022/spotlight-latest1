@@ -12,7 +12,7 @@ import {
   PageHeader, Card, Badge, Kpi, StateBlock, DisclosureNote, AuditNote,
   btn, btnPrimary, th, td, fmtDate,
 } from '../../_ui';
-import { FeesTabs } from '../_ui';
+import { FeesTabs, FeesGuard } from '../_ui';
 
 export default function FeesPromotionPage() {
   const [batches, setBatches] = useState<PromotionBatch[]>([]);
@@ -44,10 +44,11 @@ export default function FeesPromotionPage() {
   const awaitingApproval = batches.filter((b) => b.status === 'promotion_computed' || b.status === 'promotion_reviewed').length;
 
   return (
+    <FeesGuard permission="academy.fees.promotion.approve">
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Promotion & Rollover" subtitle="End-of-session promotion with the two-approval gate, then class/session rollover. Both a teacher and a head-teacher approval are structurally required before rollover applies." action={<button onClick={load} style={btn()}>Refresh</button>} />
       <FeesTabs active="promotion" />
-      <DisclosureNote>Requires <code>academy.fees.promotion</code>. <strong>SF-3 — two-approval gate:</strong> a promotion must be approved by the <strong>class teacher</strong> and <em>then</em> the <strong>head teacher</strong>. No path skips <code>promotion_computed → applied</code>; a single approval is <strong>not</strong> enough (release blocker if violated).</DisclosureNote>
+      <DisclosureNote>Requires <code>academy.fees.promotion.approve</code>. <strong>SF-3 — two-approval gate:</strong> a promotion must be approved by the <strong>class teacher</strong> and <em>then</em> the <strong>head teacher</strong>. No path skips <code>promotion_computed → applied</code>; a single approval is <strong>not</strong> enough (release blocker if violated).</DisclosureNote>
 
       <StateBlock loading={loading} error={error} empty={false}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
@@ -110,5 +111,6 @@ export default function FeesPromotionPage() {
         </Card>
       </StateBlock>
     </div>
+    </FeesGuard>
   );
 }

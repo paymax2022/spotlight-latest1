@@ -16,7 +16,7 @@ import {
   PageHeader, Card, Badge, StateBlock, DisclosureNote, AuditNote,
   btn, btnPrimary, th, td, input, label, select, formatNaira, fmtDate,
 } from '../../_ui';
-import { FeesTabs } from '../_ui';
+import { FeesTabs, FeesGuard } from '../_ui';
 
 export default function FeesSetupWizardPage() {
   const [schools, setSchools] = useState<FeesSchool[]>([]);
@@ -102,6 +102,7 @@ export default function FeesSetupWizardPage() {
   const classesFor = (sessionId: string) => classes.filter((c) => c.session_id === sessionId);
 
   return (
+    <FeesGuard permission="academy.fees.setup">
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Setup Wizard" subtitle="Stand up a school fees programme end-to-end: school → academic session → classes → fee schedules. Build fee items and an optional installment plan, then issue." action={<button onClick={load} style={btn()}>Refresh</button>} />
       <FeesTabs active="setup-wizard" />
@@ -211,5 +212,6 @@ export default function FeesSetupWizardPage() {
         </Card>
       </StateBlock>
     </div>
+    </FeesGuard>
   );
 }

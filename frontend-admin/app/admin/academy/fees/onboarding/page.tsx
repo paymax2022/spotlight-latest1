@@ -13,7 +13,7 @@ import {
   PageHeader, Card, Badge, Kpi, StateBlock, DisclosureNote, AuditNote,
   btn, btnPrimary, btnDanger, th, td, input, fmtDate,
 } from '../../_ui';
-import { FeesTabs } from '../_ui';
+import { FeesTabs, FeesGuard } from '../_ui';
 
 const SAMPLE_CSV = `student_name,guardian_email,class_name,admission_no
 Chidera Obi,obi.parent@example.com,JSS 1A,BS-2601
@@ -51,6 +51,7 @@ export default function FeesOnboardingPage() {
   const pendingBatches = batches.filter((b) => b.status === 'pending_review').length;
 
   return (
+    <FeesGuard permission="academy.fees.onboarding">
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Bulk Onboarding" subtitle="Import a student roster by CSV, preview validation results, and route each batch to a human approval queue before guardians and invoices are created." action={<button onClick={load} style={btn()}>Refresh</button>} />
       <FeesTabs active="onboarding" />
@@ -127,5 +128,6 @@ export default function FeesOnboardingPage() {
         </Card>
       </StateBlock>
     </div>
+    </FeesGuard>
   );
 }

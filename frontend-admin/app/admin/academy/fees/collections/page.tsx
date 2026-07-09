@@ -10,7 +10,7 @@ import {
   PageHeader, Card, Badge, Kpi, StateBlock, DisclosureNote, Bar,
   btn, th, td, select, formatNaira, fmtDate,
 } from '../../_ui';
-import { FeesTabs } from '../_ui';
+import { FeesTabs, FeesGuard } from '../_ui';
 
 const STATUSES: (InvoiceStatus | 'all')[] = ['all', 'issued', 'partial', 'paid', 'overdue', 'frozen'];
 
@@ -33,6 +33,7 @@ export default function FeesCollectionsPage() {
   const collectionRate = overview && overview.billed_kobo > 0 ? overview.collected_kobo / overview.billed_kobo : 0;
 
   return (
+    <FeesGuard permission="academy.fees.collections">
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Collections Dashboard" subtitle="Invoices issued, paid, partial and overdue with billed / collected / outstanding totals across the school." action={<button onClick={load} style={btn()}>Refresh</button>} />
       <FeesTabs active="collections" />
@@ -82,5 +83,6 @@ export default function FeesCollectionsPage() {
         </Card>
       </StateBlock>
     </div>
+    </FeesGuard>
   );
 }

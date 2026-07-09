@@ -14,7 +14,7 @@ import {
   PageHeader, Card, Badge, Kpi, StateBlock, DisclosureNote, AuditNote,
   btn, btnPrimary, th, td, input, label, select, fmtDate, timeAgo,
 } from '../../_ui';
-import { FeesTabs } from '../_ui';
+import { FeesTabs, FeesGuard } from '../_ui';
 
 export default function FeesGovExportPage() {
   const [schools, setSchools] = useState<FeesSchool[]>([]);
@@ -63,10 +63,11 @@ export default function FeesGovExportPage() {
   }
 
   return (
+    <FeesGuard permission="academy.fees.export.run">
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Government Export Center" subtitle="Opt in per data category, then generate regulator/government reports. Every export is written to an immutable, append-only audit trail." action={<button onClick={() => loadFor(schoolId)} style={btn()}>Refresh</button>} />
       <FeesTabs active="gov-export" />
-      <DisclosureNote>Requires <code>academy.fees.export</code>. <strong>SF-11:</strong> government/regulator sync is <strong>opt-in per school, per data category</strong>, and every export is <strong>logged immutably</strong>. A category that is not opted in cannot be exported.</DisclosureNote>
+      <DisclosureNote>Requires <code>academy.fees.export.run</code>. <strong>SF-11:</strong> government/regulator sync is <strong>opt-in per school, per data category</strong>, and every export is <strong>logged immutably</strong>. A category that is not opted in cannot be exported.</DisclosureNote>
 
       <StateBlock loading={loading} error={error} empty={false}>
         <Card title="School" >
@@ -134,5 +135,6 @@ export default function FeesGovExportPage() {
         </Card>
       </StateBlock>
     </div>
+    </FeesGuard>
   );
 }

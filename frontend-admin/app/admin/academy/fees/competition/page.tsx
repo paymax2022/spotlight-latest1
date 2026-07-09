@@ -14,7 +14,7 @@ import {
   PageHeader, Card, Badge, Kpi, StateBlock, DisclosureNote, AuditNote,
   btn, btnPrimary, th, td, input, label, select, fmtDate,
 } from '../../_ui';
-import { FeesTabs } from '../_ui';
+import { FeesTabs, FeesGuard } from '../_ui';
 
 export default function FeesCompetitionPage() {
   const [comps, setComps] = useState<Competition[]>([]);
@@ -49,10 +49,11 @@ export default function FeesCompetitionPage() {
   const openCount = comps.filter((c) => c.status === 'open_registration').length;
 
   return (
+    <FeesGuard permission="academy.fees.competition.manage">
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Competition Registration" subtitle="Register school teams into cross-school competitions (class / school / city / state / national scope)." action={<button onClick={load} style={btn()}>Refresh</button>} />
       <FeesTabs active="competition" />
-      <DisclosureNote>Requires <code>academy.fees.competition</code>. Registration is only allowed while a competition is in <code>open_registration</code>. Competitions are <strong>engagement-only</strong> — no money moves through this surface.</DisclosureNote>
+      <DisclosureNote>Requires <code>academy.fees.competition.manage</code>. Registration is only allowed while a competition is in <code>open_registration</code>. Competitions are <strong>engagement-only</strong> — no money moves through this surface.</DisclosureNote>
 
       <StateBlock loading={loading} error={error} empty={false}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
@@ -113,5 +114,6 @@ export default function FeesCompetitionPage() {
         </Card>
       </StateBlock>
     </div>
+    </FeesGuard>
   );
 }

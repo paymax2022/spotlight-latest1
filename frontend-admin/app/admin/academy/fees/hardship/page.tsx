@@ -11,7 +11,7 @@ import {
   PageHeader, Card, Badge, Kpi, StateBlock, DisclosureNote, AuditNote,
   btn, btnPrimary, btnDanger, th, td, input, formatNaira, fmtDate, timeAgo,
 } from '../../_ui';
-import { FeesTabs } from '../_ui';
+import { FeesTabs, FeesGuard } from '../_ui';
 
 export default function FeesHardshipPage() {
   const [requests, setRequests] = useState<HardshipRequest[]>([]);
@@ -41,10 +41,11 @@ export default function FeesHardshipPage() {
   const totalOutstanding = pending.reduce((s, r) => s + r.outstanding_kobo, 0);
 
   return (
+    <FeesGuard permission="academy.fees.hardship.review">
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Defaulters & Hardship Review" subtitle="Human review queue for hardship and freeze requests from guardians in arrears. Every decision is a deliberate human action." action={<button onClick={load} style={btn()}>Refresh</button>} />
       <FeesTabs active="hardship" />
-      <DisclosureNote>Requires <code>academy.fees.hardship</code>. <strong>SF-9:</strong> hardship/freeze requests <strong>never auto-approve or auto-deny</strong> — a human reviewer must decide and record a note. No automated terminal transition exists.</DisclosureNote>
+      <DisclosureNote>Requires <code>academy.fees.hardship.review</code>. <strong>SF-9:</strong> hardship/freeze requests <strong>never auto-approve or auto-deny</strong> — a human reviewer must decide and record a note. No automated terminal transition exists.</DisclosureNote>
 
       <StateBlock loading={loading} error={error} empty={false}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
@@ -82,5 +83,6 @@ export default function FeesHardshipPage() {
         </Card>
       </StateBlock>
     </div>
+    </FeesGuard>
   );
 }

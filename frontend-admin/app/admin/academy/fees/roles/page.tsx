@@ -13,7 +13,7 @@ import {
   PageHeader, Card, Badge, Kpi, StateBlock, DisclosureNote, AuditNote,
   btn, btnPrimary, btnDanger, th, td, input, label, select, fmtDate,
 } from '../../_ui';
-import { FeesTabs } from '../_ui';
+import { FeesTabs, FeesGuard } from '../_ui';
 
 function roleLabel(slug: SchoolRole) { return SCHOOL_ROLES.find((r) => r.slug === slug)?.label ?? slug; }
 
@@ -58,10 +58,11 @@ export default function FeesRolesPage() {
   const active = grants.filter((g) => g.status === 'active');
 
   return (
+    <FeesGuard permission="academy.fees.roles.assign">
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Staff & Bursar Roles" subtitle="Assign and revoke school-scoped staff roles: owner, bursar, class teacher and head teacher. Grants are scoped to the selected school." action={<button onClick={() => loadFor(schoolId)} style={btn()}>Refresh</button>} />
       <FeesTabs active="roles" />
-      <DisclosureNote>Requires <code>academy.fees.roles</code>. Role grants are <strong>school-scoped</strong> (RBAC <code>scope_type=&apos;school&apos;</code>). The class-teacher and head-teacher roles feed the two-approval promotion gate (SF-3).</DisclosureNote>
+      <DisclosureNote>Requires <code>academy.fees.roles.assign</code>. Role grants are <strong>school-scoped</strong> (RBAC <code>scope_type=&apos;school&apos;</code>). The class-teacher and head-teacher roles feed the two-approval promotion gate (SF-3).</DisclosureNote>
 
       <StateBlock loading={loading} error={error} empty={false}>
         <Card title="School">
@@ -99,5 +100,6 @@ export default function FeesRolesPage() {
         </Card>
       </StateBlock>
     </div>
+    </FeesGuard>
   );
 }
