@@ -18,6 +18,11 @@ import type {
   EstateKpis, EstateActivity, AdminResident, AdminDuesInvoice,
   AdminGate, AdminGuardShift, AdminIncident, AdminVendor,
   RentPassport, PropertyContext, ResidentStatus, VendorStatus,
+  OversightIncident, OversightGuardShift, OversightVisitorLog, OversightEmergency,
+  DuesReconciliationRow, OversightPayment, OversightRestriction,
+  OversightRepair, OversightTask, OversightMeeting, OversightFacility,
+  OversightAnnouncement, OversightDocument,
+  OversightElection, ElectionResultRow, ElectionAudit,
 } from '@/types/estateAdmin';
 
 const USE_MOCK = (process.env.NEXT_PUBLIC_ESTATE_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
@@ -194,4 +199,184 @@ export async function getRentPassport(userId: string): Promise<RentPassport> {
 export async function getPropertyContext(): Promise<PropertyContext> {
   if (USE_MOCK) { await delay(); return { ...CONTEXT }; }
   return getJson<PropertyContext>('/property/context');
+}
+
+// ─── Platform estate oversight (backend /api/finance/estate-admin/*) ──────────
+// Read-only cross-estate oversight. The Go backend returns snake_case rows under
+// {data:[...]}; getJson already unwraps {data}. We map snake→camel here so the
+// admin console types stay camelCase. Optional `estateId` scopes to one estate.
+
+function toCamel<T>(row: Record<string, unknown>): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    const ck = k.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
+    out[ck] = v;
+  }
+  return out as T;
+}
+
+function qs(estateId?: string, extra?: Record<string, string>): string {
+  const p = new URLSearchParams();
+  if (estateId) p.set('estate_id', estateId);
+  for (const [k, v] of Object.entries(extra ?? {})) if (v) p.set(k, v);
+  const s = p.toString();
+  return s ? `?${s}` : '';
+}
+
+async function getRows<T>(path: string): Promise<T[]> {
+  const rows = await getJson<Array<Record<string, unknown>>>(path);
+  return (rows ?? []).map((r) => toCamel<T>(r));
+}
+
+// Mock datasets for the oversight surfaces (mirror the live row shapes) ────────
+const O_INCIDENTS: OversightIncident[] = [
+  { id: 'oi1', estateId: 'demo-estate', guardId: 'guard-01', gateId: 'g2', incidentType: 'trespassing', description: 'Unauthorised entry attempt at North Gate', evidenceUrl: null, escalated: true, createdAt: hrs(3) },
+  { id: 'oi2', estateId: 'demo-estate', guardId: 'guard-02', gateId: 'g1', incidentType: 'suspicious', description: 'Loitering near Block A car park', evidenceUrl: null, escalated: false, createdAt: hrs(9) },
+  { id: 'oi3', estateId: 'estate-2', guardId: 'guard-07', gateId: null, incidentType: 'vehicle', description: 'Blocked service lane', evidenceUrl: null, escalated: false, createdAt: days(1) },
+];
+const O_SHIFTS: OversightGuardShift[] = [
+  { id: 'os1', estateId: 'demo-estate', guardId: 'guard-01', gateId: 'g1', startedAt: hrs(3), endedAt: null, relievedBy: null, handoverNotes: null, onDuty: true },
+  { id: 'os2', estateId: 'demo-estate', guardId: 'guard-02', gateId: 'g2', startedAt: hrs(3), endedAt: null, relievedBy: null, handoverNotes: null, onDuty: true },
+  { id: 'os3', estateId: 'demo-estate', guardId: 'guard-03', gateId: 'g1', startedAt: hrs(15), endedAt: hrs(3), relievedBy: 'guard-01', handoverNotes: 'Quiet night; barrier serviced', onDuty: false },
+];
+const O_VISITOR_LOGS: OversightVisitorLog[] = [
+  { id: 'ov1', estateId: 'demo-estate', guardId: 'guard-01', eventType: 'checkin', payload: { code: 'A1B2', visitor: 'Courier — DHL' }, capturedAt: hrs(1), syncedAt: hrs(0.9) },
+  { id: 'ov2', estateId: 'demo-estate', guardId: 'guard-01', eventType: 'checkout', payload: { code: 'A1B2' }, capturedAt: hrs(0.5), syncedAt: hrs(0.4) },
+  { id: 'ov3', estateId: 'demo-estate', guardId: 'guard-02', eventType: 'vehicle', payload: { plate: 'LND-238-KJA' }, capturedAt: hrs(4), syncedAt: hrs(3.8) },
+];
+const O_EMERGENCIES: OversightEmergency[] = [
+  { id: 'oe1', estateId: 'demo-estate', reporterId: 'res-04', kind: 'security', description: 'Suspicious persons at perimeter', location: 'Block C rear', status: 'responding', createdAt: hrs(2) },
+  { id: 'oe2', estateId: 'estate-2', reporterId: 'res-19', kind: 'medical', description: 'Resident collapse', location: 'Block A · Flat 3', status: 'resolved', createdAt: days(1) },
+];
+const O_RECON: DuesReconciliationRow[] = [
+  { estateId: 'demo-estate', billedKobo: 58_000_000_00, collectedKobo: 41_200_000_00, paidInvoiceKobo: 41_200_000_00, outstandingKobo: 16_800_000_00, overdueCount: 6, varianceKobo: 0 },
+  { estateId: 'estate-2', billedKobo: 22_500_000_00, collectedKobo: 19_100_000_00, paidInvoiceKobo: 18_900_000_00, outstandingKobo: 3_400_000_00, overdueCount: 2, varianceKobo: 200_000_00 },
+];
+const O_PAYMENTS: OversightPayment[] = [
+  { id: 'op1', estateId: 'demo-estate', invoiceId: 'i1', payerId: 'res-01', amountKobo: 4_500_000_00, method: 'wallet', status: 'successful', reference: 'idem-9f21', createdAt: hrs(1) },
+  { id: 'op2', estateId: 'demo-estate', invoiceId: 'i2', payerId: 'res-02', amountKobo: 2_700_000_00, method: 'transfer', status: 'successful', reference: 'idem-3a77', createdAt: hrs(20) },
+  { id: 'op3', estateId: 'estate-2', invoiceId: null, payerId: 'res-19', amountKobo: 600_000_00, method: 'card', status: 'refunded', reference: 'idem-1c02', createdAt: days(2) },
+];
+const O_RESTRICTIONS: OversightRestriction[] = [
+  { id: 'or1', estateId: 'demo-estate', residentId: 'res-04', invoiceId: 'i4', level: 'hard', reason: 'Security levy unpaid > 60 days', active: true, appliedBy: 'estate-admin', liftedAt: null, createdAt: days(5) },
+  { id: 'or2', estateId: 'demo-estate', residentId: 'res-05', invoiceId: 'i3', level: 'soft', reason: 'Q2 arrears', active: false, appliedBy: 'estate-admin', liftedAt: days(1), createdAt: days(12) },
+];
+const O_REPAIRS: OversightRepair[] = [
+  { id: 'orp1', estateId: 'demo-estate', propertyId: null, reporterId: 'res-03', category: 'generator', description: 'Estate generator overheating', urgency: 'high', status: 'assigned', vendorId: 'v1', costEstimateKobo: 850_000_00, createdAt: hrs(5) },
+  { id: 'orp2', estateId: 'demo-estate', propertyId: null, reporterId: 'res-07', category: 'gate', description: 'Service gate barrier stuck', urgency: 'medium', status: 'in_progress', vendorId: null, costEstimateKobo: null, createdAt: hrs(30) },
+  { id: 'orp3', estateId: 'estate-2', propertyId: null, reporterId: 'res-22', category: 'water', description: 'Borehole pump failure', urgency: 'high', status: 'reported', vendorId: null, costEstimateKobo: null, createdAt: days(1) },
+];
+const O_TASKS: OversightTask[] = [
+  { id: 'ot1', estateId: 'demo-estate', title: 'Quarterly fire-drill', description: 'Coordinate with facilities', assigneeId: 'staff-01', createdBy: 'estate-admin', dueDate: days(-7), priority: 'high', status: 'in_progress', createdAt: days(3) },
+  { id: 'ot2', estateId: 'demo-estate', title: 'Audit CCTV coverage', description: null, assigneeId: null, createdBy: 'estate-admin', dueDate: days(-14), priority: 'medium', status: 'todo', createdAt: days(2) },
+];
+const O_MEETINGS: OversightMeeting[] = [
+  { id: 'om1', estateId: 'demo-estate', title: 'Q2 Residents AGM', agenda: 'Budget, security levy, elections', mode: 'hybrid', location: 'Clubhouse', startsAt: days(-3), endsAt: null, status: 'scheduled', createdBy: 'estate-admin', createdAt: days(10) },
+  { id: 'om2', estateId: 'demo-estate', title: 'Security committee', agenda: 'Gate incidents review', mode: 'virtual', location: null, startsAt: days(2), endsAt: days(2), status: 'ended', createdBy: 'estate-admin', createdAt: days(5) },
+];
+const O_FACILITIES: OversightFacility[] = [
+  { id: 'of1', estateId: 'demo-estate', name: 'Clubhouse Hall', kind: 'hall', capacity: 200, feeKobo: 5_000_000_00, createdAt: days(300) },
+  { id: 'of2', estateId: 'demo-estate', name: 'Swimming Pool', kind: 'pool', capacity: 40, feeKobo: 0, createdAt: days(300) },
+  { id: 'of3', estateId: 'demo-estate', name: 'Tennis Court', kind: 'court', capacity: 8, feeKobo: 1_000_000_00, createdAt: days(300) },
+];
+const O_ANNOUNCEMENTS: OversightAnnouncement[] = [
+  { id: 'oa1', estateId: 'demo-estate', title: 'Water supply interruption', body: 'Mains maintenance Saturday 6-10am.', kind: 'maintenance', createdBy: 'estate-admin', createdAt: hrs(8) },
+  { id: 'oa2', estateId: 'demo-estate', title: 'AGM nominations open', body: 'Submit candidacy by Friday.', kind: 'election', createdBy: 'estate-admin', createdAt: days(2) },
+];
+const O_DOCUMENTS: OversightDocument[] = [
+  { id: 'od1', estateId: 'demo-estate', title: 'Estate bylaws 2026', category: 'governance', fileUrl: 'https://r2.example/bylaws.pdf', uploadedBy: 'estate-admin', restricted: false, createdAt: days(60) },
+  { id: 'od2', estateId: 'demo-estate', title: 'Q1 financial statement', category: 'finance', fileUrl: 'https://r2.example/q1.pdf', uploadedBy: 'estate-admin', restricted: true, createdAt: days(20) },
+];
+const O_ELECTIONS: OversightElection[] = [
+  { id: 'el1', estateId: 'demo-estate', title: 'Estate Chairman 2026', description: 'Two-year term', startsAt: days(2), endsAt: days(-5), status: 'open', createdBy: 'estate-admin', createdAt: days(14) },
+  { id: 'el2', estateId: 'demo-estate', title: 'Security Committee Lead', description: null, startsAt: days(30), endsAt: days(23), status: 'tallied', createdBy: 'estate-admin', createdAt: days(45) },
+];
+const O_RESULTS: Record<string, ElectionResultRow[]> = {
+  el1: [
+    { candidateId: 'c1', name: 'Ngozi Umeh', bio: 'Incumbent vice-chair', votes: 142 },
+    { candidateId: 'c2', name: 'Tunde Bakare', bio: 'Facilities lead', votes: 118 },
+  ],
+  el2: [
+    { candidateId: 'c3', name: 'Musa Sani', bio: 'Head of security', votes: 96 },
+    { candidateId: 'c4', name: 'Aisha Bello', bio: 'Neighbourhood watch', votes: 88 },
+  ],
+};
+const O_AUDIT: Record<string, ElectionAudit> = {
+  el1: { electionId: 'el1', ballotsCast: 260, distinctVoters: 260, candidates: 2, status: 'open', doubleVoteDetected: false },
+  el2: { electionId: 'el2', ballotsCast: 184, distinctVoters: 184, candidates: 2, status: 'tallied', doubleVoteDetected: false },
+};
+
+// Security & guard oversight ----------------------------------------------------
+export async function listOversightIncidents(estateId?: string): Promise<OversightIncident[]> {
+  if (USE_MOCK) { await delay(); return O_INCIDENTS.filter((r) => !estateId || r.estateId === estateId); }
+  return getRows<OversightIncident>(`/estate-admin/security/incidents${qs(estateId)}`);
+}
+export async function listOversightGuardShifts(estateId?: string, activeOnly = false): Promise<OversightGuardShift[]> {
+  if (USE_MOCK) { await delay(); return O_SHIFTS.filter((r) => (!estateId || r.estateId === estateId) && (!activeOnly || r.onDuty)); }
+  return getRows<OversightGuardShift>(`/estate-admin/security/guard-shifts${qs(estateId, activeOnly ? { active: 'true' } : undefined)}`);
+}
+export async function listOversightVisitorLogs(estateId?: string): Promise<OversightVisitorLog[]> {
+  if (USE_MOCK) { await delay(); return O_VISITOR_LOGS.filter((r) => !estateId || r.estateId === estateId); }
+  return getRows<OversightVisitorLog>(`/estate-admin/security/visitor-logs${qs(estateId)}`);
+}
+export async function listOversightEmergencies(estateId?: string): Promise<OversightEmergency[]> {
+  if (USE_MOCK) { await delay(); return O_EMERGENCIES.filter((r) => !estateId || r.estateId === estateId); }
+  return getRows<OversightEmergency>(`/estate-admin/security/emergencies${qs(estateId)}`);
+}
+
+// Dues reconciliation -----------------------------------------------------------
+export async function getDuesReconciliation(estateId?: string): Promise<DuesReconciliationRow[]> {
+  if (USE_MOCK) { await delay(); return O_RECON.filter((r) => !estateId || r.estateId === estateId); }
+  return getRows<DuesReconciliationRow>(`/estate-admin/dues/reconciliation${qs(estateId)}`);
+}
+export async function listOversightPayments(estateId?: string): Promise<OversightPayment[]> {
+  if (USE_MOCK) { await delay(); return O_PAYMENTS.filter((r) => !estateId || r.estateId === estateId); }
+  return getRows<OversightPayment>(`/estate-admin/dues/payments${qs(estateId)}`);
+}
+export async function listOversightRestrictions(estateId?: string): Promise<OversightRestriction[]> {
+  if (USE_MOCK) { await delay(); return O_RESTRICTIONS.filter((r) => !estateId || r.estateId === estateId); }
+  return getRows<OversightRestriction>(`/estate-admin/dues/restrictions${qs(estateId)}`);
+}
+
+// Ops queues --------------------------------------------------------------------
+export async function listOversightRepairs(estateId?: string): Promise<OversightRepair[]> {
+  if (USE_MOCK) { await delay(); return O_REPAIRS.filter((r) => !estateId || r.estateId === estateId); }
+  return getRows<OversightRepair>(`/estate-admin/ops/repairs${qs(estateId)}`);
+}
+export async function listOversightTasks(estateId?: string): Promise<OversightTask[]> {
+  if (USE_MOCK) { await delay(); return O_TASKS.filter((r) => !estateId || r.estateId === estateId); }
+  return getRows<OversightTask>(`/estate-admin/ops/tasks${qs(estateId)}`);
+}
+export async function listOversightMeetings(estateId?: string): Promise<OversightMeeting[]> {
+  if (USE_MOCK) { await delay(); return O_MEETINGS.filter((r) => !estateId || r.estateId === estateId); }
+  return getRows<OversightMeeting>(`/estate-admin/ops/meetings${qs(estateId)}`);
+}
+export async function listOversightFacilities(estateId?: string): Promise<OversightFacility[]> {
+  if (USE_MOCK) { await delay(); return O_FACILITIES.filter((r) => !estateId || r.estateId === estateId); }
+  return getRows<OversightFacility>(`/estate-admin/ops/facilities${qs(estateId)}`);
+}
+
+// Content -----------------------------------------------------------------------
+export async function listOversightAnnouncements(estateId?: string): Promise<OversightAnnouncement[]> {
+  if (USE_MOCK) { await delay(); return O_ANNOUNCEMENTS.filter((r) => !estateId || r.estateId === estateId); }
+  return getRows<OversightAnnouncement>(`/estate-admin/content/announcements${qs(estateId)}`);
+}
+export async function listOversightDocuments(estateId?: string): Promise<OversightDocument[]> {
+  if (USE_MOCK) { await delay(); return O_DOCUMENTS.filter((r) => !estateId || r.estateId === estateId); }
+  return getRows<OversightDocument>(`/estate-admin/content/documents${qs(estateId)}`);
+}
+
+// Election integrity ------------------------------------------------------------
+export async function listOversightElections(estateId?: string): Promise<OversightElection[]> {
+  if (USE_MOCK) { await delay(); return O_ELECTIONS.filter((r) => !estateId || r.estateId === estateId); }
+  return getRows<OversightElection>(`/estate-admin/elections${qs(estateId)}`);
+}
+export async function getElectionResults(electionId: string): Promise<ElectionResultRow[]> {
+  if (USE_MOCK) { await delay(); return O_RESULTS[electionId] ?? []; }
+  return getRows<ElectionResultRow>(`/estate-admin/elections/${electionId}/results`);
+}
+export async function getElectionAudit(electionId: string): Promise<ElectionAudit> {
+  if (USE_MOCK) { await delay(); return O_AUDIT[electionId] ?? { electionId, ballotsCast: 0, distinctVoters: 0, candidates: 0, status: null, doubleVoteDetected: false }; }
+  const row = await getJson<Record<string, unknown>>(`/estate-admin/elections/${electionId}/audit`);
+  return toCamel<ElectionAudit>(row);
 }

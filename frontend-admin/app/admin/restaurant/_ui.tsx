@@ -1,6 +1,55 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
+import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
+
+// RBAC permission slugs for the restaurant ops console.
+// `manage`/`pricing` already exist server-side (restaurant.manage,
+// restaurant.admin.pricing). The dispatch/onboarding/payouts/disputes slugs are
+// the proposed slugs the backend admin routes should guard with (see service
+// header + orchestrator report). Pages disable mutating affordances when the
+// cached admin user lacks the slug; the server remains authoritative.
+export const RESTAURANT_PERMS = {
+  manage: ['restaurant.manage'],
+  pricing: ['restaurant.admin.pricing'],
+  dispatch: ['restaurant.admin.dispatch', 'restaurant.manage'],
+  onboarding: ['restaurant.admin.onboarding', 'restaurant.manage'],
+  payouts: ['restaurant.admin.payouts'],
+  disputes: ['restaurant.admin.disputes', 'restaurant.manage'],
+};
+
+// Reads the cached admin user (same source as AdminSidebar / route guard) and
+// exposes a permission check. Mirrors useDeliveryFeePermissions /
+// useMobilityPermissions. Server RBAC stays authoritative — this only prevents
+// dead-end UI.
+export function useRestaurantPermissions() {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('spotlight_admin_user');
+      if (raw) setUser(JSON.parse(raw) as AuthUser);
+    } catch {
+      /* unauthenticated handled by route guard */
+    }
+  }, []);
+  const can = (perms: string[]) => hasAnyPermission(user, perms);
+  return { user, can };
+}
+
+// Renders a "you lack permission X" banner and blocks the page body when the
+// user cannot even view the surface.
+export function AccessNotice({ perm }: { perm: string }) {
+  return (
+    <div style={{ ...card(), borderColor: '#fca5a5', background: '#fef2f2', color: '#991b1b' }}>
+      <strong>Insufficient permission.</strong>{' '}
+      <span style={{ fontSize: '0.85rem' }}>
+        This surface requires the <code>{perm}</code> RBAC permission. Contact an administrator. The
+        server enforces this independently.
+      </span>
+    </div>
+  );
+}
 
 export const card = (): CSSProperties => ({ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem', background: '#fff' });
 export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: '0.85rem' });

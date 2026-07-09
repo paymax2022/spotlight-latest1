@@ -28,6 +28,10 @@ export function CryptoTabs({ active }: { active: string }) {
   const tabs: Tab[] = [
     { href: '/admin/crypto', label: 'Overview', key: 'overview' },
     { href: '/admin/crypto/orders', label: 'Orders', key: 'orders' },
+    { href: '/admin/crypto/withdrawals', label: 'Withdrawals / AML', key: 'withdrawals' },
+    { href: '/admin/crypto/swaps', label: 'Swaps', key: 'swaps' },
+    { href: '/admin/crypto/addresses', label: 'Address review', key: 'addresses' },
+    { href: '/admin/crypto/reconciliation', label: 'Reconciliation', key: 'reconciliation' },
     { href: '/admin/crypto/assets', label: 'Assets', key: 'assets' },
   ];
   return (
@@ -121,6 +125,34 @@ export function fmtDate(isoStr: string | null | undefined): string {
   return new Date(isoStr).toLocaleDateString('en-NG', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+// Render integer asset minor-units as a decimal whole-unit string using the
+// asset's minor_unit_scale. NEVER used for money — money is formatKobo() only.
+// Integer division keeps the whole part exact; the fractional part is derived by
+// remainder, so no float rounding touches the ledger-critical integer value.
+export function fmtUnits(units: number, minorUnitScale: number, symbol?: string): string {
+  if (!minorUnitScale || minorUnitScale <= 0) return `${units.toLocaleString('en-NG')}${symbol ? ` ${symbol}` : ''}`;
+  const sign = units < 0 ? '-' : '';
+  const abs = Math.abs(units);
+  const whole = Math.floor(abs / minorUnitScale);
+  const frac = abs % minorUnitScale;
+  const digits = String(minorUnitScale).length - 1;
+  const fracStr = digits > 0 ? '.' + String(frac).padStart(digits, '0').replace(/0+$/, '') : '';
+  const cleanFrac = fracStr === '.' ? '' : fracStr;
+  return `${sign}${whole.toLocaleString('en-NG')}${cleanFrac}${symbol ? ` ${symbol}` : ''}`;
+}
+
+// AML/risk score chip: green (<40), amber (40-69), red (>=70).
+export function RiskBadge({ score }: { score: number | null | undefined }) {
+  if (score == null) return <span style={{ color: '#9ca3af' }}>—</span>;
+  const c = score >= 70 ? { fg: '#b91c1c', bg: '#fee2e2' } : score >= 40 ? { fg: '#9a3412', bg: '#ffedd5' } : { fg: '#15803d', bg: '#dcfce7' };
+  return <span style={{ display: 'inline-block', padding: '0.1rem 0.5rem', borderRadius: 9999, fontSize: '0.72rem', fontWeight: 700, color: c.fg, background: c.bg }}>{score}</span>;
+}
+
+// Small flag pill for AML flags / screening tags.
+export function FlagPill({ children }: PropsWithChildren) {
+  return <span style={{ display: 'inline-block', padding: '0.05rem 0.4rem', borderRadius: '0.25rem', fontSize: '0.68rem', fontWeight: 600, color: '#7c2d12', background: '#fff7ed', border: '1px solid #fed7aa', marginRight: '0.25rem', marginBottom: '0.15rem', whiteSpace: 'nowrap' }}>{children}</span>;
+}
+
 // ── Badges ──────────────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, { fg: string; bg: string }> = {
@@ -132,6 +164,15 @@ const STATUS_COLORS: Record<string, { fg: string; bg: string }> = {
   inactive: { fg: '#6b7280', bg: '#f3f4f6' },
   buy: { fg: '#15803d', bg: '#dcfce7' },
   sell: { fg: '#9a3412', bg: '#ffedd5' },
+  // withdrawal state machine
+  requested: { fg: '#9a3412', bg: '#ffedd5' },
+  broadcast: { fg: '#1d4ed8', bg: '#dbeafe' },
+  confirmed: { fg: '#15803d', bg: '#dcfce7' },
+  // address / recon review
+  approved: { fg: '#15803d', bg: '#dcfce7' },
+  rejected: { fg: '#b91c1c', bg: '#fee2e2' },
+  ok: { fg: '#15803d', bg: '#dcfce7' },
+  break: { fg: '#b91c1c', bg: '#fee2e2' },
 };
 
 export function StatusBadge({ status }: { status: string }) {

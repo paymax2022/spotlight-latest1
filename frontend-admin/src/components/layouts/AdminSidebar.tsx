@@ -60,6 +60,8 @@ const navItemsBase: NavItem[] = [
   { label: 'Merchant Onboarding', href: '/admin/merchant-onboarding', section: 'Finance', permissions: ['merchant.onboarding.view'] },
   { label: 'Featured Placement', href: '/admin/featured-placement', section: 'Finance', permissions: ['placement.admin.review'] },
   { label: 'Nutrition', href: '/admin/nutrition', section: 'Finance', permissions: ['nutrition.admin.manage'] },
+  { label: 'Nutrition Consults', href: '/admin/nutrition/consults', section: 'Finance', permissions: ['nutrition.admin.resolve'] },
+  { label: 'Nutritionist Payouts', href: '/admin/nutrition/payouts', section: 'Finance', permissions: ['nutrition.admin.resolve'] },
   { label: 'CF Overview', href: '/admin/crowdfunding', section: 'Crowdfunding', permissions: ['crowdfunding.view'] },
   { label: 'Campaign Review', href: '/admin/crowdfunding/review', section: 'Crowdfunding', permissions: ['crowdfunding.review'] },
   { label: 'Users & Creators', href: '/admin/crowdfunding/users', section: 'Crowdfunding', permissions: ['crowdfunding.users'] },
@@ -277,6 +279,10 @@ const navItemsBase: NavItem[] = [
   { label: 'Crypto Overview', href: '/admin/crypto', section: 'Crypto', permissions: ['crypto.admin'] },
   { label: 'Orders', href: '/admin/crypto/orders', section: 'Crypto', permissions: ['crypto.admin'] },
   { label: 'Asset Catalogue', href: '/admin/crypto/assets', section: 'Crypto', permissions: ['crypto.admin'] },
+  { label: 'Withdrawals / AML', href: '/admin/crypto/withdrawals', section: 'Crypto', permissions: ['crypto.admin'] },
+  { label: 'Swap Monitoring', href: '/admin/crypto/swaps', section: 'Crypto', permissions: ['crypto.admin'] },
+  { label: 'Address Review', href: '/admin/crypto/addresses', section: 'Crypto', permissions: ['crypto.admin'] },
+  { label: 'Reconciliation', href: '/admin/crypto/reconciliation', section: 'Crypto', permissions: ['crypto.admin'] },
   // ── Property Management ──────────────────────────────────────────────────
   // Estate workspace (gated on estate.manage; dashboard also visible to estate.admin)
   { label: 'Estate Dashboard', href: '/admin/estate', section: 'Property Management', permissions: ['estate.manage', 'estate.admin'] },
@@ -284,6 +290,15 @@ const navItemsBase: NavItem[] = [
   { label: 'Dues & Collections', href: '/admin/estate/dues', section: 'Property Management', permissions: ['estate.manage'] },
   { label: 'Gates & Security', href: '/admin/estate/gates', section: 'Property Management', permissions: ['estate.manage'] },
   { label: 'Vendors', href: '/admin/estate/vendors', section: 'Property Management', permissions: ['estate.manage'] },
+  { label: 'Estate Security & Guard', href: '/admin/estate/security', section: 'Property Management', permissions: ['estate.admin.security', 'estate.admin'] },
+  { label: 'Estate Visitor Logs', href: '/admin/estate/visitor-logs', section: 'Property Management', permissions: ['estate.admin.security', 'estate.admin'] },
+  { label: 'Estate Dues Reconciliation', href: '/admin/estate/dues-reconciliation', section: 'Property Management', permissions: ['estate.admin.dues', 'estate.admin'] },
+  { label: 'Estate Ops', href: '/admin/estate/ops', section: 'Property Management', permissions: ['estate.admin.ops', 'estate.admin'] },
+  { label: 'Estate Content', href: '/admin/estate/content', section: 'Property Management', permissions: ['estate.admin.content', 'estate.admin'] },
+  { label: 'Estate Election Integrity', href: '/admin/estate/elections', section: 'Property Management', permissions: ['estate.admin.election', 'estate.admin'] },
+  { label: 'Vendor Directory', href: '/admin/vendors', section: 'Property Management', permissions: ['estate.manage', 'estate.admin'] },
+  { label: 'Vendor Onboarding', href: '/admin/vendors/onboarding', section: 'Property Management', permissions: ['estate.manage'] },
+  { label: 'Vendor Payouts', href: '/admin/vendors/payouts', section: 'Property Management', permissions: ['estate.manage', 'estate.admin'] },
   // Realtor marketplace (existing hrefs unchanged)
   { label: 'Realtor Overview', href: '/admin/realtor', section: 'Property Management' },
   { label: 'Listing Moderation', href: '/admin/realtor/moderation', section: 'Property Management' },
@@ -306,6 +321,10 @@ const navItemsBase: NavItem[] = [
   { label: 'Scheduled', href: '/admin/mobility/scheduled', section: 'Mobility', permissions: ['transport.admin.scheduled.read'] },
   { label: 'Order Monitoring', href: '/admin/restaurant', section: 'Restaurant', permissions: ['restaurant.manage'] },
   { label: 'Delivery Fee', href: '/admin/restaurant/delivery-fee', section: 'Restaurant', permissions: ['restaurant.admin.pricing'] },
+  { label: 'Rider Dispatch', href: '/admin/restaurant/dispatch', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.dispatch'] },
+  { label: 'Onboarding / KYC', href: '/admin/restaurant/onboarding', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.onboarding'] },
+  { label: 'Payouts', href: '/admin/restaurant/payouts', section: 'Restaurant', permissions: ['restaurant.admin.payouts'] },
+  { label: 'Refunds & Disputes', href: '/admin/restaurant/disputes', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.disputes'] },
   // ── Maps (MapService v2 cost/coverage + OSM contribution review) ─────────────
   { label: 'Maps Cost & Coverage', href: '/admin/maps', section: 'Platform', permissions: ['map.admin.review'] },
   { label: 'OSM Contributions', href: '/admin/maps/contributions', section: 'Platform', permissions: ['map.admin.review'] },
@@ -439,7 +458,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Compliance (SU-12)', href: '/admin/platform/edtech/compliance', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
 ];
 
-const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Crowdfunding', 'Connect', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'Platform · EdTech'];
+const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Crowdfunding', 'Connect', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'Crypto', 'Platform · EdTech'];
 
 export function AdminSidebar() {
   const pathname = usePathname() ?? '';

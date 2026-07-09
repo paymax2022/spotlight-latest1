@@ -146,6 +146,10 @@ export default function NutritionConsolePage() {
         Curate the food composition reference, the Nigerian Dish Library, and review dish profiles
         flagged by sanity bounds. Writes are role-gated (RBAC) and audited.
       </p>
+      <p style={{ display: 'flex', gap: 12, fontSize: 13 }}>
+        <Link href="/admin/nutrition/consults">Consult Review →</Link>
+        <Link href="/admin/nutrition/payouts">Nutritionist Payouts →</Link>
+      </p>
 
       {message ? <p style={{ color: 'lightgreen' }}>{message}</p> : null}
       {error ? <p style={{ color: 'salmon' }}>{error}</p> : null}

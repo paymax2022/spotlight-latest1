@@ -7,6 +7,12 @@ import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 export const NUTRITION_PERMS = {
   manage: ['nutrition.admin.manage'],
   resolve: ['nutrition.admin.resolve'],
+  // Consult review/resolve + payout reconciliation reuse the resolve capability —
+  // the Go nutrition module only defines manage/resolve (backend/internal/nutrition
+  // /routes.go). No dedicated consult/payout permission exists yet; when a
+  // nutritionist-settlement backend lands, split these out.
+  consult: ['nutrition.admin.resolve'],
+  payout: ['nutrition.admin.resolve'],
 };
 
 // Reads the cached admin user (same source as AdminSidebar / route guard) and

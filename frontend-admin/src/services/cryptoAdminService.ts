@@ -9,7 +9,12 @@
 // fields — never rendered as money, only formatKobo() output is money-facing.
 
 import { env } from '@/config/env';
-import type { CryptoAsset, CryptoOrder, CryptoAssetConfigRequest } from '@/types/cryptoAdmin';
+import type {
+  CryptoAsset, CryptoOrder, CryptoAssetConfigRequest,
+  CryptoWithdrawal, CryptoWithdrawalDecisionRequest,
+  CryptoSwapOrder, CryptoAddress, CryptoAddressDecisionRequest,
+  CryptoReconRow, CryptoReconSummary,
+} from '@/types/cryptoAdmin';
 
 const USE_MOCK = (process.env.NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
 
@@ -116,4 +121,168 @@ export async function adminConfigAsset(input: CryptoAssetConfigRequest): Promise
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Asset config failed'));
   const body = await res.json();
   return body?.asset ?? body;
+}
+
+// ─── Admin — withdrawal / AML approval queue ─────────────────────────────────
+// NOTE: the admin withdrawal routes are NOT yet wired server-side (only member
+// /api/v1/crypto/withdrawals* exist). These fetch paths target the PLANNED admin
+// routes so the console goes live the moment the backend adds them; until then
+// USE_MOCK (default true) serves fixtures so the surface renders standalone.
+
+const MOCK_WITHDRAWALS: CryptoWithdrawal[] = [
+  {
+    id: 'wd_c1', user_id: 'usr_7f2a', asset_id: 'ast_btc', symbol: 'BTC',
+    address_id: 'adr_1', address: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh', network: 'bitcoin',
+    status: 'requested', units: 250_000, network_fee_units: 1_500, fee_kobo: 50_000,
+    price_kobo: 65_000_000_00, value_kobo: 16_250_000, provider: 'fireblocks', reference: 'wd_ref_5501',
+    aml_flags: ['first_withdrawal', 'amount_threshold'], aml_score: 42,
+    created_at: iso(12), updated_at: iso(12),
+  },
+  {
+    id: 'wd_c2', user_id: 'usr_2b9e', asset_id: 'ast_usdt', symbol: 'USDT',
+    address_id: 'adr_2', address: '0x9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c', network: 'ethereum',
+    status: 'requested', units: 5_000_000, network_fee_units: 2_000_000, fee_kobo: 30_000,
+    price_kobo: 150_000, value_kobo: 7_500_000, provider: 'fireblocks', reference: 'wd_ref_5502',
+    aml_flags: ['sanctioned_address', 'mixer_exposure', 'high_risk_geo'], aml_score: 91,
+    created_at: iso(35), updated_at: iso(35),
+  },
+  {
+    id: 'wd_c3', user_id: 'usr_9a1c', asset_id: 'ast_eth', symbol: 'ETH',
+    address_id: 'adr_3', address: '0x1234abcd5678ef901234abcd5678ef901234abcd', network: 'ethereum',
+    status: 'pending', units: 2_000_000_000, network_fee_units: 500_000_000, fee_kobo: 20_000,
+    price_kobo: 342_000_00, value_kobo: 6_840_000, provider: 'fireblocks', reference: 'wd_ref_5503',
+    aml_flags: ['velocity'], aml_score: 28,
+    created_at: iso(180), updated_at: iso(60),
+  },
+  {
+    id: 'wd_c4', user_id: 'usr_4d8e', asset_id: 'ast_btc', symbol: 'BTC',
+    address_id: 'adr_4', address: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', network: 'bitcoin',
+    status: 'confirmed', units: 100_000, network_fee_units: 1_200, fee_kobo: 50_000,
+    price_kobo: 65_100_000_00, value_kobo: 6_510_000, provider: 'fireblocks',
+    tx_hash: '0xabc123def456abc123def456abc123def456abc123def456abc123def456abcd',
+    reference: 'wd_ref_5490', aml_flags: [], aml_score: 8,
+    created_at: iso(1440), updated_at: iso(1200),
+  },
+];
+
+// GET /admin/crypto/withdrawals?status=&limit=&offset=
+export async function adminListWithdrawals(status = '', limit = 50, offset = 0): Promise<CryptoWithdrawal[]> {
+  if (USE_MOCK) {
+    await delay();
+    return status ? MOCK_WITHDRAWALS.filter((w) => w.status === status) : [...MOCK_WITHDRAWALS];
+  }
+  const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (status) qs.set('status', status);
+  const res = await fetch(`${base()}/withdrawals?${qs.toString()}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Withdrawals fetch failed'));
+  const body = await res.json();
+  return body?.withdrawals ?? [];
+}
+
+// POST /admin/crypto/withdrawals/:id/decision — approve (requested→pending) or
+// reject (requested→failed). Operator note is mandatory and audited.
+export async function adminDecideWithdrawal(id: string, input: CryptoWithdrawalDecisionRequest): Promise<CryptoWithdrawal> {
+  if (!input.note || !input.note.trim()) throw new Error('An operator note is required to decide a withdrawal.');
+  if (USE_MOCK) {
+    await delay();
+    const w = MOCK_WITHDRAWALS.find((x) => x.id === id);
+    if (!w) throw new Error('Withdrawal not found.');
+    w.status = input.decision === 'approve' ? 'pending' : 'failed';
+    if (input.decision === 'reject') w.failure_reason = input.note.trim();
+    w.updated_at = new Date().toISOString();
+    return { ...w };
+  }
+  const res = await fetch(`${base()}/withdrawals/${encodeURIComponent(id)}/decision`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Withdrawal decision failed'));
+  const body = await res.json();
+  return body?.withdrawal ?? body;
+}
+
+// ─── Admin — swap monitoring ─────────────────────────────────────────────────
+// GET /admin/crypto/swaps — recent asset→asset swaps across all users.
+
+const MOCK_SWAPS: CryptoSwapOrder[] = [
+  { id: 'swp_1', user_id: 'usr_7f2a', from_asset_id: 'ast_btc', from_symbol: 'BTC', to_asset_id: 'ast_usdt', to_symbol: 'USDT', status: 'filled', from_units: 100_000, to_units: 43_300_000, from_price_kobo: 65_000_000_00, to_price_kobo: 150_000, cash_kobo: 6_500_000, spread_kobo: 32_500, spread_bps: 50, reference: 'ldg_swp_2201', created_at: iso(45) },
+  { id: 'swp_2', user_id: 'usr_2b9e', from_asset_id: 'ast_eth', from_symbol: 'ETH', to_asset_id: 'ast_btc', to_symbol: 'BTC', status: 'filled', from_units: 1_000_000_000, to_units: 52_600, from_price_kobo: 342_000_00, to_price_kobo: 65_000_000_00, cash_kobo: 3_420_000, spread_kobo: 17_100, spread_bps: 50, reference: 'ldg_swp_2202', created_at: iso(90) },
+  { id: 'swp_3', user_id: 'usr_9a1c', from_asset_id: 'ast_usdt', from_symbol: 'USDT', to_asset_id: 'ast_eth', to_symbol: 'ETH', status: 'filled', from_units: 10_000_000, to_units: 292_000_000, from_price_kobo: 150_000, to_price_kobo: 342_000_00, cash_kobo: 15_000_000, spread_kobo: 375_000, spread_bps: 250, reference: 'ldg_swp_2203', anomaly: 'spread 250bps exceeds 100bps corridor cap', created_at: iso(20) },
+  { id: 'swp_4', user_id: 'usr_4d8e', from_asset_id: 'ast_btc', from_symbol: 'BTC', to_asset_id: 'ast_eth', to_symbol: 'ETH', status: 'failed', from_units: 20_000, to_units: 0, from_price_kobo: 65_100_000_00, to_price_kobo: 342_000_00, cash_kobo: 0, spread_kobo: 0, spread_bps: 0, reference: '', anomaly: 'to-leg credit failed after from-leg debit — check for orphaned units', created_at: iso(300) },
+];
+
+export async function adminListSwaps(limit = 50, offset = 0): Promise<CryptoSwapOrder[]> {
+  if (USE_MOCK) return delay([...MOCK_SWAPS]);
+  const res = await fetch(`${base()}/swaps?limit=${limit}&offset=${offset}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Swaps fetch failed'));
+  const body = await res.json();
+  return body?.swaps ?? [];
+}
+
+// ─── Admin — address allow-list review ───────────────────────────────────────
+// GET /admin/crypto/addresses — whitelisted withdrawal destinations pending or
+// completed review.
+
+const MOCK_ADDRESSES: CryptoAddress[] = [
+  { id: 'adr_1', user_id: 'usr_7f2a', asset_id: 'ast_btc', symbol: 'BTC', label: 'Ledger cold wallet', network: 'bitcoin', address: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh', is_active: false, review_status: 'pending', screening_result: 'clean', verified_at: null, created_at: iso(30) },
+  { id: 'adr_2', user_id: 'usr_2b9e', asset_id: 'ast_usdt', symbol: 'USDT', label: 'Binance deposit', network: 'ethereum', address: '0x9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c', is_active: false, review_status: 'pending', screening_result: 'flagged: OFAC-adjacent cluster', verified_at: null, created_at: iso(50) },
+  { id: 'adr_3', user_id: 'usr_9a1c', asset_id: 'ast_eth', symbol: 'ETH', label: 'MetaMask hot', network: 'ethereum', address: '0x1234abcd5678ef901234abcd5678ef901234abcd', is_active: true, review_status: 'approved', screening_result: 'clean', verified_at: iso(600), created_at: iso(720) },
+  { id: 'adr_4', user_id: 'usr_4d8e', asset_id: 'ast_btc', symbol: 'BTC', label: 'Unknown recipient', network: 'bitcoin', address: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', is_active: false, review_status: 'rejected', screening_result: 'flagged: known mixer', verified_at: null, created_at: iso(2000) },
+];
+
+export async function adminListAddresses(review = '', limit = 100, offset = 0): Promise<CryptoAddress[]> {
+  if (USE_MOCK) {
+    await delay();
+    return review ? MOCK_ADDRESSES.filter((a) => a.review_status === review) : [...MOCK_ADDRESSES];
+  }
+  const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (review) qs.set('review_status', review);
+  const res = await fetch(`${base()}/addresses?${qs.toString()}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Addresses fetch failed'));
+  const body = await res.json();
+  return body?.addresses ?? [];
+}
+
+// POST /admin/crypto/addresses/:id/decision — approve or reject an allow-list
+// entry. Note is mandatory and audited.
+export async function adminDecideAddress(id: string, input: CryptoAddressDecisionRequest): Promise<CryptoAddress> {
+  if (!input.note || !input.note.trim()) throw new Error('An operator note is required to review an address.');
+  if (USE_MOCK) {
+    await delay();
+    const a = MOCK_ADDRESSES.find((x) => x.id === id);
+    if (!a) throw new Error('Address not found.');
+    a.review_status = input.decision === 'approve' ? 'approved' : 'rejected';
+    a.is_active = input.decision === 'approve';
+    if (input.decision === 'approve') a.verified_at = new Date().toISOString();
+    return { ...a };
+  }
+  const res = await fetch(`${base()}/addresses/${encodeURIComponent(id)}/decision`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Address decision failed'));
+  const body = await res.json();
+  return body?.address ?? body;
+}
+
+// ─── Admin — reconciliation (on-chain vs ledger) ─────────────────────────────
+// GET /admin/crypto/reconciliation — per-asset drift between the on-chain
+// custodial balance and the summed holding projections in the finance ledger.
+// Mirrors the FX SF-8 recon pattern: drift ≠ 0 is a break to investigate.
+
+const MOCK_RECON: CryptoReconRow[] = [
+  { asset_id: 'ast_btc', symbol: 'BTC', minor_unit_scale: 100_000_000, ledger_units: 12_500_000, onchain_units: 12_500_000, drift_units: 0, price_kobo: 65_000_000_00, status: 'ok', last_checked_at: iso(5) },
+  { asset_id: 'ast_eth', symbol: 'ETH', minor_unit_scale: 1_000_000_000, ledger_units: 48_200_000_000, onchain_units: 48_199_500_000, drift_units: -500_000, price_kobo: 342_000_00, status: 'break', last_checked_at: iso(5) },
+  { asset_id: 'ast_usdt', symbol: 'USDT', minor_unit_scale: 1_000_000, ledger_units: 3_200_000_000, onchain_units: 3_202_000_000, drift_units: 2_000_000, price_kobo: 150_000, status: 'break', last_checked_at: iso(5) },
+];
+
+export async function adminGetReconciliation(): Promise<CryptoReconSummary> {
+  if (USE_MOCK) {
+    await delay();
+    const rows = [...MOCK_RECON];
+    return { rows, breaks: rows.filter((r) => r.status === 'break').length, as_of: new Date().toISOString() };
+  }
+  const res = await fetch(`${base()}/reconciliation`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Reconciliation fetch failed'));
+  const body = await res.json();
+  const rows: CryptoReconRow[] = body?.rows ?? [];
+  return { rows, breaks: body?.breaks ?? rows.filter((r) => r.status === 'break').length, as_of: body?.as_of ?? new Date().toISOString() };
 }

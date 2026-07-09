@@ -4,6 +4,8 @@ import type {
   ProfileStatus,
   ReviewState,
   NutritionSource,
+  ConsultStatus,
+  PayoutRunStatus,
 } from '@/types/nutritionAdmin';
 
 // Dark-theme badge palette (matches merchant-onboarding statusBadge).
@@ -159,6 +161,62 @@ export function ReviewStateBadge({ state }: { state: ReviewState }) {
       }}
     >
       {state}
+    </span>
+  );
+}
+
+// Nutritionist consult review-queue lifecycle badge.
+const CONSULT_COLORS: Record<ConsultStatus, { bg: string; fg: string }> = {
+  PENDING_REVIEW: { bg: '#78350f', fg: '#fde68a' },
+  UNDER_REVIEW: { bg: '#1e3a8a', fg: '#bfdbfe' },
+  RESOLVED: { bg: '#064e3b', fg: '#a7f3d0' },
+  CLOSED: { bg: '#374151', fg: '#d1d5db' },
+  ESCALATED: { bg: '#7f1d1d', fg: '#fecaca' },
+};
+
+export function ConsultStatusBadge({ status }: { status: ConsultStatus }) {
+  const c = CONSULT_COLORS[status] ?? CONSULT_COLORS.PENDING_REVIEW;
+  return (
+    <span
+      style={{
+        background: c.bg,
+        color: c.fg,
+        padding: '2px 8px',
+        borderRadius: 9999,
+        fontSize: 11,
+        fontWeight: 600,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {status.replace(/_/g, ' ')}
+    </span>
+  );
+}
+
+// Nutritionist payout-run status badge.
+const PAYOUT_COLORS: Record<PayoutRunStatus, { bg: string; fg: string }> = {
+  DRAFT: { bg: '#374151', fg: '#d1d5db' },
+  PENDING: { bg: '#78350f', fg: '#fde68a' },
+  PAID: { bg: '#1e3a8a', fg: '#bfdbfe' },
+  FAILED: { bg: '#7f1d1d', fg: '#fecaca' },
+  RECONCILED: { bg: '#064e3b', fg: '#a7f3d0' },
+};
+
+export function PayoutStatusBadge({ status }: { status: PayoutRunStatus }) {
+  const c = PAYOUT_COLORS[status] ?? PAYOUT_COLORS.PENDING;
+  return (
+    <span
+      style={{
+        background: c.bg,
+        color: c.fg,
+        padding: '2px 8px',
+        borderRadius: 9999,
+        fontSize: 11,
+        fontWeight: 600,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {status}
     </span>
   );
 }

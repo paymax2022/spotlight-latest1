@@ -1,7 +1,9 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
+import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 
 // Shared presentational helpers for the Estate console — matches the Realtor
 // console light-card inline-style convention (see realtor/_ui.tsx).
@@ -94,4 +96,60 @@ export function timeAgo(iso: string): string {
   if (h < 1) return 'just now';
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+// ── Platform estate oversight: RBAC + tabs ────────────────────────────────────
+// Slugs match the Go guards in backend/internal/app/estate_admin_routes.go and
+// the seed in supabase/migrations/20260919000000_estate_admin_rbac.sql. Client
+// gating only hides dead-end UI; the backend RBAC guard is authoritative.
+export const ESTATE_ADMIN_PERMS = {
+  security: ['estate.admin.security'],
+  dues: ['estate.admin.dues'],
+  ops: ['estate.admin.ops'],
+  content: ['estate.admin.content'],
+  election: ['estate.admin.election'],
+};
+
+// Reads the cached admin user (same source as AdminSidebar / useMobilityPermissions)
+// and exposes a permission check.
+export function useEstatePermissions() {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('spotlight_admin_user');
+      if (raw) setUser(JSON.parse(raw) as AuthUser);
+    } catch { /* unauthenticated handled by route guard */ }
+  }, []);
+  const can = (perms: string[]) => hasAnyPermission(user, perms);
+  return { user, can };
+}
+
+// Oversight tab bar (platform estate.admin.* surfaces). Kept separate from
+// EstateTabs (the per-estate operator console) so the two navigation planes stay
+// visually distinct.
+export function EstateOversightTabs({ active }: { active: string }) {
+  const tabs = [
+    { href: '/admin/estate/security', label: 'Security & Guard', key: 'security' },
+    { href: '/admin/estate/visitor-logs', label: 'Visitor Logs', key: 'visitor-logs' },
+    { href: '/admin/estate/dues-reconciliation', label: 'Dues Reconciliation', key: 'dues-reconciliation' },
+    { href: '/admin/estate/ops', label: 'Ops', key: 'ops' },
+    { href: '/admin/estate/content', label: 'Content', key: 'content' },
+    { href: '/admin/estate/elections', label: 'Election Integrity', key: 'elections' },
+  ];
+  return (
+    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>
+      {tabs.map((t) => (
+        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : '#374151', background: active === t.key ? '#7c3aed' : '#f3f4f6' }}>{t.label}</Link>
+      ))}
+    </div>
+  );
+}
+
+// Shown when the caller lacks the required estate.admin.* permission.
+export function Restricted({ perm }: { perm: string }) {
+  return (
+    <div style={{ ...card(), background: '#fffbeb', borderColor: '#fde68a', color: '#92400e', fontSize: '0.85rem' }}>
+      You do not have <code>{perm}</code> — this oversight view is unavailable for your role.
+    </div>
+  );
 }

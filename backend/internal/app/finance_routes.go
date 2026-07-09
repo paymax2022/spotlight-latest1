@@ -1051,6 +1051,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estGroup.GET("/:id/finance/dashboard", estateHandler.FinanceDashboard)
 		estGroup.GET("/:id/notifications", estateHandler.Notifications)
 		estGroup.GET("/:id/reports", estateHandler.Report)
+
+		// Platform estate oversight admin surface (read-only, estate.admin.* RBAC).
+		// Mounted as a sibling group /estate-admin (NOT /estate/admin) to avoid the
+		// Gin radix conflict with the /estate/:id/... param routes above. See
+		// estate_admin_routes.go for the full rationale.
+		RegisterEstateAdmin(finance, pool, rbac, middleware.RequireAuthContext(supabase, rbac))
 	}
 
 	// --- Property Management suite (unification umbrella) ---

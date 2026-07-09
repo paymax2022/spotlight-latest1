@@ -5,6 +5,11 @@ import type {
   DishLibraryEntry,
   ImplausibleProfile,
   ReresolveScope,
+  NutritionistConsult,
+  ConsultFilters,
+  ConsultStatus,
+  PayoutRun,
+  PayoutFilters,
 } from '@/types/nutritionAdmin';
 
 // The Go nutrition admin routes hang off the /api prefix (same convention as
@@ -337,7 +342,262 @@ export async function markReviewed(id: string, dishId: string): Promise<Implausi
   return (data.profile ?? data) as ImplausibleProfile;
 }
 
+// ── Nutritionist consults (mock-only review/resolve queue) ───────────────────
+// No backend route group exists (see types note). Reads/writes are fixture-backed
+// until /api/nutrition/admin/consults/* is delivered; the live branches below
+// document the expected shape so the flip is a one-liner.
+
+let consultFixture: NutritionistConsult[] = [
+  {
+    id: 'nc_7741',
+    clientName: 'Adaeze Okonkwo',
+    clientUserId: 'usr_ada_88',
+    nutritionistName: 'Dr. Bello Musa',
+    nutritionistId: 'nut_bello',
+    topic: 'Diabetic meal plan review',
+    channel: 'video',
+    status: 'PENDING_REVIEW',
+    priority: 'high',
+    summary:
+      'Client (Type-2 diabetic) requested a low-GI Nigerian meal plan. Nutritionist proposed swaps (brown rice, unripe plantain). Flagged for clinical review before issue.',
+    resolutionNote: null,
+    createdAt: '2026-07-08T09:10:00Z',
+    updatedAt: '2026-07-08T09:10:00Z',
+    resolvedAt: null,
+  },
+  {
+    id: 'nc_7742',
+    clientName: 'Tunde Balogun',
+    clientUserId: 'usr_tunde_12',
+    nutritionistName: 'Ngozi Eze',
+    nutritionistId: 'nut_ngozi',
+    topic: 'Weight-loss macro split dispute',
+    channel: 'chat',
+    status: 'PENDING_REVIEW',
+    priority: 'normal',
+    summary:
+      'Client disputes the calorie target in the issued plan. Needs an admin to review the macro calculation and either confirm or re-issue.',
+    resolutionNote: null,
+    createdAt: '2026-07-07T15:42:00Z',
+    updatedAt: '2026-07-07T16:00:00Z',
+    resolvedAt: null,
+  },
+  {
+    id: 'nc_7739',
+    clientName: 'Fatima Sani',
+    clientUserId: 'usr_fatima_03',
+    nutritionistName: 'Dr. Bello Musa',
+    nutritionistId: 'nut_bello',
+    topic: 'Antenatal nutrition guidance',
+    channel: 'async',
+    status: 'ESCALATED',
+    priority: 'high',
+    summary:
+      'Escalated to a senior nutritionist — client is pregnant with a nut allergy; the initial plan needs allergen re-check against the Nigerian Dish Library.',
+    resolutionNote: null,
+    createdAt: '2026-07-05T11:20:00Z',
+    updatedAt: '2026-07-06T08:15:00Z',
+    resolvedAt: null,
+  },
+];
+
+function filterConsults(
+  rows: NutritionistConsult[],
+  filters: ConsultFilters,
+): NutritionistConsult[] {
+  return rows.filter((r) => {
+    if (filters.status && r.status !== filters.status) return false;
+    if (filters.priority && r.priority !== filters.priority) return false;
+    if (filters.q) {
+      const q = filters.q.toLowerCase();
+      if (
+        !r.clientName.toLowerCase().includes(q) &&
+        !r.nutritionistName.toLowerCase().includes(q) &&
+        !r.topic.toLowerCase().includes(q)
+      )
+        return false;
+    }
+    return true;
+  });
+}
+
+// GET /nutrition/admin/consults?status=&priority=&q=
+export async function listConsults(
+  filters: ConsultFilters = {},
+): Promise<NutritionistConsult[]> {
+  if (USE_FIXTURES) return filterConsults(consultFixture, filters);
+  const params = new URLSearchParams();
+  if (filters.status) params.set('status', filters.status);
+  if (filters.priority) params.set('priority', filters.priority);
+  if (filters.q) params.set('q', filters.q);
+  const qs = params.toString();
+  const res = await fetch(`${adminApiBase()}/nutrition/admin/consults${qs ? `?${qs}` : ''}`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Consult queue failed: ${res.status}`);
+  const data = await res.json().catch(() => ({}));
+  if (Array.isArray(data)) return data as NutritionistConsult[];
+  return (data.consults ?? data.data ?? []) as NutritionistConsult[];
+}
+
+export async function getConsult(id: string): Promise<NutritionistConsult> {
+  if (USE_FIXTURES) {
+    const found = consultFixture.find((c) => c.id === id);
+    if (!found) throw new Error('Consult not found.');
+    return found;
+  }
+  const res = await fetch(`${adminApiBase()}/nutrition/admin/consults/${encodeURIComponent(id)}`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Consult fetch failed: ${res.status}`);
+  const data = await res.json().catch(() => ({}));
+  return (data.consult ?? data) as NutritionistConsult;
+}
+
+// Transition a consult (resolve / close / escalate / take under review). Requires
+// nutrition.admin.resolve server-side.
+export async function transitionConsult(
+  id: string,
+  next: ConsultStatus,
+  note?: string,
+): Promise<NutritionistConsult> {
+  if (USE_FIXTURES) {
+    await new Promise((r) => setTimeout(r, 300));
+    const idx = consultFixture.findIndex((c) => c.id === id);
+    if (idx === -1) throw new Error('Consult not found.');
+    const now = new Date().toISOString();
+    const updated: NutritionistConsult = {
+      ...consultFixture[idx],
+      status: next,
+      resolutionNote: note?.trim() ? note.trim() : consultFixture[idx].resolutionNote,
+      updatedAt: now,
+      resolvedAt: next === 'RESOLVED' || next === 'CLOSED' ? now : consultFixture[idx].resolvedAt,
+    };
+    consultFixture = consultFixture.map((c, i) => (i === idx ? updated : c));
+    return updated;
+  }
+  const action =
+    next === 'RESOLVED'
+      ? 'resolve'
+      : next === 'CLOSED'
+        ? 'close'
+        : next === 'ESCALATED'
+          ? 'escalate'
+          : 'review';
+  const data = (await post(`/nutrition/admin/consults/${encodeURIComponent(id)}/${action}`, {
+    note: note ?? '',
+  })) as Record<string, unknown>;
+  return (data.consult ?? data) as NutritionistConsult;
+}
+
+// ── Nutritionist payouts (mock-only payout runs / reconciliation) ────────────
+// Amounts are kobo (money iron-rules). Mock-only until a settlement backend
+// exists; the live branches document /api/nutrition/admin/payouts/*.
+
+const payoutFixture: PayoutRun[] = [
+  {
+    id: 'npr_2026_06',
+    period: '2026-06',
+    status: 'RECONCILED',
+    lineCount: 3,
+    totalNetKobo: 4_185_000,
+    totalFeeKobo: 465_000,
+    reconciledKobo: 4_185_000,
+    createdAt: '2026-07-01T00:05:00Z',
+    paidAt: '2026-07-02T10:00:00Z',
+    lines: [
+      { nutritionistId: 'nut_bello', nutritionistName: 'Dr. Bello Musa', consults: 22, grossKobo: 2_200_000, feeKobo: 220_000, netKobo: 1_980_000, status: 'RECONCILED' },
+      { nutritionistId: 'nut_ngozi', nutritionistName: 'Ngozi Eze', consults: 18, grossKobo: 1_800_000, feeKobo: 180_000, netKobo: 1_620_000, status: 'RECONCILED' },
+      { nutritionistId: 'nut_amina', nutritionistName: 'Amina Yusuf', consults: 7, grossKobo: 650_000, feeKobo: 65_000, netKobo: 585_000, status: 'RECONCILED' },
+    ],
+  },
+  {
+    id: 'npr_2026_07',
+    period: '2026-07',
+    status: 'PENDING',
+    lineCount: 3,
+    totalNetKobo: 2_313_000,
+    totalFeeKobo: 257_000,
+    reconciledKobo: 0,
+    createdAt: '2026-07-08T00:05:00Z',
+    paidAt: null,
+    lines: [
+      { nutritionistId: 'nut_bello', nutritionistName: 'Dr. Bello Musa', consults: 12, grossKobo: 1_200_000, feeKobo: 120_000, netKobo: 1_080_000, status: 'PENDING' },
+      { nutritionistId: 'nut_ngozi', nutritionistName: 'Ngozi Eze', consults: 9, grossKobo: 900_000, feeKobo: 90_000, netKobo: 810_000, status: 'PENDING' },
+      { nutritionistId: 'nut_amina', nutritionistName: 'Amina Yusuf', consults: 5, grossKobo: 470_000, feeKobo: 47_000, netKobo: 423_000, status: 'PENDING' },
+    ],
+  },
+];
+
+// GET /nutrition/admin/payouts?status=&period=
+export async function listPayoutRuns(filters: PayoutFilters = {}): Promise<PayoutRun[]> {
+  if (USE_FIXTURES) {
+    return payoutFixture.filter((r) => {
+      if (filters.status && r.status !== filters.status) return false;
+      if (filters.period && r.period !== filters.period) return false;
+      return true;
+    });
+  }
+  const params = new URLSearchParams();
+  if (filters.status) params.set('status', filters.status);
+  if (filters.period) params.set('period', filters.period);
+  const qs = params.toString();
+  const res = await fetch(`${adminApiBase()}/nutrition/admin/payouts${qs ? `?${qs}` : ''}`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Payout runs failed: ${res.status}`);
+  const data = await res.json().catch(() => ({}));
+  if (Array.isArray(data)) return data as PayoutRun[];
+  return (data.runs ?? data.data ?? []) as PayoutRun[];
+}
+
+export async function getPayoutRun(id: string): Promise<PayoutRun> {
+  if (USE_FIXTURES) {
+    const found = payoutFixture.find((r) => r.id === id);
+    if (!found) throw new Error('Payout run not found.');
+    return found;
+  }
+  const res = await fetch(`${adminApiBase()}/nutrition/admin/payouts/${encodeURIComponent(id)}`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Payout run fetch failed: ${res.status}`);
+  const data = await res.json().catch(() => ({}));
+  return (data.run ?? data) as PayoutRun;
+}
+
+// Reconcile a payout run against the ledger settlement account. Requires
+// nutrition.admin.resolve server-side; money mutation is backend-only (this UI
+// only triggers the run — the Go side posts the balanced double-entry).
+export async function reconcilePayoutRun(id: string): Promise<PayoutRun> {
+  if (USE_FIXTURES) {
+    await new Promise((r) => setTimeout(r, 400));
+    const found = payoutFixture.find((r) => r.id === id);
+    if (!found) throw new Error('Payout run not found.');
+    return {
+      ...found,
+      status: 'RECONCILED',
+      reconciledKobo: found.totalNetKobo,
+      paidAt: found.paidAt ?? new Date().toISOString(),
+    };
+  }
+  const data = (await post(`/nutrition/admin/payouts/${encodeURIComponent(id)}/reconcile`, {})) as Record<
+    string,
+    unknown
+  >;
+  return (data.run ?? data) as PayoutRun;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+// Format an integer kobo amount as Naira. Display-only — never used for math.
+export function formatKobo(kobo: number): string {
+  const naira = kobo / 100;
+  return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 
 export function ageFromNow(iso: string | null | undefined): string {
   if (!iso) return '—';

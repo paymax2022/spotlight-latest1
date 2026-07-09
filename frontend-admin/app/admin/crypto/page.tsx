@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { adminListAssets, adminListOrders, formatKobo } from '@/services/cryptoAdminService';
+import {
+  adminListAssets, adminListOrders, adminListWithdrawals, adminGetReconciliation, formatKobo,
+} from '@/services/cryptoAdminService';
 import { PageHeader, CryptoTabs, Card, Kpi, DisclosureNote } from './_ui';
 
 export default function CryptoOverviewPage() {
@@ -11,6 +13,8 @@ export default function CryptoOverviewPage() {
   const [pendingOrders, setPendingOrders] = useState<number | null>(null);
   const [failedOrders, setFailedOrders] = useState<number | null>(null);
   const [volumeKobo, setVolumeKobo] = useState<number>(0);
+  const [pendingWithdrawals, setPendingWithdrawals] = useState<number | null>(null);
+  const [reconBreaks, setReconBreaks] = useState<number | null>(null);
 
   useEffect(() => {
     void adminListAssets().then((r) => {
@@ -24,6 +28,9 @@ export default function CryptoOverviewPage() {
       setFailedOrders(r.filter((o) => o.status === 'failed').length);
       setVolumeKobo(r.filter((o) => o.status === 'filled').reduce((sum, o) => sum + o.cash_kobo, 0));
     }).catch(() => { setOrdersTotal(null); setPendingOrders(null); setFailedOrders(null); });
+
+    void adminListWithdrawals('requested').then((r) => setPendingWithdrawals(r.length)).catch(() => setPendingWithdrawals(null));
+    void adminGetReconciliation().then((s) => setReconBreaks(s.breaks)).catch(() => setReconBreaks(null));
   }, []);
 
   return (
@@ -45,12 +52,18 @@ export default function CryptoOverviewPage() {
         <Kpi label="Orders (recent page)" value={ordersTotal != null ? String(ordersTotal) : '—'} />
         <Kpi label="Pending orders" value={pendingOrders != null ? String(pendingOrders) : '—'} accent={pendingOrders && pendingOrders > 0 ? '#9a3412' : undefined} />
         <Kpi label="Failed orders" value={failedOrders != null ? String(failedOrders) : '—'} accent={failedOrders && failedOrders > 0 ? '#b91c1c' : undefined} />
+        <Kpi label="Withdrawals awaiting AML" value={pendingWithdrawals != null ? String(pendingWithdrawals) : '—'} accent={pendingWithdrawals && pendingWithdrawals > 0 ? '#9a3412' : undefined} />
+        <Kpi label="Reconciliation breaks" value={reconBreaks != null ? String(reconBreaks) : '—'} accent={reconBreaks && reconBreaks > 0 ? '#b91c1c' : '#15803d'} />
         <Kpi label="Filled volume (cash)" value={formatKobo(volumeKobo)} accent="#340075" />
       </div>
 
       <Card title="Modules">
         <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.88rem', color: '#374151', lineHeight: 1.9 }}>
           <li><strong>Orders</strong> — all-user buy/sell fill history, read-only oversight, filterable by status.</li>
+          <li><strong>Withdrawals / AML</strong> — approval queue for outbound crypto withdrawals with AML risk scoring and flags; approve/reject with a mandatory audited note.</li>
+          <li><strong>Swaps</strong> — asset→asset swap monitoring: realised rates, spread revenue, volume and anomaly detection.</li>
+          <li><strong>Address review</strong> — allow-list review of withdrawal destinations with screening verdicts; approve/reject with a mandatory audited note.</li>
+          <li><strong>Reconciliation</strong> — per-asset on-chain vs ledger drift, breaks surfaced (FX SF-8 pattern).</li>
           <li><strong>Assets</strong> — admin-curated tradable catalogue: create, activate/deactivate, and configure minor-unit scale.</li>
         </ul>
       </Card>
