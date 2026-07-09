@@ -292,6 +292,52 @@ func (s *Service) GetDoctorDashboard(ctx context.Context, userID string) (*Docto
 
 // ─── Appointments ────────────────────────────────────────────────────────────
 
+// assertDoctorApproved is the fail-closed MDCN credential gate. A telemedicine
+// doctor (doctors.user_id) may only take/complete consultations once their MDCN
+// verification is APPROVED. The authoritative approval lives in the doctor module
+// (doctor_verifications.status='approved'), mirrored onto doctor_profiles.
+// verification. We accept either signal as approved; the absence of any approved
+// record is treated as NOT approved (fail-closed). A missing verification table in
+// a partially-migrated environment also fails closed.
+func (s *Service) assertDoctorApproved(ctx context.Context, doctorUserID string) error {
+	var approved bool
+	const q = `
+		SELECT EXISTS (
+			SELECT 1 FROM doctor_verifications
+			WHERE user_id = $1 AND status = 'approved'
+		) OR EXISTS (
+			SELECT 1 FROM doctor_profiles
+			WHERE user_id = $1 AND verification = 'approved'
+		)`
+	if err := s.db.QueryRow(ctx, q, doctorUserID).Scan(&approved); err != nil {
+		// Fail-closed: if we cannot confirm approval, do not permit the action.
+		return fmt.Errorf("telemedicine: doctor credential not verified")
+	}
+	if !approved {
+		return fmt.Errorf("telemedicine: doctor is not MDCN-approved for consultations")
+	}
+	return nil
+}
+
+// assertSlotFree rejects a booking when the doctor already has an active
+// appointment (not cancelled/completed) at the same scheduled_at.
+func (s *Service) assertSlotFree(ctx context.Context, doctorID string, scheduledAt time.Time) error {
+	var taken bool
+	const q = `
+		SELECT EXISTS (
+			SELECT 1 FROM appointments
+			WHERE doctor_id = $1 AND scheduled_at = $2
+			  AND status NOT IN ('cancelled','completed')
+		)`
+	if err := s.db.QueryRow(ctx, q, doctorID, scheduledAt).Scan(&taken); err != nil {
+		return fmt.Errorf("telemedicine: check slot availability: %w", err)
+	}
+	if taken {
+		return fmt.Errorf("telemedicine: the selected time slot is no longer available")
+	}
+	return nil
+}
+
 // BookAppointment escrows the consultation fee and creates an appointment.
 func (s *Service) BookAppointment(ctx context.Context, patientID string, req BookAppointmentRequest) (*Appointment, error) {
 	var doctor Doctor
@@ -302,6 +348,17 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 	}
 	if !doctor.IsAvailable {
 		return nil, fmt.Errorf("telemedicine: doctor is not currently available")
+	}
+	// Credential gate (fail-closed): a doctor may only take bookings once their MDCN
+	// credential is APPROVED. is_available alone is a soft availability toggle and
+	// MUST NOT bypass the licence check (safety hole).
+	if err := s.assertDoctorApproved(ctx, doctor.UserID); err != nil {
+		return nil, err
+	}
+	// Slot-collision guard: reject a booking when an active (not cancelled/completed)
+	// appointment already occupies this doctor's slot at the same scheduled_at.
+	if err := s.assertSlotFree(ctx, req.DoctorID, req.ScheduledAt); err != nil {
+		return nil, err
 	}
 
 	apptID := uuid.New().String()

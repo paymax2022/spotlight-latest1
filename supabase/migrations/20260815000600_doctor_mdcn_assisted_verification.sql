@@ -61,8 +61,8 @@ CREATE POLICY doctor_verif_doc_access_service ON public.doctor_verification_doc_
 
 -- RBAC: the ops reviewer permission for assisted MDCN verification. A doctor can
 -- NEVER review/decide; object-level no-self-approval is enforced in the service.
-INSERT INTO public.permissions (slug, description)
-VALUES ('health.doctor.review', 'Review and decide assisted MDCN doctor verifications')
+INSERT INTO public.permissions (name, slug, module, resource, action, description, is_system_permission)
+VALUES ('Health Doctor Review', 'health.doctor.review', 'health', 'doctor', 'review', 'Review and decide assisted MDCN doctor verifications', true)
 ON CONFLICT (slug) DO NOTHING;
 
 INSERT INTO public.role_permissions (role_id, permission_id)

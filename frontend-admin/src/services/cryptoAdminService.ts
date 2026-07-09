@@ -37,7 +37,9 @@ export function formatKobo(kobo: number | null | undefined): string {
   return `₦${(kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
 }
 
-const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms));
+function delay<T = void>(value?: T, ms = 220): Promise<T> {
+  return new Promise((r) => setTimeout(() => r(value as T), ms));
+}
 
 async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
   try {

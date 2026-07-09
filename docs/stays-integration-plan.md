@@ -89,6 +89,60 @@ or **keep them mock-flagged** for now and ship the real booking saga first.
 
 ---
 
+## 4b. Progress (2026-07-06) — booking saga wired (adapter approach)
+
+Chosen: **fast adapter** (A1) + **defer discovery/agent** (B). Implemented in
+`src/features/stays/{api,trips,reviews,agent}.ts`; mobile type-check clean.
+
+Wired LIVE to the real backend (unwrapping the `{data}` envelope; composite
+supplier key encoded into opaque ids):
+- **search** → `GET /search` (per-offer results grouped into `PropertyCard[]`;
+  client-side filter/sort preserved). `searchRelaxed` too.
+- **property content** → `GET /properties/:rail/:supplier/:ref` → `PropertyDetail`.
+- **rooms** → re-runs the dated `/search`, groups offers into `RoomType[]` +
+  `RatePlan[]`, encoding `offer_token`+refs into each `RatePlan.id`.
+- **prebook** → `POST /prebook` (auto-grants NDPA `consent` first; sends the
+  supplier refs; returns a `bookToken` carrying `reservation_id`+`book_token`).
+- **book** → `POST /book` (Idempotency-Key; 409+`state=VOID` → hold-released).
+- **reservations / trips** → `GET /reservations[/:id]`, `POST /reservations/:id/
+  {cancel,modify}` → `Trip`/`Reservation`/`RefundStatus`.
+- **reviews** → `GET /reviews`, `GET /reviews-mine`, `GET /reservations/:id/
+  review-eligibility`, `POST /reservations/:id/review`.
+
+> **Discovery progress (2026-07-06):** `destinations` (GET /destinations?q=) and
+> `home` (GET /home → trending destinations) are now BUILT and wired
+> (`internal/stays/discovery/discovery.go`, registered in `stays_routes.go`;
+> frontend `searchDestinations`/`getStaysHome` live). `go build`/`vet` clean; SQL
+> verified against seeded rows on the local Postgres. Both read distinct ACTIVE
+> cities from `stays_property` (DIRECT inventory) — bedbank supply isn't locally
+> indexed, and `deals`/`nearby` remain (deals needs a curated table; nearby needs
+> lat/lng in the search handler + frontend device coords + PostGIS geo).
+
+Kept as flagged fallbacks (no backend): deals, nearby,
+saved/wishlist (client-only Set), add-ons (static catalogue), profile, loyalty,
+saved-guests, cancel/modify previews, refund status, and the **entire agent
+flow** (`agent.ts` — reads return empty, money mutations throw). Every one is
+marked `TODO(stays)` and never calls a 404 path.
+
+**Known lossiness / must-verify (flagged in code):**
+- ~~`Reservation`/`Trip` carry no property display content~~ **ADDRESSED
+  (2026-07-06, pending local `go build`):** the reservation handler now enriches
+  List/Get/Cancel/Modify responses with a best-effort `content` block
+  (`name/city/address/cover_url/star_rating/property_type`) via
+  `searchSvc.GetContent(rail, supplier, PropertyID)` — additive, nil-safe, no
+  migration (relies on the reservation persisting the supplier property ref as
+  `PropertyID`, which the adapter's prebook body sends). Backend:
+  `internal/stays/reservation/handler.go` + `internal/app/stays_routes.go`.
+  Frontend `api.ts`/`trips.ts` read the `content` block. Room/rate display names
+  are still ID-only (would need room/rate content embedding). **Verify with
+  `go build ./... && go vet ./...` locally.**
+- Results cards have no cover photo (search offers carry no thumbnail).
+- **prebook/book field semantics are UNVERIFIED here** (no Go toolchain / test DB
+  in this session): `property_id/room_type_id/rate_plan_id` are sent as the
+  supplier refs; if the gateway needs the INTERNAL mapped ids for mapped supply,
+  thread `offer.mapped_property_id`. **Run the two-step saga against a live
+  backend before trusting the money path.**
+
 ## 5. Recommended sequence (once approach chosen)
 1. **Consent** call + gate (prebook returns 428 without it).
 2. **Search → property content** wired live (real supply on the results/detail

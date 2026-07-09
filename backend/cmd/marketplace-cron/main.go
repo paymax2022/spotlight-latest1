@@ -1,25 +1,16 @@
 // Command marketplace-cron runs the periodic (non-request-driven) jobs the
-// marketplace escrow/listing state machines depend on:
+// marketplace listing lifecycle depends on:
 //
 //   - listing auto_expire            (§2.1: active -> expired when expires_at < now())
-//   - order auto_release             (§2.2: inspection_window -> released when
-//                                      inspection_deadline < now() AND no open dispute)
-//   - hourly escrow reconciliation   (§2.2 invariant: SUM(escrow ledger balance)
-//                                      == SUM(orders in any open-escrow status))
+//
+// The order auto_release and hourly escrow reconciliation jobs were removed with
+// the escrow order FSM (ADR-023 listings-and-connect pivot): the marketplace no
+// longer holds escrow orders, so there is nothing to release or reconcile.
 //
 // House pattern: ticker-goroutine-style loop per job, mirroring
 // internal/fractionalre/autoinvest_runner.go (StartAutoInvestRunner) — this
-// repo has no pg_cron and no asynq periodic scheduler.
-//
-// Money-path note: this binary NEVER posts ledger entries itself. Per
-// SWARM_INTEGRATION_CONTRACT.md, package marketplace (Agent A) owns every
-// ledger-touching transition; auto_release must go through
-// marketplace.Service.AutoReleaseDue so the exact same guarded, idempotent,
-// ledger-posting code path used by the API's cron caller is reused here. If
-// that symbol is not yet available at build time (Agent A still in
-// progress), this file is written so the dependency is explicit and isolated
-// to auto-release; the listing auto-expire and reconciliation-check jobs are
-// read/write-but-ledger-free raw SQL and do not require package marketplace.
+// repo has no pg_cron and no asynq periodic scheduler. This binary is ledger-free
+// (the listing auto-expire job is raw SQL with no money movement).
 package main
 
 import (
@@ -33,12 +24,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	goredis "github.com/redis/go-redis/v9"
 
-	"spotlight/backend/internal/finance/ledger"
-	"spotlight/backend/internal/marketplace"
 	platformDB "spotlight/backend/internal/platform/db"
-	platformRedis "spotlight/backend/internal/platform/redis"
 )
 
 func main() {
@@ -56,34 +43,16 @@ func main() {
 	}
 	defer pool.Close()
 
-	// Build the marketplace Service so auto-release goes through the single
-	// guarded, idempotent, ledger-posting code path (Service.AutoReleaseDue) —
-	// the same one the confirm-delivery endpoint uses. Redis is optional (the
-	// service falls back to the DB-unique idempotency backstop when nil), so a
-	// missing REDIS_URL degrades gracefully rather than disabling releases.
-	var rdb *goredis.Client
-	if url := os.Getenv("REDIS_URL"); url != "" {
-		if rc, err := platformRedis.New(url); err != nil {
-			log.Printf("marketplace-cron: REDIS_URL set but connect failed (%v) — proceeding with DB-unique idempotency backstop", err)
-		} else {
-			rdb = rc
-		}
-	}
-	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), rdb)
-	svc := marketplace.NewService(pool, ledgerSvc, rdb)
-
-	log.Println("marketplace-cron: starting (listing auto-expire every 5m, order auto-release every 1m, escrow reconciliation every 1h)")
+	// Order auto-release + escrow reconciliation jobs REMOVED (ADR-023
+	// listings-and-connect pivot): the marketplace no longer holds escrow orders,
+	// so there is nothing to release or reconcile. The only remaining periodic job
+	// is listing auto-expiry (§2.1), which is ledger-free.
+	log.Println("marketplace-cron: starting (listing auto-expire every 5m)")
 
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(1)
 	go runLoop(ctx, &wg, "listing-auto-expire", 5*time.Minute, func(c context.Context) {
 		expireListings(c, pool)
-	})
-	go runLoop(ctx, &wg, "order-auto-release", 1*time.Minute, func(c context.Context) {
-		autoReleaseOrders(c, pool, svc)
-	})
-	go runLoop(ctx, &wg, "escrow-reconciliation", time.Hour, func(c context.Context) {
-		reconcileEscrow(c, pool)
 	})
 
 	wg.Wait()
@@ -177,95 +146,4 @@ func expireListings(ctx context.Context, pool *pgxpool.Pool) {
 	if len(out) > 0 {
 		log.Printf("marketplace-cron: expire-listings: expired %d listing(s)", len(out))
 	}
-}
-
-// autoReleaseOrders implements §2.2's `inspection_window` -> `auto_release` ->
-// `released` transition.
-//
-// PREFERRED PATH: call marketplace.Service.AutoReleaseDue(ctx), which is the
-// single source of truth for the guarded, idempotent, ledger-posting
-// transition (escrow sub-account -> seller wallet, minus platform fee) that
-// the manual `confirm-delivery` endpoint also uses. That call is intentionally
-// NOT wired directly in this file: package marketplace is owned by Agent A
-// and importing it here would make this binary's compilation depend on
-// Agent A's package landing first. Wire it by adding, once marketplace.Service
-// is available:
-//
-//	import "spotlight/backend/internal/marketplace"
-//	svc := marketplace.NewService(pool, ledgerSvc, rdb)
-//	n, err := svc.AutoReleaseDue(ctx)
-//
-// FALLBACK PATH (used here so this binary builds and ships independently of
-// Agent A's timeline): a read-only detector that finds orders past their
-// inspection deadline and logs them for the ledger-owning service to act on.
-// It deliberately does NOT flip order status or move money — doing so here
-// would duplicate/bypass the guarded FSM and ledger posting that
-// marketplace.Service.AutoReleaseDue is responsible for (violates the "every
-// terminal state MUST correspond to exactly one balanced ledger posting"
-// invariant in §2.2 if two code paths could both attempt the release).
-func autoReleaseOrders(ctx context.Context, pool *pgxpool.Pool, svc *marketplace.Service) {
-	// Single source of truth: AutoReleaseDue selects every order past its
-	// inspection_deadline with no open dispute and performs the guarded,
-	// idempotent release (escrow sub-account -> seller wallet minus platform
-	// fee, ledger_release_ref stored, status -> released, placeholder review
-	// inserted) per §2.2. It is safe to run every minute because each order's
-	// release is guarded on status='inspection_window' and posts exactly one
-	// balanced ledger entry.
-	n, err := svc.AutoReleaseDue(ctx)
-	if err != nil {
-		log.Printf("marketplace-cron: auto-release: %v", err)
-		return
-	}
-	if n > 0 {
-		log.Printf("marketplace-cron: auto-release: released %d order(s) past inspection_deadline", n)
-	}
-}
-
-// reconcileEscrow implements the §2.2 non-negotiable invariant check:
-//
-//	SUM(escrow_sub_account_balance) == SUM(orders WHERE status IN
-//	  ('funded','seller_accepted','in_delivery','delivered','inspection_window','disputed'))
-//
-// Escrow balance is derived from the ledger (never a stored column — house
-// doctrine, CLAUDE.md "Wallet balances are projections of the ledger"), so we
-// read the AccountEscrow standing-account balance via the same
-// ledger_entries/ledger_accounts tables and the identical CREDIT/DEBIT +
-// REVERSAL_* projection formula as
-// internal/finance/ledger/repository.go:balanceProjectionSQL, without
-// depending on package marketplace or exporting any ledger internals. Any
-// drift is logged loudly for on-call/alerting — this job never attempts to
-// "fix" drift automatically (a reconciliation mismatch is a signal for human
-// investigation, not a self-healing bug).
-func reconcileEscrow(ctx context.Context, pool *pgxpool.Pool) {
-	var escrowBalanceKobo int64
-	err := pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(
-			CASE WHEN e.type IN ('CREDIT','REVERSAL_DEBIT') THEN e.amount_kobo ELSE -e.amount_kobo END
-		), 0)
-		FROM ledger_entries e
-		JOIN ledger_accounts a ON a.id = e.account_id
-		WHERE a.type = 'escrow'`).Scan(&escrowBalanceKobo)
-	if err != nil {
-		log.Printf("marketplace-cron: reconcile-escrow: sum ledger escrow balance: %v (schema may differ — verify ledger_entries/ledger_accounts column names against internal/finance/ledger)", err)
-		return
-	}
-
-	var openOrdersKobo int64
-	err = pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount_kobo), 0)
-		FROM mkt_orders
-		WHERE status IN ('funded','seller_accepted','in_delivery','delivered','inspection_window','disputed')`).
-		Scan(&openOrdersKobo)
-	if err != nil {
-		log.Printf("marketplace-cron: reconcile-escrow: sum open orders: %v", err)
-		return
-	}
-
-	drift := escrowBalanceKobo - openOrdersKobo
-	if drift != 0 {
-		log.Printf("marketplace-cron: ESCROW RECONCILIATION DRIFT detected: escrow_ledger_balance_kobo=%d open_orders_kobo=%d drift_kobo=%d — invariant violated, needs investigation",
-			escrowBalanceKobo, openOrdersKobo, drift)
-		return
-	}
-	log.Printf("marketplace-cron: escrow reconciliation OK: escrow_ledger_balance_kobo=%d open_orders_kobo=%d", escrowBalanceKobo, openOrdersKobo)
 }

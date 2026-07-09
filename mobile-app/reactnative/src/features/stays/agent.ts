@@ -21,6 +21,72 @@ import type { Currency, GuestConfig, PropertyCard } from './types';
 const delay = (ms = MOCK_DELAY_MS) => new Promise((r) => setTimeout(r, ms));
 const KEY = 'stays';
 
+// Backend wraps every response body in { data: ... }.
+function unwrap<T>(body: any): T {
+  return body && typeof body === 'object' && 'data' in body ? body.data : body;
+}
+
+// ── Live backend agent channel (mounted under /api/finance/stays/agent) ───────
+// POST /agent/quote · POST /agent/book · GET /agent/bookings · GET /agent/commissions
+const AGENT_API_BASE = `${STAYS_API_BASE}/agent`;
+
+// Backend quote shape (POST /agent/quote → { data: BEAgentQuote }).
+interface BEAgentQuote {
+  reservation_id: string;
+  book_token: string;
+  customer_name: string;
+  property_id: string;
+  check_in: string;
+  check_out: string;
+  currency: string;
+  gross_kobo: number;
+  tax_kobo: number;
+  net_rate_kobo: number;
+  commission_kobo: number;
+}
+
+// Backend reservation shape (subset used by the agent surface).
+interface BEAgentReservation {
+  id: string;
+  supplier_ref?: string;
+  property_id: string;
+  customer_name?: string;
+  customer_contact?: string;
+  check_in: string;
+  check_out: string;
+  currency: string;
+  gross_amount_kobo: number;
+  commission_kobo: number;
+  state: string;
+  created_at: string;
+  content?: { name?: string; city?: string; cover_url?: string } | null;
+}
+
+// Backend commission totals (GET /agent/commissions → { data: BEAgentCommission }).
+interface BEAgentCommission {
+  bookings_count: number;
+  gross_sales_kobo: number;
+  commission_kobo: number;
+}
+
+function mapBEReservationToBooking(r: BEAgentReservation): AgentBooking {
+  return {
+    id: r.id,
+    reference: r.supplier_ref ?? r.id,
+    customerName: r.customer_name ?? '',
+    customerId: '', // walk-in: no separate customer account id
+    propertyName: r.content?.name ?? '',
+    city: r.content?.city ?? '',
+    checkIn: (r.check_in ?? '').slice(0, 10),
+    checkOut: (r.check_out ?? '').slice(0, 10),
+    totalKobo: r.gross_amount_kobo ?? 0,
+    currency: (r.currency ?? 'NGN') as Currency,
+    commissionKobo: r.commission_kobo ?? 0,
+    status: r.state?.startsWith('CANCELLED') || r.state === 'VOID' ? 'CANCELLED' : 'CONFIRMED',
+    createdAt: r.created_at ?? '',
+  };
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────--
 export interface Customer {
   id: string;
@@ -140,6 +206,9 @@ const MOCK_AGENT_PROPERTIES: PropertyCard[] = [
 ];
 
 const quotes = new Map<string, AgentQuote>();
+// Live: the supplier book_token returned by /agent/quote, keyed by reservation id
+// (the quoteId). Book passes it back to /agent/book.
+const bookTokens = new Map<string, string>();
 const agentBookings: AgentBooking[] = [
   {
     id: 'ab_1', reference: 'PMX-AG3KQ9', customerName: 'Fatima Bello', customerId: 'cust_3',
@@ -171,8 +240,8 @@ export async function lookupCustomers(q: string): Promise<Customer[]> {
       (c) => c.fullName.toLowerCase().includes(needle) || c.phone.includes(needle) || c.email.toLowerCase().includes(needle),
     );
   }
-  const { data } = await api.get<Customer[]>(`${STAYS_API_BASE}/agent/customers`, { params: { q } });
-  return data;
+  // TODO(stays): agent-assisted flow has no backend
+  return [];
 }
 
 export async function getCustomer(id: string): Promise<Customer> {
@@ -182,8 +251,8 @@ export async function getCustomer(id: string): Promise<Customer> {
     if (!c) throw new Error('Customer not found');
     return c;
   }
-  const { data } = await api.get<Customer>(`${STAYS_API_BASE}/agent/customers/${encodeURIComponent(id)}`);
-  return data;
+  // TODO(stays): agent-assisted flow has no backend
+  return { id, fullName: '', phone: '', email: '', kycTier: 0, walletKobo: 0, city: '' };
 }
 
 export async function agentSearch(input: AgentSearchInput): Promise<PropertyCard[]> {
@@ -195,8 +264,8 @@ export async function agentSearch(input: AgentSearchInput): Promise<PropertyCard
       (p) => p.city.toLowerCase().includes(dest) || p.area.toLowerCase().includes(dest) || p.name.toLowerCase().includes(dest),
     );
   }
-  const { data } = await api.post<PropertyCard[]>(`${STAYS_API_BASE}/agent/search`, input);
-  return data;
+  // TODO(stays): agent-assisted flow has no backend
+  return [];
 }
 
 export async function getAgentProperty(id: string): Promise<PropertyCard> {
@@ -206,8 +275,25 @@ export async function getAgentProperty(id: string): Promise<PropertyCard> {
     if (!p) throw new Error('Property not found');
     return p;
   }
-  const { data } = await api.get<PropertyCard>(`${STAYS_API_BASE}/agent/properties/${encodeURIComponent(id)}`);
-  return data;
+  // TODO(stays): agent-assisted flow has no backend
+  return {
+    id,
+    name: '',
+    city: '',
+    area: '',
+    star: 0,
+    propertyType: 'hotel',
+    sourceRail: 'DIRECT',
+    coverUrl: '',
+    leadPriceMinor: 0,
+    currency: 'NGN',
+    reviewScore: 0,
+    reviewCount: 0,
+    freeCancellation: false,
+    amenities: [],
+    geo: { lat: 0, lng: 0 },
+    soldOut: false,
+  };
 }
 
 /** Build a held quote on the customer's behalf (prebook-equivalent). */
@@ -241,8 +327,57 @@ export async function buildQuote(input: AgentQuoteInput): Promise<AgentQuote> {
     quotes.set(quote.quoteId, quote);
     return quote;
   }
-  const { data } = await api.post<AgentQuote>(`${STAYS_API_BASE}/agent/quote`, input);
-  return data;
+  // Live: search + priced hold on the customer's behalf (reservation prebook saga).
+  // The walk-in customer name/contact are echoed back and captured at book time.
+  const { data } = await api.post(
+    `${AGENT_API_BASE}/quote`,
+    {
+      customer_name: input.customerId, // caller supplies the customer name via lookup; id doubles as label for walk-ins
+      customer_contact: '',
+      // Direct own-supply rail: property_id doubles as the supplier property ref.
+      rail: 'DIRECT',
+      supplier_code: 'DIRECT',
+      property_id: input.propertyId,
+      room_type_id: input.propertyId,
+      rate_plan_id: input.ratePlanId,
+      supplier_property_ref: input.propertyId,
+      supplier_rate_plan_ref: input.ratePlanId,
+      check_in: input.checkIn,
+      check_out: input.checkOut,
+      rooms: input.guests.rooms ?? 1,
+      occupancy: {
+        adults: input.guests.adults,
+        children: input.guests.children,
+        childrenAges: input.guests.childrenAges,
+      },
+      currency: 'NGN',
+      payment_method: 'WALLET',
+    },
+  );
+  const be = unwrap<BEAgentQuote>(data);
+  const q: AgentQuote = {
+    quoteId: be.reservation_id, // reservation id doubles as the hold reference → Book
+    customerId: input.customerId,
+    propertyId: be.property_id,
+    propertyName: '',
+    coverUrl: '',
+    city: '',
+    roomTypeName: '',
+    ratePlanName: '',
+    checkIn: be.check_in ?? input.checkIn,
+    checkOut: be.check_out ?? input.checkOut,
+    nights: nightsBetween(input.checkIn, input.checkOut),
+    guests: input.guests,
+    totalKobo: be.gross_kobo ?? 0,
+    currency: (be.currency ?? 'NGN') as Currency,
+    commissionKobo: be.commission_kobo ?? 0,
+    // Backend hold TTL is enforced server-side; mirror a conservative client TTL.
+    expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+  };
+  // Cache the book_token alongside the quote so Book can pass it (kept client-side).
+  quotes.set(q.quoteId, q);
+  bookTokens.set(q.quoteId, be.book_token);
+  return q;
 }
 
 export async function getQuote(quoteId: string): Promise<AgentQuote> {
@@ -252,8 +387,11 @@ export async function getQuote(quoteId: string): Promise<AgentQuote> {
     if (!q) throw new Error('Quote expired');
     return q;
   }
-  const { data } = await api.get<AgentQuote>(`${STAYS_API_BASE}/agent/quote/${encodeURIComponent(quoteId)}`);
-  return data;
+  // Live: the quote is a short-lived hold cached client-side after buildQuote
+  // (the backend has no GET /agent/quote/:id — the hold lives on the reservation).
+  const cached = quotes.get(quoteId);
+  if (!cached) throw new Error('Quote expired — please re-quote.');
+  return cached;
 }
 
 /** Collect payment: cash→float→wallet, send a pay-link, or charge wallet. */
@@ -268,11 +406,8 @@ export async function collectPayment(input: CollectInput): Promise<CollectResult
     // cash → agent float → customer wallet (or direct wallet charge).
     return { ok: true, method: input.method, fundedKobo: q.totalKobo };
   }
-  // Live: Idempotency-Key REQUIRED (money-path).
-  const { data } = await api.post<CollectResult>(`${STAYS_API_BASE}/agent/collect`, input, {
-    headers: { 'Idempotency-Key': newIdempotencyKey() },
-  });
-  return data;
+  // TODO(stays): agent-assisted flow has no backend (money-path — never fabricate success)
+  throw new Error('Agent-assisted booking is not available yet.');
 }
 
 /** Confirm/book on the customer's behalf (prebook→book confirmation guarantee). */
@@ -301,13 +436,31 @@ export async function agentBook(quoteId: string): Promise<AgentBooking> {
     quotes.delete(quoteId);
     return booking;
   }
-  // Live: Idempotency-Key REQUIRED (money-path; booking lives on customer acct).
-  const { data } = await api.post<AgentBooking>(
-    `${STAYS_API_BASE}/agent/book`,
-    { quoteId },
+  // Live: book the held quote on the customer's behalf — SAME reservation.Book
+  // saga (escrow→settle). Idempotency-Key REQUIRED (money-path).
+  const q = quotes.get(quoteId);
+  const bookToken = bookTokens.get(quoteId);
+  if (!q || !bookToken) throw new Error('Quote expired — please re-quote.');
+  // Derive a lead-guest from the captured walk-in customer name (agent channel:
+  // the booking carries the customer's identity, not the agent's).
+  const parts = (q.customerId || 'Walk-in Customer').trim().split(/\s+/);
+  const firstName = parts[0] || 'Walk-in';
+  const lastName = parts.slice(1).join(' ') || 'Customer';
+  const { data } = await api.post(
+    `${AGENT_API_BASE}/book`,
+    {
+      reservation_id: q.quoteId,
+      book_token: bookToken,
+      customer_name: q.customerId,
+      customer_contact: '',
+      guest: { first_name: firstName, last_name: lastName, email: 'walkin@paymax.ng', phone: '' },
+    },
     { headers: { 'Idempotency-Key': newIdempotencyKey() } },
   );
-  return data;
+  const r = mapBEReservationToBooking(unwrap<BEAgentReservation>(data));
+  quotes.delete(quoteId);
+  bookTokens.delete(quoteId);
+  return r;
 }
 
 export async function listAgentBookings(): Promise<AgentBooking[]> {
@@ -315,8 +468,12 @@ export async function listAgentBookings(): Promise<AgentBooking[]> {
     await delay(200);
     return [...agentBookings];
   }
-  const { data } = await api.get<AgentBooking[]>(`${STAYS_API_BASE}/agent/bookings`);
-  return data;
+  // Live: reservations this agent booked (filtered by agent_user_id server-side).
+  const { data } = await api.get(`${AGENT_API_BASE}/bookings`, {
+    params: { limit: 100, offset: 0 },
+  });
+  const rows = unwrap<BEAgentReservation[]>(data) ?? [];
+  return rows.map(mapBEReservationToBooking);
 }
 
 export async function getAgentBooking(id: string): Promise<AgentBooking> {
@@ -326,8 +483,22 @@ export async function getAgentBooking(id: string): Promise<AgentBooking> {
     if (!b) throw new Error('Booking not found');
     return b;
   }
-  const { data } = await api.get<AgentBooking>(`${STAYS_API_BASE}/agent/bookings/${encodeURIComponent(id)}`);
-  return data;
+  // TODO(stays): agent-assisted flow has no backend
+  return {
+    id,
+    reference: '',
+    customerName: '',
+    customerId: '',
+    propertyName: '',
+    city: '',
+    checkIn: '',
+    checkOut: '',
+    totalKobo: 0,
+    currency: 'NGN',
+    commissionKobo: 0,
+    status: 'CANCELLED',
+    createdAt: new Date().toISOString(),
+  };
 }
 
 export async function agentCancel(id: string): Promise<AgentBooking> {
@@ -338,12 +509,8 @@ export async function agentCancel(id: string): Promise<AgentBooking> {
     b.status = 'CANCELLED';
     return { ...b };
   }
-  const { data } = await api.post<AgentBooking>(
-    `${STAYS_API_BASE}/agent/bookings/${encodeURIComponent(id)}/cancel`,
-    {},
-    { headers: { 'Idempotency-Key': newIdempotencyKey() } },
-  );
-  return data;
+  // TODO(stays): agent-assisted flow has no backend (money-path — never fabricate success)
+  throw new Error('Agent-assisted booking is not available yet.');
 }
 
 export async function getCommissionSummary(): Promise<AgentCommissionSummary> {
@@ -362,8 +529,20 @@ export async function getCommissionSummary(): Promise<AgentCommissionSummary> {
       floatBalanceKobo: 12_500_000,
     };
   }
-  const { data } = await api.get<AgentCommissionSummary>(`${STAYS_API_BASE}/agent/commission`);
-  return data;
+  // Live: agent commission totals across booked+settled reservations.
+  const { data } = await api.get(`${AGENT_API_BASE}/commissions`);
+  const be = unwrap<BEAgentCommission>(data);
+  return {
+    monthLabel: new Date().toLocaleDateString('en-NG', { month: 'long', year: 'numeric' }),
+    bookingsCount: be.bookings_count ?? 0,
+    grossSalesKobo: be.gross_sales_kobo ?? 0,
+    commissionKobo: be.commission_kobo ?? 0,
+    // Backend does not yet split paid/pending/float; surface the full commission
+    // as pending and leave float unknown (0) rather than fabricating a payout state.
+    paidKobo: 0,
+    pendingKobo: be.commission_kobo ?? 0,
+    floatBalanceKobo: 0,
+  };
 }
 
 // ── Hooks ──────────────────────────────────────────────────────────────────--

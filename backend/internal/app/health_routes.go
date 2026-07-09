@@ -35,7 +35,7 @@ import (
 // reminders; finance/escrow + ledger are reused by the verticals (not this shared
 // layer, which carries no money path — HL-1 marketplace-not-provider). Auditing is
 // nil-safe (the orchestrator may inject the immutable audit sink — HL-12).
-func RegisterHealth(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config) {
+func RegisterHealth(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config, audit services.AuditService) {
 	if pool == nil {
 		log.Println("[health] nil pool — skipping health routes")
 		return
@@ -146,7 +146,9 @@ func RegisterHealth(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpo
 		// Optional symptom-checker pre-fill — server-side LLM; empty key → mock.
 		intakeLLM := llm.NewAnthropicClient(cfg.AnthropicAPIKey)
 
-		var preconsultAudit healthpreconsult.Auditor = nil
+		// Real immutable-audit sink injected by the orchestrator — nil-safe. The
+		// concrete services.AuditService satisfies the module's minimal Auditor slice.
+		var preconsultAudit healthpreconsult.Auditor = audit
 		preconsultSvc := healthpreconsult.NewService(pool, intakeSvc, consultSvc, preconsultAudit).
 			WithPresigner(intakePresigner, cfg.R2Bucket).
 			WithLLM(intakeLLM)

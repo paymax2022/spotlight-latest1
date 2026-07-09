@@ -36,6 +36,16 @@ CREATE TABLE IF NOT EXISTS public.events (
   created_at   timestamptz NOT NULL DEFAULT now(),
   updated_at   timestamptz NOT NULL DEFAULT now()
 );
+-- Collision guard: an earlier migration (20260616240000_events.sql) may already
+-- own public.events with the legacy EPIC-CMS shape, so the CREATE above no-ops.
+-- Ensure the columns this (Top-5) migration relies on exist — mirrors
+-- 20260902_events_schema_drift_fix so the July schema is self-sufficient
+-- regardless of apply order. Additive; nullable/defaulted (no CHECK on the guard
+-- to stay safe over any legacy rows).
+ALTER TABLE public.events ADD COLUMN IF NOT EXISTS organiser_id uuid REFERENCES auth.users(id);
+ALTER TABLE public.events ADD COLUMN IF NOT EXISTS venue text NOT NULL DEFAULT '';
+ALTER TABLE public.events ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'DRAFT';
+ALTER TABLE public.events ADD COLUMN IF NOT EXISTS fee_bps int NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_events_organiser ON public.events (organiser_id, state);
 
 CREATE TABLE IF NOT EXISTS public.event_ticket_tiers (
@@ -88,6 +98,16 @@ CREATE TABLE IF NOT EXISTS public.event_tickets (
   price_paid_kobo bigint NOT NULL DEFAULT 0 CHECK (price_paid_kobo >= 0),
   created_at      timestamptz NOT NULL DEFAULT now()
 );
+-- Collision guard: legacy 20260616240000_events.sql may already own
+-- public.event_tickets (with ticket_type_id/qr_code/status, no credential_id).
+-- Ensure the Top-5 columns referenced below exist. Additive; nullable/defaulted.
+ALTER TABLE public.event_tickets ADD COLUMN IF NOT EXISTS event_id uuid;
+ALTER TABLE public.event_tickets ADD COLUMN IF NOT EXISTS tier_id uuid REFERENCES public.event_ticket_tiers(id);
+ALTER TABLE public.event_tickets ADD COLUMN IF NOT EXISTS order_id uuid REFERENCES public.event_orders(id);
+ALTER TABLE public.event_tickets ADD COLUMN IF NOT EXISTS owner_id uuid REFERENCES auth.users(id);
+ALTER TABLE public.event_tickets ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'ISSUED';
+ALTER TABLE public.event_tickets ADD COLUMN IF NOT EXISTS credential_id uuid REFERENCES public.credentials(id) ON DELETE SET NULL;
+ALTER TABLE public.event_tickets ADD COLUMN IF NOT EXISTS price_paid_kobo bigint NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_event_tickets_owner ON public.event_tickets (owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_event_tickets_cred ON public.event_tickets (credential_id);
 

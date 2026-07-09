@@ -67,8 +67,8 @@ CREATE POLICY health_doc_access_service ON public.health_credential_doc_access_l
 
 -- RBAC: the ops reviewer permission. Seeded + granted to admin roles (the vet
 -- can NEVER review/decide; object-level no-self-approval enforced in the service).
-INSERT INTO public.permissions (slug, description)
-VALUES ('health.vet.review', 'Review and decide assisted VCN vet verifications')
+INSERT INTO public.permissions (name, slug, module, resource, action, description, is_system_permission)
+VALUES ('Health Vet Review', 'health.vet.review', 'health', 'vet', 'review', 'Review and decide assisted VCN vet verifications', true)
 ON CONFLICT (slug) DO NOTHING;
 
 INSERT INTO public.role_permissions (role_id, permission_id)

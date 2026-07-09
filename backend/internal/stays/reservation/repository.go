@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -240,6 +241,39 @@ func (r *Repository) RecordPaymentIntent(ctx context.Context, reservationID, met
 		ON CONFLICT (idempotency_key) DO NOTHING`,
 		reservationID, method, status, ledgerRef, idempotencyKey, amountKobo)
 	return err
+}
+
+// NextModifySeq returns the number of prior modify payment-intents for the
+// reservation (used to derive a per-modify idempotency suffix so a retried modify
+// with the same seq is idempotent, while a genuinely new modify gets a fresh key).
+func (r *Repository) NextModifySeq(ctx context.Context, reservationID string) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx, `
+		SELECT count(*) FROM public.stays_payment_intent
+		WHERE reservation_id = $1 AND ledger_ref LIKE 'stays:modify:%'`,
+		reservationID).Scan(&n)
+	return n, err
+}
+
+// ApplyModify persists the re-priced stay (new dates + new money columns + state)
+// AFTER the money movement has succeeded. Optimistic-locked. State stays CONFIRMED
+// (a modify does not leave the confirmed lifecycle); only the dates/amounts change.
+func (r *Repository) ApplyModify(ctx context.Context, id string, newCheckIn, newCheckOut time.Time, grossKobo, taxKobo, netRateKobo, markupKobo, commissionKobo int64, expectedVersion int) error {
+	ct, err := r.db.Exec(ctx, `
+		UPDATE public.stays_reservation
+		SET check_in = $2, check_out = $3, gross_amount_kobo = $4, tax_amount_kobo = $5,
+		    net_rate_kobo = $6, markup_kobo = $7, commission_kobo = $8,
+		    version = version + 1, updated_at = now()
+		WHERE id = $1 AND version = $9`,
+		id, newCheckIn, newCheckOut, grossKobo, taxKobo, netRateKobo, markupKobo,
+		commissionKobo, expectedVersion)
+	if err != nil {
+		return fmt.Errorf("reservation: apply modify: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("reservation: optimistic lock conflict on modify %s", id)
+	}
+	return nil
 }
 
 // UpsertGuest records the lead guest (PII) for a reservation. Shared with the

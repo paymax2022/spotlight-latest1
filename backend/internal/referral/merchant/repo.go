@@ -53,6 +53,13 @@ func (r *Repository) GetMerchant(ctx context.Context, id string) (*Merchant, err
 	return scanMerchant(r.db.QueryRow(ctx, q, id))
 }
 
+// GetMerchantByOwner returns the merchant owned by a user (member self-view).
+// pgx.ErrNoRows when the caller owns no merchant.
+func (r *Repository) GetMerchantByOwner(ctx context.Context, ownerUserID string) (*Merchant, error) {
+	q := `SELECT ` + merchantCols + ` FROM referral_merchants WHERE owner_user_id = $1 ORDER BY created_at LIMIT 1`
+	return scanMerchant(r.db.QueryRow(ctx, q, ownerUserID))
+}
+
 // ListMerchants returns all merchants (admin).
 func (r *Repository) ListMerchants(ctx context.Context) ([]Merchant, error) {
 	q := `SELECT ` + merchantCols + ` FROM referral_merchants ORDER BY created_at DESC LIMIT 500`

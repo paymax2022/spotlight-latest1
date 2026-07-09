@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -56,7 +57,7 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 		&escrowAdapter{e: escrowSvc},
 		&rxGateAdapter{rx: rxSvc, db: pool},
 		&rxVerifierAdapter{rx: rxSvc},
-		&dispatchAdapter{t: transportSvc},
+		&dispatchAdapter{t: transportSvc, db: pool},
 		&providerGateAdapter{db: pool},
 		&payoutGateAdapter{kyc: kycSvc},
 		nil, // audit sink injected by orchestrator (HL-12) — nil-safe here
@@ -186,14 +187,75 @@ func (a *rxVerifierAdapter) BeginVerify(ctx context.Context, pharmacistID, rxID 
 // last-mile rail (REUSE — no routing rebuild). The pharmacy supplies the route;
 // here the minimal job is booked under the patient as sender. The returned
 // reference is the parcel id tracked by the transport module.
-type dispatchAdapter struct{ t *transport.Service }
+//
+// Real coordinates + contact are sourced from the order/pharmacy/patient records
+// (never the 0,0 placeholder): the pickup (pharmacy) geo comes from the provider's
+// application, and the dropoff (patient) name/phone from the patient profile. If a
+// required coordinate is genuinely unavailable, the dispatch FAILS with a clear
+// error rather than booking a garbage 0,0 route.
+type dispatchAdapter struct {
+	t  *transport.Service
+	db *pgxpool.Pool
+}
 
 func (a *dispatchAdapter) CreateDelivery(ctx context.Context, senderID, reference, idemKey string) (string, error) {
+	// reference is "pharmacy:<orderID>" (set by the pharmacy service Dispatch flow).
+	orderID := strings.TrimPrefix(reference, "pharmacy:")
+	if orderID == reference || orderID == "" {
+		return "", ginError("pharmacy: dispatch reference malformed — cannot resolve order")
+	}
+
+	// Pickup = the owning pharmacy's registered location. geo lives on the provider's
+	// APPROVED application (health_provider_applications.geo_lat/geo_lng); the address
+	// on the storefront profile. Join via the order → provider.
+	var pickupLat, pickupLng *float64
+	var pickupAddr string
+	const qPickup = `
+		SELECT app.geo_lat, app.geo_lng, COALESCE(prof.address, '')
+		FROM pharmacy_orders o
+		JOIN health_providers hp ON hp.id = o.pharmacy_provider_id
+		LEFT JOIN health_provider_applications app
+		       ON app.provider_id = hp.id AND app.state = 'APPROVED'
+		LEFT JOIN pharmacy_provider_profiles prof ON prof.pharmacy_provider_id = hp.id
+		WHERE o.id = $1`
+	if err := a.db.QueryRow(ctx, qPickup, orderID).Scan(&pickupLat, &pickupLng, &pickupAddr); err != nil {
+		return "", ginError("pharmacy: dispatch — cannot load pharmacy pickup location")
+	}
+	if pickupLat == nil || pickupLng == nil {
+		return "", ginError("pharmacy: dispatch — pharmacy has no registered pickup coordinates")
+	}
+	if pickupAddr == "" {
+		pickupAddr = "pharmacy"
+	}
+
+	// Dropoff = the patient. Name/phone come from the patient profile so the courier
+	// can contact the recipient; the patient's delivery coordinates, however, are NOT
+	// stored on the order in the current schema. Routing to 0,0 would misprice and
+	// misroute the courier, so a delivery without resolvable dropoff coordinates MUST
+	// fail-closed with a clear, actionable error (rather than send a placeholder).
+	var receiverName, receiverPhone string
+	const qPatient = `SELECT COALESCE(full_name, ''), COALESCE(phone, '') FROM user_profiles WHERE id = $1`
+	if err := a.db.QueryRow(ctx, qPatient, senderID).Scan(&receiverName, &receiverPhone); err != nil {
+		return "", ginError("pharmacy: dispatch — cannot load patient contact")
+	}
+	if receiverName == "" {
+		receiverName = "Patient"
+	}
+	if receiverPhone == "" {
+		return "", ginError("pharmacy: dispatch — patient has no contact phone on file")
+	}
+
+	// Dropoff coordinates for pharmacy orders are not captured yet. Fail-closed.
+	dropLat, dropLng, dropAddr, ok := patientDropoff(ctx, a.db, orderID)
+	if !ok {
+		return "", ginError("pharmacy: dispatch — no patient delivery address/coordinates on file for this order")
+	}
+
 	req := transport.ParcelBookRequest{
-		Pickup:         transport.Place{Lat: 0, Lng: 0, Address: "pharmacy"},
-		Dropoff:        transport.Place{Lat: 0, Lng: 0, Address: "patient"},
-		ReceiverName:   "patient",
-		ReceiverPhone:  "n/a",
+		Pickup:         transport.Place{Lat: *pickupLat, Lng: *pickupLng, Address: pickupAddr},
+		Dropoff:        transport.Place{Lat: dropLat, Lng: dropLng, Address: dropAddr},
+		ReceiverName:   receiverName,
+		ReceiverPhone:  receiverPhone,
 		Category:       "small",
 		Size:           "small",
 		Speed:          "standard",
@@ -208,6 +270,15 @@ func (a *dispatchAdapter) CreateDelivery(ctx context.Context, senderID, referenc
 		return id, nil
 	}
 	return reference, nil
+}
+
+// patientDropoff resolves the patient's delivery coordinates + address for an
+// order. The current pharmacy schema does not persist a per-order delivery address
+// or geo, so this returns ok=false and the caller fails the dispatch closed rather
+// than routing to a 0,0 placeholder. It is the single seam to wire real dropoff
+// data once the order-time delivery address is captured.
+func patientDropoff(_ context.Context, _ *pgxpool.Pool, _ string) (lat, lng float64, address string, ok bool) {
+	return 0, 0, "", false
 }
 
 // providerGateAdapter enforces HL-2 against health_providers (parameterised).

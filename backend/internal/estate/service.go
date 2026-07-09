@@ -3,11 +3,13 @@ package estate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 	platformRedis "spotlight/backend/internal/platform/redis"
@@ -244,11 +246,21 @@ func (s *Service) CastVote(ctx context.Context, estateID, electionID, voterID st
 		CandidateID: req.CandidateID,
 		CastAt:      time.Now(),
 	}
+	// Replay guard: UNIQUE(election_id, voter_id) enforces one vote per voter per
+	// election at the DB. ON CONFLICT DO NOTHING makes a double-vote a clean no-op
+	// (no row returned) so we can distinguish a duplicate vote from an invalid
+	// candidate (FK violation → err), instead of relying on a raw constraint error.
 	const q = `
 		INSERT INTO election_votes (id, election_id, voter_id, candidate_id)
-		VALUES ($1,$2,$3,$4)`
-	if _, err := s.db.Exec(ctx, q, v.ID, v.ElectionID, v.VoterID, v.CandidateID); err != nil {
-		return nil, fmt.Errorf("estate: vote already cast or candidate invalid")
+		VALUES ($1,$2,$3,$4)
+		ON CONFLICT (election_id, voter_id) DO NOTHING
+		RETURNING id`
+	var insertedID string
+	if err := s.db.QueryRow(ctx, q, v.ID, v.ElectionID, v.VoterID, v.CandidateID).Scan(&insertedID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("estate: you have already voted in this election")
+		}
+		return nil, fmt.Errorf("estate: invalid candidate for this election")
 	}
 	return v, nil
 }

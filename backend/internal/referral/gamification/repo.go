@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -319,6 +320,37 @@ func (r *Repository) ListContests(ctx context.Context, onlyActive bool) ([]Conte
 		out = append(out, ct)
 	}
 	return out, rows.Err()
+}
+
+// Streak is a user's consecutive-active streak (M-GAM-03). NON-CASH status data.
+type Streak struct {
+	Current        int
+	Longest        int
+	LastActiveDate *time.Time
+	Unit           string
+	Found          bool
+}
+
+// GetStreak returns the caller's streak row, or Found=false when none exists.
+func (r *Repository) GetStreak(ctx context.Context, userID string) (Streak, error) {
+	const q = `
+		SELECT current, longest, last_active_date, unit
+		FROM referral_streaks
+		WHERE user_id = $1`
+	var (
+		st   Streak
+		last *time.Time
+	)
+	err := r.db.QueryRow(ctx, q, userID).Scan(&st.Current, &st.Longest, &last, &st.Unit)
+	if err == pgx.ErrNoRows {
+		return Streak{Found: false}, nil
+	}
+	if err != nil {
+		return Streak{}, fmt.Errorf("gamification: get streak: %w", err)
+	}
+	st.LastActiveDate = last
+	st.Found = true
+	return st, nil
 }
 
 func nullable(s string) any {

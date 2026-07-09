@@ -126,8 +126,8 @@ BEGIN
 END $$;
 
 -- RBAC: the maps ops/dashboard + contribution review permission.
-INSERT INTO public.permissions (slug, description)
-VALUES ('map.admin.review', 'View MapService cost/coverage dashboards and review OSM contribution candidates')
+INSERT INTO public.permissions (name, slug, module, resource, action, description, is_system_permission)
+VALUES ('Map Admin Review', 'map.admin.review', 'map', 'admin', 'review', 'View MapService cost/coverage dashboards and review OSM contribution candidates', true)
 ON CONFLICT (slug) DO NOTHING;
 
 INSERT INTO public.role_permissions (role_id, permission_id)

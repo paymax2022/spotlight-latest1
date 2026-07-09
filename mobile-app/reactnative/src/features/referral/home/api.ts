@@ -92,26 +92,40 @@ export async function getDashboard(): Promise<DashboardSummary> {
     await delay();
     return { ...MOCK_SUMMARY, snapshot: { ...MOCK_SNAPSHOT } };
   }
-  // Live: Direct Rewards engine dashboard. Fields with no backend source
-  // default to 0 (see TODOs) — money stays integer kobo, no float math.
-  const res = await api.get('/api/v1/referrals/me/dashboard');
-  const d = unwrap<EngineDashboard>(res);
+  // Live: Direct Rewards engine dashboard (tier/counts/lifetime) + the RB0
+  // reward-ledger summary (GET /api/v1/referral/my-rewards) for the per-state
+  // snapshot. Money stays integer kobo, no float math.
+  const [dRes, sRes] = await Promise.all([
+    api.get('/api/v1/referrals/me/dashboard'),
+    api.get('/api/v1/referral/my-rewards').catch(() => null),
+  ]);
+  const d = unwrap<EngineDashboard>(dRes);
+  const s = sRes
+    ? unwrap<{
+        total_earned_kobo?: number;
+        eligible_kobo?: number;
+        paid_kobo?: number;
+        clawed_back_kobo?: number;
+        by_state?: Record<string, number>;
+      }>(sRes)
+    : null;
+  const byState = s?.by_state ?? {};
   const snapshot: EarningsSnapshot = {
-    eligibleKobo: 0, // TODO(referral phase3): no eligible/withdrawable source yet
-    pendingKobo: 0, // TODO(referral phase3): no pending source yet
-    vestingKobo: 0, // TODO(referral phase3): no vesting source yet
-    paidKobo: d.this_month_earned_kobo, // this-month credited proxy
-    clawedBackKobo: 0, // TODO(referral phase3): no clawback source yet
-    lifetimeEarnedKobo: d.lifetime_earned_kobo,
+    eligibleKobo: Math.trunc(s?.eligible_kobo ?? 0),
+    pendingKobo: Math.trunc(byState.pending ?? 0),
+    vestingKobo: Math.trunc(byState.vesting ?? 0),
+    paidKobo: Math.trunc(s?.paid_kobo ?? d.this_month_earned_kobo),
+    clawedBackKobo: Math.trunc(s?.clawed_back_kobo ?? 0),
+    lifetimeEarnedKobo: Math.trunc(s?.total_earned_kobo ?? d.lifetime_earned_kobo),
     currency: 'NGN',
   };
   return {
     snapshot,
-    invitesSent: 0, // TODO(referral phase3): no invites-sent source yet
-    signups: 0, // TODO(referral phase3): no signups source yet
+    invitesSent: 0, // TODO(referral phase3): needs invite-tracking backend (R3)
+    signups: 0, // TODO(referral phase3): needs invite-tracking backend (R3)
     activated: d.active_referral_count,
-    rank: null, // TODO(referral phase3): no leaderboard rank source yet
-    rankTotal: null, // TODO(referral phase3): no leaderboard total source yet
+    rank: null, // TODO(referral phase3): needs leaderboard rank source (R2)
+    rankTotal: null, // TODO(referral phase3): needs leaderboard total (R2)
     rankTier: d.current_tier,
   };
 }

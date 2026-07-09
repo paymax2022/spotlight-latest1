@@ -333,8 +333,14 @@ func (s *Service) settleTrip(ctx context.Context, t *tripRow) error {
 // settleTrip for trips whose settlement_status='pending'; settleTrip is
 // idempotent (each Settle no-ops once its settlement row is 'settled').
 // settlementPendingStatus is the queryable marker written to trips.settlement_status
-// when settlement fails after completion. The reconciliation job scans for it.
-const settlementPendingStatus = "pending"
+// when settlement fails after completion. It MUST match the value permitted by the
+// trips.settlement_status CHECK constraint (migration 20260710000000:
+// 'settled' | 'settlement_pending' | 'settlement_failed'); previously this was the
+// bare string "pending", which violated the CHECK — so the mirror UPDATE silently
+// affected 0 rows and the reconciler's flag index was never populated. The
+// authoritative recovery signal is still the settlements table (see reconciler.go),
+// but the flag must be a legal value so the mirror + partial index work.
+const settlementPendingStatus = "settlement_pending"
 
 // settlementPendingEvent is the immutable trip_events event_type for the same.
 const settlementPendingEvent = "settlement_pending"

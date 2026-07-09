@@ -1,6 +1,7 @@
 package adminext
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -101,7 +102,29 @@ func (h *Handler) ListWithdrawals(c *gin.Context) {
 }
 
 // ApproveWithdrawal — POST /withdrawals/:id/approve.
-func (h *Handler) ApproveWithdrawal(c *gin.Context) { h.decideWithdrawal(c, true) }
+//
+// MONEY-PATH: releases campaign escrow to the payout-clearing account and marks
+// the withdrawal COMPLETED. Requires an Idempotency-Key header (fail-closed).
+func (h *Handler) ApproveWithdrawal(c *gin.Context) {
+	idempotencyKey := c.GetHeader("Idempotency-Key")
+	if idempotencyKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header is required"})
+		return
+	}
+	res, err := h.svc.ApproveWithdrawal(c.Request.Context(), c.Param("id"), c.GetString("user_id"), idempotencyKey)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrWithdrawalNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		case errors.Is(err, ErrWithdrawalIllegalState):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
 
 // RejectWithdrawal — POST /withdrawals/:id/reject.
 func (h *Handler) RejectWithdrawal(c *gin.Context) { h.decideWithdrawal(c, false) }

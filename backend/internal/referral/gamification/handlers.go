@@ -115,6 +115,43 @@ func (h *Handler) MyRank(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"rank": rank, "points": pts})
 }
 
+// Streak handles GET /api/finance/referral/gamification/streak — the caller's
+// consecutive-active streak (M-GAM-03). NON-CASH status data. Returns the shape
+// the mobile StreakState expects; a zeroed default when the user has no row.
+func (h *Handler) Streak(c *gin.Context) {
+	uid := c.GetString("user_id")
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	st, err := h.svc.repo.GetStreak(c.Request.Context(), uid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if !st.Found {
+		c.JSON(http.StatusOK, gin.H{
+			"current":    0,
+			"longest":    0,
+			"unit":       "day",
+			"expiresAt":  nil,
+			"milestones": []any{},
+		})
+		return
+	}
+	unit := st.Unit
+	if unit == "" {
+		unit = "day"
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"current":    st.Current,
+		"longest":    st.Longest,
+		"unit":       unit,
+		"expiresAt":  nil, // no configured expiry window yet
+		"milestones": []any{},
+	})
+}
+
 func (h *Handler) BadgesList(c *gin.Context) {
 	list, err := h.svc.ListBadges(c.Request.Context())
 	if err != nil {

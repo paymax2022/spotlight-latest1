@@ -156,12 +156,12 @@ func (h *Handler) AdminResolve(c *gin.Context) {
 //	        GET  /health/triage/escalations
 //	        POST /health/triage/escalations/:id/ack
 //	        POST /health/triage/escalations/:id/resolve
-func RegisterHealthTriageCare(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, pay Payment, loc EmergencyLocator, notify Notifier, booker CareBooker) {
+func RegisterHealthTriageCare(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, pay Payment, loc EmergencyLocator, notify Notifier, booker CareBooker, audit Auditor) {
 	if pool == nil {
 		log.Println("[health.triage.care] nil pool — skipping care routes")
 		return
 	}
-	repo := NewRepository(pool, nil) // audit sink injected by orchestrator (SC-12) — nil-safe
+	repo := NewRepository(pool, audit) // real immutable-audit sink injected by orchestrator (SC-12) — nil-safe
 	svc := NewCareService(repo, pay, loc, notify, booker, nil)
 	h := NewHandler(svc)
 

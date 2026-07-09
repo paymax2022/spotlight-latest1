@@ -3,16 +3,21 @@ package adminext
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	financeledger "spotlight/backend/internal/finance/ledger"
 )
 
 // RegisterAdmin wires the crowdfunding admin domain onto an already-constructed
 // admin router group (the /api/crowdfunding/admin group, which carries the
 // requireUserID() middleware so c.GetString("user_id") is populated).
 //
+// ledgerSvc is the finance ledger used by the withdrawal-approval money-path; it
+// may be nil (the payout path then fails closed).
+//
 // It is purely additive: it registers NEW sub-paths under the same group the
 // campaign-review handlers already use, and never edits shared route files.
-func RegisterAdmin(rg *gin.RouterGroup, db *pgxpool.Pool) {
-	h := NewHandler(NewService(db))
+func RegisterAdmin(rg *gin.RouterGroup, db *pgxpool.Pool, ledgerSvc *financeledger.Service) {
+	h := NewHandler(NewService(db).WithLedger(ledgerSvc))
 
 	// Finance — refunds & settlement.
 	rg.GET("/finance/summary", h.FinanceSummary)

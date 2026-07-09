@@ -31,6 +31,108 @@ import type {
 const delay = (ms = MOCK_DELAY_MS) => new Promise((r) => setTimeout(r, ms));
 const KEY = 'stays';
 
+// Backend wraps every response body in { data: ... }.
+function unwrap<T>(body: any): T {
+  return body && typeof body === 'object' && 'data' in body ? body.data : body;
+}
+
+// Backend reservation shape (member routes /api/v1/stays/reservations*).
+interface BEReservation {
+  id: string;
+  property_id: string;
+  room_type_id: string;
+  rate_plan_id: string;
+  source_rail: string;
+  supplier_code: string;
+  supplier_ref?: string;
+  state: string; // UPPERCASE e.g. CONFIRMED/COMPLETED/CANCELLED_BY_GUEST/VOID
+  check_in: string; // RFC3339
+  check_out: string;
+  rooms: number;
+  occupancy?: { adults?: number; children?: number; childrenAges?: number[] };
+  currency: string;
+  gross_amount_kobo: number;
+  tax_amount_kobo: number;
+  net_rate_kobo: number;
+  payment_method: string; // UPPERCASE
+  voucher_ref?: string;
+  created_at: string;
+  // Best-effort display content attached by the backend enrichment block.
+  content?: {
+    name?: string;
+    city?: string;
+    address?: string;
+    cover_url?: string;
+    star_rating?: number;
+    property_type?: string;
+  } | null;
+}
+
+/** Map the backend UPPERCASE state onto the local ReservationState union. */
+function mapState(state: string): ReservationState {
+  // SEARCHING has no backend equivalent; otherwise the backend uses the same
+  // UPPERCASE tokens as the local ReservationState union, so cast through.
+  if (state === 'SEARCHING') return 'OFFER_SELECTED';
+  return state as ReservationState;
+}
+
+/** Derive the trips bucket from backend state / dates. */
+function bucketFor(r: BEReservation): TripBucket {
+  if (r.state.startsWith('CANCELLED') || r.state === 'VOID') return 'cancelled';
+  if (r.state === 'COMPLETED') return 'past';
+  return 'upcoming';
+}
+
+/** Map a backend reservation into the local Trip type.
+ *  Backend Reservation carries IDs, not display content — property display
+ *  fields default to '' / null. */
+function mapReservationToTrip(r: BEReservation): Trip {
+  const checkIn = (r.check_in ?? '').slice(0, 10);
+  const checkOut = (r.check_out ?? '').slice(0, 10);
+  const nights = checkIn && checkOut ? nightsBetween(checkIn, checkOut) : 0;
+  const total = r.gross_amount_kobo ?? 0;
+  return {
+    id: r.id,
+    reference: r.supplier_ref ?? r.id,
+    state: mapState(r.state),
+    bucket: bucketFor(r),
+    // Display content from the backend enrichment block (name/city/photo).
+    // room/rate names remain ID-only (TODO(stays): embed room/rate content).
+    propertyName: r.content?.name ?? '',
+    coverUrl: r.content?.cover_url ?? '',
+    city: r.content?.city ?? '',
+    address: r.content?.address ?? '',
+    roomTypeName: '',
+    ratePlanName: '',
+    checkIn,
+    checkOut,
+    nights,
+    guests: {
+      adults: r.occupancy?.adults ?? 0,
+      children: r.occupancy?.children ?? 0,
+      childrenAges: r.occupancy?.childrenAges ?? [],
+      rooms: r.rooms ?? 1,
+    },
+    paymentMethod: (r.payment_method?.toLowerCase() ?? 'wallet') as PaymentMethod,
+    totalKobo: total,
+    currency: (r.currency ?? 'NGN') as Currency,
+    displayTotalMinor: total,
+    // TODO(stays): backend Reservation has no lead-guest display content.
+    leadGuest: { fullName: '', email: '', phone: '', country: '' },
+    createdAt: r.created_at ?? '',
+    // TODO(stays): backend Reservation has no policy snapshot text.
+    cancellationPolicy: '',
+    refundable: false,
+    supplierRef: r.supplier_ref,
+    propertyId: r.property_id,
+    // TODO(stays): backend Reservation has no geo/voucher/check-in-time content.
+    geo: { lat: 0, lng: 0 },
+    voucherUrl: '',
+    checkInTime: '',
+    checkOutTime: '',
+  };
+}
+
 // ── Domain types (SM2-owned, additive) ───────────────────────────────────────
 export type TripBucket = 'upcoming' | 'past' | 'cancelled';
 
@@ -309,10 +411,21 @@ export async function listTrips(bucket?: TripBucket): Promise<Trip[]> {
     const all = [...trips].sort((a, b) => (a.checkIn < b.checkIn ? 1 : -1));
     return bucket ? all.filter((t) => t.bucket === bucket) : all;
   }
-  const { data } = await api.get<Trip[]>(`${STAYS_API_BASE}/trips`, {
-    params: bucket ? { bucket } : undefined,
+  // Live: backend has /reservations (no /trips). Fetch all, map, filter client-side.
+  const { data } = await api.get(`${STAYS_API_BASE}/reservations`, {
+    params: { limit: 100, offset: 0 },
   });
-  return data;
+  const rows = unwrap<BEReservation[]>(data) ?? [];
+  const mapped = rows.map(mapReservationToTrip);
+  if (!bucket) return mapped;
+  return mapped.filter((t) => {
+    if (bucket === 'upcoming') {
+      return t.state === 'CONFIRMED' || (!!t.checkIn && new Date(t.checkIn).getTime() > Date.now());
+    }
+    if (bucket === 'past') return t.state === 'COMPLETED';
+    // cancelled
+    return t.state.startsWith('CANCELLED') || t.state === 'VOID';
+  });
 }
 
 export async function getTrip(id: string): Promise<Trip> {
@@ -322,8 +435,8 @@ export async function getTrip(id: string): Promise<Trip> {
     if (!t) throw new Error('Booking not found');
     return { ...t };
   }
-  const { data } = await api.get<Trip>(`${STAYS_API_BASE}/trips/${encodeURIComponent(id)}`);
-  return data;
+  const { data } = await api.get(`${STAYS_API_BASE}/reservations/${encodeURIComponent(id)}`);
+  return mapReservationToTrip(unwrap<BEReservation>(data));
 }
 
 /** Cancellation preview from the captured policy snapshot (no charge yet). */
@@ -373,10 +486,17 @@ export async function previewCancellation(id: string): Promise<CancellationPrevi
       policyText: t.cancellationPolicy,
     };
   }
-  const { data } = await api.get<CancellationPreview>(
-    `${STAYS_API_BASE}/trips/${encodeURIComponent(id)}/cancel/preview`,
-  );
-  return data;
+  // TODO(stays): no backend endpoint yet for cancellation preview.
+  // Return a safe default (refundability unknown) without a network call.
+  return {
+    refundableKobo: 0,
+    penaltyKobo: 0,
+    paidKobo: 0,
+    legs: [],
+    freeCancel: false,
+    instant: false,
+    policyText: '',
+  };
 }
 
 export async function cancelTrip(id: string): Promise<RefundStatus> {
@@ -400,12 +520,23 @@ export async function cancelTrip(id: string): Promise<RefundStatus> {
     return status;
   }
   // Live: Idempotency-Key REQUIRED (money-path; refund is a reversing entry).
-  const { data } = await api.post<RefundStatus>(
-    `${STAYS_API_BASE}/trips/${encodeURIComponent(id)}/cancel`,
-    {},
+  const { data } = await api.post(
+    `${STAYS_API_BASE}/reservations/${encodeURIComponent(id)}/cancel`,
+    { reason: '' },
     { headers: { 'Idempotency-Key': newIdempotencyKey() } },
   );
-  return data;
+  const r = unwrap<BEReservation>(data);
+  // Best-effort map: backend returns the updated reservation, not a refund record.
+  // TODO(stays): no backend refund-amount field — refund amount unknown, defaulted to 0.
+  const cancelled = r.state?.startsWith('CANCELLED') || r.state === 'VOID';
+  return {
+    reservationId: id,
+    status: cancelled ? 'approved' : 'requested',
+    amountKobo: 0,
+    requestedAt: new Date().toISOString(),
+    destination: 'wallet',
+    reference: r.supplier_ref ?? r.id ?? id,
+  };
 }
 
 /** Re-prebook for the delta (PRD §13) — price difference charged/refunded via wallet. */
@@ -428,11 +559,15 @@ export async function quoteModify(input: ModifyInput): Promise<ModifyQuote> {
       unavailable,
     };
   }
-  const { data } = await api.post<ModifyQuote>(
-    `${STAYS_API_BASE}/trips/${encodeURIComponent(input.reservationId)}/modify/quote`,
-    input,
-  );
-  return data;
+  // TODO(stays): no backend modify-quote endpoint yet.
+  // Return a safe default (no delta, availability unknown) without a network call.
+  return {
+    deltaKobo: 0,
+    newTotalKobo: 0,
+    oldTotalKobo: 0,
+    newNights: nightsBetween(input.checkIn, input.checkOut),
+    unavailable: false,
+  };
 }
 
 export async function applyModify(input: ModifyInput): Promise<Trip> {
@@ -451,12 +586,12 @@ export async function applyModify(input: ModifyInput): Promise<Trip> {
     return { ...t };
   }
   // Live: Idempotency-Key REQUIRED — the delta is a wallet charge/refund.
-  const { data } = await api.post<Trip>(
-    `${STAYS_API_BASE}/trips/${encodeURIComponent(input.reservationId)}/modify`,
-    input,
+  const { data } = await api.post(
+    `${STAYS_API_BASE}/reservations/${encodeURIComponent(input.reservationId)}/modify`,
+    { check_in: input.checkIn, check_out: input.checkOut },
     { headers: { 'Idempotency-Key': newIdempotencyKey() } },
   );
-  return data;
+  return mapReservationToTrip(unwrap<BEReservation>(data));
 }
 
 export async function getRefundStatus(id: string): Promise<RefundStatus> {
@@ -477,10 +612,19 @@ export async function getRefundStatus(id: string): Promise<RefundStatus> {
     };
     return status;
   }
-  const { data } = await api.get<RefundStatus>(
-    `${STAYS_API_BASE}/trips/${encodeURIComponent(id)}/refund`,
-  );
-  return data;
+  // TODO(stays): no backend refund-status endpoint yet. Derive minimally from
+  // the reservation state; refund amount is unknown, defaulted to 0.
+  const { data } = await api.get(`${STAYS_API_BASE}/reservations/${encodeURIComponent(id)}`);
+  const r = unwrap<BEReservation>(data);
+  const cancelled = r.state?.startsWith('CANCELLED') || r.state === 'VOID';
+  return {
+    reservationId: id,
+    status: cancelled ? 'approved' : 'requested',
+    amountKobo: 0,
+    requestedAt: r.created_at ?? new Date().toISOString(),
+    destination: 'wallet',
+    reference: r.supplier_ref ?? r.id ?? id,
+  };
 }
 
 // ── Hooks ──────────────────────────────────────────────────────────────────--

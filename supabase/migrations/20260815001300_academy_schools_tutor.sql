@@ -39,7 +39,10 @@ CREATE TABLE IF NOT EXISTS public.academy_class_groups (
   created_at      timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS public.academy_enrollments (
+-- NOTE: named academy_edu_enrollments (not academy_enrollments) to avoid colliding
+-- with the pre-existing film/vocational academy_enrollments table (20260408110000)
+-- which has a different schema (no idempotency_key). Additive; legacy table untouched.
+CREATE TABLE IF NOT EXISTS public.academy_edu_enrollments (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   institution_id  uuid NOT NULL REFERENCES public.academy_institutions(id) ON DELETE CASCADE,
   class_group_id  uuid REFERENCES public.academy_class_groups(id),
@@ -49,8 +52,8 @@ CREATE TABLE IF NOT EXISTS public.academy_enrollments (
   created_at      timestamptz NOT NULL DEFAULT now(),
   UNIQUE (institution_id, learner_user_id)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_academy_enroll_idem ON public.academy_enrollments(idempotency_key) WHERE idempotency_key IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_academy_enroll_learner ON public.academy_enrollments(learner_user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_academy_enroll_idem ON public.academy_edu_enrollments(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_academy_enroll_learner ON public.academy_edu_enrollments(learner_user_id);
 
 CREATE TABLE IF NOT EXISTS public.academy_institution_billing (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -128,7 +131,7 @@ DO $$
 DECLARE
   public_read text[] := ARRAY['academy_tutors'];
   admin_only  text[] := ARRAY['academy_institutions','academy_licences','academy_class_groups',
-    'academy_enrollments','academy_institution_billing','academy_tutor_assignments','academy_tutor_grades',
+    'academy_edu_enrollments','academy_institution_billing','academy_tutor_assignments','academy_tutor_grades',
     'academy_tutor_earnings','academy_tutor_payouts'];
   t text;
 BEGIN
@@ -143,7 +146,7 @@ BEGIN
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS %I_read ON public.%I', t, t);
     -- owner-visible where a user column exists; admins always; service_role writes.
-    IF t = 'academy_enrollments' THEN
+    IF t = 'academy_edu_enrollments' THEN
       EXECUTE format('CREATE POLICY %I_read ON public.%I FOR SELECT USING (public.is_admin() OR learner_user_id = auth.uid())', t, t);
     ELSIF t = 'academy_tutor_grades' THEN
       EXECUTE format('CREATE POLICY %I_read ON public.%I FOR SELECT USING (public.is_admin() OR learner_id = auth.uid())', t, t);
@@ -156,9 +159,9 @@ BEGIN
 END $$;
 
 -- ───────────────────────── RBAC ──────────────────────────────────────────────
-INSERT INTO public.permissions (slug, description) VALUES
-  ('academy.schools','Manage B2B2C institutions, licences, enrolment + billing'),
-  ('academy.tutor','Manage tutor marketplace: vetting, assignments, payouts')
+INSERT INTO public.permissions (name, slug, module, resource, action, description, is_system_permission) VALUES
+  ('Academy Schools','academy.schools','academy','academy','schools','Manage B2B2C institutions, licences, enrolment + billing',true),
+  ('Academy Tutor','academy.tutor','academy','academy','tutor','Manage tutor marketplace: vetting, assignments, payouts',true)
 ON CONFLICT (slug) DO NOTHING;
 
 INSERT INTO public.role_permissions (role_id, permission_id)

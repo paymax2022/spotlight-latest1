@@ -48,6 +48,9 @@ func RegisterReferralEcon(member *gin.RouterGroup, admin *gin.RouterGroup, pool 
 	// 2) Gamification (cash rewards via RB0 ledger; points non-cash).
 	gamSvc := gamification.NewService(gamification.NewRepository(pool), rewardSvc)
 	gamification.Register(member, admin, gamSvc, rbac)
+	// Streak (M-GAM-03) — member read on the same /gamification group.
+	gamHandler := gamification.NewHandler(gamSvc)
+	member.Group("/gamification").GET("/streak", gamHandler.Streak)
 
 	// 3) Ambassador/agent overrides (activity-based, capped, house-excluded).
 	netSvc := network.NewService(network.NewRepository(pool), rewardSvc, eventsSvc)
@@ -56,6 +59,8 @@ func RegisterReferralEcon(member *gin.RouterGroup, admin *gin.RouterGroup, pool 
 	// 4) Merchant-funded campaigns + partner API (settlement hook nil stub).
 	merchantSvc := merchant.NewService(merchant.NewRepository(pool), financeLedgerSvc, nil)
 	merchant.Register(admin, merchantSvc, rbac)
+	// Read-only member merchant self-view (dashboard/performance) on /merchant/*.
+	merchant.RegisterMember(member, merchantSvc)
 
 	log.Println("[referral-econ] routes registered — campaigns/gamification/network/merchant live")
 }

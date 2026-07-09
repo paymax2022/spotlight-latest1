@@ -110,9 +110,9 @@ type PrebookInput struct {
 // reservation in PREBOOK_OK with the re-validated, priced total + the book_token
 // ref it must pass to Book.
 type PrebookResult struct {
-	Reservation *Reservation        `json:"reservation"`
-	Breakdown   pricing.Breakdown   `json:"breakdown"`
-	BookToken   string              `json:"book_token"`
+	Reservation *Reservation      `json:"reservation"`
+	Breakdown   pricing.Breakdown `json:"breakdown"`
+	BookToken   string            `json:"book_token"`
 }
 
 // Prebook runs the two-step gate: create the reservation (SEARCHING→OFFER_SELECTED),
@@ -223,11 +223,11 @@ func (s *Service) Prebook(ctx context.Context, userID string, in PrebookInput) (
 //     yet. PREBOOK_OK → PAYMENT_HELD → BOOKING.
 //  4. gateway.Book(idempotency_key, book_token) — idempotent at the supplier.
 //     - CONFIRMED: BOOKING → CONFIRMED; settle the escrow split (commission →
-//       AccountCommission, net → AccountProviderClearing); persist supplier_ref +
-//       voucher; audit; notify.
+//     AccountCommission, net → AccountProviderClearing); persist supplier_ref +
+//     voucher; audit; notify.
 //     - BOOK_FAILED: BOOKING → BOOK_FAILED → settlement.Refund (RELEASE the hold,
-//       reversing credit, NO net debit) → VOID. The guest is NEVER charged without
-//       a confirmed room. This auto-release is the #1 invariant.
+//     reversing credit, NO net debit) → VOID. The guest is NEVER charged without
+//     a confirmed room. This auto-release is the #1 invariant.
 //
 // idempotencyKey is the caller-supplied Idempotency-Key (REQUIRED on book); the same
 // key threads the escrow + provider book + settle so the whole saga is replay-safe.
@@ -489,10 +489,30 @@ func (s *Service) Cancel(ctx context.Context, userID, reservationID, reason stri
 	return s.repo.Get(ctx, res.ID)
 }
 
-// Modify re-prebooks the delta (dates/occupancy) and charges/refunds the price
-// difference via the wallet. The two-step gate still applies: a modify re-validates
-// the new price before charging.
-func (s *Service) Modify(ctx context.Context, userID, reservationID string, newCheckIn, newCheckOut time.Time) (*Reservation, error) {
+// Modify re-prices the changed stay (new dates) and charges/refunds the price
+// difference through the SAME finance primitives the Book path uses. The two-step
+// gate still applies: a modify re-validates live availability + price BEFORE any
+// money moves, and only mutates the reservation row AFTER the money movement
+// succeeds. It is idempotent on the caller-supplied Idempotency-Key.
+//
+// Money legs (REUSE — no new ledger accounts):
+//   - delta > 0 (CHARGE): settlement.Escrow(delta) → AccountEscrow with key
+//     "stays:modify:charge:<id>:<seq>", then settleConfirmed → the same split the
+//     Book path posts (commission → AccountPaymaxRevenue, net → provider clearing
+//     wallet). Fail-closed: if the escrow debit fails (insufficient funds / limit),
+//     NOTHING is mutated on the reservation.
+//   - delta < 0 (REFUND): settlement/ledger reversing credit escrow → user wallet
+//     for abs(delta) via ledger.PostReversal — the exact primitive Cancel uses for
+//     a partial refund. NO net debit.
+//   - delta == 0: no money movement.
+//
+// idempotencyKey is REQUIRED (the Idempotency-Key header). A retried modify with the
+// same key returns the current reservation without re-charging (the payment-intent
+// UNIQUE(idempotency_key) + ledger idempotency make the charge/refund replay-safe).
+func (s *Service) Modify(ctx context.Context, userID, reservationID, idempotencyKey string, newCheckIn, newCheckOut time.Time) (*Reservation, error) {
+	if idempotencyKey == "" {
+		return nil, fmt.Errorf("reservation: Idempotency-Key required for modify")
+	}
 	res, err := s.Get(ctx, userID, reservationID)
 	if err != nil {
 		return nil, err
@@ -500,10 +520,62 @@ func (s *Service) Modify(ctx context.Context, userID, reservationID string, newC
 	if res.State != StateConfirmed {
 		return nil, fmt.Errorf("%w: modify requires CONFIRMED, got %s", ErrBadState, res.State)
 	}
+	if !newCheckOut.After(newCheckIn) {
+		return nil, fmt.Errorf("%w: modify requires check_out after check_in", ErrBadState)
+	}
+
 	gw, rErr := s.router.Resolve(ctx, res.SourceRail, res.SupplierCode)
 	if rErr != nil {
 		return nil, rErr
 	}
+
+	// (1) Re-validate live availability + price for the NEW dates through the SAME
+	// gateway.Prebook the Prebook path uses. Availability is respected here: an
+	// unavailable new stay (SoldOut) fails WITHOUT any money movement. The reservation
+	// persists the supplier property/room/rate refs as PropertyID/RoomTypeID/RatePlanID
+	// (clients address direct offers that way).
+	pre, pErr := gw.Prebook(ctx, gateway.PrebookRequest{
+		Rail:                res.SourceRail,
+		SupplierCode:        res.SupplierCode,
+		SupplierPropertyRef: res.PropertyID,
+		SupplierRoomTypeRef: res.RoomTypeID,
+		SupplierRatePlanRef: res.RatePlanID,
+		CheckIn:             newCheckIn,
+		CheckOut:            newCheckOut,
+		Rooms:               res.Rooms,
+		Occupancy:           gateway.Occupancy{},
+		Currency:            res.Currency,
+	})
+	if pErr != nil {
+		return nil, fmt.Errorf("reservation: modify re-quote: %w", pErr)
+	}
+	if pre.SoldOut || pre.BookToken == "" {
+		s.auditSafe(ctx, userID, "stays.modify_unavailable", map[string]any{"reservation_id": res.ID})
+		return nil, fmt.Errorf("%w: new dates unavailable", ErrPrebookFailed)
+	}
+
+	// (2) Price the re-validated rate. A cross-currency re-price with no FX engine is
+	// fail-closed here (never silent) — the pricing engine returns an explicit error.
+	offer := gateway.PropertyOffer{
+		Rail:         res.SourceRail,
+		SupplierCode: res.SupplierCode,
+		NetRateKobo:  pre.NetRateKobo,
+		TaxKobo:      pre.TaxKobo,
+		Currency:     pre.Currency,
+	}
+	bd, priceErr := s.pricing.Price(offer, "", 0)
+	if priceErr != nil {
+		return nil, fmt.Errorf("reservation: modify re-price: %w", priceErr)
+	}
+
+	newGross := bd.GrossKobo
+	newCommission := bps(pre.NetRateKobo, s.directCommissionBps)
+	if res.SourceRail != gateway.RailDirect {
+		newCommission = 0 // Rail A keeps markup, not a commission split
+	}
+	delta := newGross - res.GrossAmountKobo
+
+	// (3) Acknowledge the supplier-side modify (idempotent on the supplier ref).
 	supplierRef := ""
 	if res.SupplierRef != nil {
 		supplierRef = *res.SupplierRef
@@ -518,9 +590,94 @@ func (s *Service) Modify(ctx context.Context, userID, reservationID string, newC
 	}); mErr != nil {
 		return nil, fmt.Errorf("reservation: supplier modify: %w", mErr)
 	}
-	// TODO: re-price delta + charge/refund via wallet. Recorded as an audit for now.
-	s.auditSafe(ctx, userID, "stays.modified", map[string]any{"reservation_id": res.ID})
+
+	// (4) MONEY FIRST, then mutate the row. A stable per-modify sequence keys the
+	// idempotency so a retried modify never double-charges/refunds.
+	seq, seqErr := s.repo.NextModifySeq(ctx, res.ID)
+	if seqErr != nil {
+		return nil, fmt.Errorf("reservation: modify seq: %w", seqErr)
+	}
+
+	switch {
+	case delta > 0:
+		// CHARGE the delta — HOLD then settle the split (same as Book's charge leg).
+		chargeKey := fmt.Sprintf("stays:modify:charge:%s:%d", res.ID, seq)
+		sett, escErr := s.settlement.Escrow(ctx, userID, "stays:modify:"+res.ID, chargeKey, "stays", delta)
+		if escErr != nil {
+			// Fail-closed: no funds held → nothing mutated on the reservation.
+			s.auditSafe(ctx, userID, "stays.modify_charge_failed", map[string]any{
+				"reservation_id": res.ID, "delta_kobo": delta, "err": escErr.Error(),
+			})
+			return nil, fmt.Errorf("%w: modify charge: %v", ErrInsufficient, escErr)
+		}
+		if setErr := s.settleModifyDelta(ctx, res, sett.ID, newCommission, delta); setErr != nil {
+			log.Printf("[stays] WARN: modify charge held but settle failed for reservation %s: %v", res.ID, setErr)
+			// Cover exists (funds held); reconciliation completes the settle. Do not
+			// unwind — the guest owes the delta and it is held.
+		}
+		_ = s.repo.RecordPaymentIntent(ctx, res.ID, string(res.PaymentMethod), "charged",
+			"stays:modify:charge:"+res.ID, chargeKey, delta)
+
+	case delta < 0:
+		// REFUND abs(delta) — reversing credit escrow → user wallet (same primitive as
+		// Cancel's partial refund). NO net debit.
+		refundKobo := -delta
+		refundKey := fmt.Sprintf("stays:modify:refund:%s:%d", res.ID, seq)
+		userWallet, wErr := s.ledger.GetOrCreateUserWallet(ctx, userID)
+		escrowAcc, eErr := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+		if wErr != nil || eErr != nil {
+			return nil, fmt.Errorf("reservation: modify refund accounts: %v/%v", wErr, eErr)
+		}
+		if pErr := s.ledger.PostReversal(ctx, userWallet.ID, escrowAcc.ID, refundKobo,
+			"stays:modify:refund:"+res.ID, refundKey); pErr != nil && !errors.Is(pErr, ledger.ErrDuplicate) {
+			return nil, fmt.Errorf("reservation: modify refund: %w", pErr)
+		}
+		_ = s.repo.RecordPaymentIntent(ctx, res.ID, string(res.PaymentMethod), "refunded",
+			"stays:modify:refund:"+res.ID, refundKey, refundKobo)
+	}
+
+	// (5) Persist the re-priced stay ONLY after the money movement succeeded.
+	if err := s.repo.ApplyModify(ctx, res.ID, newCheckIn, newCheckOut, newGross, bd.TaxKobo,
+		bd.NetRateKobo, bd.MarkupKobo, newCommission, res.Version); err != nil {
+		// Money moved but the projection failed to persist — reconciliation picks this
+		// up from the payment-intent. Surface the error; do not re-charge on retry (the
+		// idempotency keys above make a retry a safe no-op).
+		return nil, fmt.Errorf("reservation: modify persist: %w", err)
+	}
+
+	s.auditSafe(ctx, userID, "stays.modified", map[string]any{
+		"reservation_id": res.ID, "old_gross_kobo": res.GrossAmountKobo,
+		"new_gross_kobo": newGross, "delta_kobo": delta,
+	})
+	s.notifySafe(ctx, userID, "stays.modified", "Your booking dates have been updated.")
 	return s.repo.Get(ctx, res.ID)
+}
+
+// settleModifyDelta settles a modify-charge escrow using the same split shape as the
+// Book path: the commission portion of the delta is Paymax revenue and the remainder
+// is the net owed to the supplier (provider clearing). Reuses settlement.Settle — no
+// new ledger accounts.
+func (s *Service) settleModifyDelta(ctx context.Context, res *Reservation, settlementID string, commissionKobo, deltaKobo int64) error {
+	revenueKobo := commissionKobo
+	if res.SourceRail == gateway.RailBedbank {
+		revenueKobo = 0 // Rail A markup is baked into the delta gross; keep parity with Book
+	}
+	if revenueKobo < 0 {
+		revenueKobo = 0
+	}
+	if deltaKobo <= 0 {
+		return nil
+	}
+	platformPct := float64(revenueKobo) / float64(deltaKobo)
+	split := settlement.Split{
+		ProviderID:  "stays-clearing:" + res.SupplierCode,
+		ProviderPct: 1.0 - platformPct,
+		PlatformPct: platformPct,
+	}
+	if err := split.Validate(); err != nil {
+		return err
+	}
+	return s.settlement.Settle(ctx, settlementID, split)
 }
 
 // --- admin ---

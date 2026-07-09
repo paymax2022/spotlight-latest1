@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { use, useCallback, useEffect, useState } from 'react';
 import { getDriver, setDriverVerification } from '@/services/mobilityAdminService';
 import type { DriverDetail } from '@/types/mobility';
 import {
@@ -10,8 +10,8 @@ import {
   useMobilityPermissions, MOBILITY_PERMS,
 } from '../../_ui';
 
-export default function MobilityDriverDetailPage({ params }: { params: { id: string } }) {
-  const { id } = params;
+export default function MobilityDriverDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
   const { can } = useMobilityPermissions();
   const canManage = can(MOBILITY_PERMS.driversManage);
 

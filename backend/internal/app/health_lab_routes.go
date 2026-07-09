@@ -30,7 +30,7 @@ import (
 //   - admin : /api/health/lab/admin/*    (per-route RBAC health.lab.*)
 //
 // Gated by FeatureHealthLabEnabled at the orchestrator. Auditing is nil-safe.
-func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService) {
 	if pool == nil {
 		log.Println("[health.lab] nil pool — skipping lab routes")
 		return
@@ -51,7 +51,7 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		&labPayoutGateAdapter{kyc: kycSvc},
 		&labNotifierAdapter{db: pool},
 		&labVaultAdapter{r: recordsSvc},
-		nil, // audit sink injected by orchestrator (HL-12) — nil-safe here
+		audit, // real immutable-audit sink injected by orchestrator (HL-12) — nil-safe
 	)
 
 	isAdmin := func(c *gin.Context) bool { return isHealthLabAdmin(c, rbac) }

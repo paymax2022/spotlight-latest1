@@ -82,7 +82,7 @@ func RegisterCreators(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgx
 //
 //   - member: /api/finance/p2p/*  +  /api/finance/spray/*
 //   - admin : /api/p2p/admin/*  +  /api/spray/admin/*  (RBAC p2p.* / spray.*)
-func RegisterP2PMarket(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterP2PMarket(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService) {
 	if pool == nil {
 		log.Println("[p2pmarket] nil pool — skipping p2p routes")
 		return
@@ -95,12 +95,23 @@ func RegisterP2PMarket(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// Shared escrow core + Phase-3 dispute extension (same package).
 	escrowSvc := escrow.NewService(pool, ledgerSvc, nil)
 
-	p2pSvc := p2pmarket.NewService(pool, escrowSvc, nil)
+	// Real immutable-audit sink (NL-12) injected by the orchestrator — nil-safe.
+	p2pSvc := p2pmarket.NewService(pool, escrowSvc, audit)
 	p2pHandler := p2pmarket.NewHandler(p2pSvc)
 	p2pHandler.Register(member, admin, p2pmarket.GuardFunc(guardFor(rbac)))
 
-	// Shared spray engine (reused by social lives + creators). AML defaults applied.
-	spraySvc := spray.NewService(pool, ledgerSvc, walletSvc, spray.AMLConfig{}, nil)
+	// Shared spray engine (reused by social lives + creators). AML velocity limits
+	// (NL-10) set explicitly in NGN kobo, consistent with the tier/AML magnitudes used
+	// by the social-pay AML (₦200k single) and the spray package defaults: a single
+	// spray is capped at ₦500,000, rolling-24h spend at ₦2,000,000 across at most 500
+	// sprays, and dust below ₦1 is rejected (anti-structuring). Admins can widen later.
+	sprayAML := spray.AMLConfig{
+		MaxSingleKobo: 500_000_00,   // ₦500,000 per spray
+		MaxDailyKobo:  2_000_000_00, // ₦2,000,000 / rolling 24h
+		MaxDailyCount: 500,          // ≤500 sprays / rolling 24h
+		MinSingleKobo: 1_00,         // reject dust below ₦1
+	}
+	spraySvc := spray.NewService(pool, ledgerSvc, walletSvc, sprayAML, audit)
 	sprayHandler := spray.NewHandler(spraySvc)
 	sprayHandler.Register(member, admin, spray.GuardFunc(guardFor(rbac)))
 

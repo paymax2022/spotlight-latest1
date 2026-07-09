@@ -216,12 +216,12 @@ DO $$
 DECLARE
   owner_tables text[] := ARRAY[
     'academy_profiles','academy_gamification_profiles','academy_user_badges',
-    'academy_attempts','academy_responses','academy_mastery_records','academy_progress_events',
+    'academy_attempts','academy_mastery_records','academy_progress_events',
     'academy_reward_ledger_entries','academy_redemptions','academy_subscriptions',
     'academy_entitlements','academy_orders','academy_analytics_events','academy_guardian_links','academy_consent_records'];
   admin_tables text[] := ARRAY[
     'academy_curriculum_versions','academy_classes','academy_streams','academy_trade_tracks',
-    'academy_subjects','academy_topics','academy_learning_objectives','academy_lessons',
+    'academy_subjects','academy_topics','academy_learning_objectives','academy_edu_lessons',
     'academy_content_bundles','academy_question_items','academy_past_questions','academy_exam_arenas',
     'academy_cbt_blueprints','academy_subject_combination_rules','academy_badges','academy_challenges',
     'academy_leaderboards','academy_leaderboard_entries','academy_sponsors','academy_campaigns',
@@ -240,6 +240,12 @@ BEGIN
     EXECUTE format('DROP POLICY IF EXISTS %I_service ON public.%I', t, t);
     EXECUTE format('CREATE POLICY %I_service ON public.%I FOR ALL USING (auth.role() = ''service_role'') WITH CHECK (auth.role() = ''service_role'')', t, t);
   END LOOP;
+  -- academy_responses has no user_id column (child of academy_attempts): owner via the parent attempt.
+  EXECUTE 'ALTER TABLE public.academy_responses ENABLE ROW LEVEL SECURITY';
+  EXECUTE 'DROP POLICY IF EXISTS academy_responses_owner ON public.academy_responses';
+  EXECUTE 'CREATE POLICY academy_responses_owner ON public.academy_responses FOR SELECT USING (public.is_admin() OR EXISTS (SELECT 1 FROM public.academy_attempts a WHERE a.id = academy_responses.attempt_id AND a.user_id = auth.uid()))';
+  EXECUTE 'DROP POLICY IF EXISTS academy_responses_service ON public.academy_responses';
+  EXECUTE 'CREATE POLICY academy_responses_service ON public.academy_responses FOR ALL USING (auth.role() = ''service_role'') WITH CHECK (auth.role() = ''service_role'')';
   FOREACH t IN ARRAY admin_tables LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS %I_read ON public.%I', t, t);
@@ -251,17 +257,17 @@ BEGIN
 END $$;
 
 -- ───────────────────────── RBAC — staff capabilities ─────────────────────────
-INSERT INTO public.permissions (slug, description) VALUES
-  ('academy.admin','Spotlight Academy super admin'),
-  ('academy.content','Author/publish lessons + bundles'),
-  ('academy.curriculum','Manage versioned curriculum'),
-  ('academy.assessment','Manage question bank + items'),
-  ('academy.exam','Configure exam arenas + blueprints'),
-  ('academy.rewards','Manage reward pools + redemptions + wallet ops'),
-  ('academy.commerce','Manage plans/bundles/access-cards/payments'),
-  ('academy.sponsor','Manage sponsors + campaigns + funded pools'),
-  ('academy.moderation','Moderate content/community + trust-safety'),
-  ('academy.support','Support lookup + impersonation (audited)')
+INSERT INTO public.permissions (name, slug, module, resource, action, description, is_system_permission) VALUES
+  ('Academy Admin','academy.admin','academy','academy','admin','Spotlight Academy super admin',true),
+  ('Academy Content','academy.content','academy','academy','content','Author/publish lessons + bundles',true),
+  ('Academy Curriculum','academy.curriculum','academy','academy','curriculum','Manage versioned curriculum',true),
+  ('Academy Assessment','academy.assessment','academy','academy','assessment','Manage question bank + items',true),
+  ('Academy Exam','academy.exam','academy','academy','exam','Configure exam arenas + blueprints',true),
+  ('Academy Rewards','academy.rewards','academy','academy','rewards','Manage reward pools + redemptions + wallet ops',true),
+  ('Academy Commerce','academy.commerce','academy','academy','commerce','Manage plans/bundles/access-cards/payments',true),
+  ('Academy Sponsor','academy.sponsor','academy','academy','sponsor','Manage sponsors + campaigns + funded pools',true),
+  ('Academy Moderation','academy.moderation','academy','academy','moderation','Moderate content/community + trust-safety',true),
+  ('Academy Support','academy.support','academy','academy','support','Support lookup + impersonation (audited)',true)
 ON CONFLICT (slug) DO NOTHING;
 
 INSERT INTO public.role_permissions (role_id, permission_id)

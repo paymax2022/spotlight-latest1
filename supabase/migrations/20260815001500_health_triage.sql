@@ -257,9 +257,9 @@ BEGIN
 END $$;
 
 -- ── RBAC ── clinician sign-off + ops. SC-5/SC-6.
-INSERT INTO public.permissions (slug, description) VALUES
-  ('health.triage.review','Review/sign-off triage clinical content + red-flag rules; handle escalations'),
-  ('health.triage.admin','Administer the AI symptom checker (sessions, validation, config)')
+INSERT INTO public.permissions (name, slug, module, resource, action, description, is_system_permission) VALUES
+  ('Health Triage Review','health.triage.review','health','triage','review','Review/sign-off triage clinical content + red-flag rules; handle escalations', true),
+  ('Health Triage Admin','health.triage.admin','health','triage','admin','Administer the AI symptom checker (sessions, validation, config)', true)
 ON CONFLICT (slug) DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM public.roles r CROSS JOIN public.permissions p

@@ -1,6 +1,7 @@
 package reservation
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -11,16 +12,72 @@ import (
 	"spotlight/backend/internal/stays/gateway"
 )
 
+// contentResolver fetches normalised property content for a (rail, supplier,
+// supplier_property_ref). Matches search.Service.GetContent — passed as a plain
+// func so the reservation package need not import search (avoids a cycle).
+type contentResolver func(ctx context.Context, rail gateway.SourceRail, supplierCode, supplierPropertyRef string) (gateway.PropertyContent, error)
+
 // Handler exposes the member + admin reservation routes.
 type Handler struct {
 	svc     *Service
 	signRef func(ref string) (string, error) // R2 signer for vouchers (may be nil)
+	content contentResolver                  // optional; enriches responses with display content (nil-safe)
 }
 
 // NewHandler constructs the reservation handler. signRef may be nil (voucher route
 // then returns the raw ref instead of a signed URL).
 func NewHandler(svc *Service, signRef func(ref string) (string, error)) *Handler {
 	return &Handler{svc: svc, signRef: signRef}
+}
+
+// SetContentResolver injects a best-effort property-content fetcher used to
+// enrich reservation responses with display fields (name/city/photo) so a client
+// can render a booking without a second content call. Optional and nil-safe;
+// non-breaking — existing constructions leave it unset.
+func (h *Handler) SetContentResolver(fn contentResolver) { h.content = fn }
+
+// reservationView embeds a Reservation (its JSON fields flatten to the top level)
+// and adds an optional resolved content block.
+type reservationView struct {
+	*Reservation
+	Content *contentView `json:"content,omitempty"`
+}
+
+type contentView struct {
+	Name         string `json:"name"`
+	City         string `json:"city"`
+	Address      string `json:"address"`
+	CoverURL     string `json:"cover_url"`
+	StarRating   int    `json:"star_rating"`
+	PropertyType string `json:"property_type"`
+}
+
+// enrich attaches best-effort display content to a reservation. The reservation
+// persists the supplier property ref as PropertyID (clients address offers that
+// way), so the resolver keys on (SourceRail, SupplierCode, PropertyID). Any error
+// leaves Content nil — enrichment NEVER fails the request.
+func (h *Handler) enrich(ctx context.Context, res *Reservation) reservationView {
+	view := reservationView{Reservation: res}
+	if h.content == nil || res == nil || res.PropertyID == "" {
+		return view
+	}
+	pc, err := h.content(ctx, res.SourceRail, res.SupplierCode, res.PropertyID)
+	if err != nil {
+		return view // best-effort: leave content unresolved
+	}
+	cover := ""
+	if len(pc.Photos) > 0 {
+		cover = pc.Photos[0]
+	}
+	view.Content = &contentView{
+		Name:         pc.Name,
+		City:         pc.City,
+		Address:      pc.Address,
+		CoverURL:     cover,
+		StarRating:   pc.StarRating,
+		PropertyType: pc.PropertyType,
+	}
+	return view
 }
 
 func userID(c *gin.Context) string { return c.GetString("user_id") }
@@ -160,7 +217,11 @@ func (h *Handler) List(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": rs})
+	views := make([]reservationView, 0, len(rs))
+	for i := range rs {
+		views = append(views, h.enrich(c.Request.Context(), &rs[i]))
+	}
+	c.JSON(http.StatusOK, gin.H{"data": views})
 }
 
 // Get (member): GET /reservations/:id
@@ -170,7 +231,7 @@ func (h *Handler) Get(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": res})
+	c.JSON(http.StatusOK, gin.H{"data": h.enrich(c.Request.Context(), res)})
 }
 
 // Voucher (member): GET /reservations/:id/voucher — signed URL.
@@ -200,11 +261,18 @@ func (h *Handler) Cancel(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": res})
+	c.JSON(http.StatusOK, gin.H{"data": h.enrich(c.Request.Context(), res)})
 }
 
-// Modify (member): POST /reservations/:id/modify {check_in, check_out}
+// Modify (member): POST /reservations/:id/modify {check_in, check_out} —
+// Idempotency-Key header REQUIRED (a modify re-prices and may charge/refund the
+// price delta; the key makes a retry replay-safe).
 func (h *Handler) Modify(c *gin.Context) {
+	idemKey := c.GetHeader("Idempotency-Key")
+	if idemKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
+		return
+	}
 	var body struct {
 		CheckIn  string `json:"check_in" binding:"required"`
 		CheckOut string `json:"check_out" binding:"required"`
@@ -219,12 +287,12 @@ func (h *Handler) Modify(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid check_in/check_out"})
 		return
 	}
-	res, err := h.svc.Modify(c.Request.Context(), userID(c), c.Param("id"), ci, co)
+	res, err := h.svc.Modify(c.Request.Context(), userID(c), c.Param("id"), idemKey, ci, co)
 	if err != nil {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": res})
+	c.JSON(http.StatusOK, gin.H{"data": h.enrich(c.Request.Context(), res)})
 }
 
 // AdminSearch (admin): GET /reservations?state=&city=

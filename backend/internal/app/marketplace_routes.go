@@ -192,9 +192,8 @@ func RegisterMarketplace(
 	// ── Escrow webhooks REMOVED (ADR-023 listings-and-connect pivot) ──
 	// The two inbound webhooks (POST /webhooks/logistics/delivery-confirmed and
 	// POST /webhooks/payments/funding-confirmed) drove the escrow order FSM. With no
-	// escrow orders they have no state to advance, so they are unregistered. The
-	// handlers (DeliveryConfirmedWebhook/FundingConfirmedWebhook) remain in the package
-	// as unreachable dead code.
+	// escrow orders they have no state to advance; both the routes and their handlers
+	// (webhooks.go / webhook_handler.go) have been deleted.
 
 	// ── Public read (listing detail, search, categories, seller profile) ──
 	// Auth-optional reads: listing detail + search + categories + seller pages are
@@ -234,8 +233,8 @@ func RegisterMarketplace(
 	// unregistered: the directory no longer holds funds or manages orders/disputes.
 	// Parties connect and transact off-platform (Meetup Mode). The order/dispute
 	// FSM code (service_order.go, service_dispute.go, fsm_order.go, fsm_dispute.go,
-	// their handlers) remains in the package as unreachable dead code (additive-only;
-	// mkt_orders/mkt_disputes tables are retained but unused).
+	// their handlers and the logistics/payments webhooks) has been deleted
+	// (additive-only; mkt_orders/mkt_disputes tables are retained but unused).
 	//
 	// Reviews: SubmitReview was gated on OrderReleased (an escrow-completed order).
 	// With no orders it has no valid completion signal, so POST /orders/:id/review is
@@ -292,7 +291,7 @@ func RegisterMarketplace(
 	a.POST("/listings/:id/approve", guard("marketplace.admin.approve"), h.AdminApproveListing)
 	a.POST("/listings/:id/reject", guard("marketplace.admin.reject"), h.AdminRejectListing)
 	// Admin dispute queue/decide/approve + orders aging REMOVED (ADR-023): no orders
-	// or disputes exist to moderate. Their handlers remain as dead code; the seeded
+	// or disputes exist to moderate. Their handlers have been deleted; the seeded
 	// dispute.*/orders.aging RBAC perms are now unused (additive-only, left in place).
 	a.GET("/flags", guard("marketplace.admin.flags.action"), h.AdminFlags)
 	a.POST("/flags/:id/action", guard("marketplace.admin.flags.action"), h.AdminActionFlag)

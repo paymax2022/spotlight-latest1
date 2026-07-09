@@ -8,17 +8,26 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	financeledger "spotlight/backend/internal/finance/ledger"
 )
 
 // Service is the crowdfunding admin domain service. It reads/writes the cf_*
 // admin tables via a pgx pool (the money-path access pattern). It is transactional
 // for every guarded transition and writes an audit row on each decision.
 type Service struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	ledger *financeledger.Service // optional; required only for the withdrawal payout money-path
 }
 
-// NewService constructs the admin service.
+// NewService constructs the admin service. The finance ledger is optional here;
+// wire it with WithLedger to enable the withdrawal-approval money-path.
 func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
+
+// WithLedger injects the finance ledger used by the withdrawal payout money-path
+// (ApproveWithdrawal). Non-breaking: existing NewService(db) callers keep a nil
+// ledger and the money-path fails closed until one is wired.
+func (s *Service) WithLedger(l *financeledger.Service) *Service { s.ledger = l; return s }
 
 // rfc3339 formats a timestamp the way the TS client expects.
 func rfc3339(t time.Time) string { return t.UTC().Format(time.RFC3339) }

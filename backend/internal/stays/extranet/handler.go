@@ -252,27 +252,33 @@ func (h *Handler) CancelByHotel(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
 }
 
-// SendMessage: POST .../messages — messaging stub (guest<->hotel). Persistence is a
-// later block; this acknowledges and object-scopes the request.
+// SendMessage: POST .../messages {body} — persists a HOST message on the guest<->
+// hotel thread and returns the stored row. Object-scoped (active grant on the
+// property + reservation belongs to it) in the service.
 func (h *Handler) SendMessage(c *gin.Context) {
-	if _, err := h.svc.ReservationDetail(c.Request.Context(), uid(c), c.Param("propertyId"), c.Param("reservationId")); err != nil {
+	var b struct {
+		Body string `json:"body" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	msg, err := h.svc.PostMessage(c.Request.Context(), uid(c), c.Param("propertyId"), c.Param("reservationId"), b.Body)
+	if err != nil {
 		mapErr(c, err)
 		return
 	}
-	var b struct {
-		Body string `json:"body"`
-	}
-	_ = c.ShouldBindJSON(&b)
-	c.JSON(http.StatusAccepted, gin.H{"data": gin.H{"queued": true, "note": "messaging stub"}})
+	c.JSON(http.StatusCreated, gin.H{"data": msg})
 }
 
-// ListMessages: GET .../messages — messaging stub.
+// ListMessages: GET .../messages — the reservation's persisted thread, oldest-first.
 func (h *Handler) ListMessages(c *gin.Context) {
-	if _, err := h.svc.ReservationDetail(c.Request.Context(), uid(c), c.Param("propertyId"), c.Param("reservationId")); err != nil {
+	out, err := h.svc.ListMessages(c.Request.Context(), uid(c), c.Param("propertyId"), c.Param("reservationId"))
+	if err != nil {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": []any{}})
+	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
 // Payouts: GET /properties/:propertyId/payouts

@@ -46,6 +46,11 @@ func (s *Service) GetMerchant(ctx context.Context, id string) (*Merchant, error)
 	return s.repo.GetMerchant(ctx, id)
 }
 
+// GetMerchantByOwner returns the merchant owned by a user (member self-view).
+func (s *Service) GetMerchantByOwner(ctx context.Context, ownerUserID string) (*Merchant, error) {
+	return s.repo.GetMerchantByOwner(ctx, ownerUserID)
+}
+
 func (s *Service) CreateCampaign(ctx context.Context, in CreateMCInput) (*MerchantCampaign, error) {
 	if in.MerchantID == "" || in.Name == "" {
 		return nil, fmt.Errorf("merchant: merchant_id and name required")

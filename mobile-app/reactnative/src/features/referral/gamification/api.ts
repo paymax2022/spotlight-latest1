@@ -444,18 +444,42 @@ export async function claimMission(id: string): Promise<ClaimMissionResult> {
   };
 }
 
+// Backend (bare JSON) streak shape from GET /gamification/streak.
+interface BackendStreak {
+  current: number;
+  longest: number;
+  unit: string; // 'day' | 'week'
+  expiresAt: string | null;
+  milestones?: Array<{
+    id: string;
+    label: string;
+    atStreak: number;
+    points: number;
+    reached: boolean;
+  }> | null;
+}
+
 export async function getStreak(): Promise<StreakState> {
   if (USE_MOCK) {
     await delay(220);
     return { ...MOCK_STREAK, milestones: MOCK_STREAK.milestones.map((m) => ({ ...m })) };
   }
-  // TODO(referral phase3): no backend streak endpoint. Return a safe empty default.
+  // Live: GET the caller's streak (NON-CASH status data). Backend returns a
+  // zeroed default when the user has no row yet.
+  const res = await api.get(`${REFERRAL_API_BASE}/gamification/streak`);
+  const s = unwrap<BackendStreak>(res);
   return {
-    current: 0,
-    longest: 0,
-    unit: 'week',
-    expiresAt: null,
-    milestones: [],
+    current: s.current ?? 0,
+    longest: s.longest ?? 0,
+    unit: s.unit === 'week' ? 'week' : 'day',
+    expiresAt: s.expiresAt ?? null,
+    milestones: (s.milestones ?? []).map((m) => ({
+      id: m.id,
+      label: m.label,
+      atStreak: m.atStreak,
+      points: m.points,
+      reached: m.reached,
+    })),
   };
 }
 

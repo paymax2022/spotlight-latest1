@@ -286,10 +286,12 @@ func TestSettlementPendingMarker_CarriesSettlementIDAndCause(t *testing.T) {
 }
 
 func TestSettlementPendingStatus_IsPendingNotSettled(t *testing.T) {
-	// The queryable flag written on the trip must be the 'pending' marker the
-	// reconciliation job scans for — NOT a silent 'settled'.
-	if settlementPendingStatus != "pending" {
-		t.Fatalf("settlement_status marker = %q, want %q", settlementPendingStatus, "pending")
+	// The queryable flag written on the trip must be the non-terminal marker the
+	// reconciliation job scans for — NOT a silent 'settled'. It must also be a value
+	// the trips.settlement_status CHECK constraint permits ('settlement_pending'),
+	// otherwise the mirror UPDATE fails the constraint and silently no-ops.
+	if settlementPendingStatus != "settlement_pending" {
+		t.Fatalf("settlement_status marker = %q, want %q", settlementPendingStatus, "settlement_pending")
 	}
 	if settlementPendingEvent != "settlement_pending" {
 		t.Fatalf("trip_events marker = %q, want %q", settlementPendingEvent, "settlement_pending")

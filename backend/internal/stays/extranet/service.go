@@ -170,6 +170,43 @@ func (s *Service) releaseAllotment(ctx context.Context, reservationID string) {
 	_ = s.allot.AllotmentRelease(ctx, rt, ari.DateRange{CheckIn: in, CheckOut: out}, rooms)
 }
 
+// --- messaging (guest <-> hotel thread) ---
+
+// PostMessage persists a HOST message on a reservation's thread. Object-scoped: the
+// caller must hold an ACTIVE grant on the property AND the reservation must belong to
+// that property. Returns the persisted row (not a stub).
+func (s *Service) PostMessage(ctx context.Context, userID, propertyID, reservationID, body string) (Message, error) {
+	if err := s.guard(ctx, userID, propertyID); err != nil {
+		return Message{}, err
+	}
+	ok, err := s.repo.ReservationBelongsToProperty(ctx, reservationID, propertyID)
+	if err != nil {
+		return Message{}, err
+	}
+	if !ok {
+		return Message{}, ErrNotFound
+	}
+	if body == "" {
+		return Message{}, errors.New("extranet: message body required")
+	}
+	return s.repo.InsertMessage(ctx, reservationID, propertyID, "host", userID, body)
+}
+
+// ListMessages returns a reservation's thread. Object-scoped as above.
+func (s *Service) ListMessages(ctx context.Context, userID, propertyID, reservationID string) ([]Message, error) {
+	if err := s.guard(ctx, userID, propertyID); err != nil {
+		return nil, err
+	}
+	ok, err := s.repo.ReservationBelongsToProperty(ctx, reservationID, propertyID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return s.repo.ListMessages(ctx, reservationID, 200)
+}
+
 // --- finance reads ---
 
 func (s *Service) Payouts(ctx context.Context, userID, propertyID string) ([]PayoutRow, error) {

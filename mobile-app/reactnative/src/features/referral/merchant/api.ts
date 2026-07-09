@@ -1,29 +1,14 @@
 // ── Referral Merchant Zone (lite) API (M-MER-01..03) ─────────────────────────
 // Mock-first (USE_MOCK). Money is ALWAYS integer kobo.
 //
-// BACKEND GAP (confirmed): merchant.Register is wired ONLY onto the referral
-// ADMIN router group, not the member group — see
-// backend/internal/app/referral_econ_routes.go:58 (`merchant.Register(admin,
-// merchantSvc, rbac)`, single group arg) and
-// backend/internal/referral/merchant/handlers.go:23-37, all routes RBAC-gated
-// on `referral.merchant.*` under /api/referral/admin/merchants/*:
-//   GET  /api/referral/admin/merchants                       (List)
-//   POST /api/referral/admin/merchants                       (Create)
-//   GET  /api/referral/admin/merchants/:id                   (Get)
-//   GET  /api/referral/admin/merchants/:id/campaigns         (ListCampaigns)
-//   POST /api/referral/admin/merchants/campaigns             (CreateCampaign)
-//   POST /api/referral/admin/merchants/campaigns/:mcid/fund  (Fund — money mutation)
-//   POST /api/referral/admin/merchants/campaigns/:mcid/settle(Settle)
-//   GET  /api/referral/admin/merchants/:id/keys               (ListKeys)
-//   POST /api/referral/admin/merchants/keys                   (IssueKey)
-//   POST /api/referral/admin/merchants/keys/:keyid/revoke     (RevokeKey)
-// There is NO member-role merchant endpoint at all. The frontend-web
-// /api/v1/referral proxy (singular, member group) has nothing to forward to
-// for merchant — only the admin console (frontend-admin, not in scope here)
-// could reach these. This whole feature is kept mock-only on mobile; do NOT
-// fabricate a live branch that calls a path the member JWT cannot access.
+// READ-ONLY member self-view is now live: GET /api/finance/referral/merchant/
+// {dashboard, campaigns/:id/performance} (scoped to the caller's owned merchant
+// via referral_merchants.owner_user_id). Campaign FUNDING remains an admin/back-
+// office money mutation (/api/referral/admin/merchants/*) — createAndFundCampaign
+// stays unavailable to the member JWT and throws rather than fabricating.
 
-import { USE_MOCK } from '../constants/referral.constants';
+import { api } from '@/api/client';
+import { USE_MOCK, REFERRAL_API_BASE } from '../constants/referral.constants';
 import type {
   MerchantDashboard,
   CreateCampaignInput,
@@ -32,6 +17,10 @@ import type {
 } from './types';
 
 const delay = (ms = 260) => new Promise((r) => setTimeout(r, ms));
+
+function unwrap<T>(res: { data?: { data?: T } & T }): T {
+  return (res.data?.data ?? res.data) as T;
+}
 
 const daysAgo = (d: number) => new Date(Date.now() - d * 86400_000).toISOString();
 
@@ -84,15 +73,32 @@ export async function getMerchantDashboard(): Promise<MerchantDashboard> {
     await delay();
     return { ...MOCK_DASHBOARD, campaigns: MOCK_DASHBOARD.campaigns.map((c) => ({ ...c })) };
   }
-  // TODO(referral phase3): member merchant zone has no backend yet (merchant
-  // routes are admin-only under /api/referral/admin/merchants/*). Return an empty
-  // dashboard so the screen renders a clean "no campaigns" state instead of 404.
+  // Live: read-only member merchant dashboard (owner-scoped).
+  const res = await api.get(`${REFERRAL_API_BASE}/merchant/dashboard`);
+  const b = unwrap<{
+    wallet_balance_kobo?: number;
+    total_spent_kobo?: number;
+    total_conversions?: number;
+    active_campaigns?: number;
+    campaigns?: Array<{
+      id: string; name: string; status: string;
+      budget_kobo: number; spent_kobo: number; conversions: number; started_at: string;
+    }>;
+  }>(res);
   return {
-    walletBalanceKobo: 0,
-    totalSpentKobo: 0,
-    totalConversions: 0,
-    activeCampaigns: 0,
-    campaigns: [],
+    walletBalanceKobo: Math.trunc(b.wallet_balance_kobo ?? 0),
+    totalSpentKobo: Math.trunc(b.total_spent_kobo ?? 0),
+    totalConversions: b.total_conversions ?? 0,
+    activeCampaigns: b.active_campaigns ?? 0,
+    campaigns: (b.campaigns ?? []).map((mc) => ({
+      id: mc.id,
+      name: mc.name,
+      status: mc.status as MerchantDashboard['campaigns'][number]['status'],
+      budgetKobo: Math.trunc(mc.budget_kobo ?? 0),
+      spentKobo: Math.trunc(mc.spent_kobo ?? 0),
+      conversions: mc.conversions ?? 0,
+      startedAt: mc.started_at ?? null,
+    })),
   };
 }
 
@@ -125,15 +131,21 @@ export async function getMerchantPerformance(campaignId: string): Promise<Mercha
     const p = MOCK_PERFORMANCE[campaignId] ?? MOCK_PERFORMANCE.mc1;
     return { ...p, series: p.series.map((s) => ({ ...s })) };
   }
-  // TODO(referral phase3): no member merchant performance endpoint yet.
+  // Live: owner-scoped campaign performance.
+  const res = await api.get(`${REFERRAL_API_BASE}/merchant/campaigns/${encodeURIComponent(campaignId)}/performance`);
+  const b = unwrap<{
+    campaign_id?: string; campaign_name?: string; budget_kobo?: number; spent_kobo?: number;
+    conversions?: number; cost_per_conversion_kobo?: number; roas?: number;
+    series?: Array<{ label: string; conversions: number; spendKobo: number }>;
+  }>(res);
   return {
-    campaignId,
-    campaignName: '',
-    budgetKobo: 0,
-    spentKobo: 0,
-    conversions: 0,
-    costPerConversionKobo: 0,
-    roas: 0,
-    series: [],
+    campaignId: b.campaign_id ?? campaignId,
+    campaignName: b.campaign_name ?? '',
+    budgetKobo: Math.trunc(b.budget_kobo ?? 0),
+    spentKobo: Math.trunc(b.spent_kobo ?? 0),
+    conversions: b.conversions ?? 0,
+    costPerConversionKobo: Math.trunc(b.cost_per_conversion_kobo ?? 0),
+    roas: b.roas ?? 0,
+    series: b.series ?? [],
   };
 }

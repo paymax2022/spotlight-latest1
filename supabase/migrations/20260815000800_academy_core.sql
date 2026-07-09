@@ -113,7 +113,10 @@ CREATE TABLE IF NOT EXISTS public.academy_learning_objectives (
 );
 
 -- ───────────────────────── Content (lite for Phase 1) ────────────────────────
-CREATE TABLE IF NOT EXISTS public.academy_lessons (
+-- NOTE: named academy_edu_lessons (not academy_lessons) to avoid colliding with the
+-- pre-existing film/vocational academy_lessons table (20260408110000) which has a
+-- different schema (module_id, no objective_id). Additive, no rename of legacy table.
+CREATE TABLE IF NOT EXISTS public.academy_edu_lessons (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   objective_id uuid REFERENCES public.academy_learning_objectives(id),
   title        text NOT NULL,
@@ -126,7 +129,7 @@ CREATE TABLE IF NOT EXISTS public.academy_lessons (
   created_at   timestamptz NOT NULL DEFAULT now(),
   updated_at   timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_academy_lessons_objective ON public.academy_lessons(objective_id);
+CREATE INDEX IF NOT EXISTS idx_academy_lessons_objective ON public.academy_edu_lessons(objective_id);
 
 CREATE TABLE IF NOT EXISTS public.academy_content_bundles (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),

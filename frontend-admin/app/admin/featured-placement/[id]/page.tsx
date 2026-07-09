@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import type { Campaign } from '@/types/featuredPlacementAdmin';
 import {
   getCampaign,
@@ -26,8 +26,8 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-export default function FeaturedPlacementDetailPage({ params }: { params: { id: string } }) {
-  const { id } = params;
+export default function FeaturedPlacementDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
   const { can } = useFeaturedPermissions();
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [loading, setLoading] = useState(true);

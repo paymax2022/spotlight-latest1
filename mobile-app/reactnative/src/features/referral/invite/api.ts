@@ -3,7 +3,7 @@
 // is compliant: it points at real product use, never income/recruitment.
 
 import { api } from '@/api/client';
-import { USE_MOCK } from '../constants/referral.constants';
+import { USE_MOCK, REFERRAL_API_BASE } from '../constants/referral.constants';
 import type {
   SharePayload,
   InviteContact,
@@ -165,13 +165,40 @@ export async function inviteContacts(ids: string[]): Promise<{ ok: true; invited
   return { ok: true, invited: ids.length };
 }
 
+// Backend (bare JSON) vanity-link row shape.
+interface BackendVanityLink {
+  id: string;
+  alias: string;
+  url: string;
+  source: string | null;
+  campaign: string | null;
+  clicks: number;
+  signups: number;
+  created_at: string;
+}
+
+function mapVanityLink(v: BackendVanityLink): VanityLink {
+  return {
+    id: v.id,
+    alias: v.alias,
+    url: v.url,
+    source: v.source ?? null,
+    campaign: v.campaign ?? null,
+    clicks: v.clicks ?? 0,
+    signups: v.signups ?? 0,
+    createdAt: v.created_at,
+  };
+}
+
 export async function getVanityLinks(): Promise<VanityLink[]> {
   if (USE_MOCK) {
     await delay(260);
     return MOCK_VANITY.map((v) => ({ ...v }));
   }
-  // TODO(referral phase3): no backend vanity-link/UTM service yet.
-  return [];
+  // Live: GET the caller's persisted vanity links (bare JSON array).
+  const res = await api.get(`${REFERRAL_API_BASE}/invite/vanity`);
+  const rows = unwrap<BackendVanityLink[]>(res) ?? [];
+  return rows.map(mapVanityLink);
 }
 
 export async function createVanityLink(input: VanityLinkInput): Promise<VanityLink> {
@@ -189,9 +216,14 @@ export async function createVanityLink(input: VanityLinkInput): Promise<VanityLi
       createdAt: new Date().toISOString(),
     };
   }
-  // TODO(referral phase3): no backend vanity-link service — do not fabricate a
-  // persisted alias that would not survive a refresh.
-  throw new Error('Custom invite links are not available yet.');
+  // Live: POST creates (or returns the existing) vanity link, idempotent per
+  // (user, alias). Backend normalizes the alias server-side.
+  const res = await api.post(`${REFERRAL_API_BASE}/invite/vanity`, {
+    alias: input.alias,
+    source: input.source,
+    campaign: input.campaign,
+  });
+  return mapVanityLink(unwrap<BackendVanityLink>(res));
 }
 
 export async function getContextualPrompt(context: ShareContext): Promise<ContextualPrompt> {

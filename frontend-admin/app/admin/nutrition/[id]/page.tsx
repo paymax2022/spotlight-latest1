@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import type { ImplausibleProfile } from '@/types/nutritionAdmin';
 import {
   getImplausible,
@@ -15,8 +15,8 @@ import { useNutritionPermissions, NUTRITION_PERMS } from '../_ui';
 const card = { border: '1px solid #2a2a2a', padding: 12, borderRadius: 6 } as const;
 const td = { padding: '6px 8px' } as const;
 
-export default function NutritionProfileDetailPage({ params }: { params: { id: string } }) {
-  const { id } = params;
+export default function NutritionProfileDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
   const { can } = useNutritionPermissions();
   const canResolve = can(NUTRITION_PERMS.resolve);
   const canManage = can(NUTRITION_PERMS.manage);

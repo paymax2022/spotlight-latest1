@@ -61,66 +61,6 @@ func (h *Handler) AdminRejectListing(c *gin.Context) {
 	respond(c, http.StatusOK, l)
 }
 
-// AdminDisputeQueue GET /admin/disputes/queue
-func (h *Handler) AdminDisputeQueue(c *gin.Context) {
-	limit, offset := pageParams(c)
-	ds, err := h.svc.DisputeQueue(c.Request.Context(), c.Query("status"), limit, offset)
-	if err != nil {
-		fail(c, err)
-		return
-	}
-	respond(c, http.StatusOK, ds)
-}
-
-// AdminGetDispute GET /admin/disputes/:id (evidence side-by-side view; admin bypass OLA)
-func (h *Handler) AdminGetDispute(c *gin.Context) {
-	d, err := h.svc.GetDispute(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		fail(c, err)
-		return
-	}
-	respond(c, http.StatusOK, d)
-}
-
-// AdminDecideDispute POST /admin/disputes/:id/decide — reason_code MANDATORY;
-// dual-approval when amount>₦500k (returns 202 awaiting second approver).
-func (h *Handler) AdminDecideDispute(c *gin.Context) {
-	uid, ok := requireUser(c)
-	if !ok {
-		return
-	}
-	var in DecideDisputeInput
-	if err := c.ShouldBindJSON(&in); err != nil {
-		fail(c, fieldErr(CodeValidation, err.Error(), ""))
-		return
-	}
-	d, err := h.svc.DecideDispute(c.Request.Context(), uid, c.Param("id"), in)
-	if err != nil {
-		// AWAITING_SECOND_APPROVAL is a 202, not a failure — render the dispute with it.
-		if ce := asCoded(err); ce.Code == CodeAwaitingSecondApproval {
-			c.JSON(http.StatusAccepted, gin.H{"data": d, "status": "awaiting_second_approval"})
-			return
-		}
-		fail(c, err)
-		return
-	}
-	respond(c, http.StatusOK, d)
-}
-
-// AdminApproveDispute POST /admin/disputes/:id/approve (second approver executes).
-func (h *Handler) AdminApproveDispute(c *gin.Context) {
-	uid, ok := requireUser(c)
-	if !ok {
-		return
-	}
-	d, err := h.svc.ApproveDispute(c.Request.Context(), uid, c.Param("id"))
-	if err != nil {
-		fail(c, err)
-		return
-	}
-	respond(c, http.StatusOK, d)
-}
-
 // AdminFlags GET /admin/flags
 func (h *Handler) AdminFlags(c *gin.Context) {
 	limit, offset := pageParams(c)
@@ -165,17 +105,6 @@ func (h *Handler) AdminActionFlag(c *gin.Context) {
 func (h *Handler) AdminAuditLog(c *gin.Context) {
 	limit, offset := pageParams(c)
 	rows, err := h.svc.repo.AuditLog(c.Request.Context(), c.Query("target_type"), c.Query("target_id"), limit, offset)
-	if err != nil {
-		fail(c, err)
-		return
-	}
-	respond(c, http.StatusOK, rows)
-}
-
-// AdminOrdersAging GET /admin/orders/aging (§8 aging board)
-func (h *Handler) AdminOrdersAging(c *gin.Context) {
-	limit, offset := pageParams(c)
-	rows, err := h.svc.AgingOrders(c.Request.Context(), limit, offset)
 	if err != nil {
 		fail(c, err)
 		return

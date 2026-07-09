@@ -19,6 +19,42 @@ import { listTrips } from './trips';
 const delay = (ms = MOCK_DELAY_MS) => new Promise((r) => setTimeout(r, ms));
 const KEY = 'stays';
 
+// Backend wraps every response body in { data: ... }.
+function unwrap<T>(body: any): T {
+  return body && typeof body === 'object' && 'data' in body ? body.data : body;
+}
+
+// Backend review shape (member routes /api/v1/stays/reviews-mine etc.).
+interface BEReview {
+  id: string;
+  reservation_id: string;
+  property_id: string;
+  overall_score: number; // 1..5
+  sub_scores: Record<string, number>;
+  title: string;
+  body: string;
+  status: string;
+  created_at: string;
+}
+
+/** Map a backend review into the local MyReview (overall is out of 10). */
+function mapReview(r: BEReview): MyReview {
+  return {
+    id: r.id,
+    reservationId: r.reservation_id,
+    propertyId: r.property_id,
+    // TODO(stays): backend review has property_id only, no display content.
+    propertyName: '',
+    coverUrl: '',
+    overall: (r.overall_score ?? 0) * 2, // backend 1..5 → local out-of-10
+    subScores: (r.sub_scores ?? {}) as Partial<Record<ReviewDimension, number>>,
+    title: r.title ?? '',
+    body: r.body ?? '',
+    createdAt: r.created_at ?? '',
+    stayDate: (r.created_at ?? '').slice(0, 10),
+  };
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────--
 export interface ReviewableStay {
   reservationId: string;
@@ -166,8 +202,8 @@ export async function listReviewableStays(): Promise<ReviewableStay[]> {
         checkOut: t.checkOut,
       }));
   }
-  const { data } = await api.get<ReviewableStay[]>(`${STAYS_API_BASE}/reviews/eligible`);
-  return data;
+  // TODO(stays): no backend list-eligible endpoint (eligibility is per-reservation only).
+  return [];
 }
 
 /** Resolve a single reviewable stay by reservation id (gate the write screen). */
@@ -177,10 +213,25 @@ export async function getReviewableStay(reservationId: string): Promise<Reviewab
     const eligible = await listReviewableStays();
     return eligible.find((s) => s.reservationId === reservationId) ?? null;
   }
-  const { data } = await api.get<ReviewableStay | null>(
-    `${STAYS_API_BASE}/reviews/eligible/${encodeURIComponent(reservationId)}`,
+  // Live: GET /reservations/:id/review-eligibility → { can_review, reason? }.
+  const { data } = await api.get(
+    `${STAYS_API_BASE}/reservations/${encodeURIComponent(reservationId)}/review-eligibility`,
   );
-  return data;
+  const elig = unwrap<{ can_review: boolean; reason?: string }>(data);
+  // ReviewableStay has no `locked` flag → return null when not eligible.
+  if (!elig?.can_review) return null;
+  // Eligible, but the endpoint returns no property display content.
+  // TODO(stays): eligibility endpoint has IDs only, no property display content.
+  return {
+    reservationId,
+    propertyId: '',
+    propertyName: '',
+    coverUrl: '',
+    city: '',
+    roomTypeName: '',
+    checkIn: '',
+    checkOut: '',
+  };
 }
 
 export async function listMyReviews(): Promise<MyReview[]> {
@@ -188,8 +239,11 @@ export async function listMyReviews(): Promise<MyReview[]> {
     await delay(200);
     return [...myReviews].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   }
-  const { data } = await api.get<MyReview[]>(`${STAYS_API_BASE}/reviews/mine`);
-  return data;
+  const { data } = await api.get(`${STAYS_API_BASE}/reviews-mine`, {
+    params: { limit: 100, offset: 0 },
+  });
+  const rows = unwrap<BEReview[]>(data) ?? [];
+  return rows.map(mapReview);
 }
 
 export async function writeReview(input: WriteReviewInput): Promise<MyReview> {
@@ -215,8 +269,40 @@ export async function writeReview(input: WriteReviewInput): Promise<MyReview> {
     myReviews.unshift(review);
     return review;
   }
-  const { data } = await api.post<MyReview>(`${STAYS_API_BASE}/reviews`, input);
-  return data;
+  // Compute an overall out-of-10 from the sub-scores, then map to backend 1..5.
+  const vals = REVIEW_DIMENSIONS.map((d) => input.subScores[d]).filter(
+    (v) => typeof v === 'number',
+  );
+  const overallTen = vals.length
+    ? Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 10) / 10
+    : 0;
+  // Backend overall_score is an int in 1..5.
+  const overallFive = Math.min(5, Math.max(1, Math.round(overallTen / 2)));
+  const { data } = await api.post(
+    `${STAYS_API_BASE}/reservations/${encodeURIComponent(input.reservationId)}/review`,
+    {
+      overall_score: overallFive,
+      sub_scores: input.subScores,
+      title: input.title,
+      body: input.body,
+    },
+  );
+  const created = unwrap<{ id: string }>(data);
+  // Construct the local MyReview from the input + returned id.
+  // TODO(stays): backend returns { id } only, no property display content.
+  return {
+    id: created?.id ?? '',
+    reservationId: input.reservationId,
+    propertyId: input.propertyId,
+    propertyName: '',
+    coverUrl: '',
+    overall: overallTen,
+    subScores: input.subScores,
+    title: input.title,
+    body: input.body,
+    createdAt: new Date().toISOString(),
+    stayDate: new Date().toISOString().slice(0, 10),
+  };
 }
 
 // ── Loyalty ────────────────────────────────────────────────────────────────--
@@ -243,18 +329,68 @@ export async function getLoyaltyStatus(): Promise<LoyaltyStatus> {
       lifetimeSavingsKobo: 3_640_000,
     };
   }
-  const { data } = await api.get<LoyaltyStatus>(`${STAYS_API_BASE}/loyalty`);
-  return data;
+  // Live: backend returns raw stay counts; tier/perks/discount are derived here
+  // against the client-side LOYALTY_TIERS table (single source of tier config).
+  const { data } = await api.get(`${STAYS_API_BASE}/loyalty`);
+  const b = unwrap<{
+    stays_completed?: number;
+    stays_in_window?: number;
+    window_label?: string;
+    lifetime_savings_kobo?: number;
+  }>(data);
+  const completed = b.stays_completed ?? 0;
+  const inWindow = b.stays_in_window ?? 0;
+  const sorted = [...LOYALTY_TIERS].sort((a, z) => a.level - z.level);
+  let currentLevel = 0;
+  for (const t of sorted) if (inWindow >= t.staysRequired) currentLevel = t.level;
+  const current = LOYALTY_TIERS.find((t) => t.level === currentLevel);
+  const next = LOYALTY_TIERS.find((t) => t.level === currentLevel + 1);
+  const discountPct = currentLevel === 3 ? 10 : currentLevel === 2 ? 8 : currentLevel === 1 ? 5 : 0;
+  return {
+    currentLevel,
+    currentTierName: current?.name ?? 'Not yet a member',
+    staysCompleted: completed,
+    staysInWindow: inWindow,
+    windowLabel: b.window_label ?? 'Last 12 months',
+    nextTier: next,
+    staysToNext: next ? Math.max(0, next.staysRequired - inWindow) : 0,
+    discountPct,
+    tiers: LOYALTY_TIERS,
+    lifetimeSavingsKobo: Math.trunc(b.lifetime_savings_kobo ?? 0),
+  };
 }
 
 // ── Saved guests / travel docs ───────────────────────────────────────────────
+// Backend saved-guest shape (member routes /api/finance/stays/saved-guests). The
+// backend stores name/email/phone/is_lead only; the local SavedGuest carries a
+// few extra travel-doc fields that live client-side (not persisted server-side).
+interface BESavedGuest {
+  id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  is_lead: boolean;
+  created_at: string;
+}
+
+/** Map a backend saved guest onto the local SavedGuest type. */
+function mapSavedGuest(g: BESavedGuest): SavedGuest {
+  return {
+    id: g.id,
+    fullName: g.full_name ?? '',
+    // is_lead is the only relationship signal the backend holds.
+    relationship: g.is_lead ? 'Lead guest' : '',
+  };
+}
+
 export async function listSavedGuests(): Promise<SavedGuest[]> {
   if (USE_MOCK) {
     await delay(180);
     return [...savedGuests];
   }
-  const { data } = await api.get<SavedGuest[]>(`${STAYS_API_BASE}/saved-guests`);
-  return data;
+  const { data } = await api.get(`${STAYS_API_BASE}/saved-guests`);
+  const rows = unwrap<BESavedGuest[]>(data) ?? [];
+  return rows.map(mapSavedGuest);
 }
 
 export async function addSavedGuest(g: Omit<SavedGuest, 'id'>): Promise<SavedGuest> {
@@ -264,8 +400,13 @@ export async function addSavedGuest(g: Omit<SavedGuest, 'id'>): Promise<SavedGue
     savedGuests.push(created);
     return created;
   }
-  const { data } = await api.post<SavedGuest>(`${STAYS_API_BASE}/saved-guests`, g);
-  return data;
+  const { data } = await api.post(`${STAYS_API_BASE}/saved-guests`, {
+    full_name: g.fullName,
+    email: '',
+    phone: '',
+    is_lead: g.relationship?.toLowerCase() === 'lead guest',
+  });
+  return mapSavedGuest(unwrap<BESavedGuest>(data));
 }
 
 export async function removeSavedGuest(id: string): Promise<{ ok: true }> {

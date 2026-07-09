@@ -31,7 +31,7 @@ import (
 // Member: /api/finance/health/triage/*; admin: /api/health/triage/admin/*.
 func RegisterHealthTriage(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService,
 	ledgerSvc *ledger.Service, mapSvc *maps.Service, anthropicKey, redisURL, engineName, infID, infKey, waSecret string,
-	whatsappEnabled bool) {
+	whatsappEnabled bool, audit services.AuditService) {
 	if pool == nil {
 		return
 	}
@@ -71,7 +71,7 @@ func RegisterHealthTriage(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool
 			notify = triageNotifier{ns: notifications.NewService(qc)}
 		}
 	}
-	care.RegisterHealthTriageCare(finance, adminG, pool, rbac, pay, loc, notify, nil)
+	care.RegisterHealthTriageCare(finance, adminG, pool, rbac, pay, loc, notify, nil, audit)
 
 	// Clinical governance (content + red-flag rule sign-off, validation harness).
 	governance.RegisterHealthTriageGovernance(finance, adminG, pool, rbac)

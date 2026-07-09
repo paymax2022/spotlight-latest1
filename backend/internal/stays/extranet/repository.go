@@ -111,13 +111,13 @@ func (r *Repository) CreateRoomType(ctx context.Context, propertyID, name string
 
 // RatePlan is the rate-plan view.
 type RatePlan struct {
-	ID              string `json:"id"`
-	RoomTypeID      string `json:"room_type_id"`
-	Type            string `json:"rate_plan_type"`
-	Board           string `json:"board"`
-	Refundable      bool   `json:"refundable"`
-	BaseSellRateKobo int64 `json:"base_sell_rate_kobo"`
-	Currency        string `json:"currency"`
+	ID               string `json:"id"`
+	RoomTypeID       string `json:"room_type_id"`
+	Type             string `json:"rate_plan_type"`
+	Board            string `json:"board"`
+	Refundable       bool   `json:"refundable"`
+	BaseSellRateKobo int64  `json:"base_sell_rate_kobo"`
+	Currency         string `json:"currency"`
 }
 
 // ListRatePlans returns the property's rate plans (joined via room type).
@@ -258,12 +258,12 @@ func (r *Repository) dashboardWindow(ctx context.Context, propertyID, where, dat
 // ReservationDetail is the full reservation detail (object-scoped to property).
 type ReservationDetail struct {
 	ReservationRow
-	PropertyID   string         `json:"property_id"`
-	RoomTypeID   string         `json:"room_type_id"`
-	RatePlanID   string         `json:"rate_plan_id"`
-	NetRateKobo  int64          `json:"net_rate_kobo"`
-	CommissionKobo int64        `json:"commission_kobo"`
-	Occupancy    map[string]any `json:"occupancy"`
+	PropertyID     string         `json:"property_id"`
+	RoomTypeID     string         `json:"room_type_id"`
+	RatePlanID     string         `json:"rate_plan_id"`
+	NetRateKobo    int64          `json:"net_rate_kobo"`
+	CommissionKobo int64          `json:"commission_kobo"`
+	Occupancy      map[string]any `json:"occupancy"`
 }
 
 // GetReservationDetail returns a reservation if it belongs to the property.
@@ -410,14 +410,14 @@ func (r *Repository) ListCommission(ctx context.Context, propertyID string, limi
 
 // Analytics is the computed occupancy/ADR/RevPAR snapshot over a window.
 type Analytics struct {
-	From          string  `json:"from"`
-	To            string  `json:"to"`
-	RoomNights    int     `json:"room_nights_available"`
-	RoomNightsSold int    `json:"room_nights_sold"`
-	OccupancyPct  float64 `json:"occupancy_pct"`
-	RevenueKobo   int64   `json:"revenue_kobo"`
-	ADRKobo       int64   `json:"adr_kobo"`    // revenue / nights sold
-	RevPARKobo    int64   `json:"revpar_kobo"` // revenue / nights available
+	From           string  `json:"from"`
+	To             string  `json:"to"`
+	RoomNights     int     `json:"room_nights_available"`
+	RoomNightsSold int     `json:"room_nights_sold"`
+	OccupancyPct   float64 `json:"occupancy_pct"`
+	RevenueKobo    int64   `json:"revenue_kobo"`
+	ADRKobo        int64   `json:"adr_kobo"`    // revenue / nights sold
+	RevPARKobo     int64   `json:"revpar_kobo"` // revenue / nights available
 }
 
 // ComputeAnalytics derives occupancy/ADR/RevPAR from the availability calendar +
@@ -452,6 +452,64 @@ func (r *Repository) ComputeAnalytics(ctx context.Context, propertyID, from, to 
 		a.ADRKobo = a.RevenueKobo / int64(a.RoomNightsSold)
 	}
 	return a, nil
+}
+
+// --- messaging (guest <-> hotel thread) ---
+
+// Message is one persisted message in a reservation's guest<->hotel thread.
+type Message struct {
+	ID            string     `json:"id"`
+	ReservationID string     `json:"reservation_id"`
+	PropertyID    *string    `json:"property_id"`
+	SenderRole    string     `json:"sender_role"` // guest | host | system
+	SenderUserID  *string    `json:"sender_user_id"`
+	Body          string     `json:"body"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ReadAt        *time.Time `json:"read_at"`
+}
+
+// InsertMessage persists one message on a reservation's thread and returns the row.
+// Object-level authorization (who may post) is enforced in the service before this.
+func (r *Repository) InsertMessage(ctx context.Context, reservationID, propertyID, senderRole, senderUserID, body string) (Message, error) {
+	var m Message
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO public.stays_message
+			(reservation_id, property_id, sender_role, sender_user_id, body)
+		VALUES ($1, NULLIF($2,'')::uuid, $3, NULLIF($4,'')::uuid, $5)
+		RETURNING id, reservation_id, property_id::text, sender_role,
+		          sender_user_id::text, body, created_at, read_at`,
+		reservationID, propertyID, senderRole, senderUserID, body).Scan(
+		&m.ID, &m.ReservationID, &m.PropertyID, &m.SenderRole,
+		&m.SenderUserID, &m.Body, &m.CreatedAt, &m.ReadAt)
+	return m, err
+}
+
+// ListMessages returns a reservation's thread ordered oldest-first.
+func (r *Repository) ListMessages(ctx context.Context, reservationID string, limit int) ([]Message, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT id, reservation_id, property_id::text, sender_role,
+		       sender_user_id::text, body, created_at, read_at
+		FROM public.stays_message
+		WHERE reservation_id = $1
+		ORDER BY created_at ASC
+		LIMIT $2`, reservationID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]Message, 0)
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.ID, &m.ReservationID, &m.PropertyID, &m.SenderRole,
+			&m.SenderUserID, &m.Body, &m.CreatedAt, &m.ReadAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 // --- account / staff ---

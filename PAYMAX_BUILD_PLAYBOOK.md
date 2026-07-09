@@ -55,7 +55,7 @@ All 51 packages pass `go test ./...`. `go vet ./...` and `go build ./...` are cl
 | Telemedicine | `telemedicine` | ✅ |
 | Transport | `transport` | ✅ |
 | Restaurant delivery | `restaurant` | ✅ |
-| Events & ticketing | `events` | ✅ |
+| Events & ticketing | `top5events` (canonical; legacy `events` package deprecated-but-present, router wiring removed) | ✅ |
 | Crowdfunding | `crowdfunding` | ✅ |
 | Estate management | `estate` | ✅ |
 | Group savings | `groups` | ✅ |
@@ -91,6 +91,9 @@ Admin routes in Go backend: `/api/finance/admin/kyc/...` and `/api/finance/admin
 ### Workflow
 - API changes start in `contracts/openapi.yaml` — spec PR first, then implementation.
 - New module = run `/new-module` command.
+- **Every revenue-bearing module MUST integrate the Referral Reward Engine** as a
+  required downstream consumer — emit `PurchaseSettled` / `PurchaseRefunded`
+  (ADR-022, `docs/prd/referal/MODULE-INTEGRATION-CHECKLIST.md`).
 - Feature-flag every new module. No flag, no merge.
 - Conventional Commits. PRs < 400 lines where possible.
 
@@ -191,6 +194,16 @@ Acceptance criteria:
 - QR code: UUID, immutable at INSERT
 - Paid tickets: debit via wallet, idempotent on `IdempotencyKey`
 - `CancelEvent()` → bulk refund all non-scanned tickets
+
+> **Superseded — see `EVENTS-BUILD.md`.** The description above documents the original,
+> now-legacy `internal/events` CMS. A later reconciliation pass found this package colliding
+> (route + schema) with the newer `backend/internal/top5events` cashless-wallet implementation
+> and made **`top5events` the sole, canonical, wired implementation**; the legacy package's
+> router wiring was removed (files left in place, untouched). That pass also added the missing
+> `GET /api/finance/events` discovery/list endpoint, fixed a double `/events/events` route-path
+> bug, reconciled schema drift between two competing migrations via an additive-only migration,
+> and rewired the mobile app's 17 Events screens off mock data. See `EVENTS-BUILD.md` (repo root)
+> and `mobile-app/reactnative/EVENTS_TASK_TRACKER.json` for the full record and open items.
 
 ---
 

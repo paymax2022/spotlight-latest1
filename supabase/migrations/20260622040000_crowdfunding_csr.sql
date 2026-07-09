@@ -77,17 +77,25 @@ CREATE TABLE IF NOT EXISTS cf_employee_giving (
 
 CREATE INDEX IF NOT EXISTS cf_employee_giving_sponsor_idx ON cf_employee_giving(sponsor_id);
 
--- ─── seed data ───────────────────────────────────────────────────────────────
--- Demo/sample rows keyed to a synthetic sponsor so the CSR dashboards render
--- before any real corporate partner is onboarded. Idempotent via stable refs.
-INSERT INTO cf_csr_invoices (sponsor_id, reference, description, amount_kobo, vat_kobo, total_kobo, status, issued_at) VALUES
-    ('00000000-0000-0000-0000-000000000000', 'CSR-INV-2026-0001', 'Q1 matched contributions — medical campaigns', 5000000, 375000, 5375000, 'PAID', NOW() - INTERVAL '60 days'),
-    ('00000000-0000-0000-0000-000000000000', 'CSR-INV-2026-0002', 'Q2 matched contributions — education campaigns', 3200000, 240000, 3440000, 'DUE',  NOW() - INTERVAL '5 days')
-ON CONFLICT DO NOTHING;
+-- ─── seed data (demo; guarded) ───────────────────────────────────────────────
+-- Demo/sample rows keyed to a synthetic sponsor so the CSR dashboards render in
+-- a demo/staging environment. sponsor_id is NOT NULL REFERENCES auth.users(id),
+-- so on a real/production DB (where the synthetic sponsor does not exist) these
+-- seeds would violate the FK. Guarded to run ONLY when the synthetic sponsor
+-- exists → a safe no-op in production (no fake data, migration still succeeds).
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM auth.users WHERE id = '00000000-0000-0000-0000-000000000000') THEN
+    INSERT INTO cf_csr_invoices (sponsor_id, reference, description, amount_kobo, vat_kobo, total_kobo, status, issued_at) VALUES
+        ('00000000-0000-0000-0000-000000000000', 'CSR-INV-2026-0001', 'Q1 matched contributions — medical campaigns', 5000000, 375000, 5375000, 'PAID', NOW() - INTERVAL '60 days'),
+        ('00000000-0000-0000-0000-000000000000', 'CSR-INV-2026-0002', 'Q2 matched contributions — education campaigns', 3200000, 240000, 3440000, 'DUE',  NOW() - INTERVAL '5 days')
+    ON CONFLICT DO NOTHING;
 
-INSERT INTO cf_employee_giving (sponsor_id, title, goal_kobo, raised_kobo, participants, ends_at, company_match_ratio) VALUES
-    ('00000000-0000-0000-0000-000000000000', 'Staff Giving Drive 2026', 10000000, 4200000, 138, NOW() + INTERVAL '45 days', '1:1')
-ON CONFLICT DO NOTHING;
+    INSERT INTO cf_employee_giving (sponsor_id, title, goal_kobo, raised_kobo, participants, ends_at, company_match_ratio) VALUES
+        ('00000000-0000-0000-0000-000000000000', 'Staff Giving Drive 2026', 10000000, 4200000, 138, NOW() + INTERVAL '45 days', '1:1')
+    ON CONFLICT DO NOTHING;
+  END IF;
+END $$;
 
 -- ─── RLS — owner-scoped reads/writes + service_role bypass ────────────────────
 ALTER TABLE cf_csr_profiles    ENABLE ROW LEVEL SECURITY;

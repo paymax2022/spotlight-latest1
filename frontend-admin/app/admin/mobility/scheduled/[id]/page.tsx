@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { use, useCallback, useEffect, useState } from 'react';
 import {
   getScheduledBooking, forceDispatchScheduled, reassignScheduled, cancelScheduled,
 } from '@/services/scheduledAdminService';
@@ -23,8 +23,8 @@ function materializedHref(kind: ScheduledBookingDetail['materializedKind'], ref:
   return null;
 }
 
-export default function ScheduledBookingDetailPage({ params }: { params: { id: string } }) {
-  const { id } = params;
+export default function ScheduledBookingDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
   const { can } = useMobilityPermissions();
   const canView = can(SCHEDULED_PERMS.read);
   const canReassign = can(SCHEDULED_PERMS.reassign);

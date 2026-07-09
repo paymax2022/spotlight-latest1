@@ -1,16 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import { getStemSchoolDashboard } from '@/services/stemService';
 import type { StemSchoolDashboard } from '@/types/stem';
 
-export default function AdminSchoolDashboardPage({ params }: { params: { id: string } }) {
+export default function AdminSchoolDashboardPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
   const [data, setData] = useState<StemSchoolDashboard | null>(null);
 
   useEffect(() => {
-    void getStemSchoolDashboard(params.id).then(setData);
-  }, [params.id]);
+    void getStemSchoolDashboard(id).then(setData);
+  }, [id]);
 
   return (
     <section>

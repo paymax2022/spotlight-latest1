@@ -39,6 +39,32 @@ CREATE TABLE IF NOT EXISTS public.pharmacy_products (
   -- HL-5: a NAFDAC reference must be present for any catalog row.
   CHECK (length(btrim(nafdac_ref)) > 0)
 );
+
+-- COLLISION GUARD: an earlier migration (20260617000000_health_premium.sql) may
+-- have already created public.pharmacy_products with a DIFFERENT, simpler schema
+-- (no pharmacy_provider_id / nafdac_* / stock_qty / active / updated_at). In that
+-- case the CREATE TABLE IF NOT EXISTS above is a no-op and the columns this module
+-- (and its indexes/policies) depend on would be missing. Add them additively so
+-- this migration succeeds on a fresh DB whether or not the premium table pre-exists.
+-- Nullable / defaulted to stay additive-safe over any pre-seeded legacy rows; the
+-- Go service enforces presence + NAFDAC/tier invariants at write time (HL-3/4/5).
+ALTER TABLE public.pharmacy_products
+  ADD COLUMN IF NOT EXISTS pharmacy_provider_id uuid REFERENCES public.health_providers(id) ON DELETE CASCADE;
+ALTER TABLE public.pharmacy_products
+  ADD COLUMN IF NOT EXISTS nafdac_ref    text;
+ALTER TABLE public.pharmacy_products
+  ADD COLUMN IF NOT EXISTS nafdac_status text NOT NULL DEFAULT 'REGISTERED';
+ALTER TABLE public.pharmacy_products
+  ADD COLUMN IF NOT EXISTS rx_required   boolean NOT NULL DEFAULT false;
+ALTER TABLE public.pharmacy_products
+  ADD COLUMN IF NOT EXISTS is_controlled boolean NOT NULL DEFAULT false;
+ALTER TABLE public.pharmacy_products
+  ADD COLUMN IF NOT EXISTS stock_qty     int NOT NULL DEFAULT 0;
+ALTER TABLE public.pharmacy_products
+  ADD COLUMN IF NOT EXISTS active        boolean NOT NULL DEFAULT true;
+ALTER TABLE public.pharmacy_products
+  ADD COLUMN IF NOT EXISTS updated_at    timestamptz NOT NULL DEFAULT now();
+
 CREATE INDEX IF NOT EXISTS idx_pharmacy_products_provider
   ON public.pharmacy_products (pharmacy_provider_id, active);
 -- Catalog read path (HL-5: only registered+active surface).

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { use, useCallback, useEffect, useState } from 'react';
 import {
   getMember, suspendMember, restoreMember, transferMember, assignMemberRole,
   type MemberDetail,
@@ -14,8 +14,8 @@ import {
 
 type ActionKind = 'suspend' | 'restore' | 'transfer' | 'role';
 
-export default function AssociationMemberDetailPage({ params }: { params: { id: string } }) {
-  const { id } = params;
+export default function AssociationMemberDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
   const { can } = useAssociationPermissions();
   const canManage = can(ASSOCIATION_PERMS.manage);
 

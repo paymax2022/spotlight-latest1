@@ -115,16 +115,52 @@ func indicativeBase(from, to string) float64 {
 }
 
 // ─── Transfers: get by reference (GET /transfers/:reference) ─────────────────
-// The mobile polls this after POST /transfers. Not tracked in this stub, so we
-// echo the reference in a schema-complete, clearly-placeholder Transfer.
-
+// The mobile polls this after POST /transfers. This is now a REAL lookup: the
+// reference is resolved against the orchestration transaction ledger (the same
+// store CreateTransfer persists to). We return the actual status, amounts, rates,
+// route and status history. Only when no transfer is found for the caller do we
+// fall back to a schema-complete placeholder so the polling screen still renders.
 func (h *Handler) GetTransferByReference(c *gin.Context) {
 	ref := c.Param("reference")
+
+	// Resolve the persisted transaction for THIS customer by reference. Transaction
+	// matches on either id or reference and is object-scoped to the caller (no
+	// cross-customer leakage). A transfer is Type == "transfer".
+	if tx, ok, err := h.svc.Transaction(c.Request.Context(), customerID(c), ref); err == nil && ok && tx.Type == "transfer" {
+		history := make([]gin.H, 0)
+		if len(tx.Fees) == 0 {
+			tx.Fees = []Fee{}
+		}
+		history = append(history, gin.H{"status": tx.Status, "at": tx.CreatedAt.UTC().Format(time.RFC3339)})
+		c.JSON(http.StatusOK, gin.H{
+			"id":           tx.ID,
+			"reference":    tx.Reference,
+			"status":       tx.Status,
+			"source":       gin.H{"amount": tx.Source.AmountMinor, "currency": tx.Source.Currency},
+			"destination":  gin.H{"amount": tx.Destination.AmountMinor, "currency": tx.Destination.Currency},
+			"quotedRate":   tx.QuotedRate,
+			"executedRate": tx.ExecutedRate,
+			"fees":         tx.Fees,
+			"route":        tx.Route,
+			"beneficiary": gin.H{
+				"id": "", "name": "Beneficiary", "rail": string(tx.Route.Rail), "scheme": "BANK",
+				"currency": tx.Destination.Currency, "accountNumber": "", "bankName": nil, "countryCode": "NG",
+			},
+			"narration":     nil,
+			"transactionId": tx.ProviderRef,
+			"createdAt":     tx.CreatedAt.UTC().Format(time.RFC3339),
+			"statusHistory": history,
+		})
+		return
+	}
+
+	// Not found (e.g. reference not yet persisted, or wrong customer): honest,
+	// clearly-placeholder Transfer so the polling screen renders without a 404.
 	zero := gin.H{"amount": 0, "currency": "NGN"}
 	c.JSON(http.StatusOK, gin.H{
 		"id":           stubID("tr"),
 		"reference":    ref,
-		"status":       "processing", // honest: terminal status not tracked here
+		"status":       "processing", // honest: not resolvable to a persisted transfer
 		"source":       zero,
 		"destination":  zero,
 		"quotedRate":   nil,

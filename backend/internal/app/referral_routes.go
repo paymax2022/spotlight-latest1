@@ -14,6 +14,7 @@ import (
 	referralconfig "spotlight/backend/internal/referral/config"
 	referralevents "spotlight/backend/internal/referral/events"
 	referralhouse "spotlight/backend/internal/referral/house"
+	"spotlight/backend/internal/referral/invite"
 	referralledger "spotlight/backend/internal/referral/ledger"
 	"spotlight/backend/internal/services"
 )
@@ -62,6 +63,7 @@ func RegisterReferral(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgx
 	houseHandler := referralhouse.NewHandler(houseSvc, pool)
 	rewardHandler := referralledger.NewHandler(rewardSvc)
 	attribHandler := attribution.NewHandler(attribSvc, pool)
+	inviteHandler := invite.NewHandler(pool)
 
 	// --- Member routes (/api/finance/referral) ---
 	mg := member.Group("/referral")
@@ -71,6 +73,8 @@ func RegisterReferral(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgx
 	mg.GET("/my-rewards", rewardHandler.MySummary)          // M-HOME-03 summary
 	mg.GET("/withdraw-eligible", rewardHandler.MyEligible)  // eligible balance
 	mg.POST("/withdraw", rewardHandler.MyWithdraw)          // sweep eligible → wallet
+	mg.GET("/invite/vanity", inviteHandler.ListVanity)      // M-INV-05 list vanity links
+	mg.POST("/invite/vanity", inviteHandler.CreateVanity)   // M-INV-05 create vanity link
 
 	// --- Admin routes (/api/referral/admin, per-route RBAC referral.*) ---
 	guard := func(permission string) gin.HandlerFunc {

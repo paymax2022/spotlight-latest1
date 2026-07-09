@@ -157,7 +157,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_academy_scholaward_idem ON public.academy_s
 -- ───────────────────────── Content production + localization ──────────────────
 CREATE TABLE IF NOT EXISTS public.academy_content_productions (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  lesson_id  uuid REFERENCES public.academy_lessons(id),
+  lesson_id  uuid REFERENCES public.academy_edu_lessons(id),
   title      text NOT NULL,
   stage      text NOT NULL DEFAULT 'script'
                CHECK (stage IN ('script','storyboard','shoot','edit','qa','publish')),
@@ -265,9 +265,9 @@ BEGIN
 END $$;
 
 -- ───────────────────────── RBAC ──────────────────────────────────────────────
-INSERT INTO public.permissions (slug, description) VALUES
-  ('academy.edupay','Manage schools, fee schedules, disbursements + scholarships'),
-  ('academy.notifications','Manage academy notification templates + messaging')
+INSERT INTO public.permissions (name, slug, module, resource, action, description, is_system_permission) VALUES
+  ('Academy Edupay','academy.edupay','academy','academy','edupay','Manage schools, fee schedules, disbursements + scholarships',true),
+  ('Academy Notifications','academy.notifications','academy','academy','notifications','Manage academy notification templates + messaging',true)
 ON CONFLICT (slug) DO NOTHING;
 
 INSERT INTO public.role_permissions (role_id, permission_id)

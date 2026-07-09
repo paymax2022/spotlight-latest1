@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import type { OnboardingApplication } from '@/types/onboarding';
 import {
   getApplication,
@@ -28,8 +28,8 @@ const DOC_COLORS: Record<string, string> = {
   expired: '#fca5a5',
 };
 
-export default function MerchantOnboardingDetailPage({ params }: { params: { id: string } }) {
-  const { id } = params;
+export default function MerchantOnboardingDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
   const [app, setApp] = useState<OnboardingApplication | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);

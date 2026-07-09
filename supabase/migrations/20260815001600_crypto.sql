@@ -118,10 +118,10 @@ BEGIN
 END $$;
 
 -- ── RBAC ── view (read catalogue/portfolio), trade (buy/sell), admin (catalogue + orders).
-INSERT INTO public.permissions (slug, description) VALUES
-  ('crypto.view','View crypto assets, quotes and own portfolio/holdings'),
-  ('crypto.trade','Place crypto buy/sell orders'),
-  ('crypto.admin','Administer crypto assets, view all orders and configuration')
+INSERT INTO public.permissions (name, slug, module, resource, action, description, is_system_permission) VALUES
+  ('Crypto View','crypto.view','crypto','crypto','view','View crypto assets, quotes and own portfolio/holdings', true),
+  ('Crypto Trade','crypto.trade','crypto','crypto','trade','Place crypto buy/sell orders', true),
+  ('Crypto Admin','crypto.admin','crypto','crypto','admin','Administer crypto assets, view all orders and configuration', true)
 ON CONFLICT (slug) DO NOTHING;
 INSERT INTO public.role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM public.roles r CROSS JOIN public.permissions p

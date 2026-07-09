@@ -244,9 +244,9 @@ BEGIN
 END $$;
 
 -- ───────────────────────── RBAC ──────────────────────────────────────────────
-INSERT INTO public.permissions (slug, description) VALUES
-  ('academy.credentials','Issue/revoke credentials + manage earning-bridge opportunities'),
-  ('academy.live','Manage live classes/events + replays')
+INSERT INTO public.permissions (name, slug, module, resource, action, description, is_system_permission) VALUES
+  ('Academy Credentials','academy.credentials','academy','academy','credentials','Issue/revoke credentials + manage earning-bridge opportunities',true),
+  ('Academy Live','academy.live','academy','academy','live','Manage live classes/events + replays',true)
 ON CONFLICT (slug) DO NOTHING;
 
 INSERT INTO public.role_permissions (role_id, permission_id)
