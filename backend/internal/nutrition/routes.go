@@ -59,5 +59,15 @@ func RegisterNutrition(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac 
 	admin.POST("/reresolve", middleware.RequirePermission(rbac, PermNutritionResolve), h.AdminReresolve)
 	admin.POST("/resolve", middleware.RequirePermission(rbac, PermNutritionResolve), h.AdminResolve)
 
+	// ── Admin oversight surface (makes the frontend-admin nutrition console live).
+	//    consults = the dish-profile review queue mapped onto the console's consult
+	//    shape (real review entity; person fields are documented placeholders).
+	//    resolve  = a real human resolve/accept/close over that profile (audited).
+	//    payouts  = READ-ONLY explicit empty shape — no settlement entity exists,
+	//               money is never fabricated here (see admin_oversight.go).
+	admin.GET("/consults", middleware.RequirePermission(rbac, PermNutritionManage), h.AdminListConsults)
+	admin.POST("/consults/:id/resolve", middleware.RequirePermission(rbac, PermNutritionResolve), h.AdminResolveConsult)
+	admin.GET("/payouts", middleware.RequirePermission(rbac, PermNutritionManage), h.AdminPayoutRuns)
+
 	log.Println("[nutrition] NRE routes registered at /api/finance/nutrition + /api/nutrition/admin")
 }

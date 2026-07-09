@@ -355,25 +355,7 @@ func (s *Service) UpdateStatus(ctx context.Context, orderID, actorID string, new
 
 	// On delivery, settle: 80% restaurant owner, 10% rider (stubbed to owner if no rider), 10% platform.
 	if newStatus == OrderDelivered {
-		var riderID *string
-		s.db.QueryRow(ctx, `SELECT rider_id FROM orders WHERE id=$1`, orderID).Scan(&riderID)
-		var ownerID string
-		s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, order.RestaurantID).Scan(&ownerID)
-		// Split must sum to 1.0. With a rider: 80% restaurant / 10% platform / 10%
-		// rider. With NO rider, the 10% rider share folds back into the restaurant
-		// (90% / 10%) so escrow is fully released and nothing is orphaned.
-		split := settlement.Split{
-			ProviderID:  ownerID,
-			ProviderPct: 0.80,
-			PlatformPct: 0.10,
-			RiderID:     riderID,
-			RiderPct:    0.10,
-		}
-		if riderID == nil {
-			split.ProviderPct = 0.90
-			split.RiderPct = 0
-		}
-		if err := s.settlement.Settle(ctx, order.SettlementID, split); err != nil {
+		if err := s.settleOrder(ctx, orderID, order.RestaurantID, order.SettlementID); err != nil {
 			return fmt.Errorf("restaurant: settle order: %w", err)
 		}
 	}
@@ -437,6 +419,34 @@ func canTransition(from, to OrderStatus) bool {
 		// delivered / cancelled are terminal.
 		return false
 	}
+}
+
+// settleOrder releases an order's escrow with the standard split: 80% restaurant
+// owner / 10% rider / 10% platform, folding the rider share back into the
+// restaurant (90/10) when no rider is assigned so escrow is fully released.
+//
+// IDEMPOTENT: it drives settlement.Settle, which is guarded WHERE the settlement
+// row is 'escrowed' (a duplicate no-ops with a "cannot settle" error) and posts
+// every ledger leg with ON CONFLICT (idempotency_key) DO NOTHING. Re-driving this
+// after a partial crash therefore converges to exactly one payout. Shared by the
+// live UpdateStatus(delivered) path and the crash-recovery reconciler.
+func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settlementID string) error {
+	var riderID *string
+	s.db.QueryRow(ctx, `SELECT rider_id FROM orders WHERE id=$1`, orderID).Scan(&riderID)
+	var ownerID string
+	s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID)
+	split := settlement.Split{
+		ProviderID:  ownerID,
+		ProviderPct: 0.80,
+		PlatformPct: 0.10,
+		RiderID:     riderID,
+		RiderPct:    0.10,
+	}
+	if riderID == nil {
+		split.ProviderPct = 0.90
+		split.RiderPct = 0
+	}
+	return s.settlement.Settle(ctx, settlementID, split)
 }
 
 // CancelOrder refunds the customer if the order has not yet been picked up.

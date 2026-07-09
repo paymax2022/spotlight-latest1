@@ -71,4 +71,6 @@ const (
 	EventOrderNoRiders  = "restaurant.order.no_riders" // dispatch found no available riders
 	EventOrderHandoff   = "restaurant.order.handoff"   // delivered + handed off (code confirmed)
 	EventNewMessage     = "restaurant.chat.message"
+	// Admin ops-console onboarding decision (approve/reject) delivered to the owner.
+	EventOnboardingDecision = "restaurant.onboarding.decision"
 )

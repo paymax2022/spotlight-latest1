@@ -1251,6 +1251,25 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.GET("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.GetDeliveryConfig)
 		restAdmin.PUT("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.PutDeliveryConfig)
 
+		// Ops-console admin surfaces (dispatch board, onboarding/KYC review, payout
+		// reconciliation) consumed by frontend-admin/app/admin/restaurant/*. Each is
+		// fail-closed behind its own restaurant.admin.* permission. Reads are thin
+		// projections over existing tables; the two mutations drive existing
+		// idempotent transitions (manual assign, onboarding is_open gate). Disputes
+		// are NOT here — the console reuses /api/finance/{disputes,admin/disputes}.
+		restAdmin.GET("/riders", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminListRiders)
+		restAdmin.GET("/dispatch/queue", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminDispatchQueue)
+		restAdmin.POST("/orders/:id/assign", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminAssignRider)
+		restAdmin.GET("/onboarding", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListApplications)
+		// Single wildcard segment handles all three shapes the admin UI may post:
+		//   /onboarding/:id/decision  (body {decision, note})
+		//   /onboarding/:id/approve   (decision taken from the path)
+		//   /onboarding/:id/reject    (decision taken from the path)
+		// Registering both a static "decision" and a ":decision" param at the same
+		// position would panic in Gin, so the handler resolves the literal below.
+		restAdmin.POST("/onboarding/:id/:decision", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideApplication)
+		restAdmin.GET("/payouts", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminPayoutRuns)
+
 		// Crash-recovery settlement reconciliation (money-path durability): an order
 		// marked delivered whose escrow never released (process died / Settle errored
 		// after the status flip) is re-driven through the SAME idempotent settleOrder

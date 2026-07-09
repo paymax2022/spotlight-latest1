@@ -91,6 +91,16 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		admin.GET("/orders", rp(PermAdmin), h.AdminListOrders)
 		admin.GET("/assets", rp(PermAdmin), h.AdminListAssets)
 		admin.POST("/assets", rp(PermAdmin), h.AdminConfigAsset)
+
+		// ── Crypto oversight (withdrawals/swaps/addresses/reconciliation) ──────
+		// Backs frontend-admin/app/admin/crypto/*. Read + AML/allow-list decision
+		// paths; decisions drive the EXISTING state machines (no new money movement).
+		admin.GET("/withdrawals", rp(PermAdmin), h.AdminListWithdrawals)
+		admin.POST("/withdrawals/:id/decision", rp(PermAdmin), h.AdminDecideWithdrawal)
+		admin.GET("/swaps", rp(PermAdmin), h.AdminListSwaps)
+		admin.GET("/addresses", rp(PermAdmin), h.AdminListAddresses)
+		admin.POST("/addresses/:id/decision", rp(PermAdmin), h.AdminDecideAddress)
+		admin.GET("/reconciliation", rp(PermAdmin), h.AdminReconciliation)
 	}
 
 	log.Println("[crypto] routes registered at /api/v1/crypto and /api/v1/admin/crypto (price=" + svc.price.Name() + ")")

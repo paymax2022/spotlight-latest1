@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -238,6 +239,11 @@ func (r *Repository) UpsertRecipe(ctx context.Context, rec Recipe) (*Recipe, err
 const profileCols = `id, menu_item_id, restaurant_id, grounding, confidence, status,
 	portion_label, portion_size_g, per_serving, composition_version, confirmed_by::text, version`
 
+// profileColsPrefixed is profileCols with a `p.` table alias, for the admin
+// review-queue join to menu_items (ListReviewProfiles).
+const profileColsPrefixed = `p.id, p.menu_item_id, p.restaurant_id, p.grounding, p.confidence, p.status,
+	p.portion_label, p.portion_size_g, p.per_serving, p.composition_version, p.confirmed_by::text, p.version`
+
 func scanProfile(row interface{ Scan(...any) error }) (*Profile, error) {
 	var p Profile
 	var psRaw []byte
@@ -469,6 +475,64 @@ func (r *Repository) ListAllProfiles(ctx context.Context, limit int) ([]Profile,
 			return nil, err
 		}
 		out = append(out, *p)
+	}
+	return out, rows.Err()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin oversight reads (review queue). Thin, read-only. No money.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ReviewProfile is a profile enriched with its dish name + timestamps, for the
+// admin review queue ("consults" surface). The join to menu_items gives the human
+// name; created_at/updated_at are the profile's own audit timestamps.
+type ReviewProfile struct {
+	Profile   Profile
+	DishName  string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// ListReviewProfiles returns the profiles that need a human review — LOW/free AI
+// estimates + STALE profiles (the real population behind the admin "consult"
+// queue) — newest-flagged first, joined to the dish name. RESTAURANT_CONFIRMED /
+// EXACT are excluded at the query level (already trusted). Read-only.
+func (r *Repository) ListReviewProfiles(ctx context.Context, limit int) ([]ReviewProfile, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	const q = `
+		SELECT ` + profileColsPrefixed + `,
+		       mi.name, p.created_at, p.updated_at
+		FROM dish_nutrition_profile p
+		JOIN menu_items mi ON mi.id = p.menu_item_id
+		WHERE p.status IN ('AI_ESTIMATE','STALE')
+		ORDER BY p.updated_at DESC
+		LIMIT $1`
+	rows, err := r.db.Query(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ReviewProfile
+	for rows.Next() {
+		var rp ReviewProfile
+		var psRaw []byte
+		var grounding, conf, status string
+		if err := rows.Scan(
+			&rp.Profile.ID, &rp.Profile.MenuItemID, &rp.Profile.RestaurantID, &grounding, &conf, &status,
+			&rp.Profile.PortionLabel, &rp.Profile.PortionSizeG, &psRaw, &rp.Profile.CompositionVersion,
+			&rp.Profile.ConfirmedBy, &rp.Profile.Version,
+			&rp.DishName, &rp.CreatedAt, &rp.UpdatedAt); err != nil {
+			return nil, err
+		}
+		rp.Profile.Grounding = Grounding(grounding)
+		rp.Profile.Confidence = Confidence(conf)
+		rp.Profile.Status = Status(status)
+		if len(psRaw) > 0 {
+			_ = json.Unmarshal(psRaw, &rp.Profile.PerServing)
+		}
+		out = append(out, rp)
 	}
 	return out, rows.Err()
 }

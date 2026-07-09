@@ -249,6 +249,50 @@ func (h *Handler) AdminReresolve(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"reresolved": n})
 }
 
+// ── Admin oversight (consults + payouts) — makes the admin console live ───────
+
+// AdminListConsults: GET /consults?status=&priority=&q= — the review queue of dish
+// nutrition profiles awaiting a human resolve/accept (mapped onto the console's
+// "nutritionist consult" shape; see admin_oversight.go for what is real vs a
+// placeholder). RBAC nutrition.admin.manage at the route.
+func (h *Handler) AdminListConsults(c *gin.Context) {
+	f := AdminConsultFilters{
+		Status:   c.Query("status"),
+		Priority: c.Query("priority"),
+		Q:        c.Query("q"),
+	}
+	rows, err := h.svc.AdminListConsults(c.Request.Context(), f, 0)
+	if err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"consults": rows})
+}
+
+// AdminResolveConsult: POST /consults/:id/resolve {resolution, note} — a REAL
+// human resolve/accept/close over the dish profile behind the consult. Audited.
+// RBAC nutrition.admin.resolve at the route.
+func (h *Handler) AdminResolveConsult(c *gin.Context) {
+	var body struct {
+		Resolution string `json:"resolution"`
+		Note       string `json:"note"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	out, err := h.svc.AdminResolveConsult(c.Request.Context(), c.Param("id"), uid(c), body.Resolution, body.Note)
+	if err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"consult": out})
+}
+
+// AdminPayoutRuns: GET /payouts — read-only. Returns an explicit, documented EMPTY
+// shape: the nutrition module has NO settlement/payout entity and never fabricates
+// money (see admin_oversight.go TODO). RBAC nutrition.admin.manage at the route.
+func (h *Handler) AdminPayoutRuns(c *gin.Context) {
+	c.JSON(http.StatusOK, h.svc.AdminPayoutRuns(c.Request.Context()))
+}
+
 // AdminResolve: POST /resolve — force-resolve a single dish (the internal resolve).
 func (h *Handler) AdminResolve(c *gin.Context) {
 	var body struct {
