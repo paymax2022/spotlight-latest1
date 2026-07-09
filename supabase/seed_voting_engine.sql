@@ -147,7 +147,7 @@ BEGIN
   --    Uses real enrollment IDs if available, otherwise skips gracefully.
   -- -------------------------------------------------------------------------
   WITH contestants AS (
-    SELECT id, ROW_NUMBER() OVER (ORDER BY created_at) AS rn
+    SELECT id, ROW_NUMBER() OVER (ORDER BY enrolled_at) AS rn
     FROM public.competition_enrollments
     WHERE competition_id = v_contest_id
     LIMIT 10
