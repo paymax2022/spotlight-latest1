@@ -74,6 +74,7 @@ export default function ParentHome() {
         <View style={styles.grid}>
           <QuickLink icon={FileText} label="Reports" onPress={() => router.push('/learn/academy/parent/reports')} />
           <QuickLink icon={Wallet} label="EduPay fees" onPress={() => router.push('/learn/academy/parent/edupay')} />
+          <QuickLink icon={GraduationCap} label="School fees" onPress={() => router.push('/learn/academy/fees')} />
           <QuickLink icon={Award} label="Scholarships" onPress={() => router.push('/learn/academy/parent/scholarships')} />
           <QuickLink icon={CreditCard} label="Billing" onPress={() => router.push('/learn/academy/parent/billing')} />
         </View>

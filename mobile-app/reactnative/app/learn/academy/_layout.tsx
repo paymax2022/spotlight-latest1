@@ -116,6 +116,28 @@ export default function AcademyLayout() {
       <Stack.Screen name="ecce/index" />
       <Stack.Screen name="ecce/play/[id]" options={{ gestureEnabled: false }} />
       <Stack.Screen name="ecce/gate" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
+
+      {/* EdTech School-Fees — Parent (PA-01 … PA-16) · mock-first behind
+          EXPO_PUBLIC_ACADEMY_FEES_USE_MOCK. Live path → /api/finance/academy/fees. */}
+      <Stack.Screen name="fees/index" />
+      <Stack.Screen name="fees/onboarding" options={{ animation: 'slide_from_bottom', presentation: 'modal' }} />
+      <Stack.Screen name="fees/invoices/[childId]" />
+      <Stack.Screen name="fees/invoice/[invoiceId]" />
+      <Stack.Screen name="fees/pay/[invoiceId]" />
+      <Stack.Screen name="fees/installments/[invoiceId]" />
+      <Stack.Screen name="fees/disclosure/[invoiceId]" />
+      <Stack.Screen name="fees/vault/index" />
+      <Stack.Screen name="fees/vault/auto-save/[vaultId]" />
+      <Stack.Screen name="fees/receipts" />
+      <Stack.Screen name="fees/hardship" />
+      <Stack.Screen name="fees/sponsor" />
+      <Stack.Screen name="fees/directory" />
+
+      {/* EdTech Cross-School Competition — Student (SA-121 … SA-126) */}
+      <Stack.Screen name="competition/index" />
+      <Stack.Screen name="competition/leaderboard" />
+      <Stack.Screen name="competition/challenge" />
+      <Stack.Screen name="competition/badges" />
     </Stack>
   );
 }

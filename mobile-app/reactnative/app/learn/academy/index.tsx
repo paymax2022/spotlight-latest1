@@ -190,6 +190,14 @@ export default function AcademyHome() {
           <QuickLink icon={Megaphone} label="Announcements" onPress={() => router.push('/learn/academy/announcements')} />
         </View>
 
+        {/* School & Compete */}
+        <Text style={styles.railTitle}>School & Compete</Text>
+        <View style={styles.quickGrid}>
+          <QuickLink icon={GraduationCap} label="School fees" onPress={() => router.push('/learn/academy/fees')} />
+          <QuickLink icon={Trophy} label="Compete" onPress={() => router.push('/learn/academy/competition')} />
+          <QuickLink icon={Trophy} label="Leaderboards" onPress={() => router.push('/learn/academy/competition/leaderboard')} />
+        </View>
+
         {/* Parent area entry (role switch) */}
         <Pressable style={[styles.parentCard, shadow1]} onPress={() => router.push('/learn/academy/parent')}>
           <View style={styles.parentIcon}><Users size={20} color={Colors.primary} /></View>

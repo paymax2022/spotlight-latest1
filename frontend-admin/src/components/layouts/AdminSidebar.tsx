@@ -343,6 +343,15 @@ const navItemsBase: NavItem[] = [
   { label: 'Schools', href: '/admin/academy/schools', section: 'Academy', permissions: ['academy.schools'] },
   { label: 'Tutor Ops', href: '/admin/academy/tutors', section: 'Academy', permissions: ['academy.tutor'] },
   { label: 'Analytics & BI', href: '/admin/academy/analytics', section: 'Academy', permissions: ['academy.analyst'] },
+  // ── EdTech School-Fees console (SC-29 … SC-40; RBAC academy.fees.*; school-scoped) ──
+  { label: 'Fees · Setup Wizard', href: '/admin/academy/fees/setup-wizard', section: 'Academy', permissions: ['academy.fees.setup'] },
+  { label: 'Fees · Bulk Onboarding', href: '/admin/academy/fees/onboarding', section: 'Academy', permissions: ['academy.fees.onboarding'] },
+  { label: 'Fees · Collections', href: '/admin/academy/fees/collections', section: 'Academy', permissions: ['academy.fees.collections'] },
+  { label: 'Fees · Hardship Queue', href: '/admin/academy/fees/hardship', section: 'Academy', permissions: ['academy.fees.hardship'] },
+  { label: 'Fees · Promotion & Rollover', href: '/admin/academy/fees/promotion', section: 'Academy', permissions: ['academy.fees.promotion'] },
+  { label: 'Fees · Competitions', href: '/admin/academy/fees/competition', section: 'Academy', permissions: ['academy.fees.competition'] },
+  { label: 'Fees · Gov Export', href: '/admin/academy/fees/gov-export', section: 'Academy', permissions: ['academy.fees.export'] },
+  { label: 'Fees · Staff Roles', href: '/admin/academy/fees/roles', section: 'Academy', permissions: ['academy.fees.roles'] },
   // ── Telemedicine (Health — read-only ops; backend has no admin route group yet) ──
   { label: 'Telemedicine Overview', href: '/admin/telemedicine/dashboard', section: 'Health', permissions: ['health.doctor.review', 'health.triage.review'] },
   { label: 'Consultations', href: '/admin/telemedicine/consultations', section: 'Health', permissions: ['health.doctor.review', 'health.triage.review'] },
@@ -401,9 +410,36 @@ const navItemsBase: NavItem[] = [
   { label: 'Pot & Disbursement', href: '/admin/arena/pot', section: 'Arena', permissions: ['arena.admin.manage'] },
   { label: 'Sponsor Placement', href: '/admin/arena/sponsors', section: 'Arena', permissions: ['arena.admin.manage'] },
   { label: 'Credentials', href: '/admin/arena/credentials', section: 'Arena', permissions: ['arena.admin.manage'] },
+  // ── Platform · EdTech (SUPER-ADMIN console, SU-01..SU-12) ────────────────────
+  // Checkpoint E — RBAC scope separation. This is a Paymax PLATFORM-OPERATOR
+  // surface, NOT an escalated school-admin surface. It is registered as its OWN
+  // top-level section ('Platform · EdTech'), entirely separate from the per-school
+  // 'Academy' section above. Every item is gated on the SINGLE capability
+  // `platform_edtech_admin`. Because the section renderer below filters items with
+  // hasAnyPermission(authUser, item.permissions), a school-level role
+  // (school-owner / bursar / class-teacher / head-teacher / guardian / student) —
+  // which never carries `platform_edtech_admin` — matches ZERO items here, so the
+  // whole section header is skipped (see `if (!items.length) return null`). There
+  // is no school-role permission that unlocks any of these routes; a school owner
+  // or bursar has zero visibility into the Super-Admin console regardless of their
+  // own school-scoped permissions. Each page ALSO re-asserts the capability via
+  // <PlatformGuard> for defence-in-depth, and the Go backend
+  // (middleware.RequirePermission "platform_edtech_admin") stays authoritative.
+  { label: 'School Directory (SU-01)', href: '/admin/platform/edtech', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
+  { label: 'Verification Queue (SU-02)', href: '/admin/platform/edtech/verification', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
+  { label: 'Collections (SU-03)', href: '/admin/platform/edtech/collections', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
+  { label: 'Fraud & Risk (SU-04)', href: '/admin/platform/edtech/fraud', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
+  { label: 'Gov Sync (SU-05)', href: '/admin/platform/edtech/gov-sync', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
+  { label: 'Competition Ops (SU-06)', href: '/admin/platform/edtech/competitions', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
+  { label: 'Trust Score (SU-07)', href: '/admin/platform/edtech/trust-scores', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
+  { label: 'Scholarships (SU-08)', href: '/admin/platform/edtech/scholarships', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
+  { label: 'Support Queue (SU-09)', href: '/admin/platform/edtech/support', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
+  { label: 'Flags & Config (SU-10)', href: '/admin/platform/edtech/flags', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
+  { label: 'Audit Log (SU-11)', href: '/admin/platform/edtech/audit-log', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
+  { label: 'Compliance (SU-12)', href: '/admin/platform/edtech/compliance', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
 ];
 
-const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Crowdfunding', 'Connect', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace'];
+const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Crowdfunding', 'Connect', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'Platform · EdTech'];
 
 export function AdminSidebar() {
   const pathname = usePathname() ?? '';
