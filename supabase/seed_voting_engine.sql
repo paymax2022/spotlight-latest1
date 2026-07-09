@@ -107,7 +107,6 @@ BEGIN
     status         = EXCLUDED.status,
     voting_ends_at = EXCLUDED.voting_ends_at;
 
-  GET DIAGNOSTICS v_settings_id = ROW_COUNT;
   RAISE NOTICE 'Voting settings upserted for contest: %', v_contest_id;
 
   -- -------------------------------------------------------------------------
