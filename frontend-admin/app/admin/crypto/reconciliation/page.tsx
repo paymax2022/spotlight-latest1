@@ -74,9 +74,10 @@ export default function CryptoReconciliationPage() {
             <tbody>
               {rows.map((r) => {
                 const dk = driftKobo(r);
-                const isBreak = r.status === 'break' || r.drift_units !== 0;
+                const noFeed = r.status === 'no_feed';
+                const isBreak = !noFeed && (r.status === 'break' || r.status === 'drift' || r.drift_units !== 0);
                 return (
-                  <tr key={r.asset_id} style={isBreak ? { background: '#fef2f2' } : undefined}>
+                  <tr key={r.asset_id} style={isBreak ? { background: '#fef2f2' } : noFeed ? { background: '#fffbeb' } : undefined}>
                     <td style={{ ...td(), fontWeight: 700 }}>{r.symbol}</td>
                     <td style={td()}>{fmtUnits(r.ledger_units, r.minor_unit_scale, r.symbol)}</td>
                     <td style={td()}>{fmtUnits(r.onchain_units, r.minor_unit_scale, r.symbol)}</td>
@@ -86,7 +87,7 @@ export default function CryptoReconciliationPage() {
                     <td style={{ ...td(), color: dk === 0 ? '#15803d' : '#b91c1c', fontWeight: 600 }}>
                       {dk > 0 ? '+' : dk < 0 ? '-' : ''}{formatKobo(Math.abs(dk))}
                     </td>
-                    <td style={td()}><StatusBadge status={isBreak ? 'break' : 'ok'} /></td>
+                    <td style={td()}><StatusBadge status={noFeed ? 'no_feed' : isBreak ? 'break' : 'ok'} /></td>
                     <td style={td()}>{fmtDate(r.last_checked_at)}</td>
                   </tr>
                 );
