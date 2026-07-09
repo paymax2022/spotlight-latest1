@@ -165,8 +165,9 @@ export async function listDispatchQueue(): Promise<DispatchOrder[]> {
   return reqAt<DispatchOrder[]>(`${adminBase()}/dispatch/queue`);
 }
 
-// Manually assign/offer an order to a specific rider. CONSUMES the live
-// POST /api/finance/restaurant/orders/:orderId/assign route.
+// Manually assign/offer an order to a specific rider. Targets the live admin
+// dispatch route POST /api/restaurant/admin/orders/:id/assign (body {rider_id}),
+// which returns {ok:true}.
 export async function assignRider(orderId: string, riderId: string): Promise<{ ok: true }> {
   if (USE_MOCK) {
     await delay();
@@ -175,7 +176,8 @@ export async function assignRider(orderId: string, riderId: string): Promise<{ o
     if (d && r) { d.rider_id = riderId; d.rider_name = r.name; d.status = 'assigned'; r.status = 'on_delivery'; r.active_order_id = orderId; }
     return { ok: true };
   }
-  return reqAt<{ ok: true }>(`${base()}/orders/${orderId}/assign`, {
+  // TARGET: POST /api/restaurant/admin/orders/:id/assign (restaurant.admin.dispatch)
+  return reqAt<{ ok: true }>(`${adminBase()}/orders/${orderId}/assign`, {
     method: 'POST',
     body: JSON.stringify({ rider_id: riderId }),
   });

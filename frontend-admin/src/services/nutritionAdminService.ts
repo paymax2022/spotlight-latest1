@@ -478,15 +478,20 @@ export async function transitionConsult(
     consultFixture = consultFixture.map((c, i) => (i === idx ? updated : c));
     return updated;
   }
-  const action =
+  // Backend exposes a SINGLE resolve endpoint: POST /consults/:id/resolve with the
+  // desired action carried in the body's `resolution` field (see AdminResolveConsult:
+  // resolve|accept|close|escalate). Map the console's target status onto that vocab
+  // and always post to /resolve; the handler returns { consult:{...} }.
+  const resolution =
     next === 'RESOLVED'
       ? 'resolve'
       : next === 'CLOSED'
         ? 'close'
         : next === 'ESCALATED'
           ? 'escalate'
-          : 'review';
-  const data = (await post(`/nutrition/admin/consults/${encodeURIComponent(id)}/${action}`, {
+          : 'accept';
+  const data = (await post(`/nutrition/admin/consults/${encodeURIComponent(id)}/resolve`, {
+    resolution,
     note: note ?? '',
   })) as Record<string, unknown>;
   return (data.consult ?? data) as NutritionistConsult;
