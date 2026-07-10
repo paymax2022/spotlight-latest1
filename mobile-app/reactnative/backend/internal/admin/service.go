@@ -647,6 +647,20 @@ func (s *Service) FeatureFlags() []FeatureFlag {
 	return out
 }
 
+// FlagEnabled reports whether a feature flag is on. An UNKNOWN key returns true
+// (fail-open) so a typo in a call site never becomes an accidental outage; a KNOWN
+// key returns its current toggle state so operators can kill a capability live.
+// Thread-safe — the money-path handlers consult this before executing.
+func (s *Service) FlagEnabled(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, ok := s.flags[key]
+	if !ok {
+		return true
+	}
+	return f.Enabled
+}
+
 // SetFlag toggles a feature flag. Not maker-checked (reversible product toggle)
 // but always audited. Requires PermFlagToggle.
 func (s *Service) SetFlag(key string, enabled bool, actor Role, reason string) *AdminError {

@@ -139,9 +139,25 @@ func (r tradeReq) quoteID() string {
 func (s *Server) postBuy(w http.ResponseWriter, r *http.Request)  { s.trade(w, r, "buy") }
 func (s *Server) postSell(w http.ResponseWriter, r *http.Request) { s.trade(w, r, "sell") }
 
+// requireFlag enforces an operator kill-switch: if the named feature flag has been
+// switched off in the admin console, the money path is blocked (503) before any
+// state is touched. An absent admin service or unknown flag fails open, so this can
+// only ever STOP a capability, never accidentally enable one.
+func (s *Server) requireFlag(w http.ResponseWriter, key string) bool {
+	if s.Admin != nil && !s.Admin.FlagEnabled(key) {
+		writeErr(w, http.StatusServiceUnavailable, "feature_disabled", "This feature is temporarily unavailable.")
+		return false
+	}
+	return true
+}
+
 func (s *Server) trade(w http.ResponseWriter, r *http.Request, side string) {
 	// Compliance gate first: block ineligible users before any state is touched.
 	if !s.requireEligible(w) {
+		return
+	}
+	// Operator kill-switch for crypto buy/sell.
+	if !s.requireFlag(w, "invest_crypto") {
 		return
 	}
 
@@ -194,6 +210,9 @@ func (s *Server) trade(w http.ResponseWriter, r *http.Request, side string) {
 
 func (s *Server) postSwap(w http.ResponseWriter, r *http.Request) {
 	if !s.requireEligible(w) {
+		return
+	}
+	if !s.requireFlag(w, "crypto_swaps") {
 		return
 	}
 	key := r.Header.Get("Idempotency-Key")
@@ -496,6 +515,9 @@ func (s *Server) postWebhook(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) postWithdraw(w http.ResponseWriter, r *http.Request) {
 	if !s.requireEligible(w) {
+		return
+	}
+	if !s.requireFlag(w, "crypto_withdrawals") {
 		return
 	}
 	key := r.Header.Get("Idempotency-Key")

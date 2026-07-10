@@ -49,6 +49,9 @@ func (s *Server) getStockCorporateActions(w http.ResponseWriter, r *http.Request
 // ── Stocks: orders ─────────────────────────────────────────────────────────────
 
 func (s *Server) postStockOrder(w http.ResponseWriter, r *http.Request) {
+	if !s.requireFlag(w, "invest_stocks") {
+		return
+	}
 	key := r.Header.Get("Idempotency-Key")
 	var draft stocks.OrderDraft
 	if err := readJSON(r, &draft); err != nil {
@@ -101,6 +104,9 @@ func (s *Server) getStockOffer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) applyStockOffer(w http.ResponseWriter, r *http.Request) {
+	if !s.requireFlag(w, "public_offers") {
+		return
+	}
 	key := r.Header.Get("Idempotency-Key")
 	var body struct {
 		Units int64 `json:"units"`
