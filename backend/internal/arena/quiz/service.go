@@ -101,6 +101,12 @@ func mark(qs []Question, answers []Answer) (score, total int, reveals []Reveal, 
 		if correct {
 			score++
 		}
+		// Persist -1 for an unanswered question so the audit trail can tell
+		// "did not answer" apart from "chose option 0" (both would be 0 otherwise).
+		optionIndex := picked
+		if !answered {
+			optionIndex = -1
+		}
 		reveals = append(reveals, Reveal{
 			QuestionID:      q.ExternalID,
 			CorrectOptionID: strconv.Itoa(q.CorrectIndex),
@@ -109,7 +115,7 @@ func mark(qs []Question, answers []Answer) (score, total int, reveals []Reveal, 
 		})
 		responses = append(responses, Response{
 			QuestionExternalID: q.ExternalID,
-			OptionIndex:        picked,
+			OptionIndex:        optionIndex,
 			Correct:            correct,
 		})
 	}

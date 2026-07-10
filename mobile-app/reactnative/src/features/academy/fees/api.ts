@@ -403,7 +403,7 @@ export async function createInstallmentPlan(invoiceId: string, count: number): P
     const installments = Array.from({ length: count }).map((_, idx) => {
       const amt = idx === count - 1 ? outstanding - base * (count - 1) : base;
       const due = new Date(Date.now() + idx * 30 * 86_400_000).toISOString();
-      return { id: `ins_${Date.now()}_${idx}`, seq: idx + 1, amountKobo: amt, dueDate: due, status: (idx === 0 ? 'due' : 'scheduled') as const };
+      return { id: `ins_${Date.now()}_${idx}`, seq: idx + 1, amountKobo: amt, dueDate: due, status: idx === 0 ? ('due' as const) : ('scheduled' as const) };
     });
     const plan: InstallmentPlan = {
       id: `plan_${Date.now()}`, invoiceId, count, totalKobo: outstanding, installments,

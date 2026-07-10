@@ -168,7 +168,7 @@ export async function getSplit(id: string): Promise<SplitBill> {
     return s;
   }
   const res = await api.get(`${API_BASE}/splits/${id}`);
-  const body = (res.data ?? {}) as { bill?: SplitBill; shares?: SplitShareServer[] };
+  const body = (res.data ?? {}) as { bill?: Record<string, unknown>; shares?: SplitShareServer[] };
   return mapSplit(body.bill, body.shares);
 }
 
