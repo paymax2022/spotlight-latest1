@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"paymax/crypto-backend/internal/adapter"
+	"paymax/crypto-backend/internal/circuitbreaker"
 	"paymax/crypto-backend/internal/domain"
 )
 
@@ -49,22 +50,30 @@ var (
 )
 
 // Client is an HTTP-backed provider adapter. It is safe for concurrent use; the
-// embedded *http.Client is.
+// embedded *http.Client and *circuitbreaker.Breaker are.
 type Client struct {
 	baseURL string
 	apiKey  string
 	hc      *http.Client
+	cb      *circuitbreaker.Breaker
 }
 
 // New builds a Client pointed at baseURL. apiKey may be empty (no auth header).
-// The underlying http.Client uses a 10s timeout.
+// The underlying http.Client uses a 10s timeout, and every call passes through a
+// circuit breaker so a persistently unhealthy provider fails fast (ErrOpen)
+// instead of stacking up 10s timeouts under load. Defaults: trip after 5
+// consecutive transport/5xx failures, stay open 30s, one half-open trial.
 func New(baseURL, apiKey string) *Client {
 	return &Client{
 		baseURL: baseURL,
 		apiKey:  apiKey,
 		hc:      &http.Client{Timeout: 10 * time.Second},
+		cb:      circuitbreaker.New(circuitbreaker.Config{}),
 	}
 }
+
+// CircuitState exposes the breaker state for observability ("closed"/"open"/"half-open").
+func (c *Client) CircuitState() string { return c.cb.State() }
 
 // ── HTTP helpers ─────────────────────────────────────────────────────────────
 
@@ -92,15 +101,34 @@ func (c *Client) postJSON(path string, body interface{}, out interface{}) error 
 	return c.do(req, out)
 }
 
-// do sets auth, executes the request, enforces a 2xx status and decodes the
-// body. It always closes the response body.
+// do sets auth, executes the request under the circuit breaker, enforces a 2xx
+// status and decodes the body. It always closes the response body.
+//
+// Breaker accounting: only transport errors and 5xx responses are counted as
+// failures (a provider-down signal). A 4xx (e.g. 404 not-found, 422) means the
+// provider is healthy but the request was client-side, so it does NOT trip the
+// breaker — otherwise ordinary not-found lookups would open the circuit. When the
+// breaker is open the call fails fast with circuitbreaker.ErrOpen without hitting
+// the network.
 func (c *Client) do(req *http.Request, out interface{}) error {
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		return err
+	var resp *http.Response
+	cbErr := c.cb.Do(func() error {
+		r, err := c.hc.Do(req)
+		if err != nil {
+			return err // transport failure → counts against the breaker
+		}
+		if r.StatusCode >= 500 {
+			r.Body.Close()
+			return fmt.Errorf("httpadapter: %s %s: unexpected status %d", req.Method, req.URL.Path, r.StatusCode)
+		}
+		resp = r // 2xx-4xx: provider is up, don't trip the breaker
+		return nil
+	})
+	if cbErr != nil {
+		return cbErr
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
