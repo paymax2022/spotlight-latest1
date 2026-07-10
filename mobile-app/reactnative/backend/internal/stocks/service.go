@@ -22,7 +22,8 @@ type Service struct {
 	actions   []CorporateAction
 	offers    []PublicOffer
 
-	idem map[string]StockOrder
+	idem   map[string]StockOrder
+	broker Broker // execution venue seam (defaults to MockBroker)
 }
 
 // Illustrative investable balances for buy pre-checks (mirrors stocks.api.ts).
@@ -44,7 +45,20 @@ func NewService() *Service {
 		actions:   seedCorporateActions(),
 		offers:    seedOffers(),
 		idem:      map[string]StockOrder{},
+		broker:    MockBroker{},
 	}
+}
+
+// WithBroker injects a custom execution venue (e.g. an Alpaca adapter) in place of
+// the default MockBroker, returning the Service for chaining. A nil broker is
+// ignored so the default is never removed.
+func (s *Service) WithBroker(b Broker) *Service {
+	if b != nil {
+		s.mu.Lock()
+		s.broker = b
+		s.mu.Unlock()
+	}
+	return s
 }
 
 // ── Assets / market data ─────────────────────────────────────────────────────--
@@ -211,28 +225,23 @@ func (s *Service) PlaceOrder(d OrderDraft, idempotencyKey string) (StockOrder, *
 	}
 
 	now := engine.Now()
-	status := "Submitted"
-	var filledQuantity int64
-	settlementDate := ""
-	var statusHistory []StatusEvent
-	if d.OrderType == "market" {
-		status = "Filled"
-		filledQuantity = d.Quantity
-		days := 3
-		if asset.SettlementCycle == "T+2" {
-			days = 2
-		}
-		settlementDate = daysFromNow(days)
-		statusHistory = []StatusEvent{
-			{Status: "Submitted", At: now},
-			{Status: "AcceptedByProvider", At: now},
-			{Status: "Filled", At: now},
-		}
-	} else {
-		statusHistory = []StatusEvent{
-			{Status: "AwaitingUserConfirmation", At: now},
-			{Status: "Submitted", At: now},
-		}
+	// Execution venue decides the resulting order state (mock fills instantly; a
+	// real broker returns "accepted" and drives fills via webhooks). Pre-trade
+	// checks above and persistence below are unchanged.
+	fill := s.broker.Place(BrokerRequest{
+		Symbol:          asset.Symbol,
+		Side:            d.Side,
+		OrderType:       d.OrderType,
+		Quantity:        d.Quantity,
+		SettlementCycle: asset.SettlementCycle,
+	})
+	status := fill.Status
+	filledQuantity := fill.FilledQuantity
+	settlementDate := fill.SettlementDate
+	statusHistory := fill.History
+	provider := fill.Provider
+	if provider == "" {
+		provider = "mock-broker"
 	}
 
 	// Executed/indicative price: limit price for limit orders, else est price.
@@ -257,7 +266,7 @@ func (s *Service) PlaceOrder(d OrderDraft, idempotencyKey string) (StockOrder, *
 		Gross:             est.Gross,
 		Fees:              est.Fees,
 		Total:             est.Total,
-		Provider:          "mock-broker",
+		Provider:          provider,
 		ProviderReference: engine.NewRef("BR") + "-XY",
 		SettlementDate:    settlementDate,
 		IdempotencyKey:    idempotencyKey,
