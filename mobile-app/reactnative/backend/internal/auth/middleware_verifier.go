@@ -18,7 +18,9 @@ func MiddlewareVerifier(verify func(string) (Claims, error)) func(http.Handler) 
 				return
 			}
 			if verify == nil {
-				next.ServeHTTP(w, r.WithContext(withUser(r.Context(), "demo-user")))
+				// Dev fallback only reachable when constructed with a nil verifier;
+				// server wiring only uses this middleware with a real JWKS verifier.
+				next.ServeHTTP(w, r.WithContext(withUser(r.Context(), "demo-user", "")))
 				return
 			}
 			tok := bearer(r)
@@ -31,7 +33,7 @@ func MiddlewareVerifier(verify func(string) (Claims, error)) func(http.Handler) 
 				unauthorized(w, "Invalid or expired token.")
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(withUser(r.Context(), claims.Sub)))
+			next.ServeHTTP(w, r.WithContext(withUser(r.Context(), claims.Sub, claims.Role)))
 		})
 	}
 }

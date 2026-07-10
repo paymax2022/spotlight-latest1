@@ -4,15 +4,26 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 
 	"paymax/crypto-backend/internal/admin"
+	"paymax/crypto-backend/internal/auth"
 )
 
-// adminRole reads the actor's role from the X-Admin-Role header. In production
-// this would come from the verified admin JWT's role claim; the header keeps the
-// console usable in dev. Empty role → no privileged permissions.
+// adminRole resolves the actor's role. The trustworthy source is the verified JWT
+// role claim (threaded through context by the auth middleware); it is always
+// preferred when present. The client-supplied X-Admin-Role header is only honored
+// when TRUST_ADMIN_ROLE_HEADER=true — intended for a trusted reverse proxy that
+// injects it, or local dev. In production without that flag, a client cannot
+// escalate by setting the header. Empty role → no privileged permissions.
 func adminRole(r *http.Request) admin.Role {
-	return admin.Role(r.Header.Get("X-Admin-Role"))
+	if role := auth.Role(r.Context()); role != "" {
+		return admin.Role(role)
+	}
+	if os.Getenv("TRUST_ADMIN_ROLE_HEADER") == "true" {
+		return admin.Role(r.Header.Get("X-Admin-Role"))
+	}
+	return admin.Role("")
 }
 
 // adminErr maps a typed admin error to an HTTP status.

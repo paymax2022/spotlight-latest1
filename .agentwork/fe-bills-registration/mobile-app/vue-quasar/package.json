@@ -1,9 +1,0 @@
-{
-  "name": "mobile-vue-quasar",
-  "private": true,
-  "version": "0.1.0",
-  "scripts": {
-    "dev": "echo 'Initialize Quasar app (scaffold phase)'",
-    "build": "echo 'Build Quasar app (scaffold phase)'"
-  }
-}

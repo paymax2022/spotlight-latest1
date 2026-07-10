@@ -167,11 +167,15 @@ func (s *Server) Handler() http.Handler {
 	if jwksURL := os.Getenv("SUPABASE_JWKS_URL"); jwksURL != "" {
 		authMW = auth.MiddlewareVerifier(auth.NewJWKSVerifier(jwksURL).Verify)
 	} else {
-		authMW = auth.Middleware(os.Getenv("SUPABASE_JWT_SECRET"))
+		// Dev fallback (pass-through as demo-user when no secret is set) is OFF by
+		// default and fail-closed; enable explicitly with ALLOW_DEV_AUTH=true.
+		allowDevAuth := os.Getenv("ALLOW_DEV_AUTH") == "true"
+		authMW = auth.Middleware(os.Getenv("SUPABASE_JWT_SECRET"), allowDevAuth)
 	}
 	rps := envFloat("RATE_LIMIT_RPS", 50)
 	rl := rateLimitMW(ratelimit.New(rps, rps*2))
-	return recoverMW(metricsMW(reg)(requestIDMW(tracing.Middleware(rl(corsMW(authMW(logMW(mux))))))))
+	cors := corsMW(corsAllowedOrigins())
+	return recoverMW(metricsMW(reg)(requestIDMW(tracing.Middleware(rl(cors(authMW(logMW(mux))))))))
 }
 
 func envFloat(key string, def float64) float64 {
@@ -203,19 +207,51 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
-// corsMW allows the Expo web client to call the API and answers preflight.
-func corsMW(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set("Access-Control-Allow-Origin", "*")
-		h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-		h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Admin-Role")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
+// corsAllowedOrigins reads the CORS allowlist from CORS_ALLOW_ORIGINS (comma-
+// separated). Unset → a safe localhost dev default (NOT a wildcard). Set to "*"
+// only if you explicitly, knowingly want to allow any origin.
+func corsAllowedOrigins() []string {
+	if v := strings.TrimSpace(os.Getenv("CORS_ALLOW_ORIGINS")); v != "" {
+		parts := strings.Split(v, ",")
+		out := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if p = strings.TrimSpace(p); p != "" {
+				out = append(out, p)
+			}
 		}
-		next.ServeHTTP(w, r)
-	})
+		return out
+	}
+	return []string{"http://localhost:3000", "http://localhost:8081", "http://localhost:19006"}
+}
+
+// corsMW echoes the request Origin only when it is in the allowlist (or when the
+// allowlist is the explicit wildcard "*"), replacing the previous unconditional
+// "Access-Control-Allow-Origin: *". Answers preflight.
+func corsMW(allowed []string) func(http.Handler) http.Handler {
+	wildcard := len(allowed) == 1 && allowed[0] == "*"
+	allowSet := make(map[string]bool, len(allowed))
+	for _, o := range allowed {
+		allowSet[o] = true
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			h := w.Header()
+			h.Add("Vary", "Origin")
+			if wildcard {
+				h.Set("Access-Control-Allow-Origin", "*")
+			} else if origin != "" && allowSet[origin] {
+				h.Set("Access-Control-Allow-Origin", origin)
+			}
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Admin-Role")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 type reqIDKey struct{}

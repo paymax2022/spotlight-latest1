@@ -53,7 +53,7 @@ API source of truth: `contracts/openapi.yaml`.
 - **Backend API:** `backend/` — Go 1.23, Gin v1.10; module `spotlight/backend`.
 - **Mobile:** `mobile-app/reactnative/` (React Native/Expo), `mobile-app/vue-quasar/` (Vue 3).
 - **Database:** PostgreSQL 17 via Supabase (cloud-hosted). No ORM — raw Supabase JS client
-  + SQL RPCs. 65 migrations in `supabase/migrations/`. Local DB port 54322.
+  + SQL RPCs. ~291 additive-only migrations in `supabase/migrations/`. Local DB port 54322.
 - **Auth:** Supabase Auth (managed JWT/HS256). HTTP-only cookie session in Next.js middleware
   (`frontend-web/src/middleware.ts`); Bearer token validated via service-role client in API
   route handlers (`frontend-web/src/lib/auth/request.ts`); Go backend uses
@@ -63,8 +63,17 @@ API source of truth: `contracts/openapi.yaml`.
 - **Payments:** Paystack. HMAC-SHA512 webhook verification. Live webhook handler:
   `frontend-web/app/api/webhooks/paystack/route.ts`.
 - **Test runner (frontend):** Vitest 4.1 (`frontend-web/vitest.config.ts`), v8 coverage,
-  node environment. One spec exists: `frontend-web/tests/unit/voting/free-vote.spec.ts`.
-- **Test runner (backend):** None configured. `backend/tests/` is empty.
+  node environment. ~42 specs under `frontend-web/tests/` (golden-path, finance money-invariants,
+  wallet/ledger, tiers). Mobile: Playwright e2e under `mobile-app/reactnative/tests/e2e/`.
+- **Test runner (backend):** `go test` (see `Makefile` `test`/`verify`, run `-race`). ~253 Go
+  test files incl. `backend/tests/` domain + invariant suites (ledger, settlement split, fees,
+  fx, crypto/cryptoaml, arenaquiz, edtechfees…); live-DB integration tests gated on
+  `TEST_DATABASE_URL`. NOTE: repo-wide `ci.yml` runs only build+vet — full `go test` runs in
+  per-module CI lanes + the Makefile. See `backend/tests/TEST_STRATEGY.md`.
+- **⚠️ Separate trading service:** `mobile-app/reactnative/backend/` is a standalone Go module
+  (`paymax/crypto-backend`, its OWN Postgres via golang-migrate) housing crypto + stocks + invest
+  trading. It is distinct from `backend/internal/crypto` (the ledger-integrated crypto in the main
+  module). See `docs/audit/PHASE-1-FINTECH-PLATFORM-AUDIT.md`.
 - **⚠️ No Turborepo, no `apps/` directory, no `packages/` directory.** The previous layout
   description was aspirational. Actual layout: `frontend-web/`, `frontend-admin/`,
   `backend/`, `mobile-app/`, `supabase/`, `docs/`.

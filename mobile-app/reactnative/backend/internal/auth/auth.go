@@ -89,24 +89,41 @@ func Verify(token, secret string) (Claims, error) {
 
 type ctxKey struct{}
 
-func withUser(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, ctxKey{}, id)
+// principal is the authenticated identity threaded through request context: the
+// user id plus the verified role claim (so authorization never has to trust a
+// client-supplied header).
+type principal struct {
+	ID   string
+	Role string
+}
+
+func withUser(ctx context.Context, id, role string) context.Context {
+	return context.WithValue(ctx, ctxKey{}, principal{ID: id, Role: role})
 }
 
 // UserID returns the authenticated user id (empty if unauthenticated).
 func UserID(ctx context.Context) string {
-	v, _ := ctx.Value(ctxKey{}).(string)
-	return v
+	p, _ := ctx.Value(ctxKey{}).(principal)
+	return p.ID
+}
+
+// Role returns the authenticated user's verified JWT role claim (empty if none).
+// This is the trustworthy source of an actor's role — prefer it over any header.
+func Role(ctx context.Context) string {
+	p, _ := ctx.Value(ctxKey{}).(principal)
+	return p.Role
 }
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
-// Middleware verifies the bearer token and injects the user id into context.
-//   - /healthz is always exempt.
-//   - When secret == "" (no SUPABASE_JWT_SECRET configured) it runs in DEV mode:
-//     requests pass through as a single "demo-user" so the mock works locally.
-//     Set the secret in any real environment to enforce authentication.
-func Middleware(secret string) func(http.Handler) http.Handler {
+// Middleware verifies the bearer token and injects the user id + role into context.
+//   - /healthz, /readyz, /metrics and provider webhooks are always exempt.
+//   - When secret == "" the dev fallback (pass through as a single "demo-user") is
+//     ONLY taken if allowDevAuth is true. In every other case a missing secret is
+//     fail-closed: all non-exempt requests get 401. This prevents a misconfigured
+//     production (unset SUPABASE_JWT_SECRET) from silently authenticating everyone.
+//     Enable the dev fallback explicitly with ALLOW_DEV_AUTH=true (never in prod).
+func Middleware(secret string, allowDevAuth bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Exempt health/readiness and provider webhooks (webhooks authenticate
@@ -117,7 +134,12 @@ func Middleware(secret string) func(http.Handler) http.Handler {
 				return
 			}
 			if secret == "" {
-				next.ServeHTTP(w, r.WithContext(withUser(r.Context(), "demo-user")))
+				if allowDevAuth {
+					next.ServeHTTP(w, r.WithContext(withUser(r.Context(), "demo-user", "")))
+					return
+				}
+				// Fail closed: no secret and dev auth not explicitly allowed.
+				unauthorized(w, "Authentication is not configured.")
 				return
 			}
 			tok := bearer(r)
@@ -130,7 +152,7 @@ func Middleware(secret string) func(http.Handler) http.Handler {
 				unauthorized(w, "Invalid or expired token.")
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(withUser(r.Context(), claims.Sub)))
+			next.ServeHTTP(w, r.WithContext(withUser(r.Context(), claims.Sub, claims.Role)))
 		})
 	}
 }

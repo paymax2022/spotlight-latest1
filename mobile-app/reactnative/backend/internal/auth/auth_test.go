@@ -64,7 +64,7 @@ func TestMiddlewareEnforcesWhenSecretSet(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(UserID(r.Context())))
 	})
-	h := Middleware(secret)(next)
+	h := Middleware(secret, false)(next)
 
 	// No token → 401.
 	rec := httptest.NewRecorder()
@@ -91,11 +91,44 @@ func TestMiddlewareEnforcesWhenSecretSet(t *testing.T) {
 	}
 }
 
-func TestMiddlewareDevFallback(t *testing.T) {
+func TestMiddlewareDevFallbackOnlyWhenAllowed(t *testing.T) {
+	// allowDevAuth=true → pass through as demo-user (local dev).
 	var seen string
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { seen = UserID(r.Context()) })
-	Middleware("")(next).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/crypto/assets", nil))
+	Middleware("", true)(next).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/crypto/assets", nil))
 	if seen != "demo-user" {
 		t.Errorf("dev fallback user = %q, want demo-user", seen)
+	}
+}
+
+func TestMiddlewareFailsClosedWhenSecretUnsetAndDevAuthDisabled(t *testing.T) {
+	// No secret + dev auth NOT allowed → 401, never a silent demo-user pass.
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true })
+	rec := httptest.NewRecorder()
+	Middleware("", false)(next).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/crypto/assets", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("fail-closed status = %d, want 401", rec.Code)
+	}
+	if called {
+		t.Error("handler must not run when auth is unconfigured and dev auth disabled")
+	}
+	// Health remains exempt even when fail-closed.
+	rec = httptest.NewRecorder()
+	Middleware("", false)(next).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("healthz status = %d, want 200 (always exempt)", rec.Code)
+	}
+}
+
+func TestMiddlewareThreadsRoleFromClaims(t *testing.T) {
+	var gotRole string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gotRole = Role(r.Context()) })
+	tok := sign("HS256", secret, map[string]any{"sub": "user-9", "role": "authenticated", "exp": time.Now().Add(time.Hour).Unix()})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/crypto/assets", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	Middleware(secret, false)(next).ServeHTTP(httptest.NewRecorder(), req)
+	if gotRole != "authenticated" {
+		t.Errorf("threaded role = %q, want authenticated", gotRole)
 	}
 }
