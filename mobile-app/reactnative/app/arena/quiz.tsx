@@ -1,251 +1,183 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Gamepad2, Timer, CheckCircle2, Circle, XCircle, Flame, Trophy } from 'lucide-react-native';
+import { Gamepad2, ChevronRight, ShieldCheck, Clock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
+import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
-import SegmentedControl from '@/components/SegmentedControl';
-import RoundVideoCard from '@/features/arena/components/RoundVideoCard';
-import { usePlayAlongQuestions, useSubmitPlayAlong } from '@/features/arena/hooks';
-import { PLAYALONG_ROUNDS, NDC1_MERIT_NOTE } from '@/features/arena/constants';
+import QuizRunner, { QuizRunnerResult } from '@/features/arena/components/QuizRunner';
+import { usePlayAlongStage, useSubmitPlayAlong } from '@/features/arena/hooks';
+import { PLAYALONG_STAGES, PER_QUESTION_SECS, NDC1_MERIT_NOTE, stageMeta } from '@/features/arena/constants';
 import { newIdempotencyKey } from '@/features/arena/api';
-
-const PER_QUESTION_SECS = 20;
-const BASE_POINTS = 100;
-
-const ROUND_OPTIONS = PLAYALONG_ROUNDS.map((r) => ({ value: String(r.round), label: r.label }));
+import { useConnectivity } from '@/features/academy/offlineQueue';
+import type { PlayAlongPerQuestion } from '@/features/arena/types';
 
 /**
- * S2 — "Are You a Naija Driver?" Play-Along quiz, organised into three
- * categorised rounds. Each round opens with an (admin-updatable) lesson video,
- * then a gamified quiz: instant right/wrong reveal, points, and a streak
- * multiplier. ENGAGEMENT only — an attempt never affects Merit (NDC-1).
+ * S2 — "Are You a Naija Driver?" Play-Along quiz. Three stages (Foundation /
+ * Intermediate / Advanced) drawn from the shared safe-driving bank; 120s per
+ * question. Stage picker → QuizRunner (playalong mode, with the teaching-moment
+ * reveal) → results (S3). ENGAGEMENT only — an attempt never affects Merit
+ * (NDC-1). Offline-tolerant: an offline finish queues the attempt.
  */
 export default function QuizScreen() {
-  const { competitionId: raw } = useLocalSearchParams<{ competitionId?: string }>();
+  const { competitionId: raw, stage: stageParam } = useLocalSearchParams<{ competitionId?: string; stage?: string }>();
   const competitionId = raw ?? '';
 
-  const [roundNo, setRoundNo] = useState(1);
-  const round = useMemo(() => PLAYALONG_ROUNDS.find((r) => r.round === roundNo) ?? PLAYALONG_ROUNDS[0], [roundNo]);
-  const category = round.category;
-
+  const [stage, setStage] = useState<number>(stageParam ? Number(stageParam) : 1);
   const [started, setStarted] = useState(false);
-  const q = usePlayAlongQuestions(competitionId, category);
-  const submit = useSubmitPlayAlong();
-
-  const [index, setIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [secs, setSecs] = useState(PER_QUESTION_SECS);
   const [idemKey, setIdemKey] = useState(() => newIdempotencyKey());
 
-  // Gamification
-  const [score, setScore] = useState(0);
-  const [streak, setStreak] = useState(0);
-  const [bestStreak, setBestStreak] = useState(0);
-  const [correctCount, setCorrectCount] = useState(0);
-  const [revealed, setRevealed] = useState(false);
-  const [lastPoints, setLastPoints] = useState(0);
+  const { offline } = useConnectivity();
+  const q = usePlayAlongStage(competitionId, stage, started);
+  const submit = useSubmitPlayAlong();
 
-  const questions = q.data ?? [];
-  const current = questions[index];
-  const gamified = !!current?.correctOptionId; // mock provides answers → instant feedback
+  const stageSet = q.data;
+  const questions = stageSet?.questions ?? [];
+  const meta = useMemo(() => stageMeta(stage), [stage]);
 
-  // Per-question countdown; pauses on reveal, auto-times-out otherwise.
-  useEffect(() => {
-    if (!started || !current || revealed) return;
-    setSecs(current.timeLimitSecs ?? PER_QUESTION_SECS);
-    const id = setInterval(() => {
-      setSecs((s) => {
-        if (s <= 1) { clearInterval(id); handleTimeout(); return 0; }
-        return s - 1;
-      });
-    }, 1000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, started, current?.id, revealed]);
-
-  const handleTimeout = () => {
-    if (gamified && !revealed) { setStreak(0); setLastPoints(0); setRevealed(true); }
-    else if (!gamified) advance();
-  };
-
-  const pick = (qid: string, oid: string) => {
-    if (revealed) return; // locked after reveal
-    setAnswers((a) => ({ ...a, [qid]: oid }));
-    if (!gamified || !current) return;
-    const correct = oid === current.correctOptionId;
-    if (correct) {
-      const pts = BASE_POINTS + secs * 5 + streak * 10; // time bonus + streak multiplier
-      setLastPoints(pts);
-      setScore((s) => s + pts);
-      setCorrectCount((c) => c + 1);
-      setStreak((st) => { const next = st + 1; setBestStreak((b) => Math.max(b, next)); return next; });
-    } else {
-      setLastPoints(0);
-      setStreak(0);
-    }
-    setRevealed(true);
-  };
-
-  const advance = () => {
-    setRevealed(false);
-    if (index < questions.length - 1) setIndex((i) => i + 1);
-    else finish();
-  };
-
-  const finish = () => {
-    const total = questions.length;
-    const passed = total > 0 && correctCount / total >= 0.6;
-    const goResults = () =>
-      router.replace({
-        pathname: '/arena/quiz-results',
-        params: {
-          competitionId,
-          round: String(roundNo),
-          score: String(correctCount),
-          total: String(total),
-          points: String(score),
-          bestStreak: String(bestStreak),
-          passed: passed ? '1' : '0',
-        },
-      });
-    submit.mutate(
-      {
-        competitionId,
-        category,
-        idempotencyKey: idemKey,
-        answers: Object.entries(answers).map(([questionId, optionId]) => ({ questionId, optionId })),
-      },
-      // Engagement recording is best-effort; the gamified result still shows.
-      { onSuccess: goResults, onError: goResults },
-    );
-  };
-
-  const startRound = () => {
-    setIndex(0); setAnswers({}); setScore(0); setStreak(0); setBestStreak(0);
-    setCorrectCount(0); setRevealed(false); setLastPoints(0);
+  const startStage = () => {
     setIdemKey(newIdempotencyKey());
     setStarted(true);
   };
 
-  const answered = useMemo(() => Object.keys(answers).length, [answers]);
+  const finish = (result: QuizRunnerResult) => {
+    const answers = Object.entries(result.answers).map(([questionId, optionId]) => ({ questionId, optionId }));
+    submit.mutate(
+      { competitionId, stage, answers, idempotencyKey: idemKey },
+      {
+        onSuccess: (res) => goResults(res),
+        // Best-effort: even if the engagement write fails/queues offline, the
+        // learner still sees their teaching-moment recap (scored client-side in
+        // mock; on a real backend a failed submit shows a retry on results).
+        onError: () =>
+          goResults({
+            score: result.correctCount,
+            total: questions.length,
+            passed: false,
+            perQuestion: [],
+            credentialIssued: false,
+            credentialHash: null,
+            cashbackKobo: null,
+          }),
+      },
+    );
+  };
 
-  // ── Round picker + video intro ──────────────────────────────────────────────
+  const goResults = (res: {
+    score: number; total: number; passed: boolean;
+    perQuestion: PlayAlongPerQuestion[];
+    credentialIssued?: boolean; credentialHash?: string | null; cashbackKobo?: number | null;
+  }) => {
+    router.replace({
+      pathname: '/arena/quiz-results',
+      params: {
+        competitionId,
+        stage: String(stage),
+        score: String(res.score),
+        total: String(res.total),
+        passed: res.passed ? '1' : '0',
+        hash: res.credentialHash ?? '',
+        cashback: res.cashbackKobo != null ? String(res.cashbackKobo) : '',
+        perQuestion: encodeURIComponent(JSON.stringify(res.perQuestion ?? [])),
+        offline: offline ? '1' : '0',
+      },
+    });
+  };
+
+  // ── Stage picker (intro) ────────────────────────────────────────────────────
   if (!started) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Are You a Naija Driver?" />
         <ScrollView contentContainerStyle={styles.introContent} showsVerticalScrollIndicator={false}>
           <View style={styles.introIcon}><Gamepad2 size={30} color={Colors.primary} /></View>
-          <Text style={styles.introTitle}>Play-Along · 3 rounds</Text>
+          <Text style={styles.introTitle}>Play-Along · 3 stages</Text>
           <Text style={styles.introBody}>
-            Watch the round briefing, then take the gamified quiz. Answer fast and keep your streak alive to score higher.
+            The same safe-driving questions our contestants take. 30 questions a stage, {PER_QUESTION_SECS / 60} minutes
+            per question. Keep your streak alive, pass the mark, and earn your Certified Safe Driver badge.
           </Text>
 
-          <Text style={styles.catLabel}>Choose a round</Text>
-          <SegmentedControl options={ROUND_OPTIONS} value={String(roundNo)} onChange={(v) => setRoundNo(Number(v))} scrollable />
+          <Text style={styles.pickLabel}>Choose a stage</Text>
+          {PLAYALONG_STAGES.map((s) => {
+            const active = s.stage === stage;
+            return (
+              <Pressable
+                key={s.stage}
+                onPress={() => setStage(s.stage)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: active }}
+                style={[styles.stageCard, shadow1, active && styles.stageCardActive]}
+              >
+                <View style={[styles.stageBadge, active && styles.stageBadgeActive]}>
+                  <Text style={[styles.stageBadgeText, active && styles.stageBadgeTextActive]}>{s.stage}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.stageName}>{s.short}</Text>
+                  <Text style={styles.stageBlurb} numberOfLines={2}>{s.blurb}</Text>
+                  <Text style={styles.stagePass}>Pass mark {s.passMarkPercent}%</Text>
+                </View>
+                <ChevronRight size={18} color={active ? Colors.primary : Colors.outline} />
+              </Pressable>
+            );
+          })}
 
-          <Text style={styles.roundTitle}>{round.label} · {round.title}</Text>
-          <Text style={styles.roundBlurb}>{round.blurb}</Text>
-
-          <View style={{ height: Spacing.sm }} />
-          <RoundVideoCard video={round.video} />
+          <View style={styles.metaChips}>
+            <View style={styles.metaChip}><Clock size={13} color={Colors.secondary} /><Text style={styles.metaChipText}>{PER_QUESTION_SECS / 60} min / question</Text></View>
+            <View style={styles.metaChip}><ShieldCheck size={13} color={Colors.teal} /><Text style={styles.metaChipText}>Badge on {meta.passMarkPercent}%</Text></View>
+          </View>
 
           <View style={styles.note}><Text style={styles.noteText}>{NDC1_MERIT_NOTE}</Text></View>
           <View style={{ height: Spacing.md }} />
-          <PrimaryButton
-            label={q.isLoading ? 'Loading…' : `Start ${round.label}`}
-            onPress={startRound}
-            loading={q.isLoading}
-            disabled={q.isLoading || questions.length === 0}
-          />
-          {questions.length === 0 && !q.isLoading ? (
-            <Text style={styles.emptyHint}>No questions available for this round yet.</Text>
-          ) : null}
+          <PrimaryButton label={`Start ${meta.short}`} onPress={startStage} />
+          {offline ? <Text style={styles.offlineHint}>You’re offline — you can still play; your attempt will sync when you reconnect.</Text> : null}
         </ScrollView>
       </SafeAreaView>
     );
   }
 
+  // ── Loading / error / empty ─────────────────────────────────────────────────
+  if (q.isLoading) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title={meta.short} onBack={() => setStarted(false)} />
+        <StateView kind="loading" message="Loading questions…" />
+      </SafeAreaView>
+    );
+  }
   if (q.isError) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title={round.label} />
-        <StateView kind="error" title="Couldn’t load the quiz" actionLabel="Retry" onAction={() => q.refetch()} />
+        <ScreenHeader title={meta.short} onBack={() => setStarted(false)} />
+        <StateView kind="error" title="Couldn’t load the quiz" message="Check your connection and try again." actionLabel="Retry" onAction={() => q.refetch()} />
       </SafeAreaView>
     );
   }
-  if (!current) {
+  if (questions.length === 0) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title={round.label} />
-        <StateView kind="loading" />
+        <ScreenHeader title={meta.short} onBack={() => setStarted(false)} />
+        <StateView kind="empty" title="No questions yet" message="This stage has no questions available right now." actionLabel="Back" onAction={() => setStarted(false)} />
       </SafeAreaView>
     );
   }
 
+  // ── Runner ──────────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title={`${round.label} · ${round.title}`} showBack={false} />
-
-      {/* Gamification bar: score + streak + timer */}
-      <View style={styles.gameBar}>
-        <View style={styles.gameStat}><Trophy size={15} color={Colors.gold} /><Text style={styles.gameStatText}>{score}</Text></View>
-        <View style={styles.gameStat}><Flame size={15} color={streak > 0 ? '#F97316' : Colors.outline} /><Text style={[styles.gameStatText, streak > 0 && { color: '#F97316' }]}>{streak}x</Text></View>
-        <View style={styles.timer}><Timer size={16} color={secs <= 5 ? Colors.error : Colors.secondary} /><Text style={[styles.timerText, secs <= 5 && { color: Colors.error }]}>{secs}s</Text></View>
-      </View>
-      <View style={styles.metaRow}>
-        <Text style={styles.qCount}>Question {index + 1}/{questions.length}</Text>
-      </View>
-      <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${((index + 1) / questions.length) * 100}%` }]} /></View>
-
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.prompt}>{current.prompt}</Text>
-        {current.options.map((o) => {
-          const sel = answers[current.id] === o.id;
-          const isCorrect = revealed && o.id === current.correctOptionId;
-          const isWrongPick = revealed && sel && o.id !== current.correctOptionId;
-          return (
-            <Pressable
-              key={o.id}
-              style={[styles.option, sel && styles.optionSel, isCorrect && styles.optionCorrect, isWrongPick && styles.optionWrong]}
-              onPress={() => pick(current.id, o.id)}
-              disabled={revealed}
-            >
-              {isCorrect ? <CheckCircle2 size={20} color="#16A34A" />
-                : isWrongPick ? <XCircle size={20} color={Colors.error} />
-                : sel ? <CheckCircle2 size={20} color={Colors.primary} />
-                : <Circle size={20} color={Colors.outline} />}
-              <Text style={[styles.optionText, sel && styles.optionTextSel]}>{o.label}</Text>
-            </Pressable>
-          );
-        })}
-
-        {revealed ? (
-          <View style={[styles.feedback, lastPoints > 0 ? styles.feedbackGood : styles.feedbackBad]}>
-            <Text style={styles.feedbackTitle}>
-              {lastPoints > 0 ? `Correct! +${lastPoints} pts${streak > 1 ? ` · ${streak}x streak 🔥` : ''}` : 'Not quite'}
-            </Text>
-            {current.explanation ? <Text style={styles.feedbackText}>{current.explanation}</Text> : null}
-          </View>
-        ) : null}
-      </ScrollView>
-
-      <SafeAreaView edges={['bottom']} style={styles.footer}>
-        <PrimaryButton
-          label={index < questions.length - 1 ? 'Next' : submit.isPending ? 'Scoring…' : 'Finish'}
-          onPress={advance}
-          loading={submit.isPending}
-          disabled={submit.isPending || (gamified && !revealed)}
-        />
-        <Text style={styles.answeredHint}>{gamified ? `${correctCount} correct` : `${answered} answered`}</Text>
-      </SafeAreaView>
+      <ScreenHeader title={`Stage ${stage} · ${stageSet?.stageName ?? ''}`} showBack={false} />
+      <QuizRunner
+        mode="playalong"
+        questions={questions}
+        perQuestionSecs={stageSet?.timeLimitSecs ?? PER_QUESTION_SECS}
+        onSubmit={finish}
+        submitting={submit.isPending}
+      />
     </SafeAreaView>
   );
 }
@@ -256,34 +188,24 @@ const styles = StyleSheet.create({
   introIcon: { width: 60, height: 60, borderRadius: Radius.full, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
   introTitle: { ...Typography.headlineMd, color: Colors.onSurface },
   introBody: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, marginBottom: Spacing.md },
-  catLabel: { ...Typography.labelMd, color: Colors.onSurface, marginBottom: Spacing.sm },
-  roundTitle: { ...Typography.titleMd, color: Colors.onSurface, marginTop: Spacing.md },
-  roundBlurb: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
+  pickLabel: { ...Typography.labelMd, color: Colors.onSurface, marginBottom: Spacing.xs },
+  stageCard: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
+    backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md,
+    borderWidth: 1.5, borderColor: Colors.surfaceContainerHigh,
+  },
+  stageCardActive: { borderColor: Colors.primary },
+  stageBadge: { width: 40, height: 40, borderRadius: Radius.full, backgroundColor: Colors.surfaceContainerHigh, alignItems: 'center', justifyContent: 'center' },
+  stageBadgeActive: { backgroundColor: Colors.primary },
+  stageBadgeText: { ...Typography.titleMd, color: Colors.onSurfaceVariant },
+  stageBadgeTextActive: { color: Colors.onPrimary },
+  stageName: { ...Typography.labelLg, color: Colors.onSurface },
+  stageBlurb: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
+  stagePass: { ...Typography.caption, color: Colors.secondary, marginTop: 4 },
+  metaChips: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md },
+  metaChip: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.full, paddingHorizontal: Spacing.md, paddingVertical: 6 },
+  metaChipText: { ...Typography.labelSm, color: Colors.onSurface },
   note: { backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.lg, padding: Spacing.md, marginTop: Spacing.md },
   noteText: { ...Typography.labelSm, color: Colors.onSurfaceVariant, lineHeight: 18 },
-  emptyHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant, textAlign: 'center', marginTop: Spacing.sm },
-  gameBar: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm },
-  gameStat: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.full, paddingHorizontal: Spacing.md, paddingVertical: 6 },
-  gameStatText: { ...Typography.labelMd, color: Colors.onSurface, fontVariant: ['tabular-nums'] },
-  metaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm },
-  qCount: { ...Typography.labelMd, color: Colors.onSurface },
-  timer: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginLeft: 'auto' },
-  timerText: { ...Typography.titleMd, color: Colors.secondary, fontVariant: ['tabular-nums'] },
-  progressTrack: { height: 4, backgroundColor: Colors.surfaceContainerHigh, borderRadius: Radius.full, marginHorizontal: Spacing.containerMargin, marginTop: Spacing.sm },
-  progressFill: { height: 4, backgroundColor: Colors.primary, borderRadius: Radius.full },
-  content: { padding: Spacing.containerMargin, gap: Spacing.sm },
-  prompt: { ...Typography.titleLg, color: Colors.onSurface, marginBottom: Spacing.sm },
-  option: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, borderWidth: 1.5, borderColor: Colors.outlineVariant, borderRadius: Radius.lg, padding: Spacing.md, backgroundColor: Colors.surfaceContainerLowest },
-  optionSel: { borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
-  optionCorrect: { borderColor: '#16A34A', backgroundColor: 'rgba(22,163,74,0.10)' },
-  optionWrong: { borderColor: Colors.error, backgroundColor: Colors.errorContainer },
-  optionText: { ...Typography.bodyMd, color: Colors.onSurface, flex: 1 },
-  optionTextSel: { color: Colors.primary, fontWeight: '600' as const },
-  feedback: { borderRadius: Radius.lg, padding: Spacing.md, marginTop: Spacing.xs },
-  feedbackGood: { backgroundColor: 'rgba(22,163,74,0.10)' },
-  feedbackBad: { backgroundColor: Colors.errorContainer },
-  feedbackTitle: { ...Typography.labelLg, color: Colors.onSurface, marginBottom: 2 },
-  feedbackText: { ...Typography.bodySm, color: Colors.onSurfaceVariant, lineHeight: 18 },
-  footer: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.md, paddingTop: Spacing.sm },
-  answeredHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant, textAlign: 'center', marginTop: Spacing.xs },
+  offlineHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant, textAlign: 'center', marginTop: Spacing.sm },
 });

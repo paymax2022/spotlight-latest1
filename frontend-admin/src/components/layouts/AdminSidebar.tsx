@@ -421,6 +421,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Audit Log', href: '/admin/marketplace/audit-log', section: 'Marketplace', permissions: ['marketplace.admin.audit.read'] },
   // ── Arena (Naija Driver contest ops console; per-console RBAC arena.*) ──────
   { label: 'Competition Config', href: '/admin/arena/config', section: 'Arena', permissions: ['arena.admin.manage'] },
+  { label: 'Quiz Bank', href: '/admin/arena/questions', section: 'Arena', permissions: ['arena.admin.questions', 'arena.admin.manage'] },
   { label: 'Screening Queue', href: '/admin/arena/screening', section: 'Arena', permissions: ['arena.reviewer.screen', 'arena.admin.manage'] },
   { label: 'Proctor Console', href: '/admin/arena/proctor', section: 'Arena', permissions: ['arena.proctor.attest', 'arena.admin.manage'] },
   { label: 'Judge Console', href: '/admin/arena/judge', section: 'Arena', permissions: ['arena.judge.score', 'arena.admin.manage'] },

@@ -20,13 +20,19 @@ import type {
   ContestantMeResponse,
   MyMeritResponse,
   TrainingModule,
-  PlayAlongQuestion,
+  PlayAlongStageSet,
   PlayAlongAttemptResult,
+  ExamAssignment,
+  ExamSubmitResult,
   SupportResult,
   PeoplesChampionTally,
   PredictionPick,
 } from './types';
-import { mockPlayAlong } from './playalong.mock';
+import {
+  mockPlayAlongStage,
+  mockScorePlayAlong,
+  mockExamAssignment,
+} from './quiz.stages.mock';
 import { USE_MOCK } from './constants';
 import {
   mockCompetition,
@@ -178,20 +184,30 @@ export async function support(input: {
 /**
  * POST /competitions/{id}/playalong/attempt — "Are You a Naija Driver?" (S2).
  * Writes ENGAGEMENT only (never Merit). Idempotent per attempt so a retried
- * submit can't double-write. May issue a Certified Safe Driver credential.
+ * submit can't double-write. Returns a per-question reveal (the teaching moment)
+ * and may issue a Certified Safe Driver credential.
+ *
+ * Contract body: { stage, answers:[{questionId, optionId}] }
+ * Contract result: { score, total, passed, perQuestion:[{questionId,
+ *                    correctOptionId, explanation, correct}], credentialIssued,
+ *                    credentialHash, cashbackKobo }
  */
 export async function submitPlayAlong(input: {
   competitionId: string;
-  category: string;
+  stage: number;
   answers: { questionId: string; optionId: string }[];
   idempotencyKey?: string;
 }): Promise<PlayAlongAttemptResult> {
+  if (USE_MOCK) {
+    await new Promise((r) => setTimeout(r, 400));
+    return mockScorePlayAlong(input.stage, input.answers);
+  }
   return unwrap<PlayAlongAttemptResult>(
     await api.post(
       `${BASE}/competitions/${input.competitionId}/playalong/attempt`,
       {
-        category: input.category,
-        answers: input.answers.map((a) => ({ question_id: a.questionId, option_id: a.optionId })),
+        stage: input.stage,
+        answers: input.answers.map((a) => ({ questionId: a.questionId, optionId: a.optionId })),
       },
       idem(input.idempotencyKey),
     ),
@@ -230,25 +246,29 @@ export async function getTraining(competitionId: string): Promise<TrainingModule
   return Array.isArray(raw) ? raw : raw.modules ?? [];
 }
 
-/** Play-Along question set (S2). Falls back to the mock bank in dev / when the
- *  backend has no questions yet, so the quiz + gamification are always walkable. */
-export async function getPlayAlongQuestions(
+/**
+ * GET /competitions/{id}/playalong/questions?stage={1|2|3} — the contestant-safe
+ * question set for a stage (S2). Returns stage metadata (name, pass mark,
+ * per-question time limit) alongside the questions. Falls back to the seed-shaped
+ * mock bank in dev / when the backend has no questions yet, so the quiz is always
+ * walkable offline.
+ */
+export async function getPlayAlongStage(
   competitionId: string,
-  category: string,
-): Promise<PlayAlongQuestion[]> {
-  if (USE_MOCK) return mockPlayAlong(category);
+  stage: number,
+): Promise<PlayAlongStageSet> {
+  if (USE_MOCK) return mockPlayAlongStage(stage);
   try {
-    const raw = unwrap<{ questions?: PlayAlongQuestion[] } | PlayAlongQuestion[]>(
+    const raw = unwrap<PlayAlongStageSet>(
       await api.get(`${BASE}/competitions/${competitionId}/playalong/questions`, {
-        params: { category },
+        params: { stage },
       }),
     );
-    const list = Array.isArray(raw) ? raw : raw.questions ?? [];
-    if (list.length > 0) return list;
+    if (raw && Array.isArray(raw.questions) && raw.questions.length > 0) return raw;
   } catch {
     /* backend unavailable in dev — use the mock bank below */
   }
-  return mockPlayAlong(category);
+  return mockPlayAlongStage(stage);
 }
 
 /** State Pride leaderboard (S6). */
@@ -279,30 +299,58 @@ export async function getDriverProfile(
   }
 }
 
-/**
- * C6 proctored exam — question feed for an assigned batch. ONLINE-REQUIRED.
- * NOTE: capture/proctor SDK is stubbed for sandbox (see the exam runner screen).
- */
-export async function getExamQuestions(competitionId: string): Promise<PlayAlongQuestion[]> {
-  const raw = unwrap<{ questions?: PlayAlongQuestion[] } | PlayAlongQuestion[]>(
-    await api.get(`${BASE}/competitions/${competitionId}/me/exam`),
-  );
-  return Array.isArray(raw) ? raw : raw.questions ?? [];
+/** Raised by getExam when the contestant is not in THEORY_ASSIGNED (HTTP 409). */
+export class ExamNotAssignedError extends Error {
+  constructor() {
+    super('Exam is not assigned yet.');
+    this.name = 'ExamNotAssignedError';
+  }
 }
 
 /**
- * POST the completed proctored exam → THEORY_TAKEN (merit pending). Idempotent:
- * one attempt per (contestant, batch) is enforced server-side.
+ * GET /competitions/{id}/me/exam — the contestant's assigned batch feed (C6).
+ * ONLINE-REQUIRED and CONTESTANT-SAFE (no answers/explanations ever ship here).
+ * The backend returns 409 unless the contestant is THEORY_ASSIGNED; we surface
+ * that as {@link ExamNotAssignedError} so the runner can guard gracefully.
+ *
+ * NOTE: capture/proctor SDK is stubbed for sandbox (see the exam runner screen).
+ */
+export async function getExam(competitionId: string): Promise<ExamAssignment> {
+  if (USE_MOCK) return mockExamAssignment();
+  try {
+    return unwrap<ExamAssignment>(await api.get(`${BASE}/competitions/${competitionId}/me/exam`));
+  } catch (err) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    if (status === 409) throw new ExamNotAssignedError();
+    throw err;
+  }
+}
+
+/**
+ * POST /competitions/{id}/me/exam/submit — the completed proctored exam →
+ * THEORY_TAKEN (Merit pending). Idempotent: one attempt per (contestant, batch)
+ * is enforced server-side. Only the selected optionIds leave the device —
+ * answers are NEVER revealed in exam mode.
+ *
+ * Contract body: { answers:[{questionId, optionId}], responseTimeMs? }
  */
 export async function submitExam(input: {
   competitionId: string;
   answers: { questionId: string; optionId: string }[];
+  responseTimeMs?: number;
   idempotencyKey?: string;
-}): Promise<{ ok: true; state: Contestant['state'] }> {
-  return unwrap<{ ok: true; state: Contestant['state'] }>(
+}): Promise<ExamSubmitResult> {
+  if (USE_MOCK) {
+    await new Promise((r) => setTimeout(r, 500));
+    return { ok: true, state: 'THEORY_TAKEN', submittedAt: new Date().toISOString() };
+  }
+  return unwrap<ExamSubmitResult>(
     await api.post(
       `${BASE}/competitions/${input.competitionId}/me/exam/submit`,
-      { answers: input.answers.map((a) => ({ question_id: a.questionId, option_id: a.optionId })) },
+      {
+        answers: input.answers.map((a) => ({ questionId: a.questionId, optionId: a.optionId })),
+        ...(input.responseTimeMs != null ? { responseTimeMs: input.responseTimeMs } : {}),
+      },
       idem(input.idempotencyKey),
     ),
   );

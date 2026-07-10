@@ -68,12 +68,11 @@ type querier interface {
 // (id, sponsor_identity_id, target_student_id, amount_minor, applied_minor, currency, state,
 // fund_ledger_ref, created_at) — additive-only — OR map pledges onto academy_scholarships with
 // the target student recorded in criteria jsonb. The SQL below assumes the dedicated table.
-// Awards reuse the append-only academy_scholarship_awards shape (idempotency_key UNIQUE). NOTE:
-// academy_scholarship_awards.scholarship_id is a NOT NULL FK to academy_scholarships — if pledges
-// live in a SEPARATE academy_scholarship_pledges table, the integration task must either (a) add
-// a pledge_id column + invoice_payment_id column to academy_scholarship_awards (additive), or
-// (b) create each pledge as an academy_scholarships row so the existing FK is satisfied. The
-// service treats scholarship_id as the pledge reference; adjust the DDL accordingly.
+// Awards reuse the append-only academy_scholarship_awards shape (idempotency_key UNIQUE).
+// RESOLVED (migration 20260920000500): pledge-funded awards reference the pledge via the
+// additive pledge_id column; academy_scholarship_awards.scholarship_id had its NOT NULL FK
+// dropped (left NULL for pledge-funded awards) and the state CHECK widened to admit 'applied'.
+// The append/read queries below key off pledge_id, not scholarship_id.
 
 func (r *Repository) InsertPledge(ctx context.Context, p Pledge) (*Pledge, error) {
 	id := uuid.New().String()
@@ -151,11 +150,13 @@ func appendAward(ctx context.Context, q querier, a Award) (*Award, bool, error) 
 	id := uuid.New().String()
 	now := time.Now()
 	const ins = `INSERT INTO academy_scholarship_awards
-	    (id, scholarship_id, user_id, fee_schedule_id, amount_minor, state, idempotency_key, created_at)
+	    (id, pledge_id, user_id, fee_schedule_id, amount_minor, state, idempotency_key, created_at)
 	    VALUES ($1,$2,$3,NULL,$4,'applied',$5,$6)
 	    ON CONFLICT (idempotency_key) DO NOTHING`
-	// scholarship_id column carries the pledge id (pledges extend the scholarship spine);
-	// user_id carries the invoice's guardian/student party for traceability.
+	// pledge_id references the funding pledge (academy_scholarship_pledges). scholarship_id
+	// is left NULL for pledge-funded awards (migration 20260920000500 drops its NOT NULL and
+	// widens the state CHECK to admit 'applied'). user_id carries the invoice's
+	// guardian/student party for traceability.
 	tag, err := q.Exec(ctx, ins, id, a.PledgeID, a.StudentID, a.AmountMinor, a.IdempotencyKey, now)
 	if err != nil {
 		return nil, false, err
@@ -172,7 +173,7 @@ func appendAward(ctx context.Context, q querier, a Award) (*Award, bool, error) 
 }
 
 func getAwardByIdem(ctx context.Context, q querier, idemKey string) (*Award, error) {
-	const sel = `SELECT id, scholarship_id, user_id, amount_minor, state, idempotency_key, created_at
+	const sel = `SELECT id, pledge_id, user_id, amount_minor, state, idempotency_key, created_at
 	             FROM academy_scholarship_awards WHERE idempotency_key = $1`
 	var a Award
 	var state string
@@ -188,8 +189,8 @@ func getAwardByIdem(ctx context.Context, q querier, idemKey string) (*Award, err
 }
 
 func (r *Repository) ListAwardsByPledge(ctx context.Context, pledgeID string) ([]Award, error) {
-	const q = `SELECT id, scholarship_id, user_id, amount_minor, state, idempotency_key, created_at
-	           FROM academy_scholarship_awards WHERE scholarship_id = $1 ORDER BY created_at DESC`
+	const q = `SELECT id, pledge_id, user_id, amount_minor, state, idempotency_key, created_at
+	           FROM academy_scholarship_awards WHERE pledge_id = $1 ORDER BY created_at DESC`
 	rows, err := r.db.Query(ctx, q, pledgeID)
 	if err != nil {
 		return nil, err

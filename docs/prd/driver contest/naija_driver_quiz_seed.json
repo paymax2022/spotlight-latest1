@@ -1,0 +1,1390 @@
+{
+  "quiz_bank": "naija_driver_safe_driving_assessment",
+  "version": "1.0.0",
+  "generated": "2026-07-07",
+  "locale": "en-NG",
+  "question_time_limit_seconds": 120,
+  "scoring_note": "1 point per correct answer; unanswered at timer expiry scores 0. Suggested tie-breaker: total response time.",
+  "stages": [
+    {
+      "stage_number": 1,
+      "stage_name": "Foundation — Road Rules, Signs & Documentation",
+      "description": "Basic knowledge of Nigerian road signs, traffic rules, required documents and rights of way.",
+      "question_count": 30,
+      "time_limit_per_question_seconds": 120,
+      "suggested_pass_mark_percent": 70,
+      "questions": [
+        {
+          "id": "ND-S1-Q01",
+          "category": "road_signs",
+          "time_limit_seconds": 120,
+          "question": "In Nigeria, what shape are most warning signs (e.g. 'bend ahead', 'narrow bridge')?",
+          "options": [
+            "Rectangular",
+            "Triangular",
+            "Circular",
+            "Octagonal"
+          ],
+          "correct_index": 1,
+          "correct_answer": "Triangular",
+          "explanation": "Triangular signs warn of hazards ahead. Circular signs give orders; rectangular signs give information."
+        },
+        {
+          "id": "ND-S1-Q02",
+          "category": "road_signs",
+          "time_limit_seconds": 120,
+          "question": "A circular road sign with a red border generally means:",
+          "options": [
+            "Information for drivers",
+            "A warning of danger ahead",
+            "Parking is permitted",
+            "Prohibition — something is not allowed"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Prohibition — something is not allowed",
+          "explanation": "Red-bordered circles are prohibitive/regulatory signs, e.g. 'No entry', 'No overtaking'."
+        },
+        {
+          "id": "ND-S1-Q03",
+          "category": "traffic_rules",
+          "time_limit_seconds": 120,
+          "question": "What must you do at a red traffic light?",
+          "options": [
+            "Stop only if pedestrians are crossing",
+            "Slow down and proceed if clear",
+            "Sound your horn and proceed",
+            "Stop completely behind the stop line"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Stop completely behind the stop line",
+          "explanation": "Red means a complete stop behind the stop line until the light turns green."
+        },
+        {
+          "id": "ND-S1-Q04",
+          "category": "traffic_rules",
+          "time_limit_seconds": 120,
+          "question": "A flashing amber (yellow) traffic light means:",
+          "options": [
+            "Stop and wait for green",
+            "Speed up before it turns red",
+            "The light is broken — ignore it",
+            "Proceed with caution, giving way where required"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Proceed with caution, giving way where required",
+          "explanation": "Flashing amber allows you to proceed carefully while giving way to pedestrians and other traffic as required."
+        },
+        {
+          "id": "ND-S1-Q05",
+          "category": "traffic_rules",
+          "time_limit_seconds": 120,
+          "question": "Which agency is primarily responsible for road traffic safety and driver's licensing in Nigeria?",
+          "options": [
+            "NAFDAC",
+            "FRSC (Federal Road Safety Corps)",
+            "NDLEA",
+            "EFCC"
+          ],
+          "correct_index": 1,
+          "correct_answer": "FRSC (Federal Road Safety Corps)",
+          "explanation": "The FRSC administers road safety, driver's licences and highway regulations in Nigeria."
+        },
+        {
+          "id": "ND-S1-Q06",
+          "category": "emergency_response",
+          "time_limit_seconds": 120,
+          "question": "What is the FRSC national toll-free emergency number?",
+          "options": [
+            "767",
+            "122",
+            "199",
+            "911"
+          ],
+          "correct_index": 1,
+          "correct_answer": "122",
+          "explanation": "Dial 122 (toll-free) to reach the FRSC in a road emergency or crash."
+        },
+        {
+          "id": "ND-S1-Q07",
+          "category": "documentation",
+          "time_limit_seconds": 120,
+          "question": "The minimum age to obtain a driver's licence in Nigeria is:",
+          "options": [
+            "16 years",
+            "18 years",
+            "17 years",
+            "21 years"
+          ],
+          "correct_index": 1,
+          "correct_answer": "18 years",
+          "explanation": "You must be at least 18 years old to hold a Nigerian driver's licence."
+        },
+        {
+          "id": "ND-S1-Q08",
+          "category": "traffic_rules",
+          "time_limit_seconds": 120,
+          "question": "In Nigeria, vehicles are driven on which side of the road?",
+          "options": [
+            "Either side",
+            "The left side",
+            "The right side",
+            "The centre of the road"
+          ],
+          "correct_index": 2,
+          "correct_answer": "The right side",
+          "explanation": "Nigeria uses right-hand traffic: keep right, and overtaking is normally done on the left."
+        },
+        {
+          "id": "ND-S1-Q09",
+          "category": "traffic_rules",
+          "time_limit_seconds": 120,
+          "question": "A zebra crossing is designed for:",
+          "options": [
+            "Cyclists to ride across",
+            "Vehicles to overtake",
+            "Animals to cross",
+            "Pedestrians to cross the road safely"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Pedestrians to cross the road safely",
+          "explanation": "Zebra crossings give pedestrians priority; drivers must slow down and stop for people on the crossing."
+        },
+        {
+          "id": "ND-S1-Q10",
+          "category": "road_signs",
+          "time_limit_seconds": 120,
+          "question": "A red octagonal (eight-sided) sign always means:",
+          "options": [
+            "STOP",
+            "No parking",
+            "Give way",
+            "Danger ahead"
+          ],
+          "correct_index": 0,
+          "correct_answer": "STOP",
+          "explanation": "The octagon is reserved for STOP: come to a complete halt before proceeding."
+        },
+        {
+          "id": "ND-S1-Q11",
+          "category": "documentation",
+          "time_limit_seconds": 120,
+          "question": "Which of these is NOT a document you are required to have for your vehicle?",
+          "options": [
+            "Driver's licence",
+            "International passport",
+            "Certificate of roadworthiness",
+            "Vehicle insurance certificate"
+          ],
+          "correct_index": 1,
+          "correct_answer": "International passport",
+          "explanation": "Required papers include your licence, insurance, roadworthiness and proof of ownership — not a passport."
+        },
+        {
+          "id": "ND-S1-Q12",
+          "category": "documentation",
+          "time_limit_seconds": 120,
+          "question": "A standard Nigerian driver's licence is issued with a validity of:",
+          "options": [
+            "3 or 5 years",
+            "10 years",
+            "1 year",
+            "2 years"
+          ],
+          "correct_index": 0,
+          "correct_answer": "3 or 5 years",
+          "explanation": "FRSC issues driver's licences with 3-year and 5-year validity options."
+        },
+        {
+          "id": "ND-S1-Q13",
+          "category": "road_signs",
+          "time_limit_seconds": 120,
+          "question": "A triangular sign with an exclamation mark (!) means:",
+          "options": [
+            "End of speed limit",
+            "Road permanently closed",
+            "General danger/hazard ahead",
+            "Filling station ahead"
+          ],
+          "correct_index": 2,
+          "correct_answer": "General danger/hazard ahead",
+          "explanation": "The exclamation triangle is a general warning: slow down and be prepared for a hazard."
+        },
+        {
+          "id": "ND-S1-Q14",
+          "category": "traffic_rules",
+          "time_limit_seconds": 120,
+          "question": "A green traffic light means:",
+          "options": [
+            "Go immediately regardless of traffic",
+            "Proceed only if the junction is clear and safe",
+            "Pedestrians have right of way over you in all directions",
+            "Prepare to stop"
+          ],
+          "correct_index": 1,
+          "correct_answer": "Proceed only if the junction is clear and safe",
+          "explanation": "Green permits you to go, but only when your exit and the junction are clear and it is safe."
+        },
+        {
+          "id": "ND-S1-Q15",
+          "category": "road_signs",
+          "time_limit_seconds": 120,
+          "question": "A road sign showing two children walking usually warns of:",
+          "options": [
+            "No minors allowed on this road",
+            "A school or children crossing ahead",
+            "A playground for adults",
+            "A toy market ahead"
+          ],
+          "correct_index": 1,
+          "correct_answer": "A school or children crossing ahead",
+          "explanation": "Slow down near school zones — children may cross suddenly."
+        },
+        {
+          "id": "ND-S1-Q16",
+          "category": "road_signs",
+          "time_limit_seconds": 120,
+          "question": "Rectangular road signs are generally used to:",
+          "options": [
+            "Provide information or direction",
+            "Give compulsory orders",
+            "Indicate speed limits only",
+            "Warn of danger"
+          ],
+          "correct_index": 0,
+          "correct_answer": "Provide information or direction",
+          "explanation": "Rectangles are informative signs: directions, distances, facilities and services."
+        },
+        {
+          "id": "ND-S1-Q17",
+          "category": "documentation",
+          "time_limit_seconds": 120,
+          "question": "Every vehicle in Nigeria must display:",
+          "options": [
+            "Number plates at the front and rear",
+            "A tinted-glass permit",
+            "The owner's photograph",
+            "A national flag"
+          ],
+          "correct_index": 0,
+          "correct_answer": "Number plates at the front and rear",
+          "explanation": "Valid number plates must be fixed and clearly visible at the front and rear of the vehicle."
+        },
+        {
+          "id": "ND-S1-Q18",
+          "category": "traffic_rules",
+          "time_limit_seconds": 120,
+          "question": "When the traffic light changes from green to amber (yellow), you should:",
+          "options": [
+            "Sound your horn and continue",
+            "Reverse away from the junction",
+            "Prepare to stop safely before the line",
+            "Accelerate to beat the red"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Prepare to stop safely before the line",
+          "explanation": "Amber means stop if you can do so safely — never accelerate to 'beat' the light."
+        },
+        {
+          "id": "ND-S1-Q19",
+          "category": "road_signs",
+          "time_limit_seconds": 120,
+          "question": "A continuous (unbroken) white line in the centre of the road means:",
+          "options": [
+            "It marks a bus lane",
+            "It marks a parking zone",
+            "Overtaking is allowed at any time",
+            "Do not cross or overtake across the line"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Do not cross or overtake across the line",
+          "explanation": "A solid centre line prohibits crossing or overtaking because visibility or conditions are unsafe."
+        },
+        {
+          "id": "ND-S1-Q20",
+          "category": "road_signs",
+          "time_limit_seconds": 120,
+          "question": "A broken white centre line means:",
+          "options": [
+            "The road ends ahead",
+            "No overtaking at any time",
+            "You may overtake when it is safe to do so",
+            "It is a one-way street"
+          ],
+          "correct_index": 2,
+          "correct_answer": "You may overtake when it is safe to do so",
+          "explanation": "Broken lines allow crossing/overtaking, but only when you can see it is completely safe."
+        },
+        {
+          "id": "ND-S1-Q21",
+          "category": "speed_limits",
+          "time_limit_seconds": 120,
+          "question": "The general speed limit for cars in built-up areas (towns and cities) in Nigeria is:",
+          "options": [
+            "50 km/h",
+            "100 km/h",
+            "30 km/h",
+            "80 km/h"
+          ],
+          "correct_index": 0,
+          "correct_answer": "50 km/h",
+          "explanation": "In built-up areas the limit for cars is 50 km/h due to pedestrians, junctions and heavy activity."
+        },
+        {
+          "id": "ND-S1-Q22",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "Before starting to drive, the first things to adjust are your:",
+          "options": [
+            "Number plates",
+            "Seat and mirrors",
+            "Tyres",
+            "Radio and air-conditioner"
+          ],
+          "correct_index": 1,
+          "correct_answer": "Seat and mirrors",
+          "explanation": "A correct seating position and properly set mirrors are essential for control and visibility."
+        },
+        {
+          "id": "ND-S1-Q23",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "Seat belts must be worn by:",
+          "options": [
+            "The driver only",
+            "Only on expressways",
+            "The driver and all passengers",
+            "Front-seat occupants only"
+          ],
+          "correct_index": 2,
+          "correct_answer": "The driver and all passengers",
+          "explanation": "Nigerian law requires the driver and all passengers to use seat belts on every trip."
+        },
+        {
+          "id": "ND-S1-Q24",
+          "category": "road_signs",
+          "time_limit_seconds": 120,
+          "question": "The 'No Entry' sign is best described as:",
+          "options": [
+            "A yellow triangle",
+            "A blue square with an arrow",
+            "A red circle with a white horizontal bar",
+            "A green circle"
+          ],
+          "correct_index": 2,
+          "correct_answer": "A red circle with a white horizontal bar",
+          "explanation": "The red disc with a white bar means the road is closed to traffic in that direction."
+        },
+        {
+          "id": "ND-S1-Q25",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "Where there is no footpath, pedestrians should walk:",
+          "options": [
+            "In the middle of the road",
+            "With their back to traffic",
+            "Only at night",
+            "Facing oncoming traffic"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Facing oncoming traffic",
+          "explanation": "Facing traffic lets pedestrians see approaching vehicles and step aside in time."
+        },
+        {
+          "id": "ND-S1-Q26",
+          "category": "traffic_rules",
+          "time_limit_seconds": 120,
+          "question": "Sounding your horn near a hospital or in a marked 'silence zone' is:",
+          "options": [
+            "Allowed only at night",
+            "Encouraged",
+            "Compulsory",
+            "Prohibited"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Prohibited",
+          "explanation": "Horns are banned in silence zones such as hospital areas; the sign shows a crossed-out horn."
+        },
+        {
+          "id": "ND-S1-Q27",
+          "category": "documentation",
+          "time_limit_seconds": 120,
+          "question": "Third-party motor insurance covers:",
+          "options": [
+            "Theft of your own car",
+            "All damage to your own car",
+            "Injury or damage you cause to other people and their property",
+            "Your fuel costs"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Injury or damage you cause to other people and their property",
+          "explanation": "Third-party cover is the legal minimum: it protects others against loss you cause, not your own vehicle."
+        },
+        {
+          "id": "ND-S1-Q28",
+          "category": "documentation",
+          "time_limit_seconds": 120,
+          "question": "A certificate of roadworthiness confirms that:",
+          "options": [
+            "The owner has paid income tax",
+            "The vehicle is mechanically fit to be on the road",
+            "The car has been washed",
+            "The driver can drive well"
+          ],
+          "correct_index": 1,
+          "correct_answer": "The vehicle is mechanically fit to be on the road",
+          "explanation": "Roadworthiness certifies the vehicle's brakes, lights, tyres and body are in safe condition."
+        },
+        {
+          "id": "ND-S1-Q29",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "When approaching a junction with no signs or traffic lights, you should:",
+          "options": [
+            "Slow down, look both ways and be ready to give way",
+            "Speed through quickly before others arrive",
+            "Flash your headlights and continue",
+            "Sound your horn and continue at speed"
+          ],
+          "correct_index": 0,
+          "correct_answer": "Slow down, look both ways and be ready to give way",
+          "explanation": "Uncontrolled junctions demand reduced speed and readiness to stop for crossing traffic."
+        },
+        {
+          "id": "ND-S1-Q30",
+          "category": "documentation",
+          "time_limit_seconds": 120,
+          "question": "A learner driver in Nigeria must:",
+          "options": [
+            "Display 'L' plates and be accompanied by a licensed driver",
+            "Avoid all main roads permanently",
+            "Drive only at night",
+            "Drive only automatic cars"
+          ],
+          "correct_index": 0,
+          "correct_answer": "Display 'L' plates and be accompanied by a licensed driver",
+          "explanation": "Learners must show L plates and drive under the supervision of a fully licensed driver."
+        }
+      ]
+    },
+    {
+      "stage_number": 2,
+      "stage_name": "Intermediate — Safe Driving Practice & FRSC Regulations",
+      "description": "Practical safe-driving behaviour: following distance, overtaking, speed limits, lane discipline and vehicle regulations.",
+      "question_count": 30,
+      "time_limit_per_question_seconds": 120,
+      "suggested_pass_mark_percent": 75,
+      "questions": [
+        {
+          "id": "ND-S2-Q01",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "The 'two-second rule' is used to:",
+          "options": [
+            "Time traffic lights",
+            "Keep a safe following distance from the vehicle ahead",
+            "Calculate fuel consumption",
+            "Measure engine speed"
+          ],
+          "correct_index": 1,
+          "correct_answer": "Keep a safe following distance from the vehicle ahead",
+          "explanation": "Pick a fixed point; if you pass it less than two seconds after the car ahead, you are too close."
+        },
+        {
+          "id": "ND-S2-Q02",
+          "category": "night_weather",
+          "time_limit_seconds": 120,
+          "question": "On wet roads or in rain, your following distance should be:",
+          "options": [
+            "The same as in dry weather",
+            "Ignored because of the wipers",
+            "Reduced to stay in convoy",
+            "At least doubled — about four seconds"
+          ],
+          "correct_index": 3,
+          "correct_answer": "At least doubled — about four seconds",
+          "explanation": "Wet roads can double stopping distances, so double your gap to at least four seconds."
+        },
+        {
+          "id": "ND-S2-Q03",
+          "category": "overtaking",
+          "time_limit_seconds": 120,
+          "question": "In Nigeria (right-hand traffic), you should normally overtake other vehicles on the:",
+          "options": [
+            "Left side",
+            "Either side freely",
+            "Right side",
+            "Road shoulder"
+          ],
+          "correct_index": 0,
+          "correct_answer": "Left side",
+          "explanation": "With traffic keeping right, overtaking is done on the left, returning right when safely clear."
+        },
+        {
+          "id": "ND-S2-Q04",
+          "category": "overtaking",
+          "time_limit_seconds": 120,
+          "question": "It is most dangerous to overtake:",
+          "options": [
+            "During daylight",
+            "At bends, hilltops, junctions and pedestrian crossings",
+            "On a dual carriageway",
+            "On a straight, clear road"
+          ],
+          "correct_index": 1,
+          "correct_answer": "At bends, hilltops, junctions and pedestrian crossings",
+          "explanation": "Never overtake where your view of oncoming traffic or crossing hazards is blocked."
+        },
+        {
+          "id": "ND-S2-Q05",
+          "category": "speed_limits",
+          "time_limit_seconds": 120,
+          "question": "The maximum speed limit for private cars on Nigerian expressways is:",
+          "options": [
+            "140 km/h",
+            "100 km/h",
+            "80 km/h",
+            "120 km/h"
+          ],
+          "correct_index": 1,
+          "correct_answer": "100 km/h",
+          "explanation": "Cars are limited to 100 km/h on expressways (80 km/h on other highways, 50 km/h in town)."
+        },
+        {
+          "id": "ND-S2-Q06",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "The legal blood alcohol concentration (BAC) limit for drivers in Nigeria is:",
+          "options": [
+            "0.00% — but only for learners",
+            "0.50%",
+            "0.10%",
+            "0.05%"
+          ],
+          "correct_index": 3,
+          "correct_answer": "0.05%",
+          "explanation": "FRSC enforces a 0.05 g/100ml BAC limit; the safest choice is not to drink at all before driving."
+        },
+        {
+          "id": "ND-S2-Q07",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "Using a handheld mobile phone while driving is:",
+          "options": [
+            "Allowed for business calls",
+            "A punishable traffic offence",
+            "Allowed if the call is short",
+            "Allowed in slow traffic"
+          ],
+          "correct_index": 1,
+          "correct_answer": "A punishable traffic offence",
+          "explanation": "Phone use while driving is an FRSC offence — it multiplies your crash risk. Park safely to make calls."
+        },
+        {
+          "id": "ND-S2-Q08",
+          "category": "speed_limits",
+          "time_limit_seconds": 120,
+          "question": "FRSC requires commercial vehicles in Nigeria to be fitted with:",
+          "options": [
+            "A speed limiting device",
+            "A television screen",
+            "External loudspeakers",
+            "Extra roof seats"
+          ],
+          "correct_index": 0,
+          "correct_answer": "A speed limiting device",
+          "explanation": "Speed limiters are mandatory on commercial vehicles to curb overspeeding, the top cause of crashes."
+        },
+        {
+          "id": "ND-S2-Q09",
+          "category": "vehicle_condition",
+          "time_limit_seconds": 120,
+          "question": "The minimum legal tyre tread depth is generally:",
+          "options": [
+            "1.6 mm",
+            "0.5 mm",
+            "10 mm",
+            "5 mm"
+          ],
+          "correct_index": 0,
+          "correct_answer": "1.6 mm",
+          "explanation": "Below 1.6 mm of tread, grip in the wet collapses and the tyre is illegal — check tyres weekly."
+        },
+        {
+          "id": "ND-S2-Q10",
+          "category": "overtaking",
+          "time_limit_seconds": 120,
+          "question": "When another vehicle is overtaking you, you should:",
+          "options": [
+            "Brake suddenly",
+            "Swerve towards it to warn the driver",
+            "Accelerate so it cannot pass",
+            "Maintain or slightly reduce your speed and keep right"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Maintain or slightly reduce your speed and keep right",
+          "explanation": "Help the overtaker pass safely; speeding up prolongs the manoeuvre and creates danger."
+        },
+        {
+          "id": "ND-S2-Q11",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "The correct routine before changing lanes is:",
+          "options": [
+            "Signal only, then move",
+            "Horn, then swerve",
+            "Mirror — Signal — check blind spot — then Manoeuvre",
+            "Brake, turn, then signal"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Mirror — Signal — check blind spot — then Manoeuvre",
+          "explanation": "The MSM routine with a blind-spot (shoulder) check prevents side-swipe collisions."
+        },
+        {
+          "id": "ND-S2-Q12",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "You should signal your intention to turn:",
+          "options": [
+            "In good time — at least about 30 metres before the turn",
+            "At the exact moment of turning",
+            "Only when other cars are visible",
+            "After completing the turn"
+          ],
+          "correct_index": 0,
+          "correct_answer": "In good time — at least about 30 metres before the turn",
+          "explanation": "Early, clear signals give other road users time to react to your intentions."
+        },
+        {
+          "id": "ND-S2-Q13",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "Leaving a broken-down vehicle on the road at night without lights or reflectors is:",
+          "options": [
+            "Allowed on expressways only",
+            "A serious hazard and an offence",
+            "Normal practice on quiet roads",
+            "Acceptable if you will return soon"
+          ],
+          "correct_index": 1,
+          "correct_answer": "A serious hazard and an offence",
+          "explanation": "Unlit stationary vehicles cause fatal night crashes — use hazard lights and place your warning triangle."
+        },
+        {
+          "id": "ND-S2-Q14",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "'Tailgating' means:",
+          "options": [
+            "Following the vehicle ahead too closely",
+            "Reversing on a highway",
+            "Overtaking on the shoulder",
+            "Driving with the boot open"
+          ],
+          "correct_index": 0,
+          "correct_answer": "Following the vehicle ahead too closely",
+          "explanation": "Tailgating removes your stopping margin; if the car ahead brakes hard, you will hit it."
+        },
+        {
+          "id": "ND-S2-Q15",
+          "category": "traffic_rules",
+          "time_limit_seconds": 120,
+          "question": "At a zebra crossing, the right of way belongs to:",
+          "options": [
+            "Pedestrians on the crossing",
+            "Commercial buses",
+            "Motorcycles",
+            "The fastest approaching vehicle"
+          ],
+          "correct_index": 0,
+          "correct_answer": "Pedestrians on the crossing",
+          "explanation": "Slow down on approach and stop for anyone on or stepping onto the crossing."
+        },
+        {
+          "id": "ND-S2-Q16",
+          "category": "night_weather",
+          "time_limit_seconds": 120,
+          "question": "In heavy rain during the day, you should:",
+          "options": [
+            "Use hazard lights while moving",
+            "Use full beam headlights",
+            "Switch on dipped (low beam) headlights",
+            "Drive with no lights to save the battery"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Switch on dipped (low beam) headlights",
+          "explanation": "Dipped headlights make you visible in rain and spray; hazard lights while moving confuse other drivers."
+        },
+        {
+          "id": "ND-S2-Q17",
+          "category": "night_weather",
+          "time_limit_seconds": 120,
+          "question": "If dazzled by the high beams of an oncoming vehicle at night:",
+          "options": [
+            "Stop suddenly in your lane",
+            "Slow down and look towards the right edge of the road",
+            "Close your eyes briefly until it passes",
+            "Flash your lights repeatedly and speed up"
+          ],
+          "correct_index": 1,
+          "correct_answer": "Slow down and look towards the right edge of the road",
+          "explanation": "Using the road edge as a guide keeps you on course until your vision recovers."
+        },
+        {
+          "id": "ND-S2-Q18",
+          "category": "vehicle_condition",
+          "time_limit_seconds": 120,
+          "question": "Overloading a vehicle beyond its rated capacity:",
+          "options": [
+            "Reduces braking efficiency and stability, and is an offence",
+            "Is allowed for short trips",
+            "Saves fuel",
+            "Improves road grip"
+          ],
+          "correct_index": 0,
+          "correct_answer": "Reduces braking efficiency and stability, and is an offence",
+          "explanation": "Excess load lengthens braking distance, strains tyres and destabilises the vehicle."
+        },
+        {
+          "id": "ND-S2-Q19",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "Young children travelling in a car should:",
+          "options": [
+            "Sit on the driver's lap",
+            "Sit in front without a belt",
+            "Stand between the front seats",
+            "Sit in the back seat, properly restrained"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Sit in the back seat, properly restrained",
+          "explanation": "The back seat with an appropriate restraint is the safest position for children."
+        },
+        {
+          "id": "ND-S2-Q20",
+          "category": "traffic_rules",
+          "time_limit_seconds": 120,
+          "question": "When entering a roundabout, you should give way to:",
+          "options": [
+            "Only trucks and tankers",
+            "Nobody — first come, first served",
+            "Vehicles behind you",
+            "Traffic already circulating in the roundabout"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Traffic already circulating in the roundabout",
+          "explanation": "Vehicles already in the roundabout have priority; enter only when there is a safe gap."
+        },
+        {
+          "id": "ND-S2-Q21",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "Hazard warning lights should be used:",
+          "options": [
+            "When your vehicle is stationary and causing an obstruction, or in an emergency",
+            "Whenever you overtake",
+            "While driving normally in light rain",
+            "To thank other drivers"
+          ],
+          "correct_index": 0,
+          "correct_answer": "When your vehicle is stationary and causing an obstruction, or in an emergency",
+          "explanation": "Hazard lights warn of danger or breakdown — using them while moving normally misleads other drivers."
+        },
+        {
+          "id": "ND-S2-Q22",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "'Defensive driving' means:",
+          "options": [
+            "Fitting protective bars to your vehicle",
+            "Driving very slowly at all times",
+            "Anticipating hazards and the mistakes of other road users",
+            "Driving aggressively to defend your lane"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Anticipating hazards and the mistakes of other road users",
+          "explanation": "A defensive driver expects errors from others and always leaves room and time to respond."
+        },
+        {
+          "id": "ND-S2-Q23",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "If you begin to feel sleepy while driving, the safest action is to:",
+          "options": [
+            "Stop in a safe place and rest",
+            "Drive faster to finish the trip quickly",
+            "Turn up the music loudly",
+            "Open the window and continue"
+          ],
+          "correct_index": 0,
+          "correct_answer": "Stop in a safe place and rest",
+          "explanation": "No trick beats sleep. A short nap in a safe place can save your life — fatigue kills."
+        },
+        {
+          "id": "ND-S2-Q24",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "On long journeys, FRSC advises drivers to take a rest break:",
+          "options": [
+            "Every ten hours",
+            "About every two hours, or whenever tired",
+            "Never — breaks waste time",
+            "Only when fuel runs out"
+          ],
+          "correct_index": 1,
+          "correct_answer": "About every two hours, or whenever tired",
+          "explanation": "Regular breaks keep reaction time sharp; fatigue builds up silently on long trips."
+        },
+        {
+          "id": "ND-S2-Q25",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "When passing motorcyclists (okada) and cyclists, you should:",
+          "options": [
+            "Force them onto the shoulder",
+            "Pass as closely as possible",
+            "Give them extra clearance and reduce speed",
+            "Sound your horn continuously"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Give them extra clearance and reduce speed",
+          "explanation": "Two-wheelers can wobble or swerve around potholes — leave generous side space."
+        },
+        {
+          "id": "ND-S2-Q26",
+          "category": "speed_limits",
+          "time_limit_seconds": 120,
+          "question": "Compared with private cars, tankers and trailers are subject to:",
+          "options": [
+            "Higher speed limits",
+            "Exactly the same limits",
+            "No speed limits",
+            "Lower speed limits"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Lower speed limits",
+          "explanation": "Heavy vehicles need far longer to stop, so their limits (e.g. 45–60 km/h) are lower than cars'."
+        },
+        {
+          "id": "ND-S2-Q27",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "The recommended way to hold the steering wheel is:",
+          "options": [
+            "Steering with the knees on straight roads",
+            "One hand resting at the bottom",
+            "Both hands on the wheel, about the 9 and 3 o'clock position",
+            "One finger on the rim"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Both hands on the wheel, about the 9 and 3 o'clock position",
+          "explanation": "Two hands at 9 and 3 give maximum control for emergency steering."
+        },
+        {
+          "id": "ND-S2-Q28",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "When joining an expressway from a slip road (acceleration lane), you should:",
+          "options": [
+            "Reverse if no gap appears",
+            "Stop at the end of the lane and wait",
+            "Merge immediately at very low speed",
+            "Build up speed to match traffic and merge when there is a safe gap"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Build up speed to match traffic and merge when there is a safe gap",
+          "explanation": "Matching traffic speed lets you merge smoothly without forcing others to brake."
+        },
+        {
+          "id": "ND-S2-Q29",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "Wearing a seat belt in a crash roughly:",
+          "options": [
+            "Only helps below 30 km/h",
+            "Halves your risk of death or serious injury",
+            "Doubles your risk of injury",
+            "Makes no measurable difference"
+          ],
+          "correct_index": 1,
+          "correct_answer": "Halves your risk of death or serious injury",
+          "explanation": "Belts cut the risk of death for front-seat occupants by about 45–50% — buckle up every trip."
+        },
+        {
+          "id": "ND-S2-Q30",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "At a railway level crossing without barriers or lights, you should:",
+          "options": [
+            "Stop, look both ways and listen before crossing",
+            "Drive across as quickly as possible",
+            "Follow the vehicle in front without checking",
+            "Sound your horn and cross"
+          ],
+          "correct_index": 0,
+          "correct_answer": "Stop, look both ways and listen before crossing",
+          "explanation": "Trains cannot stop for you. Cross only after confirming the line is completely clear."
+        }
+      ]
+    },
+    {
+      "stage_number": 3,
+      "stage_name": "Advanced — Hazard Perception & Emergency Response",
+      "description": "Defensive driving judgement: emergencies, skids, night/weather driving, crash-scene response and risk anticipation.",
+      "question_count": 30,
+      "time_limit_per_question_seconds": 120,
+      "suggested_pass_mark_percent": 80,
+      "questions": [
+        {
+          "id": "ND-S3-Q01",
+          "category": "emergency_response",
+          "time_limit_seconds": 120,
+          "question": "If your brakes fail while driving, you should first:",
+          "options": [
+            "Accelerate to escape the traffic around you",
+            "Switch off the engine and remove the key",
+            "Jump out of the moving vehicle",
+            "Pump the brake pedal, shift to a lower gear and apply the handbrake gradually"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Pump the brake pedal, shift to a lower gear and apply the handbrake gradually",
+          "explanation": "Pumping may restore pressure; engine braking and gradual handbrake use scrub off speed under control."
+        },
+        {
+          "id": "ND-S3-Q02",
+          "category": "emergency_response",
+          "time_limit_seconds": 120,
+          "question": "If a tyre bursts at speed, you should:",
+          "options": [
+            "Grip the steering firmly, ease off the accelerator and slow down gradually",
+            "Swerve quickly to the shoulder at speed",
+            "Switch off the ignition at once",
+            "Brake as hard as possible immediately"
+          ],
+          "correct_index": 0,
+          "correct_answer": "Grip the steering firmly, ease off the accelerator and slow down gradually",
+          "explanation": "Hard braking or sharp steering after a blowout causes loss of control — decelerate smoothly first."
+        },
+        {
+          "id": "ND-S3-Q03",
+          "category": "hazard_perception",
+          "time_limit_seconds": 120,
+          "question": "'Aquaplaning' (hydroplaning) happens when:",
+          "options": [
+            "Tyres lose contact with the road on a film of water",
+            "The road surface is dusty",
+            "The wipers stop working",
+            "The engine floods with fuel"
+          ],
+          "correct_index": 0,
+          "correct_answer": "Tyres lose contact with the road on a film of water",
+          "explanation": "At speed on standing water, tyres ride on the water film and steering and braking stop working."
+        },
+        {
+          "id": "ND-S3-Q04",
+          "category": "emergency_response",
+          "time_limit_seconds": 120,
+          "question": "If your car begins to aquaplane, you should:",
+          "options": [
+            "Brake as hard as possible",
+            "Ease off the accelerator, keep the steering straight and avoid braking suddenly",
+            "Accelerate through the water",
+            "Turn the wheel sharply to regain grip"
+          ],
+          "correct_index": 1,
+          "correct_answer": "Ease off the accelerator, keep the steering straight and avoid braking suddenly",
+          "explanation": "Lifting off gently lets the tyres slow and regain contact; sudden inputs cause a skid."
+        },
+        {
+          "id": "ND-S3-Q05",
+          "category": "emergency_response",
+          "time_limit_seconds": 120,
+          "question": "If your vehicle catches fire while driving:",
+          "options": [
+            "Keep driving to the nearest mechanic",
+            "Continue slowly with the windows open",
+            "Open the bonnet fully to inspect the flames",
+            "Stop safely, switch off the ignition, get everyone out and away, then tackle only a small fire with an extinguisher"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Stop safely, switch off the ignition, get everyone out and away, then tackle only a small fire with an extinguisher",
+          "explanation": "Life first: evacuate upwind and call for help. Never fully open a burning bonnet — it feeds the fire air."
+        },
+        {
+          "id": "ND-S3-Q06",
+          "category": "emergency_response",
+          "time_limit_seconds": 120,
+          "question": "On a highway, the warning triangle (C-caution) should be placed approximately:",
+          "options": [
+            "200 metres ahead of the vehicle",
+            "45 metres behind the vehicle",
+            "5 metres behind the vehicle",
+            "On the roof of the vehicle"
+          ],
+          "correct_index": 1,
+          "correct_answer": "45 metres behind the vehicle",
+          "explanation": "About 45 m gives approaching traffic time to see and react before reaching your vehicle."
+        },
+        {
+          "id": "ND-S3-Q07",
+          "category": "emergency_response",
+          "time_limit_seconds": 120,
+          "question": "To correct a rear-wheel skid, you should:",
+          "options": [
+            "Accelerate hard out of it",
+            "Pull the handbrake firmly",
+            "Ease off the pedals and steer gently in the direction the rear is sliding",
+            "Brake hard and steer away from the skid"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Ease off the pedals and steer gently in the direction the rear is sliding",
+          "explanation": "Steering into the skid realigns the car; harsh braking or power makes the slide worse."
+        },
+        {
+          "id": "ND-S3-Q08",
+          "category": "night_weather",
+          "time_limit_seconds": 120,
+          "question": "The most important rule for night driving is:",
+          "options": [
+            "Follow the tail lights ahead closely",
+            "Use hazard lights while moving",
+            "Use full beam at all times",
+            "Never drive faster than you can stop within the distance your headlights show"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Never drive faster than you can stop within the distance your headlights show",
+          "explanation": "If a hazard appears at the edge of your beam, you must be able to stop before reaching it."
+        },
+        {
+          "id": "ND-S3-Q09",
+          "category": "night_weather",
+          "time_limit_seconds": 120,
+          "question": "When meeting an oncoming vehicle at night, you should:",
+          "options": [
+            "Flash your lights repeatedly",
+            "Switch off your lights completely",
+            "Dip your headlights to low beam",
+            "Keep full beam on for better vision"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Dip your headlights to low beam",
+          "explanation": "Dipping prevents dazzling the other driver — a dazzled driver may drift into your lane."
+        },
+        {
+          "id": "ND-S3-Q10",
+          "category": "night_weather",
+          "time_limit_seconds": 120,
+          "question": "During harmattan haze or fog, you should:",
+          "options": [
+            "Drive at normal speed to exit the fog quickly",
+            "Use full beam to see farther",
+            "Use dipped headlights or fog lights, reduce speed and increase following distance",
+            "Use only parking lights"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Use dipped headlights or fog lights, reduce speed and increase following distance",
+          "explanation": "Full beam reflects off haze and blinds you; slow down and extend your gap — visibility can drop suddenly."
+        },
+        {
+          "id": "ND-S3-Q11",
+          "category": "emergency_response",
+          "time_limit_seconds": 120,
+          "question": "Arriving first at a crash scene, your first action should be to:",
+          "options": [
+            "Start moving all victims immediately",
+            "Take photographs before anything else",
+            "Drive past quickly to avoid delay",
+            "Park safely, switch on hazard lights, protect the scene and call 122"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Park safely, switch on hazard lights, protect the scene and call 122",
+          "explanation": "Securing the scene prevents a second crash; then summon FRSC/emergency services on 122."
+        },
+        {
+          "id": "ND-S3-Q12",
+          "category": "emergency_response",
+          "time_limit_seconds": 120,
+          "question": "A crash victim with a suspected neck or spinal injury should be:",
+          "options": [
+            "Carried on someone's back to a car",
+            "Given water to drink",
+            "Left in position and not moved unless there is immediate danger such as fire",
+            "Sat upright immediately to help breathing"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Left in position and not moved unless there is immediate danger such as fire",
+          "explanation": "Movement can turn a spinal injury into permanent paralysis — wait for trained responders unless danger forces evacuation."
+        },
+        {
+          "id": "ND-S3-Q13",
+          "category": "hazard_perception",
+          "time_limit_seconds": 120,
+          "question": "Total stopping distance is made up of:",
+          "options": [
+            "Engine size plus tyre width",
+            "Speed minus reaction time",
+            "Braking distance only",
+            "Thinking (reaction) distance plus braking distance"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Thinking (reaction) distance plus braking distance",
+          "explanation": "You travel a long way while reacting before the brakes even begin to work."
+        },
+        {
+          "id": "ND-S3-Q14",
+          "category": "hazard_perception",
+          "time_limit_seconds": 120,
+          "question": "If you double your speed, your braking distance becomes roughly:",
+          "options": [
+            "Half as long",
+            "Twice as long",
+            "Exactly the same",
+            "Four times as long"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Four times as long",
+          "explanation": "Braking distance rises with the square of speed — small speed increases cost big stopping distance."
+        },
+        {
+          "id": "ND-S3-Q15",
+          "category": "vehicle_condition",
+          "time_limit_seconds": 120,
+          "question": "If the engine overheats, you should:",
+          "options": [
+            "Open the radiator cap immediately to release pressure",
+            "Pull over safely, switch off the engine and wait for it to cool before checking",
+            "Pour cold water on the hot engine block",
+            "Keep driving to burn off the heat"
+          ],
+          "correct_index": 1,
+          "correct_answer": "Pull over safely, switch off the engine and wait for it to cool before checking",
+          "explanation": "A hot radiator cap can erupt with scalding steam; cold water on a hot block can crack it."
+        },
+        {
+          "id": "ND-S3-Q16",
+          "category": "hazard_perception",
+          "time_limit_seconds": 120,
+          "question": "Sleeping inside a parked car with the engine and air-conditioner running is dangerous mainly because of:",
+          "options": [
+            "Carbon monoxide poisoning",
+            "Fuel gauge damage",
+            "Tyre wear",
+            "Battery drain"
+          ],
+          "correct_index": 0,
+          "correct_answer": "Carbon monoxide poisoning",
+          "explanation": "Exhaust fumes can seep into the cabin; carbon monoxide is odourless and can kill sleeping occupants."
+        },
+        {
+          "id": "ND-S3-Q17",
+          "category": "hazard_perception",
+          "time_limit_seconds": 120,
+          "question": "A 'black spot' on a road refers to:",
+          "options": [
+            "A location with a history of frequent crashes",
+            "An oil stain on the tarmac",
+            "A speed camera position",
+            "A toll gate"
+          ],
+          "correct_index": 0,
+          "correct_answer": "A location with a history of frequent crashes",
+          "explanation": "Approach marked black spots with extra caution and reduced speed."
+        },
+        {
+          "id": "ND-S3-Q18",
+          "category": "hazard_perception",
+          "time_limit_seconds": 120,
+          "question": "Strong crosswinds on bridges and exposed roads most affect:",
+          "options": [
+            "High-sided vehicles, motorcycles — and any vehicle's steering, so grip the wheel firmly",
+            "Only small-engine cars",
+            "Only parked vehicles",
+            "Nothing on a modern car"
+          ],
+          "correct_index": 0,
+          "correct_answer": "High-sided vehicles, motorcycles — and any vehicle's steering, so grip the wheel firmly",
+          "explanation": "Sudden gusts can push you off line, especially when passing trucks or gaps in buildings."
+        },
+        {
+          "id": "ND-S3-Q19",
+          "category": "hazard_perception",
+          "time_limit_seconds": 120,
+          "question": "A long articulated truck ahead signals and swings wide before a junction. You should:",
+          "options": [
+            "Flash your lights to hurry it up",
+            "Sound your horn and squeeze past",
+            "Hold back — it needs extra room to complete its turn",
+            "Quickly overtake through the gap it has opened"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Hold back — it needs extra room to complete its turn",
+          "explanation": "Long vehicles swing out before turning; the 'gap' will close on anything beside them."
+        },
+        {
+          "id": "ND-S3-Q20",
+          "category": "hazard_perception",
+          "time_limit_seconds": 120,
+          "question": "A defensive driver always maintains a 'space cushion', meaning:",
+          "options": [
+            "Extra passengers for balance",
+            "A fully loaded boot",
+            "Soft padded seats",
+            "Space around the vehicle that allows an escape route if something goes wrong"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Space around the vehicle that allows an escape route if something goes wrong",
+          "explanation": "Managing the space ahead, behind and beside you is the core of defensive driving."
+        },
+        {
+          "id": "ND-S3-Q21",
+          "category": "emergency_response",
+          "time_limit_seconds": 120,
+          "question": "In an emergency stop with ABS brakes, you should:",
+          "options": [
+            "Pump the pedal rapidly",
+            "Release the brake when the pedal vibrates",
+            "Press the brake firmly, keep it pressed, and steer around the hazard if needed",
+            "Use only the handbrake"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Press the brake firmly, keep it pressed, and steer around the hazard if needed",
+          "explanation": "The pulsing pedal is ABS working — maintain firm pressure; ABS lets you steer while braking."
+        },
+        {
+          "id": "ND-S3-Q22",
+          "category": "safe_practice",
+          "time_limit_seconds": 120,
+          "question": "When descending a long, steep hill, you should:",
+          "options": [
+            "Ride the brakes continuously all the way down",
+            "Switch off the engine",
+            "Shift to neutral to save fuel",
+            "Engage a lower gear and use engine braking"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Engage a lower gear and use engine braking",
+          "explanation": "Engine braking controls speed without overheating the brakes; neutral or engine-off removes control."
+        },
+        {
+          "id": "ND-S3-Q23",
+          "category": "vehicle_condition",
+          "time_limit_seconds": 120,
+          "question": "'Brake fade' is caused by:",
+          "options": [
+            "Overheating of the brakes from continuous heavy use",
+            "Driving too slowly",
+            "Brand-new brake pads",
+            "Very cold weather"
+          ],
+          "correct_index": 0,
+          "correct_answer": "Overheating of the brakes from continuous heavy use",
+          "explanation": "Overheated pads and fluid lose stopping power — a major danger on long descents."
+        },
+        {
+          "id": "ND-S3-Q24",
+          "category": "night_weather",
+          "time_limit_seconds": 120,
+          "question": "The safest approach to a flooded section of road is to:",
+          "options": [
+            "Follow trucks through at their speed",
+            "Cross with the clutch fully pressed",
+            "Avoid it if possible; if you must cross, go slowly in a low gear and test your brakes afterwards",
+            "Speed through so the engine does not stall"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Avoid it if possible; if you must cross, go slowly in a low gear and test your brakes afterwards",
+          "explanation": "Water hides depth, washouts and open drains; wet brakes need gentle testing after crossing."
+        },
+        {
+          "id": "ND-S3-Q25",
+          "category": "vehicle_condition",
+          "time_limit_seconds": 120,
+          "question": "An unsecured or protruding load on a vehicle:",
+          "options": [
+            "Improves the vehicle's balance",
+            "Is only illegal at night",
+            "Is a serious hazard to other road users and an offence",
+            "Is acceptable if tied loosely with rope"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Is a serious hazard to other road users and an offence",
+          "explanation": "Falling loads cause multi-vehicle crashes; loads must be secured and within legal dimensions."
+        },
+        {
+          "id": "ND-S3-Q26",
+          "category": "night_weather",
+          "time_limit_seconds": 120,
+          "question": "At night or in heavy rain, the two-second following rule should be extended to at least:",
+          "options": [
+            "It should be reduced",
+            "One second",
+            "Four seconds",
+            "Half a second"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Four seconds",
+          "explanation": "Lower visibility and grip demand a much bigger safety gap."
+        },
+        {
+          "id": "ND-S3-Q27",
+          "category": "emergency_response",
+          "time_limit_seconds": 120,
+          "question": "A pedestrian suddenly steps into your path. The safest reaction is usually to:",
+          "options": [
+            "Accelerate past before they cross",
+            "Swerve into the oncoming lane",
+            "Brake firmly while keeping control and staying in your lane where possible",
+            "Sound the horn and maintain speed"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Brake firmly while keeping control and staying in your lane where possible",
+          "explanation": "Controlled firm braking sheds the most speed; swerving into traffic often trades one crash for a worse one."
+        },
+        {
+          "id": "ND-S3-Q28",
+          "category": "documentation",
+          "time_limit_seconds": 120,
+          "question": "FRSC requires vehicles to carry which safety items?",
+          "options": [
+            "An umbrella and torch only",
+            "A television and loudspeakers",
+            "A fire extinguisher and a warning triangle (C-caution)",
+            "A spare number plate"
+          ],
+          "correct_index": 2,
+          "correct_answer": "A fire extinguisher and a warning triangle (C-caution)",
+          "explanation": "The extinguisher and C-caution are mandatory equipment checked at FRSC inspections."
+        },
+        {
+          "id": "ND-S3-Q29",
+          "category": "hazard_perception",
+          "time_limit_seconds": 120,
+          "question": "Brief 'microsleeps' while driving are a sign of:",
+          "options": [
+            "Low fuel level",
+            "The air-conditioner being too strong",
+            "Good, relaxed concentration",
+            "Dangerous fatigue — stop and rest immediately"
+          ],
+          "correct_index": 3,
+          "correct_answer": "Dangerous fatigue — stop and rest immediately",
+          "explanation": "A 3-second microsleep at 100 km/h means over 80 metres travelled blind."
+        },
+        {
+          "id": "ND-S3-Q30",
+          "category": "hazard_perception",
+          "time_limit_seconds": 120,
+          "question": "After long, fast expressway driving, when you enter a town your speed often:",
+          "options": [
+            "No longer matters in built-up areas",
+            "Cannot be measured accurately",
+            "Feels slower than it really is — check your speedometer",
+            "Feels faster than it really is"
+          ],
+          "correct_index": 2,
+          "correct_answer": "Feels slower than it really is — check your speedometer",
+          "explanation": "Speed adaptation tricks your senses; trust the speedometer and drop to the 50 km/h limit."
+        }
+      ]
+    }
+  ]
+}

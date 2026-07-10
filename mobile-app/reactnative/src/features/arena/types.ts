@@ -141,28 +141,81 @@ export interface TrainingModule {
 }
 
 // ─── Play-Along quiz (S2) — engagement, NOT merit ───────────────────────────
+// Naija Driver bank: 90 questions, 3 stages × 30, 120s per question. The backend
+// serves CONTESTANT-SAFE questions (no correct answer / explanation) and scores
+// server-side on submit, returning a per-question breakdown for the teaching
+// moment (S3). Option ids are the string indices "0".."3" (per contract).
 
+/** Which of the three stages of the safe-driving bank. */
+export type QuizStage = 1 | 2 | 3;
+
+export interface QuizOption {
+  /** "0".."3" per the backend contract. */
+  id: string;
+  label: string;
+}
+
+/** A single contestant-safe question (NO answer/explanation leaked). */
 export interface PlayAlongQuestion {
   id: string;
+  /** Question category tag (e.g. "road_signs") — informational only. */
+  category?: string;
   prompt: string;
-  options: { id: string; label: string }[];
+  options: QuizOption[];
+  /** Per-question limit (seconds). Defaults to 120 for this bank. */
   timeLimitSecs?: number | null;
-  // Optional — present in mock/dev so the client can give instant gamified
-  // feedback (points, streaks, reveal). The real backend omits it and scores
-  // server-side on submit.
+  // Optional — present ONLY in mock/dev so the client can score offline and give
+  // the instant gamified reveal. The real backend OMITS these on question feeds
+  // (contestant-safe) and returns them in the attempt result's `perQuestion`.
   correctOptionId?: string;
   explanation?: string;
 }
 
+/** A full stage question set from GET …/playalong/questions?stage=N. */
+export interface PlayAlongStageSet {
+  stageNumber: QuizStage;
+  stageName: string;
+  passMarkPercent: number;
+  timeLimitSecs: number;
+  questions: PlayAlongQuestion[];
+}
+
+/** Per-question result returned by the attempt POST (the teaching moment). */
+export interface PlayAlongPerQuestion {
+  questionId: string;
+  correctOptionId: string;
+  explanation?: string | null;
+  correct: boolean;
+}
+
+/** Result of POST …/playalong/attempt. Engagement — never Merit. */
 export interface PlayAlongAttemptResult {
   score: number;
   total: number;
   passed: boolean;
+  perQuestion: PlayAlongPerQuestion[];
   /** Issued when the pass threshold is met (Certified Safe Driver badge). */
   credentialIssued?: boolean;
   credentialHash?: string | null;
   /** Small ledgered cashback in kobo (NL5-style disclosure applies). */
   cashbackKobo?: number | null;
+}
+
+// ─── Proctored theory exam (C6) — feeds signed Merit ─────────────────────────
+
+/** GET …/me/exam — the contestant's assigned batch feed (contestant-safe). */
+export interface ExamAssignment {
+  batch: TheoryBatch;
+  stage: QuizStage;
+  timeLimitSecs: number;
+  questions: PlayAlongQuestion[];
+}
+
+/** POST …/me/exam/submit result. */
+export interface ExamSubmitResult {
+  ok: true;
+  state: 'THEORY_TAKEN';
+  submittedAt: string;
 }
 
 // ─── Support / Back-a-Driver (S5) — feeds pot + People's Champion, NOT crown ─

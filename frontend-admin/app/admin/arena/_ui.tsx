@@ -172,6 +172,7 @@ export function LockedChip({ label = 'LOCKED' }: { label?: string }) {
 export const ARENA_PERMS = {
   admin: 'arena.admin.manage', // A1/A5/A7/A9 (Competition Admin)
   potDisburse: 'arena.admin.disburse',
+  questions: 'arena.admin.questions', // Quiz Bank (Naija Driver quiz management)
   reviewer: 'arena.reviewer.screen', // A2
   proctor: 'arena.proctor.attest', // A3
   judge: 'arena.judge.score', // A4

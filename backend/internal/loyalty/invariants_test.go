@@ -75,28 +75,27 @@ func TestRank_MinTierGating(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// BUG (documented, NOT fixed): rank(TierBlack) falls through to the default and
-// returns 0, which places BLACK BELOW TIER1 (black.go comments it as "above TIER3").
-// Loyalty's Black membership is tracked in a separate table (black.go), so today's
-// catalog gating does not route BLACK through rank(); but the comparator is wrong,
-// and if any loyalty catalog item ever set MinTier=BLACK, rank(item.MinTier)==0 would
-// make it eligible to EVERY member (rank(anyTier) >= 0). This test PINS the current
-// (buggy) behaviour so a future fix is a deliberate, reviewed change — it does not
-// assert the intended ordering, it documents the latent defect.
+// rank(TierBlack) is now the highest tier (above TIER3), fixing the latent defect
+// where BLACK fell through to 0 and a MinTier=BLACK reward gate would admit EVERY
+// member (rank(anyTier) >= 0). BLACK membership is also tracked in a separate table
+// (black.go); this asserts the comparator itself is correct + fail-closed.
 // ---------------------------------------------------------------------------
 
-func TestRank_BlackTierIsUnordered(t *testing.T) {
-	// Current behaviour: BLACK is unranked (0), i.e. below every real tier.
-	if rank(TierBlack) != 0 {
-		t.Errorf("EXPECTED-FAIL sentinel changed: rank(TierBlack) is now %d (was 0). "+
-			"If BLACK was intentionally added to rank(), update this test AND verify "+
-			"MinTier=BLACK gating in Redeem/ListCatalog is correct.", rank(TierBlack))
+func TestRank_BlackTierIsHighest(t *testing.T) {
+	// BLACK must outrank every real tier.
+	if !(rank(TierBlack) > rank(Tier3)) {
+		t.Errorf("BLACK must be the highest tier: rank(BLACK)=%d, rank(TIER3)=%d",
+			rank(TierBlack), rank(Tier3))
 	}
-	// Demonstrate the consequence the bug would cause IF a catalog item used it:
-	// every member would clear a BLACK gate because rank(member) >= 0 always.
-	memberEligibleForBlackGate := rank(Tier1) >= rank(TierBlack)
-	if !memberEligibleForBlackGate {
-		t.Log("note: consequence relies on rank(TierBlack)==0; revisit if rank changes")
+	// A non-Black member must NOT clear a BLACK-gated reward (>= comparator).
+	for _, member := range []Tier{Tier1, Tier2, Tier3} {
+		if rank(member) >= rank(TierBlack) {
+			t.Errorf("%s member must not be eligible for a MinTier=BLACK gate", member)
+		}
+	}
+	// A Black member clears a Black gate.
+	if !(rank(TierBlack) >= rank(TierBlack)) {
+		t.Error("a BLACK member must be eligible for a MinTier=BLACK gate")
 	}
 }
 

@@ -153,6 +153,11 @@ func rank(t Tier) int {
 		return 2
 	case Tier3:
 		return 3
+	case TierBlack:
+		// BLACK is the highest tier (above TIER3). Without this case it fell
+		// through to 0, ranking BLACK below TIER1 — a MinTier=BLACK reward gate
+		// would then admit every member (rank(member) >= 0 always). Fail-closed.
+		return 4
 	default:
 		return 0
 	}

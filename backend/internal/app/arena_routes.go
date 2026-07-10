@@ -10,6 +10,7 @@ import (
 	"spotlight/backend/internal/arena"
 	"spotlight/backend/internal/arena/adapters"
 	arenahandler "spotlight/backend/internal/arena/handler"
+	arenaquiz "spotlight/backend/internal/arena/quiz"
 	arenarepo "spotlight/backend/internal/arena/repo"
 	arenasvc "spotlight/backend/internal/arena/service"
 	"spotlight/backend/internal/config"
@@ -120,6 +121,14 @@ func RegisterArena(
 		contestantRepo, meritSvc, awardRepo, credentialSvc, potSvc, tierPort, compSvc, auditRepo, crownSigner)
 	screeningSvc := arenasvc.NewScreeningService(contestantRepo, auditRepo)
 
+	// ── Quiz bank (Naija Driver) — Play-Along + Theory exam over one bank ─────
+	// The quiz service holds NO signer (NDC-1): Play-Along delegates engagement/
+	// credential/cashback to playAlongSvc; the exam records an append-only attempt
+	// and advances the lifecycle but mints NO merit (NDC-2 — merit is minted only
+	// at proctor attestation, sourced from the stored attempt).
+	quizRepo := arenaquiz.NewRepository(pool)
+	quizSvc := arenaquiz.NewService(quizRepo, playAlongSvc, contestantSvc)
+
 	h := arenahandler.New(arenahandler.Services{
 		Competition: compSvc,
 		Contestant:  contestantSvc,
@@ -131,6 +140,8 @@ func RegisterArena(
 		Prediction:  predictionSvc,
 		Credential:  credentialSvc,
 		Pot:         potSvc,
+		Quiz:        quizSvc,
+		QuizRepo:    quizRepo,
 	})
 
 	// ── PUBLIC (no auth) ─────────────────────────────────────────────────────
@@ -150,7 +161,10 @@ func RegisterArena(
 	mg.GET("/me", h.Me)
 	mg.GET("/me/merit", h.MyMerit)
 	mg.POST("/support", h.Support)
+	mg.GET("/playalong/questions", h.PlayAlongQuestions)
 	mg.POST("/playalong/attempt", h.PlayAlongAttempt)
+	mg.GET("/me/exam", h.MyExam)
+	mg.POST("/me/exam/submit", h.SubmitExam)
 	mg.POST("/predictions", h.Prediction)
 
 	// ── ADMIN (member-auth + per-route RBAC arena.*) ─────────────────────────
@@ -179,6 +193,11 @@ func RegisterArena(
 	admin.POST("/competitions/:id/pot/disburse", perm("arena.admin.disburse"), h.PotDisburse)
 	admin.POST("/competitions/:id/credentials/issue", perm("arena.admin.credential"), h.IssueCredential)
 	admin.POST("/competitions/:id/credentials/:cid/revoke", perm("arena.admin.credential"), h.RevokeCredential)
+
+	// Quiz bank admin (import/list/stats) — arena.admin.questions.
+	admin.POST("/competitions/:id/questions/import", perm("arena.admin.questions"), h.ImportQuestions)
+	admin.GET("/competitions/:id/questions", perm("arena.admin.questions"), h.ListQuestions)
+	admin.GET("/competitions/:id/questions/stats", perm("arena.admin.questions"), h.QuestionStats)
 
 	log.Println("[arena] routes registered — merit firewall active (signer only in ScoringGateway)")
 }

@@ -106,20 +106,25 @@ export function useTraining(competitionId: string | null | undefined) {
   });
 }
 
-export function usePlayAlongQuestions(competitionId: string | null | undefined, category: string) {
+/** Play-Along stage question set (S2) — contestant-safe, offline-tolerant. */
+export function usePlayAlongStage(competitionId: string | null | undefined, stage: number, enabled = true) {
   return useQuery({
-    queryKey: [KEY, 'playalong-questions', competitionId, category],
-    queryFn: () => arena.getPlayAlongQuestions(competitionId as string, category),
-    enabled: !!competitionId && !!category,
+    queryKey: [KEY, 'playalong-stage', competitionId, stage],
+    queryFn: () => arena.getPlayAlongStage(competitionId as string, stage),
+    enabled: !!competitionId && enabled,
     staleTime: 60_000,
   });
 }
 
-/** C6 exam feed — ONLINE-REQUIRED, no cache retry (network failure must surface). */
-export function useExamQuestions(competitionId: string | null | undefined, enabled: boolean) {
+/**
+ * C6 exam feed — ONLINE-REQUIRED, no cache retry (network failure must surface).
+ * A 409 (not THEORY_ASSIGNED) surfaces as ExamNotAssignedError; we do NOT retry
+ * it so the runner can guard immediately.
+ */
+export function useExam(competitionId: string | null | undefined, enabled: boolean) {
   return useQuery({
-    queryKey: [KEY, 'exam-questions', competitionId],
-    queryFn: () => arena.getExamQuestions(competitionId as string),
+    queryKey: [KEY, 'exam', competitionId],
+    queryFn: () => arena.getExam(competitionId as string),
     enabled: !!competitionId && enabled,
     staleTime: 0,
     gcTime: 0,

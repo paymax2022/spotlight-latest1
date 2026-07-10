@@ -210,6 +210,68 @@ export interface CompetitionConfig {
   config_version?: number | null;
 }
 
+// ── Quiz bank (Arena — Naija Driver quiz management) ─────────────────────────
+// Full ADMIN view of the 90-question bank (3 stages × 30, 120s each). Unlike the
+// contestant view, admin rows carry the answers (correctIndex/correctAnswer) and
+// explanation for teaching/QA. camelCase mirrors the backend admin contract:
+//   GET  /competitions/:id/questions?stage=&category=
+//   GET  /competitions/:id/questions/stats
+//   POST /competitions/:id/questions/import
+export type QuizStage = 1 | 2 | 3;
+
+export interface QuizQuestion {
+  id: string;
+  externalId: string; // seed id, e.g. 'ND-S1-Q01'
+  stage: QuizStage;
+  category: string; // e.g. 'road_signs', 'hazard_perception'
+  prompt: string;
+  options: string[]; // exactly 4
+  correctIndex: number; // 0..3
+  correctAnswer: string;
+  explanation: string;
+  timeLimitSeconds: number;
+  passMarkPercent: number;
+}
+
+export interface QuizStageCount {
+  stage: QuizStage;
+  count: number;
+}
+
+export interface QuizCounts {
+  total: number;
+  perStage: QuizStageCount[];
+  perCategory?: { category: string; count: number }[];
+}
+
+export interface QuizListResult {
+  questions: QuizQuestion[];
+  counts: QuizCounts;
+}
+
+export interface QuizStatPerStage {
+  stage: QuizStage;
+  questionCount: number;
+  attemptCount: number;
+  passRate: number; // 0..1
+}
+
+export interface QuizStats {
+  perStage: QuizStatPerStage[];
+  totalQuestions: number;
+}
+
+export interface QuizImportResult {
+  imported: number;
+  stages: { stage: QuizStage; count: number }[];
+}
+
+export const QUIZ_STAGE_LABELS: Record<QuizStage, string> = {
+  1: 'Stage 1 · Foundation (Road Rules, Signs & Docs)',
+  2: 'Stage 2 · Intermediate (Safe Driving & FRSC)',
+  3: 'Stage 3 · Advanced (Hazard Perception & Emergency)',
+};
+
 // ── Scaffold rails (A3 proctor, A4 judge) — thin request shapes ──────────────
 export interface ProctorAttestInput {
   contestant_id: string;

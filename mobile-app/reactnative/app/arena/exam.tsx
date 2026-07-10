@@ -1,32 +1,35 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, AppState } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, AppState } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Wifi, WifiOff, Timer, ShieldAlert, CheckCircle2, Circle } from 'lucide-react-native';
+import { Wifi, WifiOff } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
-import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
-import { useExamQuestions, useSubmitExam } from '@/features/arena/hooks';
+import QuizRunner, { QuizRunnerResult } from '@/features/arena/components/QuizRunner';
+import { useExam, useSubmitExam } from '@/features/arena/hooks';
 import { examAutosave, ensureExamAutosave, autosaveExamAnswer, resetExamAutosave } from '@/features/arena/draft';
-import { newIdempotencyKey } from '@/features/arena/api';
-
-const EXAM_SECONDS = 20 * 60; // 20-minute proctored theory exam
+import { newIdempotencyKey, ExamNotAssignedError } from '@/features/arena/api';
 
 /**
- * C6 — Proctored exam runner. ONLINE-REQUIRED (the one offline exception, UX
- * rule A1): a persistent banner shows connection state; questions are fetched
- * with retry:false so a drop surfaces immediately. One question at a time, a
- * countdown timer, and per-answer autosave so a paused/dropped session resumes
- * on the same buffer.
+ * C6 — Proctored Theory exam runner. Runs the shared QuizRunner in EXAM mode:
+ * one question at a time, a 120s-per-question timer, an item navigator (jump to
+ * any question, answered/unanswered shown), per-answer autosave (survives a
+ * paused/dropped session), and NO correctness reveal. Submit → THEORY_TAKEN.
  *
- * ── PROCTORING (STUBBED for sandbox) ────────────────────────────────────────
- * Real integration: launch the proctor SDK (camera + screen attestation) using a
- * server-issued session token, and stream attestation frames alongside answers.
- * Here we render a "proctoring active (sandbox)" chip only. No secret in the app.
+ * GUARDS
+ *  - ONLINE-REQUIRED (UX rule A1): a persistent banner shows connection state;
+ *    the feed is fetched with retry:false so a drop surfaces immediately.
+ *  - Only reachable when the contestant is THEORY_ASSIGNED. A 409 from the
+ *    backend surfaces as ExamNotAssignedError and we show a graceful "not
+ *    assigned yet" state instead of a raw error.
+ *  - Answers are contestant-safe: only selected optionIds ever leave the device.
+ *
+ * PROCTORING is stubbed for the sandbox (a "Proctored" chip only). Real
+ * integration launches the proctor SDK with a server-issued session token; no
+ * secret lives in the app.
  */
 export default function ExamScreen() {
   const { competitionId: raw } = useLocalSearchParams<{ competitionId?: string }>();
@@ -34,93 +37,59 @@ export default function ExamScreen() {
   ensureExamAutosave(competitionId);
 
   const [online, setOnline] = useState(true); // stub: assume online; real = NetInfo
-  const q = useExamQuestions(competitionId, online);
+  const q = useExam(competitionId, online);
   const submit = useSubmitExam();
-
-  const [index, setIndex] = useState(examAutosave.current.currentIndex);
-  const [answers, setAnswers] = useState<Record<string, string>>(examAutosave.current.answers);
-  const [secondsLeft, setSecondsLeft] = useState(EXAM_SECONDS);
   const [idemKey] = useState(() => newIdempotencyKey());
   const [submitted, setSubmitted] = useState(false);
 
-  const questions = q.data ?? [];
+  const assignment = q.data;
+  const questions = assignment?.questions ?? [];
+  const notAssigned = q.error instanceof ExamNotAssignedError;
 
-  // Timer — pauses when the app backgrounds (proctor policy: timer pauses on
-  // interruption, resumes on the same signed session). ONLINE-required exception.
+  // Reconnect detection stub — a real build uses NetInfo. On app foreground we
+  // optimistically flip back online and let the query surface any real drop.
   useEffect(() => {
-    if (submitted || questions.length === 0) return;
-    const id = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
     const sub = AppState.addEventListener('change', (st) => {
-      // On background the interval keeps the wall-clock; a real proctor session
-      // would freeze + require re-attestation. We surface an offline banner if
-      // the app returns without a connection.
       if (st === 'active') setOnline(true);
     });
-    return () => {
-      clearInterval(id);
-      sub.remove();
-    };
-  }, [submitted, questions.length]);
+    return () => sub.remove();
+  }, []);
 
-  // Auto-submit when time expires.
-  useEffect(() => {
-    if (secondsLeft === 0 && !submitted && questions.length > 0) onSubmit();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [secondsLeft]);
-
-  const answered = useMemo(() => Object.keys(answers).length, [answers]);
-  const current = questions[index];
-
-  const pick = (questionId: string, optionId: string) => {
-    const next = { ...answers, [questionId]: optionId };
-    setAnswers(next);
-    autosaveExamAnswer(questionId, optionId, index); // persist per keystroke
-  };
-
-  const goNext = () => {
-    if (index < questions.length - 1) {
-      const ni = index + 1;
-      setIndex(ni);
-      examAutosave.current.currentIndex = ni;
-    }
-  };
-  const goPrev = () => {
-    if (index > 0) {
-      const pi = index - 1;
-      setIndex(pi);
-      examAutosave.current.currentIndex = pi;
-    }
-  };
-
-  const onSubmit = () => {
+  const onSubmit = (result: QuizRunnerResult) => {
+    const answers = Object.entries(result.answers).map(([questionId, optionId]) => ({ questionId, optionId }));
     submit.mutate(
-      {
-        competitionId,
-        idempotencyKey: idemKey,
-        answers: Object.entries(answers).map(([questionId, optionId]) => ({ questionId, optionId })),
-      },
+      { competitionId, answers, responseTimeMs: result.responseTimeMs, idempotencyKey: idemKey },
       {
         onSuccess: () => {
           resetExamAutosave();
           setSubmitted(true);
+          // C7 — result pending screen reflecting state THEORY_TAKEN.
+          router.replace({ pathname: '/arena/exam-result', params: { competitionId } });
         },
       },
     );
   };
 
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const mm = Math.floor(secondsLeft / 60);
-  const ss = secondsLeft % 60;
-
+  // ── Submitted (handled by redirect; guard against back-nav flash) ───────────
   if (submitted) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title="Exam" showBack={false} />
+        <ScreenHeader title="Theory exam" showBack={false} />
+        <StateView kind="loading" message="Submitting…" />
+      </SafeAreaView>
+    );
+  }
+
+  // ── Guard: not THEORY_ASSIGNED (409) ────────────────────────────────────────
+  if (notAssigned) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Theory exam" showBack={false} />
         <StateView
           kind="empty"
-          icon="CheckCircle2"
-          title="Exam submitted"
-          message="Your answers are in. Your Merit score is now pending proctor sign-off — you’ll see your standing in Compete."
+          icon="CalendarClock"
+          title="Exam not assigned yet"
+          message="You’ll be able to sit the proctored exam once your batch is assigned and the window opens. We’ll notify you."
           actionLabel="Back to Compete"
           onAction={() => router.replace({ pathname: '/arena/compete', params: { competitionId } })}
         />
@@ -130,64 +99,50 @@ export default function ExamScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Theory exam" showBack={false} />
+      <ScreenHeader
+        title="Theory exam"
+        subtitle={assignment ? `Batch ${assignment.batch}` : undefined}
+        showBack={false}
+      />
 
       {/* ONLINE-REQUIRED banner */}
       <View style={[styles.banner, online ? styles.bannerOk : styles.bannerBad]}>
         {online ? <Wifi size={14} color={Colors.teal} /> : <WifiOff size={14} color={Colors.error} />}
         <Text style={[styles.bannerText, { color: online ? Colors.teal : Colors.error }]}>
-          {online ? 'Online — proctored session active (sandbox)' : 'Connection lost — timer paused. Reconnect to continue.'}
+          {online ? 'Online — proctored session active (sandbox)' : 'Connection lost — reconnect to continue.'}
         </Text>
       </View>
 
       {!online ? (
-        <StateView kind="error" icon="WifiOff" title="You’re offline" message="The proctored exam requires a live connection. Your progress is saved." actionLabel="Retry" onAction={() => { setOnline(true); q.refetch(); }} />
+        <StateView
+          kind="error" icon="WifiOff" title="You’re offline"
+          message="The proctored exam requires a live connection. Your progress is saved."
+          actionLabel="Retry" onAction={() => { setOnline(true); q.refetch(); }}
+        />
       ) : q.isLoading ? (
         <StateView kind="loading" message="Loading exam…" />
       ) : q.isError ? (
-        <StateView kind="error" title="Couldn’t load the exam" message="This needs a stable connection. Your session is preserved." actionLabel="Retry" onAction={() => q.refetch()} />
-      ) : questions.length === 0 || !current ? (
+        <StateView
+          kind="error" title="Couldn’t load the exam"
+          message="This needs a stable connection. Your session is preserved."
+          actionLabel="Retry" onAction={() => q.refetch()}
+        />
+      ) : questions.length === 0 ? (
         <StateView kind="empty" title="No questions available" message="Your exam window may not be open yet." actionLabel="Back" onAction={() => router.back()} />
       ) : (
-        <>
-          {/* Timer + proctor chip */}
-          <View style={styles.metaRow}>
-            <View style={styles.timer}><Timer size={16} color={Colors.secondary} /><Text style={styles.timerText}>{pad(mm)}:{pad(ss)}</Text></View>
-            <View style={styles.proctorChip}><ShieldAlert size={12} color={Colors.onWarning} /><Text style={styles.proctorText}>Proctoring · sandbox</Text></View>
-          </View>
-          <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${((index + 1) / questions.length) * 100}%` }]} /></View>
-          <Text style={styles.qCount}>Question {index + 1} of {questions.length} · {answered} answered</Text>
-
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-            <Text style={styles.prompt}>{current.prompt}</Text>
-            {current.options.map((o) => {
-              const sel = answers[current.id] === o.id;
-              return (
-                <Pressable key={o.id} style={[styles.option, sel && styles.optionSel]} onPress={() => pick(current.id, o.id)}>
-                  {sel ? <CheckCircle2 size={20} color={Colors.primary} /> : <Circle size={20} color={Colors.outline} />}
-                  <Text style={[styles.optionText, sel && styles.optionTextSel]}>{o.label}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-
-          <SafeAreaView edges={['bottom']} style={styles.footer}>
-            <View style={styles.navRow}>
-              <View style={{ flex: 1 }}>
-                {index > 0 ? <PrimaryButton label="Previous" variant="secondary" onPress={goPrev} /> : null}
-              </View>
-              <View style={{ width: Spacing.sm }} />
-              <View style={{ flex: 1 }}>
-                {index < questions.length - 1 ? (
-                  <PrimaryButton label="Next" onPress={goNext} />
-                ) : (
-                  <PrimaryButton label={submit.isPending ? 'Submitting…' : 'Submit exam'} onPress={onSubmit} loading={submit.isPending} disabled={submit.isPending} />
-                )}
-              </View>
-            </View>
-            {submit.isError ? <Text style={styles.error}>Submit failed — your answers are saved. Tap Submit to retry.</Text> : null}
-          </SafeAreaView>
-        </>
+        <QuizRunner
+          mode="exam"
+          proctored
+          questions={questions}
+          perQuestionSecs={assignment?.timeLimitSecs}
+          initialAnswers={examAutosave.current.answers}
+          initialIndex={examAutosave.current.currentIndex}
+          onAnswer={(questionId, optionId, index) => autosaveExamAnswer(questionId, optionId, index)}
+          onIndexChange={(index) => { examAutosave.current.currentIndex = index; }}
+          onSubmit={onSubmit}
+          submitting={submit.isPending}
+          submitError={submit.isError}
+        />
       )}
     </SafeAreaView>
   );
@@ -199,21 +154,4 @@ const styles = StyleSheet.create({
   bannerOk: { backgroundColor: Colors.iconBgTeal },
   bannerBad: { backgroundColor: Colors.errorContainer },
   bannerText: { ...Typography.labelSm },
-  metaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm },
-  timer: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
-  timerText: { ...Typography.titleMd, color: Colors.onSurface, fontVariant: ['tabular-nums'] },
-  proctorChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.iconBgGold, paddingHorizontal: Spacing.sm, paddingVertical: 4, borderRadius: Radius.full },
-  proctorText: { ...Typography.caption, color: Colors.onWarning, fontWeight: '600' as const },
-  progressTrack: { height: 4, backgroundColor: Colors.surfaceContainerHigh, borderRadius: Radius.full, marginHorizontal: Spacing.containerMargin, marginTop: Spacing.sm },
-  progressFill: { height: 4, backgroundColor: Colors.primary, borderRadius: Radius.full },
-  qCount: { ...Typography.labelSm, color: Colors.onSurfaceVariant, paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.xs },
-  content: { padding: Spacing.containerMargin, gap: Spacing.sm },
-  prompt: { ...Typography.titleLg, color: Colors.onSurface, marginBottom: Spacing.sm },
-  option: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, borderWidth: 1.5, borderColor: Colors.outlineVariant, borderRadius: Radius.lg, padding: Spacing.md, backgroundColor: Colors.surfaceContainerLowest },
-  optionSel: { borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
-  optionText: { ...Typography.bodyMd, color: Colors.onSurface, flex: 1 },
-  optionTextSel: { color: Colors.primary, fontWeight: '600' as const },
-  footer: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.md, paddingTop: Spacing.sm },
-  navRow: { flexDirection: 'row' },
-  error: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.sm, textAlign: 'center' },
 });

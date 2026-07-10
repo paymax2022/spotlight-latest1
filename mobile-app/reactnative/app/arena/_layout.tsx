@@ -30,6 +30,7 @@ export default function ArenaLayout() {
       <Stack.Screen name="compete" />
       <Stack.Screen name="apply" />
       <Stack.Screen name="exam" options={{ gestureEnabled: false }} />
+      <Stack.Screen name="exam-result" options={{ gestureEnabled: false }} />
       <Stack.Screen name="credentials" />
     </Stack>
   );

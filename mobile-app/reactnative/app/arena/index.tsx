@@ -70,7 +70,7 @@ export default function ArenaHomeScreen() {
   const entries = board.data ?? [];
 
   const rails: { key: string; label: string; sub: string; Icon: typeof Gamepad2; go: () => void }[] = [
-    { key: 'quiz', label: 'Are You a Naija Driver?', sub: 'Play-Along quiz', Icon: Gamepad2, go: () => router.push({ pathname: '/arena/quiz', params: { competitionId } }) },
+    { key: 'quiz', label: 'Are You a Naija Driver?', sub: 'Play-Along · 3 stages', Icon: Gamepad2, go: () => router.push({ pathname: '/arena/quiz', params: { competitionId } }) },
     { key: 'support', label: 'Back a Driver', sub: 'Fuel their journey', Icon: HandCoins, go: () => router.push({ pathname: '/arena/driver', params: { competitionId, contestantId: entries[0]?.contestantId ?? 'c1' } }) },
     { key: 'state', label: 'State Pride', sub: '36 states + FCT', Icon: MapPin, go: () => router.push({ pathname: '/arena/state-pride', params: { competitionId } }) },
     { key: 'predict', label: 'Predict the Champion', sub: 'Make your picks', Icon: Target, go: () => router.push({ pathname: '/arena/predict', params: { competitionId } }) },

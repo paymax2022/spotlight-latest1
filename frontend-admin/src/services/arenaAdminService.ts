@@ -18,6 +18,11 @@ import type {
   SponsorSlot,
   AwardBinding,
   RailConfig,
+  QuizQuestion,
+  QuizStage,
+  QuizListResult,
+  QuizStats,
+  QuizImportResult,
 } from '@/types/arenaAdmin';
 
 // Arena (Naija Driver contest) admin console — service layer.
@@ -447,3 +452,88 @@ export async function listSponsorSlots(competitionId: string): Promise<SponsorSl
   const data = await res.json();
   return Array.isArray(data) ? data : data.data ?? data.slots ?? [];
 }
+
+// ─── Quiz bank (Naija Driver quiz management) ────────────────────────────────
+// The 90-question bank (3 stages × 30, 120s each). This is the FULL ADMIN view:
+// rows carry answers + explanation (teaching/QA), unlike the contestant view.
+// Default bank imported is the Naija Driver seed bank (naija_driver_quiz_seed.json).
+// NOTE: bankKey and rubricVersion are DISTINCT — the backend matches template rows on
+// bank_key; 'naija_driver_v1.0.0' is the rubric VERSION, not the key.
+export const DEFAULT_QUIZ_BANK_KEY = 'naija_driver_safe_driving_assessment';
+export const DEFAULT_QUIZ_RUBRIC_VERSION = 'naija_driver_v1.0.0';
+
+// Representative fixture — ~6 questions across the 3 stages, mirroring the seed
+// shape (stage pass marks 70/75/80, 120s each). Only mounted on cmp_ndc26 so the
+// empty state (no bank imported) is demonstrable on other competitions.
+const FIXTURE_QUIZ: QuizQuestion[] = [
+  { id: 'q_s1_01', externalId: 'ND-S1-Q01', stage: 1, category: 'road_signs', prompt: "In Nigeria, what shape are most warning signs (e.g. 'bend ahead', 'narrow bridge')?", options: ['Rectangular', 'Triangular', 'Circular', 'Octagonal'], correctIndex: 1, correctAnswer: 'Triangular', explanation: 'Triangular signs warn of hazards ahead. Circular signs give orders; rectangular signs give information.', timeLimitSeconds: 120, passMarkPercent: 70 },
+  { id: 'q_s1_05', externalId: 'ND-S1-Q05', stage: 1, category: 'traffic_rules', prompt: "Which agency is primarily responsible for road traffic safety and driver's licensing in Nigeria?", options: ['NAFDAC', 'FRSC (Federal Road Safety Corps)', 'NDLEA', 'EFCC'], correctIndex: 1, correctAnswer: 'FRSC (Federal Road Safety Corps)', explanation: "The FRSC administers road safety, driver's licences and highway regulations in Nigeria.", timeLimitSeconds: 120, passMarkPercent: 70 },
+  { id: 'q_s2_01', externalId: 'ND-S2-Q01', stage: 2, category: 'safe_practice', prompt: "The 'two-second rule' is used to:", options: ['Time traffic lights', 'Keep a safe following distance from the vehicle ahead', 'Calculate fuel consumption', 'Measure engine speed'], correctIndex: 1, correctAnswer: 'Keep a safe following distance from the vehicle ahead', explanation: 'Pick a fixed point; if you pass it less than two seconds after the car ahead, you are too close.', timeLimitSeconds: 120, passMarkPercent: 75 },
+  { id: 'q_s2_02', externalId: 'ND-S2-Q02', stage: 2, category: 'night_weather', prompt: 'On wet roads or in rain, your following distance should be:', options: ['The same as in dry weather', 'Ignored because of the wipers', 'Reduced to stay in convoy', 'At least doubled — about four seconds'], correctIndex: 3, correctAnswer: 'At least doubled — about four seconds', explanation: 'Wet roads can double stopping distances, so double your gap to at least four seconds.', timeLimitSeconds: 120, passMarkPercent: 75 },
+  { id: 'q_s3_01', externalId: 'ND-S3-Q01', stage: 3, category: 'emergency_response', prompt: 'If your brakes fail while driving, you should first:', options: ['Accelerate to escape the traffic around you', 'Switch off the engine and remove the key', 'Jump out of the moving vehicle', 'Pump the brake pedal, shift to a lower gear and apply the handbrake gradually'], correctIndex: 3, correctAnswer: 'Pump the brake pedal, shift to a lower gear and apply the handbrake gradually', explanation: 'Pumping may restore pressure; engine braking and gradual handbrake use scrub off speed under control.', timeLimitSeconds: 120, passMarkPercent: 80 },
+  { id: 'q_s3_03', externalId: 'ND-S3-Q03', stage: 3, category: 'hazard_perception', prompt: 'A child chasing a ball toward the road ahead is best treated as:', options: ['A distraction to ignore', 'A developing hazard — slow down and cover the brake', 'A reason to sound the horn and maintain speed', 'Someone else’s responsibility'], correctIndex: 1, correctAnswer: 'A developing hazard — slow down and cover the brake', explanation: 'Anticipate that the child may enter the road; reduce speed early and be ready to stop.', timeLimitSeconds: 120, passMarkPercent: 80 },
+];
+
+function quizCounts(rows: QuizQuestion[]): QuizListResult['counts'] {
+  const perStage = ([1, 2, 3] as QuizStage[]).map((stage) => ({ stage, count: rows.filter((q) => q.stage === stage).length }));
+  const catMap = new Map<string, number>();
+  for (const q of rows) catMap.set(q.category, (catMap.get(q.category) ?? 0) + 1);
+  return { total: rows.length, perStage, perCategory: [...catMap.entries()].map(([category, count]) => ({ category, count })) };
+}
+
+// Which competitions have an imported bank in fixture mode (drives empty state).
+const FIXTURE_QUIZ_IMPORTED = new Set<string>(['cmp_ndc26']);
+
+export async function listQuizQuestions(
+  competitionId: string,
+  filters?: { stage?: QuizStage; category?: string },
+): Promise<QuizListResult> {
+  if (USE_FIXTURES) {
+    const has = FIXTURE_QUIZ_IMPORTED.has(competitionId);
+    let rows = has ? [...FIXTURE_QUIZ] : [];
+    if (filters?.stage) rows = rows.filter((q) => q.stage === filters.stage);
+    if (filters?.category) rows = rows.filter((q) => q.category === filters.category);
+    return delay({ questions: rows, counts: quizCounts(has ? FIXTURE_QUIZ : []) });
+  }
+  const params = new URLSearchParams();
+  if (filters?.stage) params.set('stage', String(filters.stage));
+  if (filters?.category) params.set('category', filters.category);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const res = await fetch(`${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/questions${qs}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(`Quiz questions fetch failed: ${res.status}`);
+  const data = await res.json();
+  return { questions: data.questions ?? [], counts: data.counts ?? quizCounts(data.questions ?? []) };
+}
+
+export async function quizStats(competitionId: string): Promise<QuizStats> {
+  if (USE_FIXTURES) {
+    const has = FIXTURE_QUIZ_IMPORTED.has(competitionId);
+    const source = has ? FIXTURE_QUIZ : [];
+    const perStage = ([1, 2, 3] as QuizStage[]).map((stage) => {
+      const questionCount = source.filter((q) => q.stage === stage).length;
+      // Deterministic-ish sample telemetry so the badges render meaningfully.
+      const attemptCount = has ? [1420, 980, 540][stage - 1] : 0;
+      const passRate = has ? [0.82, 0.71, 0.58][stage - 1] : 0;
+      return { stage, questionCount, attemptCount, passRate };
+    });
+    return delay({ perStage, totalQuestions: source.length });
+  }
+  const res = await fetch(`${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/questions/stats`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(`Quiz stats fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function importQuizBank(
+  competitionId: string,
+  opts?: { bankKey?: string; rubricVersion?: string },
+): Promise<QuizImportResult> {
+  if (USE_FIXTURES) {
+    FIXTURE_QUIZ_IMPORTED.add(competitionId);
+    return delay({ imported: FIXTURE_QUIZ.length, stages: ([1, 2, 3] as QuizStage[]).map((stage) => ({ stage, count: FIXTURE_QUIZ.filter((q) => q.stage === stage).length })) });
+  }
+  const body = { bankKey: opts?.bankKey ?? DEFAULT_QUIZ_BANK_KEY, rubricVersion: opts?.rubricVersion ?? DEFAULT_QUIZ_RUBRIC_VERSION };
+  const res = await fetch(`${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/questions/import`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(`Quiz bank import failed: ${res.status}`);
+  return res.json();
+}
+

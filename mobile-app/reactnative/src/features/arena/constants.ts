@@ -2,7 +2,7 @@
 // Single source of truth for the progress stepper, human labels, NDC-1 copy, and
 // the 36 states + FCT selector. Keeps screens declarative.
 
-import type { ContestantState, MeritStage } from './types';
+import type { ContestantState, MeritStage, QuizStage } from './types';
 
 // Dev/offline mode: when true (the default), the arena api returns mock data
 // WITHOUT calling the backend — so the spectator screens are walkable and the
@@ -126,6 +126,61 @@ export const PLAYALONG_CATEGORIES: { value: string; label: string }[] = [
   { value: 'highway-code', label: 'Highway code' },
   { value: 'safety', label: 'Road safety' },
 ];
+
+// ─── Naija Driver bank — 3 stages × 30 questions, 120s per question (S2) ─────
+// The public Play-Along and the proctored Theory exam draw from the SAME
+// safe-driving bank (ARENA-PRD Rail 3). Stage metadata mirrors the seed
+// (naija_driver_quiz_seed.json). Pass marks rise per stage.
+
+/** Per-question limit for the whole bank (seconds). */
+export const PER_QUESTION_SECS = 120;
+
+/** Number of questions per stage in the full bank. */
+export const STAGE_QUESTION_COUNT = 30;
+
+export interface PlayAlongStageMeta {
+  stage: QuizStage;
+  name: string;
+  short: string;
+  blurb: string;
+  passMarkPercent: number;
+}
+
+export const PLAYALONG_STAGES: PlayAlongStageMeta[] = [
+  {
+    stage: 1,
+    name: 'Foundation — Road Rules, Signs & Documentation',
+    short: 'Stage 1 · Foundation',
+    blurb: 'Road signs, traffic rules, required documents and rights of way.',
+    passMarkPercent: 70,
+  },
+  {
+    stage: 2,
+    name: 'Intermediate — Safe Driving Practice & FRSC Regulations',
+    short: 'Stage 2 · Intermediate',
+    blurb: 'Following distance, overtaking, speed limits and lane discipline.',
+    passMarkPercent: 75,
+  },
+  {
+    stage: 3,
+    name: 'Advanced — Hazard Perception & Emergency Response',
+    short: 'Stage 3 · Advanced',
+    blurb: 'Emergencies, skids, night/weather driving and crash-scene response.',
+    passMarkPercent: 80,
+  },
+];
+
+export function stageMeta(stage: number): PlayAlongStageMeta {
+  return PLAYALONG_STAGES.find((s) => s.stage === stage) ?? PLAYALONG_STAGES[0];
+}
+
+/** Human label for a question category tag (informational chip on the runner). */
+export function categoryLabel(tag?: string | null): string {
+  if (!tag) return '';
+  return tag
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 // ─── Play-Along rounds (S2) ──────────────────────────────────────────────────
 // The quiz is organised into three categorised rounds, each opening with a short
