@@ -209,6 +209,18 @@ type Config struct {
 	// (internal/crypto): mock-first price feed, reuses the finance ledger.
 	FeatureCryptoEnabled bool
 
+	// ── Internal service-authenticated Ledger API (Stage 1.5c) ───────────────
+	// Lets the separate trading service post cash legs through the AUTHORITATIVE
+	// double-entry ledger (it does not run its own money ledger). DEFAULT OFF.
+	// Gates POST /internal/finance/ledger/journal + GET /internal/finance/ledger/balance.
+	// The endpoints are ADDITIONALLY guarded by a constant-time service-token check
+	// against LedgerServiceToken — never a user JWT.
+	FeatureInternalLedgerAPIEnabled bool
+	// Shared Bearer service token authenticating the trading service to the internal
+	// ledger API. Server-side ONLY; NEVER shipped to a client and NEVER a user JWT.
+	// Empty ⇒ the internal ledger endpoints fail closed (503), even when the flag is on.
+	LedgerServiceToken string
+
 	// Learn Center (education). DEFAULT OFF. Gates /api/v1/learn (internal/learn).
 	FeatureLearnEnabled bool
 	// Invest-AI education assistant. DEFAULT OFF. Gates /api/v1/ai/invest
@@ -567,6 +579,8 @@ func Load() Config {
 		FeaturePropertySuiteEnabled:           getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
 		FeatureFractionalREEnabled:            getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
 		FeatureCryptoEnabled:                  getEnvBool("FEATURE_CRYPTO_ENABLED", false),
+		FeatureInternalLedgerAPIEnabled:       getEnvBool("FEATURE_INTERNAL_LEDGER_API_ENABLED", false),
+		LedgerServiceToken:                    getEnv("LEDGER_SERVICE_TOKEN", ""),
 		FeatureLearnEnabled:                   getEnvBool("FEATURE_LEARN_ENABLED", false),
 		FeatureInvestaiEnabled:                getEnvBool("FEATURE_INVESTAI_ENABLED", false),
 		FeatureSpotlightwealthEnabled:         getEnvBool("FEATURE_SPOTLIGHTWEALTH_ENABLED", false),

@@ -39,6 +39,16 @@ func (s *Service) GetBalance(ctx context.Context, userID string) (int64, error) 
 	return s.repo.GetBalance(ctx, acc.ID)
 }
 
+// GetAccountBalance returns the current projected balance (kobo) for an already
+// resolved ledger account ID. ADDITIVE read accessor — it exposes the repository's
+// pool-based balance projection (never a stored column) for callers that hold a
+// resolved account ID (e.g. a standing account) rather than a user id. Read-only;
+// like Repository.GetBalance it takes no lock and MUST NOT be used as the
+// sufficiency gate for a debit (use Debit/DebitWithBalanceCheck for that).
+func (s *Service) GetAccountBalance(ctx context.Context, accountID string) (int64, error) {
+	return s.repo.GetBalance(ctx, accountID)
+}
+
 // Posted reports whether the balanced pair for baseIdempotencyKey has been durably
 // written. It checks the CREDIT side (":credit"), which every posting — Credit,
 // Debit, and PostJournal — always writes. Redis-independent (reads the ledger of

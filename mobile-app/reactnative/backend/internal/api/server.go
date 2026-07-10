@@ -19,6 +19,7 @@ import (
 	"paymax/crypto-backend/internal/auth"
 	"paymax/crypto-backend/internal/engine"
 	"paymax/crypto-backend/internal/httpadapter"
+	"paymax/crypto-backend/internal/ledger"
 	"paymax/crypto-backend/internal/metrics"
 	"paymax/crypto-backend/internal/ratelimit"
 	"paymax/crypto-backend/internal/stocks"
@@ -36,6 +37,15 @@ type Server struct {
 	CU     adapter.Custody
 	Stocks *stocks.Service
 	Admin  *admin.Service
+
+	// ledger is the port to the AUTHORITATIVE money-core ledger (Stage 1.5). During
+	// the shadow phase it is written ADDITIVELY, in parallel with the store (which
+	// stays authoritative), so the new ledger can be validated before any cutover.
+	// Nil when unconfigured; every call site is nil-safe via shadowPost.
+	ledger ledger.Client
+	// ledgerShadowEnabled gates the additive parallel post. True only for
+	// LEDGER_BACKEND=shadow|http; false (default) leaves the money path untouched.
+	ledgerShadowEnabled bool
 }
 
 // NewServer builds a Server. Provider adapters are mock by default; set
@@ -55,7 +65,60 @@ func NewServer(repo store.Repository) *Server {
 		s.MD, s.LQ, s.CU = c, c, c // *Client satisfies all three interfaces
 		log.Printf("provider: http (%s)", os.Getenv("PROVIDER_BASE_URL"))
 	}
+	s.ledger, s.ledgerShadowEnabled = newLedgerClient()
 	return s
+}
+
+// newLedgerClient selects the money-core ledger Client from LEDGER_BACKEND and
+// reports whether additive shadow-posting is enabled:
+//
+//   - "mock" (default) / unset → in-memory MockLedger, shadow DISABLED (no parallel
+//     post; the store is the only writer — a pure no-op relative to today).
+//   - "shadow"                 → shadow ENABLED. Posts additively for validation. Uses
+//     the real HTTPLedger when LEDGER_BASE_URL is set, else an in-memory MockLedger.
+//   - "http"                   → HTTPLedger, shadow ENABLED (still additive here; the
+//     store stays authoritative until an explicit cutover in a later stage).
+//
+// The returned Client is never nil; shadowPost additionally nil-checks for safety.
+func newLedgerClient() (ledger.Client, bool) {
+	switch os.Getenv("LEDGER_BACKEND") {
+	case "http":
+		log.Printf("ledger: http shadow (%s)", os.Getenv("LEDGER_BASE_URL"))
+		return ledger.NewHTTP(os.Getenv("LEDGER_BASE_URL"), os.Getenv("LEDGER_SERVICE_TOKEN")), true
+	case "shadow":
+		if base := os.Getenv("LEDGER_BASE_URL"); base != "" {
+			log.Printf("ledger: shadow via http (%s)", base)
+			return ledger.NewHTTP(base, os.Getenv("LEDGER_SERVICE_TOKEN")), true
+		}
+		log.Printf("ledger: shadow via mock (in-memory)")
+		return ledger.NewMock(), true
+	default: // "mock" or unset
+		return ledger.NewMock(), false
+	}
+}
+
+// shadowPost ADDITIVELY posts one cash leg to the money-core ledger for validation
+// against the store. It is a strict no-op unless shadow is enabled and a client is
+// wired, and it is NON-FATAL: a post failure is logged as a structured divergence
+// line and NEVER affects the caller's result — the user's operation already
+// succeeded via the store. A non-positive amount is skipped so a zero-fee leg never
+// logs spurious noise.
+//
+// The post is deliberately NOT balance-checked: during the shadow phase the STORE is
+// authoritative and has already enforced the user's balance, while this parallel
+// ledger has not seen the user's deposits — so a balance check here would be a false
+// "insufficient funds" divergence on every buy/withdrawal. We validate that the
+// movement (accounts + amount) is correct; balance enforcement becomes this ledger's
+// responsibility only at the authoritative cutover (a later, separate stage).
+func (s *Server) shadowPost(ctx context.Context, op string, j ledger.Journal) {
+	if !s.ledgerShadowEnabled || s.ledger == nil || j.AmountKobo <= 0 {
+		return
+	}
+	j.BalanceChecked = false
+	if err := s.ledger.PostJournal(ctx, j); err != nil {
+		log.Printf("ledger shadow divergence: op=%s user=%s ref=%q amount=%d err=%v",
+			op, j.UserID, j.Reference, j.AmountKobo, err)
+	}
 }
 
 // Handler returns the fully-wired HTTP handler (routes + middleware).

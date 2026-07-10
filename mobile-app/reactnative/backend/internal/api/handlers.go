@@ -7,8 +7,10 @@ import (
 	"os"
 	"time"
 
+	"paymax/crypto-backend/internal/auth"
 	"paymax/crypto-backend/internal/domain"
 	"paymax/crypto-backend/internal/engine"
+	"paymax/crypto-backend/internal/ledger"
 	"paymax/crypto-backend/internal/recon"
 	"paymax/crypto-backend/internal/store"
 	"paymax/crypto-backend/internal/webhook"
@@ -203,7 +205,50 @@ func (s *Server) trade(w http.ResponseWriter, r *http.Request, side string) {
 	}
 	order.IdempotencyKey = key
 	s.S.SaveIdempotent(key, order)
+
+	// Stage 1.5 shadow: ADDITIVELY post the cash leg to the authoritative money-core
+	// ledger for validation. The store already executed and is authoritative; this
+	// is non-fatal and never touches the response above. Cash amount is the all-in
+	// TotalFiat (fees included) — the same figure the store debits/credits.
+	if s.ledgerShadowEnabled {
+		uid := auth.UserID(r.Context())
+		stableID := shadowKey(order.IdempotencyKey, order.Reference)
+		if side == "buy" {
+			// Buy: cash leaves the wallet into settlement, balance-checked (fail-closed).
+			s.shadowPost(r.Context(), "buy", ledger.Journal{
+				UserID:         uid,
+				DebitAccount:   "user_wallet",
+				CreditAccount:  "settlement",
+				AmountKobo:     order.TotalFiat.Amount,
+				Reference:      "shadow:buy:" + order.Reference,
+				IdempotencyKey: "shadow:" + stableID,
+				BalanceChecked: true,
+			})
+		} else {
+			// Sell: cash returns from settlement to the wallet, no balance check.
+			s.shadowPost(r.Context(), "sell", ledger.Journal{
+				UserID:         uid,
+				DebitAccount:   "settlement",
+				CreditAccount:  "user_wallet",
+				AmountKobo:     order.TotalFiat.Amount,
+				Reference:      "shadow:sell:" + order.Reference,
+				IdempotencyKey: "shadow:" + stableID,
+				BalanceChecked: false,
+			})
+		}
+	}
 	writeJSON(w, http.StatusOK, order)
+}
+
+// shadowKey derives a stable idempotency source for a shadow leg: the operation's
+// own idempotency key when present, else its immutable server reference. Deriving it
+// from an existing stable id makes a replayed request a no-op at the ledger too, so
+// shadow posts never double-count.
+func shadowKey(idemKey, reference string) string {
+	if idemKey != "" {
+		return idemKey
+	}
+	return reference
 }
 
 // ── Swap ──────────────────────────────────────────────────────────────────────
@@ -243,6 +288,21 @@ func (s *Server) postSwap(w http.ResponseWriter, r *http.Request) {
 	}
 	res.IdempotencyKey = key
 	s.S.SaveIdempotent(key, res)
+
+	// Stage 1.5 shadow: ADDITIVELY post the swap spread (the fee the module keeps) as
+	// a cash leg — user_wallet → paymax_revenue, balance-checked (net). Non-fatal; a
+	// zero fee is skipped inside shadowPost.
+	if s.ledgerShadowEnabled {
+		s.shadowPost(r.Context(), "swap", ledger.Journal{
+			UserID:         auth.UserID(r.Context()),
+			DebitAccount:   "user_wallet",
+			CreditAccount:  "paymax_revenue",
+			AmountKobo:     res.Fee.Amount,
+			Reference:      "shadow:swap:" + res.Reference,
+			IdempotencyKey: "shadow:" + shadowKey(res.IdempotencyKey, res.Reference),
+			BalanceChecked: true,
+		})
+	}
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -545,5 +605,20 @@ func (s *Server) postWithdraw(w http.ResponseWriter, r *http.Request) {
 	}
 	res.IdempotencyKey = key
 	s.S.SaveIdempotent(key, res)
+
+	// Stage 1.5 shadow: ADDITIVELY post the withdrawal HOLD cash leg — user_wallet →
+	// settlement, balance-checked (fail-closed) — for the fiat value of the request.
+	// The store's pending-review withdrawal remains authoritative; this is non-fatal.
+	if s.ledgerShadowEnabled {
+		s.shadowPost(r.Context(), "withdraw", ledger.Journal{
+			UserID:         auth.UserID(r.Context()),
+			DebitAccount:   "user_wallet",
+			CreditAccount:  "settlement",
+			AmountKobo:     q.FiatValue.Amount,
+			Reference:      "shadow:withdraw:" + res.Reference,
+			IdempotencyKey: "shadow:" + shadowKey(res.IdempotencyKey, res.Reference),
+			BalanceChecked: true,
+		})
+	}
 	writeJSON(w, http.StatusOK, res)
 }

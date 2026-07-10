@@ -166,6 +166,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Finance services ---
 	ledgerRepo := ledger.NewRepository(pool)
 	ledgerSvc := ledger.NewService(ledgerRepo, redisClient)
+
+	// --- Internal service-authenticated ledger API (Stage 1.5c) ---
+	// Exposes the authoritative double-entry ledger to the separate trading service
+	// so it can post trade CASH legs here. Flag-gated (default OFF) + service-token
+	// guarded (fail-closed when the token is unset). Additive — reuses ledgerSvc only.
+	RegisterInternalLedgerAPI(r, cfg, ledgerSvc)
+
 	tiersSvc := tiers.NewService(pool)
 	walletSvc := wallet.NewService(ledgerSvc, tiersSvc)
 	kycSvc := kyc.NewService(pool)
