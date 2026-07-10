@@ -516,7 +516,10 @@ func Load() Config {
 		FeatureReferralsEnabled:               getEnvBool("FEATURE_REFERRALS_ENABLED", false),
 		FeatureReferralRewardsEnabled:         getEnvBool("FEATURE_REFERRAL_REWARDS_ENABLED", false),
 		ReferralRewardsInternalSecret:         getEnv("REFERRAL_REWARDS_INTERNAL_SECRET", ""),
-		FeatureTierLimitsEnabled:              getEnvBool("FEATURE_TIER_LIMITS_ENABLED", false),
+		// Iron Rule: every money mutation must pass tier-limit checks fail-closed.
+		// Defaults TRUE so limits are enforced by default; set FEATURE_TIER_LIMITS_ENABLED=false
+		// only for explicit local/dev opt-out. (docs/go-live-readiness.md blocker #1)
+		FeatureTierLimitsEnabled:              getEnvBool("FEATURE_TIER_LIMITS_ENABLED", true),
 		FeatureFXEnabled:                      getEnvBool("FEATURE_FX_ENABLED", false),
 		FeatureFXOrchestrationEnabled:         getEnvBool("FEATURE_FX_ORCHESTRATION_ENABLED", false),
 		PaymaxWebhookOutURL:                   getEnv("PAYMAX_WEBHOOK_OUT_URL", ""),

@@ -463,6 +463,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		academyBNPL, academyDisburse, academyBilling, academyPayout := academyRails(cfg)
 		RegisterAcademy(r, finance, pool, rbac, ledgerSvc, academyRTC, academyBNPL, academyDisburse, academyBilling, academyPayout, paymentProvider, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled, cfg.FeatureAcademyFeesEnabled, webhookHandler)
 
+		// EdTech PLATFORM super-admin oversight (SU-01..SU-12): read-only cross-tenant
+		// console backend at /api/academy/admin/platform/*, gated purely by the seeded
+		// platform_edtech_admin capability. Behind the academy fees flag (the same flag
+		// that lights up the fees data these screens observe). No money path.
+		if cfg.FeatureAcademyFeesEnabled {
+			RegisterAcademyPlatform(r, pool, rbac, middleware.RequireAuthContext(supabase, rbac))
+		}
+
 		// Inbound academy rail webhooks (signature-verified, idempotent), mounted on
 		// the unauthenticated /internal/webhooks group. Only when RAILS_MODE is active.
 		if m := strings.ToLower(strings.TrimSpace(cfg.RailsMode)); m != "" && m != "off" {

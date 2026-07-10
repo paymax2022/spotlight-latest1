@@ -168,18 +168,25 @@ export default function DiscoveryStackScreen() {
               }
               style={styles.card}
             >
-              <Image source={{ uri: current.photos[0] }} style={styles.photo} resizeMode="cover" />
+              {current.photos?.[0] ? (
+                <Image source={{ uri: current.photos[0] }} style={styles.photo} resizeMode="cover" />
+              ) : (
+                <View style={styles.photo} />
+              )}
               <View style={styles.cardBody}>
                 <Text style={styles.name}>
-                  {current.displayName}, {current.age}
+                  {current.displayName}
+                  {current.age ? `, ${current.age}` : ''}
                 </Text>
                 {current.headline ? <Text style={styles.headline}>{current.headline}</Text> : null}
-                <View style={styles.distanceRow}>
-                  <MapPin size={14} color={ConnectColors.muted} strokeWidth={2} />
-                  <Text style={styles.distance}>{current.distanceLabel}</Text>
-                </View>
-                <DiscoveryVerifiedBadges flags={current.verified} size="sm" />
-                {current.prompts[0] ? (
+                {current.distanceLabel ? (
+                  <View style={styles.distanceRow}>
+                    <MapPin size={14} color={ConnectColors.muted} strokeWidth={2} />
+                    <Text style={styles.distance}>{current.distanceLabel}</Text>
+                  </View>
+                ) : null}
+                <DiscoveryVerifiedBadges flags={current.verified ?? []} size="sm" />
+                {current.prompts?.[0] ? (
                   <View style={styles.promptCard}>
                     <Text style={styles.promptLabel}>{current.prompts[0].prompt}</Text>
                     <Text style={styles.promptAnswer}>{current.prompts[0].answer}</Text>

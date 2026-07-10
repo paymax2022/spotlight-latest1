@@ -18,7 +18,10 @@ import (
 // ── Withdrawals (AML review queue) ───────────────────────────────────────────
 
 // AdminListWithdrawals lists withdrawals across all users for AML review, optionally
-// filtered by status (requested|pending|broadcast|confirmed|failed).
+// filtered by status (requested|pending_review|approved|broadcast|confirmed|failed).
+// When no explicit status is supplied it defaults to the AML REVIEW QUEUE
+// (status='pending_review') — the withdrawals parked and awaiting a compliance
+// decision. Pass an explicit status to browse other states.
 func (s *Service) AdminListWithdrawals(ctx context.Context, status string, limit, offset int) ([]AdminWithdrawal, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -26,37 +29,44 @@ func (s *Service) AdminListWithdrawals(ctx context.Context, status string, limit
 	if offset < 0 {
 		offset = 0
 	}
+	if status == "" {
+		// Default surface = the review queue (money parked, awaiting AML decision).
+		status = WithdrawalPendingReview
+	}
 	return s.repo.AdminListWithdrawals(ctx, status, limit, offset)
 }
 
-// AdminDecideWithdrawal applies a compliance decision to a withdrawal:
-//   - "approve": requested → pending (accepted for processing; the member/provider
-//     path then drives pending → broadcast → confirmed).
-//   - "reject":  requested → failed  (parked units returned to the owner's holding).
+// AdminDecideWithdrawal applies a compliance (AML) decision to a withdrawal that is
+// PARKED for review. This is the gate: no money leaves before an approve here.
+//   - "approve": pending_review → approved, then triggers the provider broadcast
+//     (approved → broadcast) via broadcastApprovedWithdrawal. This is the ONLY path
+//     that dispatches to the provider — the member create path stops at pending_review.
+//   - "reject":  pending_review → failed  (parked units returned to the owner's holding).
 //
-// The transition is guarded (WHERE status='requested'), so it is idempotent and can
-// only act on a still-pending-review row; a second decision returns ErrInvalidTransition.
+// The transition is guarded (WHERE status='pending_review'), so it is idempotent and
+// can only act on a still-in-review row; a second decision returns ErrInvalidTransition.
 func (s *Service) AdminDecideWithdrawal(ctx context.Context, actorID, id, decision, note string) (*AdminWithdrawal, error) {
 	var to, action string
 	var returnUnits int64
 	switch decision {
 	case "approve":
-		to, action = WithdrawalPending, "crypto.admin.withdraw.approve"
+		to, action = WithdrawalApproved, "crypto.admin.withdraw.approve"
 	case "reject":
 		to, action = WithdrawalFailed, "crypto.admin.withdraw.reject"
 	default:
 		return nil, ErrBadRequest
 	}
 
-	// On reject we must return the parked units — read the row first to know how many.
+	// Read the row first: guard it is still in review, and (on reject) learn how many
+	// parked units to return.
+	cur, err := s.repo.AdminGetWithdrawal(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if cur.Status != WithdrawalPendingReview {
+		return nil, ErrInvalidTransition
+	}
 	if decision == "reject" {
-		cur, err := s.repo.AdminGetWithdrawal(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if cur.Status != WithdrawalRequested {
-			return nil, ErrInvalidTransition
-		}
 		returnUnits = cur.Units
 	}
 
@@ -69,13 +79,25 @@ func (s *Service) AdminDecideWithdrawal(ctx context.Context, actorID, id, decisi
 		failureReason = note
 	}
 
-	out, err := s.repo.AdminTransitionWithdrawal(ctx, id, WithdrawalRequested, to, actorID, detail, failureReason, returnUnits)
+	// pending_review → approved | failed (guarded, idempotent, audited).
+	out, err := s.repo.AdminTransitionWithdrawal(ctx, id, WithdrawalPendingReview, to, actorID, detail, failureReason, returnUnits)
 	if err != nil {
 		return nil, err
 	}
 	if err := s.audit.log(ctx, actorID, action, "crypto_withdrawal", id, note,
 		nil, map[string]any{"decision": decision, "to_status": to, "units": out.Units}); err != nil {
 		return nil, err
+	}
+
+	// On approve, the AML gate has cleared — NOW dispatch to the provider (the only
+	// place a broadcast fires). broadcastApprovedWithdrawal drives approved→broadcast
+	// (or approved→failed + unit return on provider reject) and audits the outcome.
+	if decision == "approve" {
+		bo, berr := s.broadcastApprovedWithdrawal(ctx, out)
+		if berr != nil {
+			return nil, berr
+		}
+		return bo, nil
 	}
 	return out, nil
 }

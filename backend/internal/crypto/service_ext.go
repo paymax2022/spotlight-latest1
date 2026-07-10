@@ -335,12 +335,16 @@ func networkFeeUnits(units int64) int64 {
 	return fee
 }
 
-// Withdraw opens a withdrawal against a whitelisted address and drives the state
-// machine through to `broadcast` via the pluggable provider adapter. Money model:
+// Withdraw opens a withdrawal against a whitelisted address and PARKS it for AML
+// review. It does NOT dispatch to the provider — the broadcast is gated behind an
+// admin compliance approval (see AdminDecideWithdrawal). Money model:
 //   - Asset side: `units` leave the holding into the withdrawal row (parked; no mint).
 //   - Fiat side: a processing fee (feeKobo) debits the wallet to paymax_revenue.
-//   - State machine: requested → pending → broadcast (provider). On provider reject
-//     or error the withdrawal fails and parked units are returned to the holding.
+//   - State machine (member path): requested → pending_review. THE MEMBER PATH STOPS
+//     HERE. Funds are parked/held and NOT sent. A compliance officer must approve
+//     (pending_review → approved → broadcast) before anything leaves; a reject
+//     (pending_review → failed) returns the parked units. No provider dispatch
+//     happens on the member path — enforcing the AML gate before any broadcast.
 // Requires an Idempotency-Key (replay-safe) and the destination to be an owned,
 // active, whitelisted address for the same asset (allow-list enforced).
 func (s *Service) Withdraw(ctx context.Context, userID, assetID, addressID string, units, feeKobo int64, idemKey string) (*Withdrawal, error) {
@@ -412,45 +416,72 @@ func (s *Service) Withdraw(ctx context.Context, userID, assetID, addressID strin
 		}
 	}
 
-	// 3) requested → pending (accepted for processing).
-	if _, err := s.repo.TransitionWithdrawal(ctx, userID, wid, WithdrawalRequested, WithdrawalPending,
-		userID, "accepted for processing", "", "", "", 0); err != nil {
+	// 3) requested → pending_review. THE MEMBER PATH STOPS HERE (AML gate). The units
+	//    are parked and held; NOTHING is dispatched to the provider. A compliance
+	//    officer must approve via AdminDecideWithdrawal before any broadcast fires.
+	out, err := s.repo.TransitionWithdrawal(ctx, userID, wid, WithdrawalRequested, WithdrawalPendingReview,
+		userID, "parked for AML review", "", "", "", 0)
+	if err != nil {
 		return nil, err
 	}
+	if err := s.audit.log(ctx, userID, "crypto.withdraw.requested", "crypto_withdrawal", wid, "",
+		nil, map[string]any{
+			"asset": a.Symbol, "units": units, "network_fee_units": netFee,
+			"fee_kobo": feeKobo, "address_id": addr.ID, "status": WithdrawalPendingReview,
+		}); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
-	// 4) pending → broadcast via the provider seam. Provider reject/error fails the
-	//    withdrawal and returns the parked units (compensation, never mints).
+// broadcastApprovedWithdrawal dispatches an admin-approved withdrawal to the
+// provider and advances approved → broadcast. It is the ONLY place the provider is
+// called — invoked from the admin approve path AFTER the AML gate, never from the
+// member create path. On provider reject/error the withdrawal fails and the parked
+// units are returned to the holder (compensation, never mints). It reads the owner +
+// destination from the persisted row so the broadcast targets the right whitelisted
+// address. Idempotent: the guarded approved→broadcast transition (and the provider's
+// own idempotency on the withdrawal id) make a re-run safe.
+//
+// TODO(crypto-worker): for production this should be enqueued to an asynq worker so
+// the admin approve HTTP call returns immediately and provider latency/retries are
+// handled off the request path. Today it runs inline on approve so the state machine
+// is exercisable end-to-end with the mock provider.
+func (s *Service) broadcastApprovedWithdrawal(ctx context.Context, w *AdminWithdrawal) (*AdminWithdrawal, error) {
+	// Provider needs the net units, the destination address + network, and a stable
+	// idempotency key. Derive the provider idem key from the withdrawal id (stable).
+	netUnits := w.Units - w.NetworkFeeUnits
+	if netUnits <= 0 {
+		netUnits = w.Units
+	}
 	res, berr := s.withdraw.Broadcast(ctx, BroadcastRequest{
-		WithdrawalID: wid, Symbol: a.Symbol, Network: addr.Network, Address: addr.Address,
-		Units: units - netFee, ProviderIdemKey: idemKey,
+		WithdrawalID: w.ID, Symbol: w.Symbol, Network: w.Network, Address: w.Address,
+		Units: netUnits, ProviderIdemKey: "crypto:withdraw:" + w.ID,
 	})
 	if berr != nil || !res.Accepted {
 		reason := "provider rejected withdrawal"
 		if berr != nil {
 			reason = berr.Error()
 		}
-		out, terr := s.repo.TransitionWithdrawal(ctx, userID, wid, WithdrawalPending, WithdrawalFailed,
-			userID, reason, "", "", reason, units)
+		out, terr := s.repo.AdminTransitionWithdrawal(ctx, w.ID, WithdrawalApproved, WithdrawalFailed,
+			"custody:"+s.withdraw.Name(), reason, reason, w.Units)
 		if terr != nil {
 			return nil, terr
 		}
-		_ = s.audit.log(ctx, userID, "crypto.withdraw.failed", "crypto_withdrawal", wid, reason, nil,
-			map[string]any{"asset": a.Symbol, "units": units})
+		_ = s.audit.log(ctx, "custody:"+s.withdraw.Name(), "crypto.withdraw.failed", "crypto_withdrawal", w.ID, reason,
+			nil, map[string]any{"asset": w.Symbol, "units": w.Units})
 		return out, nil
 	}
 
-	out, err := s.repo.TransitionWithdrawal(ctx, userID, wid, WithdrawalPending, WithdrawalBroadcast,
-		userID, "submitted to provider", res.ProviderRef, res.TxHash, "", 0)
+	out, err := s.repo.AdminTransitionWithdrawalProvider(ctx, w.ID, WithdrawalApproved, WithdrawalBroadcast,
+		"custody:"+s.withdraw.Name(), "submitted to provider", res.ProviderRef, res.TxHash)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.audit.log(ctx, userID, "crypto.withdraw", "crypto_withdrawal", wid, "",
+	_ = s.audit.log(ctx, "custody:"+s.withdraw.Name(), "crypto.withdraw.broadcast", "crypto_withdrawal", w.ID, "",
 		nil, map[string]any{
-			"asset": a.Symbol, "units": units, "network_fee_units": netFee,
-			"fee_kobo": feeKobo, "address_id": addr.ID, "provider_ref": res.ProviderRef,
-		}); err != nil {
-		return nil, err
-	}
+			"asset": w.Symbol, "units": w.Units, "provider_ref": res.ProviderRef, "tx_hash": res.TxHash,
+		})
 	return out, nil
 }
 

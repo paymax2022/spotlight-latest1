@@ -379,12 +379,12 @@ export async function payInvoice(invoiceId: string, amountKobo: number, method: 
     return applyPayment(inv, amountKobo, method);
   }
   // feesinvoice member: POST /invoices/:id/payments (record payment, Idempotency-Key required).
-  // Envelope {data}. NOTE(payload): the backend RecordPaymentRequest uses amountMinor (+ optional
-  // gatewayRef/ledgerReference); the amountKobo/method body here is a types-owned follow-up — the
-  // path + idempotency header + envelope are aligned.
+  // Envelope {data}. The backend RecordPaymentRequest expects `amountMinor` (kobo is a minor
+  // unit, so amountKobo maps 1:1 to amountMinor). `method` is not a backend field and is
+  // dropped from the wire body (payment routing is derived server-side / by gatewayRef).
   const res = await api.post(
     `${B}/invoices/${invoiceId}/payments`,
-    { amountKobo, method },
+    { amountMinor: amountKobo },
     { headers: { 'Idempotency-Key': idempotencyKey ?? generateIdempotencyKey() } },
   );
   return unwrap<PaymentResult>(res);
@@ -518,11 +518,11 @@ export async function fundVault(vaultId: string, amountKobo: number, idempotency
     return updated;
   }
   // feesvault member: POST /vaults/:id/contribute (fund, Idempotency-Key required — SF-5).
-  // Envelope {data}. NOTE(payload): backend ContributeRequest uses amountMinor; amountKobo body
-  // is a types-owned follow-up — path + idempotency header + envelope are aligned.
+  // Envelope {data}. The backend ContributeRequest expects `amountMinor` (kobo is a minor
+  // unit, so amountKobo maps 1:1 to amountMinor).
   const res = await api.post(
     `${B}/vaults/${vaultId}/contribute`,
-    { amountKobo },
+    { amountMinor: amountKobo },
     { headers: { 'Idempotency-Key': idempotencyKey ?? generateIdempotencyKey() } },
   );
   return unwrap<FeesVault>(res);

@@ -13,6 +13,7 @@ import (
 	"spotlight/backend/internal/academy/curriculum"
 	"spotlight/backend/internal/academy/edupay"
 	"spotlight/backend/internal/academy/exam"
+	feesadminapi "spotlight/backend/internal/academy/fees/adminapi"
 	feescompetition "spotlight/backend/internal/academy/fees/competition"
 	feesexport "spotlight/backend/internal/academy/fees/export"
 	feesschedule "spotlight/backend/internal/academy/fees/feeschedule"
@@ -241,6 +242,14 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	feespromotion.RegisterFeesPromotion(member, admin, pool, rbac)   // /promotions (SF-3 two-approval)
 	feesroles.RegisterFeesRoles(admin, pool, rbac)                   // /schools/:schoolId/staff (RequireScopedPermission academy.fees.roles.assign)
 	feeshardship.RegisterFeesHardship(member, admin, pool, rbac)     // /invoices hardship review queue (SF-9, no money)
+
+	// Flat admin oversight surface for the school-admin console (SC-29…SC-40): read-heavy
+	// list/aggregate views ACROSS schools at /api/academy/admin/fees/* (distinct from the
+	// per-school member routes). Each route self-gates with a seeded academy.fees.* slug.
+	// No money path — reads the existing academy_fees tables + two config writes
+	// (create/issue fee schedule, gov-export opt-in). Backs the console's
+	// TODO(no backend route) branches on the /api/academy/admin/fees/* namespace.
+	feesadminapi.RegisterFeesAdminAPI(admin, pool, rbac)
 
 	// Compliance export (SF-11): admin-only, self-wires optin+verifier from pool.
 	// It reserves RBAC to the caller, so gate the whole group here.

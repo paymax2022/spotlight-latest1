@@ -127,6 +127,46 @@ func (r *Repository) AdminTransitionWithdrawal(
 	return r.AdminGetWithdrawal(ctx, id)
 }
 
+// AdminTransitionWithdrawalProvider moves a withdrawal from->to under the guarded
+// update (WHERE status=from) and records the provider reference + tx hash. It is used
+// by the approved→broadcast dispatch (broadcastApprovedWithdrawal): no user scope
+// (the actor is the custody provider), no unit return (broadcast is not a reject).
+// Idempotent: a repeated dispatch hits WHERE status=from with 0 rows → ErrInvalidTransition.
+func (r *Repository) AdminTransitionWithdrawalProvider(
+	ctx context.Context, id, from, to, actorID, detail, providerRef, txHash string,
+) (*AdminWithdrawal, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	const upd = `UPDATE crypto_withdrawals
+		SET status=$2,
+		    provider_ref=COALESCE(NULLIF($3,''), provider_ref),
+		    tx_hash=COALESCE(NULLIF($4,''), tx_hash),
+		    updated_at=now()
+		WHERE id=$1 AND status=$5`
+	ct, err := tx.Exec(ctx, upd, id, to, providerRef, txHash, from)
+	if err != nil {
+		return nil, err
+	}
+	if ct.RowsAffected() == 0 {
+		return nil, ErrInvalidTransition
+	}
+
+	const evt = `INSERT INTO crypto_withdrawal_events (withdrawal_id, from_status, to_status, actor_id, detail)
+	             VALUES ($1,$2,$3,$4,$5)`
+	if _, err := tx.Exec(ctx, evt, id, from, to, nullStr(actorID), nullStr(detail)); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return r.AdminGetWithdrawal(ctx, id)
+}
+
 func scanAdminWithdrawal(row rowScanner) (*AdminWithdrawal, error) {
 	var w AdminWithdrawal
 	var scale int64
@@ -172,7 +212,7 @@ func deriveAmlSignals(valueKobo int64, status string) ([]string, int) {
 		flags = append(flags, "high_value")
 		score += 30
 	}
-	if status == WithdrawalRequested {
+	if status == WithdrawalRequested || status == WithdrawalPendingReview {
 		// Still awaiting review — nudge visibility.
 		score += 10
 	}
@@ -320,10 +360,13 @@ func (r *Repository) AdminHeldUnitsByAsset(ctx context.Context) (map[string]int6
 		return nil, err
 	}
 
-	// Units parked in non-terminal withdrawals are still owed on-chain.
+	// Units parked in non-terminal withdrawals are still owed on-chain. This spans
+	// the full pre-terminal state machine: requested, pending_review (AML gate),
+	// approved (cleared, not yet sent), and broadcast (submitted, not yet confirmed).
+	// Confirmed = units burned (left custody); failed = units returned to holdings.
 	const parkedQ = `SELECT asset_id, COALESCE(SUM(units),0)
 	                 FROM crypto_withdrawals
-	                 WHERE status IN ('requested','pending','broadcast')
+	                 WHERE status IN ('requested','pending_review','approved','broadcast')
 	                 GROUP BY asset_id`
 	prows, err := r.db.Query(ctx, parkedQ)
 	if err != nil {

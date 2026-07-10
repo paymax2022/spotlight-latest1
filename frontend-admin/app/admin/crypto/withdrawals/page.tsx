@@ -22,7 +22,7 @@ export default function CryptoWithdrawalsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('pending_review');
   const [offset, setOffset] = useState(0);
 
   // Decision drawer state.
@@ -59,22 +59,22 @@ export default function CryptoWithdrawalsPage() {
     finally { setBusy(false); }
   }
 
-  const pending = rows.filter((w) => w.status === 'requested');
+  const pending = rows.filter((w) => w.status === 'pending_review');
 
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader
         title="Crypto — Withdrawals / AML"
-        subtitle="Approval queue for outbound crypto withdrawals. Approve moves requested → pending (accepted for broadcast); reject moves requested → failed and returns the parked holding units. Both transitions are audited."
+        subtitle="AML review queue for outbound crypto withdrawals. Approve moves pending_review → approved (accepted for broadcast); reject moves pending_review → failed and returns the parked holding units. Funds never leave before approval. Both transitions are audited."
         action={<button onClick={() => void load(offset, statusFilter)} style={btn()}>Refresh</button>}
       />
       <CryptoTabs active="withdrawals" />
       <DisclosureNote>
         Backed by <code>GET /api/v1/admin/crypto/withdrawals</code> and{' '}
         <code>POST /api/v1/admin/crypto/withdrawals/:id/decision</code> (RBAC <code>crypto.admin</code>). Withdrawals
-        follow the guarded state machine <code>requested → pending → broadcast → confirmed | failed</code> — the queue
-        only drives the first hop. Units are integer asset minor-units; cash equivalents are NGN kobo. No status is
-        mutated outside the state machine.
+        follow the guarded state machine <code>requested → pending_review → approved → broadcast → confirmed | failed</code> —
+        funds never leave before an admin approval (member requests park at pending_review). Units are integer asset
+        minor-units; cash equivalents are NGN kobo. No status is mutated outside the state machine.
       </DisclosureNote>
 
       {!canAdmin && <PermissionBanner permission={CRYPTO_PERMS.admin} />}
@@ -129,8 +129,9 @@ export default function CryptoWithdrawalsPage() {
             <label style={lbl()}>Status</label>
             <select style={select()} value={statusFilter} onChange={(e) => { setOffset(0); setStatusFilter(e.target.value); }}>
               <option value="">All</option>
-              <option value="requested">Requested (awaiting decision)</option>
-              <option value="pending">Pending</option>
+              <option value="pending_review">Pending review (awaiting AML decision)</option>
+              <option value="approved">Approved (accepted for broadcast)</option>
+              <option value="requested">Requested (legacy)</option>
               <option value="broadcast">Broadcast</option>
               <option value="confirmed">Confirmed</option>
               <option value="failed">Failed</option>
@@ -149,7 +150,7 @@ export default function CryptoWithdrawalsPage() {
             <tbody>
               {rows.map((w) => {
                 const scale = SCALE[w.symbol ?? ''] ?? 0;
-                const decidable = w.status === 'requested';
+                const decidable = w.status === 'pending_review';
                 return (
                   <tr key={w.id}>
                     <td style={{ ...td(), ...mono() }}>{w.id}</td>

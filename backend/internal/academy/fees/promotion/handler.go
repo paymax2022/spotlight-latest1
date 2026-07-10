@@ -94,17 +94,25 @@ func RegisterFeesPromotion(member, admin *gin.RouterGroup, pool *pgxpool.Pool, r
 	h := NewHandler(NewService(pool))
 	if member != nil {
 		g := member.Group("/schools/:schoolId")
+		// Member self-service (score entry / proposal / read) — no RBAC gate; the
+		// service self-authorizes on school membership.
 		g.POST("/sessions/:sessionId/classes/:classId/scores", h.ImportScores)
 		g.POST("/sessions/:sessionId/classes/:classId/compute", h.Compute)
 		g.GET("/promotions/:promotionId", h.Get)
-		g.POST("/promotions/:promotionId/teacher-approval", h.TeacherApprove)
-		g.POST("/promotions/:promotionId/admin-approval", h.AdminApprove)
-		g.POST("/promotions/:promotionId/apply", h.Apply)
+		// SF-3 two-approval + apply are privileged admin actions. Gate them with the
+		// seeded `academy.fees.promotion.approve` permission as defense-in-depth on top
+		// of the state machine + distinct-approver + DB CHECK. Without this a caller
+		// lacking the permission is rejected (403) before any state transition.
+		g.POST("/promotions/:promotionId/teacher-approval",
+			middleware.RequirePermission(rbac, "academy.fees.promotion.approve"), h.TeacherApprove)
+		g.POST("/promotions/:promotionId/admin-approval",
+			middleware.RequirePermission(rbac, "academy.fees.promotion.approve"), h.AdminApprove)
+		g.POST("/promotions/:promotionId/apply",
+			middleware.RequirePermission(rbac, "academy.fees.promotion.approve"), h.Apply)
 	}
-	// admin group + rbac reserved so the integration task can gate platform variants
+	// admin group reserved so the integration task can register platform variants
 	// without a signature change.
 	_ = admin
-	_ = rbac
 	return h
 }
 

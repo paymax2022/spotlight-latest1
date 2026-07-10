@@ -91,22 +91,33 @@ type DepositAddress struct {
 // ── Withdrawal state machine ────────────────────────────────────────────────
 
 // Withdrawal statuses (persisted in crypto_withdrawals.status).
+//
+// AML GATE: the member create path parks the units and STOPS at pending_review —
+// it never calls the provider. Money can only leave AFTER a compliance officer
+// approves (pending_review → approved), which is the point the broadcast fires.
+// Reject (pending_review → failed) returns the parked units. No provider dispatch
+// happens on any path before `approved`.
 const (
-	WithdrawalRequested = "requested" // row created, holding units parked
-	WithdrawalPending   = "pending"   // accepted for processing (pre-broadcast)
-	WithdrawalBroadcast = "broadcast" // submitted to provider/network
-	WithdrawalConfirmed = "confirmed" // on-chain confirmed; parked units burned
-	WithdrawalFailed    = "failed"    // rejected/failed; parked units returned
+	WithdrawalRequested     = "requested"      // row created, holding units parked
+	WithdrawalPendingReview = "pending_review" // parked/held, awaiting admin AML review
+	WithdrawalApproved      = "approved"       // AML-approved; cleared to broadcast
+	WithdrawalBroadcast     = "broadcast"      // submitted to provider/network
+	WithdrawalConfirmed     = "confirmed"      // on-chain confirmed; parked units burned
+	WithdrawalFailed        = "failed"         // rejected/failed; parked units returned
 )
 
 // allowedWithdrawalTransitions is the guarded state machine. Any transition not
-// listed here is rejected (never mutate status ad hoc).
+// listed here is rejected (never mutate status ad hoc). The AML review gate
+// (pending_review) sits BEFORE any provider dispatch: the member create path can
+// only reach pending_review; the admin approve path drives pending_review→approved
+// and then approved→broadcast.
 var allowedWithdrawalTransitions = map[string]map[string]bool{
-	WithdrawalRequested: {WithdrawalPending: true, WithdrawalFailed: true},
-	WithdrawalPending:   {WithdrawalBroadcast: true, WithdrawalFailed: true},
-	WithdrawalBroadcast: {WithdrawalConfirmed: true, WithdrawalFailed: true},
-	WithdrawalConfirmed: {}, // terminal
-	WithdrawalFailed:    {}, // terminal
+	WithdrawalRequested:     {WithdrawalPendingReview: true, WithdrawalFailed: true},
+	WithdrawalPendingReview: {WithdrawalApproved: true, WithdrawalFailed: true},
+	WithdrawalApproved:      {WithdrawalBroadcast: true, WithdrawalFailed: true},
+	WithdrawalBroadcast:     {WithdrawalConfirmed: true, WithdrawalFailed: true},
+	WithdrawalConfirmed:     {}, // terminal
+	WithdrawalFailed:        {}, // terminal
 }
 
 func canTransitionWithdrawal(from, to string) bool {

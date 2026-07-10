@@ -62,13 +62,51 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
   return (res.data?.data ?? res.data) as T;
 }
 
+// The live backend ProfileCard is leaner than the mock DiscoveryProfile: it may
+// omit id/photos/age/prompts/interests and sends `verified` as a BOOL rather than
+// a VerificationFlag[]. Normalize every card to the full DiscoveryProfile shape so
+// downstream UI (which reads current.photos[0], .age, .prompts[0], .verified) can
+// never crash on a sparse live card.
+function normalizeVerified(v: unknown): DiscoveryProfile['verified'] {
+  if (Array.isArray(v)) return v as DiscoveryProfile['verified'];
+  // A truthy bool means "verified" but the backend doesn't say which flags — treat
+  // it as a single generic 'identity' flag so the badge row still renders; false/
+  // missing → no badges.
+  return v === true ? (['identity'] as DiscoveryProfile['verified']) : [];
+}
+
+function normalizeProfile(raw: Record<string, unknown>): DiscoveryProfile {
+  const r = raw ?? {};
+  return {
+    // Backend may send `profileId` instead of `id`; alias so nav/keys work.
+    id: (r.id as string) ?? (r.profileId as string) ?? '',
+    displayName: (r.displayName as string) ?? 'Someone',
+    age: typeof r.age === 'number' ? (r.age as number) : 0,
+    headline: r.headline as string | undefined,
+    bio: r.bio as string | undefined,
+    photos: Array.isArray(r.photos) ? (r.photos as string[]) : [],
+    interests: Array.isArray(r.interests) ? (r.interests as string[]) : [],
+    prompts: Array.isArray(r.prompts) ? (r.prompts as DiscoveryProfile['prompts']) : [],
+    distanceLabel: (r.distanceLabel as string) ?? '',
+    distanceBucket: r.distanceBucket as DiscoveryProfile['distanceBucket'],
+    verified: normalizeVerified(r.verified),
+    likedYou: r.likedYou as boolean | undefined,
+    occupation: r.occupation as string | undefined,
+    company: r.company as string | undefined,
+    mutualConnections: r.mutualConnections as number | undefined,
+  };
+}
+
 // Backend responses are camelCase and wrap collections in { profiles }. This
 // helper pulls the profiles array whether the server returns the envelope or a
-// bare array (defensive; the contract is { profiles }).
+// bare array (defensive; the contract is { profiles }) and normalizes each card
+// to a safe DiscoveryProfile shape (see normalizeProfile).
 function unwrapProfiles(res: { data?: unknown }): DiscoveryProfile[] {
   const body = (res.data as { data?: unknown })?.data ?? res.data;
-  if (Array.isArray(body)) return body as DiscoveryProfile[];
-  return ((body as { profiles?: DiscoveryProfile[] })?.profiles ?? []) as DiscoveryProfile[];
+  const arr = Array.isArray(body)
+    ? body
+    : ((body as { profiles?: unknown[] })?.profiles ?? []);
+  return (arr as Record<string, unknown>[]).map(normalizeProfile);
 }
 
 // UI intent → contract wire value. Backend expects 'like' | 'pass' | 'superlike'.

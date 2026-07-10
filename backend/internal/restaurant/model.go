@@ -106,7 +106,11 @@ type CreateRestaurantRequest struct {
 type PlaceOrderRequest struct {
 	Items           []OrderItemInput `json:"items" binding:"required,min=1"`
 	DeliveryAddress string           `json:"delivery_address" binding:"required"`
-	IdempotencyKey  string           `json:"idempotency_key" binding:"required"`
+	// IdempotencyKey is read from the `Idempotency-Key` HEADER by the handler
+	// (the client convention across every money route). The body field is a
+	// fallback only — hence no binding:"required" here, so a header-only client
+	// no longer 400s on bind.
+	IdempotencyKey string `json:"idempotency_key"`
 
 	DeliveryLat      *float64 `json:"delivery_lat,omitempty"`
 	DeliveryLng      *float64 `json:"delivery_lng,omitempty"`
@@ -133,7 +137,32 @@ func (r PlaceOrderRequest) DeliveryCoords() (lat, lng float64, ok bool) {
 }
 
 // OrderItemInput is one line item in the order request.
+//
+// The mobile client sends the menu-item id as `item_id`; the DB column and the
+// canonical Order line are `menu_item_id`. We accept BOTH json tags and normalize
+// via MenuItem() so the client field name (`item_id`) works without a client change
+// while `menu_item_id` remains accepted for any other caller.
 type OrderItemInput struct {
-	MenuItemID string `json:"menu_item_id" binding:"required"`
-	Quantity   int    `json:"quantity" binding:"required,min=1"`
+	MenuItemID string `json:"menu_item_id"`
+	ItemID     string `json:"item_id"`
+	// Quantity is accepted as either `quantity` (canonical) or `qty` (mobile client).
+	Quantity int `json:"quantity"`
+	Qty      int `json:"qty"`
+}
+
+// MenuItem returns the normalized menu-item id regardless of which json field the
+// client sent (`menu_item_id` preferred, `item_id` fallback).
+func (i OrderItemInput) MenuItem() string {
+	if i.MenuItemID != "" {
+		return i.MenuItemID
+	}
+	return i.ItemID
+}
+
+// QtyOf returns the normalized quantity (`quantity` preferred, `qty` fallback).
+func (i OrderItemInput) QtyOf() int {
+	if i.Quantity > 0 {
+		return i.Quantity
+	}
+	return i.Qty
 }

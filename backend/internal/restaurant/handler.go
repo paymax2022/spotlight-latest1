@@ -43,6 +43,30 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	// Idempotency-Key is a HEADER by client convention (every money route). Prefer
+	// the header; fall back to the body field for any legacy caller. Fail closed.
+	if hk := c.GetHeader("Idempotency-Key"); hk != "" {
+		req.IdempotencyKey = hk
+	}
+	if req.IdempotencyKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key is required"})
+		return
+	}
+	// Normalize each line so the service sees canonical MenuItemID/Quantity
+	// regardless of whether the client sent item_id/qty (mobile) or
+	// menu_item_id/quantity (canonical). Validate fail-closed.
+	for idx := range req.Items {
+		req.Items[idx].MenuItemID = req.Items[idx].MenuItem()
+		req.Items[idx].Quantity = req.Items[idx].QtyOf()
+		if req.Items[idx].MenuItemID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "each item requires an item_id"})
+			return
+		}
+		if req.Items[idx].Quantity < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "each item requires a quantity >= 1"})
+			return
+		}
+	}
 	order, err := h.svc.PlaceOrder(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

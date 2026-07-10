@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 
@@ -93,8 +94,30 @@ func (s *Service) GetQuote(ctx context.Context, userID string, req QuoteRequest)
 }
 
 // Convert executes the FX conversion for a valid, unexpired quote.
+//
+// Money-path invariants (see docs/qa/money-paths.md RISK-FX-1/2/3):
+//   - RISK-FX-2: the WHOLE conversion is idempotent on the single req.IdempotencyKey.
+//     A replay returns the existing conversion. The two ledger legs carry per-leg
+//     suffixed keys (":debit" / ":credit") so a replay is a per-leg no-op, and the
+//     fx_conversions row is guarded by its UNIQUE(idempotency_key) constraint via
+//     INSERT ... ON CONFLICT DO NOTHING RETURNING — so two concurrent identical
+//     Converts can never both win the insert and double-credit the target wallet.
+//   - RISK-FX-1: BOTH legs hit the finance ledger as balanced double-entries. The
+//     source (NGN) leg is a user-wallet Debit; the target-currency leg is a balanced
+//     PostJournal (DR settlement standing account → CR fx-spread standing account)
+//     recording the foreign-currency movement. currency_wallets is NEVER a bare
+//     UPDATE: it is only ever mutated as a MIRROR of the target-leg ledger post,
+//     inside the SAME tx that persists the conversion row, so the fast projection
+//     can never drift from a committed conversion.
+//   - RISK-FX-3: provider-failure reverses the full debit (fail-closed); and the
+//     currency_wallets mirror + conversion-row insert commit together in ONE pgx tx
+//     gated by the unique idempotency key, so a crash can never leave a credited
+//     wallet with no conversion record (or vice-versa).
 func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest) (*FXConversion, error) {
-	// Duplicate check.
+	// Fast idempotency short-circuit: if this key already produced a conversion,
+	// return it (a genuine replay). The durable guard is the UNIQUE(idempotency_key)
+	// constraint enforced by the ON CONFLICT insert below — this SELECT is only an
+	// optimization and is NOT relied on for correctness (no TOCTOU dependency).
 	var existingID string
 	const checkDup = `SELECT id FROM fx_conversions WHERE idempotency_key=$1 LIMIT 1`
 	_ = s.db.QueryRow(ctx, checkDup, req.IdempotencyKey).Scan(&existingID)
@@ -114,12 +137,13 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 	totalDebitKobo := q.SourceAmountKobo + q.FeeKobo
 	reference := "fx:" + uuid.New().String()
 
-	// Debit source wallet.
+	// --- LEG 1: debit source (NGN) wallet — balanced double-entry via the ledger,
+	// idempotent on req.IdempotencyKey+":debit". ErrDuplicate on a replay is success.
 	fxSpreadAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountFXSpreadIncome)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ledger.Debit(ctx, userID, reference, req.IdempotencyKey+":debit", fxSpreadAcc.ID, totalDebitKobo); err != nil {
+	if err := s.ledger.Debit(ctx, userID, reference, req.IdempotencyKey+":debit", fxSpreadAcc.ID, totalDebitKobo); err != nil && err != ledger.ErrDuplicate {
 		return nil, fmt.Errorf("fx: debit source wallet: %w", err)
 	}
 
@@ -132,14 +156,30 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 		Reference:      reference,
 	})
 	if err != nil {
-		// Conversion failed after debit — post reversal and return error.
+		// Conversion failed after debit — post reversal (fail-closed) and return.
+		// Nothing was credited or recorded, so the user is left net-zero.
 		_ = s.postReversal(ctx, userID, reference, req.IdempotencyKey, totalDebitKobo, fxSpreadAcc.ID)
 		return nil, fmt.Errorf("fx: provider convert: %w", err)
 	}
 
-	// Credit target currency wallet.
-	if err := s.creditCurrencyWallet(ctx, userID, q.TargetCurrency, convResp.TargetAmountMinor); err != nil {
-		return nil, fmt.Errorf("fx: credit target wallet: %w", err)
+	// --- LEG 2: the target-currency credit must ALSO be a ledger projection, not a
+	// bare stored-balance write. Post a balanced double-entry recording the foreign
+	// leg: DR settlement standing account → CR fx-spread standing account, keyed
+	// ":credit" so a replay is a no-op. This gives the target side a ledger
+	// counterpart (double-entry restored); currency_wallets is then updated ONLY as
+	// a mirror of this post, inside the conversion tx below.
+	settlementAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.ledger.PostJournal(ctx, ledger.JournalEntry{
+		Reference:       reference,
+		IdempotencyKey:  req.IdempotencyKey + ":credit",
+		AmountKobo:      convResp.TargetAmountMinor,
+		DebitAccountID:  settlementAcc.ID,
+		CreditAccountID: fxSpreadAcc.ID,
+	}); err != nil && err != ledger.ErrDuplicate {
+		return nil, fmt.Errorf("fx: post target-leg journal: %w", err)
 	}
 
 	conv := &FXConversion{
@@ -158,17 +198,53 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 		IdempotencyKey:    req.IdempotencyKey,
 		CreatedAt:         time.Now(),
 	}
+
+	// Persist the conversion row AND mirror the currency_wallets projection in ONE
+	// pgx tx, gated by UNIQUE(idempotency_key). If the INSERT loses the race (a
+	// concurrent identical Convert already committed), ON CONFLICT DO NOTHING returns
+	// no row: we skip the wallet mirror and return the already-persisted conversion —
+	// so the target wallet can never be double-credited. Crash-safety (RISK-FX-3):
+	// the mirror and the record commit atomically, so we never credit the wallet
+	// without a durable conversion row.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("fx: begin conversion tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
 	const insertConv = `
 		INSERT INTO fx_conversions (id, user_id, quote_id, provider_txn_id, source_currency, target_currency,
 		    source_amount_kobo, target_amount_minor, rate, fee_kobo, status, reference, idempotency_key)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'completed',$11,$12)`
-	if _, err := s.db.Exec(ctx, insertConv,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'completed',$11,$12)
+		ON CONFLICT (idempotency_key) DO NOTHING
+		RETURNING id`
+	var insertedID string
+	err = tx.QueryRow(ctx, insertConv,
 		conv.ID, conv.UserID, conv.QuoteID, conv.ProviderTxnID,
 		conv.SourceCurrency, conv.TargetCurrency,
 		conv.SourceAmountKobo, conv.TargetAmountMinor, conv.Rate, conv.FeeKobo,
 		conv.Reference, conv.IdempotencyKey,
-	); err != nil {
+	).Scan(&insertedID)
+	if err == pgx.ErrNoRows {
+		// A concurrent identical Convert won the race and already credited the wallet.
+		// Do NOT mirror the credit again; roll back this (empty) tx and return the
+		// existing conversion. This is the idempotent replay path.
+		_ = tx.Rollback(ctx)
+		return s.getConversionByKey(ctx, req.IdempotencyKey)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("fx: store conversion: %w", err)
+	}
+
+	// Mirror the target-leg credit into the fast currency_wallets projection, in the
+	// SAME tx as the conversion insert. currency_wallets is thus only ever moved as a
+	// mirror of a committed ledger post + conversion record — never a bare UPDATE.
+	if err := s.mirrorCurrencyWalletTx(ctx, tx, userID, q.TargetCurrency, convResp.TargetAmountMinor); err != nil {
+		return nil, fmt.Errorf("fx: mirror target wallet: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("fx: commit conversion tx: %w", err)
 	}
 	return conv, nil
 }
@@ -220,10 +296,35 @@ func (s *Service) getConversion(ctx context.Context, id string) (*FXConversion, 
 	)
 }
 
-func (s *Service) creditCurrencyWallet(ctx context.Context, userID, currency string, amountMinor int64) error {
-	const update = `UPDATE currency_wallets SET balance_minor = balance_minor + $3 WHERE user_id=$1 AND currency=$2`
-	_, err := s.db.Exec(ctx, update, userID, currency, amountMinor)
+// mirrorCurrencyWalletTx updates the fast currency_wallets projection as a MIRROR of
+// the already-posted target-leg ledger entry, inside the caller's transaction. It is
+// NEVER called on its own — only from Convert, in the same tx that inserts the
+// fx_conversions row (guarded by UNIQUE(idempotency_key)). This preserves the iron
+// rule that balances are ledger-derived: the currency_wallets row moves only when a
+// balanced ledger post AND a durable conversion record commit together, so it can
+// never be a bare stored-balance write with no ledger counterpart (RISK-FX-1), and
+// can never be double-applied (RISK-FX-2/3 — the conflicting insert short-circuits
+// before we ever reach here).
+//
+// Upsert semantics mirror GetOrCreateCurrencyWallet so a first conversion into a
+// currency the user has never held still lands correctly.
+func (s *Service) mirrorCurrencyWalletTx(ctx context.Context, tx pgx.Tx, userID, currency string, amountMinor int64) error {
+	const upsert = `
+		INSERT INTO currency_wallets (user_id, currency, balance_minor)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (user_id, currency)
+		DO UPDATE SET balance_minor = currency_wallets.balance_minor + EXCLUDED.balance_minor`
+	_, err := tx.Exec(ctx, upsert, userID, currency, amountMinor)
 	return err
+}
+
+func (s *Service) getConversionByKey(ctx context.Context, idempotencyKey string) (*FXConversion, error) {
+	const q = `SELECT id, user_id, quote_id, provider_txn_id, source_currency, target_currency, source_amount_kobo, target_amount_minor, rate, fee_kobo, status, reference, idempotency_key, created_at FROM fx_conversions WHERE idempotency_key=$1`
+	c := &FXConversion{}
+	return c, s.db.QueryRow(ctx, q, idempotencyKey).Scan(
+		&c.ID, &c.UserID, &c.QuoteID, &c.ProviderTxnID, &c.SourceCurrency, &c.TargetCurrency,
+		&c.SourceAmountKobo, &c.TargetAmountMinor, &c.Rate, &c.FeeKobo, &c.Status, &c.Reference, &c.IdempotencyKey, &c.CreatedAt,
+	)
 }
 
 func (s *Service) postReversal(ctx context.Context, userID, reference, idempotencyKey string, amountKobo int64, creditAccountID string) error {
