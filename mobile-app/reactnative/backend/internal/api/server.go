@@ -151,6 +151,7 @@ func (s *Server) Handler() http.Handler {
 	// Portfolio
 	mux.HandleFunc("GET /api/v1/portfolio", s.getPortfolio)
 	mux.HandleFunc("GET /api/v1/portfolio/positions", s.getPositions)
+	mux.HandleFunc("GET /api/v1/portfolio/networth", s.getNetWorth)
 
 	// Transactions
 	mux.HandleFunc("GET /api/v1/crypto/transactions", s.getTransactions)

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"time"
@@ -337,6 +338,76 @@ func (s *Server) getPositions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.S.Positions())
+}
+
+// ── Unified net worth (crypto + stocks + cash) ────────────────────────────────
+
+type netWorthBreakdown struct {
+	Crypto domain.Money `json:"crypto"`
+	Stocks domain.Money `json:"stocks"`
+	Cash   domain.Money `json:"cash"`
+}
+
+type netWorthAllocation struct {
+	CryptoPct float64 `json:"cryptoPct"`
+	StocksPct float64 `json:"stocksPct"`
+	CashPct   float64 `json:"cashPct"`
+}
+
+type netWorthResponse struct {
+	BaseCurrency  string             `json:"baseCurrency"`
+	NetWorth      domain.Money       `json:"netWorth"`
+	DayChange     domain.Money       `json:"dayChange"`
+	TotalGainLoss domain.Money       `json:"totalGainLoss"`
+	Breakdown     netWorthBreakdown  `json:"breakdown"`
+	Allocation    netWorthAllocation `json:"allocation"`
+}
+
+// getNetWorth aggregates the user's crypto holdings, stock holdings and cash into a
+// SINGLE net-worth view — the unified portfolio the audit found missing (crypto,
+// stocks and cash were three separate screens with no combined figure). All amounts
+// are integer minor units in the base currency.
+//
+// Cash is taken once from the crypto portfolio's investable balance (the
+// ledger-backed wallet, canonical per the Stage 1.5 consolidation) so it is never
+// double-counted across the crypto and stock silos.
+func (s *Server) getNetWorth(w http.ResponseWriter, _ *http.Request) {
+	cp := s.S.Portfolio()      // crypto: holdings value + cash
+	sp := s.Stocks.Portfolio() // stocks: holdings value
+
+	cryptoVal := cp.TotalValue.Amount
+	stocksVal := sp.TotalValue.Amount
+	cash := cp.InvestableBalance.Amount
+	total := cryptoVal + stocksVal + cash
+
+	ccy := cp.BaseCurrency
+	if ccy == "" {
+		ccy = "NGN"
+	}
+	pct := func(part int64) float64 {
+		if total <= 0 {
+			return 0
+		}
+		return math.Round(float64(part)/float64(total)*10000) / 100 // 2 dp
+	}
+	money := func(a int64) domain.Money { return domain.Money{Amount: a, Currency: ccy} }
+
+	writeJSON(w, http.StatusOK, netWorthResponse{
+		BaseCurrency:  ccy,
+		NetWorth:      money(total),
+		DayChange:     money(cp.DayChange.Amount + sp.DayChange.Amount),
+		TotalGainLoss: money(cp.TotalGainLoss.Amount + sp.TotalGainLoss.Amount),
+		Breakdown: netWorthBreakdown{
+			Crypto: money(cryptoVal),
+			Stocks: money(stocksVal),
+			Cash:   money(cash),
+		},
+		Allocation: netWorthAllocation{
+			CryptoPct: pct(cryptoVal),
+			StocksPct: pct(stocksVal),
+			CashPct:   pct(cash),
+		},
+	})
 }
 
 // ── Transactions ──────────────────────────────────────────────────────────────
