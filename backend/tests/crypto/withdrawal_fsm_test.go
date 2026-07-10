@@ -37,17 +37,20 @@ import (
 //	    WithdrawalConfirmed: {}, // terminal
 //	    WithdrawalFailed:    {}, // terminal
 //	}
+// AML-gated flow (model_ext.go): requested → pending_review → approved →
+// broadcast → confirmed | failed. Money never leaves before an admin approval.
 var withdrawalTransitionsMirror = map[string]map[string]bool{
-	crypto.WithdrawalRequested: {crypto.WithdrawalPending: true, crypto.WithdrawalFailed: true},
-	crypto.WithdrawalPending:   {crypto.WithdrawalBroadcast: true, crypto.WithdrawalFailed: true},
-	crypto.WithdrawalBroadcast: {crypto.WithdrawalConfirmed: true, crypto.WithdrawalFailed: true},
-	crypto.WithdrawalConfirmed: {},
-	crypto.WithdrawalFailed:    {},
+	crypto.WithdrawalRequested:     {crypto.WithdrawalPendingReview: true, crypto.WithdrawalFailed: true},
+	crypto.WithdrawalPendingReview: {crypto.WithdrawalApproved: true, crypto.WithdrawalFailed: true},
+	crypto.WithdrawalApproved:      {crypto.WithdrawalBroadcast: true, crypto.WithdrawalFailed: true},
+	crypto.WithdrawalBroadcast:     {crypto.WithdrawalConfirmed: true, crypto.WithdrawalFailed: true},
+	crypto.WithdrawalConfirmed:     {},
+	crypto.WithdrawalFailed:        {},
 }
 
 var allWithdrawalStates = []string{
-	crypto.WithdrawalRequested, crypto.WithdrawalPending, crypto.WithdrawalBroadcast,
-	crypto.WithdrawalConfirmed, crypto.WithdrawalFailed,
+	crypto.WithdrawalRequested, crypto.WithdrawalPendingReview, crypto.WithdrawalApproved,
+	crypto.WithdrawalBroadcast, crypto.WithdrawalConfirmed, crypto.WithdrawalFailed,
 }
 
 var withdrawalTerminalStates = map[string]bool{
@@ -63,7 +66,8 @@ func TestWithdrawalStatusConstants_MatchExpectedStrings(t *testing.T) {
 		constVal, want string
 	}{
 		{crypto.WithdrawalRequested, "requested"},
-		{crypto.WithdrawalPending, "pending"},
+		{crypto.WithdrawalPendingReview, "pending_review"},
+		{crypto.WithdrawalApproved, "approved"},
 		{crypto.WithdrawalBroadcast, "broadcast"},
 		{crypto.WithdrawalConfirmed, "confirmed"},
 		{crypto.WithdrawalFailed, "failed"},
@@ -95,9 +99,10 @@ func TestWithdrawalFSM_ExhaustiveTransitionMatrix(t *testing.T) {
 			}
 		}
 	}
-	// requested{pending,failed} + pending{broadcast,failed} + broadcast{confirmed,failed} = 6.
-	if legalCount != 6 {
-		t.Errorf("expected exactly 6 legal withdrawal edges, got %d", legalCount)
+	// requested{pending_review,failed} + pending_review{approved,failed} +
+	// approved{broadcast,failed} + broadcast{confirmed,failed} = 8.
+	if legalCount != 8 {
+		t.Errorf("expected exactly 8 legal withdrawal edges, got %d", legalCount)
 	}
 }
 
@@ -107,10 +112,12 @@ func TestWithdrawalFSM_LegalTransitions(t *testing.T) {
 		name     string
 		from, to string
 	}{
-		{"accepted for processing", crypto.WithdrawalRequested, crypto.WithdrawalPending},
-		{"rejected before processing", crypto.WithdrawalRequested, crypto.WithdrawalFailed},
-		{"submitted to provider", crypto.WithdrawalPending, crypto.WithdrawalBroadcast},
-		{"provider rejects during pending", crypto.WithdrawalPending, crypto.WithdrawalFailed},
+		{"parked for AML review", crypto.WithdrawalRequested, crypto.WithdrawalPendingReview},
+		{"rejected before review", crypto.WithdrawalRequested, crypto.WithdrawalFailed},
+		{"AML-approved for broadcast", crypto.WithdrawalPendingReview, crypto.WithdrawalApproved},
+		{"rejected during review", crypto.WithdrawalPendingReview, crypto.WithdrawalFailed},
+		{"submitted to provider after approval", crypto.WithdrawalApproved, crypto.WithdrawalBroadcast},
+		{"provider rejects an approved withdrawal", crypto.WithdrawalApproved, crypto.WithdrawalFailed},
 		{"on-chain confirmed", crypto.WithdrawalBroadcast, crypto.WithdrawalConfirmed},
 		{"broadcast fails/reorg-fails", crypto.WithdrawalBroadcast, crypto.WithdrawalFailed},
 	}
@@ -131,14 +138,16 @@ func TestWithdrawalFSM_IllegalTransitionsRejected(t *testing.T) {
 		name     string
 		from, to string
 	}{
-		{"cannot skip pending straight to broadcast", crypto.WithdrawalRequested, crypto.WithdrawalBroadcast},
+		{"cannot skip review straight to approved (AML bypass)", crypto.WithdrawalRequested, crypto.WithdrawalApproved},
+		{"cannot skip review straight to broadcast (AML bypass)", crypto.WithdrawalRequested, crypto.WithdrawalBroadcast},
+		{"cannot broadcast without approval (AML bypass)", crypto.WithdrawalPendingReview, crypto.WithdrawalBroadcast},
 		{"cannot skip straight to confirmed from requested", crypto.WithdrawalRequested, crypto.WithdrawalConfirmed},
-		{"cannot confirm without broadcasting", crypto.WithdrawalPending, crypto.WithdrawalConfirmed},
-		{"cannot revive a failed withdrawal to pending", crypto.WithdrawalFailed, crypto.WithdrawalPending},
+		{"cannot confirm without broadcasting", crypto.WithdrawalApproved, crypto.WithdrawalConfirmed},
+		{"cannot revive a failed withdrawal to review", crypto.WithdrawalFailed, crypto.WithdrawalPendingReview},
 		{"cannot revive a failed withdrawal to broadcast", crypto.WithdrawalFailed, crypto.WithdrawalBroadcast},
 		{"cannot un-confirm a confirmed withdrawal", crypto.WithdrawalConfirmed, crypto.WithdrawalBroadcast},
 		{"cannot go backward from broadcast to requested", crypto.WithdrawalBroadcast, crypto.WithdrawalRequested},
-		{"cannot go backward from pending to requested", crypto.WithdrawalPending, crypto.WithdrawalRequested},
+		{"cannot go backward from approved to review", crypto.WithdrawalApproved, crypto.WithdrawalPendingReview},
 		{"cannot fail a confirmed withdrawal (already final/burned)", crypto.WithdrawalConfirmed, crypto.WithdrawalFailed},
 		{"cannot re-fail an already-failed withdrawal", crypto.WithdrawalFailed, crypto.WithdrawalFailed},
 	}
