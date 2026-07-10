@@ -1,0 +1,40 @@
+name: Crypto Backend CI
+
+# CI for the standalone `paymax/crypto-backend` Go module
+# (mobile-app/reactnative/backend) — the crypto + stocks + invest trading service.
+# The Phase-1 audit flagged that this module had NO CI at all: its ~15+ tests never
+# ran in a gate. This workflow builds, vets and runs the FULL test suite on every
+# change, giving the green baseline the trading-module work depends on.
+
+on:
+  push:
+    paths:
+      - 'mobile-app/reactnative/backend/**'
+      - '.github/workflows/crypto-backend-ci.yml'
+  pull_request:
+    paths:
+      - 'mobile-app/reactnative/backend/**'
+      - '.github/workflows/crypto-backend-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app/reactnative/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: mobile-app/reactnative/backend/go.sum
+      - name: Build (whole module)
+        run: go build ./...
+      - name: Vet (static analysis)
+        run: go vet ./...
+      - name: Test (all, race detector)
+        run: go test ./... -count=1 -race
