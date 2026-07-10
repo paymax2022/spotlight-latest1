@@ -145,7 +145,9 @@ func TestUpdateTransactionStatus(t *testing.T) {
 
 func TestWithdrawalAndReversal(t *testing.T) {
 	s := New()
-	usdt, _ := s.Asset("ast_usdt")
+	if _, ok := s.Asset("ast_usdt"); !ok {
+		t.Fatal("seed asset ast_usdt missing")
+	}
 	before, _ := findPos(s.Positions(), "USDT")
 
 	res, ee := s.RecordWithdrawal("USDT", "Tron (TRC-20)", "TXyz", 100_000_000, 50_000, 160_500_00)
