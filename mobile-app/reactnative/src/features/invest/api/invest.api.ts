@@ -89,7 +89,7 @@ export async function getStock(symbol: string): Promise<StockWithQuote> {
     const s = MOCK_STOCKS.find((x) => x.symbol === symbol) ?? MOCK_STOCKS[0];
     return waitMock(s);
   }
-  return investGet<StockWithQuote>(`/stocks/${symbol}`);
+  return investGet<StockWithQuote>(`/stocks/ticker/${symbol}`);
 }
 
 export async function getStockChart(symbol: string, range = '1m'): Promise<Candle[]> {
@@ -102,7 +102,7 @@ export async function getStockChart(symbol: string, range = '1m'): Promise<Candl
       return { t: Math.floor(Date.now() / 1000) - (n - i) * 86400, o: c - base / 200, h: c + base / 100, l: c - base / 100, c, v: 100000 };
     }));
   }
-  return investGet<Candle[]>(`/stocks/${symbol}/chart`, { range });
+  return investGet<Candle[]>(`/stocks/ticker/${symbol}/chart`, { range });
 }
 
 export async function getMarketStatus(): Promise<{ market_status: string }> {

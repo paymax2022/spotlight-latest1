@@ -73,7 +73,10 @@ function requireAsset(idOrSymbol: string): StockAsset {
   return asset;
 }
 
-// ─── Assets (GET /stocks, /stocks/:symbol) ────────────────────────────────────
+// ─── Assets (GET /stocks, /stocks/ticker/:symbol) ─────────────────────────────
+// Single-asset reads are namespaced under /ticker/{symbol} so the symbol wildcard
+// does not collide with the /stocks/orders and /stocks/offers collections on the
+// Go ServeMux (see internal/api/server.go).
 
 export async function getStocks(): Promise<StockAsset[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_STOCKS]; }
@@ -82,18 +85,18 @@ export async function getStocks(): Promise<StockAsset[]> {
 
 export async function getStock(symbol: string): Promise<StockAsset> {
   if (USE_MOCK) { await delay(220); return requireAsset(symbol); }
-  return unwrap<StockAsset>(await api.get(`/api/v1/stocks/${symbol}`));
+  return unwrap<StockAsset>(await api.get(`/api/v1/stocks/ticker/${symbol}`));
 }
 
 /** Deterministic mock price history for the asset chart. */
 export async function getChart(symbol: string, range: ChartRange): Promise<Candle[]> {
   if (USE_MOCK) { await delay(240); return chartFor(requireAsset(symbol), range); }
-  return unwrap<Candle[]>(await api.get(`/api/v1/stocks/${symbol}/chart`, { params: { range } }));
+  return unwrap<Candle[]>(await api.get(`/api/v1/stocks/ticker/${symbol}/chart`, { params: { range } }));
 }
 
 export async function getNews(symbol: string): Promise<StockNews[]> {
   if (USE_MOCK) { await delay(240); void symbol; return [...MOCK_NEWS]; }
-  return unwrap<StockNews[]>(await api.get(`/api/v1/stocks/${symbol}/news`));
+  return unwrap<StockNews[]>(await api.get(`/api/v1/stocks/ticker/${symbol}/news`));
 }
 
 export async function getDividends(symbol: string): Promise<Dividend[]> {
@@ -101,7 +104,7 @@ export async function getDividends(symbol: string): Promise<Dividend[]> {
     await delay(220);
     return MOCK_DIVIDENDS.filter((d) => d.symbol === symbol);
   }
-  return unwrap<Dividend[]>(await api.get(`/api/v1/stocks/${symbol}/dividends`));
+  return unwrap<Dividend[]>(await api.get(`/api/v1/stocks/ticker/${symbol}/dividends`));
 }
 
 export async function getCorporateActions(symbol: string): Promise<CorporateAction[]> {
@@ -109,7 +112,7 @@ export async function getCorporateActions(symbol: string): Promise<CorporateActi
     await delay(220);
     return MOCK_CORPORATE_ACTIONS.filter((c) => c.symbol === symbol);
   }
-  return unwrap<CorporateAction[]>(await api.get(`/api/v1/stocks/${symbol}/corporate-actions`));
+  return unwrap<CorporateAction[]>(await api.get(`/api/v1/stocks/ticker/${symbol}/corporate-actions`));
 }
 
 // ─── Portfolio (GET /portfolio, /portfolio/positions) ─────────────────────────

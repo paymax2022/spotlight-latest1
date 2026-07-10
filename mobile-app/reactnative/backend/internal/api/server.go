@@ -123,11 +123,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/stocks/offers", s.getStockOffers)
 	mux.HandleFunc("GET /api/v1/stocks/offers/{id}", s.getStockOffer)
 	mux.HandleFunc("POST /api/v1/stocks/offers/{id}/apply", s.applyStockOffer)
-	mux.HandleFunc("GET /api/v1/stocks/{symbol}", s.getStock)
-	mux.HandleFunc("GET /api/v1/stocks/{symbol}/chart", s.getStockChart)
-	mux.HandleFunc("GET /api/v1/stocks/{symbol}/news", s.getStockNews)
-	mux.HandleFunc("GET /api/v1/stocks/{symbol}/dividends", s.getStockDividends)
-	mux.HandleFunc("GET /api/v1/stocks/{symbol}/corporate-actions", s.getStockCorporateActions)
+	// Single-asset reads are namespaced under /ticker/{symbol} so the {symbol}
+	// wildcard cannot cross the literal `orders`/`offers` collections above (Go's
+	// ServeMux rejects e.g. `{symbol}/chart` vs `orders/{id}` as ambiguous — both
+	// match /stocks/orders/chart). Handlers still read PathValue("symbol").
+	mux.HandleFunc("GET /api/v1/stocks/ticker/{symbol}", s.getStock)
+	mux.HandleFunc("GET /api/v1/stocks/ticker/{symbol}/chart", s.getStockChart)
+	mux.HandleFunc("GET /api/v1/stocks/ticker/{symbol}/news", s.getStockNews)
+	mux.HandleFunc("GET /api/v1/stocks/ticker/{symbol}/dividends", s.getStockDividends)
+	mux.HandleFunc("GET /api/v1/stocks/ticker/{symbol}/corporate-actions", s.getStockCorporateActions)
 
 	// ── Admin console (RBAC via X-Admin-Role; mutations audited + maker-checker) ─
 	mux.HandleFunc("GET /api/v1/admin/dashboard", s.adminDashboard)
