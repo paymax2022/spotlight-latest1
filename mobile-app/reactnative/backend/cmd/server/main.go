@@ -13,19 +13,23 @@ import (
 	"time"
 
 	"paymax/crypto-backend/internal/api"
+	"paymax/crypto-backend/internal/config"
 	"paymax/crypto-backend/internal/pgstore"
 	"paymax/crypto-backend/internal/store"
 )
 
 func main() {
-	port := os.Getenv("PORT")
+	// Central config layer: one load from the environment (see internal/config).
+	cfg := config.Load()
+
+	port := cfg.Port
 	if port == "" {
 		port = "8080"
 	}
 
 	// Storage engine: Postgres when DATABASE_URL is set, else the in-memory mock.
 	var repo store.Repository
-	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
+	if dsn := cfg.DatabaseURL; dsn != "" {
 		pg, err := pgstore.New(context.Background(), dsn)
 		if err != nil {
 			log.Fatalf("postgres: %v", err)

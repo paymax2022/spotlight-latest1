@@ -12,8 +12,12 @@ import "paymax/crypto-backend/internal/engine"
 //     asynchronously via webhooks; that adapter implements this same interface and
 //     is injected with Service.WithBroker — no change to the execution path.
 type Broker interface {
-	// Place submits an order to the venue and reports the resulting state.
-	Place(BrokerRequest) BrokerResult
+	// Place submits an order to the venue and reports the resulting state. It
+	// returns an error when the venue could not accept the order at all (transport
+	// failure, provider outage, non-2xx); the caller must NOT persist or cache such
+	// an attempt. A nil error means the venue accepted the order and BrokerResult
+	// describes its resulting lifecycle state.
+	Place(BrokerRequest) (BrokerResult, error)
 }
 
 // BrokerRequest is the venue-facing order, built AFTER Service's pre-trade checks.
@@ -38,8 +42,8 @@ type BrokerResult struct {
 // orders fill immediately (T+2/T+3 settlement), limit orders rest as Submitted.
 type MockBroker struct{}
 
-// Place implements Broker.
-func (MockBroker) Place(req BrokerRequest) BrokerResult {
+// Place implements Broker. The mock never fails, so it always returns a nil error.
+func (MockBroker) Place(req BrokerRequest) (BrokerResult, error) {
 	now := engine.Now()
 	if req.OrderType == "market" {
 		days := 3
@@ -56,7 +60,7 @@ func (MockBroker) Place(req BrokerRequest) BrokerResult {
 				{Status: "AcceptedByProvider", At: now},
 				{Status: "Filled", At: now},
 			},
-		}
+		}, nil
 	}
 	return BrokerResult{
 		Status:   "Submitted",
@@ -65,5 +69,5 @@ func (MockBroker) Place(req BrokerRequest) BrokerResult {
 			{Status: "AwaitingUserConfirmation", At: now},
 			{Status: "Submitted", At: now},
 		},
-	}
+	}, nil
 }

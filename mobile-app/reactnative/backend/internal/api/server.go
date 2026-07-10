@@ -17,10 +17,13 @@ import (
 	"paymax/crypto-backend/internal/admin"
 	"paymax/crypto-backend/internal/adapter"
 	"paymax/crypto-backend/internal/auth"
+	"paymax/crypto-backend/internal/config"
 	"paymax/crypto-backend/internal/engine"
 	"paymax/crypto-backend/internal/httpadapter"
 	"paymax/crypto-backend/internal/ledger"
 	"paymax/crypto-backend/internal/metrics"
+	"paymax/crypto-backend/internal/provider/alpaca"
+	"paymax/crypto-backend/internal/provider/quidax"
 	"paymax/crypto-backend/internal/ratelimit"
 	"paymax/crypto-backend/internal/stocks"
 	"paymax/crypto-backend/internal/store"
@@ -52,15 +55,35 @@ type Server struct {
 // PROVIDER=http (+ PROVIDER_BASE_URL / PROVIDER_API_KEY) to route market-data,
 // liquidity and custody through a real provider behind the same interfaces.
 func NewServer(repo store.Repository) *Server {
+	// cfg centralizes env reads so the BACKEND drives which venue powers each
+	// module (see internal/config). Provider selection below is config-driven.
+	cfg := config.Load()
+
+	// STOCKS: config-selected brokerage. Alpaca when configured (has an API key),
+	// else the default in-memory service.
+	stk := stocks.NewService()
+	if cfg.Alpaca.Enabled() {
+		stk = stocks.NewService().WithBroker(alpaca.New(cfg.Alpaca))
+		log.Printf("stocks broker: alpaca")
+	}
+
 	s := &Server{
 		S:      repo,
 		MD:     adapter.MockMarketData{S: repo},
 		LQ:     adapter.MockLiquidity{S: repo},
 		CU:     adapter.MockCustody{S: repo},
-		Stocks: stocks.NewService(),
+		Stocks: stk,
 	}
 	s.Admin = admin.NewService(repo, s.Stocks)
-	if os.Getenv("PROVIDER") == "http" {
+
+	// CRYPTO adapters (market-data / liquidity / custody), highest priority first:
+	//   Quidax (config-selected) > PROVIDER=http (generic httpadapter) > mock.
+	switch {
+	case cfg.Quidax.Enabled():
+		c := quidax.New(cfg.Quidax)
+		s.MD, s.LQ, s.CU = c, c, c // *Client satisfies all three interfaces
+		log.Printf("crypto provider: quidax")
+	case os.Getenv("PROVIDER") == "http":
 		c := httpadapter.New(os.Getenv("PROVIDER_BASE_URL"), os.Getenv("PROVIDER_API_KEY"))
 		s.MD, s.LQ, s.CU = c, c, c // *Client satisfies all three interfaces
 		log.Printf("provider: http (%s)", os.Getenv("PROVIDER_BASE_URL"))

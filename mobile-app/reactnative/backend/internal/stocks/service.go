@@ -228,13 +228,22 @@ func (s *Service) PlaceOrder(d OrderDraft, idempotencyKey string) (StockOrder, *
 	// Execution venue decides the resulting order state (mock fills instantly; a
 	// real broker returns "accepted" and drives fills via webhooks). Pre-trade
 	// checks above and persistence below are unchanged.
-	fill := s.broker.Place(BrokerRequest{
+	fill, err := s.broker.Place(BrokerRequest{
 		Symbol:          asset.Symbol,
 		Side:            d.Side,
 		OrderType:       d.OrderType,
 		Quantity:        d.Quantity,
 		SettlementCycle: asset.SettlementCycle,
 	})
+	if err != nil {
+		// The venue could not accept the order (transport failure, outage, non-2xx).
+		// Do NOT persist the order or cache the idempotency key — a retry with the
+		// same key must be allowed to reach a healthy venue.
+		return StockOrder{}, &StockError{
+			Type:    "provider_error",
+			Message: "The broker could not accept this order right now. Please try again.",
+		}
+	}
 	status := fill.Status
 	filledQuantity := fill.FilledQuantity
 	settlementDate := fill.SettlementDate
