@@ -343,6 +343,25 @@ export default function CableTvScreen() {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
+              {selectedProvider && (
+                <View style={styles.confirmProvider}>
+                  <ProviderLogo
+                    code={selectedProvider.code}
+                    name={selectedProvider.name}
+                    size={46}
+                    logoUri={resolveProviderImage(providerLogos, selectedProvider.code, selectedProvider.name)}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.confirmProviderName} numberOfLines={1}>{selectedProvider.name} TV</Text>
+                    {pendingForm?.smartCardNumber ? (
+                      <Text style={styles.confirmProviderSub}>{pendingForm.smartCardNumber}</Text>
+                    ) : null}
+                  </View>
+                  {selectedPackage?.sellingPrice ? (
+                    <Text style={styles.confirmProviderAmount}>{formatNaira(selectedPackage.sellingPrice)}</Text>
+                  ) : null}
+                </View>
+              )}
               <SummaryRow label="Service"   value="Cable TV" />
               <SummaryRow label="Provider"  value={selectedProvider?.name ?? '—'} />
               <SummaryRow label="Bouquet"   value={selectedPackage?.name ?? '—'} />
@@ -445,6 +464,10 @@ const styles = StyleSheet.create({
   modalTitle:  { ...Typography.titleLg, color: Colors.onSurface },
   modalScroll: { maxHeight: '68%' },
   modalScrollContent: { paddingBottom: Spacing.sm },
+  confirmProvider:{ flexDirection: 'row', alignItems: 'center', gap: Spacing.md, padding: Spacing.md, backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.lg, marginBottom: Spacing.md, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
+  confirmProviderName:{ ...Typography.titleMd, color: Colors.onSurface },
+  confirmProviderSub:{ ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: 2 },
+  confirmProviderAmount:{ ...Typography.titleMd, color: Colors.primary, fontWeight: '700' },
   modalActions:    { gap: Spacing.sm, marginTop: Spacing.lg },
   paystackInfoPanel: { backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.md, padding: Spacing.md, borderLeftWidth: 3, borderLeftColor: Colors.secondary, marginTop: Spacing.md },
   paystackInfoText:  { ...Typography.labelSm, color: Colors.onSurfaceVariant, lineHeight: 18 },

@@ -358,6 +358,25 @@ export default function ElectricityScreen() {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
+              {selectedDisco && (
+                <View style={styles.confirmProvider}>
+                  <ProviderLogo
+                    code={selectedDisco.code}
+                    name={selectedDisco.name}
+                    size={46}
+                    logoUri={resolveProviderImage(providerLogos, selectedDisco.code, selectedDisco.name)}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.confirmProviderName} numberOfLines={1}>{selectedDisco.name} Electricity</Text>
+                    {pendingForm?.meterNumber ? (
+                      <Text style={styles.confirmProviderSub}>{pendingForm.meterNumber}</Text>
+                    ) : null}
+                  </View>
+                  {pendingForm?.amount ? (
+                    <Text style={styles.confirmProviderAmount}>{formatNaira(pendingForm.amount)}</Text>
+                  ) : null}
+                </View>
+              )}
               <SummaryRow label="Service"    value="Electricity" />
               <SummaryRow label="DISCO"      value={selectedDisco?.name ?? '—'} />
               <SummaryRow label="Meter"      value={pendingForm?.meterNumber} />
@@ -468,6 +487,10 @@ const styles = StyleSheet.create({
   modalTitle:  { ...Typography.titleLg, color: Colors.onSurface },
   modalScroll: { maxHeight: '68%' },
   modalScrollContent: { paddingBottom: Spacing.sm },
+  confirmProvider:{ flexDirection: 'row', alignItems: 'center', gap: Spacing.md, padding: Spacing.md, backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.lg, marginBottom: Spacing.md, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
+  confirmProviderName:{ ...Typography.titleMd, color: Colors.onSurface },
+  confirmProviderSub:{ ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: 2 },
+  confirmProviderAmount:{ ...Typography.titleMd, color: Colors.primary, fontWeight: '700' },
   modalActions:    { gap: Spacing.sm, marginTop: Spacing.lg },
   processingText:  { ...Typography.labelSm, color: Colors.secondary, lineHeight: 18, marginTop: Spacing.sm },
   paystackInfoPanel: { backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.md, padding: Spacing.md, borderLeftWidth: 3, borderLeftColor: Colors.secondary, marginTop: Spacing.md },

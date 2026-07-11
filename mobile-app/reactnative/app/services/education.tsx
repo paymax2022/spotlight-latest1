@@ -342,6 +342,25 @@ export default function EducationScreen() {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
+              {selectedProvider && (
+                <View style={styles.confirmProvider}>
+                  <ProviderLogo
+                    code={selectedProvider.code}
+                    name={selectedProvider.name}
+                    size={46}
+                    logoUri={resolveProviderImage(providerLogos, selectedProvider.code, selectedProvider.name)}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.confirmProviderName} numberOfLines={1}>{selectedProduct?.name ?? `${selectedProvider.name} PIN`}</Text>
+                    {pendingForm?.customerReference ? (
+                      <Text style={styles.confirmProviderSub}>{pendingForm.customerReference}</Text>
+                    ) : null}
+                  </View>
+                  {selectedProduct?.sellingPrice ? (
+                    <Text style={styles.confirmProviderAmount}>{formatNaira(selectedProduct.sellingPrice)}</Text>
+                  ) : null}
+                </View>
+              )}
               <SummaryRow label="Service" value="Education" />
               <SummaryRow label="Provider" value={selectedProvider?.name ?? '-'} />
               <SummaryRow label="Product" value={selectedProduct?.name ?? '-'} />
@@ -581,6 +600,10 @@ const styles = StyleSheet.create({
   modalTitle: { ...Typography.titleLg, color: Colors.onSurface },
   modalScroll: { maxHeight: 460 },
   modalScrollContent: { paddingBottom: Spacing.md },
+  confirmProvider: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, padding: Spacing.md, backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.lg, marginBottom: Spacing.md, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
+  confirmProviderName: { ...Typography.titleMd, color: Colors.onSurface },
+  confirmProviderSub: { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: 2 },
+  confirmProviderAmount: { ...Typography.titleMd, color: Colors.primary, fontWeight: '700' },
   paystackPanel: {
     marginTop: Spacing.md,
     backgroundColor: Colors.surfaceContainerLow,

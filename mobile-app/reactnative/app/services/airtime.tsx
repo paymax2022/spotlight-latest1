@@ -72,9 +72,14 @@ export default function AirtimeScreen() {
     queryFn:  getWallet,
   });
 
-  const { control, handleSubmit, setValue, formState: { errors } } = useForm<Form>({
+  const { control, handleSubmit, setValue, watch, formState: { errors } } = useForm<Form>({
     resolver: zodResolver(schema),
   });
+
+  // Live form values so the Payment Summary hot-loads the moment a network is
+  // selected or the phone/amount is entered — no need to tap "Review" first.
+  const liveAmount = watch('amount');
+  const livePhone = watch('phoneNumber');
 
   const { mutate: purchase, isPending, error: purchaseError } = useMutation({
     mutationFn: purchaseAirtime,
@@ -284,9 +289,10 @@ export default function AirtimeScreen() {
           </View>
           <View style={styles.summaryDivider} />
           <SummaryRow label="Network"  value={selectedNetwork?.name ?? '—'} />
-          <SummaryRow label="Phone"    value={pendingPayload?.phoneNumber ?? '—'} />
-          <SummaryRow label="Amount"   value={pendingPayload?.amount ? `₦${pendingPayload.amount.toLocaleString()}` : '—'} />
+          <SummaryRow label="Phone"    value={livePhone || '—'} />
+          <SummaryRow label="Amount"   value={liveAmount ? `₦${liveAmount.toLocaleString()}` : '—'} />
           <SummaryRow label="Fee"      value={formatNaira(0)} />
+          <SummaryRow label="Total"    value={liveAmount ? formatNaira(liveAmount) : '—'} highlight />
           <SummaryRow label="Delivery" value="Instant" />
 
           {/* Payment method selector */}
@@ -294,7 +300,7 @@ export default function AirtimeScreen() {
             selected={paymentMethod}
             onSelect={setPaymentMethod}
             walletBalance={wallet?.balance}
-            amount={pendingPayload?.amount}
+            amount={liveAmount || undefined}
           />
         </View>
 
@@ -325,6 +331,25 @@ export default function AirtimeScreen() {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
+              {selectedNetwork && (
+                <View style={styles.confirmProvider}>
+                  <ProviderLogo
+                    code={selectedNetwork.code}
+                    name={selectedNetwork.name}
+                    size={46}
+                    logoUri={resolveProviderImage(providerLogos, selectedNetwork.code, selectedNetwork.name)}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.confirmProviderName} numberOfLines={1}>{selectedNetwork.name} Airtime</Text>
+                    {pendingPayload?.phoneNumber ? (
+                      <Text style={styles.confirmProviderSub}>{pendingPayload.phoneNumber}</Text>
+                    ) : null}
+                  </View>
+                  {pendingPayload?.amount ? (
+                    <Text style={styles.confirmProviderAmount}>{formatNaira(pendingPayload.amount)}</Text>
+                  ) : null}
+                </View>
+              )}
               <SummaryRow label="Service"  value="Airtime" />
               <SummaryRow label="Network"  value={selectedNetwork?.name ?? '—'} />
               <SummaryRow label="Phone"    value={pendingPayload?.phoneNumber ?? '—'} />
@@ -450,6 +475,10 @@ const styles = StyleSheet.create({
   modalTitle: { ...Typography.titleLg, color: Colors.onSurface },
   modalScroll:{ maxHeight: '68%' },
   modalScrollContent:{ paddingBottom: Spacing.sm },
+  confirmProvider:{ flexDirection: 'row', alignItems: 'center', gap: Spacing.md, padding: Spacing.md, backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.lg, marginBottom: Spacing.md, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
+  confirmProviderName:{ ...Typography.titleMd, color: Colors.onSurface },
+  confirmProviderSub:{ ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: 2 },
+  confirmProviderAmount:{ ...Typography.titleMd, color: Colors.primary, fontWeight: '700' },
   modalActions:{ gap: Spacing.sm, marginTop: Spacing.lg },
   paystackPanel:{ marginTop: Spacing.md, gap: Spacing.sm },
   paystackInfo:{ ...Typography.bodySm, color: Colors.onSurfaceVariant, lineHeight: 20, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.md, borderRadius: Radius.md, borderLeftWidth: 3, borderLeftColor: Colors.secondary },
