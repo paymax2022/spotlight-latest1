@@ -15,6 +15,10 @@ type ProviderCreds struct {
 	BaseURL   string
 	APIKey    string
 	APISecret string
+	// AccountID is the venue sub-account to act on. For Alpaca's Broker API each
+	// end-user maps to an Alpaca account; until per-user provisioning lands, a
+	// single sandbox account (ALPACA_ACCOUNT_ID) lets orders flow end-to-end.
+	AccountID string
 }
 
 // Enabled reports whether the provider is configured (has an API key).
@@ -65,6 +69,7 @@ func Load() Config {
 			BaseURL:   os.Getenv("ALPACA_BASE_URL"),
 			APIKey:    os.Getenv("ALPACA_API_KEY"),
 			APISecret: os.Getenv("ALPACA_API_SECRET"),
+			AccountID: os.Getenv("ALPACA_ACCOUNT_ID"),
 		},
 		Quidax: ProviderCreds{
 			BaseURL:   os.Getenv("QUIDAX_BASE_URL"),

@@ -41,8 +41,30 @@ services:
         condition: service_completed_successfully
     ports:
       - "8080:8080"
+    # Values below are interpolated from a `.env` file next to this compose file
+    # (copy .env.example → .env and fill it in). Any unset var defaults to empty,
+    # which keeps that module on the built-in mock — so real keys are opt-in and
+    # never committed.
     environment:
       - PORT=8080
       - DATABASE_URL=postgres://paymax:paymax@postgres:5432/paymax?sslmode=disable
-      # - SUPABASE_JWT_SECRET=...   # set to enforce auth
+      # Auth
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:-}
+      - SUPABASE_JWKS_URL=${SUPABASE_JWKS_URL:-}
+      - ALLOW_DEV_AUTH=${ALLOW_DEV_AUTH:-}
+      - TRUST_ADMIN_ROLE_HEADER=${TRUST_ADMIN_ROLE_HEADER:-}
+      - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-}
+      # Stocks venue: Alpaca Broker API (blank → mock broker)
+      - ALPACA_BASE_URL=${ALPACA_BASE_URL:-}
+      - ALPACA_API_KEY=${ALPACA_API_KEY:-}
+      - ALPACA_API_SECRET=${ALPACA_API_SECRET:-}
+      - ALPACA_ACCOUNT_ID=${ALPACA_ACCOUNT_ID:-}
+      # Crypto venue: Quidax (blank → mock adapters)
+      - QUIDAX_BASE_URL=${QUIDAX_BASE_URL:-}
+      - QUIDAX_API_KEY=${QUIDAX_API_KEY:-}
+      - QUIDAX_API_SECRET=${QUIDAX_API_SECRET:-}
+      # Money-core ledger consolidation
+      - LEDGER_BACKEND=${LEDGER_BACKEND:-}
+      - LEDGER_BASE_URL=${LEDGER_BASE_URL:-}
+      - LEDGER_SERVICE_TOKEN=${LEDGER_SERVICE_TOKEN:-}
     restart: unless-stopped

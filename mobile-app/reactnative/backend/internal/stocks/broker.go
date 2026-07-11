@@ -27,6 +27,11 @@ type BrokerRequest struct {
 	OrderType       string // market | limit
 	Quantity        int64
 	SettlementCycle string // T+2 | T+3
+	// AccountID is the venue sub-account the order belongs to (Alpaca Broker API:
+	// the end-user's Alpaca account). Empty lets a broker adapter fall back to its
+	// configured default account. Ignored by MockBroker. Populated per-user once
+	// account provisioning lands.
+	AccountID string
 }
 
 // BrokerResult is the venue's response: the order's resulting lifecycle state.

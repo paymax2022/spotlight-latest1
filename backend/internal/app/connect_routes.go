@@ -91,6 +91,7 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	registerConnectPhase1Routes(member, adminCg, pool, rbac)  // profiles, verification, matching, discovery, search
 	registerConnectSafetyRoutes(member, adminCg, pool, rbac)  // chat, blocks, date-safety, moderation, AI trust
 	registerConnectGrowthRoutes(member, adminCg, pool, rbac)  // professional, events, creator, monetization
+	registerConnectNetworkRoutes(member, adminCg, cfg, pool, rbac) // Phase 6 networking: jobs/feed/profile/assessments/mentorship under /networking
 
 	// --- Super-app money + engagement (Connect PRD v2) ---
 	RegisterConnectMoney(member, adminCg, pool, rbac)    // gifting (wallet→wallet), paid voting, AML/NFIU, payouts

@@ -1,6 +1,7 @@
 package alpaca
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,19 +16,19 @@ func enabledCreds(baseURL string) config.ProviderCreds {
 		BaseURL:   baseURL,
 		APIKey:    "test-key-id",
 		APISecret: "test-secret",
+		AccountID: "acct-123",
 	}
 }
 
-// A successful place submits the mapped order to /v2/orders with the Alpaca auth
-// headers and returns AcceptedByProvider (no synchronous fill).
+// A successful place submits the mapped order to the account-scoped Broker API
+// endpoint with HTTP Basic auth and returns AcceptedByProvider (no synchronous fill).
 func TestPlace_Success(t *testing.T) {
-	var gotPath, gotKey, gotSecret string
+	var gotPath, gotAuth string
 	var gotBody orderRequest
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
-		gotKey = r.Header.Get("APCA-API-KEY-ID")
-		gotSecret = r.Header.Get("APCA-API-SECRET-KEY")
+		gotAuth = r.Header.Get("Authorization")
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(orderResponse{ID: "alp_1", Symbol: gotBody.Symbol, Status: "accepted"})
@@ -46,14 +47,13 @@ func TestPlace_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if gotPath != "/v2/orders" {
-		t.Errorf("path = %q, want /v2/orders", gotPath)
+	if gotPath != "/v1/trading/accounts/acct-123/orders" {
+		t.Errorf("path = %q, want /v1/trading/accounts/acct-123/orders", gotPath)
 	}
-	if gotKey != "test-key-id" {
-		t.Errorf("APCA-API-KEY-ID = %q, want test-key-id", gotKey)
-	}
-	if gotSecret != "test-secret" {
-		t.Errorf("APCA-API-SECRET-KEY = %q, want test-secret", gotSecret)
+	// Basic base64("test-key-id:test-secret").
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("test-key-id:test-secret"))
+	if gotAuth != wantAuth {
+		t.Errorf("Authorization = %q, want %q", gotAuth, wantAuth)
 	}
 	if gotBody.Symbol != "AAPL" || gotBody.Qty != 7 || gotBody.Side != "buy" {
 		t.Errorf("body = %+v, want symbol=AAPL qty=7 side=buy", gotBody)
@@ -129,6 +129,46 @@ func TestPlace_BreakerTripsOn5xx(t *testing.T) {
 	}
 	if hits != hitsBefore {
 		t.Errorf("server was hit while breaker open (hits %d -> %d); expected fail-fast", hitsBefore, hits)
+	}
+}
+
+// A per-request AccountID overrides the configured default account in the path.
+func TestPlace_PerRequestAccountOverridesDefault(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(orderResponse{ID: "alp_3", Status: "accepted"})
+	}))
+	defer srv.Close()
+
+	b := New(enabledCreds(srv.URL)) // default account acct-123
+	if _, err := b.Place(stocks.BrokerRequest{
+		Symbol: "AAPL", Side: "buy", OrderType: "market", Quantity: 1, AccountID: "user-acct-999",
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/v1/trading/accounts/user-acct-999/orders" {
+		t.Errorf("path = %q, want the per-request account", gotPath)
+	}
+}
+
+// With no per-request AccountID and no configured default, Place must error before
+// any network call — an order cannot be routed without an account.
+func TestPlace_NoAccountErrors(t *testing.T) {
+	var hit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		_ = json.NewEncoder(w).Encode(orderResponse{})
+	}))
+	defer srv.Close()
+
+	// Enabled creds (key set) but no AccountID anywhere.
+	b := New(config.ProviderCreds{BaseURL: srv.URL, APIKey: "k", APISecret: "s"})
+	if _, err := b.Place(stocks.BrokerRequest{Symbol: "AAPL", Side: "buy", OrderType: "market", Quantity: 1}); err == nil {
+		t.Fatal("expected an error when no account is available")
+	}
+	if hit {
+		t.Error("HTTP request was made despite having no account")
 	}
 }
 
