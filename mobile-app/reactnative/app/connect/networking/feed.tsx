@@ -6,10 +6,12 @@ import {
   SlidersHorizontal,
   Users,
   Calendar,
+  Briefcase,
   UserPlus,
   UserCheck,
   Clock,
-  ChevronRight,
+  GraduationCap,
+  Handshake,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -103,6 +105,11 @@ export default function NetworkFeedScreen() {
 
         <View style={styles.entryRow}>
           <EntryCard
+            icon={<Briefcase size={20} color={ConnectColors.brand} strokeWidth={2} />}
+            label="Jobs"
+            onPress={() => router.push('/connect/networking/jobs')}
+          />
+          <EntryCard
             icon={<Users size={20} color={ConnectColors.brand} strokeWidth={2} />}
             label="Communities"
             onPress={() => router.push('/connect/networking/communities')}
@@ -111,6 +118,19 @@ export default function NetworkFeedScreen() {
             icon={<Calendar size={20} color={ConnectColors.brand} strokeWidth={2} />}
             label="Events"
             onPress={() => router.push('/connect/networking/events')}
+          />
+        </View>
+
+        <View style={styles.entryRow}>
+          <EntryCard
+            icon={<GraduationCap size={20} color={ConnectColors.brand} strokeWidth={2} />}
+            label="Assessments"
+            onPress={() => router.push('/connect/networking/assessments')}
+          />
+          <EntryCard
+            icon={<Handshake size={20} color={ConnectColors.brand} strokeWidth={2} />}
+            label="Mentorship"
+            onPress={() => router.push('/connect/networking/mentorship/discovery')}
           />
         </View>
 
@@ -123,10 +143,9 @@ export default function NetworkFeedScreen() {
 
 function EntryCard({ icon, label, onPress }: { icon: React.ReactNode; label: string; onPress: () => void }) {
   return (
-    <Pressable style={styles.entryCard} onPress={onPress} accessibilityRole="button">
+    <Pressable style={styles.entryCard} onPress={onPress} accessibilityRole="button" accessibilityLabel={label}>
       <View style={styles.entryIcon}>{icon}</View>
-      <Text style={styles.entryLabel}>{label}</Text>
-      <ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
+      <Text style={styles.entryLabel} numberOfLines={1}>{label}</Text>
     </Pressable>
   );
 }
@@ -230,25 +249,24 @@ const styles = StyleSheet.create({
   },
   entryCard: {
     flex: 1,
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.sm,
+    gap: Spacing.xs,
     backgroundColor: Colors.surfaceContainerLow,
     borderRadius: Radius.lg,
     borderWidth: 1,
     borderColor: Colors.outlineVariant,
-    paddingHorizontal: Spacing.md,
+    paddingHorizontal: Spacing.sm,
     paddingVertical: Spacing.md,
   },
   entryIcon: {
-    width: 36,
-    height: 36,
+    width: 40,
+    height: 40,
     borderRadius: Radius.md,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: Colors.iconBgPurple,
   },
-  entryLabel: { ...Typography.labelLg, color: Colors.onSurface, flex: 1 },
+  entryLabel: { ...Typography.labelMd, color: Colors.onSurface, fontWeight: '600' },
   card: {
     backgroundColor: Colors.surfaceContainerLowest,
     borderRadius: Radius.lg,

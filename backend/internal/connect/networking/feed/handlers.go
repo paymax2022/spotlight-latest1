@@ -101,7 +101,9 @@ func (h *Handler) Comment(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"data": cm})
 }
 
-// Feed — GET /networking/feed?limit= (member). Main PN-3-ranked content feed.
+// Feed — GET /networking/posts/feed?limit= (member). Main PN-3-ranked content
+// feed. Namespaced under /posts so it does not collide with the people-discovery
+// feed at /networking/feed (Phases 1–5), which returns profiles, not posts.
 func (h *Handler) Feed(c *gin.Context) {
 	out, err := h.svc.Feed(c.Request.Context(), parseLimit(c))
 	if err != nil {
@@ -148,7 +150,7 @@ func Register(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.
 	g.GET("/posts/:id", h.PostDetail)
 	g.POST("/posts/:id/reactions", h.React)        // Idempotency-Key required
 	g.POST("/posts/:id/comments", h.Comment)       // Idempotency-Key required
-	g.GET("/feed", h.Feed)                          // main ranked feed (PN-3)
+	g.GET("/posts/feed", h.Feed)                    // main ranked CONTENT feed (PN-3); distinct from people-discovery /networking/feed
 	g.GET("/topics/:tag", h.HashtagFeed)            // hashtag/topic feed (PN-3)
 
 	ag := admin.Group("/networking")
