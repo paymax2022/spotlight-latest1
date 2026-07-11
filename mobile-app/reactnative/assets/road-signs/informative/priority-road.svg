@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">Priority road</title>
+  <desc>White-bordered yellow diamond indicating a priority road ahead.</desc>
+  <rect x="30" y="30" width="180" height="180" rx="10" transform="rotate(45 120 120)" fill="#FFFFFF"/>
+  <rect x="48" y="48" width="144" height="144" rx="8" transform="rotate(45 120 120)" fill="#F4C400"/>
+</svg>

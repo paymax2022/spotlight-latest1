@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">No cycling</title>
+  <desc>White circle, red ring, a bicycle; cycling prohibited.</desc>
+  <circle cx="120" cy="120" r="112" fill="#C81E2D"/>
+  <circle cx="120" cy="120" r="88" fill="#FFFFFF"/>
+  <g fill="none" stroke="#141414" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="82" cy="152" r="24"/>
+    <circle cx="158" cy="152" r="24"/>
+    <path d="M82 152 L118 152 L100 110 Z"/>
+    <path d="M118 152 L138 110 L158 152"/>
+    <path d="M100 110 L142 110"/>
+    <path d="M138 108 L154 103"/>
+  </g>
+</svg>

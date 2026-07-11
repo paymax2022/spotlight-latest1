@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">Tourist information</title>
+  <desc>Blue rectangular sign with a white lower-case letter i indicating a tourist information point.</desc>
+  <rect x="30" y="30" width="180" height="180" rx="16" fill="#0B5FB0"/>
+  <circle cx="120" cy="76" r="14" fill="#FFFFFF"/>
+  <rect x="106" y="100" width="28" height="72" rx="6" fill="#FFFFFF"/>
+</svg>

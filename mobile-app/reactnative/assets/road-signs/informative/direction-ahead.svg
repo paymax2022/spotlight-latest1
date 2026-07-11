@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">Direction sign</title>
+  <desc>Green rectangular direction sign with a placeholder destination bar and a white forward arrow.</desc>
+  <rect x="20" y="60" width="200" height="120" rx="12" fill="#0A7D33"/>
+  <rect x="44" y="92" width="96" height="18" rx="4" fill="#FFFFFF" opacity="0.55"/>
+  <path d="M120 150v-16h40v-14l40 22-40 22v-14h-40z" fill="#FFFFFF"/>
+</svg>

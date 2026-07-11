@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">No entry</title>
+  <desc>Solid red circle with a white horizontal bar; entry prohibited.</desc>
+  <circle cx="120" cy="120" r="112" fill="#C81E2D"/>
+  <rect x="50" y="104" width="140" height="32" rx="4" fill="#FFFFFF"/>
+</svg>

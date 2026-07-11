@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">End of speed limit</title>
+  <desc>White circle with thin grey border and diagonal grey stripes; speed restriction ends.</desc>
+  <circle cx="120" cy="120" r="110" fill="#FFFFFF" stroke="#141414" stroke-width="6"/>
+  <clipPath id="c"><circle cx="120" cy="120" r="104"/></clipPath>
+  <g clip-path="url(#c)" stroke="#6B6B6B" stroke-width="9" stroke-linecap="round">
+    <line x1="40" y1="60" x2="180" y2="200"/>
+    <line x1="58" y1="42" x2="198" y2="182"/>
+    <line x1="76" y1="24" x2="216" y2="164"/>
+  </g>
+</svg>

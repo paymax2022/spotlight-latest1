@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">No motor vehicles</title>
+  <desc>White circle, red ring, a car and a motorcycle crossed by a red diagonal bar.</desc>
+  <circle cx="120" cy="120" r="112" fill="#C81E2D"/>
+  <circle cx="120" cy="120" r="88" fill="#FFFFFF"/>
+  <path fill="#141414" transform="translate(36,104)" d="M2 30 L10 10 C12 5 16 3 22 3 L44 3 C50 3 54 5 56 10 L64 26 C66 28 66 30 66 32 L66 34 C66 36 64 36 62 36 L58 36 A9 9 0 0 0 40 36 L26 36 A9 9 0 0 0 8 36 L4 36 C2 36 0 35 0 32 Z"/>
+  <g fill="none" stroke="#141414" stroke-width="7">
+    <circle cx="126" cy="150" r="14"/>
+    <circle cx="176" cy="150" r="14"/>
+    <path d="M126 150 L148 150 L158 130 L172 130 L177 142"/>
+    <path d="M140 130 L164 130"/>
+  </g>
+  <line x1="54" y1="54" x2="186" y2="186" stroke="#C81E2D" stroke-width="22" stroke-linecap="round"/>
+</svg>

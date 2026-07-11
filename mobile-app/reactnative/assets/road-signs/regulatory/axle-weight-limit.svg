@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">Axle weight limit</title>
+  <desc>White circle, red ring, an axle with two wheels and a black tonnage; maximum weight per axle.</desc>
+  <circle cx="120" cy="120" r="112" fill="#C81E2D"/>
+  <circle cx="120" cy="120" r="88" fill="#FFFFFF"/>
+  <text x="120" y="98" fill="#141414" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="52" text-anchor="middle" dominant-baseline="central">8t</text>
+  <g fill="#141414">
+    <rect x="80" y="150" width="80" height="10" rx="3"/>
+    <circle cx="82" cy="155" r="16"/>
+    <circle cx="158" cy="155" r="16"/>
+  </g>
+</svg>

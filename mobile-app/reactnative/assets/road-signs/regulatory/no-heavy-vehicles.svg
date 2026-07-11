@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">No heavy vehicles</title>
+  <desc>White circle, red ring, a large articulated heavy truck silhouette; heavy vehicles prohibited.</desc>
+  <circle cx="120" cy="120" r="112" fill="#C81E2D"/>
+  <circle cx="120" cy="120" r="88" fill="#FFFFFF"/>
+  <g fill="#141414">
+    <path d="M38 150 V104 H126 V150 Z"/>
+    <path d="M126 150 V116 H150 L156 100 H176 L188 118 V150 Z"/>
+    <circle cx="66" cy="156" r="13" fill="#FFFFFF" stroke="#141414" stroke-width="7"/>
+    <circle cx="102" cy="156" r="13" fill="#FFFFFF" stroke="#141414" stroke-width="7"/>
+    <circle cx="164" cy="156" r="13" fill="#FFFFFF" stroke="#141414" stroke-width="7"/>
+  </g>
+</svg>

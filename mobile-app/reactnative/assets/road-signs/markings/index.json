@@ -1,0 +1,10 @@
+[
+  { "key": "continuous-centre-line", "label": "Continuous (unbroken) centre line", "category": "marking", "file": "continuous-centre-line.svg" },
+  { "key": "broken-centre-line", "label": "Broken centre line", "category": "marking", "file": "broken-centre-line.svg" },
+  { "key": "double-white-line", "label": "Double white line", "category": "marking", "file": "double-white-line.svg" },
+  { "key": "hatched-marking", "label": "Hatched road marking", "category": "marking", "file": "hatched-marking.svg" },
+  { "key": "edge-line", "label": "Edge line", "category": "marking", "file": "edge-line.svg" },
+  { "key": "zebra-crossing", "label": "Zebra crossing", "category": "marking", "file": "zebra-crossing.svg" },
+  { "key": "stop-line", "label": "Stop line at junction", "category": "marking", "file": "stop-line.svg" },
+  { "key": "give-way-line", "label": "Give-way line (broken)", "category": "marking", "file": "give-way-line.svg" }
+]

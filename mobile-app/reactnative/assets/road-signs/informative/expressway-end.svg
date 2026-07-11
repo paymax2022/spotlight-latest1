@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">Expressway ends</title>
+  <desc>Green motorway pictogram sign with a diagonal bar indicating the end of an expressway.</desc>
+  <rect x="30" y="30" width="180" height="180" rx="16" fill="#0A7D33"/>
+  <path d="M90 180l14-120h10l-6 120z" fill="#FFFFFF"/>
+  <path d="M150 180l-14-120h-10l6 120z" fill="#FFFFFF"/>
+  <rect x="112" y="60" width="16" height="14" fill="#FFFFFF"/>
+  <rect x="110" y="92" width="20" height="14" fill="#FFFFFF"/>
+  <rect x="108" y="128" width="24" height="16" fill="#FFFFFF"/>
+  <line x1="60" y1="190" x2="180" y2="55" stroke="#D01919" stroke-width="12"/>
+</svg>

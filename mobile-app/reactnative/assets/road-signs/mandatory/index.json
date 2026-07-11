@@ -1,0 +1,18 @@
+[
+  { "key": "turn-left", "label": "Turn left", "category": "mandatory", "file": "turn-left.svg" },
+  { "key": "turn-right", "label": "Turn right", "category": "mandatory", "file": "turn-right.svg" },
+  { "key": "turn-left-ahead", "label": "Turn left ahead", "category": "mandatory", "file": "turn-left-ahead.svg" },
+  { "key": "turn-right-ahead", "label": "Turn right ahead", "category": "mandatory", "file": "turn-right-ahead.svg" },
+  { "key": "keep-left", "label": "Keep left", "category": "mandatory", "file": "keep-left.svg" },
+  { "key": "keep-right", "label": "Keep right", "category": "mandatory", "file": "keep-right.svg" },
+  { "key": "ahead-only", "label": "Ahead only", "category": "mandatory", "file": "ahead-only.svg" },
+  { "key": "ahead-or-left", "label": "Ahead or turn left", "category": "mandatory", "file": "ahead-or-left.svg" },
+  { "key": "ahead-or-right", "label": "Ahead or turn right", "category": "mandatory", "file": "ahead-or-right.svg" },
+  { "key": "mini-roundabout", "label": "Mini roundabout", "category": "mandatory", "file": "mini-roundabout.svg" },
+  { "key": "pass-either-side", "label": "Pass either side", "category": "mandatory", "file": "pass-either-side.svg" },
+  { "key": "minimum-speed-30", "label": "Minimum speed 30", "category": "mandatory", "file": "minimum-speed-30.svg" },
+  { "key": "end-minimum-speed", "label": "End of minimum speed", "category": "mandatory", "file": "end-minimum-speed.svg" },
+  { "key": "route-for-pedestrians", "label": "Route for pedestrians only", "category": "mandatory", "file": "route-for-pedestrians.svg" },
+  { "key": "route-for-cycles", "label": "Route for pedal cycles only", "category": "mandatory", "file": "route-for-cycles.svg" },
+  { "key": "contraflow-bus-lane", "label": "Contraflow bus lane", "category": "mandatory", "file": "contraflow-bus-lane.svg" }
+]

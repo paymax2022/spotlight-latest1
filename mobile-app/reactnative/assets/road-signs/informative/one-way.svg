@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">One-way traffic</title>
+  <desc>Blue rectangular sign with a white horizontal arrow indicating one-way traffic.</desc>
+  <rect x="20" y="20" width="200" height="200" rx="16" fill="#0B5FB0"/>
+  <path d="M40 120h120M160 120l-40-30v20h-80v20h80v20z" fill="none"/>
+  <path d="M40 110h108v-24l52 34-52 34v-24H40z" fill="#FFFFFF"/>
+</svg>

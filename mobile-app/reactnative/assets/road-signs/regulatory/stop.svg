@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">Stop</title>
+  <desc>Red octagon with the word STOP in white; drivers must stop.</desc>
+  <polygon points="88,13.7 152,13.7 226.3,88 226.3,152 152,226.3 88,226.3 13.7,152 13.7,88" fill="#C81E2D"/>
+  <text x="120" y="120" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="58" text-anchor="middle" dominant-baseline="central" letter-spacing="1">STOP</text>
+</svg>
