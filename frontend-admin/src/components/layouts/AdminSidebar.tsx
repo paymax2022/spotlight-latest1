@@ -93,6 +93,14 @@ const navItemsBase: NavItem[] = [
   { label: 'Support', href: '/admin/connect/support', section: 'Connect', permissions: ['connect.support.view'] },
   { label: 'Configuration', href: '/admin/connect/config', section: 'Connect', permissions: ['connect.config.view'] },
   { label: 'Audit', href: '/admin/connect/audit', section: 'Connect', permissions: ['connect.audit.view'] },
+  // ── Connect · Network (Phase 6 — Professional Network admin; ADM-JB/CN/CP/SA/MN/GM) ──
+  { label: 'Job Moderation', href: '/admin/connect/jobs', section: 'Connect · Network', permissions: ['connect.company.review'] },
+  { label: 'Bounty Payouts', href: '/admin/connect/bounties', section: 'Connect · Network', permissions: ['connect.company.review'] },
+  { label: 'Content Moderation', href: '/admin/connect/content', section: 'Connect · Network', permissions: ['connect.moderation.manage'] },
+  { label: 'Company Claims', href: '/admin/connect/company-claims', section: 'Connect · Network', permissions: ['connect.company.review'] },
+  { label: 'Assessments', href: '/admin/connect/assessments', section: 'Connect · Network', permissions: ['connect.assessment.review'] },
+  { label: 'Mentorship Reports', href: '/admin/connect/mentorship', section: 'Connect · Network', permissions: ['connect.moderation.manage'] },
+  { label: 'Loyalty Audit', href: '/admin/connect/loyalty-audit', section: 'Connect · Network', permissions: ['connect.moderation.manage'] },
   { label: 'Growth Dashboard', href: '/admin/referral/dashboard', section: 'Referral', permissions: ['referral.analytics.view'] },
   { label: 'Attribution & House', href: '/admin/referral/attribution', section: 'Referral', permissions: ['referral.config.view'] },
   { label: 'House Ledger', href: '/admin/referral/house', section: 'Referral', permissions: ['referral.house.view'] },
@@ -459,7 +467,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Compliance (SU-12)', href: '/admin/platform/edtech/compliance', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
 ];
 
-const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Crowdfunding', 'Connect', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'Crypto', 'Platform · EdTech'];
+const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Crowdfunding', 'Connect', 'Connect · Network', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'Crypto', 'Platform · EdTech'];
 
 export function AdminSidebar() {
   const pathname = usePathname() ?? '';
