@@ -114,7 +114,7 @@ export default function QuizResultsScreen() {
                   ) : (
                     <XCircle size={18} color={Colors.error} />
                   )}
-                  <Text style={styles.recapQ}>Question {i + 1} · {p.correct ? 'Correct' : 'Missed'}</Text>
+                  <Text style={styles.recapQ}>Question {i + 1} · {p.correct ? 'Correct' : 'Incorrect'}</Text>
                 </View>
                 {p.explanation ? <Text style={styles.recapExplain}>{p.explanation}</Text> : null}
               </View>
