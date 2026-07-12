@@ -29,6 +29,8 @@ interface SeedQuestion {
   options: [string, string, string, string];
   answerIndex: 0 | 1 | 2 | 3;
   explanation: string;
+  /** Optional illustration — 'sign:<key>' renders a bundled road-sign SVG. */
+  imageUrl?: string;
 }
 
 const SEED: Record<QuizStage, SeedQuestion[]> = {
@@ -56,6 +58,37 @@ const SEED: Record<QuizStage, SeedQuestion[]> = {
       question: "Which agency is primarily responsible for road traffic safety and driver's licensing in Nigeria?",
       options: ['NAFDAC', 'FRSC (Federal Road Safety Corps)', 'NDLEA', 'EFCC'], answerIndex: 1,
       explanation: "The FRSC administers road safety, driver's licences and highway regulations in Nigeria.",
+    },
+    // ── Sign-identification questions (render a bundled road-sign SVG) ──
+    {
+      id: 'ND-S1-SIGN01', category: 'road_signs', imageUrl: 'sign:no-overtaking',
+      question: 'What does this sign mean?',
+      options: ['No overtaking', 'No entry', 'One-way traffic', 'End of speed limit'], answerIndex: 0,
+      explanation: 'A red circle showing two cars means overtaking is prohibited on this stretch of road.',
+    },
+    {
+      id: 'ND-S1-SIGN02', category: 'road_signs', imageUrl: 'sign:give-way',
+      question: 'What must you do when you see this sign?',
+      options: ['Stop completely at all times', 'Give way to traffic on the major road', 'Sound your horn and proceed', 'Increase your speed'], answerIndex: 1,
+      explanation: 'The inverted red triangle means give way — yield to traffic on the road you are joining.',
+    },
+    {
+      id: 'ND-S1-SIGN03', category: 'road_signs', imageUrl: 'sign:roundabout-ahead',
+      question: 'This warning sign tells you there is a … ahead.',
+      options: ['Sharp bend', 'Roundabout', 'Level crossing', 'Steep hill'], answerIndex: 1,
+      explanation: 'The triangular sign with three curved arrows warns of a roundabout ahead — slow down and give way.',
+    },
+    {
+      id: 'ND-S1-SIGN04', category: 'road_signs', imageUrl: 'sign:pedestrian-crossing',
+      question: 'What hazard does this sign warn of?',
+      options: ['Children playing', 'A pedestrian crossing ahead', 'Road works', 'Slippery road'], answerIndex: 1,
+      explanation: 'The triangle showing a person on a crossing warns of a pedestrian crossing ahead — be ready to stop.',
+    },
+    {
+      id: 'ND-S1-SIGN05', category: 'road_signs', imageUrl: 'sign:no-entry',
+      question: 'What does this sign mean?',
+      options: ['No entry for vehicular traffic', 'Stop', 'No parking', 'Give way'], answerIndex: 0,
+      explanation: 'A solid red circle with a white horizontal bar means no entry — do not proceed past this point.',
     },
     {
       id: 'ND-S1-Q06', category: 'emergency_response',
@@ -226,6 +259,7 @@ function toSafeQuestion(s: SeedQuestion): PlayAlongQuestion {
     id: s.id,
     category: s.category,
     prompt: s.question,
+    imageUrl: s.imageUrl,
     options: s.options.map((label, i) => ({ id: String(i), label })),
     timeLimitSecs: PER_QUESTION_SECS,
   };
