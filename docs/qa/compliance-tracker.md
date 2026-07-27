@@ -151,16 +151,16 @@ Per-module status of the QA suite. Companion to `traceability-matrix.md` — thi
 | 2 | Money: every money mutation must emit an audit event | spotlightwealth (money), learn (non-money) | `spotlightwealth_routes.go` + `learn_routes.go` pass `nil` Auditor | **task_a3eacd81** — in progress |
 | 3 | Flag-gating + auth on mutations (brownfield) | contest (STEM) | public `/api/v1/<feature>` allows unauth mutations; no feature flag | documented (CONTEST-SEC-001/003); needs product decision |
 
-## Leads to validate (reported by authoring, not yet code-confirmed)
+## Leads — all verified against code
 
-| Module | Lead | Verdict so far |
+| Module | Lead | Verdict (verified) |
 |---|---|---|
-| crypto | "no KYC gate; eligibility hardcoded eligible" | **Design, not a defect** — manual compliance review + whitelist/holdings/tier limit at execution |
-| savings | "nil audit sink" | **False** — a real `auditor` is passed (`top5_p1_routes.go`) |
-| invest | `FEATURE_INVEST_PIN_DEV_BYPASS` accepts any PIN when on | Config — assert OFF in staging/prod |
-| restaurant | order-row not deduped on Idempotency-Key | Money safe (escrow reused); data-integrity question |
-| notifications | `in_app` → push task; no dedupe id | Plausible double-send; validate |
-| maps | rate limiter fails open on Redis error | By design (cost cap); confirm acceptable |
+| crypto | "no KYC gate; eligibility hardcoded eligible" | ⚪ **Design, not a defect** — manual compliance review + whitelist/holdings/tier limit at execution |
+| savings | "nil audit sink" | ⚪ **False** — a real `auditor` is passed (`top5_p1_routes.go`) |
+| invest | `FEATURE_INVEST_PIN_DEV_BYPASS` accepts any PIN when on | ⚠️ **Real but default-safe** — flag defaults `false` (`config.go:573`); ops assertion (keep OFF in prod), already in go-live checklist + INVEST-SEC-002. Not a code bug |
+| maps | rate limiter fails open on Redis error | ⚪ **Intentional & documented** — `ratelimit.go:60` "fail-open on cache error — never block users on infra"; cost-vs-availability trade-off |
+| restaurant | order-row not deduped on Idempotency-Key | ❌ **Confirmed (money-safe)** — `orders` INSERT lacks `ON CONFLICT (idempotency_key)` (service.go:270) unlike the ledger legs (line 482); replay can duplicate the row or 500 → **task_28fefa8f** |
+| notifications | `in_app` → push task; no dedupe id | ❌ **Confirmed** — `taskTypeForChannel` has no `in_app` case → `default:` push; default `{push,in_app}` = **duplicate push**; no `asynq.TaskID` dedupe → **task_ccbe6e09** |
 
 ## How a module goes green
 
