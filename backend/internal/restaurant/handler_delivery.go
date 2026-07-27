@@ -2,6 +2,7 @@ package restaurant
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -9,13 +10,100 @@ import (
 // ── Reads ─────────────────────────────────────────────────────────────────────
 
 // ListRestaurants → GET /restaurant (discovery list of open restaurants).
+// ListRestaurants → GET /restaurant. With no query params it returns the legacy open
+// listing (newest first). With any search/filter/sort/paging param it runs discovery
+// search: ?q=&cuisine=&min_rating=&open_now=&near_lat=&near_lng=&radius_km=&sort=&limit=&offset=.
 func (h *Handler) ListRestaurants(c *gin.Context) {
-	list, err := h.svc.ListOpenRestaurants(c.Request.Context())
+	p, hasParams := parseSearchParams(c)
+	if !hasParams {
+		list, err := h.svc.ListOpenRestaurants(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"restaurants": list})
+		return
+	}
+	list, err := h.svc.SearchRestaurants(c.Request.Context(), p)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"restaurants": list})
+}
+
+// parseSearchParams reads the discovery query params off the request, returning the
+// parsed params and whether ANY were present (so a bare GET keeps legacy behavior).
+// near_lat/near_lng only activate when BOTH parse as valid floats.
+func parseSearchParams(c *gin.Context) (SearchParams, bool) {
+	var p SearchParams
+	any := false
+	if v := c.Query("q"); v != "" {
+		p.Query = v
+		any = true
+	}
+	if v := c.Query("cuisine"); v != "" {
+		p.Cuisine = v
+		any = true
+	}
+	if v := c.Query("min_rating"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			p.MinRating = f
+			any = true
+		}
+	}
+	if v := c.Query("open_now"); v == "true" || v == "1" {
+		p.OpenNow = true
+		any = true
+	}
+	latS, lngS := c.Query("near_lat"), c.Query("near_lng")
+	if latS != "" && lngS != "" {
+		if lat, err1 := strconv.ParseFloat(latS, 64); err1 == nil {
+			if lng, err2 := strconv.ParseFloat(lngS, 64); err2 == nil {
+				p.NearLat, p.NearLng = &lat, &lng
+				any = true
+			}
+		}
+	}
+	if v := c.Query("radius_km"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			p.RadiusKm = f
+			any = true
+		}
+	}
+	if v := c.Query("sort"); v != "" {
+		p.Sort = v
+		any = true
+	}
+	if v := c.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			p.Limit = n
+			any = true
+		}
+	}
+	if v := c.Query("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			p.Offset = n
+			any = true
+		}
+	}
+	return p, any
+}
+
+// UpdateRestaurantProfile → PATCH /restaurant/:id (owner). Sets discovery fields
+// (cuisine / description / logo).
+func (h *Handler) UpdateRestaurantProfile(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.UpdateRestaurantProfile(c.Request.Context(), c.Param("id"), userID, req); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 // GetRestaurant → GET /restaurant/:id (restaurant detail + menu).

@@ -132,11 +132,13 @@ func (s *Service) CreateRestaurant(ctx context.Context, ownerID string, req Crea
 		Description: req.Description,
 		Address:     req.Address,
 		LogoURL:     req.LogoURL,
+		Cuisine:     req.Cuisine,
+		Rating:      5.0,
 		IsOpen:      false,
 		CreatedAt:   time.Now(),
 	}
-	const q = `INSERT INTO restaurants (id, owner_id, name, description, address, logo_url, is_open) VALUES ($1,$2,$3,$4,$5,$6,false)`
-	_, err := s.db.Exec(ctx, q, r.ID, r.OwnerID, r.Name, r.Description, r.Address, r.LogoURL)
+	const q = `INSERT INTO restaurants (id, owner_id, name, description, address, logo_url, cuisine, is_open) VALUES ($1,$2,$3,$4,$5,$6,$7,false)`
+	_, err := s.db.Exec(ctx, q, r.ID, r.OwnerID, r.Name, r.Description, r.Address, r.LogoURL, nullIfEmpty(r.Cuisine))
 
 	// Best-effort: geocode the address to a pin so "near me" works. The UPDATE
 	// fires the merchant_locations sync trigger. A geocode failure never fails

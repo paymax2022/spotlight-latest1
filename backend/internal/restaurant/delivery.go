@@ -11,7 +11,7 @@ import (
 
 // ListOpenRestaurants returns the discovery list of open restaurants.
 func (s *Service) ListOpenRestaurants(ctx context.Context) ([]Restaurant, error) {
-	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, created_at
+	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at
 	           FROM restaurants WHERE is_open = TRUE ORDER BY created_at DESC`
 	rows, err := s.db.Query(ctx, q)
 	if err != nil {
@@ -21,7 +21,7 @@ func (s *Service) ListOpenRestaurants(ctx context.Context) ([]Restaurant, error)
 	var out []Restaurant
 	for rows.Next() {
 		var r Restaurant
-		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
