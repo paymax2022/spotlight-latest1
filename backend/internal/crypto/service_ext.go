@@ -454,15 +454,32 @@ func (s *Service) broadcastApprovedWithdrawal(ctx context.Context, w *AdminWithd
 	if netUnits <= 0 {
 		netUnits = w.Units
 	}
+	// A real provider needs the asset's minor-unit scale to format the on-chain amount.
+	// Best-effort lookup; a missing scale (0) makes a real adapter error → the withdrawal
+	// safely parks in `approved` rather than sending a wrong amount.
+	var scale int64
+	if a, aerr := s.repo.GetAsset(ctx, w.AssetID); aerr == nil && a != nil {
+		scale = a.MinorUnitScale
+	}
 	res, berr := s.withdraw.Broadcast(ctx, BroadcastRequest{
 		WithdrawalID: w.ID, Symbol: w.Symbol, Network: w.Network, Address: w.Address,
-		Units: netUnits, ProviderIdemKey: "crypto:withdraw:" + w.ID,
+		Units: netUnits, MinorUnitScale: scale, ProviderIdemKey: "crypto:withdraw:" + w.ID,
 	})
-	if berr != nil || !res.Accepted {
+	if berr != nil {
+		// Ambiguous / transport failure. Per the WithdrawalProvider contract, KEEP the
+		// withdrawal in `approved` (parked) for retry / manual reconciliation — do NOT
+		// return the parked units (the provider may have already accepted the send, so
+		// refunding would double-spend) and do NOT fabricate a broadcast. The guarded
+		// approved→broadcast transition makes a later retry idempotent.
+		_ = s.audit.log(ctx, "custody:"+s.withdraw.Name(), "crypto.withdraw.broadcast_error",
+			"crypto_withdrawal", w.ID, berr.Error(), nil,
+			map[string]any{"asset": w.Symbol, "units": w.Units})
+		return nil, berr
+	}
+	if !res.Accepted {
+		// Explicit provider rejection: the provider definitively did NOT send (e.g. failed
+		// custodian-side address screening) → move to failed and return the parked units.
 		reason := "provider rejected withdrawal"
-		if berr != nil {
-			reason = berr.Error()
-		}
 		out, terr := s.repo.AdminTransitionWithdrawal(ctx, w.ID, WithdrawalApproved, WithdrawalFailed,
 			"custody:"+s.withdraw.Name(), reason, reason, w.Units)
 		if terr != nil {

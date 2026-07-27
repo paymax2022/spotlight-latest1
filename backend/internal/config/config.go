@@ -44,6 +44,18 @@ type Config struct {
 	PaystackSecretKey  string
 	PaystackWebhookKey string
 
+	// Crypto real provider (retail crypto price feed + on-chain withdrawal broadcast).
+	// CryptoProvider selects the implementation: "mock" (default, deterministic, no
+	// network) or "quidax" (real HTTP adapter). Separate TEST and LIVE credential sets
+	// are provisioned; the TEST set is used in dev/staging and the LIVE set in
+	// production, selected by IsProd(). When the selected credentials are absent the
+	// module falls back to the safe deterministic mock.
+	CryptoProvider          string
+	CryptoQuidaxTestKey     string
+	CryptoQuidaxTestBaseURL string
+	CryptoQuidaxLiveKey     string
+	CryptoQuidaxLiveBaseURL string
+
 	// Maplerad credentials (FX + alternative VA provider).
 	MapleradSecretKey     string
 	MapleradPublicKey     string
@@ -470,6 +482,12 @@ func Load() Config {
 		RedisURL:           getEnv("REDIS_URL", "redis://localhost:6379"),
 		PaystackSecretKey:  getEnv("PAYSTACK_SECRET_KEY", ""),
 		PaystackWebhookKey: getEnv("PAYSTACK_WEBHOOK_SECRET", ""),
+
+		CryptoProvider:          getEnv("CRYPTO_PROVIDER", "mock"),
+		CryptoQuidaxTestKey:     getEnv("QUIDAX_TEST_API_KEY", ""),
+		CryptoQuidaxTestBaseURL: getEnv("QUIDAX_TEST_BASE_URL", "https://app.quidax.io/api/v1"),
+		CryptoQuidaxLiveKey:     getEnv("QUIDAX_LIVE_API_KEY", ""),
+		CryptoQuidaxLiveBaseURL: getEnv("QUIDAX_LIVE_BASE_URL", "https://app.quidax.io/api/v1"),
 
 		MapleradSecretKey:      getEnv("MAPLERAD_SECRET_KEY", ""),
 		MapleradPublicKey:      getEnv("MAPLERAD_PUBLIC_KEY", ""),
