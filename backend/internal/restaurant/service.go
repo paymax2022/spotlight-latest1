@@ -221,14 +221,33 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		if !mi.IsAvailable {
 			return nil, fmt.Errorf("restaurant: menu item '%s' is not available", mi.Name)
 		}
-		lineTotal := mi.PriceKobo * int64(input.Quantity)
+		// Resolve chosen modifiers against the item's groups (validates availability,
+		// membership and each group's min/max/required rules) and add the per-unit
+		// delta to the base price. Plain items (no groups, no selection) price exactly
+		// as before. A bad selection is a client error (ErrInvalidModifierSelection).
+		groups, gErr := s.loadItemModifierGroups(ctx, mi.ID)
+		if gErr != nil {
+			return nil, gErr
+		}
+		chosenMods, modDelta, mErr := resolveLineModifiers(groups, input.ModifierIDs)
+		if mErr != nil {
+			return nil, mErr
+		}
+		lineUnit := mi.PriceKobo + modDelta
+		lineTotal := lineUnit * int64(input.Quantity)
+		snapshot := make([]OrderItemModifier, 0, len(chosenMods))
+		for _, cm := range chosenMods {
+			snapshot = append(snapshot, OrderItemModifier{ModifierID: cm.ID, Name: cm.Name, PriceDeltaKobo: cm.PriceDeltaKobo})
+		}
 		items = append(items, OrderItem{
-			ID:           uuid.New().String(),
-			MenuItemID:   mi.ID,
-			Name:         mi.Name,
-			PriceKobo:    mi.PriceKobo,
-			Quantity:     input.Quantity,
-			SubtotalKobo: lineTotal,
+			ID:            uuid.New().String(),
+			MenuItemID:    mi.ID,
+			Name:          mi.Name,
+			PriceKobo:     mi.PriceKobo,
+			Quantity:      input.Quantity,
+			ModifiersKobo: modDelta,
+			Modifiers:     snapshot,
+			SubtotalKobo:  lineTotal,
 		})
 		subtotal += lineTotal
 	}
@@ -355,6 +374,16 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 			items[i].Name, items[i].PriceKobo, items[i].Quantity, items[i].SubtotalKobo,
 		); err != nil {
 			return nil, fmt.Errorf("restaurant: insert order item: %w", err)
+		}
+		// Snapshot the chosen modifiers so the historical line price is reproducible
+		// even if the menu is edited later.
+		for _, m := range items[i].Modifiers {
+			const insertMod = `INSERT INTO order_item_modifiers (id, order_item_id, modifier_id, name, price_delta_kobo) VALUES ($1,$2,$3,$4,$5)`
+			if _, err := tx.Exec(ctx, insertMod,
+				uuid.New().String(), items[i].ID, m.ModifierID, m.Name, m.PriceDeltaKobo,
+			); err != nil {
+				return nil, fmt.Errorf("restaurant: insert order item modifier: %w", err)
+			}
 		}
 	}
 	order.Items = items

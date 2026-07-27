@@ -139,6 +139,43 @@ func (s *Service) loadOrderItems(ctx context.Context, orderID string) ([]OrderIt
 		}
 		out = append(out, it)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Hydrate each line's chosen-modifier snapshot (and the derived per-unit surcharge)
+	// so order reads reflect exactly what was ordered and priced.
+	for i := range out {
+		mods, err := s.loadOrderItemModifiers(ctx, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Modifiers = mods
+		var delta int64
+		for _, m := range mods {
+			delta += m.PriceDeltaKobo
+		}
+		out[i].ModifiersKobo = delta
+	}
+	return out, nil
+}
+
+// loadOrderItemModifiers returns the immutable chosen-modifier snapshot for one line.
+func (s *Service) loadOrderItemModifiers(ctx context.Context, orderItemID string) ([]OrderItemModifier, error) {
+	const q = `SELECT modifier_id, name, price_delta_kobo
+	           FROM order_item_modifiers WHERE order_item_id=$1 ORDER BY created_at`
+	rows, err := s.db.Query(ctx, q, orderItemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OrderItemModifier
+	for rows.Next() {
+		var m OrderItemModifier
+		if err := rows.Scan(&m.ModifierID, &m.Name, &m.PriceDeltaKobo); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
 	return out, rows.Err()
 }
 

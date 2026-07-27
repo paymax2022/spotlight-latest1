@@ -1221,6 +1221,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.POST("/:id/menu/categories", restaurantHandler.CreateCategory)
 		restGroup.POST("/:id/menu/items", restaurantHandler.CreateItem)
 		restGroup.PATCH("/:id/menu/items/:itemId", restaurantHandler.UpdateItem)
+		// Grouped menu-item modifiers: public read of an item's option groups, owner
+		// writes to define groups + options.
+		restGroup.GET("/:id/menu/items/:itemId/modifier-groups", restaurantHandler.ListItemModifierGroups)
+		restGroup.POST("/:id/menu/items/:itemId/modifier-groups", restaurantHandler.CreateModifierGroup)
+		restGroup.POST("/:id/menu/modifier-groups/:groupId/modifiers", restaurantHandler.AddModifier)
 
 		// Distance-based delivery-fee preview (before placing the order). Member auth
 		// via the finance group's requireUserID. Static "delivery-quote" segment under
