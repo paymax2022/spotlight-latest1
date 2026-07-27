@@ -132,9 +132,13 @@ func (s *Service) AdminResolveFoodDispute(ctx context.Context, disputeID, adminI
 		return nil, err
 	}
 	_ = tag
+	// Close the shared ticket. We deliberately do NOT set the shared disputes.resolution
+	// column: it carries two mutually-exclusive CHECK constraints across modules, so no
+	// value can satisfy both. The authoritative food resolution + refund live in
+	// restaurant_dispute_refunds (written above and surfaced by AdminListFoodDisputes).
 	if _, err := s.db.Exec(ctx,
-		`UPDATE disputes SET status='resolved', resolution=$2, admin_note=NULLIF($3,''), updated_at=now() WHERE id=$1`,
-		disputeID, resolutionToDBFields(res), note); err != nil {
+		`UPDATE disputes SET status='resolved', admin_note=NULLIF($2,''), updated_at=now() WHERE id=$1`,
+		disputeID, note); err != nil {
 		return nil, err
 	}
 	_, _ = s.db.Exec(ctx, `UPDATE orders SET disputed_at=COALESCE(disputed_at, now()) WHERE id=$1`, orderID)

@@ -45,8 +45,8 @@ func seedDriver(t *testing.T, ctx context.Context, pool *pgxpool.Pool, lat, lng 
 		t.Fatalf("seed user: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO drivers (user_id, name, status, verification_status, current_lat, current_lng)
-		VALUES ($1,'Rider','online','approved',$2,$3)
+		INSERT INTO drivers (user_id, name, vehicle_reg, status, verification_status, current_lat, current_lng)
+		VALUES ($1,'Rider','ABC-123','online','approved',$2,$3)
 		ON CONFLICT (user_id) DO UPDATE SET status='online', verification_status='approved', current_lat=$2, current_lng=$3`,
 		id, lat, lng); err != nil {
 		t.Skipf("drivers schema not seedable here (%v) — skipping", err)
