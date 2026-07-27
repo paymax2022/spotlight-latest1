@@ -28,6 +28,33 @@ Per-module status of the QA suite. Companion to `traceability-matrix.md` — thi
 | **Confirmed gaps (❌)** | **6** — crowdfunding, wallet, disputes, spotlightwealth, learn, contest |
 | Confirmed gaps with a task started | 2 (task_6fa26cd4, task_a3eacd81) |
 
+## Progress log (updated)
+
+**Done**
+- QA suite authored (this directory) → PR #1.
+- **11 backend packages given committed, clean-tree-verified unit tests** → PR #2:
+  `credential`, `cashtag`, `investai` (advice-refusal guardrail), `academy/assessment`,
+  `onboarding`, `points`, `connect/aml` (CBN/NFIU thresholds), `aicare` (provider plumbing),
+  `scheduler`, `domain` (`Session.Active`), `connect/gamification`. Of these, 6 are tracked
+  modules that moved **zero-coverage → tests** (`credential, cashtag, investai, assessment,
+  onboarding, points`); the rest are infra/sub-packages outside the 73-module list.
+  → Rollup above reflects this (TODO 16→10, PARTIAL 57→63 for the tracked modules).
+- Confirmed non-compliance items 1 & 2 (RBAC gaps; nil audit sink) handed to fix tasks
+  `task_6fa26cd4` and `task_a3eacd81` — **in progress in separate sessions**.
+
+**Remaining / blocked**
+- **Money-path integration suites vs real Postgres** (gaps G5–G7): blocked on local infra
+  (Docker daemon down). Runnable the moment a DB is available:
+  `supabase start && cd backend && TEST_DATABASE_URL=… go test ./... -run 'Integration|LiveDB'`.
+- **DB-bound FSM / velocity / repo logic**: unit-testable only after a repo-interface refactor
+  (a production change requiring review) — not an unattended-swarm edit.
+- `academy/platform` test exists and is green locally but is **held out of PR #2** because it
+  depends on uncommitted `feature_flags.go`; it lands when that source is committed.
+- Leads to validate: `invest` PIN-bypass config, `restaurant` order-row idempotency,
+  `notifications` in_app→push double-send, `maps` fail-open (see "Leads" section below).
+- Item 3 (`contest`/STEM public unauth mutations) is brownfield → needs a product decision,
+  not an autopatch.
+
 ## Tier 0 — critical path (money / auth / RBAC)
 
 | Module | 💰 | Cases | FSM | Auto | Status | Action point |
