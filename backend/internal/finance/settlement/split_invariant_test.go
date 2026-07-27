@@ -29,19 +29,23 @@ import (
 
 // splitLegsKobo replicates the EXACT split math in Service.Settle:
 //
-//	platformKobo = floor(total * platformPct)
-//	riderKobo    = floor(total * riderPct)   (only when a rider is present)
-//	providerKobo = total - platformKobo - riderKobo   (remainder — never rounds away kobo)
+//	base         = total - TipKobo                         (percentages apply to the non-tip base)
+//	platformKobo = floor(base * platformPct)
+//	riderKobo    = floor(base * riderPct) + TipKobo        (only when a rider is present; tip is 100% rider)
+//	providerKobo = total - platformKobo - riderKobo        (remainder — never rounds away kobo)
 //
-// Computing the provider leg as the remainder is what guarantees the three legs
-// sum to EXACTLY the escrowed total with zero leakage, regardless of float
-// rounding on the percentage legs. This helper is the single source of truth the
-// assertions below check; if service.go ever changes its formula, this must change
-// with it (and the mismatch is the bug the ledger-auditor should catch).
+// With TipKobo == 0 this collapses to the pure percentage split (base == total), so
+// every non-tipping caller is unaffected. Computing the provider leg as the remainder
+// is what guarantees the three legs sum to EXACTLY the escrowed total with zero
+// leakage, regardless of float rounding on the percentage legs OR the fixed tip. This
+// helper is the single source of truth the assertions below check; if service.go ever
+// changes its formula, this must change with it (and the mismatch is the bug the
+// ledger-auditor should catch).
 func splitLegsKobo(total int64, sp settlement.Split) (providerKobo, platformKobo, riderKobo int64) {
-	platformKobo = int64(float64(total) * sp.PlatformPct)
+	base := total - sp.TipKobo
+	platformKobo = int64(float64(base) * sp.PlatformPct)
 	if sp.RiderID != nil {
-		riderKobo = int64(float64(total) * sp.RiderPct)
+		riderKobo = int64(float64(base)*sp.RiderPct) + sp.TipKobo
 	}
 	providerKobo = total - platformKobo - riderKobo
 	return
@@ -64,6 +68,11 @@ func TestSettleSplitsSumToEscrowedExactly(t *testing.T) {
 		{"awkward total with rider", 33_333, settlement.Split{ProviderID: "p", ProviderPct: 0.70, PlatformPct: 0.15, RiderID: &rider, RiderPct: 0.15}},
 		{"1 kobo, all provider", 1, settlement.Split{ProviderID: "p", ProviderPct: 1.0, PlatformPct: 0.0}},
 		{"big total 999_999_999", 999_999_999, settlement.Split{ProviderID: "p", ProviderPct: 0.88, PlatformPct: 0.12}},
+		// Tips: the fixed rider leg rides on top of the 80/10/10 base and value must
+		// still conserve exactly (total here already INCLUDES the escrowed tip).
+		{"tip on 80/10/10", 110_000, settlement.Split{ProviderID: "p", ProviderPct: 0.80, PlatformPct: 0.10, RiderID: &rider, RiderPct: 0.10, TipKobo: 10_000}},
+		{"tip, awkward base 33_337+500", 33_837, settlement.Split{ProviderID: "p", ProviderPct: 0.70, PlatformPct: 0.15, RiderID: &rider, RiderPct: 0.15, TipKobo: 500}},
+		{"tip equal to whole total (base 0)", 5_000, settlement.Split{ProviderID: "p", ProviderPct: 0.80, PlatformPct: 0.10, RiderID: &rider, RiderPct: 0.10, TipKobo: 5_000}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -113,6 +122,67 @@ func TestSettleZeroLegsAreSkipped(t *testing.T) {
 	// posted — so no amount_kobo=0 row is attempted. This test locks that reasoning.
 	if platform > 0 || rider > 0 {
 		t.Error("zero legs must not be posted (would violate amount_kobo > 0)")
+	}
+}
+
+// TestSettleTipGoesFullyToRider proves the tip semantics: a tip is paid 100% to the
+// rider ON TOP of their percentage of the non-tip base, the percentage legs are
+// computed on (total − tip) so the tip never inflates the platform/provider cut, and
+// value still conserves exactly. It also pins the equivalence a non-tipping caller
+// relies on: TipKobo == 0 reproduces the pure percentage split leg-for-leg.
+func TestSettleTipGoesFullyToRider(t *testing.T) {
+	rider := "rider-1"
+	// 80/10/10 base of 100_000 + a 10_000 tip → escrowed total 110_000.
+	sp := settlement.Split{ProviderID: "p", ProviderPct: 0.80, PlatformPct: 0.10, RiderID: &rider, RiderPct: 0.10, TipKobo: 10_000}
+	if err := sp.Validate(); err != nil {
+		t.Fatalf("tipped split should be valid: %v", err)
+	}
+	provider, platform, riderK := splitLegsKobo(110_000, sp)
+
+	// Base (100_000) split 80/10/10, then the whole 10_000 tip added to the rider.
+	if platform != 10_000 {
+		t.Errorf("platform should be 10%% of the 100k base = 10_000, got %d (tip must not inflate it)", platform)
+	}
+	if provider != 80_000 {
+		t.Errorf("provider should be 80%% of the 100k base = 80_000, got %d (tip must not inflate it)", provider)
+	}
+	if riderK != 20_000 { // 10% of base (10_000) + full tip (10_000)
+		t.Errorf("rider should get base share + 100%% of tip = 20_000, got %d", riderK)
+	}
+	if provider+platform+riderK != 110_000 {
+		t.Errorf("legs must sum to escrowed total 110_000, got %d", provider+platform+riderK)
+	}
+
+	// Equivalence: TipKobo == 0 must reproduce the untipped split exactly.
+	untipped := settlement.Split{ProviderID: "p", ProviderPct: 0.80, PlatformPct: 0.10, RiderID: &rider, RiderPct: 0.10}
+	p0, pl0, r0 := splitLegsKobo(100_000, untipped)
+	sp0 := untipped
+	sp0.TipKobo = 0
+	p1, pl1, r1 := splitLegsKobo(100_000, sp0)
+	if p0 != p1 || pl0 != pl1 || r0 != r1 {
+		t.Errorf("TipKobo==0 changed the split: (%d,%d,%d) vs (%d,%d,%d)", p0, pl0, r0, p1, pl1, r1)
+	}
+}
+
+// TestSplitTipValidation locks the fail-closed rules on the fixed tip leg: a tip
+// requires a rider (there is no one else it can be attributed to) and cannot be
+// negative. The tip-exceeds-total bound lives in Settle (needs the escrowed total).
+func TestSplitTipValidation(t *testing.T) {
+	rider := "rider-1"
+	// Tip with no rider → rejected.
+	noRider := settlement.Split{ProviderID: "p", ProviderPct: 0.90, PlatformPct: 0.10, TipKobo: 500}
+	if err := noRider.Validate(); err == nil {
+		t.Error("tip with no rider must be rejected")
+	}
+	// Negative tip → rejected.
+	neg := settlement.Split{ProviderID: "p", ProviderPct: 0.80, PlatformPct: 0.10, RiderID: &rider, RiderPct: 0.10, TipKobo: -1}
+	if err := neg.Validate(); err == nil {
+		t.Error("negative tip must be rejected")
+	}
+	// Valid tipped split → accepted.
+	ok := settlement.Split{ProviderID: "p", ProviderPct: 0.80, PlatformPct: 0.10, RiderID: &rider, RiderPct: 0.10, TipKobo: 500}
+	if err := ok.Validate(); err != nil {
+		t.Errorf("valid tipped split rejected: %v", err)
 	}
 }
 

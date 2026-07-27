@@ -1176,6 +1176,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// Real driving distance + ETA for delivery-fee pricing (Google Distance
 			// Matrix when configured; falls back to haversine on error).
 			restaurantSvc = restaurantSvc.WithDistancer(locGeo)
+			// Delivery-zone gate: reject destinations outside the restaurant owner's
+			// drawn service areas (no-op when the owner has defined none). Runs on our
+			// own PostGIS geofences, not a maps API.
+			restaurantSvc = restaurantSvc.WithZoneChecker(maps.NewOwnerZoneChecker(pool))
 		}
 
 		// Real notifications via the asynq queue (push + in-app). Falls back to

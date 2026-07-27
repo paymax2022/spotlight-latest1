@@ -173,5 +173,8 @@ func statusCodeFor(err error) int {
 	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrDeliveredViaHandoff) {
 		return http.StatusForbidden
 	}
+	if errors.Is(err, ErrOutsideDeliveryZone) {
+		return http.StatusUnprocessableEntity
+	}
 	return http.StatusBadRequest
 }

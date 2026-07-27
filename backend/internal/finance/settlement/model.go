@@ -38,6 +38,12 @@ type Split struct {
 	PlatformPct float64 `json:"platform_pct"`  // e.g. 0.10 = 10%
 	RiderID     *string `json:"rider_id,omitempty"`
 	RiderPct    float64 `json:"rider_pct,omitempty"`
+	// TipKobo is a fixed, whole-kobo amount paid 100% to the rider ON TOP of the
+	// percentage split — it is NOT part of the percentages (those apply to the
+	// non-tip base = total − tip). Defaults to 0, which reproduces the pure
+	// percentage split exactly (backward-compatible for every non-tipping caller).
+	// A tip requires a rider; Validate rejects a tip with no RiderID.
+	TipKobo int64 `json:"tip_kobo,omitempty"`
 }
 
 // splitEpsilon tolerates float rounding (configs store pct as floats like 0.80).
@@ -51,6 +57,15 @@ const splitEpsilon = 1e-6
 func (s Split) Validate() error {
 	if s.ProviderPct < 0 || s.PlatformPct < 0 || s.RiderPct < 0 {
 		return fmt.Errorf("settlement: split percentages must be non-negative")
+	}
+	// The tip is a fixed rider leg: it must be non-negative and can only be paid when
+	// a rider is present (there is no one else it may be attributed to). The tip ≤ total
+	// bound is enforced in Settle, where the escrowed total is known.
+	if s.TipKobo < 0 {
+		return fmt.Errorf("settlement: tip must be non-negative")
+	}
+	if s.TipKobo > 0 && s.RiderID == nil {
+		return fmt.Errorf("settlement: tip requires a rider")
 	}
 	sum := s.ProviderPct + s.PlatformPct
 	if s.RiderID != nil {

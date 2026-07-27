@@ -59,6 +59,7 @@ type Order struct {
 	Items           []OrderItem `json:"items"`
 	SubtotalKobo    int64       `json:"subtotal_kobo"`
 	DeliveryKobo    int64       `json:"delivery_kobo"`
+	TipKobo         int64       `json:"tip_kobo"`
 	TotalKobo       int64       `json:"total_kobo"`
 	Status          OrderStatus `json:"status"`
 	IdempotencyKey  string      `json:"idempotency_key"`
@@ -111,6 +112,11 @@ type PlaceOrderRequest struct {
 	// fallback only — hence no binding:"required" here, so a header-only client
 	// no longer 400s on bind.
 	IdempotencyKey string `json:"idempotency_key"`
+
+	// TipKobo is an optional customer tip (whole kobo) paid 100% to the rider at
+	// settlement. It is escrowed with the order total. Negative values are clamped
+	// to 0 by PlaceOrder (never trusted from the client for money math).
+	TipKobo int64 `json:"tip_kobo,omitempty"`
 
 	DeliveryLat      *float64 `json:"delivery_lat,omitempty"`
 	DeliveryLng      *float64 `json:"delivery_lng,omitempty"`
