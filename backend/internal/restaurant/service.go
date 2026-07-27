@@ -286,6 +286,22 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		}
 	}
 
+	// Optional promo code: validate + price the discount BEFORE escrow (it reduces
+	// what the wallet is debited). An unusable code fails the order rather than being
+	// silently dropped, so the customer isn't charged full price on a code they expected
+	// to work. The discount applies to the item subtotal only (not delivery or tip) and
+	// is clamped to the subtotal by computeDiscount.
+	var applied *appliedPromo
+	discount := int64(0)
+	if req.PromoCode != "" {
+		ap, perr := s.resolvePromo(ctx, restaurantID, customerID, req.PromoCode, subtotal, time.Now())
+		if perr != nil {
+			return nil, perr
+		}
+		applied = &ap
+		discount = ap.DiscountKobo
+	}
+
 	// Optional rider tip: escrowed with the order and paid 100% to the rider at
 	// settlement. Never trust a negative tip from the client — clamp to 0 so it can
 	// only ever add to the total (and thus to what the customer's wallet is debited).
@@ -293,7 +309,7 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	if tip < 0 {
 		tip = 0
 	}
-	total := subtotal + deliveryKobo + tip
+	total := subtotal - discount + deliveryKobo + tip
 	orderID := uuid.New().String()
 	ref := "order:" + orderID
 
@@ -319,6 +335,7 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		SubtotalKobo:      subtotal,
 		DeliveryKobo:      deliveryKobo,
 		TipKobo:           tip,
+		DiscountKobo:      discount,
 		TotalKobo:         total,
 		Status:            OrderPending,
 		IdempotencyKey:    req.IdempotencyKey,
@@ -328,6 +345,10 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		EtaMinutes:        etaMinutes,
 		DeliveryBreakdown: breakdown,
 		CreatedAt:         time.Now(),
+	}
+	if applied != nil {
+		pid, fnd := applied.PromoID, string(applied.Funder)
+		order.PromoID, order.PromoFunder = &pid, &fnd
 	}
 
 	// delivery_breakdown is a NOT NULL jsonb column (default '{}'); marshal the
@@ -346,14 +367,15 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	defer tx.Rollback(ctx)
 
 	const insertOrder = `
-		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, tip_kobo)
-		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12,$13)
+		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, tip_kobo, discount_kobo, promo_id, promo_funder)
+		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insertOrder,
 		order.ID, order.CustomerID, order.RestaurantID,
 		order.SubtotalKobo, order.DeliveryKobo, order.TotalKobo,
 		order.IdempotencyKey, order.SettlementID, order.DeliveryAddress,
 		order.DistanceMeters, order.EtaMinutes, breakdownJSON, order.TipKobo,
+		order.DiscountKobo, order.PromoID, order.PromoFunder,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: insert order: %w", err)
@@ -384,6 +406,19 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 			); err != nil {
 				return nil, fmt.Errorf("restaurant: insert order item modifier: %w", err)
 			}
+		}
+	}
+	// Record the promo redemption in the SAME tx as the order, so a discounted order
+	// and its redemption commit atomically. UNIQUE(order_id) + ON CONFLICT DO NOTHING
+	// makes it idempotent on replay (never double-counts a single order's usage).
+	if applied != nil {
+		const insertRedemption = `
+			INSERT INTO restaurant_promo_redemptions (id, promo_id, order_id, user_id, discount_kobo)
+			VALUES ($1,$2,$3,$4,$5) ON CONFLICT (order_id) DO NOTHING`
+		if _, err := tx.Exec(ctx, insertRedemption,
+			uuid.New().String(), applied.PromoID, order.ID, customerID, applied.DiscountKobo,
+		); err != nil {
+			return nil, fmt.Errorf("restaurant: record promo redemption: %w", err)
 		}
 	}
 	order.Items = items
@@ -593,39 +628,46 @@ func canTransition(from, to OrderStatus) bool {
 // live UpdateStatus(delivered) path and the crash-recovery reconciler.
 func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settlementID string) error {
 	var riderID *string
-	var tipKobo int64
-	s.db.QueryRow(ctx, `SELECT rider_id, tip_kobo FROM orders WHERE id=$1`, orderID).Scan(&riderID, &tipKobo)
+	var tipKobo, discountKobo int64
+	var promoFunder *string
+	s.db.QueryRow(ctx, `SELECT rider_id, tip_kobo, discount_kobo, promo_funder FROM orders WHERE id=$1`, orderID).
+		Scan(&riderID, &tipKobo, &discountKobo, &promoFunder)
 	var ownerID string
 	s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID)
-	return s.settlement.Settle(ctx, settlementID, orderSettlementSplit(ownerID, riderID, tipKobo))
+	platformFunded := promoFunder != nil && *promoFunder == string(FunderPlatform)
+	return s.settlement.Settle(ctx, settlementID, orderSettlementSplit(ownerID, riderID, tipKobo, discountKobo, platformFunded))
 }
 
 // orderSettlementSplit builds the settlement split for a food order. Pure (no DB) so
-// the payout policy — including the rider-tip routing and its edge cases — is
-// table-testable. Two shapes:
+// the payout policy — rider-tip routing and promo-discount funding, plus their edge
+// cases — is table-testable. Two shapes:
 //
-//   - rider assigned:  80% owner / 10% platform / 10% rider of the NON-TIP base, and
-//     the whole tip added on top to the rider (settlement applies the % to total−tip).
-//   - no rider:        the rider's 10% folds into the owner (90/10), and any tip flows
-//     through the base split (TipKobo=0) — settlement.Split rejects a tip with no
-//     rider, and the tip stays escrowed in the total so the owner (who self-delivered)
-//     receives it as part of their 90% share. Nothing is stranded or lost either way.
-func orderSettlementSplit(ownerID string, riderID *string, tipKobo int64) settlement.Split {
+//   - rider assigned:  80% owner / 10% platform / 10% rider of the pre-discount gross,
+//     the whole tip added on top to the rider, and the promo discount borne by the
+//     funder (platform-funded → off the platform leg; else off the owner remainder).
+//   - no rider:        the rider's 10% folds into the owner (90/10) and the tip flows
+//     through the base split (TipKobo=0, since settlement rejects a tip with no rider);
+//     the promo discount is still borne by its funder. Nothing is stranded or lost.
+func orderSettlementSplit(ownerID string, riderID *string, tipKobo, discountKobo int64, platformFunded bool) settlement.Split {
 	if riderID == nil {
 		return settlement.Split{
-			ProviderID:  ownerID,
-			ProviderPct: 0.90,
-			PlatformPct: 0.10,
+			ProviderID:               ownerID,
+			ProviderPct:              0.90,
+			PlatformPct:              0.10,
+			DiscountKobo:             discountKobo,
+			DiscountFundedByPlatform: platformFunded,
 			// no RiderID, no RiderPct, and no fixed tip leg (would be rejected)
 		}
 	}
 	return settlement.Split{
-		ProviderID:  ownerID,
-		ProviderPct: 0.80,
-		PlatformPct: 0.10,
-		RiderID:     riderID,
-		RiderPct:    0.10,
-		TipKobo:     tipKobo, // 100% to the rider, on top of the base split
+		ProviderID:               ownerID,
+		ProviderPct:              0.80,
+		PlatformPct:              0.10,
+		RiderID:                  riderID,
+		RiderPct:                 0.10,
+		TipKobo:                  tipKobo, // 100% to the rider, on top of the base split
+		DiscountKobo:             discountKobo,
+		DiscountFundedByPlatform: platformFunded,
 	}
 }
 

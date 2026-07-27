@@ -44,6 +44,16 @@ type Split struct {
 	// percentage split exactly (backward-compatible for every non-tipping caller).
 	// A tip requires a rider; Validate rejects a tip with no RiderID.
 	TipKobo int64 `json:"tip_kobo,omitempty"`
+	// DiscountKobo is a promo discount already reflected in the escrowed total (the
+	// payer paid total = gross − discount [+ tip]). The percentages apply to the
+	// PRE-discount gross, and the discount is borne entirely by ONE party:
+	//   - DiscountFundedByPlatform == true  → subtracted from the platform leg
+	//     (the marketplace ate it; provider + rider settle on the full gross).
+	//   - DiscountFundedByPlatform == false → borne by the provider (it falls out of
+	//     the provider remainder; platform + rider are unaffected).
+	// The rider never funds a discount. Defaults to 0, reproducing the pure split.
+	DiscountKobo             int64 `json:"discount_kobo,omitempty"`
+	DiscountFundedByPlatform bool  `json:"discount_funded_by_platform,omitempty"`
 }
 
 // splitEpsilon tolerates float rounding (configs store pct as floats like 0.80).
@@ -66,6 +76,12 @@ func (s Split) Validate() error {
 	}
 	if s.TipKobo > 0 && s.RiderID == nil {
 		return fmt.Errorf("settlement: tip requires a rider")
+	}
+	// A promo discount is non-negative. That it does not drive any leg negative (a too-
+	// large platform-funded discount, or a too-large provider-funded one) is enforced in
+	// Settle, where the gross and each leg's kobo are known.
+	if s.DiscountKobo < 0 {
+		return fmt.Errorf("settlement: discount must be non-negative")
 	}
 	sum := s.ProviderPct + s.PlatformPct
 	if s.RiderID != nil {

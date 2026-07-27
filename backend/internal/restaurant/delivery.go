@@ -106,12 +106,12 @@ func (s *Service) GetOrder(ctx context.Context, orderID, userID string) (*Order,
 		return nil, fmt.Errorf("restaurant: not a participant of this order")
 	}
 	var o Order
-	const q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, tip_kobo, total_kobo,
+	const q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, tip_kobo, discount_kobo, total_kobo,
 	                  status, idempotency_key, COALESCE(settlement_id::text,''), delivery_address,
 	                  COALESCE(dispatch_status,'none'), delivery_code, created_at
 	           FROM orders WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.CustomerID, &o.RestaurantID, &o.RiderID,
-		&o.SubtotalKobo, &o.DeliveryKobo, &o.TipKobo, &o.TotalKobo, &o.Status, &o.IdempotencyKey, &o.SettlementID,
+		&o.SubtotalKobo, &o.DeliveryKobo, &o.TipKobo, &o.DiscountKobo, &o.TotalKobo, &o.Status, &o.IdempotencyKey, &o.SettlementID,
 		&o.DeliveryAddress, &o.DispatchStatus, &o.DeliveryCode, &o.CreatedAt); err != nil {
 		return nil, fmt.Errorf("restaurant: order not found")
 	}
@@ -188,18 +188,18 @@ func (s *Service) ListOrders(ctx context.Context, userID, role string) ([]Order,
 	var q string
 	switch role {
 	case "customer":
-		q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, tip_kobo, total_kobo,
+		q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, tip_kobo, discount_kobo, total_kobo,
 		            status, idempotency_key, COALESCE(settlement_id::text,''), delivery_address,
 		            COALESCE(dispatch_status,'none'), delivery_code, created_at
 		     FROM orders WHERE customer_id=$1 ORDER BY created_at DESC`
 	case "restaurant":
-		q = `SELECT o.id, o.customer_id, o.restaurant_id, o.rider_id, o.subtotal_kobo, o.delivery_kobo, o.tip_kobo, o.total_kobo,
+		q = `SELECT o.id, o.customer_id, o.restaurant_id, o.rider_id, o.subtotal_kobo, o.delivery_kobo, o.tip_kobo, o.discount_kobo, o.total_kobo,
 		            o.status, o.idempotency_key, COALESCE(o.settlement_id::text,''), o.delivery_address,
 		            COALESCE(o.dispatch_status,'none'), o.delivery_code, o.created_at
 		     FROM orders o JOIN restaurants r ON r.id = o.restaurant_id
 		     WHERE r.owner_id=$1 ORDER BY o.created_at DESC`
 	case "rider":
-		q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, tip_kobo, total_kobo,
+		q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, tip_kobo, discount_kobo, total_kobo,
 		            status, idempotency_key, COALESCE(settlement_id::text,''), delivery_address,
 		            COALESCE(dispatch_status,'none'), delivery_code, created_at
 		     FROM orders WHERE rider_id=$1 ORDER BY created_at DESC`
@@ -215,7 +215,7 @@ func (s *Service) ListOrders(ctx context.Context, userID, role string) ([]Order,
 	for rows.Next() {
 		var o Order
 		if err := rows.Scan(&o.ID, &o.CustomerID, &o.RestaurantID, &o.RiderID, &o.SubtotalKobo,
-			&o.DeliveryKobo, &o.TipKobo, &o.TotalKobo, &o.Status, &o.IdempotencyKey, &o.SettlementID,
+			&o.DeliveryKobo, &o.TipKobo, &o.DiscountKobo, &o.TotalKobo, &o.Status, &o.IdempotencyKey, &o.SettlementID,
 			&o.DeliveryAddress, &o.DispatchStatus, &o.DeliveryCode, &o.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -436,7 +436,7 @@ func (s *Service) PostLocation(ctx context.Context, orderID, riderID string, lat
 // one of several riders an order was offered to; the first to accept wins.
 // Falls back to the legacy single rider_candidate_id for backward compatibility.
 func (s *Service) RiderOffers(ctx context.Context, riderID string) ([]Order, error) {
-	const q = `SELECT o.id, o.customer_id, o.restaurant_id, o.rider_id, o.subtotal_kobo, o.delivery_kobo, o.tip_kobo, o.total_kobo,
+	const q = `SELECT o.id, o.customer_id, o.restaurant_id, o.rider_id, o.subtotal_kobo, o.delivery_kobo, o.tip_kobo, o.discount_kobo, o.total_kobo,
 	                  o.status, o.idempotency_key, COALESCE(o.settlement_id::text,''), o.delivery_address,
 	                  COALESCE(o.dispatch_status,'none'), o.delivery_code, o.created_at
 	           FROM orders o
@@ -453,7 +453,7 @@ func (s *Service) RiderOffers(ctx context.Context, riderID string) ([]Order, err
 
 // RiderActive lists the rider's in-progress deliveries (accepted, not terminal).
 func (s *Service) RiderActive(ctx context.Context, riderID string) ([]Order, error) {
-	const q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, tip_kobo, total_kobo,
+	const q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, tip_kobo, discount_kobo, total_kobo,
 	                  status, idempotency_key, COALESCE(settlement_id::text,''), delivery_address,
 	                  COALESCE(dispatch_status,'none'), delivery_code, created_at
 	           FROM orders WHERE rider_id=$1 AND status NOT IN ('delivered','cancelled')
@@ -471,7 +471,7 @@ func (s *Service) queryOrders(ctx context.Context, q string, arg string) ([]Orde
 	for rows.Next() {
 		var o Order
 		if err := rows.Scan(&o.ID, &o.CustomerID, &o.RestaurantID, &o.RiderID, &o.SubtotalKobo,
-			&o.DeliveryKobo, &o.TipKobo, &o.TotalKobo, &o.Status, &o.IdempotencyKey, &o.SettlementID,
+			&o.DeliveryKobo, &o.TipKobo, &o.DiscountKobo, &o.TotalKobo, &o.Status, &o.IdempotencyKey, &o.SettlementID,
 			&o.DeliveryAddress, &o.DispatchStatus, &o.DeliveryCode, &o.CreatedAt); err != nil {
 			return nil, err
 		}
