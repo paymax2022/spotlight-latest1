@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/finance/tiers"
 )
 
 // lagosTZ is the delivery locale used to decide the night-fee window. Loaded once;
@@ -48,10 +49,19 @@ type Service struct {
 	feeRepo    *DeliveryConfigRepo // distance-based delivery-fee config (nil-safe → defaults)
 	notifier   Notifier            // nil-safe via s.notify; defaults to LogNotifier
 	rt         *Realtime           // optional; nil → no WS fan-out
+	tiers      *tiers.Service      // optional; nil → no tier-limit gate on the order escrow
 }
 
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
 	return &Service{db: db, settlement: settlement, notifier: LogNotifier{}, feeRepo: NewDeliveryConfigRepo(db)}
+}
+
+// WithTiers attaches the KYC/tier-limit service so the order escrow debit is gated by
+// the customer's daily & per-transaction wallet limits (fail-closed), per the money
+// iron rule. Without it the gate is skipped (nil-safe, preserves prior behavior).
+func (s *Service) WithTiers(t *tiers.Service) *Service {
+	s.tiers = t
+	return s
 }
 
 // WithLedger attaches the finance ledger used by the payout-run disbursement
@@ -227,6 +237,14 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	ref := "order:" + orderID
 
 	// Escrow full amount: 80% restaurant, 10% rider, 10% platform.
+	// Tier-limit gate (money iron rule): the order escrow debits the customer's wallet,
+	// so enforce their KYC/tier daily & per-transaction limits fail-closed BEFORE any
+	// debit. A tier/limit lookup error also blocks (never allow-on-error).
+	if s.tiers != nil {
+		if terr := s.tiers.EnforceWalletDebitLimit(ctx, customerID, total); terr != nil {
+			return nil, terr
+		}
+	}
 	sett, err := s.settlement.Escrow(ctx, customerID, ref, req.IdempotencyKey, "food_delivery", total)
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: escrow payment: %w", err)
@@ -320,6 +338,17 @@ func (s *Service) OrderParties(ctx context.Context, orderID string) (customer, o
 
 // orderParties returns the three participant user-ids for an order: the
 // customer, the restaurant owner, and the assigned rider (rider may be empty).
+// recordOrderEvent appends an immutable audit row (actor + from→to + timestamp) for a
+// lifecycle transition, satisfying the "every state change writes an audit event"
+// invariant. Best-effort and non-blocking — an audit-write failure must never fail the
+// transition (the row is the compliance trail, not the source of truth).
+func (s *Service) recordOrderEvent(ctx context.Context, orderID, actorID string, from, to OrderStatus) {
+	_, _ = s.db.Exec(ctx,
+		`INSERT INTO restaurant_order_status_events (order_id, actor_id, from_status, to_status)
+		 VALUES ($1, NULLIF($2,''), NULLIF($3,''), $4)`,
+		orderID, actorID, string(from), string(to))
+}
+
 // getOrderByIdempotencyKey resolves and returns the order previously created with the
 // given Idempotency-Key — the canonical result for an idempotent PlaceOrder replay
 // (returned instead of a UNIQUE-violation 500). Scoped to the order's own customer.
@@ -387,7 +416,7 @@ func (s *Service) UpdateStatus(ctx context.Context, orderID, actorID string, new
 	if newStatus == OrderCancelled {
 		return s.cancelAndRefund(ctx, orderID, actorID)
 	}
-	return s.transitionInternal(ctx, orderID, newStatus)
+	return s.transitionInternal(ctx, orderID, actorID, newStatus)
 }
 
 // transitionInternal performs the guarded lifecycle transition and its side effects
@@ -395,7 +424,7 @@ func (s *Service) UpdateStatus(ctx context.Context, orderID, actorID string, new
 // assumed to have ALREADY been checked, or the caller is a trusted internal path such
 // as ConfirmHandoff (after it verifies the delivery-code POD). It is the ONLY place
 // `delivered` may be set.
-func (s *Service) transitionInternal(ctx context.Context, orderID string, newStatus OrderStatus) error {
+func (s *Service) transitionInternal(ctx context.Context, orderID, actorID string, newStatus OrderStatus) error {
 	var order Order
 	const q = `SELECT id, restaurant_id, status, settlement_id FROM orders WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&order.ID, &order.RestaurantID, &order.Status, &order.SettlementID); err != nil {
@@ -409,6 +438,8 @@ func (s *Service) transitionInternal(ctx context.Context, orderID string, newSta
 	if _, err := s.db.Exec(ctx, `UPDATE orders SET status=$1 WHERE id=$2`, string(newStatus), orderID); err != nil {
 		return err
 	}
+	// Append-only audit of the transition (actor + from→to). Best-effort, non-blocking.
+	s.recordOrderEvent(ctx, orderID, actorID, order.Status, newStatus)
 
 	// On delivery, settle: 80% restaurant owner, 10% rider (stubbed to owner if no rider), 10% platform.
 	if newStatus == OrderDelivered {
@@ -558,6 +589,7 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
+	s.recordOrderEvent(ctx, orderID, actorID, OrderStatus(status), OrderCancelled)
 
 	// Notify the customer + rider (if assigned) and broadcast cancellation.
 	customer, _, rider, _ := s.orderParties(ctx, orderID)
