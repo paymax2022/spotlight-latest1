@@ -379,7 +379,7 @@ func (s *Service) AcceptDelivery(ctx context.Context, orderID, riderID string) e
 		return fmt.Errorf("restaurant: you are not an offered rider for this order")
 	}
 
-	if _, err := tx.Exec(ctx, `UPDATE orders SET rider_id=$1, dispatch_status='assigned' WHERE id=$2`, riderID, orderID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE orders SET rider_id=$1, dispatch_status='assigned', assigned_at=COALESCE(assigned_at, now()) WHERE id=$2`, riderID, orderID); err != nil {
 		return err
 	}
 	// Mark this rider's offer accepted; expire the rest so they drop off other

@@ -49,6 +49,12 @@ type AdminDispatchOrder struct {
 	ReadyAt        *time.Time `json:"ready_at,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 	WaitingMinutes int        `json:"waiting_minutes"`
+	// Dispatch SLA (time-to-assign) surface for ops.
+	AssignedAt       *time.Time `json:"assigned_at,omitempty"`
+	FirstOfferedAt   *time.Time `json:"first_offered_at,omitempty"`
+	DispatchAttempts int        `json:"dispatch_attempts"`
+	SLAStatus        string     `json:"sla_status"`       // on_time | at_risk | breached
+	SLAElapsedSecs   int        `json:"sla_elapsed_secs"` // realized time-to-assign, or ticking if unassigned
 }
 
 // AdminApplication mirrors the restaurant merchant record for the onboarding/KYC
@@ -188,7 +194,8 @@ func (s *Service) AdminDispatchQueue(ctx context.Context) ([]AdminDispatchOrder,
 	const q = `
 		SELECT o.id, o.restaurant_id, r.name, o.status, o.rider_id,
 		       (SELECT d.name FROM drivers d WHERE d.user_id = o.rider_id) AS rider_name,
-		       o.delivery_address, o.total_kobo, o.delivery_kobo, o.ready_at, o.created_at
+		       o.delivery_address, o.total_kobo, o.delivery_kobo, o.ready_at, o.created_at,
+		       o.assigned_at, o.first_offered_at, o.dispatch_attempts
 		FROM orders o
 		JOIN restaurants r ON r.id = o.restaurant_id
 		WHERE o.status IN ('ready','picked_up')
@@ -204,7 +211,8 @@ func (s *Service) AdminDispatchQueue(ctx context.Context) ([]AdminDispatchOrder,
 	for rows.Next() {
 		var d AdminDispatchOrder
 		if err := rows.Scan(&d.ID, &d.RestaurantID, &d.RestaurantName, &d.Status, &d.RiderID,
-			&d.RiderName, &d.DeliveryAddr, &d.TotalKobo, &d.DeliveryFeeKobo, &d.ReadyAt, &d.CreatedAt); err != nil {
+			&d.RiderName, &d.DeliveryAddr, &d.TotalKobo, &d.DeliveryFeeKobo, &d.ReadyAt, &d.CreatedAt,
+			&d.AssignedAt, &d.FirstOfferedAt, &d.DispatchAttempts); err != nil {
 			return nil, err
 		}
 		since := d.CreatedAt
@@ -214,6 +222,10 @@ func (s *Service) AdminDispatchQueue(ctx context.Context) ([]AdminDispatchOrder,
 		if mins := int(now.Sub(since).Minutes()); mins > 0 {
 			d.WaitingMinutes = mins
 		}
+		// Dispatch SLA: time-to-assign from ready→assigned (or ready→now while searching).
+		st, elapsed := dispatchSLAStatus(d.ReadyAt, d.AssignedAt, now, dispatchSLATarget, dispatchSLABreach)
+		d.SLAStatus = string(st)
+		d.SLAElapsedSecs = int(elapsed.Seconds())
 		out = append(out, d)
 	}
 	return out, rows.Err()
