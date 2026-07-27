@@ -74,7 +74,7 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 		code := http.StatusInternalServerError
 		if errors.Is(err, ErrInvalidModifierSelection) {
 			code = http.StatusBadRequest
-		} else if errors.Is(err, ErrOutsideDeliveryZone) || errors.Is(err, ErrPromoInvalid) {
+		} else if errors.Is(err, ErrOutsideDeliveryZone) || errors.Is(err, ErrPromoInvalid) || errors.Is(err, ErrClosedNow) {
 			code = http.StatusUnprocessableEntity
 		}
 		c.JSON(code, gin.H{"error": err.Error()})
