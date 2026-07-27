@@ -233,14 +233,19 @@ func (s *Service) AdminDispatchQueue(ctx context.Context) ([]AdminDispatchOrder,
 
 // ── Onboarding review queue ───────────────────────────────────────────────────
 
-// AdminListApplications lists restaurant merchant records for the onboarding/KYC
-// review queue. status filters the derived onboarding status: an open restaurant
-// is 'approved', a closed one is 'pending'. Empty status returns all.
+// AdminListApplications lists restaurant merchant records for the onboarding/KYB
+// review queue. When a merchant has submitted KYB, the row reflects the real KYB
+// status, decision reason, and uploaded document types; otherwise it falls back to the
+// legacy is_open-derived status (approved/pending). `status` filters on the resolved
+// status. Empty status returns all.
 func (s *Service) AdminListApplications(ctx context.Context, status string) ([]AdminApplication, error) {
 	const q = `
-		SELECT r.id, r.name, r.owner_id, COALESCE(r.address,''), r.is_open, r.created_at
+		SELECT r.id, r.name, r.owner_id, COALESCE(r.address,''), r.is_open, r.created_at,
+		       k.status, k.decision_reason, k.submitted_at,
+		       COALESCE((SELECT array_agg(d.doc_type) FROM restaurant_kyb_documents d WHERE d.restaurant_id = r.id), '{}') AS doc_types
 		FROM restaurants r
-		ORDER BY r.created_at DESC`
+		LEFT JOIN restaurant_kyb k ON k.restaurant_id = r.id
+		ORDER BY COALESCE(k.submitted_at, r.created_at) DESC`
 	rows, err := s.db.Query(ctx, q)
 	if err != nil {
 		return nil, err
@@ -250,17 +255,28 @@ func (s *Service) AdminListApplications(ctx context.Context, status string) ([]A
 	for rows.Next() {
 		var a AdminApplication
 		var isOpen bool
-		if err := rows.Scan(&a.ID, &a.RestaurantName, &a.OwnerID, &a.Address, &isOpen, &a.SubmittedAt); err != nil {
+		var kybStatus, decisionReason *string
+		var submittedAt *time.Time
+		var docTypes []string
+		if err := rows.Scan(&a.ID, &a.RestaurantName, &a.OwnerID, &a.Address, &isOpen, &a.SubmittedAt,
+			&kybStatus, &decisionReason, &submittedAt, &docTypes); err != nil {
 			return nil, err
 		}
-		if isOpen {
+		if kybStatus != nil {
+			a.Status = *kybStatus // real KYB status when a submission exists
+			a.ReviewNote = decisionReason
+			if submittedAt != nil {
+				a.SubmittedAt = *submittedAt
+			}
+		} else if isOpen {
 			a.Status = "approved"
 		} else {
 			a.Status = "pending"
 		}
-		// No KYC review-note column exists on `restaurants` yet (see report); the
-		// review note supplied on reject is delivered to the owner, not persisted.
-		a.Documents = []any{}
+		a.Documents = make([]any, 0, len(docTypes))
+		for _, d := range docTypes {
+			a.Documents = append(a.Documents, d)
+		}
 		if status != "" && a.Status != status {
 			continue
 		}
@@ -282,22 +298,65 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 	if !exists {
 		return fmt.Errorf("restaurant: application not found")
 	}
+	// Resolve the KYB record (if the merchant submitted one) so the decision drives the
+	// KYB state machine + snapshot. Legacy restaurants with no KYB row keep the original
+	// direct-toggle behavior (back-compat).
+	kyb, hasKYB, err := s.loadKYB(ctx, restaurantID)
+	if err != nil {
+		return err
+	}
 	switch decision {
 	case "approve":
+		if hasKYB && !kybCanTransition(kyb.Status, KYBApproved) {
+			return fmt.Errorf("restaurant: KYB is %s — it must be submitted before approval", kyb.Status)
+		}
+		if hasKYB {
+			if _, err := s.db.Exec(ctx,
+				`UPDATE restaurant_kyb SET status='approved', decision_reason=NULLIF($2,''), reviewed_by=$3, decided_at=now(), updated_at=now() WHERE restaurant_id=$1`,
+				restaurantID, note, adminID); err != nil {
+				return err
+			}
+		}
+		// Approval is what takes a restaurant live.
 		if _, err := s.db.Exec(ctx,
-			`UPDATE restaurants SET is_open=true, updated_at=now() WHERE id=$1`, restaurantID); err != nil {
+			`UPDATE restaurants SET is_open=true, kyb_status=CASE WHEN $2 THEN 'approved' ELSE kyb_status END, updated_at=now() WHERE id=$1`,
+			restaurantID, hasKYB); err != nil {
 			return err
 		}
 	case "reject":
 		if note == "" {
 			return fmt.Errorf("restaurant: a reviewer note is required to reject")
 		}
+		if hasKYB {
+			if _, err := s.db.Exec(ctx,
+				`UPDATE restaurant_kyb SET status='rejected', decision_reason=$2, reviewed_by=$3, decided_at=now(), updated_at=now() WHERE restaurant_id=$1`,
+				restaurantID, note, adminID); err != nil {
+				return err
+			}
+		}
 		if _, err := s.db.Exec(ctx,
-			`UPDATE restaurants SET is_open=false, updated_at=now() WHERE id=$1`, restaurantID); err != nil {
+			`UPDATE restaurants SET is_open=false, kyb_status=CASE WHEN $2 THEN 'rejected' ELSE kyb_status END, updated_at=now() WHERE id=$1`,
+			restaurantID, hasKYB); err != nil {
 			return err
 		}
+	case "needs_info":
+		if note == "" {
+			return fmt.Errorf("restaurant: a reviewer note is required to request more info")
+		}
+		if !hasKYB {
+			return fmt.Errorf("restaurant: no KYB submission to return")
+		}
+		if !kybCanTransition(kyb.Status, KYBNeedsInfo) {
+			return fmt.Errorf("restaurant: KYB is %s — cannot request more info", kyb.Status)
+		}
+		if _, err := s.db.Exec(ctx,
+			`UPDATE restaurant_kyb SET status='needs_more_info', decision_reason=$2, reviewed_by=$3, decided_at=now(), updated_at=now() WHERE restaurant_id=$1`,
+			restaurantID, note, adminID); err != nil {
+			return err
+		}
+		_, _ = s.db.Exec(ctx, `UPDATE restaurants SET kyb_status='needs_more_info', updated_at=now() WHERE id=$1`, restaurantID)
 	default:
-		return fmt.Errorf("restaurant: invalid decision %q (want approve|reject)", decision)
+		return fmt.Errorf("restaurant: invalid decision %q (want approve|reject|needs_info)", decision)
 	}
 	// Best-effort audit via the shared notifier (owner is informed of the decision).
 	var owner string
