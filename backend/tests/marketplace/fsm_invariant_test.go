@@ -249,6 +249,7 @@ var listingTransitionsMirror = map[mkt.ListingStatus]map[mkt.ListingStatus]bool{
 		mkt.ListingPaused:        true,
 		mkt.ListingExpired:       true,
 		mkt.ListingSold:          true,
+		mkt.ListingPendingReview: true, // re-moderation: a content edit to a live listing
 		mkt.ListingRemovedPolicy: true,
 		mkt.ListingRemovedUser:   true,
 	},

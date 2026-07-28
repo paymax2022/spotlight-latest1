@@ -89,11 +89,41 @@ func (s *Service) UpdateListing(ctx context.Context, sellerID, id string, in Upd
 	if err != nil {
 		return nil, err
 	}
-	// If the listing is live, re-emit an upsert so search stays current.
+	// EDIT-AFTER-APPROVE RE-MODERATION (trust backbone, LM-002/MOD-010/EC-010): a content
+	// edit (title/description/attributes) to a LIVE listing must re-enter pending_review
+	// and be pulled from discovery until re-approved — otherwise a seller can bait-and-
+	// switch an approved ad into banned content. A price-only edit (already guarded against
+	// active orders above) is a normal seller action and does NOT re-moderate.
+	if updated.Status == ListingActive && requiresRemoderation(in) {
+		if err := guardListingTransition(ListingActive, ListingPendingReview); err != nil {
+			return nil, err
+		}
+		reason := "content_edited"
+		if err := s.repo.SetListingStatus(ctx, id, ListingActive, ListingPendingReview, &reason); err != nil {
+			return nil, err
+		}
+		updated.Status = ListingPendingReview
+		_ = s.repo.InsertOutbox(ctx, nil, id, OutboxDelete, map[string]any{"listing_id": id})
+		_ = s.writeAudit(ctx, AuditEntry{
+			AdminID: sellerID, Action: "mkt.listing.edit_remoderate", TargetType: "listing", TargetID: id, ReasonCode: reason,
+			BeforeState: map[string]any{"status": string(ListingActive)},
+			AfterState:  map[string]any{"status": string(ListingPendingReview)},
+		})
+		s.notifySafe(ctx, updated.SellerID, "mkt.listing.remoderation", "Your edit is under review before your listing goes live again.")
+		return updated, nil
+	}
+	// Non-sensitive edit (or non-live listing): if still live, refresh search.
 	if updated.Status == ListingActive {
 		_ = s.repo.InsertOutbox(ctx, nil, id, OutboxUpsert, s.searchPayload(updated))
 	}
 	return updated, nil
+}
+
+// requiresRemoderation reports whether an edit changes moderation-relevant CONTENT
+// (title, description, or attributes) as opposed to a price-only change — so a live
+// listing must re-enter pending_review. Pure/testable.
+func requiresRemoderation(in UpdateListingInput) bool {
+	return in.Title != nil || in.Description != nil || in.Attrs != nil
 }
 
 // SubmitListing runs the §2.1 submit guard and either auto-approves (risk_tier 0 AND

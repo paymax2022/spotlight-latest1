@@ -100,11 +100,11 @@ func (r *Repository) GetListing(ctx context.Context, id string) (*Listing, error
 func (r *Repository) SetListingStatus(ctx context.Context, id string, from, to ListingStatus, moderationReason *string) error {
 	ct, err := r.db.Exec(ctx, `
 		UPDATE public.mkt_listings
-		SET status=$2,
+		SET status=$2::listing_status,
 		    moderation_reason_code=COALESCE($4, moderation_reason_code),
-		    sold_at = CASE WHEN $2='sold' THEN now() ELSE sold_at END,
+		    sold_at = CASE WHEN $2::listing_status='sold'::listing_status THEN now() ELSE sold_at END,
 		    updated_at=now()
-		WHERE id=$1 AND status=$3`, id, string(to), string(from), moderationReason)
+		WHERE id=$1 AND status=$3::listing_status`, id, string(to), string(from), moderationReason)
 	if err != nil {
 		return wrapInternal("set listing status", err)
 	}
