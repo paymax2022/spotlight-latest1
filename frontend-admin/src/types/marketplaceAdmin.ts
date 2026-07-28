@@ -248,3 +248,110 @@ export interface MarketplaceErrorBody {
     request_id?: string | null;
   };
 }
+
+// ── Taxonomy (categories + attribute schema) ─────────────────────────────────
+// A category's attribute_schema is the draft-07 SUBSET the backend enforces at
+// listing write-time (internal/marketplace/attrs_validation.go): required[],
+// per-property type/enum/minimum/maximum, additionalProperties. Authoring it here
+// is the source that seller listings are validated against.
+
+export type MktAttributeType = 'string' | 'number' | 'integer' | 'boolean';
+
+export interface MktAttributeProp {
+  type?: MktAttributeType;
+  enum?: (string | number)[];
+  minimum?: number;
+  maximum?: number;
+}
+
+export interface MktAttributeSchema {
+  required?: string[];
+  additionalProperties?: boolean;
+  properties?: Record<string, MktAttributeProp>;
+}
+
+export interface MktCategory {
+  id: string;
+  market_id: string;
+  parent_id: string | null;
+  slug: string;
+  name: string;
+  attribute_schema: MktAttributeSchema;
+  risk_tier: number; // 0..3; 0 = auto-approve eligible for trusted sellers
+  commission_bps: number; // platform take-rate in basis points
+  is_active: boolean;
+  listing_count?: number; // active listings under this category (EC-007 delete guard)
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface MktCategoryInput {
+  name: string;
+  slug: string;
+  parent_id?: string | null;
+  risk_tier: number;
+  commission_bps: number;
+  is_active: boolean;
+  attribute_schema: MktAttributeSchema;
+  reason_code?: string; // audited config change (ADM-001)
+}
+
+// ── Analytics (GMV / DAU / conversion) — ADM-005 ─────────────────────────────
+
+export interface MktAnalyticsPoint {
+  date: string; // ISO date (day granularity)
+  gmv_kobo: number; // transaction value facilitated that day
+  deals: number; // deals closed (chat → agreed) that day
+}
+
+export interface MktCategoryStat {
+  category_id: string;
+  name: string;
+  gmv_kobo: number;
+  active_listings: number;
+}
+
+// ── Appeals (moderation reversal, maker-checker) — MOD-009 ───────────────────
+
+export type MktAppealStatus = 'opened' | 'under_review' | 'decided' | 'executed' | 'closed';
+export type MktAppealTargetType = 'listing' | 'boost' | 'user';
+export type MktAppealDecision = 'upheld' | 'overturned'; // uphold = deny appeal; overturn = reverse the original action
+
+export interface MktAppeal {
+  id: string;
+  target_type: MktAppealTargetType;
+  target_id: string;
+  appellant_id: string;
+  original_action: string; // e.g. 'removed_policy', 'rejected_with_reason', 'suspended'
+  original_reason_code: string;
+  appellant_note: string;
+  status: MktAppealStatus;
+  decision?: MktAppealDecision | null;
+  decision_notes?: string | null;
+  decided_by?: string | null;
+  second_approver_id?: string | null;
+  requires_dual_approval?: boolean; // overturning a policy action needs a second approver
+  created_at: string;
+  decided_at?: string | null;
+  executed_at?: string | null;
+}
+
+export interface MktAppealDecideRequest {
+  decision: 'uphold' | 'overturn';
+  reason_code: string;
+  notes?: string;
+}
+
+export interface MktAnalytics {
+  range_days: number;
+  gmv_kobo: number; // value facilitated over the window
+  gmv_prev_kobo: number; // same-length preceding window (for delta)
+  revenue_kobo: number; // platform take: commission + boost ad revenue
+  dau: number; // daily active users (avg over window)
+  active_listings: number;
+  new_listings: number;
+  // Discovery → contact → deal funnel counts over the window.
+  funnel: { views: number; contacts: number; deals: number };
+  gmv_series: MktAnalyticsPoint[];
+  top_categories: MktCategoryStat[];
+}
