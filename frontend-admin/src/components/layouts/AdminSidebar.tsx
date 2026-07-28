@@ -430,6 +430,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Flags Queue', href: '/admin/marketplace/flags', section: 'Marketplace', permissions: ['marketplace.admin.flags.action'] },
   { label: 'Orders Aging', href: '/admin/marketplace/orders-aging', section: 'Marketplace', permissions: ['marketplace.admin.orders.aging'] },
   { label: 'Boosts', href: '/admin/marketplace/boosts', section: 'Marketplace', permissions: ['marketplace.admin.moderation'] },
+  { label: 'Pricing & Monetisation', href: '/admin/marketplace/pricing', section: 'Marketplace', permissions: ['marketplace.admin.pricing'] },
   { label: 'Analytics', href: '/admin/marketplace/analytics', section: 'Marketplace', permissions: ['marketplace.admin.analytics', 'marketplace.admin.audit.read'] },
   { label: 'Audit Log', href: '/admin/marketplace/audit-log', section: 'Marketplace', permissions: ['marketplace.admin.audit.read'] },
   // ── Arena (Naija Driver contest ops console; per-console RBAC arena.*) ──────

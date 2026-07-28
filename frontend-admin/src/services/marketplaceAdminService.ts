@@ -22,6 +22,11 @@ import type {
   MktKycReviewRequest,
   MktBlacklistRequest,
   MktFraudSignal,
+  MktBoostPackage,
+  MktCommissionConfig,
+  MktDiscountCode,
+  MktDiscountCodeInput,
+  MktFeaturedSlotConfig,
 } from '@/types/marketplaceAdmin';
 
 // Paymax Marketplace admin console — service layer.
@@ -697,6 +702,38 @@ export async function searchUsers(params?: { q?: string; status?: MktUserStatus;
   return Array.isArray(data) ? data : data.data ?? [];
 }
 
+// ─── Pricing & Monetisation config — ADM-001/002, MO-002/011/016 ─────────────
+
+const FIXTURE_BOOST_PACKAGES: MktBoostPackage[] = [
+  { tier: 'start', label: 'Start', duration_days: 7, price_kobo: 50_000, weight: 1.0, is_active: true },
+  { tier: 'vip', label: 'VIP', duration_days: 14, price_kobo: 200_000, weight: 2.0, is_active: true },
+  { tier: 'vip_gold', label: 'VIP Gold', duration_days: 30, price_kobo: 500_000, weight: 3.0, is_active: true },
+  { tier: 'diamond', label: 'Diamond', duration_days: 30, price_kobo: 1_500_000, weight: 5.0, is_active: true },
+  { tier: 'enterprise', label: 'Enterprise', duration_days: 60, price_kobo: 5_000_000, weight: 8.0, is_active: false },
+];
+
+let fixtureCommission: MktCommissionConfig = { default_bps: 500, boost_revenue_bps: 10_000, updated_at: iso(60 * 24 * 9), updated_by: 'adm_tunde' };
+
+const FIXTURE_DISCOUNTS: MktDiscountCode[] = [
+  { id: 'dsc_1', code: 'BOOST50', kind: 'percent', value: 50, applies_to: 'boost', max_redemptions: 1000, redeemed_count: 640, valid_from: iso(60 * 24 * 20), valid_until: iso(-60 * 24 * 10), is_active: true, created_at: iso(60 * 24 * 20) },
+  { id: 'dsc_2', code: 'NEWSELLER', kind: 'fixed', value: 20_000, applies_to: 'boost', max_redemptions: null, redeemed_count: 2130, valid_from: iso(60 * 24 * 60), valid_until: null, is_active: true, created_at: iso(60 * 24 * 60) },
+  { id: 'dsc_3', code: 'XMAS2025', kind: 'percent', value: 30, applies_to: 'boost', max_redemptions: 500, redeemed_count: 500, valid_from: iso(60 * 24 * 90), valid_until: iso(60 * 24 * 30), is_active: false, created_at: iso(60 * 24 * 90) },
+];
+
+const FIXTURE_FEATURED_SLOTS: MktFeaturedSlotConfig[] = [
+  { surface: 'home_hero', label: 'Home — hero carousel', max_slots: 6, filled_slots: 6 },
+  { surface: 'category_top', label: 'Category — top strip', max_slots: 4, filled_slots: 3 },
+  { surface: 'search_top', label: 'Search — sponsored row', max_slots: 3, filled_slots: 2 },
+];
+
+export async function listBoostPackages(): Promise<MktBoostPackage[]> {
+  if (USE_FIXTURES) return delay([...FIXTURE_BOOST_PACKAGES]);
+  const res = await fetch(`${marketplaceAdminBase()}/boost-packages`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Boost packages fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
 export async function getUserAdmin(id: string): Promise<MktUserAdmin> {
   if (USE_FIXTURES) {
     const found = FIXTURE_USERS.find((u) => u.id === id);
@@ -791,6 +828,104 @@ export async function listFraudSignals(severity?: 'low' | 'medium' | 'high'): Pr
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Fraud signals fetch failed'));
   const data = await res.json();
   return Array.isArray(data) ? data : data.data ?? [];
+}
+
+// upsertBoostPackage: price/duration/weight/active for a tier. Applies to NEW
+// purchases only (ADM-001). reason_code mandatory (audited).
+export async function upsertBoostPackage(pkg: MktBoostPackage, reasonCode: string): Promise<MktBoostPackage> {
+  if (!reasonCode.trim()) throw new Error('reason_code is required to change a boost package.');
+  if (pkg.price_kobo < 0 || pkg.duration_days <= 0 || pkg.weight < 0) throw new Error('price, duration, and weight must be non-negative (duration > 0).');
+  if (USE_FIXTURES) return delay({ ...pkg });
+  const res = await fetch(`${marketplaceAdminBase()}/boost-packages/${encodeURIComponent(pkg.tier)}`, {
+    method: 'PUT', headers: authHeaders(), body: JSON.stringify({ ...pkg, reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Boost package update failed'));
+  return res.json();
+}
+
+export async function getCommissionConfig(): Promise<MktCommissionConfig> {
+  if (USE_FIXTURES) return delay({ ...fixtureCommission });
+  const res = await fetch(`${marketplaceAdminBase()}/commission`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Commission fetch failed'));
+  return res.json();
+}
+
+// setCommissionConfig: the platform default take-rate. Per-category overrides live
+// in Taxonomy (category.commission_bps). Applies to NEW purchases only; audited.
+export async function setCommissionConfig(defaultBps: number, reasonCode: string): Promise<MktCommissionConfig> {
+  if (!reasonCode.trim()) throw new Error('reason_code is required to change commission.');
+  if (defaultBps < 0 || defaultBps > 10_000) throw new Error('default_bps must be 0–10000.');
+  if (USE_FIXTURES) {
+    fixtureCommission = { ...fixtureCommission, default_bps: defaultBps, updated_at: new Date().toISOString(), updated_by: 'adm_current' };
+    return delay({ ...fixtureCommission });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/commission`, {
+    method: 'PUT', headers: authHeaders(), body: JSON.stringify({ default_bps: defaultBps, reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Commission update failed'));
+  return res.json();
+}
+
+export async function listDiscountCodes(): Promise<MktDiscountCode[]> {
+  if (USE_FIXTURES) return delay([...FIXTURE_DISCOUNTS]);
+  const res = await fetch(`${marketplaceAdminBase()}/discount-codes`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Discount codes fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+export async function createDiscountCode(input: MktDiscountCodeInput): Promise<MktDiscountCode> {
+  if (!input.reason_code.trim()) throw new Error('reason_code is required to create a discount code.');
+  if (!/^[A-Z0-9_-]{3,24}$/.test(input.code)) throw new Error('code must be 3–24 chars: A–Z, 0–9, dash, underscore.');
+  if (input.kind === 'percent' && (input.value <= 0 || input.value > 100)) throw new Error('percent value must be 1–100.');
+  if (input.kind === 'fixed' && input.value <= 0) throw new Error('fixed value (kobo) must be positive.');
+  if (USE_FIXTURES) {
+    return delay({
+      id: `dsc_${Date.now()}`, code: input.code, kind: input.kind, value: input.value, applies_to: input.applies_to,
+      max_redemptions: input.max_redemptions ?? null, redeemed_count: 0, valid_from: new Date().toISOString(),
+      valid_until: input.valid_until ?? null, is_active: true, created_at: new Date().toISOString(),
+    });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/discount-codes`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(input) });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Discount code create failed'));
+  return res.json();
+}
+
+export async function setDiscountCodeActive(id: string, isActive: boolean, reasonCode: string): Promise<MktDiscountCode> {
+  if (!reasonCode.trim()) throw new Error('reason_code is required to enable/disable a discount code.');
+  if (USE_FIXTURES) {
+    const found = FIXTURE_DISCOUNTS.find((d) => d.id === id);
+    if (!found) throw new Error(`Discount code ${id} not found`);
+    return delay({ ...found, is_active: isActive });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/discount-codes/${encodeURIComponent(id)}/active`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ is_active: isActive, reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Discount code status change failed'));
+  return res.json();
+}
+
+export async function listFeaturedSlots(): Promise<MktFeaturedSlotConfig[]> {
+  if (USE_FIXTURES) return delay([...FIXTURE_FEATURED_SLOTS]);
+  const res = await fetch(`${marketplaceAdminBase()}/featured-slots`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Featured slots fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+export async function setFeaturedSlotCap(surface: string, maxSlots: number, reasonCode: string): Promise<MktFeaturedSlotConfig> {
+  if (!reasonCode.trim()) throw new Error('reason_code is required to change slot inventory.');
+  if (maxSlots < 0) throw new Error('max_slots must be non-negative.');
+  if (USE_FIXTURES) {
+    const found = FIXTURE_FEATURED_SLOTS.find((s) => s.surface === surface);
+    if (!found) throw new Error(`Surface ${surface} not found`);
+    return delay({ ...found, max_slots: maxSlots });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/featured-slots/${encodeURIComponent(surface)}`, {
+    method: 'PUT', headers: authHeaders(), body: JSON.stringify({ max_slots: maxSlots, reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Slot inventory change failed'));
+  return res.json();
 }
 
 export type { MktDisputeDecision };
