@@ -18,7 +18,7 @@ import { shadow1 } from '@/constants/shadows';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { MarketColors, formatNaira, conditionLabel, fairPriceVerdict, FAIR_PRICE_LABEL, MEETUP_SAFETY_NUDGE } from '@/features/marketplace';
-import { useListing } from '@/features/marketplace/hooks';
+import { useListing, useSaveListing, useUnsaveListing } from '@/features/marketplace/hooks';
 import SellerTrustCard from '@/features/marketplace/components/SellerTrustCard';
 
 const { width } = Dimensions.get('window');
@@ -26,7 +26,8 @@ const { width } = Dimensions.get('window');
 export default function ListingDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const listing = useListing(id!);
-  const [saved, setSaved] = useState(false);
+  const save = useSaveListing();
+  const unsave = useUnsaveListing();
   const [callRevealed, setCallRevealed] = useState(false);
   const [gallery, setGallery] = useState(0);
 
@@ -57,8 +58,14 @@ export default function ListingDetail() {
       <View style={styles.topBar}>
         <Pressable style={styles.roundBtn} onPress={() => router.back()} hitSlop={8} accessibilityLabel="Back"><ArrowLeft size={20} color={Colors.onSurface} /></Pressable>
         <View style={styles.topBarRight}>
-          <Pressable style={styles.roundBtn} onPress={() => setSaved((s) => !s)} hitSlop={8} accessibilityLabel="Save listing">
-            <Heart size={18} color={saved ? MarketColors.danger : Colors.onSurface} fill={saved ? MarketColors.danger : 'transparent'} />
+          <Pressable
+            style={styles.roundBtn}
+            onPress={() => (l.savedByMe ? unsave.mutate(l.id) : save.mutate(l.id))}
+            disabled={save.isPending || unsave.isPending}
+            hitSlop={8}
+            accessibilityLabel={l.savedByMe ? 'Remove from saved' : 'Save listing'}
+          >
+            <Heart size={18} color={l.savedByMe ? MarketColors.danger : Colors.onSurface} fill={l.savedByMe ? MarketColors.danger : 'transparent'} />
           </Pressable>
           <Pressable style={styles.roundBtn} hitSlop={8} accessibilityLabel="Report listing" onPress={() => router.push(`/marketplace/account/report?targetType=listing&targetId=${l.id}&targetName=${encodeURIComponent(l.title)}&sellerId=${l.sellerId}` as never)}><Flag size={18} color={Colors.onSurface} /></Pressable>
         </View>

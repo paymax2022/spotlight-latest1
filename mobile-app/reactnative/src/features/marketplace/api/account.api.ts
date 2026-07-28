@@ -279,6 +279,52 @@ export async function markAllNotificationsRead(): Promise<{ ok: boolean }> {
   return mktPost<{ ok: boolean }>('/notifications/read-all');
 }
 
+// ─── Followed sellers (LD-005) ───────────────────────────────────────────────
+
+export interface FollowedSeller {
+  id: string; // follow record id
+  sellerId: string;
+  sellerName: string;
+  avatarUrl?: string | null;
+  trustScore: number;
+  activeListings: number;
+  followedAt: string;
+}
+
+let mockFollows: FollowedSeller[] = [
+  { id: 'fol-1', sellerId: 'usr_7f2a', sellerName: 'Tunde Electronics', trustScore: 0.86, activeListings: 42, followedAt: mkIso(60 * 24 * 3) },
+  { id: 'fol-2', sellerId: 'usr_2b9e', sellerName: 'Lagos Auto Hub', trustScore: 0.64, activeListings: 12, followedAt: mkIso(60 * 24 * 10) },
+];
+
+export async function listFollowedSellers(): Promise<FollowedSeller[]> {
+  if (MKT_USE_MOCK) {
+    await delay();
+    return mockFollows.map((f) => ({ ...f }));
+  }
+  return mktGet<FollowedSeller[]>('/followed-sellers');
+}
+
+export async function followSeller(sellerId: string, sellerName?: string): Promise<FollowedSeller> {
+  if (MKT_USE_MOCK) {
+    await delay(80);
+    const existing = mockFollows.find((f) => f.sellerId === sellerId);
+    if (existing) return { ...existing };
+    const rec: FollowedSeller = { id: `fol-${Date.now()}`, sellerId, sellerName: sellerName ?? 'Seller', trustScore: 0.7, activeListings: 0, followedAt: new Date().toISOString() };
+    mockFollows = [rec, ...mockFollows];
+    return { ...rec };
+  }
+  return mktPost<FollowedSeller>(`/sellers/${sellerId}/follow`);
+}
+
+export async function unfollowSeller(sellerId: string): Promise<{ ok: boolean }> {
+  if (MKT_USE_MOCK) {
+    await delay(80);
+    mockFollows = mockFollows.filter((f) => f.sellerId !== sellerId);
+    return { ok: true };
+  }
+  return mktDelete<{ ok: boolean }>(`/sellers/${sellerId}/follow`);
+}
+
 // ─── Notification preferences ────────────────────────────────────────────────
 
 export async function getNotificationPrefs(): Promise<NotificationPrefs> {

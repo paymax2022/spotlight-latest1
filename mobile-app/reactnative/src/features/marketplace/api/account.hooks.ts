@@ -10,6 +10,7 @@ export const MKT_ACCOUNT_KEYS = {
   blocks: ['mkt', 'account', 'blocks'] as const,
   notificationPrefs: ['mkt', 'account', 'notification-prefs'] as const,
   notifications: ['mkt', 'account', 'notifications'] as const,
+  followedSellers: ['mkt', 'account', 'followed-sellers'] as const,
   safeSpots: (filter?: { state?: string; lga?: string }) => ['mkt', 'account', 'safe-spots', filter ?? null] as const,
 };
 
@@ -98,6 +99,32 @@ export function useMarkAllNotificationsRead() {
       if (ctx?.prev) qc.setQueryData(MKT_ACCOUNT_KEYS.notifications, ctx.prev);
     },
     onSettled: () => qc.invalidateQueries({ queryKey: MKT_ACCOUNT_KEYS.notifications }),
+  });
+}
+
+// ── Followed sellers (LD-005) ────────────────────────────────────────────────
+export const useFollowedSellers = () =>
+  useQuery({ queryKey: MKT_ACCOUNT_KEYS.followedSellers, queryFn: accountApi.listFollowedSellers });
+
+// Convenience: is the current user following this seller?
+export function useIsFollowing(sellerId: string): boolean {
+  const { data } = useFollowedSellers();
+  return (data ?? []).some((f) => f.sellerId === sellerId);
+}
+
+export function useFollowSeller() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { sellerId: string; sellerName?: string }) => accountApi.followSeller(input.sellerId, input.sellerName),
+    onSuccess: () => qc.invalidateQueries({ queryKey: MKT_ACCOUNT_KEYS.followedSellers }),
+  });
+}
+
+export function useUnfollowSeller() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (sellerId: string) => accountApi.unfollowSeller(sellerId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: MKT_ACCOUNT_KEYS.followedSellers }),
   });
 }
 

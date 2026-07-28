@@ -46,6 +46,7 @@ export default function MarketplaceLayout() {
       <Tabs.Screen name="account/blocked" options={{ href: null }} />
       <Tabs.Screen name="account/help" options={{ href: null }} />
       <Tabs.Screen name="account/notifications" options={{ href: null }} />
+      <Tabs.Screen name="account/following" options={{ href: null }} />
       <Tabs.Screen name="account/report" options={{ href: null }} />
 
       {/* ── Discover sub-screens (not tabs; pushed from Discover) ── */}

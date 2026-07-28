@@ -4,7 +4,8 @@
 // their own hooks for Sell/Transact/Account against the same client.
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { discoveryApi } from './index';
-import type { SearchParams } from './types';
+import { saveListing, unsaveListing } from './api/account.api';
+import type { Listing, SearchParams } from './types';
 
 export const MKT_KEYS = {
   categories: ['mkt', 'categories'] as const,
@@ -63,6 +64,49 @@ export const useSellerReviews = (id: string) =>
 // ── Saved items ────────────────────────────────────────────────────────────────
 export const useSavedItems = () =>
   useQuery({ queryKey: MKT_KEYS.savedItems, queryFn: discoveryApi.getSavedItems });
+
+// Persisted favourite/save (LD-004). Optimistically flips savedByMe + saveCount on
+// the listing cache so the heart responds instantly, rolls back on error, and
+// refreshes the wishlist.
+export function useSaveListing() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (listingId: string) => saveListing(listingId),
+    onMutate: async (listingId) => {
+      await qc.cancelQueries({ queryKey: MKT_KEYS.listing(listingId) });
+      const prev = qc.getQueryData<Listing>(MKT_KEYS.listing(listingId));
+      qc.setQueryData<Listing>(MKT_KEYS.listing(listingId), (old) =>
+        old ? { ...old, savedByMe: true, saveCount: old.saveCount + (old.savedByMe ? 0 : 1) } : old,
+      );
+      return { prev, listingId };
+    },
+    onError: (_e, listingId, ctx) => { if (ctx?.prev) qc.setQueryData(MKT_KEYS.listing(listingId), ctx.prev); },
+    onSettled: (_d, _e, listingId) => {
+      qc.invalidateQueries({ queryKey: MKT_KEYS.savedItems });
+      qc.invalidateQueries({ queryKey: MKT_KEYS.listing(listingId) });
+    },
+  });
+}
+
+export function useUnsaveListing() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (listingId: string) => unsaveListing(listingId),
+    onMutate: async (listingId) => {
+      await qc.cancelQueries({ queryKey: MKT_KEYS.listing(listingId) });
+      const prev = qc.getQueryData<Listing>(MKT_KEYS.listing(listingId));
+      qc.setQueryData<Listing>(MKT_KEYS.listing(listingId), (old) =>
+        old ? { ...old, savedByMe: false, saveCount: Math.max(0, old.saveCount - (old.savedByMe ? 1 : 0)) } : old,
+      );
+      return { prev, listingId };
+    },
+    onError: (_e, listingId, ctx) => { if (ctx?.prev) qc.setQueryData(MKT_KEYS.listing(listingId), ctx.prev); },
+    onSettled: (_d, _e, listingId) => {
+      qc.invalidateQueries({ queryKey: MKT_KEYS.savedItems });
+      qc.invalidateQueries({ queryKey: MKT_KEYS.listing(listingId) });
+    },
+  });
+}
 
 // ── Saved searches ───────────────────────────────────────────────────────────
 export const useSavedSearches = () =>
