@@ -100,11 +100,11 @@ func (r *Repository) GetListing(ctx context.Context, id string) (*Listing, error
 func (r *Repository) SetListingStatus(ctx context.Context, id string, from, to ListingStatus, moderationReason *string) error {
 	ct, err := r.db.Exec(ctx, `
 		UPDATE public.mkt_listings
-		SET status=$2,
+		SET status=$2::listing_status,
 		    moderation_reason_code=COALESCE($4, moderation_reason_code),
-		    sold_at = CASE WHEN $2='sold' THEN now() ELSE sold_at END,
+		    sold_at = CASE WHEN $2::listing_status='sold'::listing_status THEN now() ELSE sold_at END,
 		    updated_at=now()
-		WHERE id=$1 AND status=$3`, id, string(to), string(from), moderationReason)
+		WHERE id=$1 AND status=$3::listing_status`, id, string(to), string(from), moderationReason)
 	if err != nil {
 		return wrapInternal("set listing status", err)
 	}
@@ -185,6 +185,58 @@ func (r *Repository) ExpiredActiveListings(ctx context.Context, now time.Time, l
 	}
 	defer rows.Close()
 	return collectListings(rows)
+}
+
+// ExpireDueListings atomically flips active listings past expires_at to expired
+// and emits a search-delete outbox row for each, in a SINGLE transaction — so a
+// crash can never strand a listing that is `expired` in Postgres but still
+// `active` in the search index. Returns the expired listing ids. This is the one
+// canonical auto-expire path; both Service.ExpireDueListings and the
+// marketplace-cron binary delegate here (no divergent reimplementation).
+func (r *Repository) ExpireDueListings(ctx context.Context, now time.Time, limit int) ([]string, error) {
+	limit = clampLimit(limit)
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, wrapInternal("expire listings: begin", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// LIMIT the batch via a subselect (Postgres UPDATE has no LIMIT clause).
+	rows, err := tx.Query(ctx, `
+		UPDATE public.mkt_listings SET status='expired'::listing_status, updated_at=now()
+		WHERE id IN (
+			SELECT id FROM public.mkt_listings
+			WHERE status='active' AND expires_at < $1
+			ORDER BY expires_at ASC LIMIT $2
+		)
+		RETURNING id`, now, limit)
+	if err != nil {
+		return nil, wrapInternal("expire listings: update", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, wrapInternal("expire listings: scan", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, wrapInternal("expire listings: rows", err)
+	}
+	rows.Close()
+
+	for _, id := range ids {
+		if err := r.InsertOutbox(ctx, tx, id, OutboxDelete, map[string]any{"listing_id": id}); err != nil {
+			return nil, wrapInternal("expire listings: outbox", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, wrapInternal("expire listings: commit", err)
+	}
+	return ids, nil
 }
 
 func collectListings(rows pgx.Rows) ([]Listing, error) {
@@ -668,7 +720,8 @@ func (r *Repository) InsertBoost(ctx context.Context, b *Boost) (*Boost, error) 
 func (r *Repository) ActiveBoostsForListing(ctx context.Context, listingID string) ([]Boost, error) {
 	rows, err := r.db.Query(ctx, `SELECT `+boostCols+`
 		FROM public.mkt_boosts
-		WHERE listing_id=$1 AND status IN ('purchased','active')`, listingID)
+		WHERE listing_id=$1 AND status IN ('purchased','active')
+		  AND (ends_at IS NULL OR ends_at > now())`, listingID)
 	if err != nil {
 		return nil, wrapInternal("active boosts for listing", err)
 	}
@@ -713,6 +766,42 @@ func (r *Repository) SetBoostStatus(ctx context.Context, id string, from, to Boo
 		return ErrConflict
 	}
 	return nil
+}
+
+// CompleteDueBoosts flips active boosts whose ends_at has passed to `completed`
+// (§2.4 active → completed) and returns the DISTINCT listing ids affected, so the
+// caller can re-index them (boost_weight drops). Batched via a LIMIT subselect.
+// The status flip is a single atomic UPDATE; the re-index is best-effort downstream
+// (a fresh index already ignores expired boosts via the ends_at guard on
+// ActiveBoostsForListing, so a missed re-index only leaves a stale weight until the
+// listing is next indexed — never a safety issue).
+func (r *Repository) CompleteDueBoosts(ctx context.Context, now time.Time, limit int) ([]string, error) {
+	limit = clampLimit(limit)
+	rows, err := r.db.Query(ctx, `
+		UPDATE public.mkt_boosts SET status='completed'::boost_status
+		WHERE id IN (
+			SELECT id FROM public.mkt_boosts
+			WHERE status='active' AND ends_at IS NOT NULL AND ends_at < $1
+			ORDER BY ends_at ASC LIMIT $2
+		)
+		RETURNING listing_id`, now, limit)
+	if err != nil {
+		return nil, wrapInternal("complete due boosts", err)
+	}
+	defer rows.Close()
+	seen := make(map[string]bool)
+	var ids []string
+	for rows.Next() {
+		var lid string
+		if err := rows.Scan(&lid); err != nil {
+			return nil, wrapInternal("complete due boosts: scan", err)
+		}
+		if !seen[lid] {
+			seen[lid] = true
+			ids = append(ids, lid)
+		}
+	}
+	return ids, rows.Err()
 }
 
 // ─── Offers ──────────────────────────────────────────────────────────────────

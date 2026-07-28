@@ -35,6 +35,19 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 	if in.PriceKobo < 0 {
 		return nil, fieldErr(CodeValidation, "price_kobo must be non-negative", "price_kobo")
 	}
+	// §1: attrs are validated against the category's attribute_schema at write time.
+	// Fetching the category also surfaces a clean 422 for a bad category_id instead
+	// of a raw FK violation from InsertListing.
+	cat, cerr := s.repo.GetCategory(ctx, in.CategoryID)
+	if cerr != nil {
+		return nil, fieldErr(CodeValidation, "unknown category_id", "category_id")
+	}
+	if !cat.IsActive {
+		return nil, fieldErr(CodeValidation, "category is not active", "category_id")
+	}
+	if err := validateAttrs(cat.AttributeSchema, in.Attrs); err != nil {
+		return nil, err
+	}
 	escrowEligible := true
 	if in.EscrowEligible != nil {
 		escrowEligible = *in.EscrowEligible
@@ -73,6 +86,14 @@ func (s *Service) UpdateListing(ctx context.Context, sellerID, id string, in Upd
 	if l.SellerID != sellerID {
 		return nil, ErrForbidden
 	}
+	// §1: a supplied attrs edit must satisfy the category's attribute_schema.
+	if in.Attrs != nil {
+		if cat, cerr := s.repo.GetCategory(ctx, l.CategoryID); cerr == nil {
+			if verr := validateAttrs(cat.AttributeSchema, in.Attrs); verr != nil {
+				return nil, verr
+			}
+		}
+	}
 	if in.PriceKobo != nil {
 		n, err := s.repo.CountNonTerminalOrdersForListing(ctx, id)
 		if err != nil {
@@ -89,11 +110,41 @@ func (s *Service) UpdateListing(ctx context.Context, sellerID, id string, in Upd
 	if err != nil {
 		return nil, err
 	}
-	// If the listing is live, re-emit an upsert so search stays current.
+	// EDIT-AFTER-APPROVE RE-MODERATION (trust backbone, LM-002/MOD-010/EC-010): a content
+	// edit (title/description/attributes) to a LIVE listing must re-enter pending_review
+	// and be pulled from discovery until re-approved — otherwise a seller can bait-and-
+	// switch an approved ad into banned content. A price-only edit (already guarded against
+	// active orders above) is a normal seller action and does NOT re-moderate.
+	if updated.Status == ListingActive && requiresRemoderation(in) {
+		if err := guardListingTransition(ListingActive, ListingPendingReview); err != nil {
+			return nil, err
+		}
+		reason := "content_edited"
+		if err := s.repo.SetListingStatus(ctx, id, ListingActive, ListingPendingReview, &reason); err != nil {
+			return nil, err
+		}
+		updated.Status = ListingPendingReview
+		_ = s.repo.InsertOutbox(ctx, nil, id, OutboxDelete, map[string]any{"listing_id": id})
+		_ = s.writeAudit(ctx, AuditEntry{
+			AdminID: sellerID, Action: "mkt.listing.edit_remoderate", TargetType: "listing", TargetID: id, ReasonCode: reason,
+			BeforeState: map[string]any{"status": string(ListingActive)},
+			AfterState:  map[string]any{"status": string(ListingPendingReview)},
+		})
+		s.notifySafe(ctx, updated.SellerID, "mkt.listing.remoderation", "Your edit is under review before your listing goes live again.")
+		return updated, nil
+	}
+	// Non-sensitive edit (or non-live listing): if still live, refresh search.
 	if updated.Status == ListingActive {
-		_ = s.repo.InsertOutbox(ctx, nil, id, OutboxUpsert, s.searchPayload(updated))
+		_ = s.repo.InsertOutbox(ctx, nil, id, OutboxUpsert, s.searchPayload(ctx, updated))
 	}
 	return updated, nil
+}
+
+// requiresRemoderation reports whether an edit changes moderation-relevant CONTENT
+// (title, description, or attributes) as opposed to a price-only change — so a live
+// listing must re-enter pending_review. Pure/testable.
+func requiresRemoderation(in UpdateListingInput) bool {
+	return in.Title != nil || in.Description != nil || in.Attrs != nil
 }
 
 // SubmitListing runs the §2.1 submit guard and either auto-approves (risk_tier 0 AND
@@ -113,11 +164,19 @@ func (s *Service) SubmitListing(ctx context.Context, sellerID, id string) (*List
 		return nil, newErr(422, CodeDescriptionTooShort, "description must be at least 8 words")
 	}
 
-	// Auto-approve guard: risk_tier 0 AND seller trust ≥ 0.6.
+	// Auto-moderation pre-filter (§2.1): prohibited content NEVER takes the
+	// auto-approve fast-path, no matter how trusted the seller is — it is routed to
+	// human review with a reason. The screen is conservative (a hit routes to review,
+	// it does not auto-reject).
+	flagReason := screenListingContent(l.Title, l.Description, l.Attrs)
+
+	// Auto-approve guard: NOT flagged AND risk_tier 0 AND seller trust ≥ 0.6.
 	autoApprove := false
-	if cat, cerr := s.repo.GetCategory(ctx, l.CategoryID); cerr == nil && cat.RiskTier == 0 {
-		if tp, terr := s.repo.GetTrustProfile(ctx, sellerID); terr == nil && tp.TrustScore >= autoApproveTrustScore {
-			autoApprove = true
+	if flagReason == "" {
+		if cat, cerr := s.repo.GetCategory(ctx, l.CategoryID); cerr == nil && cat.RiskTier == 0 {
+			if tp, terr := s.repo.GetTrustProfile(ctx, sellerID); terr == nil && tp.TrustScore >= autoApproveTrustScore {
+				autoApprove = true
+			}
 		}
 	}
 
@@ -126,15 +185,28 @@ func (s *Service) SubmitListing(ctx context.Context, sellerID, id string) (*List
 			return nil, err
 		}
 		l.Status = ListingActive
-		_ = s.repo.InsertOutbox(ctx, nil, id, OutboxUpsert, s.searchPayload(l))
+		_ = s.repo.InsertOutbox(ctx, nil, id, OutboxUpsert, s.searchPayload(ctx, l))
 		s.notifySafe(ctx, sellerID, "mkt.listing.active", "Your listing is live.")
 		return l, nil
 	}
 
-	if err := s.repo.SetListingStatus(ctx, id, ListingDraft, ListingPendingReview, nil); err != nil {
+	// Route to review. If auto-mod flagged it, persist the reason so the moderation
+	// queue shows why, and record an audit trail of the automated decision.
+	var reasonPtr *string
+	if flagReason != "" {
+		reasonPtr = &flagReason
+	}
+	if err := s.repo.SetListingStatus(ctx, id, ListingDraft, ListingPendingReview, reasonPtr); err != nil {
 		return nil, err
 	}
 	l.Status = ListingPendingReview
+	if flagReason != "" {
+		_ = s.writeAudit(ctx, AuditEntry{
+			AdminID: systemActorID, AdminRole: "system", Action: "mkt.listing.automod_flag", TargetType: "listing", TargetID: id, ReasonCode: flagReason,
+			BeforeState: map[string]any{"status": string(ListingDraft)},
+			AfterState:  map[string]any{"status": string(ListingPendingReview), "auto_flag": flagReason},
+		})
+	}
 	s.notifySafe(ctx, sellerID, "mkt.listing.pending", "Your listing is under review.")
 	return l, nil
 }
@@ -199,7 +271,7 @@ func (s *Service) sellerListingTransition(ctx context.Context, sellerID, id stri
 	if op, emit := listingOutboxOp(to); emit {
 		var payload any = map[string]any{"listing_id": id}
 		if op == OutboxUpsert {
-			payload = s.searchPayload(l)
+			payload = s.searchPayload(ctx, l)
 		}
 		_ = s.repo.InsertOutbox(ctx, nil, id, op, payload)
 	}
@@ -227,7 +299,7 @@ func (s *Service) ApproveListing(ctx context.Context, adminID, id, reasonCode st
 		return nil, err
 	}
 	l.Status = ListingActive
-	_ = s.repo.InsertOutbox(ctx, nil, id, OutboxUpsert, s.searchPayload(l))
+	_ = s.repo.InsertOutbox(ctx, nil, id, OutboxUpsert, s.searchPayload(ctx, l))
 	_ = s.writeAudit(ctx, AuditEntry{
 		AdminID: adminID, Action: "mkt.listing.approve", TargetType: "listing", TargetID: id,
 		ReasonCode:  orStr(reasonCode, "approved"),
@@ -285,23 +357,23 @@ func (s *Service) RejectListing(ctx context.Context, adminID, id, reasonCode str
 // ExpireDueListings is the cron helper (§2.1 auto_expire): active listings past
 // expires_at → expired, emitting search-delete outbox rows. Returns count expired.
 func (s *Service) ExpireDueListings(ctx context.Context) (int, error) {
-	due, err := s.repo.ExpiredActiveListings(ctx, time.Now(), 200)
+	ids, err := s.repo.ExpireDueListings(ctx, time.Now(), 200)
 	if err != nil {
 		return 0, err
 	}
-	n := 0
-	for _, l := range due {
-		if err := s.repo.SetListingStatus(ctx, l.ID, ListingActive, ListingExpired, nil); err == nil {
-			_ = s.repo.InsertOutbox(ctx, nil, l.ID, OutboxDelete, map[string]any{"listing_id": l.ID})
-			n++
-		}
-	}
-	return n, nil
+	return len(ids), nil
 }
 
 // searchPayload builds the outbox upsert payload Agent B's indexer consumes (mirrors
-// the §4 ES mapping fields).
-func (s *Service) searchPayload(l *Listing) map[string]any {
+// the §4 ES mapping fields). It includes boost_weight so paid boosts actually affect
+// ranking (§4 field_value_factor on boost_weight) — the weight is the strongest
+// currently-effective boost on the listing (0 when none). A boost lookup hiccup
+// defaults the weight to 0 rather than blocking the re-index (fail-open).
+func (s *Service) searchPayload(ctx context.Context, l *Listing) map[string]any {
+	var boostWeight float64
+	if boosts, berr := s.repo.ActiveBoostsForListing(ctx, l.ID); berr == nil {
+		boostWeight = maxBoostWeight(boosts)
+	}
 	return map[string]any{
 		"listing_id":      l.ID,
 		"market_id":       l.MarketID,
@@ -316,10 +388,25 @@ func (s *Service) searchPayload(l *Listing) map[string]any {
 		"lga":             l.LGA,
 		"quality_score":   l.QualityScore,
 		"escrow_eligible": l.EscrowEligible,
+		"boost_weight":    boostWeight,
 		"status":          string(l.Status),
 		"created_at":      l.CreatedAt,
 		"freshness_ts":    l.UpdatedAt,
 	}
+}
+
+// maxBoostWeight returns the largest catalog weight among the given (already
+// active + unexpired) boosts, or 0 if none. Pure/testable. §4: boost_mode:sum, so a
+// listing gets the single strongest boost's additive weight, not the sum of stacked
+// boosts (stacking must not let a seller buy their way to unbounded dominance).
+func maxBoostWeight(boosts []Boost) float64 {
+	var max float64
+	for i := range boosts {
+		if t, ok := lookupBoostTier(boosts[i].Tier); ok && t.Weight > max {
+			max = t.Weight
+		}
+	}
+	return max
 }
 
 // wordCount counts whitespace-delimited words (matches the §1 generated column intent).
