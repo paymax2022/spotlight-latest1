@@ -167,6 +167,9 @@ type PlaceOrderRequest struct {
 	DeliveryLocation *LatLng  `json:"delivery_location,omitempty"`
 	// SpecialInstructions is a free-text order note; sanitized server-side (CT-009).
 	SpecialInstructions string `json:"special_instructions,omitempty"`
+	// ScheduledFor, when set, places the order for a future slot (SG-001) — validated
+	// against the restaurant's hours + a lead/horizon window. Still escrowed now.
+	ScheduledFor *time.Time `json:"scheduled_for,omitempty"`
 }
 
 // LatLng is a nested coordinate object accepted on delivery requests.

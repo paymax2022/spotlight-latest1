@@ -1271,6 +1271,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.PUT("/addresses/:id/default", restaurantHandler.SetDefaultAddress)
 		restGroup.DELETE("/addresses/:id", restaurantHandler.DeleteAddress)
 		restGroup.GET("/orders", restaurantHandler.ListOrders)
+		// Group orders (SG-003/004): host creates, contributors add, host finalizes → one order.
+		restGroup.POST("/:id/group", restaurantHandler.CreateGroupOrder)
+		restGroup.GET("/group/:groupId", restaurantHandler.GetGroupOrder)
+		restGroup.POST("/group/:groupId/items", restaurantHandler.AddGroupItem)
+		restGroup.POST("/group/:groupId/finalize", restaurantHandler.FinalizeGroupOrder)
 		restGroup.GET("/orders/:orderId", restaurantHandler.GetOrder)
 
 		// Rider / delivery lifecycle. Marking an order "ready" (via the status
@@ -1326,6 +1331,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Reassignment ops (DP-005): reassign a single order, or sweep offline-assigned.
 		restAdmin.POST("/orders/:id/reassign", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminReassignOrder)
 		restAdmin.POST("/sweep-offline-assigned", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminSweepOfflineAssigned)
+		// Scheduled-order activation (SG-002/005): release due slots / auto-cancel if closed.
+		restAdmin.POST("/activate-scheduled", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminActivateScheduled)
 		restAdmin.POST("/sweep-stalled-dispatch", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminSweepStalledDispatch)
 		restAdmin.GET("/onboarding", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListApplications)
 		// Review moderation (RV-004): hide/approve an abusive review.
