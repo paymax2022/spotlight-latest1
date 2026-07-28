@@ -9,6 +9,27 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// EarningsStatement → GET /restaurant/:id/earnings?from=YYYY-MM-DD&to=YYYY-MM-DD (owner).
+func (h *Handler) EarningsStatement(c *gin.Context) {
+	userID := c.GetString("user_id")
+	from, err := time.Parse("2006-01-02", c.DefaultQuery("from", time.Now().AddDate(0, 0, -30).Format("2006-01-02")))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "from must be YYYY-MM-DD"})
+		return
+	}
+	to, err := time.Parse("2006-01-02", c.DefaultQuery("to", time.Now().Format("2006-01-02")))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "to must be YYYY-MM-DD"})
+		return
+	}
+	stmt, err := h.svc.EarningsStatement(c.Request.Context(), c.Param("id"), userID, from, to)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, stmt)
+}
+
 // ── Reviews & moderation ──────────────────────────────────────────────────────
 
 // ListReviews → GET /restaurant/:id/reviews (public; hidden excluded, rater anonymized).
