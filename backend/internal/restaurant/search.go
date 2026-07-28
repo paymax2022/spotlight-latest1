@@ -13,16 +13,17 @@ import (
 // first). Values are validated/clamped in buildSearchQuery so a hand-crafted request
 // can't inject SQL or ask for an unbounded page.
 type SearchParams struct {
-	Query     string   // free text over name + description
-	Cuisine   string   // exact (case-insensitive) cuisine tag
-	MinRating float64  // rating >= this
-	OpenNow   bool     // only restaurants open right now (honors business hours)
-	NearLat   *float64 // near-me centre (both lat+lng required to activate)
-	NearLng   *float64
-	RadiusKm  float64 // near-me radius (default 5km, capped)
-	Sort      string  // relevance | rating | distance | newest
-	Limit     int     // page size (default 20, capped 50)
-	Offset    int     // page offset
+	Query       string   // free text over name + description + dish (menu-item) names
+	Cuisine     string   // exact (case-insensitive) cuisine tag
+	DietaryTags []string // keep restaurants with an available item carrying any tag
+	MinRating   float64  // rating >= this
+	OpenNow     bool     // only restaurants open right now (honors business hours)
+	NearLat     *float64 // near-me centre (both lat+lng required to activate)
+	NearLng     *float64
+	RadiusKm    float64 // near-me radius (default 5km, capped)
+	Sort        string  // relevance | rating | distance | newest
+	Limit       int     // page size (default 20, capped 50)
+	Offset      int     // page offset
 }
 
 const (
@@ -69,10 +70,18 @@ func buildSearchQuery(p SearchParams, now time.Time, loc *time.Location) (string
 
 	if q := strings.TrimSpace(p.Query); q != "" {
 		like := ph("%" + q + "%")
-		b.WriteString(" AND (r.name ILIKE " + like + " OR r.description ILIKE " + like + ")")
+		// Match the restaurant name/description OR any of its menu-item names (dish
+		// search, DS-002) so a query like "jollof" surfaces restaurants that serve it.
+		b.WriteString(" AND (r.name ILIKE " + like + " OR r.description ILIKE " + like +
+			" OR EXISTS (SELECT 1 FROM menu_items mi WHERE mi.restaurant_id = r.id AND mi.name ILIKE " + like + "))")
 	}
 	if c := strings.TrimSpace(p.Cuisine); c != "" {
 		b.WriteString(" AND lower(r.cuisine) = lower(" + ph(c) + ")")
+	}
+	if tags := normalizeDietaryTags(p.DietaryTags); len(tags) > 0 {
+		// Dietary filter (DS-003): keep restaurants that have at least one AVAILABLE item
+		// carrying any of the requested tags.
+		b.WriteString(" AND EXISTS (SELECT 1 FROM menu_items mi WHERE mi.restaurant_id = r.id AND mi.is_available AND mi.dietary_tags && " + ph(tags) + ")")
 	}
 	if p.MinRating > 0 {
 		b.WriteString(" AND r.rating >= " + ph(p.MinRating))

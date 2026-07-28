@@ -3,10 +3,56 @@ package restaurant
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
+
+// ── Saved delivery addresses (customer) ───────────────────────────────────────
+
+// ListAddresses → GET /restaurant/addresses.
+func (h *Handler) ListAddresses(c *gin.Context) {
+	list, err := h.svc.ListAddresses(c.Request.Context(), c.GetString("user_id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"addresses": list})
+}
+
+// AddAddress → POST /restaurant/addresses.
+func (h *Handler) AddAddress(c *gin.Context) {
+	var body SavedAddress
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	a, err := h.svc.AddAddress(c.Request.Context(), c.GetString("user_id"), body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, a)
+}
+
+// SetDefaultAddress → PUT /restaurant/addresses/:id/default.
+func (h *Handler) SetDefaultAddress(c *gin.Context) {
+	if err := h.svc.SetDefaultAddress(c.Request.Context(), c.GetString("user_id"), c.Param("id")); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// DeleteAddress → DELETE /restaurant/addresses/:id.
+func (h *Handler) DeleteAddress(c *gin.Context) {
+	if err := h.svc.DeleteAddress(c.Request.Context(), c.GetString("user_id"), c.Param("id")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
 
 // ── Reads ─────────────────────────────────────────────────────────────────────
 
@@ -45,6 +91,10 @@ func parseSearchParams(c *gin.Context) (SearchParams, bool) {
 	}
 	if v := c.Query("cuisine"); v != "" {
 		p.Cuisine = v
+		any = true
+	}
+	if v := c.Query("dietary"); v != "" {
+		p.DietaryTags = strings.Split(v, ",")
 		any = true
 	}
 	if v := c.Query("min_rating"); v != "" {
