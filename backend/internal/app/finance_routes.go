@@ -1169,7 +1169,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Restaurant & Delivery routes ---
 	if cfg.FeatureRestaurantEnabled {
 		settlementSvcR := settlement.NewService(pool, ledgerSvc)
-		restaurantSvc := restaurant.NewService(pool, settlementSvcR).WithLedger(ledgerSvc)
+		restaurantSvc := restaurant.NewService(pool, settlementSvcR).WithLedger(ledgerSvc).WithTiers(tiersSvc)
 		if mapSvc != nil {
 			locGeo := maps.NewLocationGeocoder(mapSvc)
 			restaurantSvc = restaurantSvc.WithGeocoder(locGeo)

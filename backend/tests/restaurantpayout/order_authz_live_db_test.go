@@ -64,6 +64,17 @@ func TestLiveDB_OrderStatusAuthz(t *testing.T) {
 	if err := svc.UpdateStatus(ctx, orderID, owner, restaurant.OrderConfirmed); err != nil {
 		t.Fatalf("owner→confirmed: want allow, got %v", err)
 	}
+	// Phase 1: that transition wrote an append-only audit event (actor + from→to).
+	var evCount int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM restaurant_order_status_events
+		 WHERE order_id=$1 AND from_status='pending' AND to_status='confirmed' AND actor_id=$2`,
+		orderID, owner).Scan(&evCount); err != nil {
+		t.Fatalf("query audit events: %v", err)
+	}
+	if evCount != 1 {
+		t.Errorf("audit events for pending→confirmed = %d, want exactly 1", evCount)
+	}
 	// The customer MAY cancel their own order (authorized path; refund exercised by
 	// the settlement-backed suites).
 	orderID2 := seedPendingOrder(t, ctx, pool, restID, customer)
