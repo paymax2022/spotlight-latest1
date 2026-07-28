@@ -103,9 +103,10 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 func seedRestaurant(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ownerID string) string {
 	t.Helper()
 	id := uuid.New().String()
+	// KYB-approved so the Phase-17 verified-account payout gate (PY-007) includes it.
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO restaurants (id, owner_id, name, address)
-		VALUES ($1, $2, $3, '1 Test Street')`, id, ownerID, "Test Kitchen "+id[:8]); err != nil {
+		INSERT INTO restaurants (id, owner_id, name, address, kyb_status)
+		VALUES ($1, $2, $3, '1 Test Street', 'approved')`, id, ownerID, "Test Kitchen "+id[:8]); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 	return id

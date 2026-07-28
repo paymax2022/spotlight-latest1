@@ -221,6 +221,7 @@ func (s *Service) loadUnpaidSettlements(ctx context.Context, providerType, provi
 			WHERE st.module_type = 'food_delivery'
 			  AND st.status = 'settled'
 			  AND res.owner_id = $1
+			  AND res.kyb_status = 'approved' -- PY-007: pay out only to a KYB-verified restaurant (verified settlement account)
 			  AND st.provider_kobo > 0
 			  AND NOT EXISTS (SELECT 1 FROM restaurant_payout_lines pl WHERE pl.settlement_id = st.id)`
 	case PayoutProviderRider:

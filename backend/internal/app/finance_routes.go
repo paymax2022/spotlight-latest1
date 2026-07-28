@@ -1237,7 +1237,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Promo codes (owner-created, restaurant-funded).
 		restGroup.POST("/:id/promos", restaurantHandler.CreatePromo)
 		// Weekly business hours: public read (schedule + open-now), owner replace-all.
-		restGroup.GET("/:id/reviews", restaurantHandler.ListReviews) // public reviews (hidden excluded, rater anonymized)
+		restGroup.GET("/:id/reviews", restaurantHandler.ListReviews)     // public reviews (hidden excluded, rater anonymized)
+		restGroup.GET("/:id/earnings", restaurantHandler.EarningsStatement) // owner earnings statement (PY-008)
 		restGroup.GET("/:id/hours", restaurantHandler.GetBusinessHours)
 		restGroup.PUT("/:id/hours", restaurantHandler.SetBusinessHours)
 		// Holiday / special-hours overrides (owner): a per-date override wins over the
