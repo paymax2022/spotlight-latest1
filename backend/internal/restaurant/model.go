@@ -29,14 +29,15 @@ type MenuCategory struct {
 
 // MenuItem is a single item on the menu.
 type MenuItem struct {
-	ID           string  `json:"id"`
-	CategoryID   string  `json:"category_id"`
-	RestaurantID string  `json:"restaurant_id"`
-	Name         string  `json:"name"`
-	Description  string  `json:"description,omitempty"`
-	PriceKobo    int64   `json:"price_kobo"`
-	ImageURL     *string `json:"image_url,omitempty"`
-	IsAvailable  bool    `json:"is_available"`
+	ID           string   `json:"id"`
+	CategoryID   string   `json:"category_id"`
+	RestaurantID string   `json:"restaurant_id"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description,omitempty"`
+	PriceKobo    int64    `json:"price_kobo"`
+	ImageURL     *string  `json:"image_url,omitempty"`
+	IsAvailable  bool     `json:"is_available"`
+	DietaryTags  []string `json:"dietary_tags,omitempty"`
 }
 
 // OrderStatus tracks a delivery order through its lifecycle.
@@ -68,8 +69,9 @@ type Order struct {
 	// SurgeKobo is peak dynamic pricing added to the item subtotal (part of the 80/10/10
 	// settlement gross). ServiceFeeKobo is the platform service fee (a 100%-platform
 	// settlement leg). Both default to 0.
-	SurgeKobo      int64 `json:"surge_kobo"`
-	ServiceFeeKobo int64 `json:"service_fee_kobo"`
+	SurgeKobo           int64  `json:"surge_kobo"`
+	ServiceFeeKobo      int64  `json:"service_fee_kobo"`
+	SpecialInstructions string `json:"special_instructions,omitempty"`
 	// DiscountKobo is the promo discount taken off the item subtotal; PromoID and
 	// PromoFunder snapshot which promo applied and who bore it. TotalKobo (escrowed) =
 	// SubtotalKobo − DiscountKobo + DeliveryKobo + TipKobo.
@@ -154,6 +156,8 @@ type PlaceOrderRequest struct {
 	DeliveryLat      *float64 `json:"delivery_lat,omitempty"`
 	DeliveryLng      *float64 `json:"delivery_lng,omitempty"`
 	DeliveryLocation *LatLng  `json:"delivery_location,omitempty"`
+	// SpecialInstructions is a free-text order note; sanitized server-side (CT-009).
+	SpecialInstructions string `json:"special_instructions,omitempty"`
 }
 
 // LatLng is a nested coordinate object accepted on delivery requests.
