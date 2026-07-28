@@ -1,9 +1,48 @@
 package restaurant
 
 import (
+	"context"
 	"errors"
 	"fmt"
 )
+
+// applyBp returns amountKobo × bp / 10000 in whole kobo (basis points; 1000 = 10%),
+// flooring so a derived fee/surge never rounds UP past the exact fraction. Pure —
+// used for the item surge and the platform service fee. Negative/zero inputs → 0.
+func applyBp(amountKobo int64, bp int) int64 {
+	if amountKobo <= 0 || bp <= 0 {
+		return 0
+	}
+	return amountKobo * int64(bp) / 10000
+}
+
+// PricingConfig is a restaurant's platform-controlled pricing knobs (basis points).
+type PricingConfig struct {
+	ServiceFeeBp int `json:"service_fee_bp"` // platform service fee, 0–10000 (0–100% of subtotal)
+	SurgeBp      int `json:"surge_bp"`       // peak surge on the item subtotal, 0–50000 (0–5x)
+}
+
+// SetPricingConfig sets a restaurant's service-fee + surge basis points. Intended for
+// platform ops (the route is fail-closed behind restaurant.admin.pricing); it is a
+// platform control, not owner-settable, so a merchant cannot zero the service fee or
+// inflate surge.
+func (s *Service) SetPricingConfig(ctx context.Context, restaurantID string, cfg PricingConfig) error {
+	if cfg.ServiceFeeBp < 0 || cfg.ServiceFeeBp > 10000 {
+		return fmt.Errorf("restaurant: service_fee_bp must be in [0,10000]")
+	}
+	if cfg.SurgeBp < 0 || cfg.SurgeBp > 50000 {
+		return fmt.Errorf("restaurant: surge_bp must be in [0,50000]")
+	}
+	tag, err := s.db.Exec(ctx, `UPDATE restaurants SET service_fee_bp=$1, surge_bp=$2, updated_at=now() WHERE id=$3`,
+		cfg.ServiceFeeBp, cfg.SurgeBp, restaurantID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("restaurant: not found")
+	}
+	return nil
+}
 
 // ErrInvalidModifierSelection is returned when a client's chosen modifiers for a
 // line violate the menu item's modifier rules (unknown/unavailable option, a

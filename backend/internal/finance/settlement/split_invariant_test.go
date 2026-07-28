@@ -43,9 +43,9 @@ import (
 // service.go ever changes its formula, this must change with it (and the mismatch is
 // the bug the ledger-auditor should catch).
 func splitLegsKobo(total int64, sp settlement.Split) (providerKobo, platformKobo, riderKobo int64) {
-	base := total - sp.TipKobo
+	base := total - sp.TipKobo - sp.ServiceFeeKobo
 	gross := base + sp.DiscountKobo
-	platformKobo = int64(float64(gross) * sp.PlatformPct)
+	platformKobo = int64(float64(gross)*sp.PlatformPct) + sp.ServiceFeeKobo
 	if sp.DiscountFundedByPlatform {
 		platformKobo -= sp.DiscountKobo
 	}
@@ -54,6 +54,53 @@ func splitLegsKobo(total int64, sp settlement.Split) (providerKobo, platformKobo
 	}
 	providerKobo = total - platformKobo - riderKobo
 	return
+}
+
+// TestSettleServiceFeeGoesToPlatform proves the service fee is a fixed platform leg
+// (the mirror of the rider tip): it is paid 100% to the platform on top of the
+// percentage split, the percentages price only the non-fee/non-tip gross, and value
+// still conserves against the escrowed total. gross here = 100_000 (80/10/10); a
+// 5_000 service fee makes the escrowed total 105_000.
+func TestSettleServiceFeeGoesToPlatform(t *testing.T) {
+	rider := "rider-1"
+	sp := settlement.Split{ProviderID: "p", ProviderPct: 0.80, PlatformPct: 0.10, RiderID: &rider, RiderPct: 0.10, ServiceFeeKobo: 5_000}
+	if err := sp.Validate(); err != nil {
+		t.Fatalf("valid: %v", err)
+	}
+	provider, platform, riderK := splitLegsKobo(105_000, sp)
+	if provider != 80_000 {
+		t.Errorf("provider = %d, want 80_000 (unaffected by the platform service fee)", provider)
+	}
+	if riderK != 10_000 {
+		t.Errorf("rider = %d, want 10_000 (unaffected)", riderK)
+	}
+	if platform != 15_000 { // 10% of the 100k gross + the full 5_000 service fee
+		t.Errorf("platform = %d, want 15_000 (gross share + 100%% of the service fee)", platform)
+	}
+	if provider+platform+riderK != 105_000 {
+		t.Errorf("legs sum %d, want escrowed total 105_000", provider+platform+riderK)
+	}
+
+	// Compose everything: gross 100k, +5k service fee, +5k tip, −10k platform-funded
+	// discount → escrowed total 100_000. Value must still conserve exactly.
+	full := settlement.Split{ProviderID: "p", ProviderPct: 0.80, PlatformPct: 0.10, RiderID: &rider, RiderPct: 0.10,
+		ServiceFeeKobo: 5_000, TipKobo: 5_000, DiscountKobo: 10_000, DiscountFundedByPlatform: true}
+	if err := full.Validate(); err != nil {
+		t.Fatalf("full split invalid: %v", err)
+	}
+	p2, pl2, r2 := splitLegsKobo(100_000, full)
+	if p2+pl2+r2 != 100_000 {
+		t.Errorf("composed legs sum %d, want 100_000", p2+pl2+r2)
+	}
+	if r2 != 15_000 { // 10% of gross + full tip
+		t.Errorf("rider = %d, want 15_000 (gross share + tip)", r2)
+	}
+	if p2 != 80_000 { // full 80% of gross (platform ate the discount, so provider unaffected)
+		t.Errorf("provider = %d, want 80_000", p2)
+	}
+	if pl2 != 5_000 { // 10k gross share + 5k service fee − 10k platform-funded discount
+		t.Errorf("platform = %d, want 5_000 (gross share + service fee − funded discount)", pl2)
+	}
 }
 
 // TestSettleSplitsSumToEscrowedExactly is the core money invariant for Settle:

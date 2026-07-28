@@ -204,7 +204,8 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	var isOpen bool
 	var ownerID string
 	var rLat, rLng *float64
-	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng FROM restaurants WHERE id=$1`, restaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng); err != nil {
+	var serviceFeeBp, surgeBp int
+	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng, service_fee_bp, surge_bp FROM restaurants WHERE id=$1`, restaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng, &serviceFeeBp, &surgeBp); err != nil {
 		return nil, fmt.Errorf("restaurant: not found")
 	}
 	if !isOpen {
@@ -305,13 +306,20 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	var applied *appliedPromo
 	discount := int64(0)
 	if req.PromoCode != "" {
-		ap, perr := s.resolvePromo(ctx, restaurantID, customerID, req.PromoCode, subtotal, time.Now())
+		ap, perr := s.resolvePromo(ctx, restaurantID, customerID, req.PromoCode, subtotal, deliveryKobo, time.Now())
 		if perr != nil {
 			return nil, perr
 		}
 		applied = &ap
 		discount = ap.DiscountKobo
 	}
+
+	// Pricing v2 (all default-0 basis points → no change): item surge inflates the
+	// item subtotal (peak dynamic pricing — part of the 80/10/10 settlement gross), and
+	// the platform service fee is a fixed platform leg at settlement. Both are derived
+	// from the pre-surge menu subtotal.
+	surgeKobo := applyBp(subtotal, surgeBp)
+	serviceFeeKobo := applyBp(subtotal, serviceFeeBp)
 
 	// Optional rider tip: escrowed with the order and paid 100% to the rider at
 	// settlement. Never trust a negative tip from the client — clamp to 0 so it can
@@ -320,7 +328,10 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	if tip < 0 {
 		tip = 0
 	}
-	total := subtotal - discount + deliveryKobo + tip
+	// total = items + surge − discount + service fee + delivery + tip. The settlement
+	// gross (items+surge+delivery, pre-discount) splits 80/10/10; the service fee is a
+	// 100%-platform leg; the tip is a 100%-rider leg; the discount is borne by its funder.
+	total := subtotal + surgeKobo - discount + serviceFeeKobo + deliveryKobo + tip
 	orderID := uuid.New().String()
 	ref := "order:" + orderID
 
@@ -346,6 +357,8 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		SubtotalKobo:      subtotal,
 		DeliveryKobo:      deliveryKobo,
 		TipKobo:           tip,
+		SurgeKobo:         surgeKobo,
+		ServiceFeeKobo:    serviceFeeKobo,
 		DiscountKobo:      discount,
 		TotalKobo:         total,
 		Status:            OrderPending,
@@ -378,8 +391,8 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	defer tx.Rollback(ctx)
 
 	const insertOrder = `
-		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, tip_kobo, discount_kobo, promo_id, promo_funder)
-		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, tip_kobo, discount_kobo, promo_id, promo_funder, surge_kobo, service_fee_kobo)
+		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insertOrder,
 		order.ID, order.CustomerID, order.RestaurantID,
@@ -387,6 +400,7 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		order.IdempotencyKey, order.SettlementID, order.DeliveryAddress,
 		order.DistanceMeters, order.EtaMinutes, breakdownJSON, order.TipKobo,
 		order.DiscountKobo, order.PromoID, order.PromoFunder,
+		order.SurgeKobo, order.ServiceFeeKobo,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: insert order: %w", err)
@@ -642,14 +656,14 @@ func canTransition(from, to OrderStatus) bool {
 // live UpdateStatus(delivered) path and the crash-recovery reconciler.
 func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settlementID string) error {
 	var riderID *string
-	var tipKobo, discountKobo int64
+	var tipKobo, discountKobo, serviceFeeKobo int64
 	var promoFunder *string
-	s.db.QueryRow(ctx, `SELECT rider_id, tip_kobo, discount_kobo, promo_funder FROM orders WHERE id=$1`, orderID).
-		Scan(&riderID, &tipKobo, &discountKobo, &promoFunder)
+	s.db.QueryRow(ctx, `SELECT rider_id, tip_kobo, discount_kobo, promo_funder, service_fee_kobo FROM orders WHERE id=$1`, orderID).
+		Scan(&riderID, &tipKobo, &discountKobo, &promoFunder, &serviceFeeKobo)
 	var ownerID string
 	s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID)
 	platformFunded := promoFunder != nil && *promoFunder == string(FunderPlatform)
-	return s.settlement.Settle(ctx, settlementID, orderSettlementSplit(ownerID, riderID, tipKobo, discountKobo, platformFunded))
+	return s.settlement.Settle(ctx, settlementID, orderSettlementSplit(ownerID, riderID, tipKobo, discountKobo, serviceFeeKobo, platformFunded))
 }
 
 // orderSettlementSplit builds the settlement split for a food order. Pure (no DB) so
@@ -662,7 +676,7 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 //   - no rider:        the rider's 10% folds into the owner (90/10) and the tip flows
 //     through the base split (TipKobo=0, since settlement rejects a tip with no rider);
 //     the promo discount is still borne by its funder. Nothing is stranded or lost.
-func orderSettlementSplit(ownerID string, riderID *string, tipKobo, discountKobo int64, platformFunded bool) settlement.Split {
+func orderSettlementSplit(ownerID string, riderID *string, tipKobo, discountKobo, serviceFeeKobo int64, platformFunded bool) settlement.Split {
 	if riderID == nil {
 		return settlement.Split{
 			ProviderID:               ownerID,
@@ -670,6 +684,7 @@ func orderSettlementSplit(ownerID string, riderID *string, tipKobo, discountKobo
 			PlatformPct:              0.10,
 			DiscountKobo:             discountKobo,
 			DiscountFundedByPlatform: platformFunded,
+			ServiceFeeKobo:           serviceFeeKobo, // 100% platform, on top
 			// no RiderID, no RiderPct, and no fixed tip leg (would be rejected)
 		}
 	}
@@ -682,6 +697,7 @@ func orderSettlementSplit(ownerID string, riderID *string, tipKobo, discountKobo
 		TipKobo:                  tipKobo, // 100% to the rider, on top of the base split
 		DiscountKobo:             discountKobo,
 		DiscountFundedByPlatform: platformFunded,
+		ServiceFeeKobo:           serviceFeeKobo, // 100% platform, on top
 	}
 }
 

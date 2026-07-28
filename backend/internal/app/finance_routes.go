@@ -1292,6 +1292,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.Use(mapsAuth())
 		restAdmin.GET("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.GetDeliveryConfig)
 		restAdmin.PUT("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.PutDeliveryConfig)
+		// Pricing v2 knobs (service fee % + item surge, basis points) — platform-controlled.
+		restAdmin.PUT("/pricing-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.AdminSetPricingConfig)
 
 		// Ops-console admin surfaces (dispatch board, onboarding/KYC review, payout
 		// reconciliation) consumed by frontend-admin/app/admin/restaurant/*. Each is

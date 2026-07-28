@@ -254,6 +254,24 @@ func (h *Handler) CreatePromo(c *gin.Context) {
 	c.JSON(http.StatusCreated, p)
 }
 
+// AdminSetPricingConfig → PUT /api/restaurant/admin/pricing-config (ops). Sets a
+// restaurant's service-fee + surge basis points.
+func (h *Handler) AdminSetPricingConfig(c *gin.Context) {
+	var body struct {
+		RestaurantID string `json:"restaurant_id" binding:"required"`
+		PricingConfig
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.SetPricingConfig(c.Request.Context(), body.RestaurantID, body.PricingConfig); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // ── Business hours ────────────────────────────────────────────────────────────
 
 // GetBusinessHours → GET /restaurant/:id/hours. Public: weekly schedule + open-now.

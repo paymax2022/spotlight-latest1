@@ -54,6 +54,12 @@ type Split struct {
 	// The rider never funds a discount. Defaults to 0, reproducing the pure split.
 	DiscountKobo             int64 `json:"discount_kobo,omitempty"`
 	DiscountFundedByPlatform bool  `json:"discount_funded_by_platform,omitempty"`
+	// ServiceFeeKobo is a fixed, whole-kobo platform service fee paid 100% to the
+	// platform ON TOP of the percentage split — the mirror of TipKobo (which is 100%
+	// rider). It is NOT part of the percentages (those apply to the pre-discount
+	// gross = total − tip − serviceFee + discount). Defaults to 0, reproducing the
+	// pure split. Non-negative; tip + serviceFee may not exceed the escrowed total.
+	ServiceFeeKobo int64 `json:"service_fee_kobo,omitempty"`
 }
 
 // splitEpsilon tolerates float rounding (configs store pct as floats like 0.80).
@@ -82,6 +88,9 @@ func (s Split) Validate() error {
 	// Settle, where the gross and each leg's kobo are known.
 	if s.DiscountKobo < 0 {
 		return fmt.Errorf("settlement: discount must be non-negative")
+	}
+	if s.ServiceFeeKobo < 0 {
+		return fmt.Errorf("settlement: service fee must be non-negative")
 	}
 	sum := s.ProviderPct + s.PlatformPct
 	if s.RiderID != nil {
