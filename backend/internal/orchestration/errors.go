@@ -16,6 +16,7 @@ const (
 	ErrComplianceBlock     ErrorType = "compliance_block"
 	ErrConflict            ErrorType = "conflict"
 	ErrRateLimited         ErrorType = "rate_limited"
+	ErrLimitExceeded       ErrorType = "limit_exceeded"
 	ErrInternal            ErrorType = "internal"
 )
 
@@ -51,7 +52,7 @@ func (e *APIError) HTTPStatus() int {
 		return http.StatusUnauthorized
 	case ErrRateExpired, ErrConflict:
 		return http.StatusConflict
-	case ErrInsufficientFloat, ErrInsufficientBalance, ErrComplianceBlock, ErrRoutingUnavailable:
+	case ErrInsufficientFloat, ErrInsufficientBalance, ErrComplianceBlock, ErrRoutingUnavailable, ErrLimitExceeded:
 		return http.StatusUnprocessableEntity
 	case ErrRateLimited:
 		return http.StatusTooManyRequests
