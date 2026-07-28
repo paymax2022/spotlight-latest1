@@ -315,18 +315,11 @@ func (s *Service) RejectListing(ctx context.Context, adminID, id, reasonCode str
 // ExpireDueListings is the cron helper (§2.1 auto_expire): active listings past
 // expires_at → expired, emitting search-delete outbox rows. Returns count expired.
 func (s *Service) ExpireDueListings(ctx context.Context) (int, error) {
-	due, err := s.repo.ExpiredActiveListings(ctx, time.Now(), 200)
+	ids, err := s.repo.ExpireDueListings(ctx, time.Now(), 200)
 	if err != nil {
 		return 0, err
 	}
-	n := 0
-	for _, l := range due {
-		if err := s.repo.SetListingStatus(ctx, l.ID, ListingActive, ListingExpired, nil); err == nil {
-			_ = s.repo.InsertOutbox(ctx, nil, l.ID, OutboxDelete, map[string]any{"listing_id": l.ID})
-			n++
-		}
-	}
-	return n, nil
+	return len(ids), nil
 }
 
 // searchPayload builds the outbox upsert payload Agent B's indexer consumes (mirrors

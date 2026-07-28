@@ -128,3 +128,53 @@ func TestLiveDB_EditAfterApprove_ReModeration(t *testing.T) {
 		t.Error("a non-owner editing the listing must be forbidden")
 	}
 }
+
+// TestLiveDB_AutoExpire_Atomic proves the canonical auto-expire path (the one both
+// Service.ExpireDueListings and marketplace-cron delegate to): an active listing
+// past expires_at flips to expired AND emits a search-delete outbox row, in one
+// transaction. A live listing NOT yet past expiry is left untouched (LM cron / EC-011).
+func TestLiveDB_AutoExpire_Atomic(t *testing.T) {
+	svc, pool := liveMktService(t)
+	defer pool.Close()
+	ctx := context.Background()
+	cat := seedRiskTier0Category(t, ctx, pool)
+	seller := uuid.New().String()
+	admin := uuid.New().String()
+
+	// One listing already past expiry, one comfortably in the future.
+	due := activate(t, ctx, svc, seller, admin, cat, "Expiring Corolla Lagos Deal", 400000000)
+	fresh := activate(t, ctx, svc, seller, admin, cat, "Fresh Corolla Lagos Deal Now", 410000000)
+	if _, err := pool.Exec(ctx, `UPDATE mkt_listings SET expires_at=now()-interval '1 hour' WHERE id=$1::uuid`, due.ID); err != nil {
+		t.Fatalf("backdate expires_at: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE mkt_listings SET expires_at=now()+interval '30 days' WHERE id=$1::uuid`, fresh.ID); err != nil {
+		t.Fatalf("forward-date expires_at: %v", err)
+	}
+
+	n, err := svc.ExpireDueListings(ctx)
+	if err != nil {
+		t.Fatalf("expire due listings: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("expected at least 1 listing expired, got %d", n)
+	}
+
+	// Due listing → expired + a search-delete outbox row.
+	var dueStatus string
+	_ = pool.QueryRow(ctx, `SELECT status::text FROM mkt_listings WHERE id=$1::uuid`, due.ID).Scan(&dueStatus)
+	if dueStatus != string(mkt.ListingExpired) {
+		t.Errorf("due listing status = %s, want expired", dueStatus)
+	}
+	var delOps int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM mkt_listings_outbox WHERE listing_id=$1 AND op='delete'`, due.ID).Scan(&delOps)
+	if delOps < 1 {
+		t.Error("expired listing must emit a search-delete outbox row (atomic with the status flip)")
+	}
+
+	// Fresh listing must be untouched.
+	var freshStatus string
+	_ = pool.QueryRow(ctx, `SELECT status::text FROM mkt_listings WHERE id=$1::uuid`, fresh.ID).Scan(&freshStatus)
+	if freshStatus != string(mkt.ListingActive) {
+		t.Errorf("not-yet-due listing status = %s, want still active", freshStatus)
+	}
+}

@@ -187,6 +187,58 @@ func (r *Repository) ExpiredActiveListings(ctx context.Context, now time.Time, l
 	return collectListings(rows)
 }
 
+// ExpireDueListings atomically flips active listings past expires_at to expired
+// and emits a search-delete outbox row for each, in a SINGLE transaction — so a
+// crash can never strand a listing that is `expired` in Postgres but still
+// `active` in the search index. Returns the expired listing ids. This is the one
+// canonical auto-expire path; both Service.ExpireDueListings and the
+// marketplace-cron binary delegate here (no divergent reimplementation).
+func (r *Repository) ExpireDueListings(ctx context.Context, now time.Time, limit int) ([]string, error) {
+	limit = clampLimit(limit)
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, wrapInternal("expire listings: begin", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// LIMIT the batch via a subselect (Postgres UPDATE has no LIMIT clause).
+	rows, err := tx.Query(ctx, `
+		UPDATE public.mkt_listings SET status='expired'::listing_status, updated_at=now()
+		WHERE id IN (
+			SELECT id FROM public.mkt_listings
+			WHERE status='active' AND expires_at < $1
+			ORDER BY expires_at ASC LIMIT $2
+		)
+		RETURNING id`, now, limit)
+	if err != nil {
+		return nil, wrapInternal("expire listings: update", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, wrapInternal("expire listings: scan", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, wrapInternal("expire listings: rows", err)
+	}
+	rows.Close()
+
+	for _, id := range ids {
+		if err := r.InsertOutbox(ctx, tx, id, OutboxDelete, map[string]any{"listing_id": id}); err != nil {
+			return nil, wrapInternal("expire listings: outbox", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, wrapInternal("expire listings: commit", err)
+	}
+	return ids, nil
+}
+
 func collectListings(rows pgx.Rows) ([]Listing, error) {
 	var out []Listing
 	for rows.Next() {
