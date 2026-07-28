@@ -151,6 +151,7 @@ type UpdateProfileRequest struct {
 	Description     *string `json:"description,omitempty"`
 	LogoURL         *string `json:"logo_url,omitempty"`
 	PrepTimeMinutes *int    `json:"prep_time_minutes,omitempty"` // kitchen prep time folded into the ETA
+	MinOrderKobo    *int64  `json:"min_order_kobo,omitempty"`    // minimum order value (0 = none)
 }
 
 // UpdateRestaurantProfile updates an owner's restaurant discovery fields (owner only).
@@ -178,6 +179,14 @@ func (s *Service) UpdateRestaurantProfile(ctx context.Context, restaurantID, use
 			return fmt.Errorf("restaurant: prep_time_minutes must be in [0,240]")
 		}
 		if _, err := s.db.Exec(ctx, `UPDATE restaurants SET prep_time_minutes=$1, updated_at=NOW() WHERE id=$2`, *req.PrepTimeMinutes, restaurantID); err != nil {
+			return err
+		}
+	}
+	if req.MinOrderKobo != nil {
+		if *req.MinOrderKobo < 0 {
+			return fmt.Errorf("restaurant: min_order_kobo must be >= 0")
+		}
+		if _, err := s.db.Exec(ctx, `UPDATE restaurants SET min_order_kobo=$1, updated_at=NOW() WHERE id=$2`, *req.MinOrderKobo, restaurantID); err != nil {
 			return err
 		}
 	}

@@ -65,7 +65,7 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 		return nil, err
 	}
 
-	const qi = `SELECT id, category_id, restaurant_id, name, COALESCE(description,''), price_kobo, image_url, is_available
+	const qi = `SELECT id, category_id, restaurant_id, name, COALESCE(description,''), price_kobo, image_url, is_available, dietary_tags
 	            FROM menu_items WHERE restaurant_id=$1 ORDER BY created_at`
 	irows, err := s.db.Query(ctx, qi, restaurantID)
 	if err != nil {
@@ -75,7 +75,7 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 	for irows.Next() {
 		var it MenuItem
 		var catID *string
-		if err := irows.Scan(&it.ID, &catID, &it.RestaurantID, &it.Name, &it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable); err != nil {
+		if err := irows.Scan(&it.ID, &catID, &it.RestaurantID, &it.Name, &it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags); err != nil {
 			return nil, err
 		}
 		if catID != nil {
@@ -252,16 +252,20 @@ func (s *Service) CreateCategory(ctx context.Context, restaurantID, userID, name
 
 // CreateItemRequest is the body for adding a menu item.
 type CreateItemRequest struct {
-	CategoryID  string  `json:"category_id" binding:"required"`
-	Name        string  `json:"name" binding:"required,min=1,max=200"`
-	Description string  `json:"description"`
-	PriceKobo   int64   `json:"price_kobo" binding:"required,min=0"`
-	ImageURL    *string `json:"image_url,omitempty"`
+	CategoryID  string   `json:"category_id" binding:"required"`
+	Name        string   `json:"name" binding:"required,min=1,max=200"`
+	Description string   `json:"description"`
+	PriceKobo   int64    `json:"price_kobo" binding:"required,min=0"`
+	ImageURL    *string  `json:"image_url,omitempty"`
+	DietaryTags []string `json:"dietary_tags,omitempty"`
 }
 
 // CreateItem adds a menu item (owner only).
 func (s *Service) CreateItem(ctx context.Context, restaurantID, userID string, req CreateItemRequest) (*MenuItem, error) {
 	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+		return nil, err
+	}
+	if err := validateItemPriceKobo(req.PriceKobo); err != nil {
 		return nil, err
 	}
 	it := &MenuItem{
@@ -273,11 +277,12 @@ func (s *Service) CreateItem(ctx context.Context, restaurantID, userID string, r
 		PriceKobo:    req.PriceKobo,
 		ImageURL:     req.ImageURL,
 		IsAvailable:  true,
+		DietaryTags:  normalizeDietaryTags(req.DietaryTags),
 	}
 	if _, err := s.db.Exec(ctx,
-		`INSERT INTO menu_items (id, restaurant_id, category_id, name, description, price_kobo, image_url, is_available)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,true)`,
-		it.ID, it.RestaurantID, it.CategoryID, it.Name, it.Description, it.PriceKobo, it.ImageURL); err != nil {
+		`INSERT INTO menu_items (id, restaurant_id, category_id, name, description, price_kobo, image_url, is_available, dietary_tags)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,true,$8)`,
+		it.ID, it.RestaurantID, it.CategoryID, it.Name, it.Description, it.PriceKobo, it.ImageURL, it.DietaryTags); err != nil {
 		return nil, err
 	}
 	return it, nil
@@ -285,18 +290,19 @@ func (s *Service) CreateItem(ctx context.Context, restaurantID, userID string, r
 
 // UpdateItemRequest changes price and/or availability (86 an item).
 type UpdateItemRequest struct {
-	PriceKobo   *int64 `json:"price_kobo,omitempty"`
-	IsAvailable *bool  `json:"is_available,omitempty"`
+	PriceKobo   *int64    `json:"price_kobo,omitempty"`
+	IsAvailable *bool     `json:"is_available,omitempty"`
+	DietaryTags *[]string `json:"dietary_tags,omitempty"`
 }
 
-// UpdateItem updates an item's price/availability (owner only).
+// UpdateItem updates an item's price/availability/dietary tags (owner only).
 func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID string, req UpdateItemRequest) (*MenuItem, error) {
 	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
 		return nil, err
 	}
 	if req.PriceKobo != nil {
-		if *req.PriceKobo < 0 {
-			return nil, fmt.Errorf("restaurant: price_kobo must be >= 0")
+		if err := validateItemPriceKobo(*req.PriceKobo); err != nil {
+			return nil, err
 		}
 		if _, err := s.db.Exec(ctx, `UPDATE menu_items SET price_kobo=$1 WHERE id=$2 AND restaurant_id=$3`,
 			*req.PriceKobo, itemID, restaurantID); err != nil {
@@ -309,12 +315,18 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 			return nil, err
 		}
 	}
+	if req.DietaryTags != nil {
+		if _, err := s.db.Exec(ctx, `UPDATE menu_items SET dietary_tags=$1 WHERE id=$2 AND restaurant_id=$3`,
+			normalizeDietaryTags(*req.DietaryTags), itemID, restaurantID); err != nil {
+			return nil, err
+		}
+	}
 	var it MenuItem
 	var catID *string
-	const q = `SELECT id, category_id, restaurant_id, name, COALESCE(description,''), price_kobo, image_url, is_available
+	const q = `SELECT id, category_id, restaurant_id, name, COALESCE(description,''), price_kobo, image_url, is_available, dietary_tags
 	           FROM menu_items WHERE id=$1 AND restaurant_id=$2`
 	if err := s.db.QueryRow(ctx, q, itemID, restaurantID).Scan(&it.ID, &catID, &it.RestaurantID, &it.Name,
-		&it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable); err != nil {
+		&it.Description, &it.PriceKobo, &it.ImageURL, &it.IsAvailable, &it.DietaryTags); err != nil {
 		return nil, fmt.Errorf("restaurant: menu item not found")
 	}
 	if catID != nil {

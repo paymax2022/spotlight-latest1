@@ -205,7 +205,8 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	var ownerID string
 	var rLat, rLng *float64
 	var serviceFeeBp, surgeBp, prepTimeMinutes int
-	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng, service_fee_bp, surge_bp, prep_time_minutes FROM restaurants WHERE id=$1`, restaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng, &serviceFeeBp, &surgeBp, &prepTimeMinutes); err != nil {
+	var minOrderKobo int64
+	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng, service_fee_bp, surge_bp, prep_time_minutes, min_order_kobo FROM restaurants WHERE id=$1`, restaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng, &serviceFeeBp, &surgeBp, &prepTimeMinutes, &minOrderKobo); err != nil {
 		return nil, fmt.Errorf("restaurant: not found")
 	}
 	if !isOpen {
@@ -268,6 +269,12 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 			SubtotalKobo:  lineTotal,
 		})
 		subtotal += lineTotal
+	}
+
+	// Minimum-order gate (CT-007): the item subtotal must meet the restaurant's floor
+	// (0 = no minimum). Checked before any fee/escrow so an undersized cart fails fast.
+	if minOrderKobo > 0 && subtotal < minOrderKobo {
+		return nil, fmt.Errorf("restaurant: order subtotal %d is below the minimum of %d kobo", subtotal, minOrderKobo)
 	}
 
 	// Delivery fee: distance-based when BOTH the restaurant pin AND the delivery
@@ -358,24 +365,25 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	}
 
 	order := &Order{
-		ID:                orderID,
-		CustomerID:        customerID,
-		RestaurantID:      restaurantID,
-		SubtotalKobo:      subtotal,
-		DeliveryKobo:      deliveryKobo,
-		TipKobo:           tip,
-		SurgeKobo:         surgeKobo,
-		ServiceFeeKobo:    serviceFeeKobo,
-		DiscountKobo:      discount,
-		TotalKobo:         total,
-		Status:            OrderPending,
-		IdempotencyKey:    req.IdempotencyKey,
-		SettlementID:      sett.ID,
-		DeliveryAddress:   req.DeliveryAddress,
-		DistanceMeters:    distanceMeters,
-		EtaMinutes:        etaMinutes,
-		DeliveryBreakdown: breakdown,
-		CreatedAt:         time.Now(),
+		ID:                  orderID,
+		CustomerID:          customerID,
+		RestaurantID:        restaurantID,
+		SubtotalKobo:        subtotal,
+		DeliveryKobo:        deliveryKobo,
+		TipKobo:             tip,
+		SurgeKobo:           surgeKobo,
+		ServiceFeeKobo:      serviceFeeKobo,
+		SpecialInstructions: sanitizeInstructions(req.SpecialInstructions),
+		DiscountKobo:        discount,
+		TotalKobo:           total,
+		Status:              OrderPending,
+		IdempotencyKey:      req.IdempotencyKey,
+		SettlementID:        sett.ID,
+		DeliveryAddress:     req.DeliveryAddress,
+		DistanceMeters:      distanceMeters,
+		EtaMinutes:          etaMinutes,
+		DeliveryBreakdown:   breakdown,
+		CreatedAt:           time.Now(),
 	}
 	if applied != nil {
 		pid, fnd := applied.PromoID, string(applied.Funder)
@@ -398,8 +406,8 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	defer tx.Rollback(ctx)
 
 	const insertOrder = `
-		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, tip_kobo, discount_kobo, promo_id, promo_funder, surge_kobo, service_fee_kobo)
-		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, tip_kobo, discount_kobo, promo_id, promo_funder, surge_kobo, service_fee_kobo, special_instructions)
+		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insertOrder,
 		order.ID, order.CustomerID, order.RestaurantID,
@@ -407,7 +415,7 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		order.IdempotencyKey, order.SettlementID, order.DeliveryAddress,
 		order.DistanceMeters, order.EtaMinutes, breakdownJSON, order.TipKobo,
 		order.DiscountKobo, order.PromoID, order.PromoFunder,
-		order.SurgeKobo, order.ServiceFeeKobo,
+		order.SurgeKobo, order.ServiceFeeKobo, nullIfEmpty(order.SpecialInstructions),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: insert order: %w", err)

@@ -60,6 +60,13 @@ func TestLiveDB_DispatchFairnessAndSLA(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 
+	// Isolate this test's fairness assertions from drivers left online by other runs
+	// (the drivers pool is shared): take all currently-online drivers offline so only
+	// the three seeded below are eligible. Deterministic regardless of pool history.
+	if _, err := pool.Exec(ctx, `UPDATE drivers SET status='offline' WHERE status='online'`); err != nil {
+		t.Fatalf("isolate driver pool: %v", err)
+	}
+
 	owner := uuid.New().String()
 	customer := uuid.New().String()
 	for _, u := range []string{owner, customer} {
