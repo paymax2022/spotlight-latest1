@@ -1276,7 +1276,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// accept wins, picks up, then confirms handoff with the delivery code.
 		restGroup.POST("/orders/:orderId/assign", restaurantHandler.AssignRider)     // manual offer (fallback)
 		restGroup.POST("/orders/:orderId/dispatch", restaurantHandler.Redispatch)    // owner re-runs auto-dispatch
-		restGroup.POST("/orders/:orderId/accept", restaurantHandler.AcceptDelivery)  // rider claims the delivery
+		restGroup.POST("/orders/:orderId/accept", restaurantHandler.AcceptDelivery)   // rider claims the delivery
+		restGroup.POST("/orders/:orderId/decline", restaurantHandler.DeclineDelivery) // rider declines → reassign (DP-002)
 		restGroup.POST("/orders/:orderId/pickup", restaurantHandler.ConfirmPickup)   // rider confirms pickup
 		restGroup.POST("/orders/:orderId/handoff", restaurantHandler.ConfirmHandoff) // rider confirms drop-off (code)
 		restGroup.POST("/orders/:orderId/location", restaurantHandler.PostLocation)
@@ -1320,6 +1321,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.POST("/orders/:id/assign", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminAssignRider)
 		// Dispatch-failure ops (DP-003): fail+refund a single stalled order, or sweep all.
 		restAdmin.POST("/orders/:id/dispatch-failed", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminMarkDispatchFailed)
+		// Reassignment ops (DP-005): reassign a single order, or sweep offline-assigned.
+		restAdmin.POST("/orders/:id/reassign", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminReassignOrder)
+		restAdmin.POST("/sweep-offline-assigned", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminSweepOfflineAssigned)
 		restAdmin.POST("/sweep-stalled-dispatch", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminSweepStalledDispatch)
 		restAdmin.GET("/onboarding", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListApplications)
 		// Single wildcard segment handles all three shapes the admin UI may post:

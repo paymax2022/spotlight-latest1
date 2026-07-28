@@ -210,6 +210,39 @@ func (h *Handler) MarkDeliveryFailed(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// DeclineDelivery → POST /restaurant/orders/:orderId/decline (offered rider, DP-002).
+func (h *Handler) DeclineDelivery(c *gin.Context) {
+	riderID := c.GetString("user_id")
+	if err := h.svc.DeclineDelivery(c.Request.Context(), c.Param("orderId"), riderID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// AdminReassignOrder → POST /api/restaurant/admin/orders/:id/reassign (ops, DP-005).
+func (h *Handler) AdminReassignOrder(c *gin.Context) {
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	if err := h.svc.ReassignOrder(c.Request.Context(), c.Param("id"), body.Reason); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// AdminSweepOfflineAssigned → POST /api/restaurant/admin/sweep-offline-assigned (ops).
+func (h *Handler) AdminSweepOfflineAssigned(c *gin.Context) {
+	n, err := h.svc.SweepOfflineAssigned(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"reassigned": n})
+}
+
 // AdminMarkDispatchFailed → POST /api/restaurant/admin/orders/:id/dispatch-failed (ops).
 func (h *Handler) AdminMarkDispatchFailed(c *gin.Context) {
 	var body struct {
