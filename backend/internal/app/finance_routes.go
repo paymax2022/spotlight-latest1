@@ -1253,6 +1253,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.POST("/:id/orders", restaurantHandler.PlaceOrder)
 		restGroup.PATCH("/:id/orders/:orderId/status", restaurantHandler.UpdateStatus)
 		restGroup.DELETE("/:id/orders/:orderId", restaurantHandler.CancelOrder)
+		// Expanded lifecycle (Phase 14): owner rejects (refund), rider reports failed drop-off.
+		restGroup.POST("/:id/orders/:orderId/reject", restaurantHandler.RejectOrder)
+		restGroup.POST("/:id/orders/:orderId/delivery-failed", restaurantHandler.MarkDeliveryFailed)
 
 		// Food disputes: a party opens a dispute on a delivered order; parties read it.
 		// Resolution (with the platform-funded refund) is admin-only, mounted below.
@@ -1315,6 +1318,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.GET("/riders", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminListRiders)
 		restAdmin.GET("/dispatch/queue", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminDispatchQueue)
 		restAdmin.POST("/orders/:id/assign", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminAssignRider)
+		// Dispatch-failure ops (DP-003): fail+refund a single stalled order, or sweep all.
+		restAdmin.POST("/orders/:id/dispatch-failed", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminMarkDispatchFailed)
+		restAdmin.POST("/sweep-stalled-dispatch", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminSweepStalledDispatch)
 		restAdmin.GET("/onboarding", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListApplications)
 		// Single wildcard segment handles all three shapes the admin UI may post:
 		//   /onboarding/:id/decision  (body {decision, note})

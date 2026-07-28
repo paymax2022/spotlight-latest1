@@ -3,6 +3,7 @@ package restaurant
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -171,6 +172,65 @@ func (h *Handler) CancelOrder(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// RejectOrder → POST /restaurant/orders/:orderId/reject (owner). Body {reason}. Declines
+// + refunds a pre-prep order (RM-003).
+func (h *Handler) RejectOrder(c *gin.Context) {
+	actorID := c.GetString("user_id")
+	var body struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.RejectOrder(c.Request.Context(), c.Param("orderId"), actorID, body.Reason); err != nil {
+		c.JSON(statusCodeFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// MarkDeliveryFailed → POST /restaurant/orders/:orderId/delivery-failed (assigned rider).
+// Body {reason}. Records a failed drop-off (no auto-refund; resolved via dispute/cancel).
+func (h *Handler) MarkDeliveryFailed(c *gin.Context) {
+	actorID := c.GetString("user_id")
+	var body struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.MarkDeliveryFailed(c.Request.Context(), c.Param("orderId"), actorID, body.Reason); err != nil {
+		c.JSON(statusCodeFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// AdminMarkDispatchFailed → POST /api/restaurant/admin/orders/:id/dispatch-failed (ops).
+func (h *Handler) AdminMarkDispatchFailed(c *gin.Context) {
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	if err := h.svc.MarkDispatchFailed(c.Request.Context(), c.Param("id"), body.Reason); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// AdminSweepStalledDispatch → POST /api/restaurant/admin/sweep-stalled-dispatch (ops).
+func (h *Handler) AdminSweepStalledDispatch(c *gin.Context) {
+	n, err := h.svc.SweepStalledDispatch(c.Request.Context(), time.Now())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"swept": n})
 }
 
 // statusCodeFor maps order-lifecycle errors to HTTP codes: authorization failures →

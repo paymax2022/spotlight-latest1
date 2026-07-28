@@ -51,7 +51,16 @@ const (
 	OrderPickedUp  OrderStatus = "picked_up"
 	OrderDelivered OrderStatus = "delivered"
 	OrderCancelled OrderStatus = "cancelled"
+	// Expanded lifecycle (Phase 14):
+	OrderRejected       OrderStatus = "rejected"        // restaurant declined (pre-prep) → refund
+	OrderDispatchFailed OrderStatus = "dispatch_failed" // no rider sourced → refund
+	OrderDeliveryFailed OrderStatus = "delivery_failed" // rider couldn't deliver → ops/dispute resolves
 )
+
+// refundedCloseStates are the terminal states reached by refunding the escrow.
+func isRefundedClose(s OrderStatus) bool {
+	return s == OrderCancelled || s == OrderRejected || s == OrderDispatchFailed
+}
 
 // DeliveryFeeKobo is the flat delivery charge added to every order.
 const DeliveryFeeKobo int64 = 50000 // ₦500

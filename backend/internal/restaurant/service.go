@@ -645,17 +645,17 @@ func canTransition(from, to OrderStatus) bool {
 	}
 	switch from {
 	case OrderPending:
-		return to == OrderConfirmed || to == OrderCancelled
+		return to == OrderConfirmed || to == OrderCancelled || to == OrderRejected
 	case OrderConfirmed:
-		return to == OrderPreparing || to == OrderCancelled
+		return to == OrderPreparing || to == OrderCancelled || to == OrderRejected
 	case OrderPreparing:
 		return to == OrderReady || to == OrderCancelled
 	case OrderReady:
-		return to == OrderPickedUp || to == OrderCancelled
+		return to == OrderPickedUp || to == OrderCancelled || to == OrderDispatchFailed
 	case OrderPickedUp:
-		return to == OrderDelivered
+		return to == OrderDelivered || to == OrderDeliveryFailed
 	default:
-		// delivered / cancelled are terminal.
+		// delivered / cancelled / rejected / dispatch_failed / delivery_failed are terminal.
 		return false
 	}
 }
@@ -738,9 +738,19 @@ func (s *Service) CancelOrder(ctx context.Context, orderID, actorID string) erro
 // escrow (idempotent on the settlement status), marks the order cancelled, then notifies.
 // Idempotent: re-cancelling an already-cancelled order is a no-op.
 func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) error {
+	return s.refundAndClose(ctx, orderID, actorID, OrderCancelled, "order_cancelled")
+}
+
+// refundAndClose refunds an order's escrow and moves it to a terminal REFUNDED close
+// state (cancelled | rejected | dispatch_failed). Transactional (SELECT … FOR UPDATE);
+// idempotent when the order is already in that same close state; refuses to refund a
+// picked-up/delivered order (its money is already settling to the provider). The reason
+// is persisted on the order + the audit trail. This is the single money-safe path
+// shared by cancellation, restaurant rejection, and dispatch failure.
+func (s *Service) refundAndClose(ctx context.Context, orderID, actorID string, target OrderStatus, reason string) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("restaurant: begin cancel tx: %w", err)
+		return fmt.Errorf("restaurant: begin refund tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -750,34 +760,37 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 		Scan(&status, &settlementID); err != nil {
 		return fmt.Errorf("restaurant: order not found")
 	}
-	if status == string(OrderCancelled) {
-		return tx.Commit(ctx) // already cancelled — idempotent no-op
+	if status == string(target) {
+		return tx.Commit(ctx) // already in this close state — idempotent no-op
+	}
+	if isRefundedClose(OrderStatus(status)) {
+		return fmt.Errorf("restaurant: order is already %s", status)
 	}
 	if status == string(OrderPickedUp) || status == string(OrderDelivered) {
-		return fmt.Errorf("restaurant: cannot cancel an order that is already picked up or delivered")
+		return fmt.Errorf("restaurant: cannot refund an order that is already picked up or delivered")
 	}
-	// Refund the escrow before committing the cancel so an order is never marked
-	// cancelled without the money being returned. Refund is idempotent on the
-	// settlement status, so a retry after a mid-flight failure does not double-refund.
-	if err := s.settlement.Refund(ctx, settlementID, "order_cancelled"); err != nil {
+	// Refund the escrow before committing the close so an order is never moved to a
+	// terminal refunded state without the money being returned. Refund is idempotent on
+	// the settlement status, so a retry after a mid-flight failure never double-refunds.
+	if err := s.settlement.Refund(ctx, settlementID, reason); err != nil {
 		return fmt.Errorf("restaurant: refund order: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `UPDATE orders SET status='cancelled' WHERE id=$1`, orderID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE orders SET status=$1, status_reason=$2 WHERE id=$3`, string(target), nullIfEmpty(reason), orderID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	s.recordOrderEvent(ctx, orderID, actorID, OrderStatus(status), OrderCancelled)
+	s.recordOrderEvent(ctx, orderID, actorID, OrderStatus(status), target)
 
-	// Notify the customer + rider (if assigned) and broadcast cancellation.
+	// Notify the customer + rider (if assigned) and broadcast the close.
 	customer, _, rider, _ := s.orderParties(ctx, orderID)
 	if customer != "" && customer != actorID {
-		s.notify(ctx, Notification{UserID: customer, Event: EventOrderCancelled, Title: "Order cancelled", Body: "Your order was cancelled and refunded.", Data: map[string]any{"order_id": orderID}})
+		s.notify(ctx, Notification{UserID: customer, Event: EventOrderCancelled, Title: "Order " + string(target), Body: "Your order was " + string(target) + " and refunded.", Data: map[string]any{"order_id": orderID, "reason": reason}})
 	}
 	if rider != "" && rider != actorID {
-		s.notify(ctx, Notification{UserID: rider, Event: EventOrderCancelled, Title: "Order cancelled", Body: "An assigned order was cancelled.", Data: map[string]any{"order_id": orderID}})
+		s.notify(ctx, Notification{UserID: rider, Event: EventOrderCancelled, Title: "Order " + string(target), Body: "An assigned order was " + string(target) + ".", Data: map[string]any{"order_id": orderID}})
 	}
-	s.broadcastStatus(orderID, OrderCancelled)
+	s.broadcastStatus(orderID, target)
 	return nil
 }
