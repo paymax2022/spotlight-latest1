@@ -8,7 +8,7 @@ import { View, Text, StyleSheet, Pressable, ScrollView, RefreshControl } from 'r
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Icons from 'lucide-react-native';
-import { WifiOff, Menu } from 'lucide-react-native';
+import { WifiOff, Menu, Bell } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -18,6 +18,7 @@ import SectionHeader from '@/components/SectionHeader';
 import { MarketColors } from '@/features/marketplace';
 import type { Category, ListingSummary } from '@/features/marketplace';
 import { useCategories, useHomeRails } from '@/features/marketplace/hooks';
+import { useNotifications } from '@/features/marketplace/api/account.hooks';
 import { useMarketplaceMenu } from './_components/MarketplaceMenu';
 import ListingCard from '@/features/marketplace/components/ListingCard';
 import { CategoryGridSkeleton, RailSkeleton } from '@/features/marketplace/components/Skeletons';
@@ -50,6 +51,8 @@ export default function MarketplaceHome() {
   const menu = useMarketplaceMenu();
   const categories = useCategories();
   const rails = useHomeRails();
+  const notifs = useNotifications();
+  const unreadNotifs = (notifs.data ?? []).filter((n) => !n.read).length;
   const refreshing = categories.isFetching || rails.isFetching;
   // Offline-first: if a fetch failed but we still hold cached data, show it with a banner.
   const showCacheBanner = (categories.isError || rails.isError) && (!!categories.data || !!rails.data);
@@ -66,6 +69,12 @@ export default function MarketplaceHome() {
           <Menu size={24} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Text style={styles.headerTitle}>Marketplace</Text>
+        <Pressable onPress={() => router.push('/marketplace/notifications' as never)} hitSlop={8} style={styles.bellBtn} accessibilityRole="button" accessibilityLabel={`Notifications${unreadNotifs > 0 ? `, ${unreadNotifs} unread` : ''}`}>
+          <Bell size={22} color={Colors.onSurface} strokeWidth={2} />
+          {unreadNotifs > 0 ? (
+            <View style={styles.badge}><Text style={styles.badgeText}>{unreadNotifs > 9 ? '9+' : unreadNotifs}</Text></View>
+          ) : null}
+        </Pressable>
       </View>
 
       <Pressable onPress={() => router.push('/marketplace/search' as never)} accessibilityRole="button" accessibilityLabel="Search marketplace">
@@ -118,7 +127,10 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   header: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.containerMargin, paddingVertical: Spacing.sm },
   menuBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginLeft: -6 },
-  headerTitle: { ...Typography.headlineMd, color: Colors.onSurface },
+  headerTitle: { ...Typography.headlineMd, color: Colors.onSurface, flex: 1 },
+  bellBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  badge: { position: 'absolute', top: 2, right: 2, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: MarketColors.danger, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 },
+  badgeText: { ...Typography.labelSm, color: '#fff', fontSize: 10, fontWeight: '700' },
   searchWrap: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.sm },
   cacheBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: MarketColors.warnBg, marginHorizontal: Spacing.containerMargin, paddingHorizontal: Spacing.sm, paddingVertical: 6, borderRadius: Radius.md, marginBottom: Spacing.xs },
   cacheBannerText: { ...Typography.labelSm, color: MarketColors.warnText },

@@ -9,6 +9,7 @@ import type { NotificationPrefsPatch } from './account.api';
 export const MKT_ACCOUNT_KEYS = {
   blocks: ['mkt', 'account', 'blocks'] as const,
   notificationPrefs: ['mkt', 'account', 'notification-prefs'] as const,
+  notifications: ['mkt', 'account', 'notifications'] as const,
   safeSpots: (filter?: { state?: string; lga?: string }) => ['mkt', 'account', 'safe-spots', filter ?? null] as const,
 };
 
@@ -54,6 +55,49 @@ export function useUpdateNotificationPrefs() {
       if (ctx?.prev) qc.setQueryData(MKT_ACCOUNT_KEYS.notificationPrefs, ctx.prev);
     },
     onSettled: () => qc.invalidateQueries({ queryKey: MKT_ACCOUNT_KEYS.notificationPrefs }),
+  });
+}
+
+// ── Notification feed (§33 · NT-001/002/003) ─────────────────────────────────
+export const useNotifications = () =>
+  useQuery({ queryKey: MKT_ACCOUNT_KEYS.notifications, queryFn: accountApi.listNotifications });
+
+export function useMarkNotificationRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => accountApi.markNotificationRead(id),
+    // Optimistic: flip the row to read instantly.
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: MKT_ACCOUNT_KEYS.notifications });
+      const prev = qc.getQueryData<accountApi.MktNotification[]>(MKT_ACCOUNT_KEYS.notifications);
+      qc.setQueryData<accountApi.MktNotification[]>(MKT_ACCOUNT_KEYS.notifications, (old) =>
+        (old ?? []).map((n) => (n.id === id ? { ...n, read: true } : n)),
+      );
+      return { prev };
+    },
+    onError: (_e, _id, ctx) => {
+      if (ctx?.prev) qc.setQueryData(MKT_ACCOUNT_KEYS.notifications, ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: MKT_ACCOUNT_KEYS.notifications }),
+  });
+}
+
+export function useMarkAllNotificationsRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => accountApi.markAllNotificationsRead(),
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: MKT_ACCOUNT_KEYS.notifications });
+      const prev = qc.getQueryData<accountApi.MktNotification[]>(MKT_ACCOUNT_KEYS.notifications);
+      qc.setQueryData<accountApi.MktNotification[]>(MKT_ACCOUNT_KEYS.notifications, (old) =>
+        (old ?? []).map((n) => ({ ...n, read: true })),
+      );
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(MKT_ACCOUNT_KEYS.notifications, ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: MKT_ACCOUNT_KEYS.notifications }),
   });
 }
 

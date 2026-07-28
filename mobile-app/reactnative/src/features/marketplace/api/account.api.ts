@@ -217,6 +217,68 @@ export async function unblockUser(blockId: string): Promise<{ ok: boolean }> {
   return mktDelete<{ ok: boolean }>(`/blocks/${blockId}`);
 }
 
+// ─── Notification feed (§ Mobile-UX-Flows 33 · NT-001/002/003) ───────────────
+// The in-app inbox of delivered notifications, distinct from notification-prefs
+// (opt-in toggles). Each row can deep-link to the listing/thread/seller it's about.
+
+export type MktNotificationType =
+  | 'listing_status' // your listing went live / was removed (NT-001)
+  | 'new_offer' // a buyer made/updated an offer (NT-002)
+  | 'new_message' // a new chat message (NT-002)
+  | 'price_drop' // a saved-search or watched listing dropped in price (NT-003)
+  | 'saved_search' // new results for a saved search (NT-003)
+  | 'boost_expiry' // a boost is ending / has ended
+  | 'review'; // a buyer reviewed you
+
+export interface MktNotification {
+  id: string;
+  type: MktNotificationType;
+  title: string;
+  body: string;
+  read: boolean;
+  createdAt: string;
+  listingId?: string | null;
+  threadId?: string | null;
+  sellerId?: string | null;
+}
+
+const mkIso = (minsAgo: number) => new Date(Date.now() - minsAgo * 60_000).toISOString();
+
+let mockNotifications: MktNotification[] = [
+  { id: 'ntf-1', type: 'new_offer', title: 'New offer received', body: 'A buyer offered ₦480,000 for your iPhone 13 Pro Max.', read: false, createdAt: mkIso(8), listingId: 'lst_a1b2', threadId: 'thr_1' },
+  { id: 'ntf-2', type: 'listing_status', title: 'Your listing is live', body: '“Clean Toyota Corolla 2015” has been approved and is now live.', read: false, createdAt: mkIso(52), listingId: 'lst_c3d4' },
+  { id: 'ntf-3', type: 'price_drop', title: 'Price drop on a saved item', body: 'A listing on your wishlist dropped by ₦15,000.', read: false, createdAt: mkIso(140), listingId: 'lst_e5f6' },
+  { id: 'ntf-4', type: 'saved_search', title: 'New results for “3-bed Lekki”', body: '4 new listings match your saved search.', read: true, createdAt: mkIso(60 * 20) },
+  { id: 'ntf-5', type: 'boost_expiry', title: 'Boost ending soon', body: 'Your VIP boost on “MacBook Pro 2021” ends in 24 hours.', read: true, createdAt: mkIso(60 * 26), listingId: 'lst_g7h8' },
+  { id: 'ntf-6', type: 'review', title: 'You got a new review', body: 'A buyer left you a 5-star review. Tap to respond.', read: true, createdAt: mkIso(60 * 48), sellerId: MOCK_ME },
+];
+
+export async function listNotifications(): Promise<MktNotification[]> {
+  if (MKT_USE_MOCK) {
+    await delay();
+    return mockNotifications.map((n) => ({ ...n }));
+  }
+  return mktGet<MktNotification[]>('/notifications');
+}
+
+export async function markNotificationRead(id: string): Promise<{ ok: boolean }> {
+  if (MKT_USE_MOCK) {
+    await delay(80);
+    mockNotifications = mockNotifications.map((n) => (n.id === id ? { ...n, read: true } : n));
+    return { ok: true };
+  }
+  return mktPost<{ ok: boolean }>(`/notifications/${id}/read`);
+}
+
+export async function markAllNotificationsRead(): Promise<{ ok: boolean }> {
+  if (MKT_USE_MOCK) {
+    await delay(80);
+    mockNotifications = mockNotifications.map((n) => ({ ...n, read: true }));
+    return { ok: true };
+  }
+  return mktPost<{ ok: boolean }>('/notifications/read-all');
+}
+
 // ─── Notification preferences ────────────────────────────────────────────────
 
 export async function getNotificationPrefs(): Promise<NotificationPrefs> {
