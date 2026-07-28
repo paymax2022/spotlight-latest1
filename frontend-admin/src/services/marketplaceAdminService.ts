@@ -10,6 +10,8 @@ import type {
   MktFlagActionRequest,
   MktAdminAuditLogEntry,
   MktBoost,
+  MktCategory,
+  MktCategoryInput,
 } from '@/types/marketplaceAdmin';
 
 // Paymax Marketplace admin console — service layer.
@@ -366,6 +368,130 @@ export async function rejectBoost(id: string, reasonCode: string): Promise<MktBo
     method: 'POST', headers: authHeaders(), body: JSON.stringify({ reason_code: reasonCode }),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Boost reject failed'));
+  return res.json();
+}
+
+// ─── Taxonomy (categories + attribute schema) ────────────────────────────────
+
+const FIXTURE_CATEGORIES: MktCategory[] = [
+  {
+    id: 'cat_vehicles', market_id: 'NG', parent_id: null, slug: 'vehicles', name: 'Vehicles',
+    risk_tier: 2, commission_bps: 250, is_active: true, listing_count: 1842,
+    attribute_schema: {
+      required: ['make', 'year'], additionalProperties: false,
+      properties: {
+        make: { type: 'string', enum: ['toyota', 'honda', 'lexus', 'mercedes', 'other'] },
+        year: { type: 'integer', minimum: 1990, maximum: 2026 },
+        transmission: { type: 'string', enum: ['automatic', 'manual'] },
+      },
+    },
+    created_at: iso(60 * 24 * 90), updated_at: iso(60 * 24 * 5),
+  },
+  {
+    id: 'cat_phones', market_id: 'NG', parent_id: null, slug: 'phones-tablets', name: 'Phones & Tablets',
+    risk_tier: 0, commission_bps: 500, is_active: true, listing_count: 5310,
+    attribute_schema: {
+      required: ['brand'], additionalProperties: false,
+      properties: {
+        brand: { type: 'string', enum: ['apple', 'samsung', 'tecno', 'infinix', 'other'] },
+        storage_gb: { type: 'integer', minimum: 8, maximum: 2048 },
+      },
+    },
+    created_at: iso(60 * 24 * 90), updated_at: iso(60 * 24 * 12),
+  },
+  {
+    id: 'cat_fashion', market_id: 'NG', parent_id: null, slug: 'fashion', name: 'Fashion',
+    risk_tier: 1, commission_bps: 700, is_active: true, listing_count: 2205,
+    attribute_schema: { properties: {} },
+    created_at: iso(60 * 24 * 90), updated_at: iso(60 * 24 * 40),
+  },
+  {
+    id: 'cat_phones_iphone', market_id: 'NG', parent_id: 'cat_phones', slug: 'iphone', name: 'iPhone',
+    risk_tier: 0, commission_bps: 500, is_active: true, listing_count: 1290,
+    attribute_schema: {
+      required: ['model'], additionalProperties: false,
+      properties: { model: { type: 'string', enum: ['13', '14', '15', '16', 'other'] } },
+    },
+    created_at: iso(60 * 24 * 80), updated_at: iso(60 * 24 * 8),
+  },
+  {
+    id: 'cat_gift_cards', market_id: 'NG', parent_id: null, slug: 'gift-cards', name: 'Gift Cards (legacy)',
+    risk_tier: 3, commission_bps: 0, is_active: false, listing_count: 0,
+    attribute_schema: { properties: {} },
+    created_at: iso(60 * 24 * 120), updated_at: iso(60 * 24 * 60),
+  },
+];
+
+export async function listCategories(): Promise<MktCategory[]> {
+  if (USE_FIXTURES) return delay([...FIXTURE_CATEGORIES]);
+  const res = await fetch(`${marketplaceAdminBase()}/categories`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Categories fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+export async function getCategory(id: string): Promise<MktCategory> {
+  if (USE_FIXTURES) {
+    const found = FIXTURE_CATEGORIES.find((c) => c.id === id);
+    if (!found) throw new Error(`Category ${id} not found`);
+    return delay({ ...found });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/categories/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Category fetch failed'));
+  return res.json();
+}
+
+function validateCategoryInput(input: MktCategoryInput): void {
+  if (!input.name.trim()) throw new Error('name is required.');
+  if (!/^[a-z0-9-]+$/.test(input.slug)) throw new Error('slug must be lowercase letters, digits, and hyphens only.');
+  if (input.risk_tier < 0 || input.risk_tier > 3) throw new Error('risk_tier must be 0–3.');
+  if (input.commission_bps < 0 || input.commission_bps > 10_000) throw new Error('commission_bps must be 0–10000.');
+}
+
+export async function createCategory(input: MktCategoryInput): Promise<MktCategory> {
+  validateCategoryInput(input);
+  if (USE_FIXTURES) {
+    return delay({
+      id: `cat_${input.slug}`, market_id: 'NG', parent_id: input.parent_id ?? null, slug: input.slug, name: input.name,
+      risk_tier: input.risk_tier, commission_bps: input.commission_bps, is_active: input.is_active,
+      attribute_schema: input.attribute_schema, listing_count: 0,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/categories`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(input) });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Category create failed'));
+  return res.json();
+}
+
+export async function updateCategory(id: string, input: MktCategoryInput): Promise<MktCategory> {
+  validateCategoryInput(input);
+  if (USE_FIXTURES) {
+    const found = FIXTURE_CATEGORIES.find((c) => c.id === id);
+    if (!found) throw new Error(`Category ${id} not found`);
+    return delay({ ...found, ...input, id, parent_id: input.parent_id ?? null, updated_at: new Date().toISOString() });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/categories/${encodeURIComponent(id)}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(input) });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Category update failed'));
+  return res.json();
+}
+
+// setCategoryActive disables/enables a category. Disabling requires a reason_code
+// (audited) and — per EC-007 — the backend must reject disabling a category that
+// still has active listings; the UI surfaces listing_count as a pre-check.
+export async function setCategoryActive(id: string, isActive: boolean, reasonCode: string): Promise<MktCategory> {
+  if (!reasonCode || !reasonCode.trim()) throw new Error('reason_code is required to enable/disable a category.');
+  if (USE_FIXTURES) {
+    const found = FIXTURE_CATEGORIES.find((c) => c.id === id);
+    if (!found) throw new Error(`Category ${id} not found`);
+    if (!isActive && (found.listing_count ?? 0) > 0) {
+      throw new Error(`Cannot disable a category with ${found.listing_count} active listing(s) (CATEGORY_HAS_LISTINGS). Reassign or expire them first.`);
+    }
+    return delay({ ...found, is_active: isActive, updated_at: new Date().toISOString() });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/categories/${encodeURIComponent(id)}/active`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ is_active: isActive, reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Category status change failed'));
   return res.json();
 }
 

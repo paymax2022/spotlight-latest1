@@ -248,3 +248,50 @@ export interface MarketplaceErrorBody {
     request_id?: string | null;
   };
 }
+
+// ── Taxonomy (categories + attribute schema) ─────────────────────────────────
+// A category's attribute_schema is the draft-07 SUBSET the backend enforces at
+// listing write-time (internal/marketplace/attrs_validation.go): required[],
+// per-property type/enum/minimum/maximum, additionalProperties. Authoring it here
+// is the source that seller listings are validated against.
+
+export type MktAttributeType = 'string' | 'number' | 'integer' | 'boolean';
+
+export interface MktAttributeProp {
+  type?: MktAttributeType;
+  enum?: (string | number)[];
+  minimum?: number;
+  maximum?: number;
+}
+
+export interface MktAttributeSchema {
+  required?: string[];
+  additionalProperties?: boolean;
+  properties?: Record<string, MktAttributeProp>;
+}
+
+export interface MktCategory {
+  id: string;
+  market_id: string;
+  parent_id: string | null;
+  slug: string;
+  name: string;
+  attribute_schema: MktAttributeSchema;
+  risk_tier: number; // 0..3; 0 = auto-approve eligible for trusted sellers
+  commission_bps: number; // platform take-rate in basis points
+  is_active: boolean;
+  listing_count?: number; // active listings under this category (EC-007 delete guard)
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface MktCategoryInput {
+  name: string;
+  slug: string;
+  parent_id?: string | null;
+  risk_tier: number;
+  commission_bps: number;
+  is_active: boolean;
+  attribute_schema: MktAttributeSchema;
+  reason_code?: string; // audited config change (ADM-001)
+}

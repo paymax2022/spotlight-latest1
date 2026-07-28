@@ -29,6 +29,7 @@ type Tab = { href: string; label: string; key: string };
 export function MarketplaceTabs({ active }: { active: string }) {
   const tabs: Tab[] = [
     { href: '/admin/marketplace/moderation', label: 'Moderation', key: 'moderation' },
+    { href: '/admin/marketplace/taxonomy', label: 'Taxonomy', key: 'taxonomy' },
     { href: '/admin/marketplace/disputes', label: 'Disputes', key: 'disputes' },
     { href: '/admin/marketplace/flags', label: 'Flags', key: 'flags' },
     { href: '/admin/marketplace/orders-aging', label: 'Orders Aging', key: 'orders-aging' },
@@ -206,6 +207,7 @@ export const MARKETPLACE_PERMS = {
   flagsAction: 'marketplace.admin.flags.action',
   auditRead: 'marketplace.admin.audit.read',
   ordersAging: 'marketplace.admin.orders.aging',
+  taxonomy: 'marketplace.admin.taxonomy',
 } as const;
 
 export function useMarketplaceUser(): AuthUser | null {
