@@ -311,6 +311,37 @@ export interface MktCategoryStat {
   active_listings: number;
 }
 
+// ── Appeals (moderation reversal, maker-checker) — MOD-009 ───────────────────
+
+export type MktAppealStatus = 'opened' | 'under_review' | 'decided' | 'executed' | 'closed';
+export type MktAppealTargetType = 'listing' | 'boost' | 'user';
+export type MktAppealDecision = 'upheld' | 'overturned'; // uphold = deny appeal; overturn = reverse the original action
+
+export interface MktAppeal {
+  id: string;
+  target_type: MktAppealTargetType;
+  target_id: string;
+  appellant_id: string;
+  original_action: string; // e.g. 'removed_policy', 'rejected_with_reason', 'suspended'
+  original_reason_code: string;
+  appellant_note: string;
+  status: MktAppealStatus;
+  decision?: MktAppealDecision | null;
+  decision_notes?: string | null;
+  decided_by?: string | null;
+  second_approver_id?: string | null;
+  requires_dual_approval?: boolean; // overturning a policy action needs a second approver
+  created_at: string;
+  decided_at?: string | null;
+  executed_at?: string | null;
+}
+
+export interface MktAppealDecideRequest {
+  decision: 'uphold' | 'overturn';
+  reason_code: string;
+  notes?: string;
+}
+
 export interface MktAnalytics {
   range_days: number;
   gmv_kobo: number; // value facilitated over the window

@@ -13,6 +13,9 @@ import type {
   MktCategory,
   MktCategoryInput,
   MktAnalytics,
+  MktAppeal,
+  MktAppealStatus,
+  MktAppealDecideRequest,
 } from '@/types/marketplaceAdmin';
 
 // Paymax Marketplace admin console — service layer.
@@ -493,6 +496,95 @@ export async function setCategoryActive(id: string, isActive: boolean, reasonCod
     method: 'POST', headers: authHeaders(), body: JSON.stringify({ is_active: isActive, reason_code: reasonCode }),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Category status change failed'));
+  return res.json();
+}
+
+// ─── Appeals (moderation reversal, maker-checker) — MOD-009 ──────────────────
+
+const FIXTURE_APPEALS: MktAppeal[] = [
+  {
+    id: 'apl_1', target_type: 'listing', target_id: 'lst_e5f6', appellant_id: 'usr_9a1c',
+    original_action: 'removed_policy', original_reason_code: 'counterfeit_suspected',
+    appellant_note: 'These are genuine ex-UK watches with receipts. I can provide proof of purchase and serials.',
+    status: 'opened', decision: null, requires_dual_approval: false, created_at: iso(30),
+  },
+  {
+    id: 'apl_2', target_type: 'boost', target_id: 'bst_77', appellant_id: 'usr_7f2a',
+    original_action: 'rejected_with_reason', original_reason_code: 'listing_policy_removed',
+    appellant_note: 'The underlying listing was reinstated on appeal, so the boost rejection should be reversed and re-run.',
+    status: 'decided', decision: 'overturned', decided_by: 'adm_kemi', requires_dual_approval: true,
+    decision_notes: 'Listing reinstated; boost rejection no longer valid. Overturn + re-run boost.',
+    created_at: iso(220), decided_at: iso(40),
+  },
+  {
+    id: 'apl_3', target_type: 'user', target_id: 'usr_2b9e', appellant_id: 'usr_2b9e',
+    original_action: 'suspended', original_reason_code: 'multiple_fraud_flags',
+    appellant_note: 'My account was suspended by mistake — the flags were from a buyer I had a dispute with.',
+    status: 'executed', decision: 'upheld', decided_by: 'adm_tunde',
+    decision_notes: 'Fraud flags corroborated by device fingerprint. Suspension stands.',
+    created_at: iso(60 * 30), decided_at: iso(60 * 28), executed_at: iso(60 * 28),
+  },
+];
+
+export async function listAppeals(status?: MktAppealStatus): Promise<MktAppeal[]> {
+  if (USE_FIXTURES) return delay(status ? FIXTURE_APPEALS.filter((a) => a.status === status) : [...FIXTURE_APPEALS]);
+  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+  const res = await fetch(`${marketplaceAdminBase()}/appeals${qs}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Appeals fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+export async function getAppeal(id: string): Promise<MktAppeal> {
+  if (USE_FIXTURES) {
+    const found = FIXTURE_APPEALS.find((a) => a.id === id);
+    if (!found) throw new Error(`Appeal ${id} not found`);
+    return delay({ ...found });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/appeals/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Appeal fetch failed'));
+  return res.json();
+}
+
+// decideAppeal: uphold (deny appeal → original action stands) executes immediately;
+// overturn (reverse a policy removal/suspension) is high-trust → returns a
+// dual-approval-pending appeal that a DIFFERENT admin must second-sign.
+export async function decideAppeal(id: string, input: MktAppealDecideRequest): Promise<MktAppeal> {
+  if (!input.reason_code || !input.reason_code.trim()) throw new Error('reason_code is required to decide an appeal.');
+  if (USE_FIXTURES) {
+    const found = FIXTURE_APPEALS.find((a) => a.id === id);
+    if (!found) throw new Error(`Appeal ${id} not found`);
+    const overturn = input.decision === 'overturn';
+    return delay({
+      ...found,
+      decision: overturn ? 'overturned' : 'upheld',
+      decision_notes: input.notes ?? null,
+      decided_by: 'adm_current',
+      requires_dual_approval: overturn,
+      status: overturn ? 'decided' : 'executed',
+      decided_at: new Date().toISOString(),
+      executed_at: overturn ? null : new Date().toISOString(),
+    });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/appeals/${encodeURIComponent(id)}/decide`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(input),
+  });
+  if (!res.ok && res.status !== 202) throw new Error(await parseErrorMessage(res, 'Appeal decision failed'));
+  return res.json();
+}
+
+// approveAppealSecondSign: second-approver sign-off that executes an overturn. The
+// backend enforces the approver differs from the decider (409 SAME_APPROVER_NOT_ALLOWED).
+export async function approveAppealSecondSign(id: string, reasonCode?: string): Promise<MktAppeal> {
+  if (USE_FIXTURES) {
+    const found = FIXTURE_APPEALS.find((a) => a.id === id);
+    if (!found) throw new Error(`Appeal ${id} not found`);
+    return delay({ ...found, status: 'executed', second_approver_id: 'adm_second', executed_at: new Date().toISOString() });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/appeals/${encodeURIComponent(id)}/approve`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(reasonCode ? { reason_code: reasonCode } : {}),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Second approval failed'));
   return res.json();
 }
 
