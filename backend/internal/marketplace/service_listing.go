@@ -164,11 +164,19 @@ func (s *Service) SubmitListing(ctx context.Context, sellerID, id string) (*List
 		return nil, newErr(422, CodeDescriptionTooShort, "description must be at least 8 words")
 	}
 
-	// Auto-approve guard: risk_tier 0 AND seller trust ≥ 0.6.
+	// Auto-moderation pre-filter (§2.1): prohibited content NEVER takes the
+	// auto-approve fast-path, no matter how trusted the seller is — it is routed to
+	// human review with a reason. The screen is conservative (a hit routes to review,
+	// it does not auto-reject).
+	flagReason := screenListingContent(l.Title, l.Description, l.Attrs)
+
+	// Auto-approve guard: NOT flagged AND risk_tier 0 AND seller trust ≥ 0.6.
 	autoApprove := false
-	if cat, cerr := s.repo.GetCategory(ctx, l.CategoryID); cerr == nil && cat.RiskTier == 0 {
-		if tp, terr := s.repo.GetTrustProfile(ctx, sellerID); terr == nil && tp.TrustScore >= autoApproveTrustScore {
-			autoApprove = true
+	if flagReason == "" {
+		if cat, cerr := s.repo.GetCategory(ctx, l.CategoryID); cerr == nil && cat.RiskTier == 0 {
+			if tp, terr := s.repo.GetTrustProfile(ctx, sellerID); terr == nil && tp.TrustScore >= autoApproveTrustScore {
+				autoApprove = true
+			}
 		}
 	}
 
@@ -182,10 +190,23 @@ func (s *Service) SubmitListing(ctx context.Context, sellerID, id string) (*List
 		return l, nil
 	}
 
-	if err := s.repo.SetListingStatus(ctx, id, ListingDraft, ListingPendingReview, nil); err != nil {
+	// Route to review. If auto-mod flagged it, persist the reason so the moderation
+	// queue shows why, and record an audit trail of the automated decision.
+	var reasonPtr *string
+	if flagReason != "" {
+		reasonPtr = &flagReason
+	}
+	if err := s.repo.SetListingStatus(ctx, id, ListingDraft, ListingPendingReview, reasonPtr); err != nil {
 		return nil, err
 	}
 	l.Status = ListingPendingReview
+	if flagReason != "" {
+		_ = s.writeAudit(ctx, AuditEntry{
+			AdminID: systemActorID, AdminRole: "system", Action: "mkt.listing.automod_flag", TargetType: "listing", TargetID: id, ReasonCode: flagReason,
+			BeforeState: map[string]any{"status": string(ListingDraft)},
+			AfterState:  map[string]any{"status": string(ListingPendingReview), "auto_flag": flagReason},
+		})
+	}
 	s.notifySafe(ctx, sellerID, "mkt.listing.pending", "Your listing is under review.")
 	return l, nil
 }

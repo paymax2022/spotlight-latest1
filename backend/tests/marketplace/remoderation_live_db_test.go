@@ -69,6 +69,20 @@ func seedSchemaCategory(t *testing.T, ctx context.Context, pool *pgxpool.Pool, s
 	return id
 }
 
+// seedTrustedSeller inserts a mkt_trust_scores row with a trust_score high enough
+// (≥ 0.6) that risk-tier-0 submissions take the auto-approve fast-path.
+func seedTrustedSeller(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
+	t.Helper()
+	id := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO mkt_trust_scores (user_id, market_id, kyc_tier, verified_id_badge, verified_business_badge,
+			completed_escrow_count, dispute_count, trust_score, account_created_at)
+		 VALUES ($1::uuid,'paymax','tier2_sell',true,false,5,0,0.90,now()-interval '1 year')`, id); err != nil {
+		t.Fatalf("seed trusted seller: %v", err)
+	}
+	return id
+}
+
 // activate creates → submits → (approves if needed) a listing, returning it ACTIVE.
 func activate(t *testing.T, ctx context.Context, svc *mkt.Service, seller, admin, cat, title string, price int64) *mkt.Listing {
 	t.Helper()
@@ -271,5 +285,61 @@ func TestLiveDB_PauseResumeLifecycle(t *testing.T) {
 	stranger := uuid.New().String()
 	if _, err := svc.PauseListing(ctx, stranger, l.ID); err == nil {
 		t.Error("a non-owner pausing the listing must be forbidden")
+	}
+}
+
+// TestLiveDB_AutoModDeniesAutoApprove proves the auto-moderation pre-filter: a
+// TRUSTED seller in a risk-tier-0 category (who would otherwise auto-publish) is
+// forced into human review when the content trips the prohibited-keyword screen —
+// and a moderation reason is recorded. Clean content still auto-approves (MOD/EC trust).
+func TestLiveDB_AutoModDeniesAutoApprove(t *testing.T) {
+	svc, pool := liveMktService(t)
+	defer pool.Close()
+	ctx := context.Background()
+	cat := seedRiskTier0Category(t, ctx, pool)
+	seller := seedTrustedSeller(t, ctx, pool)
+
+	mk := func(title string) string {
+		l, err := svc.CreateListing(ctx, seller, mkt.CreateListingInput{
+			CategoryID: cat, Title: title,
+			Description: "brand new in original box available now lagos delivery today negotiable",
+			PriceKobo:   500000000, State: "Lagos", LGA: "Ikeja",
+		})
+		if err != nil {
+			t.Fatalf("create %q: %v", title, err)
+		}
+		return l.ID
+	}
+
+	// Clean listing by a trusted seller → auto-approved to active.
+	cleanID := mk("Clean Toyota Corolla 2015 Lagos")
+	clean, err := svc.SubmitListing(ctx, seller, cleanID)
+	if err != nil {
+		t.Fatalf("submit clean: %v", err)
+	}
+	if clean.Status != mkt.ListingActive {
+		t.Fatalf("trusted+clean should auto-approve, got %s", clean.Status)
+	}
+
+	// Prohibited content by the SAME trusted seller → forced to pending_review.
+	badID := mk("AK47 rifle for sale cheap Lagos")
+	bad, err := svc.SubmitListing(ctx, seller, badID)
+	if err != nil {
+		t.Fatalf("submit flagged: %v", err)
+	}
+	if bad.Status != mkt.ListingPendingReview {
+		t.Fatalf("prohibited content must NOT auto-approve, got %s", bad.Status)
+	}
+	// A moderation reason must be persisted.
+	var reason *string
+	_ = pool.QueryRow(ctx, `SELECT moderation_reason_code FROM mkt_listings WHERE id=$1::uuid`, badID).Scan(&reason)
+	if reason == nil || *reason == "" {
+		t.Error("auto-mod flag must persist a moderation_reason_code")
+	}
+	// And an automod audit event must be written.
+	var audits int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM mkt_admin_audit_log WHERE target_id=$1 AND action='mkt.listing.automod_flag'`, badID).Scan(&audits)
+	if audits < 1 {
+		t.Error("auto-mod flag must write an audit event")
 	}
 }
