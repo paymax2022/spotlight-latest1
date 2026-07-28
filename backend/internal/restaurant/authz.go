@@ -14,6 +14,12 @@ var (
 	// endpoint; the assigned rider must use ConfirmHandoff, which enforces the
 	// delivery-code proof-of-delivery. This closes the POD-bypass hole.
 	ErrDeliveredViaHandoff = errors.New("restaurant: delivered can only be set via rider handoff (proof of delivery)")
+	// ErrOutsideDeliveryZone — the delivery destination falls outside every service
+	// area the restaurant's owner has defined. Only enforced when the owner has at
+	// least one zone AND the request carries delivery coordinates (otherwise the order
+	// is allowed, back-compat). Maps to HTTP 422 (unprocessable — valid request, but
+	// undeliverable to this address).
+	ErrOutsideDeliveryZone = errors.New("restaurant: delivery address is outside the restaurant's delivery zone")
 )
 
 type orderActorRole int

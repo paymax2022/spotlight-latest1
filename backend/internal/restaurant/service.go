@@ -39,6 +39,16 @@ type RouteDistancer interface {
 	RouteDistanceKmEta(ctx context.Context, oLat, oLng, dLat, dLng float64) (km, etaMin float64, err error)
 }
 
+// DeliveryZoneChecker reports whether a delivery point falls inside any service area
+// the given owner has configured. `hasZones` is false when the owner has defined no
+// zones at all — in that case PlaceOrder does NOT enforce a zone (back-compat: a
+// restaurant that hasn't drawn a delivery area still takes orders). Satisfied by
+// maps.OwnerZoneChecker (PostGIS ST_Contains over service_areas). Optional: when nil,
+// no zone gate is applied.
+type DeliveryZoneChecker interface {
+	InAnyOwnerZone(ctx context.Context, lat, lng float64, ownerID string) (inZone, hasZones bool, err error)
+}
+
 // Service manages restaurants, menus, and orders.
 type Service struct {
 	db         *pgxpool.Pool
@@ -50,6 +60,7 @@ type Service struct {
 	notifier   Notifier            // nil-safe via s.notify; defaults to LogNotifier
 	rt         *Realtime           // optional; nil → no WS fan-out
 	tiers      *tiers.Service      // optional; nil → no tier-limit gate on the order escrow
+	zones      DeliveryZoneChecker // optional; nil → no delivery-zone gate on PlaceOrder
 }
 
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
@@ -76,6 +87,14 @@ func (s *Service) WithLedger(l *ledger.Service) *Service {
 // to an order's connected participants. nil-safe (fan-out becomes a no-op).
 func (s *Service) WithRealtime(rt *Realtime) *Service {
 	s.rt = rt
+	return s
+}
+
+// WithZoneChecker attaches a delivery-zone checker so PlaceOrder rejects destinations
+// outside the restaurant owner's configured service areas. nil-safe: without it (or when
+// the owner has drawn no zones), orders are accepted regardless of destination.
+func (s *Service) WithZoneChecker(z DeliveryZoneChecker) *Service {
+	s.zones = z
 	return s
 }
 
@@ -232,11 +251,35 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		etaMinutes = &em
 	}
 
-	total := subtotal + deliveryKobo
+	// Delivery-zone gate (BEFORE any money moves): when the restaurant's owner has
+	// drawn one or more service areas, the destination must fall inside one of them.
+	// Skipped when no zones are defined OR the request carries no coordinates
+	// (back-compat — a restaurant that hasn't drawn a delivery area still takes
+	// orders). A checker ERROR is treated as non-blocking: this is a logistics gate,
+	// not a money-safety invariant, and a transient geo-lookup failure must not strand
+	// every order — the order proceeds and an out-of-range drop can still be declined
+	// downstream. (Contrast the tier gate below, which is fail-closed by design.)
+	if s.zones != nil {
+		if dLat, dLng, ok := req.DeliveryCoords(); ok {
+			if inZone, hasZones, zerr := s.zones.InAnyOwnerZone(ctx, dLat, dLng, ownerID); zerr == nil && hasZones && !inZone {
+				return nil, ErrOutsideDeliveryZone
+			}
+		}
+	}
+
+	// Optional rider tip: escrowed with the order and paid 100% to the rider at
+	// settlement. Never trust a negative tip from the client — clamp to 0 so it can
+	// only ever add to the total (and thus to what the customer's wallet is debited).
+	tip := req.TipKobo
+	if tip < 0 {
+		tip = 0
+	}
+	total := subtotal + deliveryKobo + tip
 	orderID := uuid.New().String()
 	ref := "order:" + orderID
 
-	// Escrow full amount: 80% restaurant, 10% rider, 10% platform.
+	// Escrow full amount: 80% restaurant, 10% rider, 10% platform (of the non-tip
+	// base); the tip rides on top and is paid entirely to the rider at settlement.
 	// Tier-limit gate (money iron rule): the order escrow debits the customer's wallet,
 	// so enforce their KYC/tier daily & per-transaction limits fail-closed BEFORE any
 	// debit. A tier/limit lookup error also blocks (never allow-on-error).
@@ -256,6 +299,7 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		RestaurantID:      restaurantID,
 		SubtotalKobo:      subtotal,
 		DeliveryKobo:      deliveryKobo,
+		TipKobo:           tip,
 		TotalKobo:         total,
 		Status:            OrderPending,
 		IdempotencyKey:    req.IdempotencyKey,
@@ -283,14 +327,14 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	defer tx.Rollback(ctx)
 
 	const insertOrder = `
-		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown)
-		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12)
+		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, tip_kobo)
+		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12,$13)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insertOrder,
 		order.ID, order.CustomerID, order.RestaurantID,
 		order.SubtotalKobo, order.DeliveryKobo, order.TotalKobo,
 		order.IdempotencyKey, order.SettlementID, order.DeliveryAddress,
-		order.DistanceMeters, order.EtaMinutes, breakdownJSON,
+		order.DistanceMeters, order.EtaMinutes, breakdownJSON, order.TipKobo,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: insert order: %w", err)
@@ -520,21 +564,40 @@ func canTransition(from, to OrderStatus) bool {
 // live UpdateStatus(delivered) path and the crash-recovery reconciler.
 func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settlementID string) error {
 	var riderID *string
-	s.db.QueryRow(ctx, `SELECT rider_id FROM orders WHERE id=$1`, orderID).Scan(&riderID)
+	var tipKobo int64
+	s.db.QueryRow(ctx, `SELECT rider_id, tip_kobo FROM orders WHERE id=$1`, orderID).Scan(&riderID, &tipKobo)
 	var ownerID string
 	s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID)
-	split := settlement.Split{
+	return s.settlement.Settle(ctx, settlementID, orderSettlementSplit(ownerID, riderID, tipKobo))
+}
+
+// orderSettlementSplit builds the settlement split for a food order. Pure (no DB) so
+// the payout policy — including the rider-tip routing and its edge cases — is
+// table-testable. Two shapes:
+//
+//   - rider assigned:  80% owner / 10% platform / 10% rider of the NON-TIP base, and
+//     the whole tip added on top to the rider (settlement applies the % to total−tip).
+//   - no rider:        the rider's 10% folds into the owner (90/10), and any tip flows
+//     through the base split (TipKobo=0) — settlement.Split rejects a tip with no
+//     rider, and the tip stays escrowed in the total so the owner (who self-delivered)
+//     receives it as part of their 90% share. Nothing is stranded or lost either way.
+func orderSettlementSplit(ownerID string, riderID *string, tipKobo int64) settlement.Split {
+	if riderID == nil {
+		return settlement.Split{
+			ProviderID:  ownerID,
+			ProviderPct: 0.90,
+			PlatformPct: 0.10,
+			// no RiderID, no RiderPct, and no fixed tip leg (would be rejected)
+		}
+	}
+	return settlement.Split{
 		ProviderID:  ownerID,
 		ProviderPct: 0.80,
 		PlatformPct: 0.10,
 		RiderID:     riderID,
 		RiderPct:    0.10,
+		TipKobo:     tipKobo, // 100% to the rider, on top of the base split
 	}
-	if riderID == nil {
-		split.ProviderPct = 0.90
-		split.RiderPct = 0
-	}
-	return s.settlement.Settle(ctx, settlementID, split)
 }
 
 // CancelOrder refunds the customer if the order has not yet been picked up.

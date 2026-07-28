@@ -105,12 +105,24 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 	if sett.Status != StatusEscrowed {
 		return fmt.Errorf("settlement: cannot settle — current status is %s", sett.Status)
 	}
+	// A tip larger than what was escrowed would drive the non-tip base (and thus the
+	// provider remainder) negative. Fail closed — the tip can never exceed the total.
+	if split.TipKobo > sett.TotalKobo {
+		return fmt.Errorf("settlement: tip %d exceeds escrowed total %d", split.TipKobo, sett.TotalKobo)
+	}
 
-	// Compute splits.
-	platformKobo := int64(float64(sett.TotalKobo) * split.PlatformPct)
+	// Compute splits. The percentages apply to the NON-TIP base; the tip is a fixed
+	// rider leg paid on top. With TipKobo == 0 this is identical to a pure percentage
+	// split (base == total), so non-tipping callers are unaffected. The provider takes
+	// the remainder, which keeps kobo exactly balanced (platform + rider + provider ==
+	// total): provider = total − platform − rider = (base − platform − base·riderPct),
+	// i.e. the provider's share of the base, and the rider ends up with (base·riderPct
+	// + tip) — 100% of the tip plus their percentage of the base.
+	base := sett.TotalKobo - split.TipKobo
+	platformKobo := int64(float64(base) * split.PlatformPct)
 	riderKobo := int64(0)
 	if split.RiderID != nil {
-		riderKobo = int64(float64(sett.TotalKobo) * split.RiderPct)
+		riderKobo = int64(float64(base)*split.RiderPct) + split.TipKobo
 	}
 	providerKobo := sett.TotalKobo - platformKobo - riderKobo
 
