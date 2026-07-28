@@ -1216,6 +1216,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.GET("", restaurantHandler.ListRestaurants)
 		restGroup.POST("", restaurantHandler.Create)
 		restGroup.GET("/:id", restaurantHandler.GetRestaurant)
+		// Owner edits discovery fields (cuisine/description/logo).
+		restGroup.PATCH("/:id", restaurantHandler.UpdateRestaurantProfile)
 
 		// Menu management (owner only).
 		restGroup.POST("/:id/menu/categories", restaurantHandler.CreateCategory)

@@ -4,14 +4,19 @@ import "time"
 
 // Restaurant is a merchant registered on the platform.
 type Restaurant struct {
-	ID          string    `json:"id"`
-	OwnerID     string    `json:"owner_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	Address     string    `json:"address"`
-	LogoURL     *string   `json:"logo_url,omitempty"`
-	IsOpen      bool      `json:"is_open"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string  `json:"id"`
+	OwnerID     string  `json:"owner_id"`
+	Name        string  `json:"name"`
+	Description string  `json:"description,omitempty"`
+	Address     string  `json:"address"`
+	LogoURL     *string `json:"logo_url,omitempty"`
+	IsOpen      bool    `json:"is_open"`
+	// Rating is the recomputed average (default 5.0); Cuisine is an optional tag used
+	// by discovery filters. DistanceMeters is populated only on near-me searches.
+	Rating         float64   `json:"rating"`
+	Cuisine        string    `json:"cuisine,omitempty"`
+	DistanceMeters *float64  `json:"distance_meters,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // MenuCategory groups menu items (e.g. "Starters", "Mains").
@@ -52,21 +57,21 @@ const DeliveryFeeKobo int64 = 50000 // ₦500
 
 // Order is a customer's food delivery order.
 type Order struct {
-	ID              string      `json:"id"`
-	CustomerID      string      `json:"customer_id"`
-	RestaurantID    string      `json:"restaurant_id"`
-	RiderID         *string     `json:"rider_id,omitempty"`
-	Items           []OrderItem `json:"items"`
-	SubtotalKobo    int64       `json:"subtotal_kobo"`
-	DeliveryKobo    int64       `json:"delivery_kobo"`
-	TipKobo         int64       `json:"tip_kobo"`
+	ID           string      `json:"id"`
+	CustomerID   string      `json:"customer_id"`
+	RestaurantID string      `json:"restaurant_id"`
+	RiderID      *string     `json:"rider_id,omitempty"`
+	Items        []OrderItem `json:"items"`
+	SubtotalKobo int64       `json:"subtotal_kobo"`
+	DeliveryKobo int64       `json:"delivery_kobo"`
+	TipKobo      int64       `json:"tip_kobo"`
 	// DiscountKobo is the promo discount taken off the item subtotal; PromoID and
 	// PromoFunder snapshot which promo applied and who bore it. TotalKobo (escrowed) =
 	// SubtotalKobo − DiscountKobo + DeliveryKobo + TipKobo.
-	DiscountKobo int64   `json:"discount_kobo"`
-	PromoID      *string `json:"promo_id,omitempty"`
-	PromoFunder  *string `json:"promo_funder,omitempty"`
-	TotalKobo    int64   `json:"total_kobo"`
+	DiscountKobo    int64       `json:"discount_kobo"`
+	PromoID         *string     `json:"promo_id,omitempty"`
+	PromoFunder     *string     `json:"promo_funder,omitempty"`
+	TotalKobo       int64       `json:"total_kobo"`
 	Status          OrderStatus `json:"status"`
 	IdempotencyKey  string      `json:"idempotency_key"`
 	SettlementID    string      `json:"settlement_id"`
@@ -76,7 +81,7 @@ type Order struct {
 	DispatchStatus string `json:"dispatch_status"`
 	// DeliveryCode is the customer's handoff code. The rider must enter it at
 	// drop-off to confirm the handoff. Returned only to the order's participants.
-	DeliveryCode *string   `json:"delivery_code,omitempty"`
+	DeliveryCode *string `json:"delivery_code,omitempty"`
 	// Distance/time-based fee inputs + breakdown (persisted for transparency/audit).
 	// Zero/empty when the order fell back to the flat DeliveryFeeKobo (no coords).
 	DistanceMeters    *float64              `json:"distance_meters,omitempty"`
@@ -113,6 +118,7 @@ type CreateRestaurantRequest struct {
 	Description string  `json:"description"`
 	Address     string  `json:"address" binding:"required"`
 	LogoURL     *string `json:"logo_url,omitempty"`
+	Cuisine     string  `json:"cuisine,omitempty"`
 }
 
 // PlaceOrderRequest is the body for POST /restaurant/:id/orders.
