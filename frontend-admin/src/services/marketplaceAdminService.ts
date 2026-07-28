@@ -16,6 +16,12 @@ import type {
   MktAppeal,
   MktAppealStatus,
   MktAppealDecideRequest,
+  MktUserAdmin,
+  MktUserStatus,
+  MktUserActionRequest,
+  MktKycReviewRequest,
+  MktBlacklistRequest,
+  MktFraudSignal,
 } from '@/types/marketplaceAdmin';
 
 // Paymax Marketplace admin console — service layer.
@@ -631,6 +637,160 @@ export async function getMarketplaceAnalytics(rangeDays: 7 | 30 | 90 = 30): Prom
   const res = await fetch(`${marketplaceAdminBase()}/analytics?range_days=${rangeDays}`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Analytics fetch failed'));
   return res.json();
+}
+
+// ─── Users, Trust & Safety, Fraud — TS-12 (USR-001…008) ──────────────────────
+
+const FIXTURE_USERS: MktUserAdmin[] = [
+  {
+    id: 'usr_7f2a', display_name: 'Tunde Electronics', email_masked: 't***e@gmail.com', phone_masked: '+234 80****1234',
+    status: 'active', kyc_tier: 'tier2_sell', kyc_pending: false, trust_score: 0.86, verified_id_badge: true, verified_business_badge: false,
+    active_listings: 42, completed_deals: 118, open_flags: 0, fraud_score: 0.08,
+    created_at: iso(60 * 24 * 220), last_active_at: iso(35),
+  },
+  {
+    id: 'usr_2b9e', display_name: 'Lagos Auto Hub', email_masked: 'l***b@yahoo.com', phone_masked: '+234 70****5566',
+    status: 'active', kyc_tier: 'tier1_buy', kyc_pending: true, trust_score: 0.31, verified_id_badge: false, verified_business_badge: false,
+    active_listings: 12, completed_deals: 3, open_flags: 4, fraud_score: 0.71,
+    created_at: iso(60 * 24 * 14), last_active_at: iso(90),
+  },
+  {
+    id: 'usr_9a1c', display_name: 'QuickDeals NG', email_masked: 'q***s@gmail.com', phone_masked: '+234 81****9090',
+    status: 'suspended', kyc_tier: 'tier0_browse', kyc_pending: false, trust_score: 0.18, verified_id_badge: false, verified_business_badge: false,
+    active_listings: 0, completed_deals: 0, open_flags: 7, fraud_score: 0.88, suspension_reason_code: 'counterfeit_repeat',
+    created_at: iso(60 * 24 * 3), last_active_at: iso(60 * 20),
+  },
+  {
+    id: 'usr_5566', display_name: 'Ada Stores', email_masked: 'a***a@outlook.com', phone_masked: '+234 90****4321',
+    status: 'active', kyc_tier: 'tier3_business', kyc_pending: false, trust_score: 0.92, verified_id_badge: true, verified_business_badge: true,
+    active_listings: 210, completed_deals: 540, open_flags: 0, fraud_score: 0.04,
+    created_at: iso(60 * 24 * 400), last_active_at: iso(12),
+  },
+];
+
+const FIXTURE_FRAUD_SIGNALS: MktFraudSignal[] = [
+  { id: 'frd_1', kind: 'duplicate_device', user_id: 'usr_2b9e', user_display_name: 'Lagos Auto Hub', severity: 'high', detail: 'Device fingerprint shared across 4 accounts created within 48h.', related_user_ids: ['usr_2b9e', 'usr_9a1c', 'usr_dd01', 'usr_dd02'], created_at: iso(120) },
+  { id: 'frd_2', kind: 'payment_evasion', user_id: 'usr_9a1c', user_display_name: 'QuickDeals NG', severity: 'high', detail: 'Repeated "pay outside the platform" language across 6 chats.', related_user_ids: ['usr_9a1c'], created_at: iso(240) },
+  { id: 'frd_3', kind: 'velocity', user_id: 'usr_2b9e', user_display_name: 'Lagos Auto Hub', severity: 'medium', detail: '18 listings created in 30 minutes.', related_user_ids: ['usr_2b9e'], created_at: iso(300) },
+  { id: 'frd_4', kind: 'multiple_flags', user_id: 'usr_9a1c', user_display_name: 'QuickDeals NG', severity: 'medium', detail: '7 buyer flags in the last 7 days.', related_user_ids: ['usr_9a1c'], created_at: iso(60 * 10) },
+];
+
+export async function searchUsers(params?: { q?: string; status?: MktUserStatus; minFraud?: number }): Promise<MktUserAdmin[]> {
+  if (USE_FIXTURES) {
+    let out = [...FIXTURE_USERS];
+    if (params?.status) out = out.filter((u) => u.status === params.status);
+    if (params?.minFraud != null) out = out.filter((u) => u.fraud_score >= (params.minFraud as number));
+    if (params?.q?.trim()) {
+      const n = params.q.trim().toLowerCase();
+      out = out.filter((u) => u.display_name.toLowerCase().includes(n) || u.id.toLowerCase().includes(n) || u.email_masked.toLowerCase().includes(n));
+    }
+    return delay(out);
+  }
+  const qs = new URLSearchParams();
+  if (params?.q) qs.set('q', params.q);
+  if (params?.status) qs.set('status', params.status);
+  if (params?.minFraud != null) qs.set('min_fraud', String(params.minFraud));
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  const res = await fetch(`${marketplaceAdminBase()}/users${suffix}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'User search failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+export async function getUserAdmin(id: string): Promise<MktUserAdmin> {
+  if (USE_FIXTURES) {
+    const found = FIXTURE_USERS.find((u) => u.id === id);
+    if (!found) throw new Error(`User ${id} not found`);
+    return delay({ ...found });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/users/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'User fetch failed'));
+  return res.json();
+}
+
+// setUserStatus: suspend/reinstate execute immediately; BAN (most destructive,
+// USR-007) returns a dual-approval-pending user a DIFFERENT admin must second-sign.
+export async function setUserStatus(id: string, input: MktUserActionRequest): Promise<MktUserAdmin> {
+  if (!input.reason_code || !input.reason_code.trim()) throw new Error('reason_code is required to change a user’s status.');
+  if (USE_FIXTURES) {
+    const found = FIXTURE_USERS.find((u) => u.id === id);
+    if (!found) throw new Error(`User ${id} not found`);
+    if (input.action === 'ban') {
+      return delay({ ...found, pending_action: 'ban', pending_action_by: 'adm_current', requires_dual_approval: true, suspension_reason_code: input.reason_code });
+    }
+    return delay({
+      ...found,
+      status: input.action === 'suspend' ? 'suspended' : 'active',
+      suspension_reason_code: input.action === 'suspend' ? input.reason_code : null,
+      pending_action: null, requires_dual_approval: false,
+    });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/users/${encodeURIComponent(id)}/status`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(input),
+  });
+  if (!res.ok && res.status !== 202) throw new Error(await parseErrorMessage(res, 'User status change failed'));
+  return res.json();
+}
+
+// approveUserActionSecondSign: executes a pending BAN; backend enforces a different
+// approver than the initiator (409 SAME_APPROVER_NOT_ALLOWED).
+export async function approveUserActionSecondSign(id: string, reasonCode?: string): Promise<MktUserAdmin> {
+  if (USE_FIXTURES) {
+    const found = FIXTURE_USERS.find((u) => u.id === id);
+    if (!found) throw new Error(`User ${id} not found`);
+    return delay({ ...found, status: 'banned', pending_action: null, requires_dual_approval: false });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/users/${encodeURIComponent(id)}/status/approve`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(reasonCode ? { reason_code: reasonCode } : {}),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Second approval failed'));
+  return res.json();
+}
+
+export async function reviewKyc(id: string, input: MktKycReviewRequest): Promise<MktUserAdmin> {
+  if (!input.reason_code || !input.reason_code.trim()) throw new Error('reason_code is required to review KYC.');
+  if (USE_FIXTURES) {
+    const found = FIXTURE_USERS.find((u) => u.id === id);
+    if (!found) throw new Error(`User ${id} not found`);
+    return delay({ ...found, kyc_pending: false, kyc_tier: input.decision === 'approve' ? (input.grant_tier ?? found.kyc_tier) : found.kyc_tier, verified_id_badge: input.decision === 'approve' ? true : found.verified_id_badge });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/users/${encodeURIComponent(id)}/kyc`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'KYC review failed'));
+  return res.json();
+}
+
+export async function blacklistIdentifier(userId: string, input: MktBlacklistRequest): Promise<{ ok: boolean }> {
+  if (!input.value.trim() || !input.reason_code.trim()) throw new Error('value and reason_code are required to blacklist.');
+  if (USE_FIXTURES) return delay({ ok: true });
+  const res = await fetch(`${marketplaceAdminBase()}/users/${encodeURIComponent(userId)}/blacklist`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Blacklist failed'));
+  return res.json();
+}
+
+// logViewAs records an audited "view as user" access (USR-008). No impersonation
+// is performed client-side; this only writes the audit trail the backend requires
+// before a support view is granted.
+export async function logViewAs(userId: string, reasonCode: string): Promise<{ ok: boolean }> {
+  if (!reasonCode.trim()) throw new Error('reason_code is required to view as a user.');
+  if (USE_FIXTURES) return delay({ ok: true });
+  const res = await fetch(`${marketplaceAdminBase()}/users/${encodeURIComponent(userId)}/view-as`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'View-as failed'));
+  return res.json();
+}
+
+export async function listFraudSignals(severity?: 'low' | 'medium' | 'high'): Promise<MktFraudSignal[]> {
+  if (USE_FIXTURES) return delay(severity ? FIXTURE_FRAUD_SIGNALS.filter((s) => s.severity === severity) : [...FIXTURE_FRAUD_SIGNALS]);
+  const qs = severity ? `?severity=${encodeURIComponent(severity)}` : '';
+  const res = await fetch(`${marketplaceAdminBase()}/fraud-signals${qs}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Fraud signals fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
 }
 
 export type { MktDisputeDecision };

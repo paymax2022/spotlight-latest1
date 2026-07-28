@@ -425,6 +425,8 @@ const navItemsBase: NavItem[] = [
   { label: 'Taxonomy', href: '/admin/marketplace/taxonomy', section: 'Marketplace', permissions: ['marketplace.admin.taxonomy'] },
   { label: 'Dispute Workbench', href: '/admin/marketplace/disputes', section: 'Marketplace', permissions: ['marketplace.admin.dispute.review'] },
   { label: 'Appeals', href: '/admin/marketplace/appeals', section: 'Marketplace', permissions: ['marketplace.admin.appeals.review', 'marketplace.admin.appeals.decide'] },
+  { label: 'Users & Trust', href: '/admin/marketplace/users', section: 'Marketplace', permissions: ['marketplace.admin.users.view', 'marketplace.admin.users.action'] },
+  { label: 'Fraud Signals', href: '/admin/marketplace/fraud', section: 'Marketplace', permissions: ['marketplace.admin.users.view', 'marketplace.admin.users.action'] },
   { label: 'Flags Queue', href: '/admin/marketplace/flags', section: 'Marketplace', permissions: ['marketplace.admin.flags.action'] },
   { label: 'Orders Aging', href: '/admin/marketplace/orders-aging', section: 'Marketplace', permissions: ['marketplace.admin.orders.aging'] },
   { label: 'Boosts', href: '/admin/marketplace/boosts', section: 'Marketplace', permissions: ['marketplace.admin.moderation'] },
