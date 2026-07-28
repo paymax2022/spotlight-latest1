@@ -7,7 +7,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, Image, Alert, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Camera, Plus, Eye, Heart, Zap, Play, Pause, RefreshCw, CheckCircle2, Tag } from 'lucide-react-native';
+import { Camera, Plus, Eye, Heart, Zap, Play, Pause, RefreshCw, CheckCircle2, Tag, Pencil } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -182,6 +182,9 @@ function ListingRow({ listing }: { listing: Listing }) {
       </View>
 
       <View style={styles.actionsRow}>
+        {listing.status !== 'sold' && listing.status !== 'removed_policy' && listing.status !== 'removed_user' ? (
+          <QuickAction icon={Pencil} label="Edit" onPress={() => router.push(`/marketplace/sell/edit/${listing.id}` as never)} disabled={busy} />
+        ) : null}
         {listing.status === 'active' ? (
           <QuickAction icon={Pause} label="Pause" onPress={() => pause.mutate(listing.id)} disabled={busy} />
         ) : listing.status === 'paused' ? (
