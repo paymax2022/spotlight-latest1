@@ -27,6 +27,11 @@ import type {
   MktDiscountCode,
   MktDiscountCodeInput,
   MktFeaturedSlotConfig,
+  MktBanner,
+  MktBannerStatus,
+  MktBannerInput,
+  MktCategoryContent,
+  MktCategoryContentInput,
 } from '@/types/marketplaceAdmin';
 
 // Paymax Marketplace admin console — service layer.
@@ -925,6 +930,115 @@ export async function setFeaturedSlotCap(surface: string, maxSlots: number, reas
     method: 'PUT', headers: authHeaders(), body: JSON.stringify({ max_slots: maxSlots, reason_code: reasonCode }),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Slot inventory change failed'));
+  return res.json();
+}
+
+// ─── CMS: home banners + category content — ADM-003/004 ──────────────────────
+
+const FIXTURE_BANNERS: MktBanner[] = [
+  { id: 'ban_1', slot: 'home_hero', title: 'Detty December Deals', subtitle: 'Up to 40% off on phones & electronics', image_url: 'https://picsum.photos/seed/banner1/1200/400', cta_label: 'Shop phones', cta_type: 'category', cta_value: 'cat_phones', status: 'live', start_at: iso(60 * 24 * 5), end_at: iso(-60 * 24 * 20), sort_order: 0, created_at: iso(60 * 24 * 6) },
+  { id: 'ban_2', slot: 'home_hero', title: 'Sell your car in 24h', subtitle: 'List free, reach thousands of buyers', image_url: 'https://picsum.photos/seed/banner2/1200/400', cta_label: 'Post a listing', cta_type: 'search', cta_value: 'vehicles', status: 'live', start_at: iso(60 * 24 * 2), end_at: null, sort_order: 1, created_at: iso(60 * 24 * 3) },
+  { id: 'ban_3', slot: 'home_strip', title: 'New Year clearance', subtitle: 'Fashion & home from ₦1,000', image_url: 'https://picsum.photos/seed/banner3/1200/240', cta_label: 'Browse deals', cta_type: 'search', cta_value: 'clearance', status: 'scheduled', start_at: iso(-60 * 24 * 5), end_at: iso(-60 * 24 * 40), sort_order: 0, created_at: iso(30) },
+  { id: 'ban_4', slot: 'home_hero', title: 'Black Friday (ended)', subtitle: 'Thanks for shopping', image_url: 'https://picsum.photos/seed/banner4/1200/400', cta_label: 'See more', cta_type: 'none', cta_value: '', status: 'archived', start_at: iso(60 * 24 * 60), end_at: iso(60 * 24 * 40), sort_order: 2, created_at: iso(60 * 24 * 65) },
+];
+
+const fixtureCategoryContent: Record<string, MktCategoryContent> = {
+  cat_vehicles: { category_id: 'cat_vehicles', category_name: 'Vehicles', hero_heading: 'Find your next ride', intro_copy: 'Browse thousands of cars, buses, and bikes from verified sellers across Nigeria.', seo_title: 'Buy & Sell Cars in Nigeria | Paymax Marketplace', seo_description: 'Foreign-used and Nigerian-used cars, clean papers, best prices. Buy and sell vehicles safely on Paymax.', updated_at: iso(60 * 24 * 8), updated_by: 'adm_ada' },
+  cat_phones: { category_id: 'cat_phones', category_name: 'Phones & Tablets', hero_heading: 'Latest phones, honest prices', intro_copy: 'iPhones, Samsung, Tecno and more — new and clean-used, with fair-price guidance.', seo_title: 'Phones & Tablets for Sale in Nigeria | Paymax', seo_description: 'Buy new and used phones and tablets at fair prices from trusted sellers on Paymax Marketplace.', updated_at: iso(60 * 24 * 30), updated_by: 'adm_tunde' },
+};
+
+export async function listBanners(status?: MktBannerStatus): Promise<MktBanner[]> {
+  if (USE_FIXTURES) return delay(status ? FIXTURE_BANNERS.filter((b) => b.status === status) : [...FIXTURE_BANNERS]);
+  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+  const res = await fetch(`${marketplaceAdminBase()}/banners${qs}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Banners fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+function validateBanner(input: MktBannerInput): void {
+  if (!input.title.trim()) throw new Error('title is required.');
+  if (!input.reason_code.trim()) throw new Error('reason_code is required (audited).');
+  if (input.cta_type !== 'none' && !input.cta_value.trim()) throw new Error('a CTA target is required for this CTA type.');
+  if (input.cta_type === 'external' && !/^https?:\/\//.test(input.cta_value.trim())) throw new Error('external CTA must be an http(s) URL.');
+  if (input.start_at && input.end_at && new Date(input.end_at) <= new Date(input.start_at)) throw new Error('end must be after start.');
+}
+
+// deriveBannerStatus computes a display status from the schedule window (unless
+// the banner is a draft/archived, which are explicit).
+function deriveBannerStatus(startAt: string | null, endAt: string | null): MktBannerStatus {
+  const t = Date.now();
+  if (endAt && new Date(endAt).getTime() < t) return 'expired';
+  if (startAt && new Date(startAt).getTime() > t) return 'scheduled';
+  return 'live';
+}
+
+export async function createBanner(input: MktBannerInput): Promise<MktBanner> {
+  validateBanner(input);
+  if (USE_FIXTURES) {
+    return delay({
+      id: `ban_${Date.now()}`, slot: input.slot, title: input.title, subtitle: input.subtitle, image_url: input.image_url,
+      cta_label: input.cta_label, cta_type: input.cta_type, cta_value: input.cta_value,
+      status: deriveBannerStatus(input.start_at ?? null, input.end_at ?? null),
+      start_at: input.start_at ?? null, end_at: input.end_at ?? null, sort_order: input.sort_order ?? 0,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/banners`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(input) });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Banner create failed'));
+  return res.json();
+}
+
+export async function updateBanner(id: string, input: MktBannerInput): Promise<MktBanner> {
+  validateBanner(input);
+  if (USE_FIXTURES) {
+    const found = FIXTURE_BANNERS.find((b) => b.id === id);
+    if (!found) throw new Error(`Banner ${id} not found`);
+    return delay({
+      ...found, ...input, id,
+      start_at: input.start_at ?? null, end_at: input.end_at ?? null, sort_order: input.sort_order ?? found.sort_order,
+      status: found.status === 'archived' ? 'archived' : deriveBannerStatus(input.start_at ?? null, input.end_at ?? null),
+      updated_at: new Date().toISOString(),
+    });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/banners/${encodeURIComponent(id)}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(input) });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Banner update failed'));
+  return res.json();
+}
+
+// setBannerStatus: archive (retire) or restore a banner. reason_code mandatory.
+export async function setBannerStatus(id: string, status: 'archived' | 'draft', reasonCode: string): Promise<MktBanner> {
+  if (!reasonCode.trim()) throw new Error('reason_code is required to change a banner’s status.');
+  if (USE_FIXTURES) {
+    const found = FIXTURE_BANNERS.find((b) => b.id === id);
+    if (!found) throw new Error(`Banner ${id} not found`);
+    return delay({ ...found, status: status === 'draft' ? deriveBannerStatus(found.start_at, found.end_at) : 'archived', updated_at: new Date().toISOString() });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/banners/${encodeURIComponent(id)}/status`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ status, reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Banner status change failed'));
+  return res.json();
+}
+
+export async function getCategoryContent(categoryId: string): Promise<MktCategoryContent> {
+  if (USE_FIXTURES) {
+    return delay(fixtureCategoryContent[categoryId] ?? { category_id: categoryId, category_name: categoryId, hero_heading: '', intro_copy: '', seo_title: '', seo_description: '', updated_at: null, updated_by: null });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/categories/${encodeURIComponent(categoryId)}/content`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Category content fetch failed'));
+  return res.json();
+}
+
+export async function upsertCategoryContent(categoryId: string, input: MktCategoryContentInput): Promise<MktCategoryContent> {
+  if (!input.reason_code.trim()) throw new Error('reason_code is required (audited).');
+  if (input.seo_description.length > 320) throw new Error('SEO description should be ≤ 320 characters.');
+  if (USE_FIXTURES) {
+    const prev = fixtureCategoryContent[categoryId];
+    return delay({ category_id: categoryId, category_name: prev?.category_name ?? categoryId, hero_heading: input.hero_heading, intro_copy: input.intro_copy, seo_title: input.seo_title, seo_description: input.seo_description, updated_at: new Date().toISOString(), updated_by: 'adm_current' });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/categories/${encodeURIComponent(categoryId)}/content`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(input) });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Category content update failed'));
   return res.json();
 }
 
