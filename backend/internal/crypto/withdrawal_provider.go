@@ -36,11 +36,12 @@ type WithdrawalProvider interface {
 
 // BroadcastRequest is the provider-agnostic broadcast request.
 type BroadcastRequest struct {
-	WithdrawalID   string
-	Symbol         string
-	Network        string
-	Address        string
-	Units          int64 // asset minor units to send (net of network fee)
+	WithdrawalID    string
+	Symbol          string
+	Network         string
+	Address         string
+	Units           int64 // asset minor units to send (net of network fee)
+	MinorUnitScale  int64 // minor units per one whole asset (to format the amount); 0 = unknown
 	ProviderIdemKey string
 }
 

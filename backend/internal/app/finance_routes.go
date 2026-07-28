@@ -2432,7 +2432,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		cryptoMember.Use(mapsAuth())
 		cryptoAdmin := cryptoV1.Group("/admin/crypto")
 		cryptoAdmin.Use(mapsAuth())
-		crypto.Register(cryptoMember, cryptoAdmin, pool, rbac, ledgerSvc)
+		// Real price + on-chain withdrawal provider (Quidax) selectable via CRYPTO_PROVIDER,
+		// with separate TEST/LIVE credential sets — TEST in dev/staging, LIVE in production
+		// (IsProd). Falls back to the deterministic mock when unset/creds missing.
+		cryptoPrice, cryptoWithdraw, cryptoMode := crypto.ProvidersFromConfig(crypto.ProviderConfig{
+			Provider:    cfg.CryptoProvider,
+			Live:        cfg.IsProd(),
+			TestKey:     cfg.CryptoQuidaxTestKey,
+			TestBaseURL: cfg.CryptoQuidaxTestBaseURL,
+			LiveKey:     cfg.CryptoQuidaxLiveKey,
+			LiveBaseURL: cfg.CryptoQuidaxLiveBaseURL,
+		})
+		log.Printf("[crypto] price/withdrawal provider mode: %s", cryptoMode)
+		crypto.Register(cryptoMember, cryptoAdmin, pool, rbac, ledgerSvc, cryptoPrice, cryptoWithdraw)
 	} else {
 		log.Println("[crypto] FEATURE_CRYPTO_ENABLED is false — skipping routes")
 	}

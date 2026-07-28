@@ -26,7 +26,7 @@ import (
 // reverses. Every fill requires an Idempotency-Key, posts a balanced double-entry
 // pair, snapshots the quote and emits an immutable audit event. Holdings are
 // integer asset minor units; cash is NGN kobo — no float math.
-func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, led *ledger.Service) *Service {
+func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, led *ledger.Service, price PriceProvider, withdraw WithdrawalProvider) *Service {
 	if pool == nil {
 		log.Println("[crypto] nil pool — skipping crypto routes")
 		return nil
@@ -36,8 +36,10 @@ func Register(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Poo
 		return nil
 	}
 
-	// Price feed is provider-agnostic; default is the deterministic mock (no network).
-	svc := NewService(pool, led, NewMockPriceProvider())
+	// Price + withdrawal providers are injected by the caller from config (mock-first,
+	// real last). Nil is safe: NewService defaults the price to the deterministic mock,
+	// and WithWithdrawalProvider ignores a nil withdrawal adapter (keeps the mock).
+	svc := NewService(pool, led, price).WithWithdrawalProvider(withdraw)
 	h := NewHandler(svc)
 
 	rp := func(perm string) gin.HandlerFunc { return middleware.RequirePermission(rbac, perm) }
