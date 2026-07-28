@@ -254,6 +254,53 @@ func TestLiveDB_TradingWallet_ReplayPinsUnits(t *testing.T) {
 	}
 }
 
+// Regression for the re-audit CRITICALs: a reservation whose cash leg never
+// posted (crash between reserve and debit) must NEVER mint units on replay. With
+// an empty wallet the replay must drive the debit, get insufficient funds, cancel
+// the reservation, and mint nothing. After funding, a fresh subscribe settles
+// normally — units are minted ONLY once the debit is durably posted.
+func TestLiveDB_TradingWallet_NoPhantomMintOnUnpaidReservation(t *testing.T) {
+	svc, led, pool := liveFund(t, 2000, 0, true)
+	defer pool.Close()
+	ctx := context.Background()
+	resetFund(t, ctx, pool, led)
+	repo := NewRepository(pool)
+	run := uuid.NewString() + ":"
+	u := seedUser(t, ctx, pool) // wallet intentionally NOT funded
+
+	// Simulate a crash between reserve and debit: an unsettled reservation exists,
+	// but no ledger debit ever posted.
+	res := FundOrder{UserID: u, Kind: "subscribe", CashKobo: 1_000_000, UnitsDelta: UnitScale, NAVPerUnitKobo: ParNAVKobo, IdempotencyKey: run + "K", LedgerRef: "trading:subscribe:" + run + "K"}
+	if _, err := repo.ReserveOrder(ctx, res); err != nil {
+		t.Fatalf("seed reservation: %v", err)
+	}
+
+	// Replay with an empty wallet → drives the debit, insufficient funds, cancels.
+	if _, err := svc.Subscribe(ctx, u, run+"K", 1_000_000); err != ErrInsufficientCash {
+		t.Fatalf("unpaid reservation replay must not mint; want ErrInsufficientCash, got %v", err)
+	}
+	if un := userUnits(t, ctx, pool, u); un != 0 {
+		t.Fatalf("PHANTOM MINT: %d units minted with no cash", un)
+	}
+	if prior, _ := repo.GetOrderByIdem(ctx, run+"K"); prior != nil {
+		t.Fatal("unpaid reservation should have been cancelled")
+	}
+
+	// Now fund the wallet and retry → normal settle, units minted once, cash moved.
+	fundWallet(t, ctx, led, u, 2_000_000)
+	o, err := svc.Subscribe(ctx, u, run+"K", 1_000_000)
+	if err != nil {
+		t.Fatalf("funded retry: %v", err)
+	}
+	if o.UnitsDelta <= 0 {
+		t.Fatalf("funded retry minted no units: %d", o.UnitsDelta)
+	}
+	if wal, _ := led.GetBalance(ctx, u); wal != 1_000_000 {
+		t.Fatalf("funded retry wallet = %d, want 1_000_000 (2m seeded − 1m deposit)", wal)
+	}
+	assertReconciled(t, svc, ctx)
+}
+
 func TestLiveDB_TradingWallet_AccessGate(t *testing.T) {
 	svc, led, pool := liveFund(t, 2000, 0, false) // gate DENIES access
 	defer pool.Close()

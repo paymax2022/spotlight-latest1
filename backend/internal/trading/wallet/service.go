@@ -47,6 +47,12 @@ var (
 	ErrInsufficientUnit = errors.New("trading: insufficient units to redeem")
 	ErrDust             = errors.New("trading: amount too small to mint a unit at current NAV")
 	ErrIdemConflict     = errors.New("trading: idempotency key already used for a different operation")
+	// Retryable: the ledger's Redis idempotency lock returned duplicate but the
+	// durable entry is not (yet) present — the cash leg is unconfirmed. The caller
+	// retries after the lock TTL; state stays consistent (no units minted / burned
+	// units awaiting an idempotent re-drive of the payout).
+	ErrDebitPending  = errors.New("trading: deposit cash leg pending confirmation, retry")
+	ErrCreditPending = errors.New("trading: redemption payout pending confirmation, retry")
 )
 
 // clearing returns the fund clearing standing account id.
@@ -95,27 +101,44 @@ func (s *Service) Subscribe(ctx context.Context, userID, idemKey string, cashKob
 		return nil, err
 	}
 
-	// Replay: an already-recorded subscribe returns its ORIGINAL reserved units
-	// (never recomputed). If the reservation exists but isn't settled yet, settle
-	// it now (the crash-between-debit-and-settle window). A prior order under this
-	// key that is NOT a subscribe is an idempotency-key collision → reject, never
-	// pay out (guards the "reused key = free cash-out" class).
+	// Obtain the order for this idem: either an existing reservation/settled order,
+	// or a fresh reservation priced at the PRE-deposit NAV. Units are pinned here
+	// and NEVER recomputed on replay.
+	order, err := s.reserveSubscribe(ctx, userID, idemKey, cashKobo, clearingAcct)
+	if err != nil {
+		return nil, err
+	}
+
+	// CRITICAL money-path invariant: units are minted ONLY after the wallet→clearing
+	// debit is DURABLY posted — confirmed via led.Posted, never inferred from
+	// replay-existence or the ledger's (Redis-lock) ErrDuplicate, which is not proof
+	// of a durable post. This closes every phantom-mint window (crash-between-
+	// reserve-and-debit, concurrent double-submit, poisoned-lock ErrDuplicate).
+	if err := s.ensureSubscribeDebit(ctx, userID, order, clearingAcct); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.SettleOrder(ctx, idemKey); err != nil {
+		return nil, fmt.Errorf("subscribe settle: %w", err)
+	}
+	// Seed the HWM at the SUBSCRIBE NAV (cost basis) on first entry so the fee
+	// applies to gains above what the holder paid. Idempotent. NOTE: a single
+	// per-user HWM does not do series/equalisation for top-ups at different NAVs.
+	_ = s.repo.SeedHWM(ctx, userID, order.NAVPerUnitKobo)
+	return order, nil
+}
+
+// reserveSubscribe returns the order for idemKey — an existing subscribe (replay),
+// or a fresh reservation priced at the pre-deposit NAV. A prior order under this
+// key that is NOT a subscribe is an idempotency-key collision (never pays out).
+func (s *Service) reserveSubscribe(ctx context.Context, userID, idemKey string, cashKobo int64, clearingAcct string) (*FundOrder, error) {
 	if prior, err := s.repo.GetOrderByIdem(ctx, idemKey); err != nil {
 		return nil, err
 	} else if prior != nil {
 		if prior.Kind != "subscribe" {
 			return nil, ErrIdemConflict
 		}
-		if _, err := s.repo.SettleOrder(ctx, idemKey); err != nil {
-			return nil, err
-		}
-		_ = s.repo.SeedHWM(ctx, userID, prior.NAVPerUnitKobo)
 		return prior, nil
 	}
-
-	// Compute units at the PRE-deposit NAV and RESERVE them (pinned) before moving
-	// cash — so a crash-retry settles the same units instead of recomputing NAV
-	// against the post-deposit balance.
 	nav, _, _, err := s.currentNAV(ctx, clearingAcct)
 	if err != nil {
 		return nil, err
@@ -124,47 +147,57 @@ func (s *Service) Subscribe(ctx context.Context, userID, idemKey string, cashKob
 	if units <= 0 {
 		return nil, ErrDust
 	}
-	ref := "trading:subscribe:" + idemKey
-	order := FundOrder{UserID: userID, Kind: "subscribe", CashKobo: cashKobo, UnitsDelta: units, NAVPerUnitKobo: nav, IdempotencyKey: idemKey, LedgerRef: ref}
+	order := FundOrder{UserID: userID, Kind: "subscribe", CashKobo: cashKobo, UnitsDelta: units, NAVPerUnitKobo: nav, IdempotencyKey: idemKey, LedgerRef: "trading:subscribe:" + idemKey}
 	if dup, err := s.repo.ReserveOrder(ctx, order); err != nil {
 		return nil, fmt.Errorf("subscribe reserve: %w", err)
 	} else if dup {
-		// Concurrent double-submit raced us to the reservation — reload + settle it.
+		// A concurrent call reserved first — use its pinned units.
 		prior, gerr := s.repo.GetOrderByIdem(ctx, idemKey)
-		if gerr != nil || prior == nil {
-			return nil, fmt.Errorf("subscribe reserve race: %v", gerr)
+		if gerr != nil {
+			return nil, gerr
 		}
-		if _, err := s.repo.SettleOrder(ctx, idemKey); err != nil {
-			return nil, err
+		if prior == nil {
+			return nil, fmt.Errorf("subscribe reserve race: reservation vanished")
 		}
-		_ = s.repo.SeedHWM(ctx, userID, prior.NAVPerUnitKobo)
 		return prior, nil
 	}
-
-	// Cash leg: wallet → fund clearing. Insufficient funds cancels the reservation
-	// (no phantom units). Duplicate means a prior attempt already debited.
-	if err := s.led.Debit(ctx, userID, ref, idemKey+":wallet", clearingAcct, cashKobo); err != nil {
-		switch {
-		case errors.Is(err, ledger.ErrInsufficientFunds):
-			_ = s.repo.CancelReservation(ctx, idemKey)
-			return nil, ErrInsufficientCash
-		case errors.Is(err, ledger.ErrDuplicate):
-			// cash already moved on a prior attempt — proceed to settle
-		default:
-			return nil, fmt.Errorf("subscribe debit: %w", err)
-		}
-	}
-
-	// Settle: apply the reserved units, once.
-	if _, err := s.repo.SettleOrder(ctx, idemKey); err != nil {
-		return nil, fmt.Errorf("subscribe settle: %w", err)
-	}
-	// Seed the high-water mark at the SUBSCRIBE NAV (cost basis) on first entry so
-	// the performance fee applies to gains above what the holder paid. Idempotent.
-	// NOTE: a single per-user HWM does not do series/equalisation accounting for
-	// top-ups at different NAVs — that hardening is a follow-up.
-	_ = s.repo.SeedHWM(ctx, userID, nav)
 	return &order, nil
+}
+
+// ensureSubscribeDebit guarantees the wallet→clearing cash leg is DURABLY posted
+// exactly once. It returns nil ONLY when led.Posted confirms the debit is on the
+// ledger; otherwise it fails closed (never lets the caller settle units). This is
+// the single gate all Subscribe paths funnel through.
+func (s *Service) ensureSubscribeDebit(ctx context.Context, userID string, order *FundOrder, clearingAcct string) error {
+	walletKey := order.IdempotencyKey + ":wallet"
+	if posted, err := s.led.Posted(ctx, walletKey); err != nil {
+		return err
+	} else if posted {
+		return nil // cash already durably moved on a prior attempt
+	}
+	err := s.led.Debit(ctx, userID, order.LedgerRef, walletKey, clearingAcct, order.CashKobo)
+	if err == nil {
+		return nil
+	}
+	switch {
+	case errors.Is(err, ledger.ErrInsufficientFunds):
+		// DebitWithBalanceCheck posted nothing → safe to cancel the reservation.
+		_ = s.repo.CancelReservation(ctx, order.IdempotencyKey)
+		return ErrInsufficientCash
+	case errors.Is(err, ledger.ErrDuplicate):
+		// ErrDuplicate is only the Redis fast-path (a 10s lock held even after a
+		// FAILED debit) — NOT proof of a durable post. Confirm via Posted; if the
+		// entry isn't there, the cash did not move: fail closed and let the caller
+		// retry after the lock TTL. Never settle on an unconfirmed debit.
+		if posted, perr := s.led.Posted(ctx, walletKey); perr != nil {
+			return perr
+		} else if posted {
+			return nil
+		}
+		return ErrDebitPending
+	default:
+		return fmt.Errorf("subscribe debit: %w", err)
+	}
 }
 
 // Redeem burns `units` from the holder and pays out cash at the current NAV to the
@@ -226,11 +259,28 @@ func (s *Service) creditRedeem(ctx context.Context, userID, idemKey string, cash
 	if cash <= 0 {
 		return nil
 	}
-	ref := "trading:redeem:" + idemKey
-	if err := s.led.Credit(ctx, userID, ref, idemKey+":redeem", clearingAcct, cash); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
-		return fmt.Errorf("redeem credit: %w", err)
+	redeemKey := idemKey + ":redeem"
+	if posted, err := s.led.Posted(ctx, redeemKey); err != nil {
+		return err
+	} else if posted {
+		return nil // payout already durably credited
 	}
-	return nil
+	err := s.led.Credit(ctx, userID, "trading:redeem:"+idemKey, redeemKey, clearingAcct, cash)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ledger.ErrDuplicate) {
+		// ErrDuplicate (Redis lock) is not proof of a durable credit — confirm.
+		// If not posted, the payout is still pending: the units are already burned
+		// and the order is durable, so a retry re-drives this credit to completion.
+		if posted, perr := s.led.Posted(ctx, redeemKey); perr != nil {
+			return perr
+		} else if posted {
+			return nil
+		}
+		return ErrCreditPending
+	}
+	return fmt.Errorf("redeem credit: %w", err)
 }
 
 // AssessPerformanceFee crystallizes a holder's high-water-mark performance fee:
@@ -302,15 +352,30 @@ func (s *Service) postFeeLeg(ctx context.Context, idemKey string, fee int64, cle
 	if fee <= 0 {
 		return nil
 	}
+	feeKey := idemKey + ":fee"
+	if posted, err := s.led.Posted(ctx, feeKey); err != nil {
+		return err
+	} else if posted {
+		return nil // fee cash already durably moved
+	}
 	feeAcct, err := s.led.GetOrCreateStandingAccount(ctx, ledger.AccountTradingFeeIncome)
 	if err != nil {
 		return err
 	}
 	j := ledger.JournalEntry{
-		Reference: "trading:fee:" + idemKey, IdempotencyKey: idemKey + ":fee", AmountKobo: fee,
+		Reference: "trading:fee:" + idemKey, IdempotencyKey: feeKey, AmountKobo: fee,
 		DebitAccountID: clearingAcct, CreditAccountID: feeAcct.ID, Description: "trading performance fee",
 	}
-	if err := s.led.PostJournal(ctx, j); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+	if err := s.led.PostJournal(ctx, j); err != nil {
+		if errors.Is(err, ledger.ErrDuplicate) {
+			// Not proof of a durable post — confirm; if unposted, still pending.
+			if posted, perr := s.led.Posted(ctx, feeKey); perr != nil {
+				return perr
+			} else if posted {
+				return nil
+			}
+			return ErrCreditPending
+		}
 		return fmt.Errorf("fee ledger: %w", err)
 	}
 	return nil
