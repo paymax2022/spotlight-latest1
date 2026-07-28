@@ -479,3 +479,61 @@ export interface MktFeaturedSlotConfig {
   max_slots: number;
   filled_slots: number;
 }
+
+// ── CMS: home banners + category landing/SEO content — ADM-003/004 ───────────
+
+export type MktBannerSlot = 'home_hero' | 'home_strip' | 'category_top';
+export type MktBannerStatus = 'draft' | 'scheduled' | 'live' | 'expired' | 'archived';
+// A CTA target is typed so the app can route safely (no raw arbitrary nav).
+export type MktBannerCtaType = 'none' | 'category' | 'search' | 'listing' | 'external';
+
+export interface MktBanner {
+  id: string;
+  slot: MktBannerSlot;
+  title: string;
+  subtitle: string;
+  image_url: string;
+  cta_label: string;
+  cta_type: MktBannerCtaType;
+  cta_value: string; // category id / search query / listing id / url (per cta_type)
+  status: MktBannerStatus;
+  start_at: string | null; // schedule window start
+  end_at: string | null; // schedule window end
+  sort_order: number;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface MktBannerInput {
+  slot: MktBannerSlot;
+  title: string;
+  subtitle: string;
+  image_url: string;
+  cta_label: string;
+  cta_type: MktBannerCtaType;
+  cta_value: string;
+  start_at?: string | null;
+  end_at?: string | null;
+  sort_order?: number;
+  reason_code: string; // audited config change
+}
+
+// Per-category landing + SEO content (ADM-004).
+export interface MktCategoryContent {
+  category_id: string;
+  category_name: string;
+  hero_heading: string;
+  intro_copy: string;
+  seo_title: string;
+  seo_description: string;
+  updated_at?: string | null;
+  updated_by?: string | null;
+}
+
+export interface MktCategoryContentInput {
+  hero_heading: string;
+  intro_copy: string;
+  seo_title: string;
+  seo_description: string;
+  reason_code: string;
+}
