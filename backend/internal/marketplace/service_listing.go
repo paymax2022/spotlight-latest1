@@ -35,6 +35,19 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 	if in.PriceKobo < 0 {
 		return nil, fieldErr(CodeValidation, "price_kobo must be non-negative", "price_kobo")
 	}
+	// §1: attrs are validated against the category's attribute_schema at write time.
+	// Fetching the category also surfaces a clean 422 for a bad category_id instead
+	// of a raw FK violation from InsertListing.
+	cat, cerr := s.repo.GetCategory(ctx, in.CategoryID)
+	if cerr != nil {
+		return nil, fieldErr(CodeValidation, "unknown category_id", "category_id")
+	}
+	if !cat.IsActive {
+		return nil, fieldErr(CodeValidation, "category is not active", "category_id")
+	}
+	if err := validateAttrs(cat.AttributeSchema, in.Attrs); err != nil {
+		return nil, err
+	}
 	escrowEligible := true
 	if in.EscrowEligible != nil {
 		escrowEligible = *in.EscrowEligible
@@ -72,6 +85,14 @@ func (s *Service) UpdateListing(ctx context.Context, sellerID, id string, in Upd
 	}
 	if l.SellerID != sellerID {
 		return nil, ErrForbidden
+	}
+	// §1: a supplied attrs edit must satisfy the category's attribute_schema.
+	if in.Attrs != nil {
+		if cat, cerr := s.repo.GetCategory(ctx, l.CategoryID); cerr == nil {
+			if verr := validateAttrs(cat.AttributeSchema, in.Attrs); verr != nil {
+				return nil, verr
+			}
+		}
 	}
 	if in.PriceKobo != nil {
 		n, err := s.repo.CountNonTerminalOrdersForListing(ctx, id)

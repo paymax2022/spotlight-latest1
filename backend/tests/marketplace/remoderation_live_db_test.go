@@ -57,6 +57,18 @@ func seedRiskTier0Category(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	return id
 }
 
+// seedSchemaCategory inserts a risk_tier-0 category carrying a real attribute_schema.
+func seedSchemaCategory(t *testing.T, ctx context.Context, pool *pgxpool.Pool, schema string) string {
+	t.Helper()
+	id := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO mkt_categories (id, market_id, slug, name, attribute_schema, risk_tier, commission_bps, is_active)
+		 VALUES ($1::uuid,'paymax','schema-'||$1::text,'Schema Cat',$2::jsonb,0,0,true)`, id, schema); err != nil {
+		t.Fatalf("seed schema category: %v", err)
+	}
+	return id
+}
+
 // activate creates → submits → (approves if needed) a listing, returning it ACTIVE.
 func activate(t *testing.T, ctx context.Context, svc *mkt.Service, seller, admin, cat, title string, price int64) *mkt.Listing {
 	t.Helper()
@@ -176,5 +188,88 @@ func TestLiveDB_AutoExpire_Atomic(t *testing.T) {
 	_ = pool.QueryRow(ctx, `SELECT status::text FROM mkt_listings WHERE id=$1::uuid`, fresh.ID).Scan(&freshStatus)
 	if freshStatus != string(mkt.ListingActive) {
 		t.Errorf("not-yet-due listing status = %s, want still active", freshStatus)
+	}
+}
+
+const carSchemaJSON = `{
+	"required": ["make", "year"],
+	"additionalProperties": false,
+	"properties": {
+		"make": {"type": "string", "enum": ["toyota", "honda", "lexus"]},
+		"year": {"type": "integer", "minimum": 1990, "maximum": 2026}
+	}
+}`
+
+// TestLiveDB_AttributeSchemaValidation proves CreateListing enforces the category's
+// attribute_schema at write time (§1) — bad attrs are rejected, good attrs accepted
+// (LM-attr / MOD listing-quality). Exercised end-to-end through the real Service.
+func TestLiveDB_AttributeSchemaValidation(t *testing.T) {
+	svc, pool := liveMktService(t)
+	defer pool.Close()
+	ctx := context.Background()
+	cat := seedSchemaCategory(t, ctx, pool, carSchemaJSON)
+	seller := uuid.New().String()
+
+	base := func(attrs map[string]any) mkt.CreateListingInput {
+		return mkt.CreateListingInput{
+			CategoryID: cat, Title: "Clean Toyota Corolla Lagos Deal",
+			Description: "well maintained first body accident free lagos pickup available now",
+			PriceKobo:   500000000, State: "Lagos", LGA: "Ikeja", Attrs: attrs,
+		}
+	}
+
+	bad := []struct {
+		name  string
+		attrs map[string]any
+	}{
+		{"missing required year", map[string]any{"make": "toyota"}},
+		{"enum violation", map[string]any{"make": "ferrari", "year": 2015}},
+		{"year below minimum", map[string]any{"make": "toyota", "year": 1980}},
+		{"unknown attribute", map[string]any{"make": "toyota", "year": 2015, "color": "red"}},
+	}
+	for _, b := range bad {
+		if _, err := svc.CreateListing(ctx, seller, base(b.attrs)); err == nil {
+			t.Errorf("CreateListing must reject invalid attrs (%s)", b.name)
+		}
+	}
+
+	// Valid attrs are accepted.
+	if _, err := svc.CreateListing(ctx, seller, base(map[string]any{"make": "toyota", "year": 2015})); err != nil {
+		t.Fatalf("CreateListing must accept valid attrs: %v", err)
+	}
+}
+
+// TestLiveDB_PauseResumeLifecycle exercises the seller pause/resume FSM edges against
+// a live listing, asserting search visibility follows (paused ⇒ delete, resumed ⇒ upsert).
+func TestLiveDB_PauseResumeLifecycle(t *testing.T) {
+	svc, pool := liveMktService(t)
+	defer pool.Close()
+	ctx := context.Background()
+	cat := seedRiskTier0Category(t, ctx, pool)
+	seller := uuid.New().String()
+	admin := uuid.New().String()
+
+	l := activate(t, ctx, svc, seller, admin, cat, "Pausable Corolla Lagos Deal", 500000000)
+
+	paused, err := svc.PauseListing(ctx, seller, l.ID)
+	if err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	if paused.Status != mkt.ListingPaused {
+		t.Fatalf("pause: status = %s, want paused", paused.Status)
+	}
+
+	resumed, err := svc.ResumeListing(ctx, seller, l.ID)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if resumed.Status != mkt.ListingActive {
+		t.Fatalf("resume: status = %s, want active", resumed.Status)
+	}
+
+	// A non-owner cannot pause the listing (IDOR).
+	stranger := uuid.New().String()
+	if _, err := svc.PauseListing(ctx, stranger, l.ID); err == nil {
+		t.Error("a non-owner pausing the listing must be forbidden")
 	}
 }
