@@ -74,11 +74,11 @@ func TestLiveDB_Promos(t *testing.T) {
 	}
 
 	// Below minimum → invalid.
-	if _, err := svc.resolvePromo(ctx, restID, customer, "save10", 50_000, time.Now()); !errors.Is(err, ErrPromoInvalid) {
+	if _, err := svc.resolvePromo(ctx, restID, customer, "save10", 50_000, 0, time.Now()); !errors.Is(err, ErrPromoInvalid) {
 		t.Fatalf("below-min resolve: want ErrPromoInvalid, got %v", err)
 	}
 	// Valid (case-insensitive code) → 10% of 200_000 = 20_000, restaurant-funded.
-	ap, err := svc.resolvePromo(ctx, restID, customer, "save10", 200_000, time.Now())
+	ap, err := svc.resolvePromo(ctx, restID, customer, "save10", 200_000, 0, time.Now())
 	if err != nil {
 		t.Fatalf("valid resolve: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestLiveDB_Promos(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("UNIQUE(order_id) should keep exactly 1 redemption for the order, got %d", count)
 	}
-	if _, err := svc.resolvePromo(ctx, restID, customer, "save10", 200_000, time.Now()); !errors.Is(err, ErrPromoInvalid) {
+	if _, err := svc.resolvePromo(ctx, restID, customer, "save10", 200_000, 0, time.Now()); !errors.Is(err, ErrPromoInvalid) {
 		t.Fatalf("usage-limit resolve: want ErrPromoInvalid (limit reached), got %v", err)
 	}
 }

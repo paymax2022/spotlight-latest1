@@ -18,8 +18,9 @@ var ErrPromoInvalid = errors.New("restaurant: promo code cannot be applied")
 type PromoKind string
 
 const (
-	PromoPercent PromoKind = "percent" // ValueBp basis points off the subtotal (capped by MaxDiscountKobo)
-	PromoFixed   PromoKind = "fixed"   // AmountKobo off the subtotal
+	PromoPercent      PromoKind = "percent"       // ValueBp basis points off the subtotal (capped by MaxDiscountKobo)
+	PromoFixed        PromoKind = "fixed"         // AmountKobo off the subtotal
+	PromoFreeDelivery PromoKind = "free_delivery" // discount == the delivery fee (waives delivery)
 )
 
 // PromoFunder is who bears the discount at settlement.
@@ -162,7 +163,7 @@ type appliedPromo struct {
 // code is unknown, out of window, under the minimum, or at its usage cap. A zero
 // discount (e.g. a percent promo on a tiny order rounding to 0) is treated as invalid
 // so the caller never records a no-op redemption.
-func (s *Service) resolvePromo(ctx context.Context, restaurantID, userID, code string, subtotalKobo int64, now time.Time) (appliedPromo, error) {
+func (s *Service) resolvePromo(ctx context.Context, restaurantID, userID, code string, subtotalKobo, deliveryKobo int64, now time.Time) (appliedPromo, error) {
 	p, err := s.loadPromoForOrder(ctx, restaurantID, code)
 	if err != nil {
 		return appliedPromo{}, err
@@ -180,7 +181,16 @@ func (s *Service) resolvePromo(ctx context.Context, restaurantID, userID, code s
 	if !ok {
 		return appliedPromo{}, fmt.Errorf("%w: usage limit reached", ErrPromoInvalid)
 	}
-	discount := computeDiscount(p, subtotalKobo)
+	// free_delivery waives the delivery fee (the discount equals it); every other kind
+	// discounts the item subtotal via computeDiscount. The discount still flows through
+	// the same settlement mechanism (borne by the funder), so the rider/restaurant are
+	// still paid for the delivery when the platform funds the waiver.
+	var discount int64
+	if p.Kind == PromoFreeDelivery {
+		discount = deliveryKobo
+	} else {
+		discount = computeDiscount(p, subtotalKobo)
+	}
 	if discount <= 0 {
 		return appliedPromo{}, fmt.Errorf("%w: no discount for this order", ErrPromoInvalid)
 	}
@@ -218,8 +228,10 @@ func (s *Service) CreatePromo(ctx context.Context, restaurantID, userID string, 
 		if req.AmountKobo < 1 {
 			return nil, fmt.Errorf("restaurant: fixed promo needs amount_kobo >= 1")
 		}
+	case PromoFreeDelivery:
+		// No value needed — the discount is the order's delivery fee at checkout.
 	default:
-		return nil, fmt.Errorf("restaurant: promo kind must be 'percent' or 'fixed'")
+		return nil, fmt.Errorf("restaurant: promo kind must be 'percent', 'fixed' or 'free_delivery'")
 	}
 	if req.MinSubtotalKobo < 0 || (req.MaxDiscountKobo != nil && *req.MaxDiscountKobo < 0) {
 		return nil, fmt.Errorf("restaurant: promo amounts must be non-negative")

@@ -107,8 +107,8 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 	}
 	// A tip larger than what was escrowed would drive the non-tip base (and thus the
 	// provider remainder) negative. Fail closed — the tip can never exceed the total.
-	if split.TipKobo > sett.TotalKobo {
-		return fmt.Errorf("settlement: tip %d exceeds escrowed total %d", split.TipKobo, sett.TotalKobo)
+	if split.TipKobo+split.ServiceFeeKobo > sett.TotalKobo {
+		return fmt.Errorf("settlement: tip %d + service fee %d exceed escrowed total %d", split.TipKobo, split.ServiceFeeKobo, sett.TotalKobo)
 	}
 
 	// Compute splits. The percentages apply to the pre-discount GROSS (the item+delivery
@@ -124,9 +124,9 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 	// funds it and always gets its gross share + the full tip. With tip == 0 AND
 	// discount == 0, gross == base == total and this is the pure percentage split —
 	// unchanged for every caller that sets neither.
-	base := sett.TotalKobo - split.TipKobo
+	base := sett.TotalKobo - split.TipKobo - split.ServiceFeeKobo
 	gross := base + split.DiscountKobo
-	platformKobo := int64(float64(gross) * split.PlatformPct)
+	platformKobo := int64(float64(gross)*split.PlatformPct) + split.ServiceFeeKobo
 	if split.DiscountFundedByPlatform {
 		platformKobo -= split.DiscountKobo
 	}

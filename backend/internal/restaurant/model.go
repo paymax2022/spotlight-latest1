@@ -65,6 +65,11 @@ type Order struct {
 	SubtotalKobo int64       `json:"subtotal_kobo"`
 	DeliveryKobo int64       `json:"delivery_kobo"`
 	TipKobo      int64       `json:"tip_kobo"`
+	// SurgeKobo is peak dynamic pricing added to the item subtotal (part of the 80/10/10
+	// settlement gross). ServiceFeeKobo is the platform service fee (a 100%-platform
+	// settlement leg). Both default to 0.
+	SurgeKobo      int64 `json:"surge_kobo"`
+	ServiceFeeKobo int64 `json:"service_fee_kobo"`
 	// DiscountKobo is the promo discount taken off the item subtotal; PromoID and
 	// PromoFunder snapshot which promo applied and who bore it. TotalKobo (escrowed) =
 	// SubtotalKobo − DiscountKobo + DeliveryKobo + TipKobo.
