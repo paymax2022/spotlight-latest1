@@ -220,12 +220,21 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	if herr != nil {
 		return nil, fmt.Errorf("restaurant: check business hours: %w", herr)
 	}
-	holiday, holErr := s.loadHolidayForDate(ctx, restaurantID, time.Now(), lagosTZ)
-	if holErr != nil {
-		return nil, fmt.Errorf("restaurant: check holiday hours: %w", holErr)
-	}
-	if !effectiveOpenWithHoliday(true, hours, holiday, time.Now(), lagosTZ) {
-		return nil, ErrClosedNow
+	if req.ScheduledFor != nil {
+		// Scheduled order (SG-001): gate on the FUTURE slot (lead/horizon + open-at-slot)
+		// rather than open-now, so a restaurant that's closed right now can still take an
+		// order for a valid future window.
+		if verr := validateScheduledFor(time.Now(), *req.ScheduledFor, hours, lagosTZ); verr != nil {
+			return nil, verr
+		}
+	} else {
+		holiday, holErr := s.loadHolidayForDate(ctx, restaurantID, time.Now(), lagosTZ)
+		if holErr != nil {
+			return nil, fmt.Errorf("restaurant: check holiday hours: %w", holErr)
+		}
+		if !effectiveOpenWithHoliday(true, hours, holiday, time.Now(), lagosTZ) {
+			return nil, ErrClosedNow
+		}
 	}
 
 	// Fetch and validate menu items.
@@ -406,8 +415,8 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	defer tx.Rollback(ctx)
 
 	const insertOrder = `
-		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, tip_kobo, discount_kobo, promo_id, promo_funder, surge_kobo, service_fee_kobo, special_instructions)
-		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, tip_kobo, discount_kobo, promo_id, promo_funder, surge_kobo, service_fee_kobo, special_instructions, scheduled_for)
+		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insertOrder,
 		order.ID, order.CustomerID, order.RestaurantID,
@@ -416,6 +425,7 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		order.DistanceMeters, order.EtaMinutes, breakdownJSON, order.TipKobo,
 		order.DiscountKobo, order.PromoID, order.PromoFunder,
 		order.SurgeKobo, order.ServiceFeeKobo, nullIfEmpty(order.SpecialInstructions),
+		req.ScheduledFor,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: insert order: %w", err)

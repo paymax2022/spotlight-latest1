@@ -67,7 +67,7 @@ func sanitizeInstructions(s string) string {
 // vegetarian, halal, gluten_free, contains_nuts, …) — normalized, not white-listed.
 func normalizeDietaryTags(tags []string) []string {
 	seen := map[string]bool{}
-	var out []string
+	out := []string{} // non-nil so a tag-less item inserts '{}' (NOT NULL column), not NULL
 	for _, t := range tags {
 		t = strings.ToLower(strings.TrimSpace(t))
 		t = strings.ReplaceAll(t, " ", "_")
