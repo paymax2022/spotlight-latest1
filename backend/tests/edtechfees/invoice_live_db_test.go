@@ -101,6 +101,51 @@ func TestLiveDB_Invoice_IdempotencyKeyScopedToInvoice(t *testing.T) {
 	}
 }
 
+// TestLiveDB_Invoice_RejectsOverpayment proves the invoice money invariant: a payment
+// that would push the derived paid amount above the invoice total is rejected with
+// ErrOverpayment BEFORE any row is recorded — you cannot pay more than you owe. An
+// exact-full payment (bringing balance to 0) is still accepted.
+func TestLiveDB_Invoice_RejectsOverpayment(t *testing.T) {
+	pool := liveDBPool(t)
+	defer pool.Close()
+	svc := feesinvoice.NewService(pool)
+	ctx := context.Background()
+
+	const total = int64(100_000)
+	guardianID := seedUser(t, ctx, pool)
+	actorID := seedUser(t, ctx, pool)
+	schoolID := seedSchool(t, ctx, pool)
+	studentID := seedStudent(t, ctx, pool, schoolID, guardianID)
+	inv, err := svc.Issue(ctx, actorID, feesinvoice.IssueInvoiceRequest{
+		StudentID: studentID, FeeScheduleID: seedFeeSchedule(t, ctx, pool, schoolID, total), TotalAmountMinor: total,
+	})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	cleanupInvoice(t, pool, inv.ID)
+
+	// Pay 60,000 → partially_paid (balance 40,000).
+	if _, err := svc.RecordPayment(ctx, actorID, inv.ID, guardianID, 60_000, "", "", newIdemKey(t, "op-1")); err != nil {
+		t.Fatalf("RecordPayment 60k: %v", err)
+	}
+	// A further 60,000 (→ 120,000 > 100,000) must be rejected as overpayment, recording NOTHING.
+	if _, err := svc.RecordPayment(ctx, actorID, inv.ID, guardianID, 60_000, "", "", newIdemKey(t, "op-over")); !errors.Is(err, feesinvoice.ErrOverpayment) {
+		t.Fatalf("overpayment: want ErrOverpayment, got %v", err)
+	}
+	// The rejected payment left the balance untouched (still 40,000 owed).
+	if _, balance, derr := svc.DerivedBalance(ctx, inv.ID); derr != nil || balance != 40_000 {
+		t.Fatalf("after rejected overpayment, balance=%d (err %v), want 40000", balance, derr)
+	}
+	// The exact remaining 40,000 IS accepted → paid, balance 0.
+	res, err := svc.RecordPayment(ctx, actorID, inv.ID, guardianID, 40_000, "", "", newIdemKey(t, "op-exact"))
+	if err != nil {
+		t.Fatalf("exact-full payment: %v", err)
+	}
+	if res.Invoice.Status != "paid" || res.Invoice.Balance != 0 {
+		t.Fatalf("after exact-full payment: status=%s balance=%d, want paid/0", res.Invoice.Status, res.Invoice.Balance)
+	}
+}
+
 // liveDBPool connects using TEST_DATABASE_URL/DATABASE_URL, or skips. Same gate
 // and precedence as backend/tests/crypto + backend/tests/association.
 func liveDBPool(t *testing.T) *pgxpool.Pool {

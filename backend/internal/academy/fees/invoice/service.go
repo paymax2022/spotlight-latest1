@@ -267,6 +267,21 @@ func (s *Service) RecordPayment(ctx context.Context, actorID, invoiceID, guardia
 		return nil, ErrInvoiceNotPayable
 	}
 
+	// Overpayment guard (money invariant): a NEW payment must not push the derived paid
+	// amount above the invoice total — you cannot pay more than you owe on an invoice.
+	// Checked BEFORE the append so an overpaying payment is never recorded (an exact-full
+	// payment, priorPaid+amount == total, is allowed). Best-effort against the derived sum:
+	// the append-only model means a truly concurrent pair could each pass this read, so a
+	// hard cap would need a row lock — acceptable here, this closes the ordinary case that
+	// ErrOverpayment was declared for but never enforced.
+	priorPaid, err := s.store.SumSucceededPayments(ctx, invoiceID)
+	if err != nil {
+		return nil, err
+	}
+	if priorPaid+amountMinor > inv.TotalAmountMinor {
+		return nil, ErrOverpayment
+	}
+
 	// APPEND the payment (idempotent on idempotency_key). Payment is recorded 'succeeded'
 	// here because the money move is either already settled by E3's adapter (ledgerReference
 	// set) or, in the record-only path, treated as the source of truth for the invoice.
