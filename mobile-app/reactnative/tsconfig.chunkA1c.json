@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "app/admin/**/*.ts",
+    "app/admin/**/*.tsx",
+    "app/guard/**/*.ts",
+    "app/guard/**/*.tsx",
+    "app/arena/**/*.ts",
+    "app/arena/**/*.tsx",
+    "app/loyalty/**/*.ts",
+    "app/loyalty/**/*.tsx",
+    "app/kyc-verify/**/*.ts",
+    "app/kyc-verify/**/*.tsx",
+    "app/invest-onboarding/**/*.ts",
+    "app/invest-onboarding/**/*.tsx",
+    "app/visitor/**/*.ts",
+    "app/visitor/**/*.tsx",
+    "app/savings/**/*.ts",
+    "app/savings/**/*.tsx",
+    "app/invest/**/*.ts",
+    "app/invest/**/*.tsx"
+  ]
+}

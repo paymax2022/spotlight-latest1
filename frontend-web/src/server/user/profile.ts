@@ -211,6 +211,13 @@ export async function updateUserProfile(user: RequestUser, patch: Partial<Spotli
     last_name: patch.lastName || null,
     display_name: patch.displayName || fullName || null,
     phone: patch.phone || null,
+    date_of_birth: patch.dateOfBirth || null,
+    gender: patch.gender || null,
+    country: patch.country || null,
+    state: patch.state || null,
+    lga: patch.lga || null,
+    city: patch.city || null,
+    address: patch.address || null,
     metadata,
     social: patch.social || {},
     identity: patch.identity || {},
@@ -225,11 +232,29 @@ export async function updateUserProfile(user: RequestUser, patch: Partial<Spotli
     role: patch.role || 'USER',
   };
 
-  const attempts = [widePayload, narrowPayload];
-  for (const payload of attempts) {
+  const attempts: Array<{ label: string; payload: Record<string, unknown> }> = [
+    { label: 'full', payload: widePayload },
+    { label: 'minimal', payload: narrowPayload },
+  ];
+  let lastError: unknown = null;
+  for (const { label, payload } of attempts) {
     const { data, error } = await supabase.from('user_profiles').upsert(payload as any).select('*').maybeSingle();
-    if (!error) return normalizeProfile((data as Record<string, unknown>) || payload, user);
+    if (!error) {
+      if (label === 'minimal') {
+        // The full write failed (almost always a user_profiles column that the app
+        // expects but the schema lacks) and we fell back to persisting only
+        // id/email/role — the user's edited details were DROPPED. Log loudly so this
+        // schema drift is caught instead of silently returning a "successful" update
+        // that saved nothing. (Fix: add the missing columns via an additive migration.)
+        console.error('[profile] updateUserProfile: full upsert failed, fell back to the minimal payload — user details were NOT persisted. Wide-upsert error:', lastError);
+      }
+      return normalizeProfile((data as Record<string, unknown>) || payload, user);
+    }
+    lastError = error;
+    console.error(`[profile] updateUserProfile: "${label}" upsert failed:`, error);
   }
 
+  // Every attempt failed — do not claim success; the caller gets the unchanged profile.
+  console.error('[profile] updateUserProfile: all upsert attempts failed; profile left unchanged. Last error:', lastError);
   return getOrCreateUserProfile(user);
 }

@@ -1,0 +1,119 @@
+name: Association CI
+
+# Formal verification gate for the Group / Association membership module.
+# Mirrors the pattern of connect-ci.yml: Go build/vet/test, frontend-admin
+# typecheck, mobile scoped typecheck, and an additive-only DDL guard.
+# Blocks merges on red.
+
+on:
+  push:
+    paths:
+      - 'backend/internal/association/**'
+      - 'backend/internal/app/finance_routes.go'
+      - 'backend/internal/app/router.go'
+      - 'backend/internal/config/config.go'
+      - 'contracts/associations.openapi.yaml'
+      - 'supabase/migrations/*assoc*.sql'
+      - 'frontend-web/src/app/api/associations/**'
+      - 'frontend-web/src/lib/feature-flags.ts'
+      - 'mobile-app/reactnative/src/features/association/**'
+      - 'mobile-app/reactnative/tsconfig.associationcheck.json'
+      - '.github/workflows/association-ci.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ── 1. Go: build the whole backend, then vet + test the association slice ────
+  backend:
+    name: Go build / vet / test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+
+      - name: Build (whole backend — catches wiring / import breaks)
+        run: go build ./...
+
+      - name: Vet (association module)
+        run: go vet ./internal/association/...
+
+      - name: Test (association module — money path, RBAC, RevenueSplit)
+        run: go test ./internal/association/... -count=1 -v -timeout 60s
+
+      - name: Test (all — regression)
+        run: go test ./... -count=1 -timeout 120s
+
+  # ── 2. frontend-admin: TypeScript strict check ───────────────────────────────
+  admin-typecheck:
+    name: Admin dashboard typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck admin (tsc --noEmit)
+        run: npm run type-check
+
+  # ── 3. frontend-web: TypeScript strict check (proxy route + feature flags) ───
+  web-typecheck:
+    name: Frontend-web typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck web (tsc --noEmit)
+        run: npx tsc --noEmit
+
+  # ── 4. Mobile: scoped association typecheck, then whole-app belt-and-braces ───
+  mobile-typecheck:
+    name: Mobile typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app/reactnative
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck association feature (scoped)
+        run: npx tsc --noEmit -p tsconfig.associationcheck.json
+      - name: Typecheck whole app (belt-and-braces)
+        run: npx tsc --noEmit -p tsconfig.json
+
+  # ── 5. Migration guard: additive-only DDL ────────────────────────────────────
+  migration-guard:
+    name: Additive-only DDL guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject destructive DDL in assoc migrations
+        run: |
+          set -e
+          FILES=$(ls supabase/migrations/*assoc*.sql 2>/dev/null || true)
+          if [ -z "$FILES" ]; then echo "no assoc migrations found"; exit 0; fi
+          # Allow "DROP POLICY/TRIGGER IF EXISTS" (RLS/trigger re-create pattern).
+          # Reject real destructive DDL: DROP TABLE, DROP COLUMN, ALTER .. DROP,
+          # DROP NOT NULL, RENAME COLUMN.
+          if grep -iEn '\b(drop\s+(table|column|type)|alter\s+[a-z_."]+\s+drop|drop\s+not\s+null|rename\s+(column|to))\b' $FILES \
+             | grep -ivE 'drop\s+(policy|trigger)\s+if\s+exists'; then
+            echo "::error::Destructive DDL found in assoc migration (must be additive-only)"
+            exit 1
+          fi
+          echo "Additive-only guard passed for: $FILES"

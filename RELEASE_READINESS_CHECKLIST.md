@@ -16,8 +16,13 @@ Last updated: 2026-05-28
 - [x] Critical-permission assignment restricted to super-admin
 - [x] Audit logs for sensitive RBAC actions
 - [x] Login activity + security events endpoints
-- [~] Full suspicious-activity response playbook (notify user, revoke sessions, forced reset)
-- [~] Full refresh-token/session revocation lifecycle hardening
+- [x] Full suspicious-activity response playbook (notify user, revoke sessions, forced reset)
+      — #19: new-device/new-IP/impossible-travel/failed-spike detection, security_events
+      record, Resend notification, configurable escalation (notify|force_reverify|force_password_reset).
+- [x] Full refresh-token/session revocation lifecycle hardening
+      — #19: refresh-token rotation + reuse-detection (family revoke), revoke-one/all,
+      admin force-logout/force-reset, fail-closed middleware session check. Gated by
+      FEATURE_SESSION_HARDENING_ENABLED (default OFF).
 
 ## 2) API Completion
 - [x] Auth core endpoints available
@@ -26,7 +31,16 @@ Last updated: 2026-05-28
 - [x] User-role assignment/removal endpoints
 - [x] User status endpoints (suspend/unsuspend/lock/unlock)
 - [x] Audit/log activity/security/export endpoints with filters
-- [~] Full endpoint parity from long-form spec across every domain module
+- [x] Full endpoint parity from long-form spec across admin user + RBAC endpoints
+      — #23: scoped list filters (program/contest/school/country), admin-user export,
+      read-only per-user session view (composes #19), bulk role assign (one↔many),
+      bulk permission→role assign. Deny-by-default gated + audited; in openapi.yaml.
+      (Specialized money-module admin paths use native ledger/event trails — see
+      docs/audit/09-audit-coverage-matrix.md.)
+- [x] Full audit coverage for STEM + contest sensitive mutations
+      — #23: create/update/state-transition/approve/award events emitted from the
+      handler edge via audit_service (no protected-module edits). Money path keeps
+      its append-only ledger / kyc_events / tier_limit_events trails.
 
 ## 3) Frontend Admin Completion
 - [x] Route guard + permission-based sidebar visibility

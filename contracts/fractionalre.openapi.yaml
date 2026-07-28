@@ -1,0 +1,31 @@
+# ── Fractional Real Estate / Land Crowd-Investing — MERGED ───────────────────
+#
+# This fragment was merged into the master contract (contracts/openapi.yaml)
+# on 2026-07-03. Do not add paths or schemas here — the master file is the
+# single source of truth for the fractionalre module:
+#
+#   * paths:   /api/finance/fractionalre/*  and  /api/finance/fractionalre/admin/*
+#   * schemas: Money, FreOffering, FreSubscription, FreSubscribeRequest,
+#              FreCapTableEntry, FreInvestorProfile, FreLimitCheck,
+#              FreDistribution, FreSecondaryListing, FreSecondaryOrder,
+#              FreMarketControls, FreAutoInvestPlan, FreBeneficiary,
+#              FreBeneficiaryCreate, FreReferralSummary, FreReconciliationRow,
+#              FreAuditEntry
+#
+# During the merge the schemas were aligned to the shipped implementation
+# (backend/internal/fractionalre) — lowercase status enums, integer-kobo
+# fields, and the hardening endpoints added by the 2026-07-03 audit pass:
+# beneficiaries, referrals, admin escrow reconciliation, admin market-controls
+# GET, and idempotent secondary-market listing.
+#
+# This file is retained as a pointer only (spec-first workflow: API changes
+# start in contracts/openapi.yaml).
+openapi: 3.1.0
+info:
+  title: Paymax Fractional Real Estate API (merged into openapi.yaml on 2026-07-03)
+  version: 1.1.0
+  description: >
+    Pointer stub. The fractionalre module's contract now lives in
+    contracts/openapi.yaml (merged 2026-07-03). See the master file for all
+    paths and schemas.
+paths: {}

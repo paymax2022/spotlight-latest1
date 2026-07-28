@@ -5,8 +5,8 @@ import { Swiper, SwiperSlide } from "swiper/react"
 
 const heroSlides = [
     { src: "/assets/img/shape/flyer3.png", alt: "Spotlight flyer" },
-    { src: "/assets/img/shape/banner1.png", alt: "Spotlight banner one" },
-    { src: "/assets/img/shape/banner2.png", alt: "Spotlight banner two" },
+    { src: "/assets/img/shape/cover.jpg", alt: "Spotlight banner one" },
+    { src: "/assets/img/shape/search.png", alt: "Spotlight banner two" },
 ]
 
 const swiperOptions = {

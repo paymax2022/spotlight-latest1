@@ -1,0 +1,114 @@
+// PRIVACY: This screen shows the doctor only a COARSE verification status plus
+// guidance copy. It must NEVER render MDCN/register data, reviewer identity,
+// internal reviewer notes, or matched-field detail — Paymax verifies out-of-band
+// (assisted Mode B) and the doctor never sees the MDCN portal.
+import React from 'react';
+import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
+import { Clock, CheckCircle2, XCircle, FileCheck2, AlertCircle, PauseCircle } from 'lucide-react-native';
+import type { LucideIcon } from 'lucide-react-native';
+import { Colors } from '@/constants/colors';
+import { Radius } from '@/constants/radius';
+import { Spacing } from '@/constants/spacing';
+import { Typography } from '@/constants/typography';
+import PrimaryButton from '@/components/PrimaryButton';
+import { TeleHeader } from '@/features/telemedicine/components';
+import { SectionCard, InfoRow, StateView } from '@/features/doctor/components';
+import { useVerification } from '@/features/doctor/hooks';
+import type { VerificationStatus } from '@/types/doctor';
+
+const STATUS_CONFIG: Record<VerificationStatus, { icon: LucideIcon; color: string; bg: string; title: string; sub: string }> = {
+  unsubmitted: { icon: FileCheck2,   color: Colors.onSurfaceVariant, bg: Colors.surfaceContainerLow, title: 'Not submitted',        sub: 'Submit your documents to begin verification.' },
+  pending:     { icon: Clock,        color: Colors.secondary,        bg: Colors.iconBgBlue,          title: 'Verification pending', sub: 'Your documents are under review. This usually takes 24–48 hours. You do not need to visit any external portal — Paymax handles verification for you.' },
+  needs_info:  { icon: AlertCircle,  color: Colors.secondary,        bg: Colors.iconBgBlue,          title: 'More information needed', sub: 'We need a little more from you to finish verification. Please re-upload the requested documents.' },
+  approved:    { icon: CheckCircle2, color: Colors.teal,             bg: Colors.iconBgTeal,          title: 'Verified',             sub: 'You are verified and can accept consultations.' },
+  rejected:    { icon: XCircle,      color: Colors.error,            bg: Colors.errorContainer,      title: 'Verification rejected', sub: 'Please review the reason below and resubmit.' },
+  suspended:   { icon: PauseCircle,  color: Colors.error,            bg: Colors.errorContainer,      title: 'Verification suspended', sub: 'Your licence has expired and your verification is suspended. Please renew your licence to continue practising.' },
+};
+
+export default function VerificationPendingScreen() {
+  const { data: submission, isLoading, isError, refetch } = useVerification();
+
+  return (
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <TeleHeader title="Verification Status" />
+
+      {isLoading && !submission ? (
+        <StateView variant="loading" label="Checking your status" />
+      ) : isError || !submission ? (
+        <StateView variant="error" message="We could not load your verification status." onRetry={() => refetch()} />
+      ) : (
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+          {(() => {
+            const cfg = STATUS_CONFIG[submission.status];
+            const Icon = cfg.icon;
+            return (
+              <View style={styles.hero}>
+                <View style={[styles.heroIcon, { backgroundColor: cfg.bg }]}>
+                  <Icon size={36} color={cfg.color} strokeWidth={2} />
+                </View>
+                <Text style={styles.heroTitle}>{cfg.title}</Text>
+                <Text style={styles.heroSub}>{cfg.sub}</Text>
+              </View>
+            );
+          })()}
+
+          {!!submission.rejectionReason && (
+            <SectionCard title="Reason" style={styles.card}>
+              <Text style={styles.reason}>{submission.rejectionReason}</Text>
+            </SectionCard>
+          )}
+
+          <SectionCard title="Submission details" style={styles.card}>
+            {submission.submittedAt && <InfoRow label="Submitted" value={new Date(submission.submittedAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' })} />}
+            {submission.reviewedAt && <InfoRow label="Reviewed" value={new Date(submission.reviewedAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' })} />}
+            <InfoRow label="Documents" value={`${submission.documents.length} uploaded`} />
+          </SectionCard>
+
+          {submission.documents.length > 0 && (
+            <SectionCard title="Documents" style={styles.card}>
+              {submission.documents.map((doc, i) => (
+                <View key={doc.type} style={[styles.docRow, i > 0 && styles.docBorder]}>
+                  <FileCheck2 size={18} color={Colors.teal} strokeWidth={2} />
+                  <Text style={styles.docLabel} numberOfLines={1}>{doc.label}</Text>
+                  <Text style={styles.docFile} numberOfLines={1}>{doc.fileName}</Text>
+                </View>
+              ))}
+            </SectionCard>
+          )}
+
+          {submission.status === 'approved' ? (
+            <PrimaryButton label="View verification result" onPress={() => router.push('/(doctor)/profile/verification/approved')} style={styles.btn} />
+          ) : submission.status === 'rejected' ? (
+            <PrimaryButton label="View details & resubmit" onPress={() => router.push('/(doctor)/profile/verification/failed')} style={styles.btn} />
+          ) : submission.status === 'needs_info' ? (
+            <PrimaryButton label="Provide more information" onPress={() => router.push('/(doctor)/profile/verification/resubmit')} style={styles.btn} />
+          ) : submission.status === 'suspended' ? (
+            <PrimaryButton label="Renew licence" onPress={() => router.push('/(doctor)/profile/licence/renew')} style={styles.btn} />
+          ) : submission.status === 'unsubmitted' ? (
+            <PrimaryButton label="Resubmit documents" onPress={() => router.replace('/(doctor)/signup')} style={styles.btn} />
+          ) : (
+            <PrimaryButton label="Refresh status" onPress={() => refetch()} variant="secondary" style={styles.btn} />
+          )}
+        </ScrollView>
+      )}
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe:      { flex: 1, backgroundColor: Colors.background },
+  content:   { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md, paddingBottom: Spacing.xxl },
+  hero:      { alignItems: 'center', gap: Spacing.xs, marginBottom: Spacing.lg, paddingHorizontal: Spacing.md },
+  heroIcon:  { width: 80, height: 80, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.xs },
+  heroTitle: { ...Typography.headlineMd, color: Colors.onSurface },
+  heroSub:   { ...Typography.bodyMd, color: Colors.onSurfaceVariant, textAlign: 'center' },
+  card:      { marginBottom: Spacing.md },
+  reason:    { ...Typography.bodyMd, color: Colors.onSurface },
+  docRow:    { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.sm },
+  docBorder: { borderTopWidth: 1, borderTopColor: Colors.surfaceContainerHigh },
+  docLabel:  { ...Typography.labelMd, color: Colors.onSurface, flex: 1 },
+  docFile:   { ...Typography.caption, color: Colors.onSurfaceVariant, flexShrink: 1 },
+  btn:       { marginTop: Spacing.sm },
+});

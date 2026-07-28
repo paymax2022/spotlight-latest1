@@ -23,6 +23,9 @@ type AdminUserFilter struct {
 	Status   string
 	State    string
 	Program  string
+	Contest  string
+	School   string
+	Country  string
 	Search   string
 	Limit    int
 }

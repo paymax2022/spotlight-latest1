@@ -101,11 +101,15 @@ describe('Rate Limiter', () => {
 // 2. Voting settings guard — assertVotingOpen
 // ---------------------------------------------------------------------------
 describe('assertVotingOpen', () => {
+  // Generous timeout: this is the first test to dynamically import the voting
+  // service graph, so it pays the one-time module-transform cost under vitest.
+  // The assertion is unchanged — only the import-warmup budget is widened so the
+  // suite never flakes at the 5s boundary on a busy machine.
   it('throws if voting is disabled', async () => {
     const { assertVotingOpen } = await import('../../../src/server/voting/free-vote.service');
     const s = makeSettings({ votingEnabled: false });
     expect(() => assertVotingOpen(s as any)).toThrow('not open');
-  });
+  }, 30_000);
 
   it('throws if before voting window', async () => {
     const { assertVotingOpen } = await import('../../../src/server/voting/free-vote.service');

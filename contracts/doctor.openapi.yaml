@@ -1,0 +1,2349 @@
+openapi: 3.1.0
+info:
+  title: Doctor (Telemedicine, provider) Module
+  version: 1.0.0
+  description: >
+    Provider-side telemedicine module inside the Paymax super app. Covers the
+    doctor / specialist / veterinarian provider experience: profile &
+    verification, schedule, appointments & consults, chat / calls / clinical
+    notes, prescriptions & pharmacy, lab orders & results, HMO, referrals & care
+    plans, emergency escalation, vet/pet care, records & reputation, earnings &
+    payouts, notifications, support, compliance, security and settings.
+
+    Conventions:
+      * Feature-flagged off in the app layer (FEATURE_DOCTOR_ENABLED). No flag, no route.
+      * All monetary amounts are integers in MINOR units (kobo). Never floats, never strings.
+      * Every state-changing mutation requires an `Idempotency-Key` header and is deduped
+        server-side; replaying the same key returns the original result (409 on conflict).
+      * Earnings/wallet balances are PROJECTIONS of the double-entry ledger — payout
+        requests and invoices are stored; balances are never directly mutated.
+      * Auth: Bearer (Supabase-issued JWT). Every route is scoped to the calling provider.
+      * Response envelope on the wire is `res.data.data ?? res.data`; schemas below describe
+        the unwrapped payload.
+
+    NOTE: This fragment documents the doctor module's routes. Merge into / reference
+    alongside the master contracts/openapi.yaml `paths:` block when integrating.
+
+servers:
+  - url: /api/v1
+    description: Go backend (Gin) — doctor (telemedicine, provider) module
+
+security:
+  - bearerAuth: []
+
+tags:
+  - { name: doctor-mvp,          description: "MVP — core provider consult flow" }
+  - { name: doctor-phase2,       description: "Phase 2 — pharmacy, referrals, HMO, care, reputation" }
+  - { name: doctor-phase3,       description: "Phase 3 — vet, AI assist, multi-clinic practice" }
+  - { name: doctor-profile,      description: "Profile & verification builder (Section B)" }
+  - { name: doctor-onboarding,   description: "Onboarding — provider type, consents, permissions" }
+  - { name: doctor-batch1,       description: "Vet profile, dashboard, schedule, queue, appointments" }
+  - { name: doctor-batch2,       description: "Patient profile, chat, calls, clinical notes" }
+  - { name: doctor-batch3,       description: "Prescriptions, pharmacy, lab orders & results" }
+  - { name: doctor-batch4,       description: "HMO, referrals, care plans, emergency" }
+  - { name: doctor-batch5,       description: "Vet consults, Rx, lab, records, store" }
+  - { name: doctor-batch6,       description: "Records, notifications, earnings, quality" }
+  - { name: doctor-batch7,       description: "Support, privacy, security, account" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Supabase-issued JWT for the authenticated provider.
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string }
+      description: Globally unique key per mutation (prevents duplicate retries / double charges).
+
+  responses:
+    BadRequest:   { description: Invalid request / validation error }
+    Unauthorized: { description: Missing or invalid bearer token }
+    Forbidden:    { description: "Not a verified/eligible provider, or row not owned by caller" }
+    NotFound:     { description: Resource not found }
+    Conflict:     { description: Idempotency-Key replay conflict (different payload for same key) }
+
+  schemas:
+    # ── Primitives ──────────────────────────────────────────────────────────────
+    Money:
+      type: integer
+      format: int64
+      description: Amount in kobo (minor units).
+    Generic:
+      type: object
+      description: Pragmatic catch-all for large nested shapes; key fields plus open extension.
+      additionalProperties: true
+
+    PatientSummary:
+      type: object
+      properties:
+        id:          { type: string }
+        name:        { type: string }
+        initials:    { type: string }
+        avatarColor: { type: string }
+        age:         { type: integer }
+        gender:      { type: string, enum: [male, female, other] }
+
+    # ── MVP: profile & verification ──────────────────────────────────────────────
+    DoctorProfile:
+      type: object
+      properties:
+        id:              { type: string }
+        name:            { type: string }
+        title:           { type: string }
+        specialtyId:     { type: string }
+        specialties:     { type: array, items: { type: string } }
+        subSpecialties:  { type: array, items: { type: string } }
+        bio:             { type: string }
+        initials:        { type: string }
+        avatarColor:     { type: string }
+        email:           { type: string }
+        phone:           { type: string }
+        mdcnNumber:      { type: string }
+        feeKobo:         { $ref: '#/components/schemas/Money' }
+        rating:          { type: number }
+        reviewCount:     { type: integer }
+        yearsExperience: { type: integer }
+        languages:       { type: array, items: { type: string } }
+        isOnline:        { type: boolean }
+        verification:    { type: string, enum: [unsubmitted, pending, approved, rejected] }
+        hospital:        { type: string }
+        state:           { type: string }
+    VerificationDocument:
+      type: object
+      properties:
+        type:       { type: string, enum: [mdcn_certificate, medical_license, degree_certificate, government_id, passport_photo, cv] }
+        label:      { type: string }
+        fileName:   { type: string }
+        uploadedAt: { type: string, format: date-time }
+    VerificationSubmission:
+      type: object
+      properties:
+        id:              { type: string }
+        status:          { type: string, enum: [unsubmitted, pending, approved, rejected] }
+        submittedAt:     { type: string, format: date-time }
+        reviewedAt:      { type: string, format: date-time }
+        documents:       { type: array, items: { $ref: '#/components/schemas/VerificationDocument' } }
+        rejectionReason: { type: string }
+        notes:           { type: string }
+    SubmitVerificationRequest:
+      type: object
+      required: [mdcnNumber, documents]
+      properties:
+        mdcnNumber: { type: string }
+        documents:  { type: array, items: { type: string } }
+    SubmitVerificationResult:
+      type: object
+      properties:
+        submissionId: { type: string }
+        status:       { type: string, enum: [unsubmitted, pending, approved, rejected] }
+
+    # ── MVP: availability ────────────────────────────────────────────────────────
+    WorkingDay:
+      type: object
+      properties:
+        day:       { type: string, enum: [mon, tue, wed, thu, fri, sat, sun] }
+        enabled:   { type: boolean }
+        startTime: { type: string }
+        endTime:   { type: string }
+    ScheduleBreak:
+      type: object
+      properties:
+        id:        { type: string }
+        day:       { type: string, enum: [mon, tue, wed, thu, fri, sat, sun] }
+        startTime: { type: string }
+        endTime:   { type: string }
+        label:     { type: string }
+    AvailabilitySchedule:
+      type: object
+      properties:
+        doctorId:            { type: string }
+        workingDays:         { type: array, items: { $ref: '#/components/schemas/WorkingDay' } }
+        breaks:              { type: array, items: { $ref: '#/components/schemas/ScheduleBreak' } }
+        consultDurationMins: { type: integer }
+        bufferMins:          { type: integer }
+        acceptsInstant:      { type: boolean }
+    UpdateAvailabilityRequest:
+      type: object
+      required: [schedule]
+      properties:
+        schedule: { $ref: '#/components/schemas/AvailabilitySchedule' }
+
+    # ── MVP: appointments ────────────────────────────────────────────────────────
+    DoctorAppointment:
+      type: object
+      properties:
+        id:          { type: string }
+        ref:         { type: string }
+        patient:     { $ref: '#/components/schemas/PatientSummary' }
+        consultType: { type: string }
+        status:      { type: string }
+        slotDate:    { type: string, format: date }
+        slotTime:    { type: string }
+        feeKobo:     { $ref: '#/components/schemas/Money' }
+        createdAt:   { type: string, format: date-time }
+        reason:      { type: string }
+        isHmo:       { type: boolean }
+        hmoProvider: { type: string }
+    UpdateAppointmentStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string }
+    UpdateAppointmentStatusResult:
+      type: object
+      properties:
+        status: { type: string }
+
+    # ── MVP: patient medical profile ─────────────────────────────────────────────
+    PatientVital:
+      type: object
+      properties:
+        label: { type: string }
+        value: { type: string }
+    PatientHistoryItem:
+      type: object
+      properties:
+        id:         { type: string }
+        date:       { type: string, format: date }
+        summary:    { type: string }
+        doctorName: { type: string }
+    PatientMedicalProfile:
+      type: object
+      properties:
+        patient:            { $ref: '#/components/schemas/PatientSummary' }
+        bloodGroup:         { type: string }
+        genotype:           { type: string }
+        allergies:          { type: array, items: { type: string } }
+        chronicConditions:  { type: array, items: { type: string } }
+        currentMedications: { type: array, items: { type: string } }
+        vitals:             { type: array, items: { $ref: '#/components/schemas/PatientVital' } }
+        history:            { type: array, items: { $ref: '#/components/schemas/PatientHistoryItem' } }
+
+    # ── MVP: chat ────────────────────────────────────────────────────────────────
+    ChatMessage:
+      type: object
+      properties:
+        id:             { type: string }
+        threadId:       { type: string }
+        author:         { type: string, enum: [doctor, patient] }
+        body:           { type: string }
+        createdAt:      { type: string, format: date-time }
+        attachmentUrl:  { type: string }
+        attachmentName: { type: string }
+    ChatThread:
+      type: object
+      properties:
+        id:            { type: string }
+        appointmentId: { type: string }
+        patient:       { $ref: '#/components/schemas/PatientSummary' }
+        lastMessage:   { type: string }
+        lastMessageAt: { type: string, format: date-time }
+        unreadCount:   { type: integer }
+        consultType:   { type: string }
+        status:        { type: string }
+    SendChatMessageRequest:
+      type: object
+      required: [body]
+      properties:
+        body:           { type: string }
+        attachmentUrl:  { type: string }
+        attachmentName: { type: string }
+
+    # ── MVP: call session ────────────────────────────────────────────────────────
+    CallSession:
+      type: object
+      properties:
+        id:            { type: string }
+        appointmentId: { type: string }
+        patient:       { $ref: '#/components/schemas/PatientSummary' }
+        mode:          { type: string, enum: [audio, video] }
+        status:        { type: string, enum: [connecting, ringing, live, ended, failed] }
+        startedAt:     { type: string, format: date-time }
+        durationSecs:  { type: integer }
+        roomToken:     { type: string, description: Short-lived signed RTC token; empty when rtcConfigured is false }
+        provider:      { type: string, enum: [agora, videosdk] }
+        tokenUid:      { type: string, description: Deterministic uid the RTC token is bound to }
+        tokenExpiresAt: { type: string, format: date-time }
+        rtcConfigured: { type: boolean, description: "false when the provider has no server-side creds (roomToken empty, do not join)" }
+
+    # ── MVP: SOAP note ───────────────────────────────────────────────────────────
+    SoapNote:
+      type: object
+      properties:
+        id:            { type: string }
+        appointmentId: { type: string }
+        patientId:     { type: string }
+        subjective:    { type: string }
+        objective:     { type: string }
+        assessment:    { type: string }
+        plan:          { type: string }
+        diagnosis:     { type: array, items: { type: string } }
+        createdAt:     { type: string, format: date-time }
+        updatedAt:     { type: string, format: date-time }
+    SaveSoapNoteRequest:
+      type: object
+      required: [patientId, subjective, objective, assessment, plan, diagnosis]
+      properties:
+        patientId:  { type: string }
+        subjective: { type: string }
+        objective:  { type: string }
+        assessment: { type: string }
+        plan:       { type: string }
+        diagnosis:  { type: array, items: { type: string } }
+
+    # ── MVP: prescriptions ───────────────────────────────────────────────────────
+    PrescriptionDrugItem:
+      type: object
+      properties:
+        name:      { type: string }
+        dosage:    { type: string }
+        route:     { type: string }
+        frequency: { type: string }
+        duration:  { type: string }
+        notes:     { type: string }
+    DoctorPrescription:
+      type: object
+      properties:
+        id:            { type: string }
+        ref:           { type: string }
+        appointmentId: { type: string }
+        patient:       { $ref: '#/components/schemas/PatientSummary' }
+        doctorName:    { type: string }
+        diagnosis:     { type: string }
+        items:         { type: array, items: { $ref: '#/components/schemas/PrescriptionDrugItem' } }
+        issuedAt:      { type: string, format: date-time }
+        status:        { type: string, enum: [draft, issued, dispensed] }
+    CreatePrescriptionRequest:
+      type: object
+      required: [appointmentId, patientId, diagnosis, items]
+      properties:
+        appointmentId: { type: string }
+        patientId:     { type: string }
+        diagnosis:     { type: string }
+        items:         { type: array, items: { $ref: '#/components/schemas/PrescriptionDrugItem' } }
+    CreatePrescriptionResult:
+      type: object
+      properties:
+        prescriptionId: { type: string }
+        ref:            { type: string }
+        status:         { type: string, enum: [draft, issued, dispensed] }
+
+    # ── MVP: lab orders & results ────────────────────────────────────────────────
+    LabTest:
+      type: object
+      properties:
+        id:       { type: string }
+        name:     { type: string }
+        code:     { type: string }
+        category: { type: string }
+    LabOrder:
+      type: object
+      properties:
+        id:            { type: string }
+        ref:           { type: string }
+        appointmentId: { type: string }
+        patient:       { $ref: '#/components/schemas/PatientSummary' }
+        tests:         { type: array, items: { $ref: '#/components/schemas/LabTest' } }
+        clinicalNote:  { type: string }
+        status:        { type: string, enum: [ordered, collected, resulted, reviewed] }
+        orderedAt:     { type: string, format: date-time }
+        priority:      { type: string, enum: [routine, urgent] }
+    LabResultValue:
+      type: object
+      properties:
+        testName: { type: string }
+        value:    { type: string }
+        unit:     { type: string }
+        refRange: { type: string }
+        flag:     { type: string, enum: [normal, low, high] }
+    LabResult:
+      type: object
+      properties:
+        id:         { type: string }
+        orderId:    { type: string }
+        ref:        { type: string }
+        patient:    { $ref: '#/components/schemas/PatientSummary' }
+        values:     { type: array, items: { $ref: '#/components/schemas/LabResultValue' } }
+        reportedAt: { type: string, format: date-time }
+        labName:    { type: string }
+        reviewed:   { type: boolean }
+    CreateLabOrderRequest:
+      type: object
+      required: [appointmentId, patientId, testIds, priority]
+      properties:
+        appointmentId: { type: string }
+        patientId:     { type: string }
+        testIds:       { type: array, items: { type: string } }
+        clinicalNote:  { type: string }
+        priority:      { type: string, enum: [routine, urgent] }
+    CreateLabOrderResult:
+      type: object
+      properties:
+        orderId: { type: string }
+        ref:     { type: string }
+        status:  { type: string, enum: [ordered, collected, resulted, reviewed] }
+    MarkReviewedResult:
+      type: object
+      properties:
+        reviewed: { type: boolean }
+
+    # ── MVP: HMO eligibility ─────────────────────────────────────────────────────
+    HmoCoverage:
+      type: object
+      properties:
+        provider:        { type: string }
+        planName:        { type: string }
+        memberId:        { type: string }
+        validUntil:      { type: string, format: date }
+        coveredServices: { type: array, items: { type: string } }
+    HmoEligibility:
+      type: object
+      properties:
+        appointmentId: { type: string }
+        patient:       { $ref: '#/components/schemas/PatientSummary' }
+        status:        { type: string, enum: [eligible, ineligible, pending] }
+        coverage:      { $ref: '#/components/schemas/HmoCoverage' }
+        copayKobo:     { $ref: '#/components/schemas/Money' }
+        authCode:      { type: string }
+        checkedAt:     { type: string, format: date-time }
+
+    # ── MVP: earnings & payouts ──────────────────────────────────────────────────
+    PayoutItem:
+      type: object
+      properties:
+        id:           { type: string }
+        ref:          { type: string }
+        amountKobo:   { $ref: '#/components/schemas/Money' }
+        status:       { type: string, enum: [pending, paid, processing] }
+        consultCount: { type: integer }
+        periodLabel:  { type: string }
+        paidAt:       { type: string, format: date-time }
+    EarningsSummary:
+      type: object
+      description: Projection of the ledger. availableKobo/pendingKobo/lifetimeKobo are computed, never stored balances.
+      properties:
+        availableKobo:     { $ref: '#/components/schemas/Money' }
+        pendingKobo:       { $ref: '#/components/schemas/Money' }
+        lifetimeKobo:      { $ref: '#/components/schemas/Money' }
+        thisMonthKobo:     { $ref: '#/components/schemas/Money' }
+        consultsThisMonth: { type: integer }
+        payouts:           { type: array, items: { $ref: '#/components/schemas/PayoutItem' } }
+    RequestPayoutRequest:
+      type: object
+      required: [amountKobo]
+      properties:
+        amountKobo: { $ref: '#/components/schemas/Money' }
+    RequestPayoutResult:
+      type: object
+      properties:
+        payoutId: { type: string }
+        ref:      { type: string }
+        status:   { type: string, enum: [pending, paid, processing] }
+
+    # ── MVP: notifications, support, settings ────────────────────────────────────
+    DoctorNotification:
+      type: object
+      properties:
+        id:        { type: string }
+        type:      { type: string, enum: [appointment, message, lab_result, payout, verification, system] }
+        title:     { type: string }
+        body:      { type: string }
+        createdAt: { type: string, format: date-time }
+        read:      { type: boolean }
+    SupportTicket:
+      type: object
+      properties:
+        id:        { type: string }
+        ref:       { type: string }
+        subject:   { type: string }
+        category:  { type: string }
+        status:    { type: string, enum: [open, in_progress, resolved, closed] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        lastReply: { type: string }
+    CreateSupportTicketRequest:
+      type: object
+      required: [subject, category, body]
+      properties:
+        subject:  { type: string }
+        category: { type: string }
+        body:     { type: string }
+    CreateSupportTicketResult:
+      type: object
+      properties:
+        ticketId: { type: string }
+        ref:      { type: string }
+        status:   { type: string, enum: [open, in_progress, resolved, closed] }
+    DoctorSettings:
+      type: object
+      properties:
+        doctorId:             { type: string }
+        notifyAppointments:   { type: boolean }
+        notifyMessages:       { type: boolean }
+        notifyPayouts:        { type: boolean }
+        pushEnabled:          { type: boolean }
+        emailEnabled:         { type: boolean }
+        smsEnabled:           { type: boolean }
+        showOnlineStatus:     { type: boolean }
+        autoAcceptInstant:    { type: boolean }
+        payoutBankName:       { type: string }
+        payoutAccountMasked:  { type: string }
+        preferredCurrency:    { type: string }
+    UpdateSettingsRequest:
+      type: object
+      properties:
+        settings: { type: object, additionalProperties: true }
+
+paths:
+  # ════════════════════════════════════════════════════════════════════════════
+  # MVP (doctor.api.ts)
+  # ════════════════════════════════════════════════════════════════════════════
+  /doctor/profile:
+    get:
+      tags: [doctor-mvp]
+      summary: Get doctor profile
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DoctorProfile' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /doctor/verification:
+    get:
+      tags: [doctor-mvp]
+      summary: Get current verification submission
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/VerificationSubmission' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [doctor-mvp]
+      summary: Submit verification documents
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SubmitVerificationRequest' } } }
+      responses:
+        '201': { description: Submitted, content: { application/json: { schema: { $ref: '#/components/schemas/SubmitVerificationResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /doctor/availability:
+    get:
+      tags: [doctor-mvp]
+      summary: Get availability schedule
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AvailabilitySchedule' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [doctor-mvp]
+      summary: Update availability schedule
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/UpdateAvailabilityRequest' } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AvailabilitySchedule' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /doctor/appointments:
+    get:
+      tags: [doctor-mvp]
+      summary: List appointments
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+        - { name: from,   in: query, schema: { type: string, format: date } }
+        - { name: to,     in: query, schema: { type: string, format: date } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DoctorAppointment' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /doctor/appointments/{id}:
+    get:
+      tags: [doctor-mvp]
+      summary: Get an appointment
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DoctorAppointment' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /doctor/appointments/{appointmentId}/status:
+    post:
+      tags: [doctor-mvp]
+      summary: Update appointment status
+      parameters:
+        - { name: appointmentId, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/UpdateAppointmentStatusRequest' } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateAppointmentStatusResult' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /doctor/appointments/{appointmentId}/notes:
+    get:
+      tags: [doctor-mvp]
+      summary: Get the SOAP note for an appointment
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SoapNote' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [doctor-mvp]
+      summary: Save (create/update) the SOAP note for an appointment
+      parameters:
+        - { name: appointmentId, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SaveSoapNoteRequest' } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SoapNote' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /doctor/appointments/{appointmentId}/hmo-eligibility:
+    get:
+      tags: [doctor-mvp]
+      summary: Check HMO eligibility for an appointment
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/HmoEligibility' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /doctor/patients/{patientId}:
+    get:
+      tags: [doctor-mvp]
+      summary: Get patient medical profile
+      parameters: [{ name: patientId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/PatientMedicalProfile' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /doctor/chat/threads:
+    get:
+      tags: [doctor-mvp]
+      summary: List chat threads
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ChatThread' } } } } }
+  /doctor/chat/{threadId}/messages:
+    get:
+      tags: [doctor-mvp]
+      summary: List messages in a chat thread
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ChatMessage' } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [doctor-mvp]
+      summary: Send a chat message
+      parameters:
+        - { name: threadId, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SendChatMessageRequest' } } }
+      responses:
+        '201': { description: Sent, content: { application/json: { schema: { $ref: '#/components/schemas/ChatMessage' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /doctor/calls/{appointmentId}:
+    get:
+      tags: [doctor-mvp]
+      summary: Get call session for an appointment
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CallSession' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /doctor/prescriptions:
+    get:
+      tags: [doctor-mvp]
+      summary: List prescriptions
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DoctorPrescription' } } } } }
+    post:
+      tags: [doctor-mvp]
+      summary: Create a prescription
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreatePrescriptionRequest' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/CreatePrescriptionResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /doctor/prescriptions/{id}:
+    get:
+      tags: [doctor-mvp]
+      summary: Get a prescription
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DoctorPrescription' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /doctor/lab-orders:
+    get:
+      tags: [doctor-mvp]
+      summary: List lab orders
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/LabOrder' } } } } }
+    post:
+      tags: [doctor-mvp]
+      summary: Create a lab order (also used for repeat-test requests)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateLabOrderRequest' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/CreateLabOrderResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /doctor/lab-orders/{orderId}/result:
+    get:
+      tags: [doctor-mvp]
+      summary: Get the result for a lab order
+      parameters: [{ name: orderId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/LabResult' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /doctor/lab-results/{resultId}/review:
+    post:
+      tags: [doctor-mvp]
+      summary: Mark a lab result reviewed
+      parameters:
+        - { name: resultId, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MarkReviewedResult' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /doctor/earnings:
+    get:
+      tags: [doctor-mvp]
+      summary: Earnings summary (ledger projection)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/EarningsSummary' } } } }
+  /doctor/payouts:
+    get:
+      tags: [doctor-batch6]
+      summary: List payout details
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } }
+    post:
+      tags: [doctor-mvp]
+      summary: Request / withdraw a payout (money mutation, ledger-posted)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RequestPayoutRequest' } } }
+      responses:
+        '201': { description: Requested, content: { application/json: { schema: { $ref: '#/components/schemas/RequestPayoutResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { description: Insufficient available balance }
+  /doctor/notifications:
+    get:
+      tags: [doctor-mvp]
+      summary: List notifications (rich notifications in batch6)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DoctorNotification' } } } } }
+  /doctor/support/tickets:
+    get:
+      tags: [doctor-mvp]
+      summary: List support tickets
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/SupportTicket' } } } } }
+    post:
+      tags: [doctor-mvp]
+      summary: Create a support ticket
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateSupportTicketRequest' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/CreateSupportTicketResult' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /doctor/settings:
+    get:
+      tags: [doctor-mvp]
+      summary: Get settings
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DoctorSettings' } } } }
+    put:
+      tags: [doctor-mvp]
+      summary: Update settings
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/UpdateSettingsRequest' } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DoctorSettings' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Phase 2 (doctor.phase2.api.ts)
+  # ════════════════════════════════════════════════════════════════════════════
+  /doctor/pharmacy/fulfilments:
+    get:
+      tags: [doctor-phase2]
+      summary: List pharmacy fulfilments
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/pharmacy/fulfilments/{id}:
+    get:
+      tags: [doctor-phase2]
+      summary: Get a pharmacy fulfilment
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/pharmacy/fulfilments/{fulfilmentId}/delivery:
+    get:
+      tags: [doctor-phase2]
+      summary: Get the drug delivery for a fulfilment
+      parameters: [{ name: fulfilmentId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/pharmacy/fulfilments/{fulfilmentId}/substitute:
+    post:
+      tags: [doctor-phase2]
+      summary: Review a pharmacy substitution
+      parameters: [{ name: fulfilmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/drug-deliveries:
+    get:
+      tags: [doctor-phase2]
+      summary: List drug deliveries
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/refills:
+    get:
+      tags: [doctor-phase2]
+      summary: List refill requests
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/refills/{id}:
+    get:
+      tags: [doctor-phase2]
+      summary: Get a refill request
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/refills/{refillId}/review:
+    post:
+      tags: [doctor-phase2]
+      summary: Review a refill request
+      parameters: [{ name: refillId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/specialists:
+    get:
+      tags: [doctor-phase2]
+      summary: List specialists (for referral)
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/referrals:
+    get:
+      tags: [doctor-phase2]
+      summary: List specialist referrals (outgoing)
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+    post:
+      tags: [doctor-phase2]
+      summary: Create a specialist referral
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/referrals/{id}:
+    get:
+      tags: [doctor-phase2]
+      summary: Get a referral
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/patients/{patientId}/record-hub:
+    get:
+      tags: [doctor-phase2]
+      summary: Patient record hub
+      parameters: [{ name: patientId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /doctor/hmo/claims:
+    get:
+      tags: [doctor-phase2]
+      summary: List HMO claims
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+    post:
+      tags: [doctor-phase2]
+      summary: Submit an HMO claim
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Submitted, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/hmo/claims/{id}:
+    get:
+      tags: [doctor-phase2]
+      summary: Get an HMO claim
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/hmo/claims/{claimId}/dispute:
+    post:
+      tags: [doctor-phase2]
+      summary: Dispute an HMO claim
+      parameters: [{ name: claimId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/follow-ups:
+    get:
+      tags: [doctor-phase2]
+      summary: List follow-up plans
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+    post:
+      tags: [doctor-phase2]
+      summary: Create a follow-up plan (also used for emergency follow-up scheduling)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/follow-ups/{id}:
+    get:
+      tags: [doctor-phase2]
+      summary: Get a follow-up plan
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/follow-ups/{followUpId}/review:
+    post:
+      tags: [doctor-phase2]
+      summary: Review a follow-up request
+      parameters: [{ name: followUpId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/reputation:
+    get:
+      tags: [doctor-phase2]
+      summary: Reputation summary
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/payout-report:
+    get:
+      tags: [doctor-phase2]
+      summary: Payout report (ledger projection)
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/compliance:
+    get:
+      tags: [doctor-phase2]
+      summary: Compliance dashboard
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/compliance/policies/{policyKey}/ack:
+    post:
+      tags: [doctor-phase2]
+      summary: Acknowledge a policy
+      parameters: [{ name: policyKey, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/reviews/{reviewId}/report:
+    post:
+      tags: [doctor-phase2]
+      summary: Report a review
+      parameters: [{ name: reviewId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Phase 3 — vet / AI / practice (doctor.phase3.api.ts)
+  # ════════════════════════════════════════════════════════════════════════════
+  /doctor/vet/dashboard:
+    get: { tags: [doctor-phase3], summary: Vet dashboard, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/vet/pets/{petId}:
+    get:
+      tags: [doctor-phase3]
+      summary: Get a pet profile
+      parameters: [{ name: petId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/vet/pets/{petId}/prescription:
+    get:
+      tags: [doctor-phase3]
+      summary: Get a pet's prescription
+      parameters: [{ name: petId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/vet/lab-orders:
+    get: { tags: [doctor-phase3], summary: List pet lab orders, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+    post:
+      tags: [doctor-phase3]
+      summary: Create a pet lab order
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/lab-orders/{orderId}/result:
+    get:
+      tags: [doctor-phase3]
+      summary: Get a pet lab result
+      parameters: [{ name: orderId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/vet/products:
+    get: { tags: [doctor-phase3], summary: List pet store products, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/vet/pets/{petId}/recommendations:
+    get:
+      tags: [doctor-phase3]
+      summary: List product recommendations for a pet
+      parameters: [{ name: petId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/vet/mode:
+    post:
+      tags: [doctor-phase3]
+      summary: Toggle vet mode
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/prescriptions:
+    post:
+      tags: [doctor-phase3]
+      summary: Create a pet prescription
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/lab-results/{resultId}/review:
+    post:
+      tags: [doctor-phase3]
+      summary: Mark a pet lab result reviewed
+      parameters: [{ name: resultId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MarkReviewedResult' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/recommendations:
+    post:
+      tags: [doctor-phase3]
+      summary: Recommend products for a pet
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/analytics/quality:
+    get: { tags: [doctor-phase3], summary: Quality analytics, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/clinics:
+    get: { tags: [doctor-phase3], summary: Clinic portfolio, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/clinics/active:
+    post:
+      tags: [doctor-phase3]
+      summary: Set the active clinic
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/clinics/{clinicId}/schedule:
+    patch:
+      tags: [doctor-phase3]
+      summary: Update a clinic's schedule
+      parameters: [{ name: clinicId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/ai/note-summary/{appointmentId}:
+    get:
+      tags: [doctor-phase3]
+      summary: Get the AI note summary for an appointment
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/ai/note-summary:
+    post:
+      tags: [doctor-phase3]
+      summary: Generate an AI note summary
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/ai/note-summary/accept:
+    post:
+      tags: [doctor-phase3]
+      summary: Accept an AI note summary
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/ai/rx-safety/{id}:
+    get:
+      tags: [doctor-phase3]
+      summary: Get an AI Rx-safety report
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/ai/rx-safety:
+    post:
+      tags: [doctor-phase3]
+      summary: Check prescription safety (AI)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/ai/lab-explanation/{resultId}:
+    get:
+      tags: [doctor-phase3]
+      summary: Get an AI lab explanation
+      parameters: [{ name: resultId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/ai/lab-explanation:
+    post:
+      tags: [doctor-phase3]
+      summary: Explain a lab result (AI)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Profile & Verification — Section B (doctor.profile.api.ts)
+  # ════════════════════════════════════════════════════════════════════════════
+  /doctor/profile/draft:
+    get: { tags: [doctor-profile], summary: Get the profile draft, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+    put:
+      tags: [doctor-profile]
+      summary: Save the profile draft (patch merge)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/uploads/presign:
+    post:
+      tags: [doctor-profile]
+      summary: Issue a backend-owned presigned Cloudflare R2 PUT URL for a binary upload
+      description: >-
+        Returns a short-lived presigned R2 PUT URL plus a server-chosen object key.
+        The client PUTs the binary directly to R2 (with the exact returned Content-Type),
+        then records metadata via the matching endpoint (profile photo / document /
+        licence renewal / chat attachment / dispute evidence). Returns 503 when R2 is
+        not configured. Covers uploadProfilePhoto, uploadDocument, renewLicence,
+        sendAttachment, uploadDisputeEvidence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, fileName, contentType]
+              properties:
+                kind: { type: string, enum: [profile_photo, document, licence, chat_attachment, dispute_evidence] }
+                fileName: { type: string, description: Used only for its file extension }
+                contentType: { type: string, description: 'Bound into the signature; the PUT must send exactly this' }
+      responses:
+        '200':
+          description: Presigned upload URL issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      uploadUrl: { type: string }
+                      objectKey: { type: string }
+                      bucket: { type: string }
+                      contentType: { type: string }
+                      expiresIn: { type: integer }
+                      method: { type: string, enum: [PUT] }
+        '400': { description: Invalid kind / content type / extension }
+        '503': { description: Uploads not configured (R2 credentials absent) }
+  /doctor/profile/documents:
+    get: { tags: [doctor-profile], summary: List profile document slots, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+    post:
+      tags: [doctor-profile]
+      summary: Upload a profile document
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Uploaded, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/profile/photo:
+    post:
+      tags: [doctor-profile]
+      summary: Upload the profile photo
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Uploaded, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/profile/bank-account:
+    post:
+      tags: [doctor-profile]
+      summary: Save the payout bank account (name enquiry resolved)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/profile/tax-info:
+    put:
+      tags: [doctor-profile]
+      summary: Save tax info
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/profile/publish:
+    post:
+      tags: [doctor-profile]
+      summary: Publish the profile (go live & discoverable)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '403': { $ref: '#/components/responses/Forbidden' }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/licence/expiry-warning:
+    get: { tags: [doctor-profile], summary: Licence expiry warning, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/licence/renew:
+    post:
+      tags: [doctor-profile]
+      summary: Renew the licence (re-enters verification)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Submitted, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/verification/decision:
+    get: { tags: [doctor-profile], summary: Verification decision, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Onboarding (doctor.onboarding.api.ts)
+  # ════════════════════════════════════════════════════════════════════════════
+  /doctor/onboarding/slides:
+    get: { tags: [doctor-onboarding], summary: Onboarding slides, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/onboarding/merchant-upgrade:
+    get: { tags: [doctor-onboarding], summary: Merchant-upgrade status, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+    post:
+      tags: [doctor-onboarding]
+      summary: Request merchant upgrade
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/onboarding/provider-type:
+    post:
+      tags: [doctor-onboarding]
+      summary: Select provider type (doctor / specialist / veterinarian)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/onboarding/legal:
+    get:
+      tags: [doctor-onboarding]
+      summary: Get a legal document
+      parameters: [{ name: kind, in: query, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/onboarding/consents:
+    get: { tags: [doctor-onboarding], summary: Consent status, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+    post:
+      tags: [doctor-onboarding]
+      summary: Accept a legal consent
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/onboarding/permissions:
+    get: { tags: [doctor-onboarding], summary: Permission states, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+    post:
+      tags: [doctor-onboarding]
+      summary: Record a permission decision
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Batch 1 — Vet profile / Dashboard / Schedule / Queue (doctor.batch1.api.ts)
+  # ════════════════════════════════════════════════════════════════════════════
+  /doctor/vet/profile/draft:
+    get: { tags: [doctor-batch1], summary: Get vet profile draft, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+    put:
+      tags: [doctor-batch1]
+      summary: Save vet profile draft
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/profile/documents:
+    get: { tags: [doctor-batch1], summary: List vet document slots, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/vet/verification:
+    get: { tags: [doctor-batch1], summary: Get vet verification submission, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+    post:
+      tags: [doctor-batch1]
+      summary: Submit vet verification
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Submitted, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/licence/renew:
+    post:
+      tags: [doctor-batch1]
+      summary: Renew vet licence
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Submitted, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/profile/publish:
+    post:
+      tags: [doctor-batch1]
+      summary: Publish vet profile
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/dashboard:
+    get: { tags: [doctor-batch1], summary: Doctor dashboard data, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/announcements/latest:
+    get: { tags: [doctor-batch1], summary: Latest platform announcement, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/announcements/{announcementId}/dismiss:
+    post:
+      tags: [doctor-batch1]
+      summary: Dismiss an announcement
+      parameters: [{ name: announcementId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/presence:
+    put:
+      tags: [doctor-batch1]
+      summary: Set presence (online/offline/busy)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/schedule:
+    get: { tags: [doctor-batch1], summary: Schedule settings, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/schedule/blocked-dates:
+    get: { tags: [doctor-batch1], summary: List blocked dates, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+    post:
+      tags: [doctor-batch1]
+      summary: Block a date
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/schedule/vacation:
+    put:
+      tags: [doctor-batch1]
+      summary: Set vacation
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/schedule/emergency:
+    put:
+      tags: [doctor-batch1]
+      summary: Toggle emergency availability
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/schedule/reminders:
+    put:
+      tags: [doctor-batch1]
+      summary: Save reminder settings
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/schedule/recurring:
+    put:
+      tags: [doctor-batch1]
+      summary: Save a recurring availability rule
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/schedule/timezone:
+    put:
+      tags: [doctor-batch1]
+      summary: Set timezone
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/queue:
+    get: { tags: [doctor-batch1], summary: Consultation queue, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/appointment-requests:
+    get: { tags: [doctor-batch1], summary: List appointment requests, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/appointment-requests/{id}:
+    get:
+      tags: [doctor-batch1]
+      summary: Get an appointment request
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/appointments/{appointmentId}/accept:
+    post:
+      tags: [doctor-batch1]
+      summary: Accept an appointment
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/appointments/{appointmentId}/reject:
+    post:
+      tags: [doctor-batch1]
+      summary: Reject an appointment
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/appointments/{appointmentId}/request-reschedule:
+    post:
+      tags: [doctor-batch1]
+      summary: Request a reschedule
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/appointments/{appointmentId}/reschedule:
+    post:
+      tags: [doctor-batch1]
+      summary: Reschedule an appointment
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/appointments/{appointmentId}/cancel:
+    post:
+      tags: [doctor-batch1]
+      summary: Cancel an appointment
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/appointments/{appointmentId}/start:
+    post:
+      tags: [doctor-batch1]
+      summary: Start the consultation
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/appointments/{appointmentId}/end:
+    post:
+      tags: [doctor-batch1]
+      summary: End the consultation
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/appointments/{appointmentId}/no-show:
+    post:
+      tags: [doctor-batch1]
+      summary: Mark a no-show
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Batch 2 — Patient profile / Chat / Calls / Notes (doctor.batch2.api.ts)
+  # ════════════════════════════════════════════════════════════════════════════
+  /doctor/patients/{patientId}/full-profile:
+    get:
+      tags: [doctor-batch2]
+      summary: Patient full profile
+      parameters: [{ name: patientId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /doctor/chat/{threadId}/rich-messages:
+    get:
+      tags: [doctor-batch2]
+      summary: Rich chat messages
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/chat/{threadId}/state:
+    get:
+      tags: [doctor-batch2]
+      summary: Chat thread state
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/chat/{threadId}/presence:
+    get:
+      tags: [doctor-batch2]
+      summary: Chat participant presence
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/chat/{threadId}/transcript:
+    get:
+      tags: [doctor-batch2]
+      summary: Chat transcript
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/chat/{threadId}/voice:
+    post:
+      tags: [doctor-batch2]
+      summary: Send a voice note
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Sent, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/chat/{threadId}/attachments:
+    post:
+      tags: [doctor-batch2]
+      summary: Send an attachment
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Sent, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/chat/{threadId}/share:
+    post:
+      tags: [doctor-batch2]
+      summary: Share an item in chat
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Shared, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/chat/{threadId}/escalate:
+    post:
+      tags: [doctor-batch2]
+      summary: Escalate a chat to a call
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/chat/{threadId}/end:
+    post:
+      tags: [doctor-batch2]
+      summary: End a chat
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/chat/messages/{messageId}/annotations:
+    put:
+      tags: [doctor-batch2]
+      summary: Annotate an image message
+      parameters: [{ name: messageId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/chat/messages/{messageId}/report:
+    post:
+      tags: [doctor-batch2]
+      summary: Report a message
+      parameters: [{ name: messageId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/calls/{appointmentId}/rich:
+    get:
+      tags: [doctor-batch2]
+      summary: Rich call session
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/calls/{appointmentId}/pre-check:
+    get:
+      tags: [doctor-batch2]
+      summary: Pre-call check
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/calls/disputes:
+    get: { tags: [doctor-batch2], summary: List call disputes, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/calls/{appointmentId}/join:
+    post:
+      tags: [doctor-batch2]
+      summary: Join a call
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/calls/{appointmentId}/leave:
+    post:
+      tags: [doctor-batch2]
+      summary: Leave a call
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/calls/{appointmentId}/token:
+    post:
+      tags: [doctor-batch2]
+      summary: Issue a fresh RTC join token (Agora/VideoSDK) for the call
+      description: >
+        Returns a short-lived, server-signed RTC token bound to the channel
+        (= appointmentId) and a deterministic uid for the authed doctor. No
+        Idempotency-Key (tokens are time-bound). When the provider is not
+        configured server-side the response carries an empty roomToken and
+        rtcConfigured=false — never a fabricated token. Provider secrets are
+        never returned.
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CallSession' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/ws:
+    get:
+      tags: [doctor-batch2]
+      summary: Realtime WebSocket (server→client push)
+      description: >
+        Upgrades to a WebSocket scoped to the authed doctor. The server pushes
+        events (chat.message, call.ringing, patient.waiting) to the doctor's
+        connected devices. Authentication is the standard Bearer JWT.
+      responses: { '101': { description: Switching Protocols (WebSocket upgrade) }, '401': { $ref: '#/components/responses/Unauthorized' } }
+  /doctor/calls/{appointmentId}/switch-provider:
+    post:
+      tags: [doctor-batch2]
+      summary: Switch the call provider
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/calls/{appointmentId}/feedback:
+    post:
+      tags: [doctor-batch2]
+      summary: Submit call feedback
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/calls/{appointmentId}/dispute:
+    post:
+      tags: [doctor-batch2]
+      summary: Raise a call dispute
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/support/technical:
+    post:
+      tags: [doctor-batch2]
+      summary: Report a technical issue
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/appointments/{appointmentId}/clinical-note:
+    get:
+      tags: [doctor-batch2]
+      summary: Get the clinical note for an appointment
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+    put:
+      tags: [doctor-batch2]
+      summary: Save a draft clinical note
+      parameters: [{ name: appointmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/clinical-notes/{noteId}/finalize:
+    post:
+      tags: [doctor-batch2]
+      summary: Finalize a clinical note
+      parameters: [{ name: noteId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/clinical-notes/{noteId}/share:
+    post:
+      tags: [doctor-batch2]
+      summary: Share a clinical note summary
+      parameters: [{ name: noteId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Batch 3 — Prescriptions / Pharmacy / Lab order & results (doctor.batch3.api.ts)
+  # ════════════════════════════════════════════════════════════════════════════
+  /doctor/prescriptions/{id}/issued:
+    get:
+      tags: [doctor-batch3]
+      summary: Get an issued prescription
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/prescriptions/{prescriptionId}/issue:
+    post:
+      tags: [doctor-batch3]
+      summary: Issue a prescription
+      parameters: [{ name: prescriptionId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/prescriptions/{prescriptionId}/cancel:
+    post:
+      tags: [doctor-batch3]
+      summary: Cancel a prescription
+      parameters: [{ name: prescriptionId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/prescriptions/{prescriptionId}/share:
+    post:
+      tags: [doctor-batch3]
+      summary: Share a prescription
+      parameters: [{ name: prescriptionId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/prescriptions/{prescriptionId}/send-to-pharmacy:
+    post:
+      tags: [doctor-batch3]
+      summary: Send a prescription to a pharmacy
+      parameters: [{ name: prescriptionId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/prescriptions/{prescriptionId}/refill-consultation:
+    post:
+      tags: [doctor-batch3]
+      summary: Request a refill consultation
+      parameters: [{ name: prescriptionId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/prescriptions/{prescriptionId}/pharmacy:
+    post:
+      tags: [doctor-batch3]
+      summary: Select a pharmacy for a prescription
+      parameters: [{ name: prescriptionId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/pharmacies:
+    get: { tags: [doctor-batch3], summary: List pharmacies, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/pharmacies/preferred:
+    get: { tags: [doctor-batch3], summary: Preferred pharmacy, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/pharmacies/{pharmacyId}/stock:
+    get:
+      tags: [doctor-batch3]
+      summary: Pharmacy drug stock
+      parameters: [{ name: pharmacyId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/pharmacies/{pharmacyId}/report:
+    post:
+      tags: [doctor-batch3]
+      summary: Report a pharmacy
+      parameters: [{ name: pharmacyId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/pharmacy/{fulfilmentId}/messages:
+    get:
+      tags: [doctor-batch3]
+      summary: List pharmacy messages
+      parameters: [{ name: fulfilmentId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+    post:
+      tags: [doctor-batch3]
+      summary: Send a pharmacy message
+      parameters: [{ name: fulfilmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Sent, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/pharmacy/{fulfilmentId}/received:
+    post:
+      tags: [doctor-batch3]
+      summary: Confirm the patient received the drugs
+      parameters: [{ name: fulfilmentId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/delivery-alerts:
+    get: { tags: [doctor-batch3], summary: List delivery alerts, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/lab-catalogue:
+    get: { tags: [doctor-batch3], summary: Lab catalogue, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/lab-packages:
+    get: { tags: [doctor-batch3], summary: Lab packages, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/lab-providers:
+    get: { tags: [doctor-batch3], summary: Lab providers, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/lab-orders/{orderId}/rich:
+    get:
+      tags: [doctor-batch3]
+      summary: Rich lab order
+      parameters: [{ name: orderId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/lab-orders/{orderId}/share:
+    post:
+      tags: [doctor-batch3]
+      summary: Share a lab order
+      parameters: [{ name: orderId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/lab-orders/{orderId}/cancel:
+    post:
+      tags: [doctor-batch3]
+      summary: Cancel a lab order
+      parameters: [{ name: orderId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/lab-results/inbox:
+    get: { tags: [doctor-batch3], summary: Lab result inbox, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/lab-results/{resultId}/rich:
+    get:
+      tags: [doctor-batch3]
+      summary: Rich lab result
+      parameters: [{ name: resultId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/lab-results/{resultId}/comparisons:
+    get:
+      tags: [doctor-batch3]
+      summary: Lab value comparisons
+      parameters: [{ name: resultId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/lab-results/{resultId}/interpretation:
+    put:
+      tags: [doctor-batch3]
+      summary: Add a lab interpretation
+      parameters: [{ name: resultId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/lab-results/{resultId}/share-explanation:
+    post:
+      tags: [doctor-batch3]
+      summary: Share a result explanation
+      parameters: [{ name: resultId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/lab-results/{resultId}/report:
+    post:
+      tags: [doctor-batch3]
+      summary: Report a suspicious result
+      parameters: [{ name: resultId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Batch 4 — HMO / Referrals / Care plans / Emergency (doctor.batch4.api.ts)
+  # ════════════════════════════════════════════════════════════════════════════
+  /doctor/hmo/coverage/{patientId}:
+    get:
+      tags: [doctor-batch4]
+      summary: HMO plan coverage for a patient
+      parameters: [{ name: patientId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/hmo/pre-auth:
+    get: { tags: [doctor-batch4], summary: List pre-auth requests, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+    post:
+      tags: [doctor-batch4]
+      summary: Request pre-authorisation
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/hmo/pre-auth/{id}:
+    get:
+      tags: [doctor-batch4]
+      summary: Get a pre-auth request
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/hmo/covered-services:
+    get: { tags: [doctor-batch4], summary: List covered services, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/hmo/support/{threadId}:
+    get:
+      tags: [doctor-batch4]
+      summary: HMO support thread
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/hmo/support/{threadId}/messages:
+    post:
+      tags: [doctor-batch4]
+      summary: Send an HMO support message
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Sent, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/hmo/fraud-warnings:
+    get: { tags: [doctor-batch4], summary: List HMO fraud warnings, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/hmo/fraud-warnings/{warningId}/ack:
+    post:
+      tags: [doctor-batch4]
+      summary: Acknowledge a fraud warning
+      parameters: [{ name: warningId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/referrals/incoming:
+    get: { tags: [doctor-batch4], summary: List incoming referrals, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/referrals/incoming/{id}:
+    get:
+      tags: [doctor-batch4]
+      summary: Get an incoming referral
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/referrals/incoming/{referralId}/accept:
+    post:
+      tags: [doctor-batch4]
+      summary: Accept an incoming referral
+      parameters: [{ name: referralId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/referrals/incoming/{referralId}/reject:
+    post:
+      tags: [doctor-batch4]
+      summary: Reject an incoming referral
+      parameters: [{ name: referralId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/opinions:
+    get: { tags: [doctor-batch4], summary: List opinion requests, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+    post:
+      tags: [doctor-batch4]
+      summary: Request an opinion
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/opinions/{id}:
+    get:
+      tags: [doctor-batch4]
+      summary: Get an opinion request
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/care-team/{threadId}:
+    get:
+      tags: [doctor-batch4]
+      summary: Care team thread
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/care-team/{threadId}/messages:
+    post:
+      tags: [doctor-batch4]
+      summary: Send a care-team message
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Sent, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/case-summaries/{caseRef}:
+    get:
+      tags: [doctor-batch4]
+      summary: Shared case summary
+      parameters: [{ name: caseRef, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/patients/{patientId}/follow-up-eligibility:
+    get:
+      tags: [doctor-batch4]
+      summary: Follow-up eligibility for a patient
+      parameters: [{ name: patientId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/care-plans:
+    get: { tags: [doctor-batch4], summary: List long-term care plans, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+    post:
+      tags: [doctor-batch4]
+      summary: Save a care plan
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/care-plans/{id}:
+    get:
+      tags: [doctor-batch4]
+      summary: Get a long-term care plan
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/chronic-monitoring:
+    get: { tags: [doctor-batch4], summary: Chronic monitoring entries, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/adherence-checks:
+    get: { tags: [doctor-batch4], summary: Medication adherence checks, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+    post:
+      tags: [doctor-batch4]
+      summary: Record an adherence check
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/follow-ups/{followUpId}/reminder:
+    post:
+      tags: [doctor-batch4]
+      summary: Set a follow-up reminder
+      parameters: [{ name: followUpId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/follow-ups/{followUpId}/complete:
+    post:
+      tags: [doctor-batch4]
+      summary: Complete a follow-up
+      parameters: [{ name: followUpId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/emergency/facilities:
+    get: { tags: [doctor-batch4], summary: List emergency facilities, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/red-flag-alerts:
+    get: { tags: [doctor-batch4], summary: List red-flag alerts, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/emergency/escalations:
+    get: { tags: [doctor-batch4], summary: List emergency escalations, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/emergency/cases:
+    get: { tags: [doctor-batch4], summary: List emergency case records, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+    post:
+      tags: [doctor-batch4]
+      summary: Document an emergency case
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/emergency/cases/{id}:
+    get:
+      tags: [doctor-batch4]
+      summary: Get an emergency case record
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/emergency/escalate/hospital:
+    post:
+      tags: [doctor-batch4]
+      summary: Escalate to a hospital
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/emergency/escalate/ambulance:
+    post:
+      tags: [doctor-batch4]
+      summary: Escalate to an ambulance
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/emergency/contacts/{patientId}/notify:
+    post:
+      tags: [doctor-batch4]
+      summary: Notify an emergency contact
+      parameters: [{ name: patientId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Batch 5 — Vet consults / Rx / Lab / Records / Store (doctor.batch5.api.ts)
+  # ════════════════════════════════════════════════════════════════════════════
+  /doctor/vet/appointments:
+    get: { tags: [doctor-batch5], summary: List vet appointments, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/vet/owner-requests:
+    get: { tags: [doctor-batch5], summary: List pet-owner requests, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/vet/pets/{petId}/chat:
+    get:
+      tags: [doctor-batch5]
+      summary: Vet chat thread for a pet
+      parameters: [{ name: petId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/vet/pets/{petId}/call:
+    get:
+      tags: [doctor-batch5]
+      summary: Vet call session for a pet
+      parameters: [{ name: petId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/vet/pets/{petId}/soap-note:
+    get:
+      tags: [doctor-batch5]
+      summary: Vet SOAP / clinical note for a pet
+      parameters: [{ name: petId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/vet/pets/{petId}/emergency-warnings:
+    get:
+      tags: [doctor-batch5]
+      summary: Pet emergency warnings
+      parameters: [{ name: petId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/vet/specialists:
+    get: { tags: [doctor-batch5], summary: List vet specialists, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/vet/pets/{petId}/referrals:
+    get:
+      tags: [doctor-batch5]
+      summary: Vet referrals for a pet
+      parameters: [{ name: petId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/vet/consults/{consultId}/summary:
+    get:
+      tags: [doctor-batch5]
+      summary: Vet consult summary
+      parameters: [{ name: consultId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/vet/consults/history:
+    get: { tags: [doctor-batch5], summary: Vet consult history, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/vet/pharmacies:
+    get: { tags: [doctor-batch5], summary: List pet pharmacies, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/vet/prescriptions/{prescriptionId}/issued:
+    get:
+      tags: [doctor-batch5]
+      summary: Get an issued pet prescription
+      parameters: [{ name: prescriptionId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/vet/refills:
+    get: { tags: [doctor-batch5], summary: List pet refill requests, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+    post:
+      tags: [doctor-batch5]
+      summary: Request a pet refill
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/lab-catalogue:
+    get: { tags: [doctor-batch5], summary: Pet lab catalogue, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/vet/lab-results/inbox:
+    get: { tags: [doctor-batch5], summary: Pet lab result inbox, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/vet/pets/{petId}/vaccination-recommendations:
+    get:
+      tags: [doctor-batch5]
+      summary: Pet vaccination recommendations
+      parameters: [{ name: petId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/vet/pets/{petId}/vaccination-reminders:
+    get:
+      tags: [doctor-batch5]
+      summary: Pet vaccination reminders
+      parameters: [{ name: petId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/vet/pets/{petId}/health-record:
+    get:
+      tags: [doctor-batch5]
+      summary: Pet health record
+      parameters: [{ name: petId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/vet/pets/{petId}/growth:
+    get:
+      tags: [doctor-batch5]
+      summary: Pet growth history
+      parameters: [{ name: petId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+    post:
+      tags: [doctor-batch5]
+      summary: Record a pet growth measurement
+      parameters: [{ name: petId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/pets/{petId}/chronic-monitoring:
+    get:
+      tags: [doctor-batch5]
+      summary: Pet chronic monitoring entries
+      parameters: [{ name: petId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+    post:
+      tags: [doctor-batch5]
+      summary: Save a pet chronic-monitoring entry
+      parameters: [{ name: petId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/products/{productId}:
+    get:
+      tags: [doctor-batch5]
+      summary: Pet product detail
+      parameters: [{ name: productId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/vet/product-fulfilments:
+    get: { tags: [doctor-batch5], summary: List pet product fulfilments, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/vet/product-fulfilments/{id}:
+    get:
+      tags: [doctor-batch5]
+      summary: Get a pet product fulfilment
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/vet/requests/{requestId}/respond:
+    post:
+      tags: [doctor-batch5]
+      summary: Respond to a pet-owner request
+      parameters: [{ name: requestId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/soap-notes:
+    post:
+      tags: [doctor-batch5]
+      summary: Save a vet SOAP note
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/referrals:
+    post:
+      tags: [doctor-batch5]
+      summary: Create a vet referral
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/prescriptions/{prescriptionId}/issue:
+    post:
+      tags: [doctor-batch5]
+      summary: Issue a pet prescription
+      parameters: [{ name: prescriptionId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/prescriptions/{prescriptionId}/send:
+    post:
+      tags: [doctor-batch5]
+      summary: Send a pet prescription to a pharmacy
+      parameters: [{ name: prescriptionId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/refills/{refillId}/review:
+    post:
+      tags: [doctor-batch5]
+      summary: Review a pet refill
+      parameters: [{ name: refillId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/lab-results/{resultId}/interpretation:
+    post:
+      tags: [doctor-batch5]
+      summary: Add a pet lab interpretation
+      parameters: [{ name: resultId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/vaccination-reminders:
+    post:
+      tags: [doctor-batch5]
+      summary: Set a pet vaccination reminder
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/recommendations/{recommendationId}/share:
+    post:
+      tags: [doctor-batch5]
+      summary: Share a product with the owner
+      parameters: [{ name: recommendationId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Batch 6 — Records / Notifications / Earnings / Quality (doctor.batch6.api.ts)
+  # ════════════════════════════════════════════════════════════════════════════
+  /doctor/records/dashboard:
+    get: { tags: [doctor-batch6], summary: Records dashboard, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/records/{patientId}/index:
+    get:
+      tags: [doctor-batch6]
+      summary: Patient record index
+      parameters: [{ name: patientId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } }
+  /doctor/records/{patientId}/restrictions:
+    get:
+      tags: [doctor-batch6]
+      summary: Record restrictions
+      parameters: [{ name: patientId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/records/{patientId}/restricted-warnings:
+    get:
+      tags: [doctor-batch6]
+      summary: Restricted record warnings
+      parameters: [{ name: patientId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/records/shares:
+    get: { tags: [doctor-batch6], summary: List record shares, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/records/{patientId}/export:
+    post:
+      tags: [doctor-batch6]
+      summary: Export / download a patient record
+      parameters: [{ name: patientId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/records/{patientId}/share:
+    post:
+      tags: [doctor-batch6]
+      summary: Share a patient record with a specialist
+      parameters: [{ name: patientId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/records/{patientId}/access-request:
+    post:
+      tags: [doctor-batch6]
+      summary: Request access to a record
+      parameters: [{ name: patientId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/notifications/groups:
+    get: { tags: [doctor-batch6], summary: Notification groups, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/notifications/preferences:
+    get: { tags: [doctor-batch6], summary: Notification preferences, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+    put:
+      tags: [doctor-batch6]
+      summary: Update notification preferences
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/notifications/{notificationId}/read:
+    post:
+      tags: [doctor-batch6]
+      summary: Mark a notification read
+      parameters: [{ name: notificationId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/notifications/read-all:
+    post:
+      tags: [doctor-batch6]
+      summary: Mark all notifications read
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/earnings/breakdown:
+    get: { tags: [doctor-batch6], summary: Earnings breakdown (ledger projection), responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/earnings/commission:
+    get: { tags: [doctor-batch6], summary: Commission breakdown, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/earnings/tax-vat:
+    get: { tags: [doctor-batch6], summary: Tax / VAT report, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/wallet/balance:
+    get: { tags: [doctor-batch6], summary: "Wallet balance (ledger projection — computed, never stored)", responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/payouts/{id}:
+    get:
+      tags: [doctor-batch6]
+      summary: Get a payout detail
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/payouts/disputes:
+    get: { tags: [doctor-batch6], summary: List settlement disputes, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/payouts/{payoutId}/dispute:
+    post:
+      tags: [doctor-batch6]
+      summary: Raise a settlement dispute
+      parameters: [{ name: payoutId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/payout-account:
+    put:
+      tags: [doctor-batch6]
+      summary: Update the payout bank account
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/invoices:
+    get: { tags: [doctor-batch6], summary: List invoices, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/feedback:
+    get: { tags: [doctor-batch6], summary: List consultation feedback, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/quality/score:
+    get: { tags: [doctor-batch6], summary: Quality score, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/quality/ranking:
+    get: { tags: [doctor-batch6], summary: Ranking insight, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/quality/recommendations:
+    get: { tags: [doctor-batch6], summary: Improvement recommendations, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/reviews/disputes:
+    get: { tags: [doctor-batch6], summary: List review disputes, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/reviews/{reviewId}/dispute:
+    post:
+      tags: [doctor-batch6]
+      summary: Dispute a review
+      parameters: [{ name: reviewId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/reviews/{reviewId}/removal-request:
+    post:
+      tags: [doctor-batch6]
+      summary: Request review removal
+      parameters: [{ name: reviewId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Batch 7 — Support / Privacy / Security / Account (doctor.batch7.api.ts)
+  # ════════════════════════════════════════════════════════════════════════════
+  /doctor/support/faqs:
+    get: { tags: [doctor-batch7], summary: FAQs, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/support/help-articles:
+    get: { tags: [doctor-batch7], summary: Help articles, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/disputes:
+    get: { tags: [doctor-batch7], summary: List disputes, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+    post:
+      tags: [doctor-batch7]
+      summary: Create a dispute
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/disputes/{id}:
+    get:
+      tags: [doctor-batch7]
+      summary: Get a dispute
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' } }
+  /doctor/disputes/{disputeId}/evidence:
+    post:
+      tags: [doctor-batch7]
+      summary: Upload dispute evidence
+      parameters: [{ name: disputeId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Uploaded, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/support/{threadId}/messages:
+    get:
+      tags: [doctor-batch7]
+      summary: List support messages
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } }
+    post:
+      tags: [doctor-batch7]
+      summary: Send a support message
+      parameters: [{ name: threadId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Sent, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/vet/licence:
+    get: { tags: [doctor-batch7], summary: Vet licence info, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/privacy:
+    get: { tags: [doctor-batch7], summary: Data privacy settings, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+    put:
+      tags: [doctor-batch7]
+      summary: Update privacy settings
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/privacy/export:
+    post:
+      tags: [doctor-batch7]
+      summary: Request a data export
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '202': { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/privacy/delete:
+    post:
+      tags: [doctor-batch7]
+      summary: Request account deletion
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '202': { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/audit-trail:
+    get: { tags: [doctor-batch7], summary: Audit trail, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/training:
+    get: { tags: [doctor-batch7], summary: Mandatory training, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/training/{moduleId}/complete:
+    post:
+      tags: [doctor-batch7]
+      summary: Complete a training module
+      parameters: [{ name: moduleId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/safety-issues:
+    get: { tags: [doctor-batch7], summary: List safety issue reports, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+    post:
+      tags: [doctor-batch7]
+      summary: Report a safety issue
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/account/review-notice:
+    get: { tags: [doctor-batch7], summary: Account review notice, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/account/status:
+    get: { tags: [doctor-batch7], summary: Account status, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/security:
+    get: { tags: [doctor-batch7], summary: Security settings, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/security/password:
+    post:
+      tags: [doctor-batch7]
+      summary: Change password
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '400': { $ref: '#/components/responses/BadRequest' }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/security/biometric:
+    put:
+      tags: [doctor-batch7]
+      summary: Set biometric authentication
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/security/2fa:
+    put:
+      tags: [doctor-batch7]
+      summary: Set two-factor authentication
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/security/devices:
+    get: { tags: [doctor-batch7], summary: List devices, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Generic' } } } } } } }
+  /doctor/security/devices/{deviceId}:
+    delete:
+      tags: [doctor-batch7]
+      summary: Revoke a device
+      parameters: [{ name: deviceId, in: path, required: true, schema: { type: string } }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '404': { $ref: '#/components/responses/NotFound' }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/preferences:
+    get: { tags: [doctor-batch7], summary: App preferences, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+    put:
+      tags: [doctor-batch7]
+      summary: Update app preferences
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+  /doctor/app-status:
+    get: { tags: [doctor-batch7], summary: App status, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } } } }
+  /doctor/auth/logout:
+    post:
+      tags: [doctor-batch7]
+      summary: Logout (revoke the current session)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Generic' } } } }, '409': { $ref: '#/components/responses/Conflict' } }

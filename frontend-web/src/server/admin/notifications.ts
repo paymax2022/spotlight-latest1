@@ -5,7 +5,7 @@ export interface AdminNotification {
   title: string;
   message: string;
   channel: 'email' | 'sms' | 'push' | 'in_app';
-  audience: 'all' | 'applicants' | 'contestants' | 'voters' | 'sponsors';
+  audience: 'all' | 'admins' | 'support' | 'finance' | 'applicants' | 'contestants' | 'voters' | 'sponsors';
   status: 'queued' | 'sent' | 'failed';
   sentAt?: string;
   createdAt: string;
@@ -45,4 +45,3 @@ export function queueNotification(input: Omit<AdminNotification, 'id' | 'status'
   getStore().items.set(item.id, item);
   return item;
 }
-

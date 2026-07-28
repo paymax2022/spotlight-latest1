@@ -371,6 +371,19 @@ func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) (
 		if filter.State != "" && !strings.EqualFold(strings.TrimSpace(filter.State), strings.TrimSpace(state)) {
 			continue
 		}
+		// #23 parity: additional scoped filters (program/contest/school/country).
+		if filter.Program != "" && !strings.EqualFold(strings.TrimSpace(filter.Program), strings.TrimSpace(programID)) {
+			continue
+		}
+		if filter.Contest != "" && !strings.EqualFold(strings.TrimSpace(filter.Contest), strings.TrimSpace(contestID)) {
+			continue
+		}
+		if filter.School != "" && !strings.EqualFold(strings.TrimSpace(filter.School), strings.TrimSpace(schoolID)) {
+			continue
+		}
+		if filter.Country != "" && !strings.EqualFold(strings.TrimSpace(filter.Country), strings.TrimSpace(country)) {
+			continue
+		}
 		out = append(out, domain.AdminUser{ID: row.ID, FirstName: row.FirstName, LastName: row.LastName, Email: row.Email, Phone: row.Phone, UserType: row.UserType, Status: row.Status, ProfileCompleted: row.ProfileCompleted, State: state, Country: country, ProgramID: programID, ContestID: contestID, SchoolID: schoolID, CreatedAt: row.CreatedAt})
 	}
 	return out, nil

@@ -1,0 +1,738 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight — Visitor & Estate Election API
+  version: 1.0.0
+  description: >
+    Estate Visitor/Gate management (Sections E & F) and Estate Elections (Section J),
+    consumed by the mobile app's live data layer (src/features/visitor/api/visitor.api.ts,
+    src/features/election/api/election.api.ts). Bare paths are served at the app base URL
+    (EXPO_PUBLIC_API_BASE_URL), matching the `associations` convention. All requests carry a
+    Supabase Bearer JWT; mutations require an Idempotency-Key header. Money is in kobo.
+    This is a standalone module spec (cf. contracts/invest.openapi.yaml) to be merged into
+    contracts/openapi.yaml. Spec-first per CLAUDE.md.
+
+servers:
+  - url: /api/v1
+    description: frontend-web API (Next.js route handlers, stable v1 convention)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Visitor — Resident
+  - name: Visitor — Guard
+  - name: Visitor — Admin
+  - name: Election
+  - name: Notifications
+
+paths:
+  # ── Resident: restriction ──────────────────────────────────────────────────
+  /visitor/restriction:
+    get:
+      tags: [Visitor — Resident]
+      summary: Current resident payment-restriction status
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/RestrictionStatus' } } } }
+  /visitor/restriction/proof:
+    post:
+      tags: [Visitor — Resident]
+      summary: Submit proof of payment (moves to restoration_pending)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/RestrictionStatus' } } } }
+  /visitor/restriction/appeal:
+    post:
+      tags: [Visitor — Resident]
+      summary: Appeal a restriction / request a waiver
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { reason: { type: string }, detail: { type: string } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/RestrictionStatus' } } } }
+
+  # ── Resident: codes ────────────────────────────────────────────────────────
+  /visitor/codes:
+    get:
+      tags: [Visitor — Resident]
+      summary: List the resident's access codes
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AccessCode' } } } } }
+    post:
+      tags: [Visitor — Resident]
+      summary: Create an access code
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateAccessCodeInput' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/AccessCode' } } } }
+        '403': { $ref: '#/components/responses/PaymentRestricted' }
+  /visitor/codes/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      tags: [Visitor — Resident]
+      summary: Get an access code
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AccessCode' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /visitor/codes/{id}/revoke:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [Visitor — Resident]
+      summary: Revoke an access code (invalid at the gate immediately)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AccessCode' } } } }
+  /visitor/codes/{id}/extend:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [Visitor — Resident]
+      summary: Extend an active code's validity (value/QR unchanged)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [validityEnd], properties: { validityEnd: { type: string, format: date-time } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AccessCode' } } } }
+  /visitor/codes/{id}/share:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [Visitor — Resident]
+      summary: Log a share action (no regeneration)
+      responses:
+        '204': { description: No Content }
+  /visitor/codes/event:
+    post:
+      tags: [Visitor — Resident]
+      summary: Bulk-create event guest codes
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/EventGuestInput' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/EventGuestManifest' } } } }
+
+  # ── Code attendance ────────────────────────────────────────────────────────
+  /visitor/codes/{id}/attendance:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      tags: [Visitor — Guard]
+      summary: Live check-in/out attendance for a code
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CodeAttendance' } } } }
+  /visitor/codes/{id}/arrival:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [Visitor — Guard]
+      summary: Log a gate query/arrival and notify the resident
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { gateId: { type: string } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CodeAttendance' } } } }
+  /visitor/codes/{id}/exit:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [Visitor — Guard]
+      summary: Record an exit (check-out by code)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { gateId: { type: string } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/VisitEvent' } } } }
+
+  # ── Resident: history / notifications ──────────────────────────────────────
+  /visitor/history:
+    get:
+      tags: [Visitor — Resident]
+      summary: Visitor access history
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/VisitEvent' } } } } }
+  /visitor/notifications:
+    get:
+      tags: [Visitor — Resident]
+      summary: Visitor notifications
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/VisitorNotification' } } } } }
+  /visitor/notifications/unread-count:
+    get:
+      tags: [Visitor — Resident]
+      summary: Unread visitor-notification count
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CountResult' } } } }
+  /visitor/notifications/read-all:
+    post:
+      tags: [Visitor — Resident]
+      summary: Mark all visitor notifications read
+      responses:
+        '204': { description: No Content }
+  /visitor/notifications/{id}/read:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [Visitor — Resident]
+      summary: Mark a notification read
+      responses:
+        '204': { description: No Content }
+
+  # ── Guard ──────────────────────────────────────────────────────────────────
+  /visitor/gate/session:
+    get: { tags: [Visitor — Guard], summary: Current gate session, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/GateSession' } } } } } }
+  /visitor/gate/expected:
+    get: { tags: [Visitor — Guard], summary: Today's expected (valid) codes, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AccessCode' } } } } } } }
+  /visitor/gate/log:
+    get: { tags: [Visitor — Guard], summary: Gate activity log, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/VisitEvent' } } } } } } }
+  /visitor/gate/vehicles:
+    get: { tags: [Visitor — Guard], summary: Vehicle entry log, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/VisitEvent' } } } } } } }
+  /visitor/gate/open-visits:
+    get: { tags: [Visitor — Guard], summary: Open (inside) visits, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/OpenVisit' } } } } } } }
+  /visitor/gate/open-visits/count:
+    get: { tags: [Visitor — Guard], summary: Open-visit count, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CountResult' } } } } } }
+  /visitor/gate/overstays:
+    get: { tags: [Visitor — Guard], summary: Overstayed visits, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/OverstayVisit' } } } } } } }
+  /visitor/gate/pending-sync-count:
+    get: { tags: [Visitor — Guard], summary: Pending offline-log count, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CountResult' } } } } } }
+  /visitor/gate/sync:
+    post:
+      tags: [Visitor — Guard]
+      summary: Sync pending offline logs
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { synced: { type: integer } } } } } }
+  /visitor/gate/lookup:
+    get:
+      tags: [Visitor — Guard]
+      summary: Look up a code by numeric value or QR payload
+      parameters: [{ name: code, in: query, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/LookupOutcome' } } } }
+  /visitor/gate/approve:
+    post:
+      tags: [Visitor — Guard]
+      summary: Approve entry (check-in)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ApproveEntryInput' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/VisitEvent' } } } }
+  /visitor/gate/deny:
+    post:
+      tags: [Visitor — Guard]
+      summary: Deny entry (reason required)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DenyEntryInput' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/VisitEvent' } } } }
+  /visitor/gate/checkout:
+    post:
+      tags: [Visitor — Guard]
+      summary: Check out an open visit
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [visitEventId, gateId], properties: { visitEventId: { type: string }, gateId: { type: string } } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/VisitEvent' } } } }
+  /visitor/gate/walkin:
+    post:
+      tags: [Visitor — Guard]
+      summary: Walk-in / emergency entry
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/WalkInInput' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/VisitEvent' } } } }
+  /visitor/gate/handover:
+    post:
+      tags: [Visitor — Guard]
+      summary: Shift handover
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [gateId, notes], properties: { gateId: { type: string }, notes: { type: string } } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/GateSession' } } } }
+
+  # ── Admin: blacklist / incidents / analytics / lookup ──────────────────────
+  /visitor/blacklist:
+    get: { tags: [Visitor — Admin], summary: List blacklist, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/BlacklistEntry' } } } } } } }
+    post:
+      tags: [Visitor — Admin]
+      summary: Add a blacklist entry
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/BlacklistInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/BlacklistEntry' } } } }
+  /visitor/blacklist/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    delete:
+      tags: [Visitor — Admin]
+      summary: Remove a blacklist entry
+      responses:
+        '204': { description: No Content }
+  /visitor/incidents:
+    get: { tags: [Visitor — Admin], summary: List incidents, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/IncidentReport' } } } } } } }
+    post:
+      tags: [Visitor — Guard]
+      summary: Submit an incident / suspicious-activity report
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/IncidentInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/IncidentReport' } } } }
+  /visitor/analytics:
+    get: { tags: [Visitor — Admin], summary: Visitor & gate analytics, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/VisitorAnalytics' } } } } } }
+  /visitor/search:
+    get:
+      tags: [Visitor — Guard]
+      summary: Lookup visitors (codes) and residents
+      parameters: [{ name: q, in: query, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/LookupResults' } } } }
+
+  # ── Election ───────────────────────────────────────────────────────────────
+  /elections:
+    get: { tags: [Election], summary: List elections, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Election' } } } } } } }
+    post:
+      tags: [Election]
+      summary: Create/schedule an election (admin)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateElectionInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Election' } } } }
+  /elections/active:
+    get:
+      tags: [Election]
+      summary: The currently-open election (or null)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { oneOf: [ { $ref: '#/components/schemas/Election' }, { type: 'null' } ] } } } }
+  /elections/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      tags: [Election]
+      summary: Get an election
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Election' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /elections/{id}/eligibility:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      tags: [Election]
+      summary: Voter eligibility (reads payment standing)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/VoterEligibility' } } } }
+  /elections/{id}/ballot:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      tags: [Election]
+      summary: The caller's ballot for an election
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MyBallot' } } } }
+  /elections/{id}/vote:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [Election]
+      summary: Cast a vote for one position (one per position)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [positionId, candidateId], properties: { positionId: { type: string }, candidateId: { type: string } } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MyBallot' } } } }
+        '409': { description: Already voted / voting closed, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /elections/{id}/publish:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [Election]
+      summary: Publish results (admin; only after the window closes)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Election' } } } }
+
+  # ── Notifications ──────────────────────────────────────────────────────────
+  /notifications/push-token:
+    post:
+      tags: [Notifications]
+      summary: Register a device push token for the caller
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [token, platform], properties: { token: { type: string }, platform: { type: string, enum: [ios, android, web] } } } } }
+      responses:
+        '204': { description: No Content }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 128 }
+      description: Client-generated key; identical requests with the same key are processed once.
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    PaymentRestricted:
+      description: Visitor access disabled due to a pending payment
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+
+    CountResult:
+      type: object
+      properties: { count: { type: integer } }
+
+    CodeType:
+      type: string
+      enum: [one_time, time_limited, date_specific, multi_day, recurring, delivery, ride_hailing, domestic_staff, contractor, event_guest, family_permanent, vip, emergency]
+    CodeUsageMode: { type: string, enum: [entry_exit, one_time] }
+    AccessCodeStatus: { type: string, enum: [active, expired, revoked, used] }
+    VisitAction: { type: string, enum: [arrival, check_in, check_out, deny, walk_in, emergency] }
+    SyncStatus: { type: string, enum: [synced, pending] }
+    RestrictionState: { type: string, enum: [good_standing, soft_restriction, hard_ban, restoration_pending, access_restored] }
+
+    VisitorDetails:
+      type: object
+      required: [name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        phone: { type: string }
+        purpose: { type: string }
+        expectedArrival: { type: string, format: date-time }
+        vehiclePlate: { type: string }
+        vehicleDesc: { type: string }
+        isBlacklisted: { type: boolean }
+        blacklistReason: { type: string }
+        photoRef: { type: string }
+
+    AccessCode:
+      type: object
+      required: [id, estateId, hostResidentId, hostName, propertyId, unitLabel, estateName, codeValue, qrPayload, codeType, purposeLabel, status, visitor, validityStart, validityEnd, maxEntries, entriesUsed, usageMode, partySize, createdAt, createdBy]
+      properties:
+        id: { type: string }
+        estateId: { type: string }
+        hostResidentId: { type: string }
+        hostName: { type: string }
+        propertyId: { type: string }
+        unitLabel: { type: string }
+        estateName: { type: string }
+        codeValue: { type: string }
+        qrPayload: { type: string }
+        codeType: { $ref: '#/components/schemas/CodeType' }
+        purposeLabel: { type: string }
+        status: { $ref: '#/components/schemas/AccessCodeStatus' }
+        visitor: { $ref: '#/components/schemas/VisitorDetails' }
+        validityStart: { type: string, format: date-time }
+        validityEnd: { type: string, format: date-time }
+        maxEntries: { type: integer }
+        entriesUsed: { type: integer }
+        usageMode: { $ref: '#/components/schemas/CodeUsageMode' }
+        partySize: { type: integer, minimum: 1 }
+        recurrenceRule: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        createdBy: { type: string }
+
+    CreateAccessCodeInput:
+      type: object
+      required: [codeType, visitorName, validityStart, validityEnd, maxEntries, usageMode, partySize]
+      properties:
+        codeType: { $ref: '#/components/schemas/CodeType' }
+        visitorName: { type: string }
+        visitorPhone: { type: string }
+        purpose: { type: string }
+        expectedArrival: { type: string, format: date-time }
+        vehiclePlate: { type: string }
+        vehicleDesc: { type: string }
+        validityStart: { type: string, format: date-time }
+        validityEnd: { type: string, format: date-time }
+        maxEntries: { type: integer }
+        usageMode: { $ref: '#/components/schemas/CodeUsageMode' }
+        partySize: { type: integer, minimum: 1 }
+        recurrenceRule: { type: string, description: 'e.g. "MON,WED,FRI 07:00-18:00" (recurring/staff)' }
+
+    VisitEvent:
+      type: object
+      required: [id, visitorName, unitLabel, gateId, guardId, action, timestamp, syncStatus]
+      properties:
+        id: { type: string }
+        accessCodeId: { type: string }
+        visitorName: { type: string }
+        unitLabel: { type: string }
+        gateId: { type: string }
+        guardId: { type: string }
+        action: { $ref: '#/components/schemas/VisitAction' }
+        reason: { type: string }
+        timestamp: { type: string, format: date-time }
+        syncStatus: { $ref: '#/components/schemas/SyncStatus' }
+        capturedPlate: { type: string }
+        codeType: { $ref: '#/components/schemas/CodeType' }
+
+    GateSession:
+      type: object
+      required: [id, gateId, gateLabel, guardId, guardName, shiftStart]
+      properties:
+        id: { type: string }
+        gateId: { type: string }
+        gateLabel: { type: string }
+        guardId: { type: string }
+        guardName: { type: string }
+        shiftStart: { type: string, format: date-time }
+        shiftEnd: { type: [string, 'null'], format: date-time }
+        handoverNotes: { type: string }
+
+    RestrictionStatus:
+      type: object
+      required: [residentId, estateId, state, outstandingBalanceKobo, effectiveFrom, source]
+      properties:
+        residentId: { type: string }
+        estateId: { type: string }
+        state: { $ref: '#/components/schemas/RestrictionState' }
+        outstandingBalanceKobo: { type: integer, description: Minor units (kobo) }
+        effectiveFrom: { type: string, format: date-time }
+        source: { type: string, enum: [payments] }
+
+    CodeAttendance:
+      type: object
+      required: [arrived, inside, checkIns, checkOuts]
+      properties:
+        arrived: { type: boolean }
+        inside: { type: boolean }
+        checkIns: { type: integer }
+        checkOuts: { type: integer }
+        lastInAt: { type: string, format: date-time }
+        lastOutAt: { type: string, format: date-time }
+        lastQueriedAt: { type: string, format: date-time }
+
+    ApproveEntryInput:
+      type: object
+      required: [accessCodeId, gateId]
+      properties:
+        accessCodeId: { type: string }
+        gateId: { type: string }
+        capture:
+          type: object
+          properties:
+            plate: { type: string }
+            photoCaptured: { type: boolean }
+            idCaptured: { type: boolean }
+
+    DenyEntryInput:
+      type: object
+      required: [codeValue, gateId, reason]
+      properties:
+        accessCodeId: { type: string }
+        codeValue: { type: string }
+        gateId: { type: string }
+        reason: { type: string }
+
+    OpenVisit:
+      type: object
+      required: [visitEventId, visitorName, unitLabel, checkedInAt]
+      properties:
+        visitEventId: { type: string }
+        accessCodeId: { type: string }
+        visitorName: { type: string }
+        unitLabel: { type: string }
+        codeType: { $ref: '#/components/schemas/CodeType' }
+        partySize: { type: integer }
+        checkedInAt: { type: string, format: date-time }
+        capturedPlate: { type: string }
+
+    OverstayVisit:
+      allOf:
+        - { $ref: '#/components/schemas/OpenVisit' }
+        - type: object
+          required: [expectedEnd, overdueByMinutes]
+          properties:
+            expectedEnd: { type: string, format: date-time }
+            overdueByMinutes: { type: integer }
+
+    WalkInInput:
+      type: object
+      required: [visitorName, unitLabel, emergency, gateId]
+      properties:
+        visitorName: { type: string }
+        unitLabel: { type: string }
+        visitorPhone: { type: string }
+        purpose: { type: string }
+        emergency: { type: boolean }
+        gateId: { type: string }
+
+    LookupOutcome:
+      oneOf:
+        - type: object
+          required: [kind, code]
+          properties: { kind: { type: string, enum: [ok, blacklisted] }, code: { $ref: '#/components/schemas/AccessCode' } }
+        - type: object
+          required: [kind, codeValue]
+          properties: { kind: { type: string, enum: [expired, used, revoked, not_found] }, codeValue: { type: string } }
+
+    VisitorNotificationType:
+      type: string
+      enum: [arrival, checked_in, checked_out, overstayed, denied, restriction, access_restored]
+    VisitorNotification:
+      type: object
+      required: [id, type, title, body, timestamp, read]
+      properties:
+        id: { type: string }
+        type: { $ref: '#/components/schemas/VisitorNotificationType' }
+        title: { type: string }
+        body: { type: string }
+        timestamp: { type: string, format: date-time }
+        read: { type: boolean }
+        accessCodeId: { type: string }
+
+    BlacklistEntry:
+      type: object
+      required: [id, estateId, matchKind, matchValue, reason, createdBy, createdAt]
+      properties:
+        id: { type: string }
+        estateId: { type: string }
+        matchKind: { type: string, enum: [phone, id, plate] }
+        matchValue: { type: string }
+        name: { type: string }
+        reason: { type: string }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+    BlacklistInput:
+      type: object
+      required: [matchKind, matchValue, reason]
+      properties:
+        matchKind: { type: string, enum: [phone, id, plate] }
+        matchValue: { type: string }
+        name: { type: string }
+        reason: { type: string }
+
+    IncidentReport:
+      type: object
+      required: [id, kind, severity, title, description, gateId, escalate, status, createdAt]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [suspicious, incident] }
+        severity: { type: string, enum: [low, medium, high] }
+        title: { type: string }
+        description: { type: string }
+        gateId: { type: string }
+        escalate: { type: boolean }
+        status: { type: string, enum: [open, escalated, resolved] }
+        createdAt: { type: string, format: date-time }
+    IncidentInput:
+      type: object
+      required: [kind, severity, title, description, gateId, escalate]
+      properties:
+        kind: { type: string, enum: [suspicious, incident] }
+        severity: { type: string, enum: [low, medium, high] }
+        title: { type: string }
+        description: { type: string }
+        gateId: { type: string }
+        escalate: { type: boolean }
+
+    VisitorAnalytics:
+      type: object
+      properties:
+        rangeLabel: { type: string }
+        totalEntries: { type: integer }
+        totalDenials: { type: integer }
+        overstays: { type: integer }
+        avgVerificationSeconds: { type: integer }
+        offlineSyncedPct: { type: number }
+        byType: { type: array, items: { type: object, properties: { label: { type: string }, value: { type: integer } } } }
+        byHour: { type: array, items: { type: object, properties: { hour: { type: string }, value: { type: integer } } } }
+        restrictionImpact: { type: object, properties: { restrictedResidents: { type: integer }, avgRestoreMinutes: { type: integer } } }
+
+    ResidentDirectoryEntry:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        unitLabel: { type: string }
+        phone: { type: string }
+    LookupResults:
+      type: object
+      properties:
+        query: { type: string }
+        codes: { type: array, items: { $ref: '#/components/schemas/AccessCode' } }
+        residents: { type: array, items: { $ref: '#/components/schemas/ResidentDirectoryEntry' } }
+
+    EventGuestInput:
+      type: object
+      required: [eventName, guestNames, validityStart, validityEnd]
+      properties:
+        eventName: { type: string }
+        guestNames: { type: array, items: { type: string } }
+        validityStart: { type: string, format: date-time }
+        validityEnd: { type: string, format: date-time }
+    EventGuestManifest:
+      type: object
+      properties:
+        eventCodeId: { type: string }
+        eventName: { type: string }
+        guests: { type: array, items: { type: object, properties: { name: { type: string }, codeValue: { type: string } } } }
+        validityEnd: { type: string, format: date-time }
+
+    # ── Election ───────────────────────────────────────────────────────────────
+    ElectionStatus: { type: string, enum: [scheduled, live, closed, results_published] }
+    Candidate:
+      type: object
+      required: [id, name, positionId, votes]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        positionId: { type: string }
+        manifesto: { type: string }
+        photoRef: { type: string }
+        votes: { type: integer }
+    ElectionPosition:
+      type: object
+      required: [id, title, seats, candidates]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        seats: { type: integer }
+        candidates: { type: array, items: { $ref: '#/components/schemas/Candidate' } }
+    Election:
+      type: object
+      required: [id, estateId, title, startsAt, endsAt, status, positions, totalEligibleVoters, votesCast, resultsPublished]
+      properties:
+        id: { type: string }
+        estateId: { type: string }
+        title: { type: string }
+        description: { type: string }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        status: { $ref: '#/components/schemas/ElectionStatus' }
+        positions: { type: array, items: { $ref: '#/components/schemas/ElectionPosition' } }
+        totalEligibleVoters: { type: integer }
+        votesCast: { type: integer }
+        resultsPublished: { type: boolean }
+    MyBallot:
+      type: object
+      required: [electionId, choices]
+      properties:
+        electionId: { type: string }
+        choices: { type: object, additionalProperties: { type: string }, description: positionId -> candidateId }
+        submittedAt: { type: string, format: date-time }
+    VoterEligibility:
+      type: object
+      required: [eligible]
+      properties:
+        eligible: { type: boolean }
+        reason: { type: string }
+    CreateElectionInput:
+      type: object
+      required: [title, startsAt, endsAt, positions]
+      properties:
+        title: { type: string }
+        description: { type: string }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        positions:
+          type: array
+          items:
+            type: object
+            required: [title, seats, candidateNames]
+            properties:
+              title: { type: string }
+              seats: { type: integer }
+              candidateNames: { type: array, items: { type: string } }

@@ -312,6 +312,9 @@ CREATE TABLE IF NOT EXISTS public.fraud_flags (
   reviewed_at     timestamptz,
   created_at      timestamptz NOT NULL DEFAULT now()
 );
+-- Ensure voter_profile_id exists on the already-created fraud_flags table.
+ALTER TABLE public.fraud_flags
+  ADD COLUMN IF NOT EXISTS voter_profile_id uuid REFERENCES public.voter_profiles(id);
 
 -- ---------------------------------------------------------------------------
 -- VOTE AUDIT LOGS — append-only; every vote-state change recorded here

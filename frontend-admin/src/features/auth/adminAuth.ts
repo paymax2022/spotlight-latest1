@@ -31,6 +31,11 @@ export async function signInAdmin(username: string, password: string) {
     throw new Error('Access denied. Admin privileges required.');
   }
 
+  // Top-level admin roles get a wildcard so the admin console UI is usable.
+  // The Go backend independently enforces RBAC per-route, so this gate is UX-only.
+  const TOP_LEVEL_ADMIN_ROLES = ['admin', 'super-admin', 'system-admin'];
+  const permissions = TOP_LEVEL_ADMIN_ROLES.includes(role) ? ['*'] : [];
+
   if (typeof window !== 'undefined') {
     const accessToken = data.session?.access_token ?? '';
     if (accessToken) localStorage.setItem('spotlight_admin_access_token', accessToken);
@@ -40,7 +45,7 @@ export async function signInAdmin(username: string, password: string) {
         id: data.user.id,
         email: data.user.email,
         roles: [role],
-        permissions: [],
+        permissions,
       }),
     );
   }

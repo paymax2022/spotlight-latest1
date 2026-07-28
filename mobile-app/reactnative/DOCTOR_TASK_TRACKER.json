@@ -1,0 +1,37 @@
+{
+  "project": "Paymax × Spotlight — Doctor (provider) telemedicine (mobile app + backend)",
+  "session": "doctor-app",
+  "app_root": "mobile-app/reactnative",
+  "backend_root": "backend/internal/doctor",
+  "last_updated": "2026-06-20",
+  "status": "Mobile screen spec 100% (A + C–AD) + production switch. Backend: full schema migration + OpenAPI + Go MVP slice (money path to full bar) shipped; remaining ~283 endpoints scaffolded.",
+  "note": "Durable copy (authoritative). Root task-tracker.json is contended/overwritten across concurrent sessions.",
+  "completed_tasks": [
+    { "id": "mobile-all", "title": "Mobile: ALL spec sections A + C–AD built (MVP, Phase 2/3, Section B, Batches 1–7), each Backend-contract→Frontend→QA; all blockers/majors fixed" },
+    { "id": "prod-switch", "title": "Mobile production sandbox→live switch: doctor.client.ts (DOCTOR_USE_MOCK default mock, /api/v1/doctor + auth + Idempotency-Key), ~288 api fns branched mock↔live, GO_LIVE runbook + endpoint inventory" },
+    { "id": "be-conventions", "title": "Backend conventions cheat-sheet (routes, RBAC, ledger, audit, idempotency, migrations/RLS, feature flags)" },
+    { "id": "be-spec-migration", "title": "contracts/doctor.openapi.yaml (313 ops / 47 schemas, all /api/v1/doctor paths) + additive migration 20260625000000_doctor_module.sql (81 tables, RLS on all, additive-only verified) + docs/DOCTOR_BACKEND_FOUNDATION.md" },
+    { "id": "be-go-mvp", "title": "backend/internal/doctor Go module (model/repository/service/handler) — MVP reads+writes wired under /api/v1/doctor (RequireAuthContext + FEATURE_DOCTOR_ENABLED); POST /payouts to full money bar (idempotency dedupe + tier fail-closed + balanced ledger double-entry + payout row no-balance + audit); earnings projected from ledger; +config flag +finance_routes wiring; SCAFFOLD.md + routes_remaining.go for the rest" },
+    { "id": "be-tests-qa", "title": "Doctor money-path tests (service_test, handler_test, build-tagged integration) + docs/QA_DOCTOR_BACKEND_REPORT.md — iron-rule matrix 6/6 PASS; additive scope clean" },
+    { "id": "be-wave2", "title": "Backend Wave 2: account/provider endpoints (onboarding, profile/licence lifecycle, notifications center, support+disputes, security/devices/prefs, compliance, reputation/reviews) — +49 routes; payout audit hardened to transactional InsertPayoutWithAudit. QA PASS." },
+    { "id": "be-wave3a", "title": "Backend Wave 3a: human clinical endpoints (pharmacy, labs-ext, referrals/collaboration, follow-ups/care-plans, HMO, records) +80 routes. Fixed 1 blocker (dup strOrDefault); QA PASS." },
+    { "id": "be-wave3b", "title": "Backend Wave 3b: veterinary/pet endpoints +48 routes. QA PASS." },
+    { "id": "be-wave4", "title": "Backend Wave 4: chat/call persistence, schedule mgmt (blocked-dates/vacation/recurring/reminders/timezone), appointment queue + requests + reschedule, clinics/analytics — model_ops/repository_ops/service_ops/handler_ops.go +27 routes. QA PASS (0 blockers/majors, 2 cosmetic minors); all handler→service→repo chains resolve, routing safe, tables match. BACKEND NOW: 221/309 inventory endpoints (~72%) wired + reviewed." },
+    { "id": "ci", "title": "CI: .github/workflows/doctor-ci.yml (backend build/vet/test, OpenAPI validation, scoped+full mobile tsc via tsconfig.doctorcheck.json, additive-only migration guard) — YAML valid, guard dry-run passes." },
+    { "id": "be-wave5-ai", "title": "Wave 5: AI-assist (+4 routes) + integrations/llm Anthropic client (disabled-fallback). QA PASS, AI-safety 6/6." },
+    { "id": "be-wave6-realtime", "title": "Wave 6: realtime — integrations/rtc (Agora AccessToken2 + VideoSDK JWT, stdlib-only, disabled-fallback) + platform/ws Hub mounted at authed /doctor/ws with best-effort event push; call-token issuance/refresh. QA APPROVE." },
+    { "id": "be-wave7", "title": "Wave 7: coverage reconcile + hardening — +67 endpoints (clinical/account/vet tail), per-doctor LLM rate guard (Redis fixed-window→429, fail-open), pet-growth idempotency (SetNX), removed dead routes_remaining.go, AND fixed 3 pre-existing cross-wave gin param-name conflicts that would have panicked the router at startup. QA: full-set gin route-safety 0 conflicts; rate-guard/pet-growth/security PASS." },
+    { "id": "be-wave7b", "title": "Wave 7b: wired the final 26 contract ops (dashboard, wallet/balance [ledger-projected], schedule, disputes lists, emergency, vet verification/licence/docs, static onboarding/support content) + corrected coverage doc. FULL CONTRACT COVERAGE: 320 routes, 315/315 ops, 0 missing." }
+  ],
+  "pending_tasks": [
+    { "id": "ci-go-build-test", "priority": 1, "blocked_on": "no Go toolchain in sandbox", "title": "Run doctor-ci.yml on a Go+Node runner (go build/vet/test + tsc) to formally close static-only verification." },
+    { "id": "agora-token-verify", "priority": 1, "blocked_on": "needs official-builder vector OR live join", "title": "Agora AccessToken2 VALIDATED vs documented spec: fixed a signing key-derivation bug (key/msg swap + missing salt step — would have rejected all tokens); added round-trip + spec-formula test (agora_test.go) running in CI. REMAINING: paste official-builder known-answer vector into TestAgoraKnownAnswer (or do a live join) to certify byte-for-byte. See docs/AGORA_TOKEN_VALIDATION.md. VideoSDK JWT is the high-confidence fallback meanwhile." },
+    { "id": "go-live-secrets", "priority": 2, "blocked_on": "live env", "title": "Set ANTHROPIC_API_KEY, AGORA_APP_ID/CERTIFICATE, VIDEOSDK_API_KEY/SECRET; supabase db push; FEATURE_DOCTOR_ENABLED=true + EXPO_PUBLIC_DOCTOR_USE_MOCK=false; flip flags; e2e." },
+    { "id": "wave-minors", "priority": 3, "title": "Carry-over cosmetic minors only (reschedule→'upcoming' confirm; a few status-guard/param nits). No functional gaps remain in the contract." },
+    { "id": "wave2-nits", "priority": 3, "title": "Wave 2 minors (non-blocking): align ReportReview/AcceptConsent/RecordPermission to 200 (OpenAPI), add storage-dedupe for RenewLicence/AddDisputeEvidence, plus the small account TODO sub-paths (profile/photo, bank-account, privacy export/delete, security/password, faqs)." },
+    { "id": "openapi-merge", "priority": 3, "title": "Merge/reference contracts/doctor.openapi.yaml into contracts/openapi.yaml; run contract:check." },
+    { "id": "go-live-ops", "priority": 3, "blocked_on": "live env", "title": "supabase db push (migration), set FEATURE_DOCTOR_ENABLED=true + EXPO_PUBLIC_DOCTOR_USE_MOCK=false + API base URL, ensure onboarding creates user_profiles (tier check fail-closes without it), then e2e." },
+    { "id": "full-tsc-mobile", "priority": 3, "title": "Mobile: full `npx tsc --noEmit` + `npx expo export` on a normal machine (sandbox 45s cap)." },
+    { "id": "cleanup-tmp", "priority": 4, "title": "Delete inert tsdoctor*.tmp.json at app root." }
+  ]
+}

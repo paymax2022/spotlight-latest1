@@ -1,0 +1,2 @@
+{ "extends": "./tsconfig.json", "compilerOptions": { "skipLibCheck": true, "noEmit": true, "jsx": "react-jsx" },
+  "include": ["src/features/academy/**/*.ts", "src/features/academy/**/*.tsx", "app/learn/academy/**/*.tsx"] }

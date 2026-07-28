@@ -17,7 +17,7 @@ export function generateMetadata({ params }) {
 
 export default function ServiceDetailBySlug({ params }) {
   const program = programPageBySlug[params.slug];
-  const hideProgramMedia = program?.slug === 'stem-contest' || program?.slug === 'sme-pitch-contest';
+  const hideProgramMedia = program?.slug === 'stem-contest';
   const applyHref = program?.slug === 'open-mic-competition' ? '/open-mic' : `/apply/${program?.slug}`;
 
   if (!program) {
@@ -25,7 +25,14 @@ export default function ServiceDetailBySlug({ params }) {
   }
 
   return (
-    <Layout headerStyle={1} footerStyle={2} breadcrumbTitle={program.title}>
+    <Layout headerStyle={1} footerStyle={2} breadcrumbTitle={null}>
+      <section className="overflow-hidden">
+        <img
+          src={program.bannerImage || '/assets/img/shape/banner2.png'}
+          alt={`${program.title} banner`}
+          style={{ width: '100%', height: 'auto', maxHeight: '500px', objectFit: 'cover', objectPosition: 'center', display: 'block' }}
+        />
+      </section>
       <section className="about-section section-padding fix bg-cover" style={{ backgroundImage: 'url("/assets/img/service/service-bg-2.jpg")' }}>
         <div className="container">
           <div className="service-details-wrapper">
@@ -80,9 +87,15 @@ export default function ServiceDetailBySlug({ params }) {
 
               <div className="col-12 col-lg-8 order-1 order-md-2">
                 <div className="service-details-items">
-                  <div className="details-image">
-                    <img src={program.heroImage} alt={program.title} />
-                  </div>
+                  {program.heroImage && (
+                    <div className="details-image" style={{ overflow: 'hidden', borderRadius: '8px' }}>
+                      <img
+                        src={program.heroImage}
+                        alt={program.title}
+                        style={{ width: '100%', height: '360px', objectFit: 'cover', objectPosition: 'center', display: 'block' }}
+                      />
+                    </div>
+                  )}
 
                   <div className="details-content">
                     <h3>{program.title}</h3>
@@ -95,7 +108,7 @@ export default function ServiceDetailBySlug({ params }) {
                     <div className="details-video-items">
                       {!hideProgramMedia && (
                         <div className="video-thumb">
-                          <img src="/assets/img/shape/ring1.png" alt="Spotlight program media" />
+                          <img src={program.videoThumbImage || '/assets/img/service/details-video.jpg'} alt="Spotlight program media" />
                         </div>
                       )}
                       <div className="content">
@@ -135,7 +148,25 @@ export default function ServiceDetailBySlug({ params }) {
                       </div>
                     )}
 
-                    <h3>Most Common Questions</h3>
+                    {program.mansionSection && (
+                      <div className="mansion-section mt-5">
+                        <h3>{program.mansionSection.heading}</h3>
+                        {program.mansionSection.description.map((para) => (
+                          <p className="mt-3" key={para}>{para}</p>
+                        ))}
+                        <h4 className="mt-4">What Our Reels Capture</h4>
+                        <ul className="list mt-3">
+                          {program.mansionSection.reelHighlights.map((reel) => (
+                            <li key={reel}>
+                              <i className="fa-regular fa-circle-check" />
+                              {reel}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <h3 className="mt-5">Most Common Questions</h3>
                     {program.faqs.map((faq) => (
                       <div className="mt-3" key={faq.q}>
                         <h5>{faq.q}</h5>

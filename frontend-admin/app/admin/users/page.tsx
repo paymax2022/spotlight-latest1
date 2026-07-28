@@ -11,9 +11,23 @@ import {
   unsuspendAdminUser,
   updateAdminUser,
 } from '@/services/usersService';
+import {
+  useToasts,
+  ToastStack,
+  FilterChips,
+  Pagination,
+  usePagination,
+  applySort,
+  nextSort,
+  SortHeaderButton,
+  type FilterChip,
+  type SortState,
+} from '@/components/rbac';
+
+const PAGE_SIZE = 15;
 
 const defaultFilters: AdminUserFilters = {
-  limit: 100,
+  limit: 500,
   role: '',
   userType: '',
   status: '',
@@ -22,25 +36,49 @@ const defaultFilters: AdminUserFilters = {
   search: '',
 };
 
+const FILTER_LABELS: Record<string, string> = {
+  search: 'Search',
+  status: 'Status',
+  userType: 'Type',
+  state: 'State',
+  role: 'Role',
+  program: 'Program',
+};
+
+type SortKey = 'name' | 'email' | 'userType' | 'status' | 'state';
+
 export default function AdminUsersPage() {
-  const [filters, setFilters] = useState<AdminUserFilters>(defaultFilters);
+  const [draft, setDraft] = useState<AdminUserFilters>(defaultFilters);
+  const [applied, setApplied] = useState<AdminUserFilters>(defaultFilters);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errored, setErrored] = useState(false);
   const [selectedId, setSelectedId] = useState('');
   const [selected, setSelected] = useState<AdminUser | null>(null);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
+  const [sort, setSort] = useState<SortState<SortKey>>({ key: 'name', dir: 'asc' });
+  const [page, setPage] = useState(1);
+  const { toasts, toast, dismiss } = useToasts();
 
-  const load = async () => {
+  const load = async (filters: AdminUserFilters) => {
     setLoading(true);
-    const rows = await listAdminUsers(filters);
-    setUsers(rows);
-    setLoading(false);
+    setErrored(false);
+    try {
+      const rows = await listAdminUsers(filters);
+      setUsers(rows);
+      setPage(1);
+    } catch {
+      setErrored(true);
+      setUsers([]);
+      toast.error('Failed to load users. Check your permissions and try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    void load();
+    void load(applied);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -55,6 +93,34 @@ export default function AdminUsersPage() {
     void run();
   }, [selectedId]);
 
+  const apply = () => {
+    setApplied(draft);
+    void load(draft);
+    toast.success('Filters applied.');
+  };
+
+  const chips: FilterChip[] = useMemo(() => {
+    const out: FilterChip[] = [];
+    for (const [k, label] of Object.entries(FILTER_LABELS)) {
+      const v = (applied as Record<string, unknown>)[k];
+      if (v && String(v).trim()) out.push({ key: k, label, value: String(v) });
+    }
+    return out;
+  }, [applied]);
+
+  const clearChip = (key: string) => {
+    const next = { ...applied, [key]: '' };
+    setApplied(next);
+    setDraft(next);
+    void load(next);
+  };
+
+  const clearAll = () => {
+    setApplied(defaultFilters);
+    setDraft(defaultFilters);
+    void load(defaultFilters);
+  };
+
   const stats = useMemo(() => {
     const total = users.length;
     const suspended = users.filter((u) => (u.status || '').toLowerCase() === 'suspended').length;
@@ -62,84 +128,119 @@ export default function AdminUsersPage() {
     return { total, suspended, locked };
   }, [users]);
 
+  const sorted = useMemo(
+    () => applySort(users, sort, (u, key) => {
+      if (key === 'name') return `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim();
+      return (u as Record<string, unknown>)[key];
+    }),
+    [users, sort],
+  );
+  const { slice, total, pageCount, safePage } = usePagination(sorted, PAGE_SIZE, page);
+  const sortBy = (key: SortKey) => setSort((s) => nextSort(s, key));
+
   const onSave = async () => {
     if (!selected) return;
-    setMessage('');
-    setError('');
     setSaving(true);
-    const updated = await updateAdminUser(selected.id, {
-      first_name: selected.firstName,
-      last_name: selected.lastName,
-      phone: selected.phone,
-      user_type: selected.userType,
-      status: selected.status,
-      profile_completed: selected.profileCompleted,
-    });
-    setSaving(false);
-    if (!updated) {
-      setError('Update failed. Scope or permission restrictions may apply.');
-      return;
+    try {
+      const updated = await updateAdminUser(selected.id, {
+        first_name: selected.firstName,
+        last_name: selected.lastName,
+        phone: selected.phone,
+        user_type: selected.userType,
+        status: selected.status,
+        profile_completed: selected.profileCompleted,
+      });
+      if (!updated) {
+        toast.error('Update failed. Scope or permission restrictions may apply.');
+        return;
+      }
+      toast.success('User updated successfully.');
+      setSelected(updated);
+      await load(applied);
+    } catch {
+      toast.error('Update failed due to a network or server error.');
+    } finally {
+      setSaving(false);
     }
-    setMessage('User updated successfully.');
-    setSelected(updated);
-    await load();
   };
 
-  const runStatus = async (fn: (id: string) => Promise<boolean>) => {
+  const runStatus = async (label: string, fn: (id: string) => Promise<boolean>) => {
     if (!selected) return;
-    setMessage('');
-    setError('');
     setSaving(true);
-    const ok = await fn(selected.id);
-    setSaving(false);
-    if (!ok) {
-      setError('Status action failed. Check access scope and permissions.');
-      return;
+    try {
+      const ok = await fn(selected.id);
+      if (!ok) {
+        toast.error(`${label} failed. Check access scope and permissions.`);
+        return;
+      }
+      toast.success(`User ${label.toLowerCase()} succeeded.`);
+      const refreshed = await getAdminUser(selected.id);
+      setSelected(refreshed);
+      await load(applied);
+    } catch {
+      toast.error(`${label} failed due to a network or server error.`);
+    } finally {
+      setSaving(false);
     }
-    setMessage('User status updated successfully.');
-    const refreshed = await getAdminUser(selected.id);
-    setSelected(refreshed);
-    await load();
   };
+
+  const setInput = (key: keyof AdminUserFilters, value: string) => setDraft((f) => ({ ...f, [key]: value }));
 
   return (
     <div>
+      <ToastStack toasts={toasts} onDismiss={dismiss} />
       <h1>Users Management</h1>
       <p>Search, filter, inspect, and update users with RBAC and scope restrictions enforced by backend.</p>
-      {message ? <p style={{ color: 'lightgreen' }}>{message}</p> : null}
-      {error ? <p style={{ color: 'salmon' }}>{error}</p> : null}
 
       <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(4, minmax(0,1fr))', marginTop: 12 }}>
-        <input placeholder="search" onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))} />
-        <input placeholder="status" onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))} />
-        <input placeholder="user type" onChange={(e) => setFilters((f) => ({ ...f, userType: e.target.value }))} />
-        <input placeholder="state" onChange={(e) => setFilters((f) => ({ ...f, state: e.target.value }))} />
-        <button onClick={() => void load()}>Apply Filters</button>
+        <input placeholder="search" value={draft.search ?? ''} onChange={(e) => setInput('search', e.target.value)} />
+        <input placeholder="status" value={draft.status ?? ''} onChange={(e) => setInput('status', e.target.value)} />
+        <input placeholder="user type" value={draft.userType ?? ''} onChange={(e) => setInput('userType', e.target.value)} />
+        <input placeholder="state" value={draft.state ?? ''} onChange={(e) => setInput('state', e.target.value)} />
+        <button onClick={apply}>Apply Filters</button>
       </div>
+
+      <FilterChips chips={chips} onClear={clearChip} onClearAll={clearAll} />
 
       <div style={{ marginTop: 10, fontSize: 12 }}>
         Total: {stats.total} · Suspended: {stats.suspended} · Locked: {stats.locked}
       </div>
 
-      {loading ? <p>Loading...</p> : null}
-
       <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 16, marginTop: 16 }}>
         <section>
-          <div style={{ display: 'grid', gap: 8 }}>
-            {users.map((u) => (
-              <article
-                key={u.id}
-                style={{ border: '1px solid #2a2a2a', padding: 10, cursor: 'pointer', background: selectedId === u.id ? '#1f1f1f' : 'transparent' }}
-                onClick={() => setSelectedId(u.id)}
-              >
-                <p style={{ margin: 0 }}>
-                  <strong>{u.firstName} {u.lastName}</strong>
-                </p>
-                <p style={{ margin: '4px 0 0 0', fontSize: 12 }}>{u.email} · {u.userType} · {u.status}</p>
-                <p style={{ margin: '4px 0 0 0', fontSize: 12 }}>{u.state || '-'} · {u.country || '-'}</p>
-              </article>
-            ))}
-          </div>
+          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
+            <thead>
+              <tr>
+                <th style={th()}><SortHeaderButton label="Name" active={sort?.key === 'name'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('name')} /></th>
+                <th style={th()}><SortHeaderButton label="Email" active={sort?.key === 'email'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('email')} /></th>
+                <th style={th()}><SortHeaderButton label="Type" active={sort?.key === 'userType'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('userType')} /></th>
+                <th style={th()}><SortHeaderButton label="Status" active={sort?.key === 'status'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('status')} /></th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td style={td()} colSpan={4}>Loading…</td></tr>
+              ) : errored ? (
+                <tr><td style={td()} colSpan={4}><button onClick={() => void load(applied)}>Retry</button> — failed to load.</td></tr>
+              ) : slice.length === 0 ? (
+                <tr><td style={td()} colSpan={4}>No users match the current filters.</td></tr>
+              ) : (
+                slice.map((u) => (
+                  <tr
+                    key={u.id}
+                    onClick={() => setSelectedId(u.id)}
+                    style={{ cursor: 'pointer', background: selectedId === u.id ? '#1f1f1f' : 'transparent' }}
+                  >
+                    <td style={td()}><strong>{u.firstName} {u.lastName}</strong></td>
+                    <td style={td()}>{u.email}</td>
+                    <td style={td()}>{u.userType || '-'}</td>
+                    <td style={td()}>{u.status || '-'}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+          <Pagination page={safePage} pageCount={pageCount} total={total} pageSize={PAGE_SIZE} onPage={setPage} />
         </section>
 
         <section style={{ border: '1px solid #2a2a2a', padding: 12 }}>
@@ -181,10 +282,10 @@ export default function AdminUsersPage() {
               </div>
 
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button onClick={() => void runStatus(suspendAdminUser)} disabled={saving}>Suspend</button>
-                <button onClick={() => void runStatus(unsuspendAdminUser)} disabled={saving}>Unsuspend</button>
-                <button onClick={() => void runStatus(lockAdminUser)} disabled={saving}>Lock</button>
-                <button onClick={() => void runStatus(unlockAdminUser)} disabled={saving}>Unlock</button>
+                <button onClick={() => void runStatus('Suspend', suspendAdminUser)} disabled={saving}>Suspend</button>
+                <button onClick={() => void runStatus('Unsuspend', unsuspendAdminUser)} disabled={saving}>Unsuspend</button>
+                <button onClick={() => void runStatus('Lock', lockAdminUser)} disabled={saving}>Lock</button>
+                <button onClick={() => void runStatus('Unlock', unlockAdminUser)} disabled={saving}>Unlock</button>
               </div>
 
               <button onClick={() => void onSave()} disabled={saving}>{saving ? 'Saving...' : 'Save Changes'}</button>
@@ -194,4 +295,11 @@ export default function AdminUsersPage() {
       </div>
     </div>
   );
+}
+
+function th(): React.CSSProperties {
+  return { textAlign: 'left', borderBottom: '1px solid #2a2a2a', padding: 8 };
+}
+function td(): React.CSSProperties {
+  return { borderBottom: '1px solid #1f1f1f', padding: 8 };
 }

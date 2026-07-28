@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -10,15 +11,63 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/domain"
+	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
 
 type StemHandler struct {
 	service services.StemService
+	// audit is an OPTIONAL sink. When nil (e.g. legacy construction / unit tests
+	// that don't wire it) emission is a no-op via emitAudit. This keeps the
+	// existing NewStemHandler signature and all existing tests intact while
+	// closing audit coverage on STEM sensitive mutations (#23).
+	audit services.AuditService
 }
 
 func NewStemHandler(service services.StemService) *StemHandler {
 	return &StemHandler{service: service}
+}
+
+// WithAudit attaches an audit sink so every sensitive STEM mutation
+// (create/update/state-transition/approve) emits a structured audit event.
+// Additive: returns the same handler for chaining in the router.
+func (h *StemHandler) WithAudit(audit services.AuditService) *StemHandler {
+	h.audit = audit
+	return h
+}
+
+// emitAudit records a structured audit event for a STEM mutation. Actor/IP/UA
+// are derived from the request context; when no authenticated actor is present
+// (public STEM submission endpoints) the actor is recorded as empty and the
+// event still captures the mutation for the compliance trail.
+func (h *StemHandler) emitAudit(c *gin.Context, action, resourceType, resourceID string, newValues map[string]any, severity string) {
+	if h.audit == nil {
+		return
+	}
+	actorID := ""
+	if actor, ok := middleware.GetAuthenticatedUser(c); ok {
+		actorID = actor.ID
+	}
+	h.audit.LogAction(actorID, "", action, "stem", resourceType, resourceID, nil, newValues, c.ClientIP(), c.Request.UserAgent(), severity)
+}
+
+// refID best-effort extracts an "id" from a created domain struct without
+// coupling emitAudit to every concrete STEM type. Returns "" when absent.
+func refID(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	var m map[string]any
+	if json.Unmarshal(b, &m) != nil {
+		return ""
+	}
+	for _, k := range []string{"id", "ID", "Id"} {
+		if s, ok := m[k].(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func (h *StemHandler) Overview(c *gin.Context) {
@@ -125,6 +174,7 @@ func (h *StemHandler) CreateSchool(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not create school"})
 		return
 	}
+	h.emitAudit(c, "stem.school.create", "stem_school", refID(created), map[string]any{"schoolName": payload.SchoolName, "state": payload.State}, "medium")
 	c.JSON(http.StatusCreated, gin.H{"success": true, "school": created})
 }
 
@@ -154,6 +204,7 @@ func (h *StemHandler) UpdateSchoolVerification(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not update school verification"})
 		return
 	}
+	h.emitAudit(c, "stem.school.verification", "stem_school", schoolID, map[string]any{"status": status, "reason": payload.Reason}, "high")
 	c.JSON(http.StatusOK, gin.H{"success": true, "id": schoolID, "status": status})
 }
 
@@ -522,6 +573,7 @@ func (h *StemHandler) CreateContest(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not create contest"})
 		return
 	}
+	h.emitAudit(c, "stem.contest.create", "stem_contest", refID(created), map[string]any{"name": payload.Name, "slug": payload.Slug, "status": payload.Status}, "high")
 	c.JSON(http.StatusCreated, gin.H{"success": true, "contest": created})
 }
 
@@ -569,7 +621,8 @@ func (h *StemHandler) Leaderboard(c *gin.Context) {
 	if limit > 300 {
 		limit = 300
 	}
-	rows, err := h.service.ListLeaderboard(contestID, limit)
+	// Annotated with previous-rank/rankChange (additive projection layer).
+	rows, err := h.service.ListLeaderboardWithRankChange(contestID, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not load leaderboard"})
 		return
@@ -640,6 +693,7 @@ func (h *StemHandler) UpdateSubmissionStatus(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not update submission status"})
 		return
 	}
+	h.emitAudit(c, "stem.submission.status", "stem_submission", submissionID, map[string]any{"status": payload.Status, "reviewStage": payload.ReviewStage}, "high")
 	c.JSON(http.StatusOK, gin.H{"success": true, "id": submissionID, "status": payload.Status})
 }
 
@@ -669,6 +723,7 @@ func (h *StemHandler) CreateJudgingScore(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not create judging score"})
 		return
 	}
+	h.emitAudit(c, "stem.judging.score.upsert", "stem_judging_score", refID(created), map[string]any{"applicationId": payload.ApplicationID, "reviewerId": payload.ReviewerID, "overallScore": payload.OverallScore}, "high")
 	c.JSON(http.StatusCreated, gin.H{"success": true, "score": created})
 }
 
@@ -734,6 +789,7 @@ func (h *StemHandler) UpdateJudgingScoreReviewState(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not update judging score review state"})
 		return
 	}
+	h.emitAudit(c, "stem.judging.score.review_state", "stem_judging_score", scoreID, map[string]any{"reviewStatus": reviewStatus, "isLocked": payload.IsLocked, "lockReason": payload.LockReason}, "high")
 	c.JSON(http.StatusOK, gin.H{"success": true, "id": scoreID})
 }
 
@@ -848,6 +904,7 @@ func (h *StemHandler) CreateJudgeAssignment(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not create judge assignment"})
 		return
 	}
+	h.emitAudit(c, "stem.judging.assignment.create", "stem_judge_assignment", refID(created), map[string]any{"contestId": payload.ContestID, "applicationId": payload.ApplicationID, "judgeUserId": payload.JudgeUserID, "status": status}, "high")
 	c.JSON(http.StatusCreated, gin.H{"success": true, "assignment": created})
 }
 
@@ -912,6 +969,7 @@ func (h *StemHandler) UpdateJudgeAssignmentConflict(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not update judge assignment conflict"})
 		return
 	}
+	h.emitAudit(c, "stem.judging.assignment.conflict", "stem_judge_assignment", assignmentID, map[string]any{"hasConflict": payload.HasConflict, "conflictReason": payload.ConflictReason, "status": status}, "high")
 	c.JSON(http.StatusOK, gin.H{"success": true, "id": assignmentID})
 }
 
@@ -1052,6 +1110,7 @@ func (h *StemHandler) CreateVoteTransaction(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not create vote transaction"})
 		return
 	}
+	h.emitAudit(c, "stem.voting.transaction.create", "stem_vote_transaction", refID(created), map[string]any{"contestId": payload.ContestID, "voterRef": payload.VoterRef}, "high")
 	c.JSON(http.StatusCreated, gin.H{"success": true, "transaction": created})
 }
 
@@ -1211,6 +1270,7 @@ func (h *StemHandler) CreateCertificate(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not create certificate"})
 		return
 	}
+	h.emitAudit(c, "stem.award.certificate.create", "stem_certificate", refID(created), map[string]any{"certificateType": payload.CertificateType, "certificateNumber": payload.CertificateNumber}, "high")
 	c.JSON(http.StatusCreated, gin.H{"success": true, "certificate": created})
 }
 
@@ -1274,6 +1334,7 @@ func (h *StemHandler) AwardBadge(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not award badge"})
 		return
 	}
+	h.emitAudit(c, "stem.award.badge.grant", "stem_badge_award", refID(created), map[string]any{"badgeId": payload.BadgeID}, "high")
 	c.JSON(http.StatusCreated, gin.H{"success": true, "award": created})
 }
 

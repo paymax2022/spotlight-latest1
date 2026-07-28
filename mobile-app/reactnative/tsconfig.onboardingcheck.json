@@ -1,0 +1,2 @@
+{ "extends": "./tsconfig.json", "compilerOptions": { "skipLibCheck": true, "noEmit": true, "jsx": "react-jsx" },
+  "include": ["src/features/investonboarding/**/*.ts", "src/features/investonboarding/**/*.tsx", "app/invest-onboarding/**/*.tsx"] }

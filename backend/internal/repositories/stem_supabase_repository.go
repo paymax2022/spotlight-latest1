@@ -1415,6 +1415,90 @@ func (r *StemSupabaseRepository) ListLeaderboard(contestID string, limit int) ([
 	return out, nil
 }
 
+// GetLeaderboardRankSnapshot returns the participant→rank map from the most
+// recent snapshot row for a contest. Additive — reads from the new
+// stem_leaderboard_rank_snapshots table and never touches voting internals.
+// Returns an empty (non-nil) map when no snapshot exists yet.
+func (r *StemSupabaseRepository) GetLeaderboardRankSnapshot(contestID string) (map[string]int, error) {
+	out := map[string]int{}
+	if r.client == nil || !r.client.Enabled() {
+		return out, nil
+	}
+	if strings.TrimSpace(contestID) == "" {
+		return out, nil
+	}
+	u, err := url.Parse(strings.TrimRight(r.client.BaseURL(), "/") + "/rest/v1/stem_leaderboard_rank_snapshots")
+	if err != nil {
+		return out, err
+	}
+	q := u.Query()
+	q.Set("select", "ranks")
+	q.Set("contest_id", "eq."+strings.TrimSpace(contestID))
+	q.Set("order", "captured_at.desc")
+	q.Set("limit", "1")
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	if err != nil {
+		return out, err
+	}
+	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return out, fmt.Errorf("stem rank snapshot query failed: %d", resp.StatusCode)
+	}
+	var rows []struct {
+		Ranks map[string]int `json:"ranks"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		return out, err
+	}
+	if len(rows) > 0 && rows[0].Ranks != nil {
+		return rows[0].Ranks, nil
+	}
+	return out, nil
+}
+
+// SaveLeaderboardRankSnapshot inserts a new immutable snapshot row (participant→
+// rank map as JSONB). Append-only; snapshots are never updated in place.
+func (r *StemSupabaseRepository) SaveLeaderboardRankSnapshot(contestID string, ranks map[string]int) error {
+	if r.client == nil || !r.client.Enabled() {
+		return nil
+	}
+	if strings.TrimSpace(contestID) == "" || len(ranks) == 0 {
+		return nil
+	}
+	u := strings.TrimRight(r.client.BaseURL(), "/") + "/rest/v1/stem_leaderboard_rank_snapshots"
+	payload, err := json.Marshal(map[string]any{
+		"contest_id": strings.TrimSpace(contestID),
+		"ranks":      ranks,
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, u, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("apikey", r.client.APIKey())
+	req.Header.Set("Authorization", "Bearer "+r.client.APIKey())
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Prefer", "return=minimal")
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("stem rank snapshot insert failed: %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (r *StemSupabaseRepository) ListLeaderboardSlices(contestID string, by string, limit int) ([]domain.StemLeaderboardSlice, error) {
 	if r.client == nil || !r.client.Enabled() {
 		return []domain.StemLeaderboardSlice{}, nil

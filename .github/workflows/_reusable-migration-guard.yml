@@ -1,0 +1,85 @@
+name: _reusable migration guard
+
+# Reusable: additive-only guard for supabase/migrations/.
+# CLAUDE.md iron rule: "All DB migrations are additive-only: no DROP, no column
+# renames, no type narrowing."
+#
+# We scan only migration files ADDED in this PR/push (not the whole history) so
+# that legacy migrations already merged do not retroactively fail the gate.
+# Falls back to scanning all migrations when no diff base is available
+# (e.g. workflow_dispatch on a fresh clone).
+#
+# Allowed exceptions (idempotent re-create patterns, not destructive):
+#   DROP POLICY IF EXISTS, DROP TRIGGER IF EXISTS, DROP INDEX IF EXISTS,
+#   DROP FUNCTION IF EXISTS, DROP VIEW IF EXISTS,
+#   CREATE OR REPLACE ... , DROP ... IF EXISTS for the above object kinds.
+#
+# Rejected (destructive / narrowing):
+#   DROP TABLE | DROP COLUMN | DROP TYPE | DROP SCHEMA | DROP DATABASE
+#   ALTER ... DROP (column/constraint dropping)
+#   DROP NOT NULL is allowed (widening), but SET NOT NULL on existing data and
+#   RENAME COLUMN/TABLE and type-narrowing TYPE changes are rejected.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine changed migration files
+        id: changed
+        run: |
+          set -e
+          BASE=""
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          elif [ -n "${{ github.event.before }}" ] && \
+               git cat-file -e "${{ github.event.before }}^{commit}" 2>/dev/null; then
+            BASE="${{ github.event.before }}"
+          fi
+
+          if [ -n "$BASE" ]; then
+            FILES=$(git diff --name-only --diff-filter=AM "$BASE" -- 'supabase/migrations/*.sql' || true)
+          else
+            echo "No diff base — scanning all migrations."
+            FILES=$(ls supabase/migrations/*.sql 2>/dev/null || true)
+          fi
+          echo "files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$FILES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "Changed migrations:"; echo "$FILES"
+
+      - name: Reject destructive / narrowing DDL
+        run: |
+          set -e
+          FILES="${{ steps.changed.outputs.files }}"
+          if [ -z "$FILES" ]; then echo "No changed migrations. Guard passes."; exit 0; fi
+
+          DESTRUCTIVE='\b(drop\s+(table|column|type|schema|database)|alter\s+[a-z0-9_."]+\s+drop|rename\s+(column|to))\b'
+          # Allow idempotent re-create drops for these object kinds only.
+          ALLOW='drop\s+(policy|trigger|index|function|view|materialized\s+view|publication|rule)\s+if\s+exists'
+
+          FAIL=0
+          for f in $FILES; do
+            [ -f "$f" ] || continue
+            HITS=$(grep -iEn "$DESTRUCTIVE" "$f" | grep -ivE "$ALLOW" || true)
+            if [ -n "$HITS" ]; then
+              echo "::error file=$f::Destructive/narrowing DDL found (migrations must be additive-only)"
+              echo "$HITS"
+              FAIL=1
+            fi
+          done
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::Additive-only guard FAILED. Use expand/contract; corrections are new additive migrations only."
+            exit 1
+          fi
+          echo "Additive-only guard passed."

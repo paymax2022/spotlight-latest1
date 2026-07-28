@@ -1,0 +1,337 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight — Bank Transfers API (multi-provider)
+  version: 2.0.0
+  description: >
+    Multi-provider bank transfers (ADR-011): real wallet→bank and bank→bank
+    payouts across two providers (Paystack + Monnify) behind one
+    DisbursementProvider interface, with a registry that selects a default per
+    operation and automatically fails over on provider error. bank→bank is a
+    provider pass-through (collection pay-in → payout), webhook-settled.
+
+    Conventions:
+      - Money-path: all monetary amounts are INTEGERS in minor units (kobo),
+        never floats. Every initiate posts a balanced double-entry ledger entry,
+        emits an immutable audit event, and is checked against tier limits
+        fail-closed. Wallet balances are projections of the ledger.
+      - A transaction PIN (ADR-011 §3) MUST be verified server-side before any
+        transfer is initiated. The PIN is salted-hashed, attempt-locked, and
+        never logged or returned.
+      - Idempotency: every initiate REQUIRES an Idempotency-Key header; an
+        identical request replays the prior result without side effects.
+      - Auth: Bearer JWT issued by Supabase Auth. Member routes are gated by
+        FEATURE_BANK_TRANSFERS_ENABLED.
+    Module spec — mirrors contracts/nutrition.openapi.yaml. Served under /api/v1
+    via Next.js route handlers that proxy to the Go backend
+    (/api/finance/transfers/*).
+
+servers:
+  - url: /api/v1
+    description: Transfers module routes (Next.js route handlers)
+
+tags:
+  - { name: Transfers, description: Wallet→bank & bank→bank payouts, beneficiaries, transaction PIN }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 128 }
+      description: >
+        Client-generated unique key. Identical requests with the same key
+        replay the cached response without side effects. Required on every
+        money-path initiate.
+    BeneficiaryId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthorized: { description: Missing or invalid bearer token }
+    Forbidden: { description: PIN invalid, tier limit exceeded, or feature disabled }
+    NotFound: { description: Resource not found }
+    BadRequest: { description: Validation failed }
+    UnprocessableEntity: { description: Validation error }
+    TooManyRequests: { description: Rate or attempt-lockout limit exceeded }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        status: { type: integer }
+
+    Bank:
+      type: object
+      required: [code, name]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        slug: { type: string }
+
+    BankList:
+      type: object
+      required: [banks]
+      properties:
+        banks:
+          type: array
+          items: { $ref: '#/components/schemas/Bank' }
+
+    AccountResolution:
+      type: object
+      required: [account_name, account_number, bank_code]
+      properties:
+        account_name: { type: string }
+        account_number: { type: string }
+        bank_code: { type: string }
+
+    BankTransferRequest:
+      type: object
+      description: >
+        wallet→bank payout request. `pin` is the transaction PIN (verified
+        server-side, never logged). An Idempotency-Key header is required.
+      required: [bank_code, account_number, amount_kobo, pin]
+      properties:
+        bank_code: { type: string }
+        account_number: { type: string }
+        amount_kobo: { type: integer, format: int64, description: Amount in minor units (kobo). }
+        narration: { type: string }
+        save_beneficiary: { type: boolean }
+        provider: { type: string, enum: [paystack, monnify] }
+        pin: { type: string, description: Transaction PIN; verified server-side, never logged. }
+
+    BankToBankRequest:
+      type: object
+      description: >
+        bank→bank pass-through request (collection pay-in → payout). `pin` is the
+        transaction PIN. An Idempotency-Key header is required.
+      required: [source_bank_code, source_account_number, bank_code, account_number, amount_kobo, pin]
+      properties:
+        source_bank_code: { type: string }
+        source_account_number: { type: string }
+        bank_code: { type: string }
+        account_number: { type: string }
+        amount_kobo: { type: integer, format: int64, description: Amount in minor units (kobo). }
+        narration: { type: string }
+        provider: { type: string, enum: [paystack, monnify] }
+        pin: { type: string, description: Transaction PIN; verified server-side, never logged. }
+
+    BankTransfer:
+      type: object
+      required: [id, reference, user_id, type, source_type, status, amount_kobo, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        reference: { type: string }
+        user_id: { type: string, format: uuid }
+        type: { type: string }
+        source_type:
+          type: string
+          enum: [wallet, bank]
+          description: Funding source — wallet debit, or bank collection pass-through.
+        provider:
+          type: string
+          enum: [paystack, monnify]
+          description: Provider that handled the transfer; persisted for webhook routing.
+        status:
+          type: string
+          description: >
+            funds_reserved (wallet src) | awaiting_funding → funded (bank src) →
+            provider_initiated → successful | failed | reversed.
+          enum: [funds_reserved, awaiting_funding, funded, provider_initiated, successful, failed, reversed]
+        amount_kobo: { type: integer, format: int64 }
+        fee_kobo: { type: integer, format: int64 }
+        bank_name: { type: string }
+        account_name: { type: string }
+        account_number_last4: { type: string }
+        provider_transfer_ref: { type: string }
+        narration: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Beneficiary:
+      type: object
+      required: [id, bank_code, account_number_last4, account_name]
+      properties:
+        id: { type: string, format: uuid }
+        bank_code: { type: string }
+        bank_name: { type: string }
+        account_number_last4: { type: string }
+        account_name: { type: string }
+        nickname: { type: string }
+        provider: { type: string, enum: [paystack, monnify] }
+
+    BeneficiaryInput:
+      type: object
+      required: [bank_code, account_number]
+      properties:
+        bank_code: { type: string }
+        account_number: { type: string }
+        account_name: { type: string }
+        nickname: { type: string }
+        provider: { type: string, enum: [paystack, monnify] }
+
+    ResolveAccountRequest:
+      type: object
+      required: [bank_code, account_number]
+      properties:
+        bank_code: { type: string }
+        account_number: { type: string }
+        provider: { type: string, enum: [paystack, monnify] }
+
+    PinInput:
+      type: object
+      required: [pin]
+      properties:
+        pin: { type: string, description: Plaintext PIN; hashed server-side, never stored or logged in the clear. }
+
+    PinStatus:
+      type: object
+      required: [has_pin]
+      properties:
+        has_pin: { type: boolean }
+
+    PinVerifyResult:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ── Banks + name enquiry ──
+  /transfers/banks:
+    get:
+      operationId: transfersListBanks
+      summary: List supported destination banks (provider-backed, payment_banks fallback)
+      tags: [Transfers]
+      responses:
+        '200': { description: Supported banks, content: { application/json: { schema: { $ref: '#/components/schemas/BankList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /transfers/resolve-account:
+    post:
+      operationId: transfersResolveAccount
+      summary: Resolve a bank account name (name enquiry; no funds move)
+      tags: [Transfers]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ResolveAccountRequest' } } }
+      responses:
+        '200': { description: Resolved account name, content: { application/json: { schema: { $ref: '#/components/schemas/AccountResolution' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ── Initiates (PIN + Idempotency-Key required) ──
+  /transfers/bank:
+    post:
+      operationId: transfersBankPayout
+      summary: Initiate a wallet→bank transfer (payout)
+      description: >
+        Debits the wallet (amount + fee) into suspense and initiates a provider
+        payout. REQUIRES an Idempotency-Key and a valid transaction PIN; tier
+        limits enforced fail-closed. Settlement is webhook-driven.
+      tags: [Transfers]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/BankTransferRequest' } } }
+      responses:
+        '201': { description: Transfer accepted (funds reserved, provider initiated), content: { application/json: { schema: { $ref: '#/components/schemas/BankTransfer' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /transfers/bank-to-bank:
+    post:
+      operationId: transfersBankToBank
+      summary: Initiate a bank→bank transfer (provider pass-through)
+      description: >
+        Provider pass-through (ADR-011 §1): source bank funds the transfer
+        through the provider into a clearing account, then it is disbursed to the
+        destination bank. Two legs, webhook-settled. REQUIRES an Idempotency-Key
+        and a valid transaction PIN.
+      tags: [Transfers]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/BankToBankRequest' } } }
+      responses:
+        '201': { description: Transfer accepted (awaiting funding / provider initiated), content: { application/json: { schema: { $ref: '#/components/schemas/BankTransfer' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  # ── Beneficiaries ──
+  /transfers/beneficiaries:
+    get:
+      operationId: transfersListBeneficiaries
+      summary: List the caller's saved bank beneficiaries
+      tags: [Transfers]
+      responses:
+        '200': { description: Saved beneficiaries, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Beneficiary' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: transfersCreateBeneficiary
+      summary: Save a bank beneficiary
+      tags: [Transfers]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/BeneficiaryInput' } } }
+      responses:
+        '201': { description: Beneficiary saved, content: { application/json: { schema: { $ref: '#/components/schemas/Beneficiary' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /transfers/beneficiaries/{id}:
+    delete:
+      operationId: transfersDeleteBeneficiary
+      summary: Delete a saved beneficiary (own beneficiaries only)
+      tags: [Transfers]
+      parameters: [{ $ref: '#/components/parameters/BeneficiaryId' }]
+      responses:
+        '204': { description: Beneficiary deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── Transaction PIN (gates all money movement) ──
+  /transfers/pin/status:
+    get:
+      operationId: transfersPinStatus
+      summary: Whether the caller has set a transaction PIN
+      tags: [Transfers]
+      responses:
+        '200': { description: PIN status, content: { application/json: { schema: { $ref: '#/components/schemas/PinStatus' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /transfers/pin:
+    post:
+      operationId: transfersSetPin
+      summary: Set (or change) the caller's transaction PIN
+      description: Stores a salted hash; the PIN is never logged or returned.
+      tags: [Transfers]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PinInput' } } }
+      responses:
+        '204': { description: PIN set }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /transfers/pin/verify:
+    post:
+      operationId: transfersVerifyPin
+      summary: Verify the caller's transaction PIN
+      description: Verifies against the stored salted hash; attempt-locked, never logged.
+      tags: [Transfers]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PinInput' } } }
+      responses:
+        '200': { description: Verification result, content: { application/json: { schema: { $ref: '#/components/schemas/PinVerifyResult' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }

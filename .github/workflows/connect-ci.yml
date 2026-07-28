@@ -1,0 +1,92 @@
+name: Connect CI
+
+# Formal verification gate for the Paymax Connect (dating/networking) module.
+# The authoring sandbox had no Go toolchain and no time for a full mobile/admin
+# tsc, so the slices were static-verified only — this workflow is the real gate.
+# Blocks merges on red. See docs/prd/dating/PHASE-0-PLAN.md §P0-G.
+
+on:
+  push:
+    paths:
+      - 'backend/internal/connect/**'
+      - 'backend/internal/app/connect_routes.go'
+      - 'backend/internal/app/connect_money_routes.go'
+      - 'backend/internal/app/connect_live_routes.go'
+      - 'backend/internal/app/router.go'
+      - 'backend/internal/config/config.go'
+      - 'supabase/migrations/*connect*.sql'
+      - 'frontend-admin/app/admin/connect/**'
+      - 'frontend-admin/src/services/connectAdminService.ts'
+      - 'frontend-admin/src/services/connectAdminOpsService.ts'
+      - 'frontend-admin/src/types/connectAdmin.ts'
+      - 'mobile-app/reactnative/src/features/connect/**'
+      - 'mobile-app/reactnative/app/connect/**'
+      - 'mobile-app/reactnative/tsconfig.connectcheck.json'
+      - '.github/workflows/connect-ci.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+      - name: Build (whole backend — catches wiring/import breaks)
+        run: go build ./...
+      - name: Vet (connect module)
+        run: go vet ./internal/connect/...
+      - name: Test (connect module — state machines, age gate, validation, hashing)
+        run: go test ./internal/connect/... -count=1 -v
+      - name: Test (all — regression)
+        run: go test ./... -count=1
+
+  admin-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck admin (tsc --noEmit)
+        run: npm run type-check
+
+  mobile-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app/reactnative
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck connect module (scoped)
+        run: npx tsc --noEmit -p tsconfig.connectcheck.json
+      - name: Typecheck whole app (belt-and-braces)
+        run: npx tsc --noEmit -p tsconfig.json
+
+  migration-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject destructive DDL in connect migrations (additive-only)
+        run: |
+          set -e
+          FILES=$(ls supabase/migrations/*connect*.sql 2>/dev/null || true)
+          if [ -z "$FILES" ]; then echo "no connect migrations"; exit 0; fi
+          # Allow idempotent "DROP POLICY/TRIGGER IF EXISTS" (RLS/trigger re-create pattern);
+          # reject real destructive DDL.
+          if grep -iEn '\b(drop\s+(table|column|type)|alter\s+[a-z_."]+\s+drop|drop\s+not\s+null|rename\s+(column|to))\b' $FILES | grep -ivE 'drop\s+(policy|trigger)\s+if\s+exists'; then
+            echo "::error::Destructive DDL found in connect migration (must be additive-only)"; exit 1;
+          fi
+          echo "Additive-only guard passed for: $FILES"

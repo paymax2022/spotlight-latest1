@@ -238,6 +238,11 @@ export async function submitAcademyApplication(input: AcademyApplicationInput) {
   }
 
   if (insertError) {
+    const duplicateText = `${insertError.code || ''} ${insertError.message || ''}`.toLowerCase();
+    if (duplicateText.includes('23505') || duplicateText.includes('already applied')) {
+      throw new ApiError('You have already applied for this Film Academy batch.', 409);
+    }
+
     console.error('Application insert error:', insertError);
     throw new ApiError('Failed to submit application', 500);
   }

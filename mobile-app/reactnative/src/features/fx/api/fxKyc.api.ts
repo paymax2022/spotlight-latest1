@@ -1,0 +1,47 @@
+// ── FX Exchange — KYC/KYB API wrapper ────────────────────────────────────────
+// Verification onboarding (spec A, §16). Mock-flagged; flip USE_MOCK=false once
+// POST /v1/customers + verification endpoints land.
+
+import { api } from '@/api/client';
+import type { Verification, KycSubmission } from '../types/fx.types';
+
+const USE_MOCK = (process.env.EXPO_PUBLIC_FX_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
+const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
+
+// Module-level mock verification state (starts unverified).
+let MOCK_VERIFICATION: Verification = {
+  status: 'unstarted',
+  accountType: 'individual',
+  tier: 0,
+};
+
+export async function getVerification(): Promise<Verification> {
+  if (USE_MOCK) { await delay(200); return { ...MOCK_VERIFICATION }; }
+  return unwrap<Verification>(await api.get('/api/v1/fx/customers/verification'));
+}
+
+export async function submitKyc(submission: KycSubmission): Promise<Verification> {
+  if (USE_MOCK) {
+    await delay(1100);
+    // Individuals auto-route to pending; businesses route to manual review.
+    MOCK_VERIFICATION = {
+      status: submission.accountType === 'business' ? 'review' : 'pending',
+      accountType: submission.accountType,
+      tier: 1,
+      submittedAt: new Date().toISOString(),
+    };
+    return { ...MOCK_VERIFICATION };
+  }
+  return unwrap<Verification>(await api.post('/api/v1/fx/customers', submission));
+}
+
+/** Reset to allow a fresh submission after a rejection (spec A: resubmit). */
+export async function restartKyc(): Promise<Verification> {
+  if (USE_MOCK) {
+    await delay(200);
+    MOCK_VERIFICATION = { status: 'unstarted', accountType: MOCK_VERIFICATION.accountType, tier: 0 };
+    return { ...MOCK_VERIFICATION };
+  }
+  return unwrap<Verification>(await api.post('/api/v1/fx/customers/verification/restart', {}));
+}

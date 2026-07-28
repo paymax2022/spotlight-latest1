@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "skipLibCheck": true },
+  "include": [
+    "src/features/fx/**/*",
+    "app/fx/**/*",
+    "src/components/**/*",
+    "src/constants/**/*",
+    "src/lib/**/*",
+    "src/store/**/*",
+    "src/api/client.ts",
+    "src/features/crowdfunding/components/SegmentedTabs.tsx",
+    "src/features/doctor/components/ToggleRow.tsx"
+  ]
+}

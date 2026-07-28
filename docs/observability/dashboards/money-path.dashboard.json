@@ -1,0 +1,134 @@
+{
+  "__comment": "Paymax money-path & security golden-signals dashboard. Import into Grafana (Dashboards -> Import) or load via provisioning / terraform grafana_dashboard. Depends on the metrics in ../metrics-contract.md; panels are empty until the app emits them. Set the 'DS_PROM' datasource variable on import.",
+  "title": "Paymax — Money Path & Security",
+  "uid": "paymax-money-path",
+  "schemaVersion": 39,
+  "editable": true,
+  "tags": ["paymax", "money-path", "security", "fintech"],
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "1m",
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROM",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Deploys",
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "iconColor": "purple",
+        "__comment": "Add a deploy annotation from CI so releases are visible on the timeline (DevOps skill: make deploys visible)."
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Golden signals — money path",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Money-path error ratio",
+      "datasource": "${DS_PROM}",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.02 } ] } } },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(money_path_errors_total[5m])) / clamp_min(sum(rate(money_path_requests_total[5m])), 0.001)" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Money-path p95 latency (s)",
+      "datasource": "${DS_PROM}",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{route=~\"/api/(v1/wallet|v1/transfers|finance).*\"}[5m])))" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Money-path throughput (req/s by status)",
+      "datasource": "${DS_PROM}",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (status) (rate(money_path_requests_total[5m]))" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Ledger balanced (1=ok)",
+      "datasource": "${DS_PROM}",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 9 },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } } },
+      "targets": [ { "refId": "A", "expr": "min(ledger_balanced)" } ]
+    },
+    {
+      "type": "stat",
+      "title": "Wallet=Ledger (1=ok)",
+      "datasource": "${DS_PROM}",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 9 },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } } },
+      "targets": [ { "refId": "A", "expr": "min(wallet_balance_matches_ledger)" } ]
+    },
+    {
+      "type": "row",
+      "title": "Webhooks (Paystack)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Webhook failure ratio",
+      "datasource": "${DS_PROM}",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(webhook_failed_total[5m])) / clamp_min(sum(rate(webhook_received_total[5m])), 0.001)" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Webhook DLQ depth",
+      "datasource": "${DS_PROM}",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "targets": [ { "refId": "A", "expr": "max(webhook_dlq_depth)" } ]
+    },
+    {
+      "type": "row",
+      "title": "Security & authorization",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Authz denied (req/s)",
+      "datasource": "${DS_PROM}",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
+      "targets": [ { "refId": "A", "expr": "sum(rate(authz_denied_total[5m]))" } ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Security events by severity (req/s)",
+      "datasource": "${DS_PROM}",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
+      "targets": [ { "refId": "A", "expr": "sum by (severity) (rate(security_events_total[5m]))" } ]
+    },
+    {
+      "type": "timeseries",
+      "title": "403 rate on admin/finance routes",
+      "datasource": "${DS_PROM}",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 35 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(http_requests_total{status=\"403\", route=~\"/api/(v1/admin|finance).*\"}[5m])) / clamp_min(sum(rate(http_requests_total{route=~\"/api/(v1/admin|finance).*\"}[5m])), 0.001)" }
+      ]
+    }
+  ]
+}

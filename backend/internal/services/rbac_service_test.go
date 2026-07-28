@@ -135,6 +135,40 @@ func TestNonCriticalPermissionCanBeAssignedByAdmin(t *testing.T) {
 	}
 }
 
+func TestBulkAssignPermissionsEnforcesCriticalGate(t *testing.T) {
+	// A non-super admin bulk-assigning a critical permission must fail that item
+	// (the per-item AssignPermissionToRole gate is preserved through the bulk path).
+	repo := &stubRBACRepo{permission: domain.Permission{Slug: "votes.override"}, roles: []string{"system-admin"}}
+	svc := NewRBACService(repo)
+	results := svc.BulkAssignPermissionsToRole("u1", "r1", []string{"p1", "p2"})
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	for _, res := range results {
+		if res.Success {
+			t.Fatalf("expected critical-permission assignment to be denied for non-super admin")
+		}
+	}
+	if repo.assignCalled {
+		t.Fatalf("repo assign should not be called when gate denies")
+	}
+}
+
+func TestBulkAssignRolesToUserPassesThrough(t *testing.T) {
+	repo := &stubRBACRepo{}
+	svc := NewRBACService(repo)
+	results := svc.BulkAssignRolesToUser("u1", "global", "", "actor", []string{"r1", "r2", ""})
+	// Empty role ids are skipped; two valid grants succeed.
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results (empty skipped), got %d", len(results))
+	}
+	for _, res := range results {
+		if !res.Success {
+			t.Fatalf("expected success, got error %q", res.Error)
+		}
+	}
+}
+
 func TestGetPermissionMatrix(t *testing.T) {
 	repo := &stubRBACRepo{}
 	svc := NewRBACService(repo)

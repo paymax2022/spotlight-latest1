@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">Height limit</title>
+  <desc>White circle, red ring, inward-pointing arrows and a black dimension; maximum vehicle height.</desc>
+  <circle cx="120" cy="120" r="112" fill="#C81E2D"/>
+  <circle cx="120" cy="120" r="88" fill="#FFFFFF"/>
+  <g fill="#141414">
+    <polygon points="104,60 136,60 120,88"/>
+    <polygon points="104,180 136,180 120,152"/>
+    <text x="120" y="121" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="44" text-anchor="middle" dominant-baseline="central">3.5m</text>
+  </g>
+</svg>

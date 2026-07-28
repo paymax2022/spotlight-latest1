@@ -1,0 +1,278 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight — Property Suite API (cross-vertical)
+  version: 1.0.0
+  description: >
+    Property-suite endpoints that span the Estate and Realtor verticals:
+      - Property context (which property role/scope the caller is acting as,
+        plus a switch endpoint to change the active role).
+      - Rent Passport (a tenant's portable tenancy-reliability record): the
+        caller's own passport, and an admin lookup by user id.
+      - Realtor stays gate-pass (entry credential for a confirmed short-stay
+        booking).
+
+    Conventions:
+      - All monetary amounts are integers in minor units (kobo). Never floats.
+      - Auth: Bearer JWT issued by Supabase Auth. Property scope (estate/agency)
+        is derived server-side from membership.
+      - These are NEW endpoints only; existing estate/visitor routes live in
+        contracts/estate.openapi.yaml and contracts/visitor.openapi.yaml.
+    Served by the Go backend under /api/finance.
+
+servers:
+  - url: /api/finance
+    description: Go backend — property suite (Paymax v2)
+
+tags:
+  - { name: PropertyContext, description: Active property role / scope }
+  - { name: RentPassport, description: Tenant tenancy-reliability record }
+  - { name: RealtorStays, description: Short-stay booking credentials }
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+
+  schemas:
+    PropertyRole:
+      type: string
+      enum: [resident, tenant, owner, agent, guard, estate_admin, agency]
+      description: A role the caller may act as within the property suite.
+
+    PropertyContext:
+      type: object
+      required: [userId, activeRole, availableRoles, permissions]
+      properties:
+        userId: { type: string }
+        activeRole: { $ref: '#/components/schemas/PropertyRole' }
+        availableRoles:
+          type: array
+          items: { $ref: '#/components/schemas/PropertyRole' }
+        estateId:
+          type: string
+          nullable: true
+          description: Active estate scope, when acting in an estate role.
+        agencyId:
+          type: string
+          nullable: true
+          description: Active agency scope, when acting in an agency role.
+        permissions:
+          type: array
+          items: { type: string }
+          description: RBAC slugs granted in the active context (e.g. property.manage, estate.admin).
+
+    SwitchContextRequest:
+      type: object
+      required: [role]
+      properties:
+        role: { $ref: '#/components/schemas/PropertyRole' }
+        estateId:
+          type: string
+          nullable: true
+          description: Target estate scope when switching to an estate role.
+        agencyId:
+          type: string
+          nullable: true
+          description: Target agency scope when switching to an agency role.
+
+    RentPassport:
+      type: object
+      required:
+        - userId
+        - displayName
+        - score
+        - onTimePaymentRatePct
+        - tenanciesCompleted
+        - activeTenancies
+        - totalRentPaidKobo
+        - arrearsKobo
+        - verifiedIdentity
+        - issuedAt
+      properties:
+        userId: { type: string }
+        displayName: { type: string }
+        score:
+          type: integer
+          minimum: 0
+          maximum: 1000
+          description: Tenancy-reliability score (0–1000).
+        onTimePaymentRatePct:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: Percentage of rent obligations paid on time.
+        tenanciesCompleted: { type: integer, minimum: 0 }
+        activeTenancies: { type: integer, minimum: 0 }
+        totalRentPaidKobo:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Lifetime rent paid, integer minor units (kobo).
+        arrearsKobo:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current outstanding rent, integer minor units (kobo).
+        verifiedIdentity: { type: boolean }
+        issuedAt: { type: string, format: date-time }
+
+    GatePass:
+      type: object
+      required: [bookingId, passCode, guestName, propertyName, validFrom, validUntil, status]
+      properties:
+        bookingId: { type: string }
+        passCode:
+          type: string
+          description: Short code presented at the gate / scanned by the guard.
+        qrPayload:
+          type: string
+          nullable: true
+          description: Opaque payload encoded into a scannable QR for entry.
+        guestName: { type: string }
+        propertyName: { type: string }
+        unit:
+          type: string
+          nullable: true
+        validFrom: { type: string, format: date-time }
+        validUntil: { type: string, format: date-time }
+        status:
+          type: string
+          enum: [active, expired, revoked, used]
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        code: { type: string, nullable: true }
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Caller lacks the required RBAC permission.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+paths:
+  /property/context:
+    get:
+      tags: [PropertyContext]
+      operationId: getPropertyContext
+      summary: Get the caller's active property role, scope and permissions.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current property context.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PropertyContext' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /property/context/switch:
+    post:
+      tags: [PropertyContext]
+      operationId: switchPropertyContext
+      summary: Switch the caller's active property role / scope.
+      description: >
+        Changes the active role (and optional estate/agency scope) used to
+        resolve permissions for subsequent property-suite requests. The target
+        role must be present in the caller's availableRoles.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SwitchContextRequest' }
+      responses:
+        '200':
+          description: Updated property context.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PropertyContext' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Requested role/scope is not available to the caller.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /property/rent-passport/me:
+    get:
+      tags: [RentPassport]
+      operationId: getMyRentPassport
+      summary: Get the authenticated user's own Rent Passport.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: The caller's Rent Passport.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RentPassport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /property/rent-passport/lookup/{userId}:
+    get:
+      tags: [RentPassport]
+      operationId: lookupRentPassport
+      summary: Look up another user's Rent Passport (admin / landlord).
+      description: >
+        Requires the `property.manage` RBAC permission. Used by estate admins,
+        landlords and agencies to assess a prospective or current tenant.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+          description: Subject user id whose passport is requested.
+      responses:
+        '200':
+          description: The subject user's Rent Passport.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RentPassport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /realtor/stays/{bookingId}/gate-pass:
+    get:
+      tags: [RealtorStays]
+      operationId: getStayGatePass
+      summary: Get the gate pass / entry credential for a short-stay booking.
+      description: >
+        Returns the entry credential (pass code + optional QR) for a confirmed
+        short-stay booking, scoped to the booking's guest and validity window.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema: { type: string }
+          description: Identifier of the confirmed short-stay booking.
+      responses:
+        '200':
+          description: Gate pass for the booking.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GatePass' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }

@@ -10,6 +10,9 @@ export type AuthUser = {
 export function hasPermission(user: AuthUser | null, permission: string): boolean {
   if (!user) return false;
   if (user.roles?.includes('super-admin')) return true;
+  // Wildcard: a user granted '*' passes any permission check (UX-only gate;
+  // backend RBAC remains authoritative).
+  if (user.permissions?.includes('*')) return true;
   return user.permissions?.includes(permission) ?? false;
 }
 

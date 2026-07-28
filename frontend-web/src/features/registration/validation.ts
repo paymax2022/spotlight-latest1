@@ -9,6 +9,25 @@ function getString(value: unknown) {
   return value.trim();
 }
 
+// A `file` field's value differs by client: the web wizard stores the preview
+// URL as a plain string, while the mobile app stores an object
+// ({ previewUrl, fileName, storageKey }). Treat either shape as "a file is
+// present" so a required upload doesn't spuriously fail validation.
+function hasUploadValue(value: unknown): boolean {
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (value && typeof value === 'object') {
+    const v = value as Record<string, unknown>;
+    return Boolean(
+      (typeof v.previewUrl === 'string' && v.previewUrl.trim()) ||
+      (typeof v.signedPreviewUrl === 'string' && v.signedPreviewUrl.trim()) ||
+      (typeof v.storageKey === 'string' && v.storageKey.trim()) ||
+      (typeof v.storagePath === 'string' && v.storagePath.trim()) ||
+      (typeof v.url === 'string' && v.url.trim()),
+    );
+  }
+  return false;
+}
+
 function validateField(field: RegistrationField, value: unknown): string | null {
   if (field.type === 'checkbox') {
     if (field.required && value !== true) {
@@ -40,6 +59,13 @@ function validateField(field: RegistrationField, value: unknown): string | null 
     const num = typeof value === 'number' ? value : Number(String(value).trim());
     if (Number.isNaN(num)) {
       return `${field.label} must be a number.`;
+    }
+    return null;
+  }
+
+  if (field.type === 'file') {
+    if (field.required && !hasUploadValue(value)) {
+      return `${field.label} is required.`;
     }
     return null;
   }
@@ -185,6 +211,11 @@ export function calculateCompletionPercent(steps: RegistrationStep[], formData: 
       continue;
     }
     if (Array.isArray(value) && value.length > 0) {
+      completed += 1;
+      continue;
+    }
+    // Object-shaped uploaded file (mobile client stores { previewUrl, ... }).
+    if (value && typeof value === 'object' && hasUploadValue(value)) {
       completed += 1;
     }
   }

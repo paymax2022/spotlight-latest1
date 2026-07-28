@@ -1,0 +1,956 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight Transport / Mobility API (drift-closing fragment)
+  version: 1.0.0
+  description: >
+    Standalone OpenAPI fragment documenting the live Transport / Mobility
+    endpoints served by the Go backend (Gin) under /api/finance. These routes are
+    registered in backend/internal/app/finance_routes.go inside the
+    FeatureTransportEnabled block (customer /mobility/*, driver /driver/*, admin
+    /api/finance/admin/transport/*) and the nested FeatureTransportModesEnabled
+    block (car-hire, parcel, bus, towing, movers, event transport, business
+    logistics). Handler signatures live in backend/internal/transport/*_handler.go.
+
+    All monetary amounts are integers in minor units (kobo). Every financial
+    mutation that escrows, settles, refunds, or tips MUST carry an
+    `Idempotency-Key` header (prevents duplicate retries / double charge), posts
+    balanced double-entry ledger entries via the shared settlement service, and
+    emits an audit event. Endpoints that require the key are marked below with the
+    `IdempotencyKey` parameter; read-only GETs and non-money mutations omit it.
+
+    Auth: every route requires a Bearer JWT (bearerAuth). Customer + driver routes
+    use requireUserID(); admin routes add RequireAdmin(AdminAPIKey) plus per-area
+    RBAC permission slugs (mobility.view for reads, mobility[.area].manage for
+    mutations) seeded by supabase/migrations/20260621090000_mobility_rbac.sql.
+
+    NOTE: This fragment is kept SEPARATE to avoid clobbering the large master
+    contract. Merge these `paths:` and `components:` into the master
+    `contracts/openapi.yaml` paths block when integrating. Same style/auth/component
+    conventions as contracts/voting.openapi.yaml.
+
+servers:
+  - url: /api/finance
+    description: Go backend (Gin) — transport / mobility module
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: mobility-customer
+    description: Rider-facing ride-hailing endpoints (/mobility/*)
+  - name: mobility-driver
+    description: Driver-facing endpoints (/driver/*)
+  - name: mobility-admin
+    description: Admin control plane (/admin/transport/*) — RBAC-gated, audited
+  - name: car-hire
+    description: Car hire mode (FeatureTransportModesEnabled)
+  - name: parcel
+    description: Parcel delivery mode (FeatureTransportModesEnabled)
+  - name: bus
+    description: Bus booking mode (FeatureTransportModesEnabled)
+  - name: towing
+    description: Towing / roadside mode (FeatureTransportModesEnabled)
+  - name: movers
+    description: Movers (bid-based) mode (FeatureTransportModesEnabled)
+  - name: event-transport
+    description: Event transport mode (FeatureTransportModesEnabled)
+  - name: business-logistics
+    description: Business logistics mode (FeatureTransportModesEnabled)
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string }
+      description: Globally unique key per financial mutation (prevents duplicate retries / double charge).
+    IdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    TripIdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      description: Trip id.
+  schemas:
+    Money: { type: integer, format: int64, description: Amount in kobo (minor units) }
+    LatLng:
+      type: object
+      properties:
+        lat: { type: number }
+        lng: { type: number }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    Ok:
+      type: object
+      description: Generic success envelope. Most handlers wrap the payload in a `data` key or a named key (trip/offers/schedules/…).
+      additionalProperties: true
+
+paths:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CUSTOMER — Ride-hailing (/mobility/*)   [FeatureTransportEnabled]
+  # ═══════════════════════════════════════════════════════════════════════════
+  /mobility/ws:
+    get:
+      tags: [mobility-customer]
+      summary: Real-time trip tracking WebSocket (rider/driver channel)
+      description: Upgrades to a WebSocket; driver GPS is snapped to road and fanned out to rider + driver via Redis pub/sub.
+      responses: { '101': { description: Switching Protocols (WS upgrade) }, '401': { description: Not authenticated } }
+  /mobility/trips/{id}/track:
+    post:
+      tags: [mobility-customer]
+      summary: Ingest a driver GPS position for a trip
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Accepted }, '401': { description: Not authenticated } }
+  /mobility/home:
+    get:
+      tags: [mobility-customer]
+      summary: Mobility home (wallet balance, active trip, saved/recent places, quick tiles)
+      responses: { '200': { description: Home payload }, '401': { description: Not authenticated } }
+  /mobility/config/pricing:
+    get:
+      tags: [mobility-customer]
+      summary: Server-owned pricing config (fare floors/ceilings/commission) for a service type + zone
+      parameters:
+        - { name: service_type, in: query, schema: { type: string } }
+        - { name: zone, in: query, schema: { type: string } }
+      responses: { '200': { description: Pricing config }, '401': { description: Not authenticated } }
+  /mobility/rides/estimate:
+    post:
+      tags: [mobility-customer]
+      summary: Estimate fare/distance/duration for a ride (no money moves)
+      responses: { '200': { description: Estimate }, '401': { description: Not authenticated } }
+  /mobility/rides/request:
+    post:
+      tags: [mobility-customer]
+      summary: Request a ride (escrows fare) — money mutation
+      description: Money mutation — escrows the fare and posts balanced ledger entries. Requires an Idempotency-Key.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '200': { description: Trip created }
+        '401': { description: Not authenticated }
+        '402': { description: Insufficient wallet balance }
+        '422': { description: Offer out of allowed range / validation error }
+  /mobility/rides/active:
+    get:
+      tags: [mobility-customer]
+      summary: Get the caller's active trip (or null)
+      responses: { '200': { description: Active trip or null }, '401': { description: Not authenticated } }
+  /mobility/rides/{id}/offer:
+    post:
+      tags: [mobility-customer]
+      summary: Rider makes/updates a fare offer (negotiation)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Fare offer }, '401': { description: Not authenticated }, '422': { description: Offer out of bounds } }
+  /mobility/rides/{id}/accept-counter:
+    post:
+      tags: [mobility-customer]
+      summary: Rider accepts a driver's counter (re-escrows delta) — money mutation
+      description: Money mutation — re-escrows the fare delta. Requires an Idempotency-Key (idempotent).
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Updated trip }, '401': { description: Not authenticated } }
+  /mobility/rides/{id}/cancel:
+    post:
+      tags: [mobility-customer]
+      summary: Cancel a ride (refunds escrow per policy)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Cancelled trip }, '401': { description: Not authenticated } }
+  /mobility/rides/{id}:
+    get:
+      tags: [mobility-customer]
+      summary: Get a trip by id
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Trip }, '401': { description: Not authenticated }, '404': { description: Not found } }
+  /mobility/rides/{id}/share:
+    post:
+      tags: [mobility-customer]
+      summary: Generate a share link for a trip
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Share link }, '401': { description: Not authenticated } }
+  /mobility/rides/{id}/sos:
+    post:
+      tags: [mobility-customer]
+      summary: Trigger an SOS safety incident on a trip
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Incident opened }, '401': { description: Not authenticated } }
+  /mobility/rides/{id}/rate:
+    post:
+      tags: [mobility-customer]
+      summary: Rate a completed trip (tip is a money mutation)
+      description: Rating + optional tip. When a tip is present this is a money mutation — requires an Idempotency-Key.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Rating }, '401': { description: Not authenticated } }
+  /mobility/parcel/{id}/rate:
+    post:
+      tags: [mobility-customer]
+      summary: Rate the courier on a delivered parcel (tip is a money mutation)
+      description: Sender rates the courier; optional tip (100% to courier). Requires an Idempotency-Key when a tip is present.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Rating }, '401': { description: Not authenticated }, '403': { description: Not the sender / not delivered } }
+  /mobility/towing/{id}/rate:
+    post:
+      tags: [mobility-customer]
+      summary: Rate the operator on a completed tow (tip is a money mutation)
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Rating }, '401': { description: Not authenticated }, '403': { description: Not the customer / not completed } }
+  /mobility/movers/{id}/rate:
+    post:
+      tags: [mobility-customer]
+      summary: Rate the provider on a completed move (tip is a money mutation)
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Rating }, '401': { description: Not authenticated }, '403': { description: Not the customer / not completed } }
+  /mobility/bus/schedules/{id}/seats:
+    get:
+      tags: [mobility-customer]
+      summary: Seat map for a bus schedule
+      description: Returns total seats plus the set of taken seat numbers so the client can render seat selection.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+      responses:
+        '200':
+          description: '{ schedule_id, total_seats, taken: [int], available }'
+        '401': { description: Not authenticated }
+  /mobility/history:
+    get:
+      tags: [mobility-customer]
+      summary: Trip history
+      responses: { '200': { description: Trip list }, '401': { description: Not authenticated } }
+  /mobility/profile:
+    get:
+      tags: [mobility-customer]
+      summary: Get mobility profile
+      responses: { '200': { description: Profile }, '401': { description: Not authenticated } }
+    put:
+      tags: [mobility-customer]
+      summary: Update mobility profile
+      responses: { '200': { description: Profile }, '401': { description: Not authenticated } }
+  /mobility/trusted-contacts:
+    get:
+      tags: [mobility-customer]
+      summary: List trusted safety contacts
+      responses: { '200': { description: Contacts }, '401': { description: Not authenticated } }
+    post:
+      tags: [mobility-customer]
+      summary: Add a trusted safety contact
+      responses: { '200': { description: Created contact }, '401': { description: Not authenticated } }
+  /mobility/trusted-contacts/{id}:
+    delete:
+      tags: [mobility-customer]
+      summary: Delete a trusted safety contact
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '204': { description: Deleted }, '401': { description: Not authenticated } }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DRIVER — Ride-hailing (/driver/*)   [FeatureTransportEnabled]
+  # ═══════════════════════════════════════════════════════════════════════════
+  /driver/onboarding/submit:
+    post:
+      tags: [mobility-driver]
+      summary: Submit driver onboarding
+      responses: { '200': { description: Driver profile }, '401': { description: Not authenticated } }
+  /driver/documents:
+    post:
+      tags: [mobility-driver]
+      summary: Upload/replace a driver document
+      responses: { '200': { description: Updated profile }, '401': { description: Not authenticated } }
+  /driver/vehicle:
+    post:
+      tags: [mobility-driver]
+      summary: Add a driver vehicle
+      responses: { '200': { description: Updated profile }, '401': { description: Not authenticated } }
+  /driver/me:
+    get:
+      tags: [mobility-driver]
+      summary: Get the authenticated driver's profile
+      responses: { '200': { description: Driver profile }, '401': { description: Not authenticated } }
+  /driver/status:
+    patch:
+      tags: [mobility-driver]
+      summary: Set driver online/offline status (+ optional location)
+      responses: { '200': { description: Updated profile }, '401': { description: Not authenticated }, '403': { description: Driver not approved } }
+  /driver/requests:
+    get:
+      tags: [mobility-driver]
+      summary: List ride requests offered to the driver
+      responses: { '200': { description: Requests }, '401': { description: Not authenticated } }
+  /driver/requests/{id}/accept:
+    post:
+      tags: [mobility-driver]
+      summary: Accept a ride request — money mutation
+      description: Money mutation (binds escrow to driver). Requires an Idempotency-Key.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Trip }, '401': { description: Not authenticated } }
+  /driver/requests/{id}/counter:
+    post:
+      tags: [mobility-driver]
+      summary: Driver counters a rider's fare offer
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Fare offer }, '401': { description: Not authenticated } }
+  /driver/trips/{id}/arrive:
+    post:
+      tags: [mobility-driver]
+      summary: Mark driver arrived at pickup
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Trip }, '401': { description: Not authenticated } }
+  /driver/trips/{id}/verify-pin:
+    post:
+      tags: [mobility-driver]
+      summary: Verify the rider's 4-digit trip PIN
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Trip }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+  /driver/trips/{id}/start:
+    post:
+      tags: [mobility-driver]
+      summary: Start the trip
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Trip }, '401': { description: Not authenticated } }
+  /driver/trips/{id}/complete:
+    post:
+      tags: [mobility-driver]
+      summary: Complete the trip (settles driver split) — money mutation
+      description: >
+        Money mutation — releases escrow and settles the driver split via the
+        settlement service. Idempotency-Key recommended; backend treats completion
+        as idempotent.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Trip }, '401': { description: Not authenticated } }
+  /driver/earnings:
+    get:
+      tags: [mobility-driver]
+      summary: Driver earnings summary
+      responses: { '200': { description: Earnings }, '401': { description: Not authenticated } }
+  /driver/sos:
+    post:
+      tags: [mobility-driver]
+      summary: Driver SOS safety incident
+      responses: { '200': { description: Incident }, '401': { description: Not authenticated } }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ADMIN — control plane (/admin/transport/*)   [FeatureTransportEnabled]
+  #   RBAC: mobility.view (GET) / mobility[.area].manage (mutations). Audited.
+  # ═══════════════════════════════════════════════════════════════════════════
+  /admin/transport/dashboard:
+    get: { tags: [mobility-admin], summary: Admin dashboard, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/drivers:
+    get: { tags: [mobility-admin], summary: List drivers, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/drivers/{id}:
+    get:
+      tags: [mobility-admin]
+      summary: Driver detail
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.view } }
+  /admin/transport/drivers/{id}/verification:
+    patch:
+      tags: [mobility-admin]
+      summary: Set driver verification status
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.ride.manage } }
+  /admin/transport/vehicles:
+    get: { tags: [mobility-admin], summary: List vehicles, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/vehicles/{id}/status:
+    patch:
+      tags: [mobility-admin]
+      summary: Set vehicle status
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.ride.manage } }
+  /admin/transport/trips:
+    get: { tags: [mobility-admin], summary: List trips, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/dispatch/live:
+    get: { tags: [mobility-admin], summary: Live dispatch board, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/dispatch/{trip_id}/assign:
+    post:
+      tags: [mobility-admin]
+      summary: Manually assign a trip to a driver
+      parameters: [{ name: trip_id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.ride.manage } }
+  /admin/transport/pricing:
+    get: { tags: [mobility-admin], summary: Get pricing config, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+    patch: { tags: [mobility-admin], summary: Update pricing config, responses: { '200': { description: OK }, '403': { description: Missing mobility.manage } } }
+  /admin/transport/commission:
+    get: { tags: [mobility-admin], summary: List commission tiers, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/commission/{tier}:
+    patch:
+      tags: [mobility-admin]
+      summary: Update a commission tier
+      parameters: [{ name: tier, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.manage } }
+  /admin/transport/safety/incidents:
+    get: { tags: [mobility-admin], summary: List safety incidents, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/safety/incidents/{id}:
+    patch:
+      tags: [mobility-admin]
+      summary: Update a safety incident
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.manage } }
+  /admin/transport/reports/summary:
+    get: { tags: [mobility-admin], summary: Reports summary, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/audit:
+    get: { tags: [mobility-admin], summary: Admin audit feed, responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CAR HIRE   [FeatureTransportModesEnabled]
+  # ═══════════════════════════════════════════════════════════════════════════
+  /mobility/car-hire/quote:
+    post:
+      tags: [car-hire]
+      summary: Quote a car-hire booking (no money moves)
+      responses: { '200': { description: Quote }, '401': { description: Not authenticated } }
+  /mobility/car-hire/book:
+    post:
+      tags: [car-hire]
+      summary: Book a car hire (escrows fare + deposit) — money mutation
+      description: Money mutation — escrows fare + deposit. Requires an Idempotency-Key.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { description: Booking }, '401': { description: Not authenticated }, '402': { description: Insufficient balance } }
+  /mobility/car-hire:
+    get:
+      tags: [car-hire]
+      summary: List car-hire bookings
+      responses: { '200': { description: Bookings }, '401': { description: Not authenticated } }
+  /mobility/car-hire/{id}:
+    get:
+      tags: [car-hire]
+      summary: Get a car-hire booking
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Booking }, '401': { description: Not authenticated }, '404': { description: Not found } }
+  /mobility/car-hire/{id}/activate:
+    post:
+      tags: [car-hire]
+      summary: Activate (start) a car-hire booking
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Booking }, '401': { description: Not authenticated } }
+  /mobility/car-hire/{id}/extend:
+    post:
+      tags: [car-hire]
+      summary: Extend a car hire (escrows delta) — money mutation
+      description: Money mutation — escrows the additional-hours delta. Requires an Idempotency-Key.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Booking }, '401': { description: Not authenticated } }
+  /mobility/car-hire/{id}/complete:
+    post:
+      tags: [car-hire]
+      summary: Complete a car hire (settle split, release deposit) — money mutation
+      description: Money mutation — settles the provider split and releases the deposit. Requires an Idempotency-Key.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Booking }, '401': { description: Not authenticated } }
+  /mobility/car-hire/{id}/cancel:
+    post:
+      tags: [car-hire]
+      summary: Cancel a car-hire booking (refund per policy)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Booking }, '401': { description: Not authenticated } }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # PARCEL DELIVERY   [FeatureTransportModesEnabled]
+  # ═══════════════════════════════════════════════════════════════════════════
+  /mobility/parcels/estimate:
+    post:
+      tags: [parcel]
+      summary: Estimate a parcel delivery (no money moves)
+      responses: { '200': { description: Estimate }, '401': { description: Not authenticated } }
+  /mobility/parcels:
+    post:
+      tags: [parcel]
+      summary: Book a parcel delivery (escrows fare) — money mutation
+      description: Money mutation — escrows the fare. Requires an Idempotency-Key.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '402': { description: Insufficient balance } }
+    get:
+      tags: [parcel]
+      summary: List parcels
+      responses: { '200': { description: Parcels }, '401': { description: Not authenticated } }
+  /mobility/parcels/{id}:
+    get:
+      tags: [parcel]
+      summary: Get a parcel
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '404': { description: Not found } }
+  /mobility/parcels/{id}/cancel:
+    post:
+      tags: [parcel]
+      summary: Cancel a parcel (refund per policy)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Parcel }, '401': { description: Not authenticated } }
+  /driver/parcels/requests:
+    get:
+      tags: [parcel]
+      summary: Courier — list parcel requests
+      responses: { '200': { description: Requests }, '401': { description: Not authenticated } }
+  /driver/parcels/{id}/accept:
+    post:
+      tags: [parcel]
+      summary: Courier — accept a parcel request — money mutation
+      description: Money mutation (binds escrow to courier). Requires an Idempotency-Key.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Parcel }, '401': { description: Not authenticated } }
+  /driver/parcels/{id}/verify-pickup-pin:
+    post:
+      tags: [parcel]
+      summary: Courier — verify the sender's pickup PIN
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+  /driver/parcels/{id}/picked-up:
+    post:
+      tags: [parcel]
+      summary: Courier — mark parcel picked up
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Parcel }, '401': { description: Not authenticated } }
+  /driver/parcels/{id}/verify-dropoff:
+    post:
+      tags: [parcel]
+      summary: Courier — verify the receiver's dropoff PIN (settles on delivery)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Parcel }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # BUS BOOKING   [FeatureTransportModesEnabled]
+  # ═══════════════════════════════════════════════════════════════════════════
+  /mobility/bus/routes:
+    get:
+      tags: [bus]
+      summary: Search bus routes
+      parameters:
+        - { name: origin, in: query, schema: { type: string } }
+        - { name: dest, in: query, schema: { type: string } }
+      responses: { '200': { description: Routes }, '401': { description: Not authenticated } }
+  /mobility/bus/schedules:
+    get:
+      tags: [bus]
+      summary: List schedules for a route (+ seats left)
+      parameters:
+        - { name: route_id, in: query, required: true, schema: { type: string } }
+        - { name: date, in: query, schema: { type: string } }
+      responses: { '200': { description: Schedules }, '400': { description: route_id required }, '401': { description: Not authenticated } }
+  /mobility/bus/book:
+    post:
+      tags: [bus]
+      summary: Book a bus seat (escrow → settle operator on issue) — money mutation
+      description: Money mutation — escrows the fare and settles the operator on ticket issue. Requires an Idempotency-Key.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { description: Ticket }, '401': { description: Not authenticated }, '402': { description: Insufficient balance } }
+  /mobility/bus/tickets:
+    get:
+      tags: [bus]
+      summary: List the caller's bus tickets
+      responses: { '200': { description: Tickets }, '401': { description: Not authenticated } }
+  /mobility/bus/tickets/{id}/cancel:
+    post:
+      tags: [bus]
+      summary: Cancel a bus ticket (refund per policy)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Ticket }, '401': { description: Not authenticated } }
+  /driver/bus/validate:
+    post:
+      tags: [bus]
+      summary: Operator — validate a bus ticket QR at boarding
+      responses: { '200': { description: Validation result }, '401': { description: Not authenticated } }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # TOWING   [FeatureTransportModesEnabled]
+  # ═══════════════════════════════════════════════════════════════════════════
+  /mobility/towing/estimate:
+    post:
+      tags: [towing]
+      summary: Estimate a towing/roadside job (no money moves)
+      responses: { '200': { description: Estimate }, '401': { description: Not authenticated } }
+  /mobility/towing:
+    post:
+      tags: [towing]
+      summary: Book a towing job (escrows fare) — money mutation
+      description: Money mutation — escrows callout + distance fare. Requires an Idempotency-Key.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { description: Towing job }, '401': { description: Not authenticated }, '402': { description: Insufficient balance } }
+    get:
+      tags: [towing]
+      summary: List towing jobs
+      responses: { '200': { description: Jobs }, '401': { description: Not authenticated } }
+  /mobility/towing/{id}:
+    get:
+      tags: [towing]
+      summary: Get a towing job
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Job }, '401': { description: Not authenticated }, '404': { description: Not found } }
+  /mobility/towing/{id}/cancel:
+    post:
+      tags: [towing]
+      summary: Cancel a towing job (refund per policy)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Job }, '401': { description: Not authenticated } }
+  /driver/towing/requests:
+    get:
+      tags: [towing]
+      summary: Operator — list towing requests
+      responses: { '200': { description: Requests }, '401': { description: Not authenticated } }
+  /driver/towing/{id}/accept:
+    post:
+      tags: [towing]
+      summary: Operator — accept a towing request — money mutation
+      description: Money mutation (binds escrow to operator). Requires an Idempotency-Key.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Job }, '401': { description: Not authenticated } }
+  /driver/towing/{id}/en-route:
+    post:
+      tags: [towing]
+      summary: Operator — mark en route
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Job }, '401': { description: Not authenticated } }
+  /driver/towing/{id}/verify-pin:
+    post:
+      tags: [towing]
+      summary: Operator — verify the customer's PIN
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Job }, '401': { description: Not authenticated }, '422': { description: Invalid PIN } }
+  /driver/towing/{id}/start:
+    post:
+      tags: [towing]
+      summary: Operator — start the tow
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Job }, '401': { description: Not authenticated } }
+  /driver/towing/{id}/complete:
+    post:
+      tags: [towing]
+      summary: Operator — complete the tow (settles split) — money mutation
+      description: Money mutation — releases escrow and settles the operator split. Idempotency-Key recommended.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Job }, '401': { description: Not authenticated } }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # MOVERS (bid-based)   [FeatureTransportModesEnabled]
+  # ═══════════════════════════════════════════════════════════════════════════
+  /mobility/movers/quote:
+    post:
+      tags: [movers]
+      summary: Request a moving quote (opens for provider bids; no money moves)
+      responses: { '200': { description: Mover job }, '401': { description: Not authenticated } }
+  /mobility/movers/{id}:
+    get:
+      tags: [movers]
+      summary: Get a mover job (with bids)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Mover job }, '401': { description: Not authenticated }, '404': { description: Not found } }
+  /mobility/movers/{id}/accept-bid:
+    post:
+      tags: [movers]
+      summary: Accept a provider bid (escrow fund) — money mutation
+      description: Money mutation — escrows the accepted bid amount. Requires an Idempotency-Key.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Mover job }, '401': { description: Not authenticated }, '402': { description: Insufficient balance } }
+  /mobility/movers/{id}/confirm-completion:
+    post:
+      tags: [movers]
+      summary: Confirm completion (release escrow → settle provider) — money mutation
+      description: Money mutation — releases escrow and settles the provider. Requires an Idempotency-Key.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Mover job }, '401': { description: Not authenticated } }
+  /mobility/movers/{id}/cancel:
+    post:
+      tags: [movers]
+      summary: Cancel a mover job (refund per policy)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Mover job }, '401': { description: Not authenticated } }
+  /driver/movers/open:
+    get:
+      tags: [movers]
+      summary: Provider — list open mover jobs to bid on
+      responses: { '200': { description: Open jobs }, '401': { description: Not authenticated } }
+  /driver/movers/{id}/bid:
+    post:
+      tags: [movers]
+      summary: Provider — submit a bid on a mover job
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Bid }, '401': { description: Not authenticated } }
+  /driver/movers/{id}/start:
+    post:
+      tags: [movers]
+      summary: Provider — start the move
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Mover job }, '401': { description: Not authenticated } }
+  /driver/movers/{id}/complete:
+    post:
+      tags: [movers]
+      summary: Provider — mark the move complete (awaits customer confirmation)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Mover job }, '401': { description: Not authenticated } }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # EVENT TRANSPORT   [FeatureTransportModesEnabled]
+  #   NOTE: list is GET /mobility/events/transport?event_id=… (query param, NOT
+  #   a path segment) so the static /events/transport tree stays unambiguous.
+  # ═══════════════════════════════════════════════════════════════════════════
+  /mobility/events/transport:
+    get:
+      tags: [event-transport]
+      summary: List event-transport offers for an event
+      parameters:
+        - { name: event_id, in: query, required: true, schema: { type: string } }
+      responses: { '200': { description: Offers }, '400': { description: event_id required }, '401': { description: Not authenticated } }
+    post:
+      tags: [event-transport]
+      summary: Create an event-transport offer (organizer) — money mutation
+      description: Organizer creates an offer. Carries an Idempotency-Key (escrow/settlement-bearing flow).
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { description: Offer }, '401': { description: Not authenticated } }
+  /mobility/events/transport/{id}:
+    get:
+      tags: [event-transport]
+      summary: Get an event-transport offer
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Offer }, '401': { description: Not authenticated }, '404': { description: Not found } }
+  /mobility/events/transport/{id}/book:
+    post:
+      tags: [event-transport]
+      summary: Book seats on an offer (escrow → settle organizer → QR) — money mutation
+      description: Money mutation — escrows the fare and settles the organizer on issue. Requires an Idempotency-Key.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Booking }, '401': { description: Not authenticated }, '409': { description: Offer full } }
+  /mobility/events/bookings:
+    get:
+      tags: [event-transport]
+      summary: List the caller's event-transport bookings
+      responses: { '200': { description: Bookings }, '401': { description: Not authenticated } }
+  /mobility/events/bookings/{id}/cancel:
+    post:
+      tags: [event-transport]
+      summary: Cancel an event-transport booking (refund per policy)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Booking }, '401': { description: Not authenticated } }
+  /driver/events/validate:
+    post:
+      tags: [event-transport]
+      summary: Organizer/driver — validate an event-transport ticket QR
+      responses: { '200': { description: Validation result }, '401': { description: Not authenticated } }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # BUSINESS LOGISTICS   [FeatureTransportModesEnabled]
+  # ═══════════════════════════════════════════════════════════════════════════
+  /mobility/business/accounts:
+    post:
+      tags: [business-logistics]
+      summary: Create a business logistics account
+      responses: { '200': { description: Account }, '401': { description: Not authenticated } }
+  /mobility/business/accounts/me:
+    get:
+      tags: [business-logistics]
+      summary: Get the caller's business account (or null)
+      responses: { '200': { description: Account or null }, '401': { description: Not authenticated } }
+  /mobility/business/deliveries:
+    post:
+      tags: [business-logistics]
+      summary: Create a delivery (escrow/accrue) — money mutation
+      description: Money mutation — escrows or accrues per billing mode. Requires an Idempotency-Key.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { description: Delivery }, '401': { description: Not authenticated } }
+    get:
+      tags: [business-logistics]
+      summary: List deliveries
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+      responses: { '200': { description: Deliveries }, '401': { description: Not authenticated } }
+  /mobility/business/deliveries/{id}:
+    get:
+      tags: [business-logistics]
+      summary: Get a delivery
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Delivery }, '401': { description: Not authenticated }, '404': { description: Not found } }
+  /mobility/business/deliveries/{id}/cancel:
+    post:
+      tags: [business-logistics]
+      summary: Cancel a delivery (refund per policy)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Delivery }, '401': { description: Not authenticated } }
+  /mobility/business/batches:
+    post:
+      tags: [business-logistics]
+      summary: Create a bulk-dispatch batch (escrow/accrue) — money mutation
+      description: Money mutation — escrows or accrues for all batch deliveries. Requires an Idempotency-Key.
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { description: Batch }, '401': { description: Not authenticated } }
+    get:
+      tags: [business-logistics]
+      summary: List batches
+      responses: { '200': { description: Batches }, '401': { description: Not authenticated } }
+  /mobility/business/batches/{id}:
+    get:
+      tags: [business-logistics]
+      summary: Get a batch
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Batch }, '401': { description: Not authenticated }, '404': { description: Not found } }
+  /mobility/business/invoices:
+    get:
+      tags: [business-logistics]
+      summary: List business invoices
+      responses: { '200': { description: Invoices }, '401': { description: Not authenticated } }
+  /mobility/business/analytics:
+    get:
+      tags: [business-logistics]
+      summary: Business logistics analytics
+      responses: { '200': { description: Analytics }, '401': { description: Not authenticated } }
+  /driver/business/requests:
+    get:
+      tags: [business-logistics]
+      summary: Courier — list business delivery requests
+      responses: { '200': { description: Requests }, '401': { description: Not authenticated } }
+  /driver/business/{id}/accept:
+    post:
+      tags: [business-logistics]
+      summary: Courier — accept a business delivery
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Delivery }, '401': { description: Not authenticated } }
+  /driver/business/{id}/picked-up:
+    post:
+      tags: [business-logistics]
+      summary: Courier — mark delivery picked up
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Delivery }, '401': { description: Not authenticated } }
+  /driver/business/{id}/deliver:
+    post:
+      tags: [business-logistics]
+      summary: Courier — mark delivered (settles / collects COD) — money mutation
+      description: Money mutation — settles the courier and reconciles any COD. Idempotency-Key recommended.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: Delivery }, '401': { description: Not authenticated } }
+  /driver/business/{id}/fail:
+    post:
+      tags: [business-logistics]
+      summary: Courier — mark delivery failed
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: Delivery }, '401': { description: Not authenticated } }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ADMIN — modes (/admin/transport/*)   [FeatureTransportModesEnabled]
+  #   RBAC: mobility.view (GET) / mobility[.area].manage (mutations). Audited.
+  # ═══════════════════════════════════════════════════════════════════════════
+  /admin/transport/parcels:
+    get: { tags: [mobility-admin], summary: List parcels (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/parcels/{id}/status:
+    patch:
+      tags: [mobility-admin]
+      summary: Set parcel status (admin)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.parcel.manage } }
+  /admin/transport/bus/routes:
+    get: { tags: [mobility-admin], summary: List bus routes (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+    post: { tags: [mobility-admin], summary: Create a bus route (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.bus.manage } } }
+  /admin/transport/bus/schedules:
+    post: { tags: [mobility-admin], summary: Create a bus schedule (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.bus.manage } } }
+  /admin/transport/bus/schedules/{id}/approve-fare:
+    post:
+      tags: [mobility-admin]
+      summary: Approve a bus schedule fare (admin)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.bus.manage } }
+  /admin/transport/bus/manifest:
+    get: { tags: [mobility-admin], summary: Bus manifest (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/towing:
+    get: { tags: [mobility-admin], summary: List towing jobs (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/towing/{id}/status:
+    patch:
+      tags: [mobility-admin]
+      summary: Set towing job status (admin)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.towing.manage } }
+  /admin/transport/movers:
+    get: { tags: [mobility-admin], summary: List mover jobs (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/movers/{id}/status:
+    patch:
+      tags: [mobility-admin]
+      summary: Set mover job status (admin)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.movers.manage } }
+  /admin/transport/car-hire:
+    get: { tags: [mobility-admin], summary: List car-hire bookings (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/car-hire/{id}/status:
+    patch:
+      tags: [mobility-admin]
+      summary: Set car-hire booking status (admin)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.manage } }
+  /admin/transport/business/accounts:
+    get: { tags: [mobility-admin], summary: List business accounts (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/business/accounts/{id}/status:
+    patch:
+      tags: [mobility-admin]
+      summary: Set business account status (admin)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.logistics.manage } }
+  /admin/transport/business/deliveries:
+    get: { tags: [mobility-admin], summary: List business deliveries (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/business/deliveries/{id}/status:
+    patch:
+      tags: [mobility-admin]
+      summary: Set business delivery status (admin)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.logistics.manage } }
+  /admin/transport/business/invoices:
+    get: { tags: [mobility-admin], summary: List business invoices (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/business/invoices/{id}/issue:
+    post:
+      tags: [mobility-admin]
+      summary: Issue a business invoice (admin) — money mutation
+      description: Money mutation — issues an invoice / accrues receivable. Requires an Idempotency-Key.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.logistics.manage } }
+  /admin/transport/business/invoices/{id}/mark-paid:
+    post:
+      tags: [mobility-admin]
+      summary: Mark a business invoice paid (admin) — money mutation
+      description: Money mutation — records settlement of the invoice. Requires an Idempotency-Key.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.logistics.manage } }
+  /admin/transport/events/offers:
+    get: { tags: [mobility-admin], summary: List event-transport offers (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }
+  /admin/transport/events/offers/{id}/status:
+    patch:
+      tags: [mobility-admin]
+      summary: Set event-transport offer status (admin)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses: { '200': { description: OK }, '403': { description: Missing mobility.event.manage } }
+  /admin/transport/events/bookings:
+    get: { tags: [mobility-admin], summary: List event-transport bookings (admin), responses: { '200': { description: OK }, '403': { description: Missing mobility.view } } }

@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "skipLibCheck": true },
+  "include": [
+    "src/features/ainotes/**/*.ts",
+    "src/features/ainotes/**/*.tsx",
+    "app/ai-notes/**/*.tsx"
+  ]
+}

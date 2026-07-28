@@ -1,0 +1,330 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight — Telemedicine Pre-Consultation Intake API
+  version: 1.0.0
+  description: >
+    Pre-Consultation Health Intake for the Telemedicine module: a guarded
+    prerequisite on an appointment that captures the patient's key health details
+    (chief complaint, symptoms, medications, allergies, conditions, pregnancy,
+    lifestyle, vitals, attachments) before the consultation begins, so the doctor
+    walks in informed.
+
+    Conventions:
+      - Intake is a GUARD on the appointment, not a new booking flow. IN_CONSULT is
+        structurally unreachable until the intake status is SUBMITTED.
+      - Red-flag triage runs server-side at submit: emergency / urgent / self-harm
+        answers surface urgent-care or crisis guidance + routing instead of silently
+        queuing a routine consult. Product-safety gate, not a form field.
+      - Intake is sensitive health data: visible only to the ASSIGNED doctor for the
+        appointment (object-level access) plus the patient. Every doctor access is
+        audit-logged. Explicit, versioned consent is captured at first intake.
+      - Intake is patient-reported decision-support for the clinician, NOT a
+        diagnosis. Allergies & current medications are surfaced prominently to the
+        doctor and carried into any e-prescribing step.
+      - Auth: Bearer JWT issued by Supabase Auth.
+    Module spec — mirrors contracts/nutrition.openapi.yaml. Served under /api/v1
+    via Next.js route handlers that proxy to the Go backend (/api/finance/health/*).
+
+servers:
+  - url: /api/v1
+    description: Intake module routes (Next.js route handlers proxying to Go /api/finance/health/*)
+
+tags:
+  - { name: Intake, description: Member pre-consultation intake (draft, submit, doctor summary, health profile) }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+
+  parameters:
+    AppointmentId:
+      name: appointmentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 128 }
+      description: Client-generated unique key; identical replays are no-ops.
+
+  responses:
+    Unauthorized: { description: Missing or invalid bearer token }
+    Forbidden: { description: Not the assigned doctor / not permitted (object-level access denied) }
+    NotFound: { description: Resource not found }
+    UnprocessableEntity: { description: Required-field validation failed }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        status: { type: integer }
+
+    IntakeAttachment:
+      type: object
+      required: [key, content_type]
+      properties:
+        key: { type: string, description: Storage object key (R2). }
+        content_type: { type: string }
+        filename: { type: string }
+        size_bytes: { type: integer }
+        uploaded_at: { type: string, format: date-time }
+
+    ConsultIntake:
+      type: object
+      description: >
+        A patient's pre-consultation health intake bound to one appointment.
+        IN_CONSULT is unreachable until status=SUBMITTED. Visible only to the
+        assigned doctor (object-level) + patient. Patient-reported, not a diagnosis.
+      required: [appointment_id, consult_id, status, consent_version]
+      properties:
+        appointment_id: { type: string, format: uuid }
+        consult_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [DRAFT, SUBMITTED]
+        consent_version: { type: string }
+        red_flag_level: { type: string, nullable: true }
+        red_flag_severity:
+          type: string
+          nullable: true
+          enum: [emergency, urgent]
+        red_flag_hits:
+          type: array
+          items: { type: string }
+        attachments:
+          type: array
+          items: { $ref: '#/components/schemas/IntakeAttachment' }
+        submitted_at: { type: string, format: date-time, nullable: true }
+
+    IntakeFormField:
+      type: object
+      required: [name, type, required]
+      properties:
+        name: { type: string }
+        type: { type: string, description: 'Widget/value type, e.g. text, textarea, number, single_select, multi_select, slider, boolean, file.' }
+        required: { type: boolean }
+        label: { type: string }
+        options:
+          type: array
+          items: { type: string }
+
+    IntakeSchema:
+      type: object
+      description: Versioned, schema-driven intake form (admin Form Builder drives it without code).
+      required: [version, fields]
+      properties:
+        version: { type: integer }
+        fields:
+          type: array
+          items: { $ref: '#/components/schemas/IntakeFormField' }
+
+    ConsentVersion:
+      type: object
+      description: Versioned consent text ("shared with your doctor to provide care"); the accepted version is tracked per patient.
+      required: [version, body]
+      properties:
+        version: { type: string }
+        body: { type: string }
+        active: { type: boolean }
+        published_at: { type: string, format: date-time }
+
+    IntakeBundle:
+      type: object
+      description: >
+        Everything the patient app needs to render/resume intake: current intake,
+        active form schema, server-computed prefill (profile + last intake), and
+        the consent text/version to show. Never re-asks known profile data.
+      required: [intake, schema, consent]
+      properties:
+        intake: { $ref: '#/components/schemas/ConsultIntake' }
+        schema: { $ref: '#/components/schemas/IntakeSchema' }
+        prefill:
+          type: object
+          additionalProperties: true
+        consent: { $ref: '#/components/schemas/ConsentVersion' }
+
+    IntakeDraft:
+      type: object
+      description: Partial intake answers (offline-first auto-save). Never runs triage, never submits.
+      required: [answers]
+      properties:
+        answers:
+          type: object
+          additionalProperties: true
+        schema_version: { type: integer }
+
+    RedFlagResult:
+      type: object
+      description: >
+        Outcome of the red-flag triage gate at submit. Surfaces urgent-care / crisis
+        guidance + routing instead of silently queuing a routine consult.
+      required: [severity, routing, guidance]
+      properties:
+        severity:
+          type: string
+          enum: [emergency, urgent]
+        routing:
+          type: string
+          enum: [EMERGENCY, URGENT_CARE, CRISIS]
+        guidance:
+          type: object
+          required: [title, body]
+          properties:
+            title: { type: string }
+            body: { type: string }
+            crisis_line: { type: string }
+            show_emergency_number: { type: boolean }
+
+    IntakeSubmitResult:
+      type: object
+      description: Result of submitting intake. Clean submit → READY_FOR_CONSULT; red flag → guidance/routing.
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [DRAFT, SUBMITTED]
+        red_flag: { $ref: '#/components/schemas/RedFlagResult' }
+
+    PresignResult:
+      type: object
+      description: Presigned upload target for an intake attachment (R2 / S3-compatible).
+      required: [upload_url, key]
+      properties:
+        upload_url: { type: string, format: uri }
+        key: { type: string }
+        method: { type: string, default: PUT }
+        headers:
+          type: object
+          additionalProperties: { type: string }
+        expires_at: { type: string, format: date-time }
+
+    DoctorSummary:
+      type: object
+      description: >
+        One-screen structured intake summary for the ASSIGNED doctor at consult
+        start, ordered for clinical use (chief complaint → symptom detail →
+        allergies & current meds [highlighted] → chronic conditions → pregnancy →
+        vitals → attachments). Object-level access only; every read is audit-logged.
+        Patient-reported decision-support, NOT a diagnosis.
+      required: [sections, allergies, current_medications, patient_reported, disclaimer]
+      properties:
+        sections:
+          type: array
+          items:
+            type: object
+            required: [title]
+            properties:
+              title: { type: string }
+              body: { type: string }
+              highlight: { type: boolean }
+        allergies:
+          type: array
+          items: { type: string }
+        current_medications:
+          type: array
+          items: { type: string }
+        patient_reported:
+          type: boolean
+          const: true
+        disclaimer: { type: string }
+
+    HealthProfile:
+      type: object
+      description: Patient's longitudinal record used to pre-fill future intakes; never exposed beyond the care relationship.
+      required: [conditions, medications, allergies]
+      properties:
+        conditions:
+          type: array
+          items: { type: string }
+        medications:
+          type: array
+          items: { type: string }
+        allergies:
+          type: array
+          items: { type: string }
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health/intake/appointments/{appointmentId}:
+    get:
+      operationId: intakeGetBundle
+      summary: Get the intake bundle for an appointment (intake + schema + prefill + consent)
+      tags: [Intake]
+      parameters: [{ $ref: '#/components/parameters/AppointmentId' }]
+      responses:
+        '200': { description: Intake bundle, content: { application/json: { schema: { $ref: '#/components/schemas/IntakeBundle' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /health/intake/appointments/{appointmentId}/draft:
+    put:
+      operationId: intakeSaveDraft
+      summary: Auto-save a partial intake draft (no triage, no submit)
+      tags: [Intake]
+      parameters: [{ $ref: '#/components/parameters/AppointmentId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/IntakeDraft' } } }
+      responses:
+        '200': { description: Draft saved, content: { application/json: { schema: { $ref: '#/components/schemas/ConsultIntake' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /health/intake/appointments/{appointmentId}/submit:
+    post:
+      operationId: intakeSubmit
+      summary: Submit intake (runs red-flag triage; unlocks READY_FOR_CONSULT)
+      description: IN_CONSULT remains structurally unreachable until this succeeds. Red-flag triage may return urgent-care/crisis guidance + routing.
+      tags: [Intake]
+      parameters:
+        - { $ref: '#/components/parameters/AppointmentId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200': { description: Intake submitted (may carry red-flag guidance), content: { application/json: { schema: { $ref: '#/components/schemas/IntakeSubmitResult' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /health/intake/appointments/{appointmentId}/attachments/presign:
+    post:
+      operationId: intakePresignAttachment
+      summary: Presign an upload URL for an intake attachment (photo / lab result / prescription)
+      tags: [Intake]
+      parameters: [{ $ref: '#/components/parameters/AppointmentId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [filename, content_type]
+              properties:
+                filename: { type: string }
+                content_type: { type: string }
+                size_bytes: { type: integer }
+      responses:
+        '200': { description: Presigned upload target, content: { application/json: { schema: { $ref: '#/components/schemas/PresignResult' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /health/intake/appointments/{appointmentId}/doctor-summary:
+    get:
+      operationId: intakeGetDoctorSummary
+      summary: Doctor-facing intake summary (assigned doctor only; access-logged)
+      description: Object-level access (assigned doctor for this appointment only); every read is audit-logged. Allergies & current meds highlighted. Patient-reported, not a diagnosis.
+      tags: [Intake]
+      parameters: [{ $ref: '#/components/parameters/AppointmentId' }]
+      responses:
+        '200': { description: Doctor summary (access audit-logged), content: { application/json: { schema: { $ref: '#/components/schemas/DoctorSummary' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /health/intake/health-profile:
+    get:
+      operationId: intakeGetHealthProfile
+      summary: Get the patient's longitudinal health profile (pre-fills future intakes)
+      tags: [Intake]
+      responses:
+        '200': { description: Health profile, content: { application/json: { schema: { $ref: '#/components/schemas/HealthProfile' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }

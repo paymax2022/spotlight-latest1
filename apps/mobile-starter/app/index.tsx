@@ -5,5 +5,5 @@ import { useAuthStore } from '@/store/authStore';
 
 export default function Index() {
   const user = useAuthStore((s) => s.user);
-  return <Redirect href={user ? '/' : '/login'} />;
+  return <Redirect href={user ? '/(protected)/(tabs)' : '/login'} />;
 }

@@ -1,0 +1,32 @@
+{
+  "project": "Paymax FX — multi-provider FX orchestration (mobile app, admin console, Go backend)",
+  "session_date": "2026-06-21",
+  "note": "Reflects the Paymax FX orchestration session. NOTE: this root file is contended by multiple concurrent agent sessions (Association, Visitor/Election) that overwrite each other. A durable copy of this FX tracker is kept at backend/FX_TASK_TRACKER.json. 'verified' = tsc 0 errors for clients; Go = static audit only (no Go toolchain or network in the sandbox).",
+  "completed_tasks": [
+    { "id": "mobile-fx", "title": "Mobile FX app — full §12 inventory (A KYC, B–H, I/J/K, L)", "verified": "tsc scoped 0 errors; design tokens only" },
+    { "id": "mobile-ui-gaps", "title": "Mobile gaps: recurring + bulk payout, announcements, statement export", "verified": "tsc 0 errors" },
+    { "id": "admin-fx", "title": "Admin FX console — §13 A–M + collections + issued-card registry (13 nav links)", "verified": "tsc --noEmit 0 errors" },
+    { "id": "backend-core", "title": "Go orchestration core: money/router/spread/treasury/quotebook/ledger + service/handler/repo(pgx)", "verified": "static audit" },
+    { "id": "backend-live-adapters", "title": "Live Maplerad + Eversend HTTP adapters (env creds, HMAC webhooks, deterministic fallback)", "verified": "static audit; live calls need network" },
+    { "id": "backend-redis-quotebook", "title": "Redis-backed quote book (QuoteStore iface, SETNX single-execution)", "verified": "static audit" },
+    { "id": "backend-webhooks-treasury", "title": "Signed outbound webhooks + inbound verify + treasury auto-rebalance monitor", "verified": "static audit" },
+    { "id": "backend-recon-engine", "title": "Deep reconciliation engine (amount/fee/missing/orphan breaks, spread proof, daily run)", "verified": "static audit + TestReconcile" },
+    { "id": "backend-webhook-normalization", "title": "Inbound webhook -> canonical status -> ledger update -> normalized emit", "verified": "static audit + TestCanonStatusMapping" },
+    { "id": "provider-efficiency", "title": "Eversend client: token cache + retry/backoff + ctx timeout", "verified": "static audit" },
+    { "id": "backend-contract", "title": "OpenAPI (9 FX paths + 13 schemas) + additive migration 20260621 + config flag + route wiring", "verified": "OpenAPI YAML validated" },
+    { "id": "backend-tests", "title": "Unit + e2e tests (rate math, spread, router, quote, idempotency, insufficient, rate-expired, failover, recon, webhook map)", "verified": "static audit; run in CI" },
+    { "id": "clients-mock-flag", "title": "USE_MOCK env-driven on all clients; mobile live paths namespaced /api/v1/fx", "verified": "tsc 0 errors" },
+    { "id": "go-live-wiring", "title": "CI (.github/workflows/fx-ci.yml), backend/Makefile, cmd/fxsmoke live validator, FX_GO_LIVE.md runbook", "verified": "YAML authored; runs in connected CI/runtime" },
+    { "id": "mobile-dispute", "title": "Mobile dispute flow (H): reason + note + submit screen, wired from tx detail", "verified": "tsc 0 errors" },
+    { "id": "admin-section-n", "title": "Admin §13-N FX Settings: feature flags + corridor/currency/rail catalogues with toggles", "verified": "tsc 0 FX errors" },
+    { "id": "recon-scheduling", "title": "Daily recon scheduler + ledger-derived SettlementSource baseline (StartReconScheduler)", "verified": "Go static audit" },
+    { "id": "session-docs", "title": "QA reports (mobile/admin), orchestration README, this tracker", "verified": "files present" }
+  ],
+  "pending_tasks": [
+    { "id": "ci-compile-test", "priority": 1, "title": "Run backend compile/test in CI", "detail": "fx-ci.yml runs `go build/vet/test` automatically; execute on a Go 1.25 runner and fix anything it surfaces.", "blocked_by": "no Go toolchain in authoring sandbox" },
+    { "id": "live-provider-validation", "priority": 1, "title": "Validate Maplerad/Eversend against live sandbox", "detail": "Run `make fxsmoke` with network + creds; adjust request/response shapes + webhook header names if they differ from the documented API.", "blocked_by": "no network egress in authoring sandbox" },
+    { "id": "go-live-deploy", "priority": 2, "title": "Deploy backend + flip clients + e2e", "detail": "supabase db push; set env (FEATURE_FX_ORCHESTRATION_ENABLED, DB/Redis, provider creds, PAYMAX_WEBHOOK_*); register provider webhooks; set EXPO_PUBLIC_FX_USE_MOCK=false / NEXT_PUBLIC_FX_ADMIN_USE_MOCK=false." },
+    { "id": "settlement-source", "priority": 3, "title": "Real per-provider SettlementSource feed", "detail": "Scheduler + ledger-derived baseline are wired; replace with a provider adapter that pulls the daily settlement file/API for true breaks.", "blocked_by": "provider settlement API access" },
+    { "id": "compliance-vendor", "priority": 4, "title": "Integrate real KYC/AML/sanctions vendor", "detail": "Enforce compliance_block as a first-class quote/transfer outcome server-side." }
+  ]
+}

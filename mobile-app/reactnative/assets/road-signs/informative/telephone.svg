@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">Emergency telephone</title>
+  <desc>Blue rectangular sign with a white telephone handset symbol.</desc>
+  <rect x="30" y="30" width="180" height="180" rx="16" fill="#0B5FB0"/>
+  <path d="M80 74c-8 0-14 6-14 14 0 46 40 86 86 86 8 0 14-6 14-14v-20c0-6-4-11-10-12l-22-5c-5-1-10 1-13 5l-6 8c-14-8-25-19-33-33l8-6c4-3 6-8 5-13l-5-22c-1-6-6-10-12-10z" fill="#FFFFFF"/>
+</svg>

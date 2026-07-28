@@ -1,0 +1,63 @@
+name: CI — CLAUDE.md gates
+
+# Single PR gate that runs every quality gate required by CLAUDE.md.
+# Per-module workflows (doctor-ci.yml, connect-ci.yml, …) remain as scoped,
+# path-filtered fast lanes; this workflow is the repo-wide always-on gate that
+# blocks merges to any branch.
+#
+# Gates enforced (see CLAUDE.md "Commands you should know"):
+#   - frontend-web: golden-path regression (test:regression), money invariants
+#     (test:money), contract:check, tsc --noEmit, ESLint
+#   - frontend-admin: type-check (tsc --noEmit, strict)
+#   - backend (Go 1.25): go build ./... && go vet ./...
+#   - OpenAPI: YAML validity for every contract in contracts/
+#   - migrations: additive-only guard (no DROP / RENAME / type-narrowing)
+#
+# This workflow only verifies. It never deploys, never runs `supabase db push`,
+# never touches live secrets. Deploy lives in deploy-cpanel.yml and is gated
+# separately (push to main only, after this is green).
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-web:
+    name: frontend-web (regression + money + contract + tsc + lint)
+    uses: ./.github/workflows/_reusable-frontend-web.yml
+
+  frontend-admin:
+    name: frontend-admin (type-check)
+    uses: ./.github/workflows/_reusable-node-typecheck.yml
+    with:
+      working-directory: frontend-admin
+      typecheck-command: npm run type-check
+
+  backend:
+    name: backend (go build + vet)
+    uses: ./.github/workflows/_reusable-go-verify.yml
+
+  openapi:
+    name: openapi (validate all contracts)
+    uses: ./.github/workflows/_reusable-openapi-validate.yml
+
+  migration-guard:
+    name: migrations (additive-only guard)
+    uses: ./.github/workflows/_reusable-migration-guard.yml
+
+  secret-hygiene:
+    name: secrets (no client-exposed secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for secrets in client bundles
+        run: bash scripts/check-client-secrets.sh

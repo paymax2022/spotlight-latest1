@@ -1,0 +1,24 @@
+{
+  "session": "Health verticals (HEALTH-BUILD.md): Pharmacy + Laboratory + Veterinary on a shared health platform — built into existing repo via phased swarm; mobile per DESIGN-Mobile.md",
+  "app_root": "mobile-app/reactnative",
+  "backend_root": "backend/internal/health",
+  "admin_root": "frontend-admin/app/admin/health",
+  "last_updated": "2026-06-26",
+  "status": "Built per HEALTH-BUILD phases (P0 shared → Pharmacy → Lab → Vet) under HL-1..12 + NL-1..12. Reused escrow (held→release→refund), scheduler, transport last-mile (med delivery/phlebotomist/home-visit), wallet/ledger/kyc, RBAC + audit, MapService/PostGIS; new shared internal/health/* platform. Mobile 106 screens + 48 feature files (DESIGN-Mobile design system); admin 26 pages; backend 27 Go files; 5 additive migrations. Mobile + admin tsc=0; backend structural 0 problems; migrations additive-only. Go build via health-ci.yml. Services grid: Pharmacy/Laboratory/Veterinary repointed live to /health/{pharmacy,lab,vet}.",
+  "note": "Root file contended by concurrent sessions; durable copy mobile-app/reactnative/HEALTH_TASK_TRACKER.json (also TOP5_/STAYS_/INSURANCE_/REFERRAL_/CONNECT_/CROWDFUNDING_/DOCTOR_TASK_TRACKER.json). Legacy internal/{doctor,pharmacy,telemedicine}+app/(doctor) untouched; new build namespaced internal/health/* + app/health/*.",
+  "completed_tasks": [
+    { "id": "foundation", "title": "Reconciliation plan + reuse map + HL invariants + DB/RBAC contract; 4 Go + 4 web health feature flags." },
+    { "id": "p0", "title": "Shared health platform (providers/records/consent/scheduling/rx dispense-once+POM/consult SOAP/intake) backend + shared mobile (hub/records vault/consent/intake renderer/consult lobby)." },
+    { "id": "pharmacy", "title": "Pharmacy: NAFDAC gating + order escrow hold/release/refund + pharmacist Rx verify + dispense-once + transport dispatch; 29 mobile + 8 admin." },
+    { "id": "lab", "title": "Laboratory: catalog/packages + LabOrder SM + immutable chain-of-custody (break→recollect) + critical-result human escalation + result→vault + phlebotomist dispatch; 30 mobile + 9 admin." },
+    { "id": "vet", "title": "Veterinary: pets+records + vet discovery + appointment SM (tele/home/clinic) + tele-consult+SOAP+e-Rx(→pharmacy)+pet lab(→lab) + vaccination scheduler + emergency SOS routing; 33 mobile + 9 admin." },
+    { "id": "integrate", "title": "Wired 4 Register fns into finance_routes.go (per-flag, member+admin groups); frontend-web proxy /api/v1/health/[...path]; Services grid repoint (pharmacy/lab/vet live → /health/*); admin Health sidebar sections; health-ci.yml. Verified tsc + structural + additive migrations." }
+  ],
+  "pending_tasks": [
+    { "id": "ci-run", "priority": 1, "blocked_on": "Go+Node runner", "title": "Run health-ci.yml (go build/vet/test + web/admin/mobile tsc + migration guard)." },
+    { "id": "tests", "priority": 1, "title": "Add state-machine + object-level authZ + NDPA-access + chain-of-custody + critical-escalation + payment-hold test suites (HEALTH-BUILD §9/§11)." },
+    { "id": "care-loop", "priority": 2, "title": "Finalise cross-vertical care-loop handoffs e2e (consult→Rx→pharmacy; consult→lab→result→vault; consent-gated share→follow-up)." },
+    { "id": "av-provider-audit", "priority": 2, "title": "Wire real tele-consult A/V provider + audit sink + notifier (escalation/reminders) into aggregators (nil-safe now)." },
+    { "id": "go-live", "priority": 2, "blocked_on": "live env + partner verification", "title": "Flip FEATURE_HEALTH_* + mock flags; supabase db push (5 migrations, PostGIS); seed health.* RBAC; onboard/verify VCN/PCN/MLSCN partners + NAFDAC catalog; e2e per phase." }
+  ]
+}

@@ -1,0 +1,36 @@
+name: _reusable go verify
+
+# Reusable: Go 1.25 build + vet for the whole backend.
+# `go build ./...` catches wiring/import breaks across every module;
+# `go vet ./...` is repo-wide static analysis. Tests are run per-module in the
+# scoped module workflows (doctor-ci.yml etc.) because the root has no test
+# runner configured yet (CLAUDE.md). When backend/tests is populated, add
+# `go test ./...` here.
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        required: false
+        type: string
+        default: '1.25.x'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache-dependency-path: backend/go.sum
+      - name: Build (whole backend)
+        run: go build ./...
+      - name: Vet (static analysis)
+        run: go vet ./...

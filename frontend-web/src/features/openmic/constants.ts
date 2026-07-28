@@ -5,6 +5,7 @@ export const OPEN_MIC_CONTEST_TYPE = 'one_beat_one_verse';
 export const defaultVotingConfig: OpenMicVotingConfig = {
   enabled: true,
   freeVoting: true,
+  freeVotesPerDay: 5,
   paidVoting: true,
   votePrice: 50,
   voteBundlePrice: 200,

@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "skipLibCheck": true },
+  "include": [
+    "app/arena/**/*",
+    "src/features/arena/**/*",
+    "src/features/kycverify/useKycStepUp.ts",
+    "src/features/kycverify/types.ts",
+    "src/api/client.ts",
+    "src/api/kyc.api.ts",
+    "src/components/**/*",
+    "src/constants/**/*",
+    "src/lib/**/*"
+  ]
+}

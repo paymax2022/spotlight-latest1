@@ -1,9 +1,12 @@
 import Layout from '@/components/layout/Layout';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import ContestRegistrationWizard from '@/components/forms/ContestRegistrationWizard';
 import StemContestApplicationWizard from '@/components/forms/StemContestApplicationWizard';
+import RealityTvShowApplicationWizard from '@/components/forms/RealityTvShowApplicationWizard';
+import AcademyApplyPage from '@/app/film-academy/apply/page';
 import { programPageBySlug, programPages } from '@/src/data/programPages';
+import { createClient } from '@/lib/supabase/server';
 
 export function generateMetadata({ params }) {
   const program = programPageBySlug[params.slug];
@@ -17,7 +20,13 @@ export function generateMetadata({ params }) {
   };
 }
 
-export default function ProgramApplicationPage({ params }) {
+export default async function ProgramApplicationPage({ params }) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    redirect(`/login?next=${encodeURIComponent(`/apply/${params.slug}`)}`);
+  }
+
   const program = programPageBySlug[params.slug];
 
   if (!program) {
@@ -86,14 +95,18 @@ export default function ProgramApplicationPage({ params }) {
 
               <div className="col-12 col-lg-8">
                 <div className="service-details-items">
-                  {program.slug !== 'reality-tv-show' ? (
+                  {program.heroImage && program.slug !== 'reality-tv-show' && program.slug !== 'film-academy' ? (
                     <div className="details-image">
                       <img src={program.heroImage} alt={program.title} />
                     </div>
                   ) : null}
                   <div className="details-content">
-                    {program.slug === 'stem-contest' ? (
+                    {program.slug === 'reality-tv-show' ? (
+                      <RealityTvShowApplicationWizard />
+                    ) : program.slug === 'stem-contest' ? (
                       <StemContestApplicationWizard contestSlug={program.slug} />
+                    ) : program.slug === 'film-academy' ? (
+                      <AcademyApplyPage embedded />
                     ) : (
                       <ContestRegistrationWizard contestSlug={program.slug} />
                     )}

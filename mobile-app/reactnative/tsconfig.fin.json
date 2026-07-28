@@ -1,0 +1,2 @@
+{ "extends": "./tsconfig.json", "compilerOptions": { "skipLibCheck": true, "noEmit": true, "jsx": "react-jsx" },
+  "include": ["src/features/crowdfunding/utils/mediaPicker.ts","app/crowdfunding/settings/**/*.tsx","app/crowdfunding/milestones/**/*.tsx"] }

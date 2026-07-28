@@ -1,0 +1,254 @@
+openapi: 3.0.3
+info:
+  title: Paymax Connect — Phase 1 Core (profile / verification / matching / discovery / search)
+  version: 1.0.0
+  description: >
+    Phase-1 vertical slice of Paymax Connect. All member routes sit under
+    /api/v1/connect/* behind RequireAuthContext and the FeatureConnectEnabled gate
+    (OFF by default). Admin routes sit under /api/connect/admin/* and require the
+    relevant connect.* RBAC permission. Safety invariants enforced server-side:
+    18+ age gate (Phase 0), per-mode visibility, mutual-only matches, idempotent
+    likes, no plaintext verification PII, approximate (bucketed) distance only.
+servers:
+  - url: /api/v1/connect
+    description: Member (versioned) base path
+  - url: /api/connect/admin
+    description: Admin base path
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string }
+      description: Recommended on POST /likes; uniqueness is also enforced in the DB.
+  schemas:
+    Profile:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        display_name: { type: string, nullable: true }
+        bio: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        verified_badge: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+      description: dob and exact geo are never serialised.
+    ProfileUpdate:
+      type: object
+      properties:
+        display_name: { type: string }
+        bio: { type: string }
+        city: { type: string }
+        geo_lat: { type: number, description: approximate centroid latitude }
+        geo_lng: { type: number, description: approximate centroid longitude }
+    Mode:
+      type: object
+      properties:
+        mode: { type: string, enum: [dating, friendship, professional, creator, event] }
+        visible: { type: boolean }
+        intent_tags: { type: array, items: { type: string } }
+        privacy: { type: object, additionalProperties: true }
+        updated_at: { type: string, format: date-time }
+    ModeUpdate:
+      type: object
+      properties:
+        visible: { type: boolean }
+        intent_tags: { type: array, items: { type: string } }
+        privacy: { type: object, additionalProperties: true }
+    VerificationRecord:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        level: { type: string, enum: [l0, l1] }
+        status: { type: string, enum: [none, pending, l0_passed, l1_passed, failed, rejected] }
+        reason_code: { type: string }
+        provider: { type: string }
+        badge: { type: boolean }
+        verified_at: { type: string, format: date-time, nullable: true }
+        has_evidence: { type: boolean, description: whether an encrypted ref exists (never the ref itself) }
+    SelfieRequest:
+      type: object
+      required: [selfie_ref]
+      properties:
+        level: { type: string, enum: [l0, l1] }
+        selfie_ref: { type: string, description: opaque client upload handle }
+        liveness_token: { type: string, description: sensitive transient token; never persisted or logged }
+    LikeRequest:
+      type: object
+      required: [to_profile]
+      properties:
+        to_profile: { type: string, format: uuid }
+        kind: { type: string, enum: [like, super], default: like }
+    LikeResult:
+      type: object
+      properties:
+        liked: { type: boolean }
+        matched: { type: boolean, description: true only when a mutual like created/exists }
+        match_id: { type: string, format: uuid }
+        kind: { type: string }
+        replayed: { type: boolean, description: true on idempotent duplicate (no-op) }
+    Match:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        other_profile_id: { type: string, format: uuid }
+        other_display_name: { type: string, nullable: true }
+        status: { type: string, enum: [matched, unmatched, blocked] }
+        reason: { type: object, additionalProperties: true, description: match-reason card }
+        matched_at: { type: string, format: date-time }
+    MatchReason:
+      type: object
+      properties:
+        headline: { type: string }
+        factors: { type: array, items: { type: string } }
+        score: { type: number }
+    Candidate:
+      type: object
+      properties:
+        profile_id: { type: string, format: uuid }
+        display_name: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        verified: { type: boolean }
+        intent_tags: { type: array, items: { type: string } }
+        distance_label: { type: string, description: coarse bucketed label e.g. "within 25 km" }
+        match_reason: { $ref: '#/components/schemas/MatchReason' }
+    DiscoveryResponse:
+      type: object
+      properties:
+        mode: { type: string }
+        daily_limit: { type: integer, description: anti-fatigue limit from connect_config }
+        candidates: { type: array, items: { $ref: '#/components/schemas/Candidate' } }
+
+security:
+  - bearerAuth: []
+
+paths:
+  /profile:
+    get:
+      summary: Get the caller's identity profile (creates an empty one on first access)
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Profile' } } } } }
+    patch:
+      summary: Update the caller's identity profile
+      requestBody:
+        content: { application/json: { schema: { $ref: '#/components/schemas/ProfileUpdate' } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Profile' } } } } } }
+
+  /profile/modes:
+    get:
+      summary: List per-mode visibility/intent/privacy for the caller
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/Mode' } } } } } } }
+
+  /profile/modes/{mode}:
+    patch:
+      summary: Set per-mode visibility/intent/privacy (independent per mode)
+      parameters:
+        - name: mode
+          in: path
+          required: true
+          schema: { type: string, enum: [dating, friendship, professional, creator, event] }
+      requestBody:
+        content: { application/json: { schema: { $ref: '#/components/schemas/ModeUpdate' } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Mode' } } } } } }
+        '400': { description: invalid mode }
+
+  /profile/media:
+    post:
+      summary: Add profile media (returns moderation_status=pending; not public until moderated)
+      requestBody:
+        content: { application/json: { schema: { type: object, required: [url], properties: { url: { type: string }, kind: { type: string, enum: [photo, clip] } } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { type: object, properties: { data: { type: object, properties: { id: { type: string }, moderation_status: { type: string } } } } } } } }
+
+  /verification/selfie:
+    post:
+      summary: Submit an L0–L1 selfie/liveness check (evidence stored encrypted/opaque, never raw)
+      requestBody:
+        content: { application/json: { schema: { $ref: '#/components/schemas/SelfieRequest' } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/VerificationRecord' } } } } } }
+        '400': { description: could not be processed }
+
+  /verification/status:
+    get:
+      summary: Get the caller's verification level + badge
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/VerificationRecord' } } } } } }
+
+  /discovery:
+    get:
+      summary: Curated daily matches with match-reason cards (anti-fatigue limit from config)
+      parameters:
+        - name: mode
+          in: query
+          schema: { type: string, enum: [dating, friendship, professional, creator, event], default: dating }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/DiscoveryResponse' } } } } } }
+
+  /likes:
+    post:
+      summary: Like / super-like a profile (idempotent; mutual like creates a match)
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        content: { application/json: { schema: { $ref: '#/components/schemas/LikeRequest' } } }
+      responses:
+        '201': { description: Recorded, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/LikeResult' } } } } } }
+        '400': { description: invalid / self-like / no profile }
+
+  /matches:
+    get:
+      summary: List the caller's mutual matches
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/Match' } } } } } } }
+
+  /search:
+    get:
+      summary: Search with privacy-preserving filters (verified-only, intent, bucketed distance)
+      parameters:
+        - name: mode
+          in: query
+          schema: { type: string, enum: [dating, friendship, professional, creator, event], default: dating }
+        - name: verified
+          in: query
+          schema: { type: boolean }
+          description: when true, only L0/L1-verified profiles are returned
+        - name: intent
+          in: query
+          schema: { type: string }
+          description: a single intent tag to match
+        - name: max_distance_km
+          in: query
+          schema: { type: integer }
+          description: requested radius; snapped up to the nearest configured distance bucket
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 100 }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/Candidate' } } } } } } }
+
+  # --- Admin (base path /api/connect/admin) ---
+  /verification/status#admin:
+    get:
+      summary: 'Admin: verification status read (RBAC connect.verification.view)'
+      description: Served at GET /api/connect/admin/verification/status.
+      responses:
+        '200': { description: OK }
+        '403': { description: forbidden }

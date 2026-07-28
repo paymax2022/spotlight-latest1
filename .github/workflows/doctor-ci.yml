@@ -1,0 +1,82 @@
+name: Doctor CI
+
+# Runs the environment-blocked verification for the doctor (provider) telemedicine
+# module on a Go-enabled, Node-enabled CI runner. The authoring sandbox had no Go
+# toolchain and could not finish a full mobile tsc within its shell time cap, so
+# everything below was static-verified only — this workflow is the formal gate.
+
+on:
+  push:
+    paths:
+      - 'backend/internal/doctor/**'
+      - 'backend/internal/app/finance_routes.go'
+      - 'backend/internal/config/config.go'
+      - 'contracts/doctor.openapi.yaml'
+      - 'supabase/migrations/*doctor*.sql'
+      - 'mobile-app/reactnative/src/features/doctor/**'
+      - 'mobile-app/reactnative/app/(doctor)/**'
+      - 'mobile-app/reactnative/src/api/doctor*.ts'
+      - 'mobile-app/reactnative/src/types/doctor*.ts'
+      - 'mobile-app/reactnative/tsconfig.doctorcheck.json'
+      - '.github/workflows/doctor-ci.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+      - name: Build (whole backend — catches wiring/import breaks)
+        run: go build ./...
+      - name: Vet (doctor module + integrations)
+        run: go vet ./internal/doctor/... ./internal/integrations/...
+      - name: Test (doctor module + integrations — money path, handlers, RTC token format)
+        run: go test ./internal/doctor/... ./internal/integrations/rtc/... ./internal/integrations/llm/... -count=1 -v
+      - name: Test (all — regression)
+        run: go test ./... -count=1
+
+  openapi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate doctor OpenAPI
+        run: |
+          python3 -c "import yaml; yaml.safe_load(open('contracts/doctor.openapi.yaml')); print('doctor OpenAPI YAML valid')"
+
+  mobile-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app/reactnative
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck doctor module (scoped)
+        run: npx tsc --noEmit -p tsconfig.doctorcheck.json
+      - name: Typecheck whole app (belt-and-braces)
+        run: npx tsc --noEmit -p tsconfig.json
+
+  migration-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject destructive DDL in doctor migrations (additive-only)
+        run: |
+          set -e
+          FILES=$(ls supabase/migrations/*doctor*.sql 2>/dev/null || true)
+          if [ -z "$FILES" ]; then echo "no doctor migrations"; exit 0; fi
+          # Allow idempotent "DROP POLICY IF EXISTS" (RLS re-create pattern); reject real destructive DDL.
+          if grep -iEn '\b(drop\s+(table|column|type)|alter\s+[a-z_."]+\s+drop|drop\s+not\s+null|rename\s+(column|to))\b' $FILES | grep -ivE 'drop\s+policy\s+if\s+exists'; then
+            echo "::error::Destructive DDL found in doctor migration (must be additive-only)"; exit 1;
+          fi
+          echo "Additive-only guard passed for: $FILES"

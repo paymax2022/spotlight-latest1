@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">Stop line at junction</title>
+  <desc>Top-down view of asphalt with a solid thick white transverse stop line across the lane.</desc>
+  <rect width="240" height="240" fill="#4A4A4A"/>
+  <rect x="115" y="10" width="10" height="90" fill="#FFFFFF"/>
+  <rect x="30" y="108" width="180" height="22" fill="#FFFFFF"/>
+</svg>

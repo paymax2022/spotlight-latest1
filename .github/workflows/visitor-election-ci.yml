@@ -1,0 +1,173 @@
+name: Visitor & Election CI
+
+# Verifies the Visitor/Gate + Estate Election module on a full Node runner:
+#  - scoped mobile type-check (visitor + election features, screens, libs)
+#  - whole-app type-check (belt-and-braces, cross-module)
+#  - OpenAPI validation (module spec + main spec)
+#  - additive-only guard for any visitor/election SQL migrations
+# (The authoring sandbox cannot complete a full project tsc/bundle.)
+
+on:
+  push:
+    paths:
+      - 'mobile-app/reactnative/src/features/visitor/**'
+      - 'mobile-app/reactnative/src/features/election/**'
+      - 'mobile-app/reactnative/app/visitor/**'
+      - 'mobile-app/reactnative/app/guard/**'
+      - 'mobile-app/reactnative/app/election/**'
+      - 'mobile-app/reactnative/src/lib/push.ts'
+      - 'mobile-app/reactnative/src/lib/brandFonts.ts'
+      - 'mobile-app/reactnative/src/lib/contacts.ts'
+      - 'mobile-app/reactnative/tsconfig.visitorcheck.json'
+      - 'contracts/visitor.openapi.yaml'
+      - 'frontend-web/app/api/v1/elections/**'
+      - 'frontend-web/src/server/elections/**'
+      - 'supabase/migrations/*visitor*.sql'
+      - 'supabase/migrations/*election*.sql'
+      - 'supabase/migrations/*estate_modules*.sql'
+      - 'frontend-web/app/api/v1/visitor/**'
+      - 'frontend-web/src/server/visitor/**'
+      - 'mobile-app/reactnative/src/features/meetings/**'
+      - 'mobile-app/reactnative/app/meetings/**'
+      - 'mobile-app/reactnative/src/features/tasks/**'
+      - 'mobile-app/reactnative/app/tasks/**'
+      - 'mobile-app/reactnative/src/features/announcements/**'
+      - 'mobile-app/reactnative/app/announcements/**'
+      - 'mobile-app/reactnative/src/features/emergencies/**'
+      - 'mobile-app/reactnative/app/emergencies/**'
+      - 'mobile-app/reactnative/src/features/repairs/**'
+      - 'mobile-app/reactnative/app/repairs/**'
+      - 'mobile-app/reactnative/src/features/facilities/**'
+      - 'mobile-app/reactnative/app/facilities/**'
+      - 'mobile-app/reactnative/src/features/documents/**'
+      - 'mobile-app/reactnative/app/documents/**'
+      - 'mobile-app/reactnative/src/features/vendors/**'
+      - 'mobile-app/reactnative/app/vendors/**'
+      - 'mobile-app/reactnative/src/features/dues/**'
+      - 'mobile-app/reactnative/app/dues/**'
+      - 'mobile-app/reactnative/src/features/properties/**'
+      - 'mobile-app/reactnative/app/properties/**'
+      - 'mobile-app/reactnative/src/features/ainotes/**'
+      - 'mobile-app/reactnative/app/ai-notes/**'
+      - 'mobile-app/reactnative/src/features/finance/**'
+      - 'mobile-app/reactnative/app/finance/**'
+      - 'mobile-app/reactnative/src/features/estateadmin/**'
+      - 'mobile-app/reactnative/app/estate-admin/**'
+      - 'mobile-app/reactnative/app/vendor-portal/**'
+      - 'mobile-app/reactnative/src/features/notifications/**'
+      - 'mobile-app/reactnative/app/estate-notifications/**'
+      - 'mobile-app/reactnative/src/features/reports/**'
+      - 'mobile-app/reactnative/app/reports/**'
+      - 'mobile-app/reactnative/src/features/estatesettings/**'
+      - 'mobile-app/reactnative/app/estate-settings/**'
+      - 'supabase/migrations/*estate_modules_38_46*.sql'
+      - 'supabase/migrations/*estate_indexes*.sql'
+      - 'contracts/estate.openapi.yaml'
+      - 'frontend-web/scripts/contract-check.mjs'
+      - 'frontend-web/tests/unit/estate/**'
+      - 'frontend-web/src/server/estate/**'
+      - 'frontend-web/app/api/v1/estate/**'
+      - 'frontend-web/src/server/meetings/**'
+      - 'frontend-web/src/server/estate/**'
+      - '.github/workflows/visitor-election-ci.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  mobile-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app/reactnative
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck visitor + election module (scoped)
+        run: npx tsc --noEmit -p tsconfig.visitorcheck.json
+      - name: Typecheck whole app (belt-and-braces)
+        run: npx tsc --noEmit -p tsconfig.json
+
+  expo-export:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app/reactnative
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Export bundle (verifies Metro can resolve all imports)
+        run: npx expo export --platform ios --output-dir /tmp/visitor-export
+
+  frontend-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Type-check (covers /api/v1/elections handlers + service)
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+
+  openapi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate OpenAPI (modules + main)
+        run: |
+          python3 - <<'PY'
+          import yaml, sys
+          for p in ['contracts/visitor.openapi.yaml', 'contracts/estate.openapi.yaml', 'contracts/openapi.yaml']:
+              try:
+                  d = yaml.safe_load(open(p))
+                  print(f"{p}: valid ({len(d.get('paths', {}))} paths)")
+              except Exception as e:
+                  print(f"{p}: INVALID -> {e}"); sys.exit(1)
+          PY
+
+  contract-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Estate implementation ↔ OpenAPI drift guard
+        run: node scripts/contract-check.mjs
+
+  estate-money-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Dues money-path invariants + AI-notes summariser
+        run: npm run test:money
+
+  migration-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject destructive DDL in visitor/election migrations (additive-only)
+        run: |
+          set -e
+          FILES=$(ls supabase/migrations/*visitor*.sql supabase/migrations/*election*.sql supabase/migrations/*estate_modules*.sql supabase/migrations/*estate_modules_38_46*.sql supabase/migrations/*estate_indexes*.sql 2>/dev/null || true)
+          if [ -z "$FILES" ]; then echo "no visitor/election migrations yet"; exit 0; fi
+          if grep -iE '\b(drop\s+(table|column)|alter\s+column|drop\s+not\s+null)\b' $FILES; then
+            echo "::error::Destructive DDL found (must be additive-only)"; exit 1;
+          fi
+          echo "Additive-only guard passed for: $FILES"

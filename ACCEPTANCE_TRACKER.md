@@ -20,9 +20,33 @@ Last updated: 2026-05-27
 - Frontend route guard + sidebar permission gating
 
 ## Partially Implemented
-- Full auth/session hardening (refresh rotation/session revocation depth)
-- Full audit coverage for every domain module path (STEM/contest/payment flows still mixed)
 - Permission matrix bulk UX present; advanced conflict/warning UX pending
+
+## Implemented (#23 backend remainder)
+- Admin user / RBAC endpoint parity: scoped list filters extended
+  (program/contest/school/country), admin-user JSON export, read-only per-user
+  session/security view (composes #19 surface, feature-gated), bulk role assign
+  (one→many and many→one users), bulk permission→role assign. All deny-by-default
+  permission-gated and audited; reflected in contracts/openapi.yaml (AdminUsers).
+- Audit coverage for STEM sensitive mutations (school create/verification,
+  contest create, submission status, judging score upsert/review-state, judge
+  assignment create/conflict, certificate, badge award, vote transaction) and
+  contest open-mic create — emitted from the handler edge via the existing
+  audit_service (no protected-module edits). Money-path retains its native
+  immutable trails (ledger/kyc_events/tier_limit_events). Matrix:
+  docs/audit/09-audit-coverage-matrix.md.
+
+## Implemented (#19 session hardening)
+- Refresh-token ROTATION with reuse-detection (replay of a rotated token revokes the
+  whole session family) and rotation counter.
+- Session revocation lifecycle: revoke-one (object-level authz), revoke-all,
+  admin force-logout, admin force-password-reset; fail-closed middleware session check
+  (RequireAuthContextWithSessions) rejects revoked/expired sessions 401.
+- Suspicious-login detection on Login: new-device / new-IP / impossible-travel /
+  failed-login-spike → security_events record + Resend notification + configurable
+  escalation policy (notify | force_reverify | force_password_reset). All audited.
+- Feature-flagged: FEATURE_SESSION_HARDENING_ENABLED (default OFF) → endpoints 503;
+  flag-off preserves legacy session behaviour.
 
 ## Pending
 - Full endpoint parity from original long-form spec across all admin user endpoints and specialized modules

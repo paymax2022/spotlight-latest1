@@ -1,0 +1,108 @@
+name: Referral CI
+
+# Formal verification gate for the Paymax/Spotlight Referral Earning System
+# (PRD v1.1, incl. §7A Attribution & Default-Referrer engine). The authoring
+# sandbox has no Go toolchain (proxy blocked), so the Go packages were verified
+# static-only (gofmt-form by construction + structural checks). This workflow is
+# the real gate: full go build/vet/test, mobile + admin + web typecheck, and an
+# additive-only migration guard. Blocks merges on red.
+
+on:
+  push:
+    paths:
+      - 'backend/internal/referral/**'
+      - 'backend/internal/finance/referrals/**'
+      - 'backend/internal/app/referral_routes.go'
+      - 'backend/internal/app/referral_econ_routes.go'
+      - 'backend/internal/app/referral_trust_routes.go'
+      - 'backend/internal/app/finance_routes.go'
+      - 'backend/internal/config/config.go'
+      - 'supabase/migrations/*referral*.sql'
+      - 'frontend-admin/app/admin/referral/**'
+      - 'frontend-admin/src/services/referralAdminService.ts'
+      - 'frontend-admin/src/services/referralAdminOpsService.ts'
+      - 'frontend-admin/src/types/referralAdmin*.ts'
+      - 'frontend-admin/src/components/layouts/AdminSidebar.tsx'
+      - 'frontend-web/app/api/v1/referral/**'
+      - 'frontend-web/app/api/auth/register/route.ts'
+      - 'frontend-web/src/server/referrals/**'
+      - 'mobile-app/reactnative/app/referral/**'
+      - 'mobile-app/reactnative/src/features/referral/**'
+      - 'mobile-app/reactnative/src/constants/modules.ts'
+      - '.github/workflows/referral-ci.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+      - name: Build (whole backend — catches route wiring/import breaks)
+        run: go build ./...
+      - name: Vet (referral module)
+        run: go vet ./internal/referral/...
+      - name: Test (referral module — attribution/house/ledger/overrides)
+        run: go test ./internal/referral/... -count=1 -v
+      - name: Test (all — regression)
+        run: go test ./... -count=1
+
+  admin-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck admin (tsc --noEmit)
+        run: npm run type-check
+
+  web-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck web (referral proxy + signup attribution)
+        run: npx tsc --noEmit
+
+  mobile-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app/reactnative
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck whole app (referral Earn-hub + module registry)
+        run: npx tsc --noEmit -p tsconfig.json
+
+  migration-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject destructive DDL in referral migrations (additive-only)
+        run: |
+          set -e
+          FILES=$(ls supabase/migrations/*referral*.sql 2>/dev/null || true)
+          if [ -z "$FILES" ]; then echo "no referral migrations"; exit 0; fi
+          if echo "$FILES" | xargs sed 's/--.*$//' | grep -iEn '\b(drop\s+(table|column|type)|alter\s+[a-z_."]+\s+drop|drop\s+not\s+null|rename\s+(column|to))\b' | grep -ivE 'drop\s+(policy|trigger)\s+if\s+exists'; then
+            echo "::error::Destructive DDL found in referral migration (must be additive-only)"; exit 1;
+          fi
+          echo "Additive-only guard passed for: $FILES"

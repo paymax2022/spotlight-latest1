@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/domain"
@@ -13,10 +16,54 @@ type AuthHandler struct {
 	auth  services.AuthService
 	rbac  services.RBACService
 	audit services.AuditService
+
+	// Optional session-hardening collaborators (#19). Nil unless wired and the
+	// feature flag is on; Login degrades gracefully when absent.
+	sessions          services.SessionService
+	sessionHardening  bool
 }
 
 func NewAuthHandler(auth services.AuthService, rbac services.RBACService, audit services.AuditService) *AuthHandler {
 	return &AuthHandler{auth: auth, rbac: rbac, audit: audit}
+}
+
+// WithSessions enables session issuance + suspicious-login evaluation on Login.
+func (h *AuthHandler) WithSessions(sessions services.SessionService, enabled bool) *AuthHandler {
+	h.sessions = sessions
+	h.sessionHardening = enabled
+	return h
+}
+
+func asStr(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func asIntFromAny(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	}
+	return 0
+}
+
+// deviceFingerprint derives a stable, non-PII device hint from request headers.
+func deviceFingerprint(c *gin.Context) string {
+	ua := strings.TrimSpace(c.Request.UserAgent())
+	if fp := strings.TrimSpace(c.GetHeader("X-Device-Fingerprint")); fp != "" {
+		return fp
+	}
+	if ua == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(ua))
+	return hex.EncodeToString(sum[:])[:32]
 }
 
 func (h *AuthHandler) Register(c *gin.Context) {
@@ -47,6 +94,29 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 	h.audit.LogLogin("", in.Email, "success", "", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+
+	// Session hardening (#19): issue a tracked session + run suspicious-login
+	// detection. Gated by the feature flag; never blocks a valid login.
+	if h.sessionHardening && h.sessions != nil {
+		userID, _ := out["__user_id"].(string)
+		delete(out, "__user_id") // internal-only hint; never returned to client
+		lc := services.LoginContext{
+			IPAddress:         c.ClientIP(),
+			UserAgent:         c.Request.UserAgent(),
+			DeviceFingerprint: deviceFingerprint(c),
+		}
+		if userID != "" {
+			// Evaluate suspicious signals BEFORE recording this device as known.
+			_, _ = h.sessions.EvaluateLogin(userID, in.Email, lc)
+			tokens := services.IssuedTokens{
+				AccessToken:  asStr(out["access_token"]),
+				RefreshToken: asStr(out["refresh_token"]),
+				ExpiresIn:    asIntFromAny(out["expires_in"]),
+			}
+			_, _ = h.sessions.IssueSession(userID, tokens, lc)
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"success": true, "session": out})
 }
 

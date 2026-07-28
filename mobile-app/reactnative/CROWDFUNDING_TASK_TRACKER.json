@@ -1,0 +1,20 @@
+{
+  "session": "Crowdfunding super-app — mobile (C–Q incl. L/M) + admin (B–J,D) + FULL live backend (6 domains) + CI",
+  "app_roots": ["mobile-app/reactnative", "frontend-admin", "frontend-web", "backend", "supabase"],
+  "last_updated": "2026-06-22",
+  "status": "Client scope 100%. Backend: 7 migrations + 7 Go packages covering campaigns/contributions/wallet/withdrawals/support/notifications/settings/rewards/milestones/creator/contributions/investment(L)/CSR(M) + admin finance/refunds/settlement/disputes/withdrawals/fraud/KYC/compliance/users. Wired end-to-end via 48 Next proxy routes with a mock/live switch. CI gates the networked go build/test + tsc + additive-migration guard.",
+  "note": "Authoritative durable copy. Root task-tracker.json is contended by concurrent agent sessions.",
+  "completed_tasks": [
+    { "id": "mobile", "title": "Mobile C–Q incl. feature-flagged L/M; real image+document uploads; settings forms", "verified": "tsc clean" },
+    { "id": "admin", "title": "Admin B–J + D incl. user/creator management + RBAC gates", "verified": "tsc clean" },
+    { "id": "be-core", "title": "Go core: discovery/detail/categories/submit/contribute + admin review (guarded state machine + audit)", "verified": "go1.25 gofmt clean + 5 pure-logic unit tests PASS" },
+    { "id": "be-domains", "title": "Go domains (parallel build, 6 packages: wallet, engage, investment, csr, adminext, creator) — wallet/ledger/withdrawals, support/help/notifications/settings, investment(L) onboarding/offers/subscribe/portfolio, CSR(M) matches/impact/invoices, admin finance/refunds/settlement/disputes/withdrawals/fraud/KYC/compliance/users, creator stats/my-campaigns/contributions/contributors/milestones/rewards/saved/recently. Idempotency on money mutations; derived balances; RLS+service_role.", "verified": "gofmt -e clean all packages; route registration wired in finance_routes.go (gofmt clean); gin param-conflict (saved/recently) fixed" },
+    { "id": "be-migrations", "title": "7 additive migrations (full + wallet + engage + investment + csr + admin + creator)", "verified": "additive-only guard PASS (no DROP table/column/type/rename; DROP POLICY IF EXISTS allowed)" },
+    { "id": "wiring", "title": "48 Next.js proxy routes (/api/v1/crowdfunding/* → Go); client live-paths repointed across all api files; USE_MOCK env-driven (EXPO_PUBLIC_CF_USE_MOCK / NEXT_PUBLIC_CF_USE_MOCK), default mock", "verified": "mobile + admin tsc clean" },
+    { "id": "ci", "title": ".github/workflows/crowdfunding-ci.yml — backend build/vet/test (go1.25), mobile tsc (tsconfig.crowdfunding.json), admin tsc, additive-migration guard. Runbook docs/CROWDFUNDING_GO_LIVE.md + seed.", "verified": "guard validated locally; workflow mirrors the repo's doctor/fx CI pattern" }
+  ],
+  "pending_tasks": [
+    { "priority": 1, "blocked_on": "CI runner / live env", "title": "Run crowdfunding-ci.yml on a networked runner to formally close the full `go build ./...` + `go test ./internal/crowdfunding/...` (authoring sandbox has no Go module cache; proxy.golang.org blocked). Static verification (gofmt clean + pure-logic tests) already passes under go1.25." },
+    { "priority": 2, "blocked_on": "live env", "title": "E2E live: apply 7 migrations (supabase db push), run Go + frontend-web with FEATURE_CROWDFUNDING_ENABLED=true, set *_CF_USE_MOCK=false, exercise discovery/contribute/wallet/withdrawal/support/investment/CSR/admin-review against real data." }
+  ]
+}

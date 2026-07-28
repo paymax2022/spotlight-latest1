@@ -3,7 +3,69 @@
     "name": "Paymax React Native",
     "slug": "paymax-react-native-app",
     "scheme": "paymaxrn",
-    "plugins": ["expo-router", "expo-secure-store"],
-    "experiments": { "typedRoutes": false }
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Spotlight needs access to your photos so you can add a cover image and gallery to your campaign.",
+          "cameraPermission": "Spotlight needs access to your camera so you can take a photo for your campaign."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Spotlight needs camera access to scan visitor QR codes at the gate."
+        }
+      ],
+      "expo-font",
+      [
+        "expo-notifications",
+        {
+          "color": "#340075"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Spotlight uses your location to set your delivery and pickup address accurately.",
+          "locationWhenInUsePermission": "Spotlight uses your location to set your delivery and pickup address accurately."
+        }
+      ],
+      "@maplibre/maplibre-react-native"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    },
+    "android": {
+      "package": "com.anonymous.paymaxreactnativeapp",
+      "usesCleartextTraffic": true,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ]
+    },
+    "ios": {
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true,
+          "NSExceptionDomains": {
+            "localhost": {
+              "NSExceptionAllowsInsecureHTTPLoads": true
+            },
+            "10.0.2.2": {
+              "NSExceptionAllowsInsecureHTTPLoads": true
+            },
+            "127.0.0.1": {
+              "NSExceptionAllowsInsecureHTTPLoads": true
+            }
+          }
+        }
+      },
+      "bundleIdentifier": "com.anonymous.paymaxreactnativeapp"
+    }
   }
 }

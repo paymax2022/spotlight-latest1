@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">First aid</title>
+  <desc>Blue rectangular sign with a white square and red cross indicating a first-aid post.</desc>
+  <rect x="30" y="30" width="180" height="180" rx="16" fill="#0B5FB0"/>
+  <rect x="70" y="70" width="100" height="100" rx="8" fill="#FFFFFF"/>
+  <path d="M108 82h24v26h26v24h-26v26h-24v-26H82v-24h26z" fill="#D01919"/>
+</svg>

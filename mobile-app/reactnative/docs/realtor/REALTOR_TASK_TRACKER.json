@@ -1,0 +1,26 @@
+{
+  "session": "Realtor super-app module — mobile (A–AK funnel + hotel/maintenance/AI) + admin + backend/CI",
+  "last_updated": "2026-06-20",
+  "status": "100% of buildable scope complete. Only live-env operations (apply migrations, set keys, flip flags) + the admin control-plane HTTP endpoints remain — both env-dependent.",
+  "note": "Root task-tracker.json is contended by concurrent agent sessions; this is the authoritative durable copy. Go-live: docs/realtor/REALTOR_GO_LIVE.md.",
+  "completed_tasks": [
+    { "id": "v1-funnel", "title": "V1 funnel (15 screens): marketplace→search→listing→inspection→apply→application + property-graph migration + QA" },
+    { "id": "v2-lease", "title": "V2 lease (5): lease→e-sign→pay(escrow)→move-in; migration + atomic idempotent pay RPC" },
+    { "id": "v2-owner", "title": "V2 owner (5): cockpit + create property/unit + offering modes + void optimization; owner_dashboard RPC" },
+    { "id": "v3-shortlet", "title": "V3 shortlet (3): book/confirmed/detail; EXCLUDE no-double-booking RPC" },
+    { "id": "v3-aiadmin", "title": "V3 AI listing assistant + admin moderation (mobile)" },
+    { "id": "maintenance", "title": "Maintenance triangle (5): tenant report/ticket + vendor jobs/job; AI triage wired; migration + RLS" },
+    { "id": "hotel", "title": "Hotel + channel sync (8): search/detail/book/confirmed/reservation + front desk + room board + channel sync; hotel migration + availability RPC" },
+    { "id": "ai-expansion", "title": "AI: listing-copy + maintenance triage + shortlet pricing, all via secure Next.js routes to Claude" },
+    { "id": "admin-portal", "title": "Realtor admin web portal (frontend-admin): overview, moderation, verification, payments/escrow; sidebar 'Realtor' section; env-driven mock service" },
+    { "id": "backend", "title": "All data layers env-driven (USE_MOCK default mock); 5 additive migrations + 5 SECURITY DEFINER RPCs; real Supabase branches throughout" },
+    { "id": "ci-runbook", "title": "realtor-ci.yml (mobile+web+admin tsc, lint, additive-only migration guard); GO_LIVE runbook; .env.example docs across 3 apps" },
+    { "id": "verify", "title": "GREEN: full-module mobile tsc rc=0; esbuild bundles clean (75 mobile files/43 screens, 2 web routes, admin pages); 5 migrations pass guard" },
+    { "id": "db-applied", "title": "Migrations APPLIED + VALIDATED on real Postgres 14 (clean-room): 20 tables, 5 RPCs, EXCLUDE no-double-booking, RLS×20. Committed RPC invariant tests (supabase/tests/realtor_rpcs.test.sql + _supabase_shim.sql) PASS 4/4 (idempotent pay, shortlet no-double-book, hotel sold-out, owner dashboard). CI DB job added (postgres:14 service)." }
+  ],
+  "pending_tasks": [
+    { "id": "go-live-ops", "priority": 1, "blocked_on": "live env (Supabase project)", "title": "Run `supabase db push` on the live project + set env + flip flags (per REALTOR_GO_LIVE.md). Migrations + RPCs already validated clean-room on Postgres 14; this is the production push only." },
+    { "id": "admin-endpoints", "priority": 2, "blocked_on": "live backend", "title": "Implement /api/realtor/admin/* HTTP endpoints (overview, listings/pending, listings/{id}/decision, verifications, payments, escrow); admin client already branches mock↔live." },
+    { "id": "future-depth", "priority": 3, "title": "Optional depth: developer project sales, rent financing, multi-tenant white-label, advanced portfolio analytics, more AI (photo tagging, arrears scoring UI)." }
+  ]
+}

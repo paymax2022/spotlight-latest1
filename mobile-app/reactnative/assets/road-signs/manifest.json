@@ -1,0 +1,602 @@
+[
+  {
+    "key": "bend-right",
+    "label": "Bend to right",
+    "category": "warning",
+    "file": "bend-right.svg"
+  },
+  {
+    "key": "bend-left",
+    "label": "Bend to left",
+    "category": "warning",
+    "file": "bend-left.svg"
+  },
+  {
+    "key": "double-bend",
+    "label": "Double bend (first right)",
+    "category": "warning",
+    "file": "double-bend.svg"
+  },
+  {
+    "key": "sharp-deviation-left",
+    "label": "Sharp deviation left",
+    "category": "warning",
+    "file": "sharp-deviation-left.svg"
+  },
+  {
+    "key": "crossroads",
+    "label": "Crossroads ahead",
+    "category": "warning",
+    "file": "crossroads.svg"
+  },
+  {
+    "key": "t-junction",
+    "label": "T-junction",
+    "category": "warning",
+    "file": "t-junction.svg"
+  },
+  {
+    "key": "staggered-junction",
+    "label": "Staggered junction",
+    "category": "warning",
+    "file": "staggered-junction.svg"
+  },
+  {
+    "key": "side-road-right",
+    "label": "Side road on right",
+    "category": "warning",
+    "file": "side-road-right.svg"
+  },
+  {
+    "key": "roundabout-ahead",
+    "label": "Roundabout ahead",
+    "category": "warning",
+    "file": "roundabout-ahead.svg"
+  },
+  {
+    "key": "road-narrows-both",
+    "label": "Road narrows on both sides",
+    "category": "warning",
+    "file": "road-narrows-both.svg"
+  },
+  {
+    "key": "road-narrows-right",
+    "label": "Road narrows on right",
+    "category": "warning",
+    "file": "road-narrows-right.svg"
+  },
+  {
+    "key": "two-way-traffic",
+    "label": "Two-way traffic ahead",
+    "category": "warning",
+    "file": "two-way-traffic.svg"
+  },
+  {
+    "key": "slippery-road",
+    "label": "Slippery road",
+    "category": "warning",
+    "file": "slippery-road.svg"
+  },
+  {
+    "key": "uneven-road",
+    "label": "Uneven road",
+    "category": "warning",
+    "file": "uneven-road.svg"
+  },
+  {
+    "key": "road-hump",
+    "label": "Road hump(s)",
+    "category": "warning",
+    "file": "road-hump.svg"
+  },
+  {
+    "key": "steep-hill-downwards",
+    "label": "Steep hill downwards",
+    "category": "warning",
+    "file": "steep-hill-downwards.svg"
+  },
+  {
+    "key": "steep-hill-upwards",
+    "label": "Steep hill upwards",
+    "category": "warning",
+    "file": "steep-hill-upwards.svg"
+  },
+  {
+    "key": "pedestrian-crossing",
+    "label": "Pedestrian crossing ahead",
+    "category": "warning",
+    "file": "pedestrian-crossing.svg"
+  },
+  {
+    "key": "children-crossing",
+    "label": "Children / school ahead",
+    "category": "warning",
+    "file": "children-crossing.svg"
+  },
+  {
+    "key": "cyclists",
+    "label": "Cycle route ahead",
+    "category": "warning",
+    "file": "cyclists.svg"
+  },
+  {
+    "key": "cattle",
+    "label": "Cattle / animals",
+    "category": "warning",
+    "file": "cattle.svg"
+  },
+  {
+    "key": "wild-animals",
+    "label": "Wild animals",
+    "category": "warning",
+    "file": "wild-animals.svg"
+  },
+  {
+    "key": "road-works",
+    "label": "Road works",
+    "category": "warning",
+    "file": "road-works.svg"
+  },
+  {
+    "key": "falling-rocks",
+    "label": "Falling or fallen rocks",
+    "category": "warning",
+    "file": "falling-rocks.svg"
+  },
+  {
+    "key": "level-crossing-with-gate",
+    "label": "Level crossing with gate/barrier",
+    "category": "warning",
+    "file": "level-crossing-with-gate.svg"
+  },
+  {
+    "key": "level-crossing-without-gate",
+    "label": "Level crossing without gate",
+    "category": "warning",
+    "file": "level-crossing-without-gate.svg"
+  },
+  {
+    "key": "traffic-signals-ahead",
+    "label": "Traffic signals ahead",
+    "category": "warning",
+    "file": "traffic-signals-ahead.svg"
+  },
+  {
+    "key": "narrow-bridge",
+    "label": "Narrow bridge",
+    "category": "warning",
+    "file": "narrow-bridge.svg"
+  },
+  {
+    "key": "other-danger",
+    "label": "Other danger (exclamation)",
+    "category": "warning",
+    "file": "other-danger.svg"
+  },
+  {
+    "key": "low-flying-aircraft",
+    "label": "Low-flying aircraft",
+    "category": "warning",
+    "file": "low-flying-aircraft.svg"
+  },
+  {
+    "key": "quayside",
+    "label": "Quayside or river bank",
+    "category": "warning",
+    "file": "quayside.svg"
+  },
+  {
+    "key": "opening-bridge",
+    "label": "Opening or swing bridge",
+    "category": "warning",
+    "file": "opening-bridge.svg"
+  },
+  {
+    "key": "no-entry",
+    "label": "No entry",
+    "category": "regulatory",
+    "file": "no-entry.svg"
+  },
+  {
+    "key": "stop",
+    "label": "Stop",
+    "category": "regulatory",
+    "file": "stop.svg"
+  },
+  {
+    "key": "give-way",
+    "label": "Give way",
+    "category": "regulatory",
+    "file": "give-way.svg"
+  },
+  {
+    "key": "no-overtaking",
+    "label": "No overtaking",
+    "category": "regulatory",
+    "file": "no-overtaking.svg"
+  },
+  {
+    "key": "no-u-turn",
+    "label": "No U-turn",
+    "category": "regulatory",
+    "file": "no-u-turn.svg"
+  },
+  {
+    "key": "no-left-turn",
+    "label": "No left turn",
+    "category": "regulatory",
+    "file": "no-left-turn.svg"
+  },
+  {
+    "key": "no-right-turn",
+    "label": "No right turn",
+    "category": "regulatory",
+    "file": "no-right-turn.svg"
+  },
+  {
+    "key": "no-motor-vehicles",
+    "label": "No motor vehicles",
+    "category": "regulatory",
+    "file": "no-motor-vehicles.svg"
+  },
+  {
+    "key": "no-parking",
+    "label": "No parking",
+    "category": "regulatory",
+    "file": "no-parking.svg"
+  },
+  {
+    "key": "no-waiting",
+    "label": "No waiting",
+    "category": "regulatory",
+    "file": "no-waiting.svg"
+  },
+  {
+    "key": "no-stopping",
+    "label": "No stopping (clearway)",
+    "category": "regulatory",
+    "file": "no-stopping.svg"
+  },
+  {
+    "key": "speed-limit-30",
+    "label": "Speed limit 30",
+    "category": "regulatory",
+    "file": "speed-limit-30.svg"
+  },
+  {
+    "key": "speed-limit-50",
+    "label": "Speed limit 50",
+    "category": "regulatory",
+    "file": "speed-limit-50.svg"
+  },
+  {
+    "key": "speed-limit-80",
+    "label": "Speed limit 80",
+    "category": "regulatory",
+    "file": "speed-limit-80.svg"
+  },
+  {
+    "key": "speed-limit-100",
+    "label": "Speed limit 100",
+    "category": "regulatory",
+    "file": "speed-limit-100.svg"
+  },
+  {
+    "key": "end-of-speed-limit",
+    "label": "End of speed limit",
+    "category": "regulatory",
+    "file": "end-of-speed-limit.svg"
+  },
+  {
+    "key": "no-horn",
+    "label": "Use of horn prohibited",
+    "category": "regulatory",
+    "file": "no-horn.svg"
+  },
+  {
+    "key": "weight-limit",
+    "label": "Weight limit",
+    "category": "regulatory",
+    "file": "weight-limit.svg"
+  },
+  {
+    "key": "height-limit",
+    "label": "Height limit",
+    "category": "regulatory",
+    "file": "height-limit.svg"
+  },
+  {
+    "key": "width-limit",
+    "label": "Width limit",
+    "category": "regulatory",
+    "file": "width-limit.svg"
+  },
+  {
+    "key": "no-pedestrians",
+    "label": "No pedestrians",
+    "category": "regulatory",
+    "file": "no-pedestrians.svg"
+  },
+  {
+    "key": "no-cycling",
+    "label": "No cycling",
+    "category": "regulatory",
+    "file": "no-cycling.svg"
+  },
+  {
+    "key": "no-goods-vehicles",
+    "label": "No goods vehicles",
+    "category": "regulatory",
+    "file": "no-goods-vehicles.svg"
+  },
+  {
+    "key": "no-buses",
+    "label": "No buses",
+    "category": "regulatory",
+    "file": "no-buses.svg"
+  },
+  {
+    "key": "no-heavy-vehicles",
+    "label": "No heavy vehicles",
+    "category": "regulatory",
+    "file": "no-heavy-vehicles.svg"
+  },
+  {
+    "key": "axle-weight-limit",
+    "label": "Axle weight limit",
+    "category": "regulatory",
+    "file": "axle-weight-limit.svg"
+  },
+  {
+    "key": "turn-left",
+    "label": "Turn left",
+    "category": "mandatory",
+    "file": "turn-left.svg"
+  },
+  {
+    "key": "turn-right",
+    "label": "Turn right",
+    "category": "mandatory",
+    "file": "turn-right.svg"
+  },
+  {
+    "key": "turn-left-ahead",
+    "label": "Turn left ahead",
+    "category": "mandatory",
+    "file": "turn-left-ahead.svg"
+  },
+  {
+    "key": "turn-right-ahead",
+    "label": "Turn right ahead",
+    "category": "mandatory",
+    "file": "turn-right-ahead.svg"
+  },
+  {
+    "key": "keep-left",
+    "label": "Keep left",
+    "category": "mandatory",
+    "file": "keep-left.svg"
+  },
+  {
+    "key": "keep-right",
+    "label": "Keep right",
+    "category": "mandatory",
+    "file": "keep-right.svg"
+  },
+  {
+    "key": "ahead-only",
+    "label": "Ahead only",
+    "category": "mandatory",
+    "file": "ahead-only.svg"
+  },
+  {
+    "key": "ahead-or-left",
+    "label": "Ahead or turn left",
+    "category": "mandatory",
+    "file": "ahead-or-left.svg"
+  },
+  {
+    "key": "ahead-or-right",
+    "label": "Ahead or turn right",
+    "category": "mandatory",
+    "file": "ahead-or-right.svg"
+  },
+  {
+    "key": "mini-roundabout",
+    "label": "Mini roundabout",
+    "category": "mandatory",
+    "file": "mini-roundabout.svg"
+  },
+  {
+    "key": "pass-either-side",
+    "label": "Pass either side",
+    "category": "mandatory",
+    "file": "pass-either-side.svg"
+  },
+  {
+    "key": "minimum-speed-30",
+    "label": "Minimum speed 30",
+    "category": "mandatory",
+    "file": "minimum-speed-30.svg"
+  },
+  {
+    "key": "end-minimum-speed",
+    "label": "End of minimum speed",
+    "category": "mandatory",
+    "file": "end-minimum-speed.svg"
+  },
+  {
+    "key": "route-for-pedestrians",
+    "label": "Route for pedestrians only",
+    "category": "mandatory",
+    "file": "route-for-pedestrians.svg"
+  },
+  {
+    "key": "route-for-cycles",
+    "label": "Route for pedal cycles only",
+    "category": "mandatory",
+    "file": "route-for-cycles.svg"
+  },
+  {
+    "key": "contraflow-bus-lane",
+    "label": "Contraflow bus lane",
+    "category": "mandatory",
+    "file": "contraflow-bus-lane.svg"
+  },
+  {
+    "key": "one-way",
+    "label": "One-way traffic",
+    "category": "informative",
+    "file": "one-way.svg"
+  },
+  {
+    "key": "priority-road",
+    "label": "Priority road",
+    "category": "informative",
+    "file": "priority-road.svg"
+  },
+  {
+    "key": "end-priority-road",
+    "label": "End of priority road",
+    "category": "informative",
+    "file": "end-priority-road.svg"
+  },
+  {
+    "key": "parking",
+    "label": "Parking",
+    "category": "informative",
+    "file": "parking.svg"
+  },
+  {
+    "key": "hospital",
+    "label": "Hospital",
+    "category": "informative",
+    "file": "hospital.svg"
+  },
+  {
+    "key": "no-through-road",
+    "label": "No through road",
+    "category": "informative",
+    "file": "no-through-road.svg"
+  },
+  {
+    "key": "first-aid",
+    "label": "First aid",
+    "category": "informative",
+    "file": "first-aid.svg"
+  },
+  {
+    "key": "fuel-station",
+    "label": "Fuel station",
+    "category": "informative",
+    "file": "fuel-station.svg"
+  },
+  {
+    "key": "telephone",
+    "label": "Emergency telephone",
+    "category": "informative",
+    "file": "telephone.svg"
+  },
+  {
+    "key": "expressway-start",
+    "label": "Expressway begins",
+    "category": "informative",
+    "file": "expressway-start.svg"
+  },
+  {
+    "key": "expressway-end",
+    "label": "Expressway ends",
+    "category": "informative",
+    "file": "expressway-end.svg"
+  },
+  {
+    "key": "tourist-info",
+    "label": "Tourist information",
+    "category": "informative",
+    "file": "tourist-info.svg"
+  },
+  {
+    "key": "bus-stop",
+    "label": "Bus stop",
+    "category": "informative",
+    "file": "bus-stop.svg"
+  },
+  {
+    "key": "lay-by",
+    "label": "Lay-by / rest area",
+    "category": "informative",
+    "file": "lay-by.svg"
+  },
+  {
+    "key": "direction-ahead",
+    "label": "Direction sign",
+    "category": "informative",
+    "file": "direction-ahead.svg"
+  },
+  {
+    "key": "u-turn-permitted",
+    "label": "U-turn permitted",
+    "category": "informative",
+    "file": "u-turn-permitted.svg"
+  },
+  {
+    "key": "keep-distance",
+    "label": "Keep safe distance",
+    "category": "informative",
+    "file": "keep-distance.svg"
+  },
+  {
+    "key": "pedestrian-zone",
+    "label": "Pedestrian crossing point",
+    "category": "informative",
+    "file": "pedestrian-zone.svg"
+  },
+  {
+    "key": "continuous-centre-line",
+    "label": "Continuous (unbroken) centre line",
+    "category": "marking",
+    "file": "continuous-centre-line.svg"
+  },
+  {
+    "key": "broken-centre-line",
+    "label": "Broken centre line",
+    "category": "marking",
+    "file": "broken-centre-line.svg"
+  },
+  {
+    "key": "double-white-line",
+    "label": "Double white line",
+    "category": "marking",
+    "file": "double-white-line.svg"
+  },
+  {
+    "key": "hatched-marking",
+    "label": "Hatched road marking",
+    "category": "marking",
+    "file": "hatched-marking.svg"
+  },
+  {
+    "key": "edge-line",
+    "label": "Edge line",
+    "category": "marking",
+    "file": "edge-line.svg"
+  },
+  {
+    "key": "zebra-crossing",
+    "label": "Zebra crossing",
+    "category": "marking",
+    "file": "zebra-crossing.svg"
+  },
+  {
+    "key": "stop-line",
+    "label": "Stop line at junction",
+    "category": "marking",
+    "file": "stop-line.svg"
+  },
+  {
+    "key": "give-way-line",
+    "label": "Give-way line (broken)",
+    "category": "marking",
+    "file": "give-way-line.svg"
+  }
+]

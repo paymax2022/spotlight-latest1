@@ -47,6 +47,20 @@ type RBACService interface {
 	ListAdminUsers(filter domain.AdminUserFilter) ([]domain.AdminUser, error)
 	GetAdminUser(userID string) (domain.AdminUser, error)
 	UpdateAdminUser(userID string, patch map[string]any) (domain.AdminUser, error)
+	// #23 endpoint-parity additions — bulk role / permission operations. Each
+	// composes the existing single-mutation repo calls (which already enforce
+	// last-super-admin / critical-permission invariants) and returns a per-item
+	// result so callers can audit partial failures.
+	BulkAssignRoleToUsers(roleID, scopeType, scopeID, assignedBy string, userIDs []string) []BulkOpResult
+	BulkAssignRolesToUser(userID, scopeType, scopeID, assignedBy string, roleIDs []string) []BulkOpResult
+	BulkAssignPermissionsToRole(actorUserID, roleID string, permissionIDs []string) []BulkOpResult
+}
+
+// BulkOpResult reports the outcome of one item in a bulk operation.
+type BulkOpResult struct {
+	ID      string `json:"id"`
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
 }
 
 type rbacService struct{ repo repositories.RBACRepository }
@@ -202,4 +216,55 @@ func (s *rbacService) GetAdminUser(userID string) (domain.AdminUser, error) {
 }
 func (s *rbacService) UpdateAdminUser(userID string, patch map[string]any) (domain.AdminUser, error) {
 	return s.repo.UpdateAdminUser(userID, patch)
+}
+
+func (s *rbacService) BulkAssignRoleToUsers(roleID, scopeType, scopeID, assignedBy string, userIDs []string) []BulkOpResult {
+	out := make([]BulkOpResult, 0, len(userIDs))
+	for _, uid := range userIDs {
+		uid = strings.TrimSpace(uid)
+		if uid == "" {
+			continue
+		}
+		res := BulkOpResult{ID: uid, Success: true}
+		if err := s.AssignRoleToUser(uid, roleID, scopeType, scopeID, assignedBy); err != nil {
+			res.Success = false
+			res.Error = err.Error()
+		}
+		out = append(out, res)
+	}
+	return out
+}
+
+func (s *rbacService) BulkAssignRolesToUser(userID, scopeType, scopeID, assignedBy string, roleIDs []string) []BulkOpResult {
+	out := make([]BulkOpResult, 0, len(roleIDs))
+	for _, rid := range roleIDs {
+		rid = strings.TrimSpace(rid)
+		if rid == "" {
+			continue
+		}
+		res := BulkOpResult{ID: rid, Success: true}
+		if err := s.AssignRoleToUser(userID, rid, scopeType, scopeID, assignedBy); err != nil {
+			res.Success = false
+			res.Error = err.Error()
+		}
+		out = append(out, res)
+	}
+	return out
+}
+
+func (s *rbacService) BulkAssignPermissionsToRole(actorUserID, roleID string, permissionIDs []string) []BulkOpResult {
+	out := make([]BulkOpResult, 0, len(permissionIDs))
+	for _, pid := range permissionIDs {
+		pid = strings.TrimSpace(pid)
+		if pid == "" {
+			continue
+		}
+		res := BulkOpResult{ID: pid, Success: true}
+		if err := s.AssignPermissionToRole(actorUserID, roleID, pid); err != nil {
+			res.Success = false
+			res.Error = err.Error()
+		}
+		out = append(out, res)
+	}
+	return out
 }

@@ -1,0 +1,62 @@
+{
+  "index_patterns": ["mkt_listings_ng_v*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 3,
+      "number_of_replicas": 1,
+      "analysis": {
+        "filter": {
+          "edge_ngram_filter": { "type": "edge_ngram", "min_gram": 2, "max_gram": 15 },
+          "ng_synonym_filter": {
+            "type": "synonym",
+            "synonyms_path": "analysis/ng_synonyms.txt"
+          }
+        },
+        "analyzer": {
+          "listing_index_analyzer": {
+            "type": "custom",
+            "tokenizer": "standard",
+            "filter": ["lowercase", "ng_synonym_filter", "edge_ngram_filter"]
+          },
+          "listing_search_analyzer": {
+            "type": "custom",
+            "tokenizer": "standard",
+            "filter": ["lowercase", "ng_synonym_filter"]
+          }
+        }
+      }
+    },
+    "mappings": {
+      "properties": {
+        "listing_id":        { "type": "keyword" },
+        "market_id":         { "type": "keyword" },
+        "seller_id":         { "type": "keyword" },
+        "category_id":       { "type": "keyword" },
+        "category_path":     { "type": "keyword" },
+        "title": {
+          "type": "text",
+          "analyzer": "listing_index_analyzer",
+          "search_analyzer": "listing_search_analyzer"
+        },
+        "description": {
+          "type": "text",
+          "analyzer": "listing_index_analyzer",
+          "search_analyzer": "listing_search_analyzer"
+        },
+        "attrs":             { "type": "flattened" },
+        "price_kobo":        { "type": "long" },
+        "condition":         { "type": "keyword" },
+        "geo":               { "type": "geo_point" },
+        "state":             { "type": "keyword" },
+        "lga":               { "type": "keyword" },
+        "seller_trust_score":{ "type": "float" },
+        "quality_score":     { "type": "float" },
+        "boost_weight":      { "type": "float" },
+        "escrow_eligible":   { "type": "boolean" },
+        "status":            { "type": "keyword" },
+        "created_at":        { "type": "date" },
+        "freshness_ts":      { "type": "date" }
+      }
+    }
+  }
+}

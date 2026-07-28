@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">Give-way line (broken)</title>
+  <desc>Top-down view of asphalt with a broken white transverse give-way line across the lane.</desc>
+  <rect width="240" height="240" fill="#4A4A4A"/>
+  <g fill="#FFFFFF">
+    <rect x="34" y="108" width="26" height="20"/>
+    <rect x="72" y="108" width="26" height="20"/>
+    <rect x="110" y="108" width="26" height="20"/>
+    <rect x="148" y="108" width="26" height="20"/>
+    <rect x="186" y="108" width="26" height="20"/>
+  </g>
+</svg>

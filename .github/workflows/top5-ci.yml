@@ -1,0 +1,102 @@
+name: Top5 CI
+
+# Verification gate for the Top-5 expansion (Savings, Social/Escrow, Events/
+# Cashless, Loyalty/Black, Creators) + shared primitives (scheduler, escrow,
+# cashtag, credential, points, spray). No Go toolchain in the authoring sandbox,
+# so packages were verified static-only; this is the real gate: full go build/
+# vet/test, mobile + admin + web typecheck, additive-only migration guard.
+
+on:
+  push:
+    paths:
+      - 'backend/internal/{scheduler,escrow,cashtag,savings,social,credential,points,top5events,loyalty,creators,p2pmarket,spray}/**'
+      - 'backend/internal/app/top5_*.go'
+      - 'backend/internal/app/finance_routes.go'
+      - 'backend/internal/config/config.go'
+      - 'supabase/migrations/*top5*.sql'
+      - 'supabase/migrations/*_savings.sql'
+      - 'supabase/migrations/*_social.sql'
+      - 'supabase/migrations/*_creators.sql'
+      - 'supabase/migrations/*loyalty*.sql'
+      - 'frontend-admin/app/admin/{savings,social,events,loyalty,creators,social-escrow,loyalty-black}/**'
+      - 'frontend-admin/src/services/{savings,social,events,loyalty,creators,escrow,black}AdminService.ts'
+      - 'frontend-admin/src/components/layouts/AdminSidebar.tsx'
+      - 'frontend-web/app/api/v1/{savings,social,events,loyalty,creators,p2p,spray}/**'
+      - 'frontend-web/src/lib/feature-flags.ts'
+      - 'mobile-app/reactnative/app/{savings,social,events,loyalty,creators}/**'
+      - 'mobile-app/reactnative/src/features/{savings,social,events,loyalty,creators}/**'
+      - 'mobile-app/reactnative/src/constants/modules.ts'
+      - '.github/workflows/top5-ci.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+      - name: Build (whole backend — catches wiring/import breaks)
+        run: go build ./...
+      - name: Vet (top-5 modules + shared primitives)
+        run: go vet ./internal/scheduler/... ./internal/escrow/... ./internal/cashtag/... ./internal/savings/... ./internal/social/... ./internal/credential/... ./internal/points/... ./internal/top5events/... ./internal/loyalty/... ./internal/creators/... ./internal/p2pmarket/... ./internal/spray/...
+      - name: Test (state machines, escrow, Ajo no-yield/no-guarantor, residual refund, QR single-use, dispute arbitration)
+        run: go test ./internal/{scheduler,escrow,cashtag,savings,social,credential,points,top5events,loyalty,creators,p2pmarket,spray}/... -count=1 -v
+      - name: Test (all — regression)
+        run: go test ./... -count=1
+
+  admin-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - run: npm run type-check
+
+  web-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - run: npx tsc --noEmit
+
+  mobile-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app/reactnative
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - run: npx tsc --noEmit -p tsconfig.json
+
+  migration-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject destructive DDL in top-5 migrations (additive-only)
+        run: |
+          set -e
+          FILES=$(ls supabase/migrations/*top5*.sql supabase/migrations/*_savings.sql supabase/migrations/*_social.sql supabase/migrations/*_creators.sql supabase/migrations/*loyalty*.sql 2>/dev/null | sort -u || true)
+          if [ -z "$FILES" ]; then echo "no top5 migrations"; exit 0; fi
+          if echo "$FILES" | xargs sed 's/--.*$//' | grep -iEn '\b(drop\s+(table|column|type)|alter\s+[a-z_."]+\s+drop|drop\s+not\s+null|rename\s+(column|to))\b' | grep -ivE 'drop\s+(policy|trigger)\s+if\s+exists'; then
+            echo "::error::Destructive DDL found in top-5 migration (must be additive-only)"; exit 1;
+          fi
+          echo "Additive-only guard passed."

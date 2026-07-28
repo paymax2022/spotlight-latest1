@@ -47,6 +47,15 @@ func (m mockRBAC) GetAdminUser(string) (domain.AdminUser, error)                
 func (m mockRBAC) UpdateAdminUser(string, map[string]any) (domain.AdminUser, error) {
 	return domain.AdminUser{}, nil
 }
+func (m mockRBAC) BulkAssignRoleToUsers(string, string, string, string, []string) []services.BulkOpResult {
+	return nil
+}
+func (m mockRBAC) BulkAssignRolesToUser(string, string, string, string, []string) []services.BulkOpResult {
+	return nil
+}
+func (m mockRBAC) BulkAssignPermissionsToRole(string, string, []string) []services.BulkOpResult {
+	return nil
+}
 
 type errRBAC struct{}
 
@@ -79,6 +88,15 @@ func (e errRBAC) ListAdminUsers(domain.AdminUserFilter) ([]domain.AdminUser, err
 func (e errRBAC) GetAdminUser(string) (domain.AdminUser, error)                     { return domain.AdminUser{}, nil }
 func (e errRBAC) UpdateAdminUser(string, map[string]any) (domain.AdminUser, error) {
 	return domain.AdminUser{}, nil
+}
+func (e errRBAC) BulkAssignRoleToUsers(string, string, string, string, []string) []services.BulkOpResult {
+	return nil
+}
+func (e errRBAC) BulkAssignRolesToUser(string, string, string, string, []string) []services.BulkOpResult {
+	return nil
+}
+func (e errRBAC) BulkAssignPermissionsToRole(string, string, []string) []services.BulkOpResult {
+	return nil
 }
 
 func TestRequirePermissionDeniedByDefault(t *testing.T) {

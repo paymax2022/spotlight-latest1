@@ -1,0 +1,72 @@
+# Integration verify — the Postgres-backed end-to-end loop ENVIRONMENT-AND-GOLIVE.md
+# §4 flagged as the remaining gap. Complements ci.yml (CLAUDE.md gates: build/vet/
+# tsc/openapi/migration-guard) by adding what those can't do without a live DB:
+# real migrations apply, `go test -race` against Postgres + FAKE rails, and the
+# build-once image. Byte-mirrored locally by `make ci` + `make docker-build`.
+name: integration-verify
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integ-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: paymax
+          POSTGRES_PASSWORD: paymax
+          POSTGRES_DB: paymax
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U paymax" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: postgres://paymax:paymax@localhost:5432/paymax?sslmode=disable
+      RAILS_MODE: fake # FAKEs only — no external provider secrets in CI
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            frontend-web/package-lock.json
+            frontend-admin/package-lock.json
+
+      - name: Bootstrap
+        run: make bootstrap
+
+      - name: Migrations apply cleanly (real Postgres)
+        run: make migrate-up
+
+      - name: go build ./...
+        run: make build
+
+      - name: go test ./... -race (Postgres + fakes)
+        run: make test
+
+      - name: Full tsc --noEmit (both frontends)
+        run: make tsc
+
+      - name: Migration clean re-apply / idempotency (additive, forward-only)
+        run: make migrate-reset
+
+      - name: Security / dependency scan
+        run: make security-scan
+
+      - name: Build-once image (tagged by commit SHA)
+        run: make docker-build SHA=${{ github.sha }}

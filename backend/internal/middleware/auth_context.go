@@ -10,9 +10,25 @@ import (
 	"spotlight/backend/internal/services"
 )
 
-const AuthUserContextKey = "authUser"
+const (
+	AuthUserContextKey = "authUser"
+	AuthTokenContextKey = "authToken"
+)
 
 func RequireAuthContext(supabase *integrations.SupabaseRestClient, rbac services.RBACService) gin.HandlerFunc {
+	return requireAuth(supabase, rbac, nil, false)
+}
+
+// RequireAuthContextWithSessions is RequireAuthContext plus an auth_session
+// revocation check. When enforce is true (feature flag ON) a request whose
+// access token maps to a revoked/expired session is rejected 401 — fail-closed.
+// When enforce is false it behaves exactly like RequireAuthContext (no-op check)
+// so the flag-off path preserves existing behaviour.
+func RequireAuthContextWithSessions(supabase *integrations.SupabaseRestClient, rbac services.RBACService, sessions services.SessionService, enforce bool) gin.HandlerFunc {
+	return requireAuth(supabase, rbac, sessions, enforce)
+}
+
+func requireAuth(supabase *integrations.SupabaseRestClient, rbac services.RBACService, sessions services.SessionService, enforce bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		h := strings.TrimSpace(c.GetHeader("Authorization"))
 		if !strings.HasPrefix(strings.ToLower(h), "bearer ") {
@@ -36,10 +52,26 @@ func RequireAuthContext(supabase *integrations.SupabaseRestClient, rbac services
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "error": "account restricted"})
 			return
 		}
+		// Session revocation enforcement (fail-closed when enabled).
+		if enforce && sessions != nil {
+			if _, serr := sessions.ValidateAccess(token); serr != nil {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "session revoked"})
+				return
+			}
+		}
 		roles, _ := rbac.GetUserRoles(id)
 		perms, _ := rbac.GetUserPermissions(id, "global", "")
 		au := domain.AuthenticatedUser{ID: id, Email: email, Status: status, Roles: roles, Permissions: perms}
 		c.Set(AuthUserContextKey, au)
+		c.Set(AuthTokenContextKey, token)
+		// Mirror the authenticated user's id/email into the plain string context keys
+		// that downstream module middleware (requireUserID) and handlers read. This is
+		// set HERE — before c.Next() — because RequireAuthContext advances the chain
+		// itself; module wrappers that mirror user_id AFTER calling this handler do so
+		// too late (the downstream handler has already run). Setting it centrally makes
+		// the codebase-wide "user_id set by RequireAuthContext" assumption actually true.
+		c.Set("user_id", id)
+		c.Set("user_email", email)
 		c.Next()
 	}
 }

@@ -1,0 +1,131 @@
+# Prometheus / Grafana Alerting rules — Paymax money-path & security.
+# Provider-agnostic: loads into Prometheus, Grafana Managed Alerts (via
+# provisioning), VictoriaMetrics vmalert, or Mimir/Cortex ruler.
+#
+# Depends on the series in ../metrics-contract.md. Inert until the app emits them.
+# Thresholds are starting points — tune against one week of staging baseline.
+# Every alert carries a runbook annotation and an owner.
+
+groups:
+  - name: paymax-security
+    rules:
+      - alert: AuthzFailureSpike
+        # Authorization denials jump well above the trailing hour baseline.
+        expr: |
+          sum(rate(authz_denied_total[5m]))
+            > (3 * sum(rate(authz_denied_total[1h] offset 5m))) + 0.2
+        for: 10m
+        labels:
+          severity: page
+          team: security
+        annotations:
+          summary: "Authorization-denied rate spike"
+          description: "authz_denied_total 5m rate is >3x the 1h baseline. Possible probing, broken role mapping, or token issue."
+          runbook: "docs/runbooks/incident-rollback.md"
+
+      - alert: SecurityEventSpike
+        expr: sum(rate(security_events_total{severity=~"high|critical"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: page
+          team: security
+        annotations:
+          summary: "High/critical security_event spike"
+          description: "Backend is emitting high/critical security events above threshold. Investigate auth/PII surfaces."
+          runbook: "docs/runbooks/incident-rollback.md"
+
+      - alert: PermissionDeniedRateHigh
+        # Sustained 403s on admin/finance surfaces (operator pain, not user pain).
+        expr: |
+          sum(rate(http_requests_total{status="403", route=~"/api/(v1/admin|finance).*"}[5m]))
+            / clamp_min(sum(rate(http_requests_total{route=~"/api/(v1/admin|finance).*"}[5m])), 0.001)
+            > 0.2
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Sustained 403 rate on admin/finance routes"
+          description: ">20% of admin/finance requests are 403 for 15m. Likely RBAC mapping regression."
+          runbook: "docs/runbooks/incident-rollback.md"
+
+  - name: paymax-money-path
+    rules:
+      - alert: MoneyPathErrorRate
+        expr: |
+          sum(rate(money_path_errors_total[5m]))
+            / clamp_min(sum(rate(money_path_requests_total[5m])), 0.001)
+            > 0.02
+        for: 10m
+        labels:
+          severity: page
+          team: finance-ops
+        annotations:
+          summary: "Money-path error ratio > 2%"
+          description: "Wallet/transfer/ledger error ratio above 2% for 10m. Consider feature-flag disable (see runbook)."
+          runbook: "docs/runbooks/feature-flag-disable.md"
+
+      - alert: MoneyPathLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket{route=~"/api/(v1/wallet|v1/transfers|finance).*"}[5m]))
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+          team: finance-ops
+        annotations:
+          summary: "Money-path p95 latency > 2s"
+          description: "p95 latency on money routes degraded. Check provider (Paystack) and DB pool saturation."
+          runbook: "docs/runbooks/incident-rollback.md"
+
+      - alert: WebhookFailureRate
+        expr: |
+          sum(rate(webhook_failed_total[5m]))
+            / clamp_min(sum(rate(webhook_received_total[5m])), 0.001)
+            > 0.05
+        for: 10m
+        labels:
+          severity: page
+          team: finance-ops
+        annotations:
+          summary: "Paystack webhook failure ratio > 5%"
+          description: "Webhook verify/persist/process failures elevated. Paid credits may be missed; check DLQ depth."
+          runbook: "docs/runbooks/incident-rollback.md"
+
+      - alert: WebhookDLQGrowing
+        expr: max_over_time(webhook_dlq_depth[15m]) > 0 and deriv(webhook_dlq_depth[30m]) > 0
+        for: 30m
+        labels:
+          severity: page
+          team: finance-ops
+        annotations:
+          summary: "Webhook dead-letter queue growing"
+          description: "DLQ depth is non-zero and rising for 30m. Failed webhooks are not being drained."
+          runbook: "docs/runbooks/incident-rollback.md"
+
+  - name: paymax-ledger-invariants
+    rules:
+      - alert: LedgerInvariantDrift
+        # P0: double-entry must balance and wallet must equal ledger projection.
+        expr: min(ledger_balanced) < 1 or min(wallet_balance_matches_ledger) < 1
+        for: 0m
+        labels:
+          severity: page
+          priority: P0
+          team: finance-ops
+        annotations:
+          summary: "P0 — ledger/wallet invariant drift detected"
+          description: "Debit≠credit or wallet balance≠ledger sum. FREEZE money movement: disable money-path flags per runbook."
+          runbook: "docs/runbooks/feature-flag-disable.md"
+
+      - alert: ReconciliationUnmatched
+        expr: max(reconciliation_unmatched_total) > 0
+        for: 0m
+        labels:
+          severity: page
+          team: finance-ops
+        annotations:
+          summary: "Provider reconciliation has unmatched entries"
+          description: "Daily Paystack settlement vs internal credits has unmatched rows. Investigate before next settlement."
+          runbook: "docs/runbooks/incident-rollback.md"

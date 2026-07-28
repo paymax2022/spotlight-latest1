@@ -15,9 +15,13 @@ DECLARE
   v_settings_id  uuid;
 BEGIN
 
+  -- contest_status enum is ('draft','active','upcoming','ended'); a contest that
+  -- is live/open for voting is 'active' (or 'upcoming'). The earlier literals
+  -- ('published'/'voting_live'/'registration_open') are not valid enum values and
+  -- made the enum comparison raise 22P02, aborting `supabase db reset`.
   SELECT id INTO v_contest_id
   FROM public.contests
-  WHERE status IN ('published','voting_live','registration_open')
+  WHERE status IN ('active','upcoming')
   ORDER BY created_at DESC
   LIMIT 1;
 
@@ -103,7 +107,6 @@ BEGIN
     status         = EXCLUDED.status,
     voting_ends_at = EXCLUDED.voting_ends_at;
 
-  GET DIAGNOSTICS v_settings_id = ROW_COUNT;
   RAISE NOTICE 'Voting settings upserted for contest: %', v_contest_id;
 
   -- -------------------------------------------------------------------------
@@ -144,9 +147,9 @@ BEGIN
   --    Uses real enrollment IDs if available, otherwise skips gracefully.
   -- -------------------------------------------------------------------------
   WITH contestants AS (
-    SELECT id, ROW_NUMBER() OVER (ORDER BY created_at) AS rn
+    SELECT id, ROW_NUMBER() OVER (ORDER BY enrolled_at) AS rn
     FROM public.competition_enrollments
-    WHERE contest_id = v_contest_id
+    WHERE competition_id = v_contest_id
     LIMIT 10
   )
   INSERT INTO public.vote_totals

@@ -1,0 +1,72 @@
+name: FX CI
+
+# Runs the two environment-blocked verification steps automatically in a
+# Go-enabled, network-enabled CI runner: backend compile/vet/test and client
+# type-checks. (Authoring sandbox had no Go toolchain and no network.)
+
+on:
+  push:
+    paths:
+      - 'backend/**'
+      - 'mobile-app/reactnative/src/features/fx/**'
+      - 'mobile-app/reactnative/app/fx/**'
+      - 'frontend-admin/app/admin/fx/**'
+      - 'contracts/openapi.yaml'
+      - '.github/workflows/fx-ci.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test (orchestration)
+        run: go test ./internal/orchestration/... -count=1 -v
+      - name: Test (all)
+        run: go test ./... -count=1
+
+  openapi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate OpenAPI
+        run: |
+          python3 -c "import yaml; yaml.safe_load(open('contracts/openapi.yaml')); print('OpenAPI YAML valid')"
+
+  mobile-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app/reactnative
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck FX module
+        run: npx tsc --noEmit -p tsconfig.fxcheck.json
+
+  admin-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit

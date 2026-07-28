@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "app/fx/**/*.ts",
+    "app/fx/**/*.tsx",
+    "app/mobility/**/*.ts",
+    "app/mobility/**/*.tsx",
+    "app/insurance/**/*.ts",
+    "app/insurance/**/*.tsx",
+    "app/realtor/**/*.ts",
+    "app/realtor/**/*.tsx"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "skipLibCheck": true },
+  "include": [
+    "src/features/association/**/*",
+    "src/api/**/*",
+    "src/constants/**/*",
+    "src/lib/**/*",
+    "src/store/**/*",
+    "src/utils/**/*",
+    "src/types/**/*"
+  ]
+}

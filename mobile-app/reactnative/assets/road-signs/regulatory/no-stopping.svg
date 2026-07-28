@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">No stopping (clearway)</title>
+  <desc>White circle, red ring, two crossed red diagonal bars forming an X; stopping prohibited.</desc>
+  <circle cx="120" cy="120" r="112" fill="#C81E2D"/>
+  <circle cx="120" cy="120" r="88" fill="#FFFFFF"/>
+  <g stroke="#C81E2D" stroke-width="20" stroke-linecap="round">
+    <line x1="58" y1="58" x2="182" y2="182"/>
+    <line x1="182" y1="58" x2="58" y2="182"/>
+  </g>
+</svg>

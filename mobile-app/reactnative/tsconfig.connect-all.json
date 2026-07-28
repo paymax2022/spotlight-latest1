@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "skipLibCheck": true },
+  "include": [
+    "app/connect/**/*.ts",
+    "app/connect/**/*.tsx",
+    "src/features/connect/**/*.ts",
+    "src/features/connect/**/*.tsx"
+  ]
+}

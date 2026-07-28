@@ -1,0 +1,493 @@
+openapi: 3.1.0
+info:
+  title: Paymax × Spotlight Restaurant / Delivery API (drift-closing fragment)
+  version: 1.0.0
+  description: >
+    Standalone OpenAPI fragment documenting the live Restaurant & Delivery
+    endpoints served by the Go backend (Gin) under /api/finance/restaurant.
+    Handler signatures live in backend/internal/finance/restaurant/*_handler.go.
+
+    All monetary amounts are integers in minor units (kobo). Every financial
+    mutation that escrows, settles, or refunds (place order, cancel+refund, rate
+    with tip) MUST carry an `Idempotency-Key` header (prevents duplicate retries /
+    double charge), posts balanced double-entry ledger entries via the shared
+    settlement service, and emits an audit event. Endpoints that require the key
+    are marked below with the `IdempotencyKey` parameter; read-only GETs and
+    non-money mutations omit it.
+
+    Auth: every route requires a Bearer JWT (bearerAuth). Routes resolve the
+    caller's role (customer / restaurant operator / rider) from the auth context.
+
+    Order state machine:
+      placed → accepted → preparing → ready → (assigned → picked_up → delivered)
+    with branches: cancelled, refunded, no_rider. Cancellation refunds the
+    customer's escrow; delivery settles the restaurant and rider splits.
+
+    NOTE: This fragment is kept SEPARATE to avoid clobbering the large master
+    contract. Merge these `paths:` and `components:` into the master
+    `contracts/openapi.yaml` when integrating. Same style/auth/component
+    conventions as contracts/transport.openapi.yaml and
+    contracts/voting.openapi.yaml.
+
+    NOTE: GET /orders/{orderId}/ws is a WebSocket upgrade endpoint, NOT a REST
+    resource. It responds 101 Switching Protocols and then streams JSON frames
+    of type `order.status` | `order.location` | `order.message`. It is documented
+    here for completeness but is not callable as a normal request/response op.
+
+servers:
+  - url: /api/finance/restaurant
+    description: Go backend (Gin) — restaurant / delivery module
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: customer
+    description: Customer-facing browse / order / chat / rate endpoints
+  - name: restaurant
+    description: Restaurant-operator endpoints (create restaurant, menu, fulfil orders)
+  - name: rider
+    description: Rider / courier endpoints (offers, accept, location, active)
+  - name: admin
+    description: Read-only admin monitoring (lists restaurants and orders)
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string }
+      description: Globally unique key per financial mutation (prevents duplicate retries / double charge).
+    IdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      description: Restaurant id.
+    OrderIdParam:
+      name: orderId
+      in: path
+      required: true
+      schema: { type: string }
+      description: Order id.
+    ItemIdParam:
+      name: itemId
+      in: path
+      required: true
+      schema: { type: string }
+      description: Menu item id.
+  schemas:
+    Money: { type: integer, format: int64, description: Amount in kobo (minor units) }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    OrderStatus:
+      type: string
+      description: Order lifecycle state.
+      enum: [placed, accepted, preparing, ready, assigned, picked_up, delivered, cancelled, refunded, no_rider]
+    Restaurant:
+      type: object
+      properties:
+        id: { type: string }
+        owner_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        address: { type: string }
+        phone: { type: string }
+        cuisine: { type: string }
+        image_url: { type: string }
+        is_open: { type: boolean }
+        rating: { type: number, description: Average restaurant star rating }
+        rating_count: { type: integer }
+        created_at: { type: string, format: date-time }
+    MenuCategory:
+      type: object
+      properties:
+        id: { type: string }
+        restaurant_id: { type: string }
+        name: { type: string }
+        sort_order: { type: integer }
+    MenuItem:
+      type: object
+      properties:
+        id: { type: string }
+        restaurant_id: { type: string }
+        category_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        price_kobo: { $ref: '#/components/schemas/Money' }
+        image_url: { type: string }
+        available:
+          type: boolean
+          description: "false = 86'd (out of stock / unavailable)."
+        created_at: { type: string, format: date-time }
+    OrderItem:
+      type: object
+      properties:
+        item_id: { type: string }
+        name: { type: string }
+        unit_price_kobo: { $ref: '#/components/schemas/Money' }
+        quantity: { type: integer }
+        notes: { type: string }
+    Order:
+      type: object
+      properties:
+        id: { type: string }
+        restaurant_id: { type: string }
+        restaurant_name: { type: string }
+        customer_id: { type: string }
+        rider_id: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OrderItem' }
+        subtotal_kobo: { $ref: '#/components/schemas/Money' }
+        delivery_fee_kobo: { $ref: '#/components/schemas/Money' }
+        service_fee_kobo: { $ref: '#/components/schemas/Money' }
+        total_kobo: { $ref: '#/components/schemas/Money' }
+        delivery_address: { type: string }
+        delivery_lat: { type: number }
+        delivery_lng: { type: number }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    OrderMessage:
+      type: object
+      properties:
+        id: { type: string }
+        order_id: { type: string }
+        sender_id: { type: string }
+        sender_role: { type: string, enum: [customer, restaurant, rider] }
+        body: { type: string }
+        attachment_url: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+    Rating:
+      type: object
+      properties:
+        order_id: { type: string }
+        restaurant_stars: { type: integer, minimum: 1, maximum: 5 }
+        rider_stars: { type: integer, minimum: 1, maximum: 5, nullable: true }
+        comment: { type: string, nullable: true }
+
+paths:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # RESTAURANTS & MENU
+  # ═══════════════════════════════════════════════════════════════════════════
+  /:
+    post:
+      tags: [restaurant]
+      summary: Create a restaurant (operator)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Restaurant' }
+      responses:
+        '200': { description: Restaurant created, content: { application/json: { schema: { $ref: '#/components/schemas/Restaurant' } } } }
+        '401': { description: Not authenticated }
+    get:
+      tags: [customer, admin]
+      summary: List restaurants (browse / admin monitoring)
+      parameters:
+        - { name: cuisine, in: query, schema: { type: string } }
+        - { name: q, in: query, schema: { type: string }, description: Free-text search }
+      responses:
+        '200':
+          description: Restaurant list
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Restaurant' } } } }
+        '401': { description: Not authenticated }
+  /{id}:
+    get:
+      tags: [customer]
+      summary: Restaurant detail + full menu (categories and items)
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      responses:
+        '200':
+          description: Restaurant detail with menu
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restaurant: { $ref: '#/components/schemas/Restaurant' }
+                  categories: { type: array, items: { $ref: '#/components/schemas/MenuCategory' } }
+                  items: { type: array, items: { $ref: '#/components/schemas/MenuItem' } }
+        '401': { description: Not authenticated }
+        '404': { description: Not found }
+  /{id}/menu/categories:
+    post:
+      tags: [restaurant]
+      summary: Create a menu category
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MenuCategory' }
+      responses:
+        '200': { description: Category created, content: { application/json: { schema: { $ref: '#/components/schemas/MenuCategory' } } } }
+        '401': { description: Not authenticated }
+        '403': { description: Not the restaurant owner }
+  /{id}/menu/items:
+    post:
+      tags: [restaurant]
+      summary: Create a menu item
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MenuItem' }
+      responses:
+        '200': { description: Item created, content: { application/json: { schema: { $ref: '#/components/schemas/MenuItem' } } } }
+        '401': { description: Not authenticated }
+        '403': { description: Not the restaurant owner }
+  /{id}/menu/items/{itemId}:
+    patch:
+      tags: [restaurant]
+      summary: Update a menu item (price / 86-availability)
+      description: Patch price_kobo and/or available (false = 86'd / out of stock).
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/ItemIdParam' }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                price_kobo: { $ref: '#/components/schemas/Money' }
+                available: { type: boolean }
+      responses:
+        '200': { description: Updated item, content: { application/json: { schema: { $ref: '#/components/schemas/MenuItem' } } } }
+        '401': { description: Not authenticated }
+        '403': { description: Not the restaurant owner }
+        '404': { description: Item not found }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ORDERS
+  # ═══════════════════════════════════════════════════════════════════════════
+  /{id}/orders:
+    post:
+      tags: [customer]
+      summary: Place an order (escrows total) — money mutation
+      description: Money mutation — escrows the order total and posts balanced ledger entries. Requires an Idempotency-Key.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      item_id: { type: string }
+                      quantity: { type: integer }
+                      notes: { type: string }
+                delivery_address: { type: string }
+                delivery_lat: { type: number }
+                delivery_lng: { type: number }
+      responses:
+        '200': { description: Order placed, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '401': { description: Not authenticated }
+        '402': { description: Insufficient wallet balance }
+        '422': { description: Item unavailable (86'd) / validation error }
+  /orders/{orderId}:
+    get:
+      tags: [customer, restaurant, rider]
+      summary: Get an order by id
+      parameters: [{ $ref: '#/components/parameters/OrderIdParam' }]
+      responses:
+        '200': { description: Order, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '401': { description: Not authenticated }
+        '404': { description: Not found }
+  /orders:
+    get:
+      tags: [customer, restaurant, rider]
+      summary: List orders for the caller in a given role
+      parameters:
+        - name: role
+          in: query
+          required: true
+          schema: { type: string, enum: [customer, restaurant, rider] }
+          description: Which side of the order to list for the authenticated user.
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/OrderStatus' } }
+      responses:
+        '200':
+          description: Order list
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Order' } } } }
+        '401': { description: Not authenticated }
+  /{id}/orders/{orderId}/status:
+    patch:
+      tags: [restaurant]
+      summary: Advance order status (accepted → preparing → ready)
+      description: Restaurant operator advances the fulfilment state machine. Delivery settlement is triggered downstream on delivered.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/OrderIdParam' }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { $ref: '#/components/schemas/OrderStatus' }
+      responses:
+        '200': { description: Updated order, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '401': { description: Not authenticated }
+        '403': { description: Not the restaurant owner }
+        '422': { description: Illegal state transition }
+  /{id}/orders/{orderId}:
+    delete:
+      tags: [customer, restaurant]
+      summary: Cancel an order (refunds escrow) — money mutation
+      description: Money mutation — cancels the order and refunds the customer's escrow per policy. Requires an Idempotency-Key.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/OrderIdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200': { description: Cancelled (refunded) order, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '401': { description: Not authenticated }
+        '422': { description: Not cancellable in current state }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # RIDER
+  # ═══════════════════════════════════════════════════════════════════════════
+  /orders/{orderId}/assign:
+    post:
+      tags: [rider, restaurant]
+      summary: Offer / assign an order to a rider
+      parameters: [{ $ref: '#/components/parameters/OrderIdParam' }]
+      responses:
+        '200': { description: Order, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '401': { description: Not authenticated }
+  /orders/{orderId}/accept:
+    post:
+      tags: [rider]
+      summary: Rider accepts a delivery offer (binds rider to order)
+      parameters: [{ $ref: '#/components/parameters/OrderIdParam' }]
+      responses:
+        '200': { description: Order, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '401': { description: Not authenticated }
+        '409': { description: Offer already taken }
+  /orders/{orderId}/location:
+    post:
+      tags: [rider]
+      summary: Rider posts a GPS location for live tracking
+      description: Fanned out to customer via the order WebSocket as an `order.location` frame.
+      parameters: [{ $ref: '#/components/parameters/OrderIdParam' }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                lat: { type: number }
+                lng: { type: number }
+      responses:
+        '200': { description: Accepted }
+        '401': { description: Not authenticated }
+  /rider/offers:
+    get:
+      tags: [rider]
+      summary: List open delivery offers for the rider
+      responses:
+        '200':
+          description: Offers
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Order' } } } }
+        '401': { description: Not authenticated }
+  /rider/active:
+    get:
+      tags: [rider]
+      summary: The rider's active delivery (or null)
+      responses:
+        '200': { description: Active order or null, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '401': { description: Not authenticated }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CHAT
+  # ═══════════════════════════════════════════════════════════════════════════
+  /orders/{orderId}/messages:
+    get:
+      tags: [customer, restaurant, rider]
+      summary: List chat messages on an order
+      parameters: [{ $ref: '#/components/parameters/OrderIdParam' }]
+      responses:
+        '200':
+          description: Messages
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/OrderMessage' } } } }
+        '401': { description: Not authenticated }
+    post:
+      tags: [customer, restaurant, rider]
+      summary: Post a chat message on an order
+      description: Fanned out to other participants via the order WebSocket as an `order.message` frame.
+      parameters: [{ $ref: '#/components/parameters/OrderIdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string }
+                attachmentUrl: { type: string }
+      responses:
+        '200': { description: Message created, content: { application/json: { schema: { $ref: '#/components/schemas/OrderMessage' } } } }
+        '401': { description: Not authenticated }
+        '403': { description: Not a participant on this order }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # RATINGS
+  # ═══════════════════════════════════════════════════════════════════════════
+  /orders/{orderId}/rate:
+    post:
+      tags: [customer]
+      summary: Rate a delivered order (restaurant + optional rider)
+      description: >
+        Rates the restaurant (and optionally the rider) on a delivered order.
+        If a tip is included downstream this becomes a money mutation; the
+        Idempotency-Key is required to keep rating idempotent.
+      parameters:
+        - { $ref: '#/components/parameters/OrderIdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [restaurant_stars]
+              properties:
+                restaurant_stars: { type: integer, minimum: 1, maximum: 5 }
+                rider_stars: { type: integer, minimum: 1, maximum: 5 }
+                comment: { type: string }
+      responses:
+        '200': { description: Rating, content: { application/json: { schema: { $ref: '#/components/schemas/Rating' } } } }
+        '401': { description: Not authenticated }
+        '403': { description: Not the customer / order not delivered }
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # REALTIME (WebSocket — NOT a REST endpoint)
+  # ═══════════════════════════════════════════════════════════════════════════
+  /orders/{orderId}/ws:
+    get:
+      tags: [customer, restaurant, rider]
+      summary: Real-time order tracking WebSocket
+      description: >
+        Upgrades to a WebSocket (NOT a REST request/response). After the 101
+        upgrade the server streams JSON frames of type `order.status`,
+        `order.location`, and `order.message` to the order's participants.
+      parameters: [{ $ref: '#/components/parameters/OrderIdParam' }]
+      responses:
+        '101': { description: Switching Protocols (WS upgrade) }
+        '401': { description: Not authenticated }

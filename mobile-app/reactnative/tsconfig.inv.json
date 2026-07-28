@@ -1,0 +1,2 @@
+{ "extends": "./tsconfig.json", "compilerOptions": { "skipLibCheck": true, "noEmit": true, "jsx": "react-jsx" },
+  "include": ["src/features/crowdfunding/types/investment.types.ts","src/features/crowdfunding/api/investment.api.ts","src/features/crowdfunding/hooks/useInvestment.ts","app/crowdfunding/investment/**/*.tsx","app/crowdfunding/index.tsx","src/features/crowdfunding/components/EdgeState.tsx"] }

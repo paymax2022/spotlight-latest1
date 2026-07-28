@@ -43,6 +43,15 @@ func (rbacHandlerTestService) UnlockUser(string) error                          
 func (rbacHandlerTestService) ListAdminUsers(domain.AdminUserFilter) ([]domain.AdminUser, error) { return nil, nil }
 func (rbacHandlerTestService) GetAdminUser(string) (domain.AdminUser, error)                      { return domain.AdminUser{}, nil }
 func (rbacHandlerTestService) UpdateAdminUser(string, map[string]any) (domain.AdminUser, error)  { return domain.AdminUser{}, nil }
+func (rbacHandlerTestService) BulkAssignRoleToUsers(string, string, string, string, []string) []services.BulkOpResult {
+	return nil
+}
+func (rbacHandlerTestService) BulkAssignRolesToUser(string, string, string, string, []string) []services.BulkOpResult {
+	return nil
+}
+func (rbacHandlerTestService) BulkAssignPermissionsToRole(string, string, []string) []services.BulkOpResult {
+	return nil
+}
 
 type auditNoop struct{}
 

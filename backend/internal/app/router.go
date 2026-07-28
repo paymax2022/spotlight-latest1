@@ -1,13 +1,19 @@
 package app
 
 import (
+	"context"
+	"log"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+	goredis "github.com/redis/go-redis/v9"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/handlers"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
+	platformDB "spotlight/backend/internal/platform/db"
+	platformRedis "spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/services"
 )
@@ -32,17 +38,26 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	auditService := services.NewAuditService(auditRepo)
 	rbacService := services.NewRBACService(rbacRepo)
 	authService := services.NewAuthService(supabase, rbacService, cfg)
-	authHandler := handlers.NewAuthHandler(authService, rbacService, auditService)
+	// Session-hardening (#19): store + notifier + service, feature-flagged.
+	sessionStore := repositories.NewSessionSupabaseRepository(supabase)
+	securityNotifier := services.NewResendNotifier(cfg, supabase)
+	sessionService := services.NewSessionService(sessionStore, securityNotifier, auditService, cfg)
+	sessionHandler := handlers.NewSessionHandler(sessionService, auditService, cfg)
+	authHandler := handlers.NewAuthHandler(authService, rbacService, auditService).
+		WithSessions(sessionService, cfg.FeatureSessionHardeningEnabled)
 	rbacHandler := handlers.NewRBACHandler(rbacService, auditService)
 	auditHandler := handlers.NewAuditHandler(auditService)
-	adminUsersHandler := handlers.NewAdminUsersHandler(rbacService, auditService)
+	adminUsersHandler := handlers.NewAdminUsersHandler(rbacService, auditService).
+		WithSessions(sessionService, cfg.FeatureSessionHardeningEnabled)
 	leads := handlers.NewLeadHandler(services.NewLeadService(leadRepo))
 	chats := handlers.NewChatHandler(services.NewChatService(chatRepo))
 	handoffs := handlers.NewHandoffHandler(services.NewHandoffService(handoffRepo))
 	analytics := handlers.NewAnalyticsHandler(services.NewAnalyticsService(analyticsRepo))
-	competitions := handlers.NewCompetitionHandler(services.NewCompetitionService(competitionRepo))
+	competitions := handlers.NewCompetitionHandler(services.NewCompetitionService(competitionRepo)).WithAudit(auditService)
 	realityTV := handlers.NewRealityTVHandler(services.NewRealityTVService(realityTVRepo))
-	stem := handlers.NewStemHandler(services.NewStemService(stemRepo))
+	// #23 audit coverage: STEM sensitive mutations emit structured audit events
+	// via the shared audit_service. Additive — read endpoints are unaffected.
+	stem := handlers.NewStemHandler(services.NewStemService(stemRepo)).WithAudit(auditService)
 
 	v1 := r.Group("/api/v1")
 	{
@@ -61,10 +76,14 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		apiAuth.GET("/verify-email", authHandler.VerifyEmail)
 		apiAuth.POST("/resend-verification-link", authHandler.ResendVerificationLink)
 		apiAuthProtected := apiAuth.Group("")
-		apiAuthProtected.Use(middleware.RequireAuthContext(supabase, rbacService))
+		apiAuthProtected.Use(middleware.RequireAuthContextWithSessions(supabase, rbacService, sessionService, cfg.FeatureSessionHardeningEnabled))
 		apiAuthProtected.GET("/me", authHandler.Me)
 		apiAuthProtected.POST("/change-password", authHandler.ChangePassword)
 		apiAuthProtected.POST("/complete-profile", authHandler.CompleteProfile)
+		// Self-service session management (feature-flagged; 503 when OFF).
+		apiAuthProtected.GET("/sessions", sessionHandler.ListMySessions)
+		apiAuthProtected.DELETE("/sessions/:id", sessionHandler.RevokeMySession)
+		apiAuthProtected.POST("/sessions/revoke-all", sessionHandler.RevokeMyAllSessions)
 
 		users := v1.Group("/users")
 		users.GET("/health", health.GenericHealth)
@@ -273,14 +292,96 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		rbacAdmin.GET("/login-activity", middleware.RequirePermission(rbacService, "audit.logs.view"), auditHandler.LoginActivity)
 		rbacAdmin.GET("/security-events", middleware.RequirePermission(rbacService, "audit.logs.view"), auditHandler.SecurityEvents)
 		rbacAdmin.GET("/users", middleware.RequirePermission(rbacService, "users.view"), adminUsersHandler.List)
+		rbacAdmin.GET("/users/export", middleware.RequirePermission(rbacService, "users.view"), adminUsersHandler.Export)
+		// Bulk role assignment (one role → many users). Distinct static path placed
+		// BEFORE the /users/:id param routes to avoid wildcard capture.
+		rbacAdmin.POST("/users/bulk-roles", middleware.RequirePermission(rbacService, "users.roles.assign"), adminUsersHandler.BulkAssignRoleToUsers)
 		rbacAdmin.GET("/users/:id", middleware.RequirePermission(rbacService, "users.view"), adminUsersHandler.Get)
 		rbacAdmin.PATCH("/users/:id", middleware.RequirePermission(rbacService, "users.update"), adminUsersHandler.Update)
+		// Read-only per-user session/security view (composes #19 session surface).
+		rbacAdmin.GET("/users/:id/sessions", middleware.RequirePermission(rbacService, "users.view"), adminUsersHandler.Sessions)
+		// Bulk role assignment (many roles → one user).
+		rbacAdmin.POST("/users/:id/roles/bulk", middleware.RequirePermission(rbacService, "users.roles.assign"), adminUsersHandler.BulkAssignRoles)
+		// Bulk permission assignment (many permissions → one role).
+		rbacAdmin.POST("/roles/:id/permissions/bulk", middleware.RequirePermission(rbacService, "permissions.assign"), rbacHandler.BulkAssignPermissionsToRole)
+		// Admin session controls (#19, feature-flagged). High-impact actions are
+		// gated on users.suspend (a strong, super-admin-restricted-ish permission).
+		rbacAdmin.POST("/users/:id/force-logout", middleware.RequirePermission(rbacService, "users.suspend"), sessionHandler.AdminForceLogout)
+		rbacAdmin.POST("/users/:id/force-password-reset", middleware.RequirePermission(rbacService, "users.suspend"), sessionHandler.AdminForcePasswordReset)
 
 		mobile := v1.Group("/mobile")
 		mobile.GET("/health", health.GenericHealth)
 
 		webhooks := v1.Group("/webhooks")
 		webhooks.GET("/health", health.GenericHealth)
+	}
+
+	// Single shared pgx pool for all DB-backed module aggregators. Created once
+	// here (was previously opened twice — finance + connect each called
+	// platformDB.New). nil when DATABASE_URL is unset or the connection fails;
+	// each aggregator skips its routes on a nil pool.
+	var sharedPool *pgxpool.Pool
+	if cfg.DatabaseURL != "" {
+		if p, err := platformDB.New(context.Background(), cfg.DatabaseURL); err != nil {
+			log.Printf("[router] WARN: could not connect to database: %v — DB-backed routes disabled", err)
+		} else {
+			sharedPool = p
+		}
+	}
+
+	// Shared Redis client for idempotency fast-paths (arena ledger, etc.). nil when
+	// REDIS_URL is unset or the connection fails — callers fall back to DB-unique
+	// constraints, so Redis is a latency optimization, never a correctness dependency.
+	var sharedRedis *goredis.Client
+	if cfg.RedisURL != "" {
+		if rc, err := platformRedis.New(cfg.RedisURL); err != nil {
+			log.Printf("[router] WARN: could not connect to Redis: %v — idempotency uses DB-unique fallback", err)
+		} else {
+			sharedRedis = rc
+		}
+	}
+
+	// Finance modules — wired only when the shared pool is present. Returns the
+	// Direct Referral Rewards engine service (nil when flag-off) so Phase-1 revenue
+	// modules wired below (Marketplace) can emit purchase events (PRD §2.5/§7.1).
+	referralRewardsSvc := registerFinanceRoutes(r, cfg, supabase, rbacService, sharedPool)
+
+	// Paymax Connect module — wired only when FEATURE_CONNECT_ENABLED + shared pool.
+	registerConnectRoutes(r, cfg, supabase, rbacService, sharedPool)
+
+	// Arena competition engine (ADR-014) — feature-flagged, default off. The merit
+	// firewall lives inside: only the ScoringGateway holds signers. The shared Redis
+	// client enables the ledger idempotency fast-path (DB-unique constraints remain
+	// the correctness backstop when Redis is unavailable).
+	if cfg.FeatureArenaEnabled {
+		RegisterArena(r, cfg, supabase, sharedPool, rbacService, sharedRedis)
+	}
+
+	// Paymax Marketplace (Jiji-style classifieds + escrow checkout). Feature-flagged,
+	// default off. Reuses the finance double-entry ledger for escrow; app-wiring
+	// injects Agent B's *search.Client via svc.SetSearcher when search is available.
+	if cfg.FeatureMarketplaceEnabled {
+		RegisterMarketplace(r, cfg, supabase, rbacService, sharedPool, sharedRedis, referralRewardsSvc)
+	}
+
+	// Paymax Invest · Learn Center (education-first literacy) under /api/v1/learn/*
+	// and Spotlight Wealth (learn-and-earn growth surface) under /api/v1/spotlight/*
+	// — the exact base paths the mobile learn / spotlightwealth features call.
+	// Both are wired only when the shared pool is present (each is a no-op otherwise).
+	if cfg.FeatureLearnEnabled {
+		RegisterLearnRoutes(r, supabase, rbacService, sharedPool)
+	}
+	if cfg.FeatureSpotlightwealthEnabled {
+		RegisterSpotlightwealthRoutes(r, supabase, rbacService, sharedPool)
+	}
+
+	// Paymax InvestAI education assistant under /api/v1/ai/invest/* — the exact base
+	// path the mobile investai feature calls. Education-only (no money path); refuses
+	// advice-seeking prompts and disclaimers every assistant turn. Reuses the aicare
+	// Anthropic provider when a key is set, else a deterministic mock. Wired only when
+	// the flag is on and the shared pool is present.
+	if cfg.FeatureInvestaiEnabled {
+		RegisterInvestAIRoutes(r, cfg, supabase, rbacService, sharedPool)
 	}
 
 	return r

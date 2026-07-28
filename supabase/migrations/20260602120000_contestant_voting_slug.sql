@@ -38,8 +38,8 @@ WHERE slug IS NULL;
 -- Ensure slug is unique per contest; resolve collisions by appending short id suffix
 -- Run a second pass to fix any duplicates introduced by common names
 WITH dupes AS (
-  SELECT id, contest_id, slug,
-    ROW_NUMBER() OVER (PARTITION BY contest_id, slug ORDER BY created_at) AS rn
+  SELECT id, competition_id, slug,
+    ROW_NUMBER() OVER (PARTITION BY competition_id, slug ORDER BY enrolled_at) AS rn
   FROM public.competition_enrollments
   WHERE slug IS NOT NULL
 )
@@ -48,9 +48,17 @@ SET slug = d.slug || '-' || LEFT(e.id::text, 6)
 FROM dupes d
 WHERE e.id = d.id AND d.rn > 1;
 
--- Add unique constraint on (contest_id, slug)
-ALTER TABLE public.competition_enrollments
-  ADD CONSTRAINT IF NOT EXISTS uq_enrollment_contest_slug UNIQUE (contest_id, slug);
+-- Add unique constraint on (competition_id, slug). Postgres has no
+-- "ADD CONSTRAINT IF NOT EXISTS", so guard it for idempotent replay.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'uq_enrollment_contest_slug'
+  ) THEN
+    ALTER TABLE public.competition_enrollments
+      ADD CONSTRAINT uq_enrollment_contest_slug UNIQUE (competition_id, slug);
+  END IF;
+END$$;
 
 -- Auto-set slug on insert when not provided
 CREATE OR REPLACE FUNCTION public.set_enrollment_slug()

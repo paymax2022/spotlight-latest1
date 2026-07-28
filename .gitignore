@@ -49,3 +49,23 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 # <<< AUTO-MANAGED: update-gitignore <<<
+
+# --- Launch hardening (manual): secret-leak prevention ---
+# Editor "Local History" and agent worktrees committed .env snapshots before.
+# Never track these trees again.
+.history/
+**/.history/
+.agentwork/
+**/.agentwork/
+# Claude Code agent worktrees: committed as gitlinks by accident; their gitdirs
+# get pruned, leaving dangling refs that break `git status`. Never track these.
+.claude/worktrees/
+**/.claude/worktrees/
+
+# Catch underscore/timestamp env snapshot variants the .env.* rule misses
+# (e.g. .env_20260601180248.local written by the Local History extension).
+.env_*
+**/.env_*
+.env.local
+**/.env.local
+launch/master.env

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">Keep safe distance</title>
+  <desc>Blue rectangular sign showing two white cars with a gap indicating keep a safe distance.</desc>
+  <rect x="30" y="30" width="180" height="180" rx="16" fill="#0B5FB0"/>
+  <path d="M72 92c1-6 5-10 11-10h74c6 0 10 4 11 10l4 16c4 1 6 4 6 8v14h-12v-8H74v8H62v-14c0-4 2-7 6-8z" fill="#FFFFFF"/>
+  <path d="M72 168c1-6 5-10 11-10h74c6 0 10 4 11 10l4 16c4 1 6 4 6 8v10h-12v-6H74v6H62v-10c0-4 2-7 6-8z" fill="#FFFFFF"/>
+</svg>

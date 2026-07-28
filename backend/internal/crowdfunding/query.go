@@ -1,0 +1,103 @@
+package crowdfunding
+
+import (
+	"fmt"
+	"strings"
+)
+
+// CampaignQuery is the discovery filter parsed from request query params.
+type CampaignQuery struct {
+	Collection   string // featured | trending | urgent | verified | recommended | recent
+	Category     string
+	Type         string
+	VerifiedOnly bool
+	UrgentOnly   bool
+	Search       string
+	Sort         string // recommended | trending | newest | ending_soon | most_funded | least_funded
+	Status       string // review_status filter (admin)
+}
+
+// buildDiscoveryWhere builds the WHERE clause + ordered args for a discovery query.
+// startIdx is the first positional placeholder number ($1, $2, ...).
+// Pure function — unit-tested without a database.
+func buildDiscoveryWhere(q CampaignQuery, startIdx int) (string, []any) {
+	var conds []string
+	var args []any
+	i := startIdx
+
+	add := func(cond string, val any) {
+		conds = append(conds, fmt.Sprintf(cond, i))
+		args = append(args, val)
+		i++
+	}
+
+	switch q.Collection {
+	case "featured":
+		conds = append(conds, "c.featured = TRUE")
+	case "trending":
+		conds = append(conds, "c.trending = TRUE")
+	case "urgent":
+		conds = append(conds, "c.urgent = TRUE")
+	case "verified":
+		conds = append(conds, "c.verified = TRUE")
+	}
+
+	if q.Category != "" {
+		add("c.category = $%d", q.Category)
+	}
+	if q.Type != "" {
+		add("c.type = $%d", q.Type)
+	}
+	if q.VerifiedOnly {
+		conds = append(conds, "c.verified = TRUE")
+	}
+	if q.UrgentOnly {
+		conds = append(conds, "c.urgent = TRUE")
+	}
+	if q.Status != "" {
+		add("c.review_status = $%d", q.Status)
+	} else if q.Collection != "" || q.Search != "" || q.Category != "" {
+		// Public discovery only shows live campaigns.
+		conds = append(conds, "c.review_status = 'ACTIVE'")
+	}
+	if q.Search != "" {
+		// Two placeholders reference the same positional arg ($i) — valid in Postgres.
+		conds = append(conds, fmt.Sprintf("(c.title ILIKE '%%' || $%d || '%%' OR c.summary ILIKE '%%' || $%d || '%%')", i, i))
+		args = append(args, q.Search)
+		i++
+	}
+	_ = i
+
+	where := ""
+	if len(conds) > 0 {
+		where = "WHERE " + strings.Join(conds, " AND ")
+	}
+	return where, args
+}
+
+// sortClause maps a sort key to an ORDER BY clause (no user input interpolated).
+func sortClause(sort string) string {
+	switch sort {
+	case "newest":
+		return "ORDER BY c.created_at DESC"
+	case "ending_soon":
+		return "ORDER BY c.deadline ASC NULLS LAST"
+	case "most_funded":
+		return "ORDER BY raised_kobo DESC"
+	case "least_funded":
+		// Output-column alias used as a standalone ORDER BY term (Postgres-allowed).
+		return "ORDER BY raised_kobo ASC"
+	case "trending":
+		return "ORDER BY c.trending DESC, c.contributor_count DESC"
+	default: // recommended
+		return "ORDER BY c.verified DESC, c.featured DESC, c.contributor_count DESC"
+	}
+}
+
+// mobileStatus maps the internal review_status to the mobile CampaignStatus enum.
+func mobileStatus(reviewStatus string) string {
+	if reviewStatus == "CHANGES_REQUESTED" {
+		return "PENDING_REVIEW"
+	}
+	return reviewStatus
+}

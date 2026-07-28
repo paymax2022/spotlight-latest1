@@ -1,0 +1,254 @@
+openapi: 3.1.0
+info:
+  title: Paymax Invest (Stocks) API
+  version: 1.0.0
+  description: >
+    Stock-only investing module inside the Paymax super app. NGN equities & ETFs,
+    public offers, rights issues, dividends, corporate actions, watchlists, alerts.
+    All monetary amounts are integers in minor units (kobo). Every financial POST
+    requires an `Idempotency-Key` header and passes server-side pre-trade checks.
+    Trading is feature-flagged (FEATURE_INVEST_ENABLED) and gated per-user on
+    KYC tier + suitability + accepted active agreements + product/asset eligibility.
+
+    NOTE: This fragment documents the invest module's routes. Merge into the
+    master contracts/openapi.yaml `paths:` block when integrating.
+
+servers:
+  - url: /api/v1
+    description: Go backend (Gin) — invest module
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string }
+      description: Globally unique key per financial mutation (prevents duplicate retries).
+  schemas:
+    Money: { type: integer, format: int64, description: Amount in kobo (minor units) }
+    StockAsset:
+      type: object
+      properties:
+        id: { type: string }
+        symbol: { type: string }
+        name: { type: string }
+        exchange: { type: string }
+        sector: { type: string }
+        asset_class: { type: string, enum: [equity, etf] }
+        status: { type: string, enum: [active, suspended, delisted] }
+        buy_enabled: { type: boolean }
+        sell_enabled: { type: boolean }
+        risk_rating: { type: string, enum: [low, medium, high] }
+        minimum_order_amount: { $ref: '#/components/schemas/Money' }
+        kyc_tier_required: { type: integer }
+        settlement_days: { type: integer }
+    Quote:
+      type: object
+      properties:
+        symbol: { type: string }
+        price_kobo: { $ref: '#/components/schemas/Money' }
+        day_change_kobo: { $ref: '#/components/schemas/Money' }
+        day_change_pct: { type: number }
+        market_status: { type: string, enum: [open, closed, pre, post] }
+        data_status: { type: string, enum: [delayed, real_time], description: Always labelled }
+    Order:
+      type: object
+      properties:
+        id: { type: string }
+        symbol: { type: string }
+        side: { type: string, enum: [buy, sell] }
+        order_type: { type: string, enum: [market, limit] }
+        quantity: { type: number }
+        amount_kobo: { $ref: '#/components/schemas/Money' }
+        estimated_price_kobo: { $ref: '#/components/schemas/Money' }
+        executed_price_kobo: { $ref: '#/components/schemas/Money' }
+        fees_kobo: { $ref: '#/components/schemas/Money' }
+        total_amount_kobo: { $ref: '#/components/schemas/Money' }
+        status:
+          type: string
+          enum: [Draft, PendingReview, AwaitingConfirmation, CashLocked, Submitted, Accepted,
+                 PartiallyFilled, Filled, PendingSettlement, Settled, CancelRequested, Cancelled,
+                 Rejected, Failed, ReversalPending, Reversed, ComplianceHold]
+        provider_reference: { type: string }
+        idempotency_key: { type: string }
+        failure_reason: { type: string }
+    BuyOrderRequest:
+      type: object
+      required: [symbol, pin]
+      properties:
+        symbol: { type: string }
+        order_type: { type: string, enum: [market, limit], default: market }
+        amount_kobo: { $ref: '#/components/schemas/Money' }
+        quantity: { type: number }
+        limit_price_kobo: { $ref: '#/components/schemas/Money' }
+        pin: { type: string, description: PIN/biometric confirmation factor }
+    SellOrderRequest:
+      type: object
+      required: [symbol, quantity, pin]
+      properties:
+        symbol: { type: string }
+        order_type: { type: string, enum: [market, limit], default: market }
+        quantity: { type: number }
+        limit_price_kobo: { $ref: '#/components/schemas/Money' }
+        pin: { type: string }
+    WalletView:
+      type: object
+      properties:
+        currency: { type: string }
+        available_cash_kobo: { $ref: '#/components/schemas/Money' }
+        locked_cash_kobo: { $ref: '#/components/schemas/Money' }
+        pending_settlement_kobo: { $ref: '#/components/schemas/Money' }
+        invested_value_kobo: { $ref: '#/components/schemas/Money' }
+        total_portfolio_value_kobo: { $ref: '#/components/schemas/Money' }
+        withdrawable_cash_kobo: { $ref: '#/components/schemas/Money' }
+
+paths:
+  # ── Investment profile / onboarding ──────────────────────────────────────────
+  /invest/profile:
+    get: { summary: Get investor profile, responses: { '200': { description: OK } } }
+  /invest/start:
+    post: { summary: Start/advance investor onboarding, responses: { '200': { description: OK } } }
+  /invest/eligibility:
+    get: { summary: What the user still needs before trading, responses: { '200': { description: OK } } }
+  /invest/agreements:
+    get: { summary: Active agreements + acceptance state, responses: { '200': { description: OK } } }
+  /invest/agreements/accept:
+    post: { summary: Accept all active agreements, responses: { '200': { description: OK } } }
+
+  # ── Suitability ──────────────────────────────────────────────────────────────
+  /invest/suitability/questions:
+    get: { summary: Suitability questionnaire, responses: { '200': { description: OK } } }
+  /invest/suitability/submit:
+    post: { summary: Submit answers → risk category, responses: { '200': { description: OK } } }
+  /invest/suitability/result:
+    get: { summary: Latest suitability result, responses: { '200': { description: OK } } }
+
+  # ── Stocks / discovery ───────────────────────────────────────────────────────
+  /stocks:
+    get:
+      summary: List tradable stocks (with quotes)
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: sector, in: query, schema: { type: string } }
+      responses: { '200': { description: OK } }
+  /stocks/search:
+    get: { summary: Search stocks, responses: { '200': { description: OK } } }
+  /stocks/market-status:
+    get: { summary: Current market status, responses: { '200': { description: OK } } }
+  /stocks/{symbol}:
+    get: { summary: Stock detail + quote, responses: { '200': { description: OK } } }
+  /stocks/{symbol}/chart:
+    get: { summary: Historical candles, responses: { '200': { description: OK } } }
+  /stocks/{symbol}/dividends:
+    get: { summary: Dividend history, responses: { '200': { description: OK } } }
+  /stocks/{symbol}/corporate-actions:
+    get: { summary: Corporate actions, responses: { '200': { description: OK } } }
+
+  # ── Orders ───────────────────────────────────────────────────────────────────
+  /stocks/orders/buy:
+    post:
+      summary: Place a buy order (locks cash, server-side pre-check, idempotent)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/BuyOrderRequest' } } }
+      responses:
+        '201': { description: Order accepted/filled (receipt) }
+        '403': { description: Not eligible / KYC / suitability / terms / PIN }
+        '409': { description: Market closed }
+        '422': { description: Insufficient cash or order failed (receipt included) }
+  /stocks/orders/sell:
+    post:
+      summary: Place a sell order (locks shares, idempotent)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SellOrderRequest' } } }
+      responses:
+        '201': { description: Order accepted/filled (receipt) }
+        '422': { description: Insufficient shares or order failed }
+  /stocks/orders:
+    get: { summary: List my orders, responses: { '200': { description: OK } } }
+  /stocks/orders/{id}:
+    get: { summary: Order detail, responses: { '200': { description: OK } } }
+  /stocks/orders/{id}/cancel:
+    post: { summary: Cancel a pending order (releases locks), responses: { '200': { description: OK } } }
+
+  # ── Portfolio ────────────────────────────────────────────────────────────────
+  /invest/portfolio:
+    get: { summary: Portfolio overview, responses: { '200': { description: OK } } }
+  /invest/portfolio/positions:
+    get: { summary: Holdings with marks, responses: { '200': { description: OK } } }
+  /invest/portfolio/performance:
+    get: { summary: Performance summary, responses: { '200': { description: OK } } }
+
+  # ── Wallet ───────────────────────────────────────────────────────────────────
+  /invest/wallet:
+    get: { summary: Investment wallet snapshot, responses: { '200': { description: OK } } }
+  /invest/wallet/deposit:
+    post:
+      summary: Fund invest wallet from main Paymax wallet (double-entry both sides)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { description: OK }, '422': { description: Insufficient funds } }
+  /invest/wallet/withdraw:
+    post:
+      summary: Withdraw invest cash back to main wallet
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '200': { description: OK }, '422': { description: Insufficient cash } }
+  /invest/wallet/transactions:
+    get: { summary: Invest wallet ledger entries, responses: { '200': { description: OK } } }
+
+  # ── Watchlists ───────────────────────────────────────────────────────────────
+  /invest/watchlists:
+    get: { summary: List watchlists, responses: { '200': { description: OK } } }
+    post: { summary: Create watchlist, responses: { '201': { description: Created } } }
+  /invest/watchlists/{id}:
+    patch: { summary: Rename watchlist, responses: { '200': { description: OK } } }
+    delete: { summary: Delete watchlist, responses: { '200': { description: OK } } }
+  /invest/watchlists/{id}/stocks:
+    post: { summary: Add stock to watchlist, responses: { '200': { description: OK } } }
+  /invest/watchlists/{id}/stocks/{assetId}:
+    delete: { summary: Remove stock, responses: { '200': { description: OK } } }
+
+  # ── Alerts ───────────────────────────────────────────────────────────────────
+  /invest/alerts:
+    get: { summary: List alerts, responses: { '200': { description: OK } } }
+    post: { summary: Create price alert, responses: { '201': { description: Created } } }
+  /invest/alerts/{id}:
+    patch: { summary: Update alert status, responses: { '200': { description: OK } } }
+    delete: { summary: Delete alert, responses: { '200': { description: OK } } }
+
+  # ── Public offers ────────────────────────────────────────────────────────────
+  /invest/public-offers:
+    get: { summary: List public offers, responses: { '200': { description: OK } } }
+  /invest/public-offers/applications:
+    get: { summary: My offer applications, responses: { '200': { description: OK } } }
+  /invest/public-offers/{id}:
+    get: { summary: Offer detail, responses: { '200': { description: OK } } }
+  /invest/public-offers/{id}/apply:
+    post:
+      summary: Apply/subscribe to an offer (debits invest cash, idempotent)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: Created } }
+
+  # ── Rights issues ────────────────────────────────────────────────────────────
+  /invest/rights-issues:
+    get: { summary: List rights issues, responses: { '200': { description: OK } } }
+  /invest/rights-issues/applications:
+    get: { summary: My rights applications, responses: { '200': { description: OK } } }
+  /invest/rights-issues/{id}:
+    get: { summary: Rights issue detail, responses: { '200': { description: OK } } }
+  /invest/rights-issues/{id}/accept:
+    post:
+      summary: Accept rights entitlement (debits invest cash, idempotent)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses: { '201': { description: Created } }

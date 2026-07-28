@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import type { User } from '@supabase/supabase-js'; // still needed for useState type
+import type { Session, User } from '@supabase/supabase-js';
 
 type Props = {
   nextPath: string;
@@ -19,7 +19,7 @@ export default function OpenMicAuthGate({ nextPath, children }: Props) {
 
   useEffect(() => {
     let active = true;
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(({ data }: { data: { session: Session | null } }) => {
       if (!active) return;
       const sessionUser = data.session?.user ?? null;
       setUser(sessionUser);
@@ -29,7 +29,7 @@ export default function OpenMicAuthGate({ nextPath, children }: Props) {
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e: string, session: Session | null) => {
       if (!active) return;
       setUser(session?.user ?? null);
     });

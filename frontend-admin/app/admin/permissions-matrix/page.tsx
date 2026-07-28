@@ -3,13 +3,35 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Permission, PermissionMatrix } from '@/types/rbac';
 import { assignPermissionToRole, getPermissionMatrix, listPermissions, removePermissionFromRole } from '@/services/rbacAdminService';
+import {
+  useToasts,
+  ToastStack,
+  ConfirmDialog,
+  isCriticalPermissionSlug,
+  evaluateAssignment,
+  detectBulkConflicts,
+  readCurrentAdmin,
+  isSuperAdmin,
+} from '@/components/rbac';
+
+type MatrixRow = PermissionMatrix['rows'][number];
+
+type PendingAction =
+  | { kind: 'toggle'; roleId: string; roleName: string; roleSlug: string; slug: string; reasons: string[]; level: 'critical' | 'warning' }
+  | { kind: 'bulkRole'; roleId: string; roleName: string; roleSlug: string; slugs: string[]; reasons: string[]; level: 'critical' | 'warning' }
+  | { kind: 'bulkPermission'; slug: string; reasons: string[]; level: 'critical' | 'warning' };
 
 export default function AdminPermissionsMatrixPage() {
   const [matrix, setMatrix] = useState<PermissionMatrix | null>(null);
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errored, setErrored] = useState(false);
   const [busyKey, setBusyKey] = useState('');
   const [query, setQuery] = useState('');
+  const [pending, setPending] = useState<PendingAction | null>(null);
+  const { toasts, toast, dismiss } = useToasts();
+
+  const superAdmin = useMemo(() => isSuperAdmin(readCurrentAdmin()), []);
 
   const permissionIdBySlug = useMemo(() => {
     const m = new Map<string, string>();
@@ -26,78 +48,236 @@ export default function AdminPermissionsMatrixPage() {
 
   const load = async () => {
     setLoading(true);
-    const [m, perms] = await Promise.all([getPermissionMatrix(), listPermissions()]);
-    setMatrix(m);
-    setPermissions(perms);
-    setLoading(false);
+    setErrored(false);
+    try {
+      const [m, perms] = await Promise.all([getPermissionMatrix(), listPermissions()]);
+      if (!m) {
+        setErrored(true);
+        toast.error('Failed to load the permission matrix.');
+      }
+      setMatrix(m);
+      setPermissions(perms);
+    } catch {
+      setErrored(true);
+      toast.error('Failed to load the permission matrix.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const toggle = async (roleId: string, slug: string, enabled: boolean) => {
+  /* ── Low-level mutators ───────────────────────────────────────────────────── */
+
+  const doAssign = async (roleId: string, permissionId: string): Promise<boolean> => {
+    try {
+      return await assignPermissionToRole(roleId, permissionId);
+    } catch {
+      return false;
+    }
+  };
+  const doRemove = async (roleId: string, permissionId: string): Promise<boolean> => {
+    try {
+      return await removePermissionFromRole(roleId, permissionId);
+    } catch {
+      return false;
+    }
+  };
+
+  /* ── Single toggle ────────────────────────────────────────────────────────── */
+
+  const performToggle = async (roleId: string, slug: string, enabled: boolean) => {
     const permissionId = permissionIdBySlug.get(slug);
-    if (!permissionId) return;
+    if (!permissionId) {
+      toast.error(`No permission id found for "${slug}".`);
+      return;
+    }
     const k = `${roleId}:${slug}`;
     setBusyKey(k);
+    const ok = enabled ? await doRemove(roleId, permissionId) : await doAssign(roleId, permissionId);
+    setBusyKey('');
+    if (!ok) {
+      toast.error(`${enabled ? 'Removing' : 'Assigning'} "${slug}" failed. The backend may have denied it.`);
+      return;
+    }
+    toast.success(`${enabled ? 'Removed' : 'Assigned'} "${slug}".`);
+    await load();
+  };
+
+  const onToggle = (row: MatrixRow, slug: string, enabled: boolean) => {
+    // Only guard when ENABLING (granting). Removing never needs a warning.
     if (enabled) {
-      await removePermissionFromRole(roleId, permissionId);
-    } else {
-      await assignPermissionToRole(roleId, permissionId);
+      void performToggle(row.roleId, slug, enabled);
+      return;
+    }
+    const warning = evaluateAssignment({ permissionSlug: slug, roleSlug: row.roleSlug, roleName: row.roleName });
+    if (warning) {
+      // Critical grants to a non-super-admin role are blocked unless the operator is a super-admin.
+      if (warning.level === 'critical' && !superAdmin) {
+        toast.error(`Only a super-admin can grant the critical permission "${slug}".`);
+        return;
+      }
+      setPending({ kind: 'toggle', roleId: row.roleId, roleName: row.roleName, roleSlug: row.roleSlug, slug, reasons: [warning.reason], level: warning.level });
+      return;
+    }
+    void performToggle(row.roleId, slug, false);
+  };
+
+  /* ── Bulk per-role ────────────────────────────────────────────────────────── */
+
+  const performBulkRole = async (roleId: string, slugs: string[]) => {
+    if (!matrix) return;
+    setBusyKey(`role:${roleId}`);
+    let failures = 0;
+    let applied = 0;
+    const row = matrix.rows.find((r) => r.roleId === roleId);
+    for (const slug of slugs) {
+      const permissionId = permissionIdBySlug.get(slug);
+      if (!permissionId) continue;
+      const current = Boolean(row?.permissions?.[slug]);
+      if (current) continue;
+      const ok = await doAssign(roleId, permissionId);
+      if (ok) applied += 1; else failures += 1;
     }
     setBusyKey('');
     await load();
+    if (failures > 0) toast.error(`${failures} of ${slugs.length} assignments failed (likely backend-denied).`);
+    if (applied > 0) toast.success(`Granted ${applied} permission${applied === 1 ? '' : 's'} to the role.`);
   };
 
-  const bulkSetForRole = async (roleId: string, enable: boolean) => {
+  const onBulkRoleGrant = (row: MatrixRow) => {
+    const slugs = filteredSlugs.filter((s) => !row.permissions?.[s]);
+    if (slugs.length === 0) {
+      toast.info('Nothing to grant — all visible permissions are already assigned.');
+      return;
+    }
+    const criticalSlugs = slugs.filter(isCriticalPermissionSlug);
+    if (criticalSlugs.length > 0 && !superAdmin) {
+      toast.error(`Only a super-admin can bulk-grant critical permissions (${criticalSlugs.join(', ')}).`);
+      return;
+    }
+    const reasons = detectBulkConflicts(slugs);
+    if (criticalSlugs.length > 0) reasons.unshift(`Includes ${criticalSlugs.length} critical permission(s): ${criticalSlugs.join(', ')}.`);
+    if (reasons.length > 0) {
+      setPending({ kind: 'bulkRole', roleId: row.roleId, roleName: row.roleName, roleSlug: row.roleSlug, slugs, reasons, level: criticalSlugs.length > 0 ? 'critical' : 'warning' });
+      return;
+    }
+    void performBulkRole(row.roleId, slugs);
+  };
+
+  const performBulkRoleRemove = async (row: MatrixRow) => {
     if (!matrix) return;
+    setBusyKey(`role:${row.roleId}`);
+    let failures = 0;
     for (const slug of filteredSlugs) {
       const permissionId = permissionIdBySlug.get(slug);
       if (!permissionId) continue;
-      const row = matrix.rows.find((r) => r.roleId === roleId);
-      const current = Boolean(row?.permissions?.[slug]);
-      if (enable && !current) await assignPermissionToRole(roleId, permissionId);
-      if (!enable && current) await removePermissionFromRole(roleId, permissionId);
+      if (!row.permissions?.[slug]) continue;
+      const ok = await doRemove(row.roleId, permissionId);
+      if (!ok) failures += 1;
     }
+    setBusyKey('');
     await load();
+    if (failures > 0) toast.error(`${failures} removals failed (likely backend-denied).`);
+    else toast.success('Removed visible permissions from the role.');
   };
 
-  const bulkSetForPermission = async (slug: string, enable: boolean) => {
+  /* ── Bulk per-permission (column) ─────────────────────────────────────────── */
+
+  const performBulkPermission = async (slug: string, enable: boolean) => {
     if (!matrix) return;
     const permissionId = permissionIdBySlug.get(slug);
     if (!permissionId) return;
+    setBusyKey(`perm:${slug}`);
+    let failures = 0;
     for (const row of matrix.rows) {
       const current = Boolean(row.permissions?.[slug]);
-      if (enable && !current) await assignPermissionToRole(row.roleId, permissionId);
-      if (!enable && current) await removePermissionFromRole(row.roleId, permissionId);
+      if (enable && !current) { if (!(await doAssign(row.roleId, permissionId))) failures += 1; }
+      if (!enable && current) { if (!(await doRemove(row.roleId, permissionId))) failures += 1; }
     }
+    setBusyKey('');
     await load();
+    if (failures > 0) toast.error(`${failures} ${enable ? 'assignments' : 'removals'} failed (likely backend-denied).`);
+    else toast.success(`${enable ? 'Granted' : 'Removed'} "${slug}" across all roles.`);
+  };
+
+  const onBulkPermissionGrant = (slug: string) => {
+    if (isCriticalPermissionSlug(slug)) {
+      if (!superAdmin) {
+        toast.error(`Only a super-admin can grant the critical permission "${slug}" to every role.`);
+        return;
+      }
+      setPending({
+        kind: 'bulkPermission',
+        slug,
+        level: 'critical',
+        reasons: [`You are about to grant the critical permission "${slug}" to EVERY role. This is a high-blast-radius change.`],
+      });
+      return;
+    }
+    void performBulkPermission(slug, true);
+  };
+
+  const confirmPending = () => {
+    const action = pending;
+    setPending(null);
+    if (!action) return;
+    if (action.kind === 'toggle') void performToggle(action.roleId, action.slug, false);
+    else if (action.kind === 'bulkRole') void performBulkRole(action.roleId, action.slugs);
+    else if (action.kind === 'bulkPermission') void performBulkPermission(action.slug, true);
   };
 
   return (
     <div>
+      <ToastStack toasts={toasts} onDismiss={dismiss} />
+      <ConfirmDialog
+        open={Boolean(pending)}
+        level={pending?.level ?? 'warning'}
+        title="Confirm permission change"
+        reasons={pending?.reasons ?? []}
+        confirmLabel="Apply anyway"
+        onConfirm={confirmPending}
+        onCancel={() => setPending(null)}
+      />
       <h1>Permission Matrix</h1>
-      <p>Assign and remove permissions by role with live matrix controls.</p>
+      <p>Assign and remove permissions by role with live matrix controls. Critical and conflicting changes prompt for confirmation.</p>
+      {!superAdmin ? (
+        <p style={{ color: '#f59e0b', fontSize: 12 }}>
+          You are not a super-admin. Critical-permission grants are disabled in this view (the backend also enforces this).
+        </p>
+      ) : null}
+
       <div style={{ marginTop: 10 }}>
         <input placeholder="search permission slug" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
-      {loading ? <p>Loading...</p> : null}
+
+      {loading ? <p>Loading…</p> : null}
+      {errored && !loading ? <p><button onClick={() => void load()}>Retry</button> — failed to load matrix.</p> : null}
+      {!loading && !errored && matrix && matrix.rows.length === 0 ? <p>No roles to display.</p> : null}
+
       {!matrix ? null : (
         <div style={{ overflowX: 'auto', marginTop: 12 }}>
           <table style={{ borderCollapse: 'collapse', minWidth: 900 }}>
             <thead>
               <tr>
                 <th style={{ textAlign: 'left', borderBottom: '1px solid #2a2a2a', padding: 8 }}>Role</th>
-                {filteredSlugs.map((slug) => (
-                  <th key={slug} style={{ textAlign: 'left', borderBottom: '1px solid #2a2a2a', padding: 8, fontSize: 12 }}>
-                    <div>{slug}</div>
-                    <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                      <button onClick={() => void bulkSetForPermission(slug, true)}>All+</button>
-                      <button onClick={() => void bulkSetForPermission(slug, false)}>All-</button>
-                    </div>
-                  </th>
-                ))}
+                {filteredSlugs.map((slug) => {
+                  const critical = isCriticalPermissionSlug(slug);
+                  return (
+                    <th key={slug} style={{ textAlign: 'left', borderBottom: '1px solid #2a2a2a', padding: 8, fontSize: 12 }}>
+                      <div title={critical ? 'Critical permission' : undefined} style={{ color: critical ? '#f59e0b' : undefined }}>
+                        {critical ? '● ' : ''}{slug}
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                        <button onClick={() => onBulkPermissionGrant(slug)} disabled={busyKey === `perm:${slug}`}>All+</button>
+                        <button onClick={() => void performBulkPermission(slug, false)} disabled={busyKey === `perm:${slug}`}>All-</button>
+                      </div>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
@@ -106,8 +286,8 @@ export default function AdminPermissionsMatrixPage() {
                   <td style={{ borderBottom: '1px solid #2a2a2a', padding: 8, fontWeight: 600 }}>
                     <div>{row.roleName}</div>
                     <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                      <button onClick={() => void bulkSetForRole(row.roleId, true)}>Row+</button>
-                      <button onClick={() => void bulkSetForRole(row.roleId, false)}>Row-</button>
+                      <button onClick={() => onBulkRoleGrant(row)} disabled={busyKey === `role:${row.roleId}`}>Row+</button>
+                      <button onClick={() => void performBulkRoleRemove(row)} disabled={busyKey === `role:${row.roleId}`}>Row-</button>
                     </div>
                   </td>
                   {filteredSlugs.map((slug) => {
@@ -117,9 +297,10 @@ export default function AdminPermissionsMatrixPage() {
                       <td key={slug} style={{ borderBottom: '1px solid #2a2a2a', padding: 8 }}>
                         <input
                           type="checkbox"
+                          aria-label={`${enabled ? 'Remove' : 'Assign'} ${slug} for ${row.roleName}`}
                           checked={enabled}
-                          disabled={busyKey === key}
-                          onChange={() => void toggle(row.roleId, slug, enabled)}
+                          disabled={busyKey === key || busyKey === `role:${row.roleId}` || busyKey === `perm:${slug}`}
+                          onChange={() => onToggle(row, slug, enabled)}
                         />
                       </td>
                     );

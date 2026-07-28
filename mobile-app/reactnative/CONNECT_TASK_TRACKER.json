@@ -1,0 +1,28 @@
+{
+  "session": "Connect (formerly 'dating') — consolidation of docs/prd/dating + new connect PRD into one production-grade super-app module via 8-agent swarm + orchestrator integration",
+  "module": "connect",
+  "app_root": "mobile-app/reactnative",
+  "backend_root": "backend/internal/connect",
+  "admin_root": "frontend-admin/app/admin/connect",
+  "last_updated": "2026-06-25",
+  "status": "Consolidated + swarm-built. Mobile: 122 screens (5-tab nav, onboarding/verification, discovery+social, live+voting+gamification, wallet/gifting/tier-KYC, settings/safety) + 42 feature-layer files. Admin: 34 pages across PRD §11.1-11.12. Backend: 102 connect Go files (incl. 25 new for gifting/voting/AML/payouts/live/gamification) + 9 additive migrations. All mobile + admin TypeScript exit 0. Go build/gofmt deferred to connect-ci.yml (no Go toolchain in authoring sandbox).",
+  "note": "Root task-tracker.json is contended by concurrent agent sessions; this is the authoritative durable Connect copy.",
+  "completed_tasks": [
+    { "id": "consolidate", "title": "Deep-dive + consolidate existing dating build (Phases 0-6) with new Connect PRD → docs/prd/dating/CONSOLIDATION.md; renamed module to 'Connect' everywhere." },
+    { "id": "m1-foundation", "title": "Mobile M1: 5-tab nav (Discover/Live/Create/Inbox/Me), onboarding+18+ age gate+underage queue, verification (liveness/BVN-NIN/tier), Me/settings/safety/support (§10.1, 10.11-10.12), shared components + design tokens." },
+    { "id": "m2-discovery-social", "title": "Mobile M2: Discover Date (§10.2), Networking (§10.3), unified profile (§10.4), messaging/inbox (§10.5) — no-message-before-match (Date), request-to-connect (Network), report/block→caseId, approximate location." },
+    { "id": "m3-live-engage", "title": "Mobile M3: Live viewer+broadcaster (§10.6-10.7), voting free+paid (§10.8), gamification (§10.10). Gifts/paid-votes show tier+limit+remaining + idempotency key; XP/coins explicitly non-cash; media-moderation gating." },
+    { "id": "m4-money", "title": "Mobile M4: Connect wallet, gift catalog/send (wallet→wallet real Naira), CBN tier/KYC upgrade (Tier0-3), limits, creator payouts (§10.9). Every money action: kobo, idempotency key, tier+limit+remaining." },
+    { "id": "b1-backend-money", "title": "Backend B1: gifting (wallet→wallet, double-entry ledger, idempotent, tier-gated), paid voting, AML monitoring + NFIU STR/SAR case scaffold + sanctions/PEP stub, creator payouts. New packages gifting/voting/aml/payouts + connect_money_routes.go + additive migration 20260704000000_connect_money.sql." },
+    { "id": "b2-backend-live-game", "title": "Backend B2: live-stream sessions/co-host/PK/RTC-token-issuer (config-driven, no hardcoded secrets) + gamification XP(idempotent)/missions/streaks/leaderboards/seasons (non-cash, never touches finance ledger). New packages live/gamification + connect_live_routes.go + additive migration 20260702000300_connect_live_game.sql." },
+    { "id": "a1-admin-trust-money", "title": "Admin A1: shell+dashboard (§11.1), user/identity+underage (§11.2, PII masked), moderation+media-review (§11.4, reports→cases, AI reason codes), finance/gifting/AML+file-STR (§11.5), voting integrity (§11.6). Extended connectAdminService.ts." },
+    { "id": "a2-admin-ops", "title": "Admin A2: RBAC (§11.3), gamification ops (§11.7, non-cash), catalog/comms (§11.8), analytics (§11.9), geo policy (§11.10), support (§11.11), config (§11.12, backend-owned). New connectAdminOpsService.ts." },
+    { "id": "integrate", "title": "Orchestrator integration: mobile entry redirects into (tabs); Connect added to module registry (modules.ts); backend RegisterConnectMoney + RegisterConnectLiveGame wired into connect_routes.go; AdminSidebar 'Connect' section (21 links) with connect.* permission gates; connect-ci.yml trigger paths extended. Admin tsc=0, mobile connect tsc=0, migrations additive-only verified." }
+  ],
+  "pending_tasks": [
+    { "id": "ci-run", "priority": 1, "blocked_on": "Go+Node runner", "title": "Run connect-ci.yml to formally close static-only verification: full go build/vet/test (gofmt unavailable in authoring sandbox — files written in canonical form), whole-app + admin tsc, additive-migration guard." },
+    { "id": "go-live", "priority": 2, "blocked_on": "live env", "title": "Set FEATURE_CONNECT_ENABLED=true, EXPO_PUBLIC_CONNECT_USE_MOCK=false, NEXT_PUBLIC_CONNECT_USE_MOCK=false; supabase db push (9 connect migrations); provision RTC provider secrets (CONNECT_RTC_*); seed connect.* RBAC perms to admin roles; e2e smoke of gifting/voting/live/tier flows." },
+    { "id": "rtc-provider", "priority": 2, "title": "Wire a real RTC/live-video provider into live.RTCTokenIssuer (interface + config already in place; nil → fail-closed until configured)." },
+    { "id": "stray-file", "priority": 3, "title": "Remove brownfield-protected stray artifact backend/internal/app/connect_growth_routes.go.6711851496030656867 (non-.go, build-inert) on host — sandbox rm blocked by protected-paths hook." }
+  ]
+}

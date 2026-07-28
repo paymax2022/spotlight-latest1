@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">Lay-by / rest area</title>
+  <desc>Blue rectangular sign with a white car and tree symbol indicating a rest area.</desc>
+  <rect x="30" y="30" width="180" height="180" rx="16" fill="#0B5FB0"/>
+  <path d="M64 148c0-4 2-7 5-8l8-24c2-6 7-10 13-10h36c6 0 11 4 13 10l8 24c3 1 5 4 5 8v14h-14v-8H78v8H64z" fill="#FFFFFF"/>
+  <circle cx="82" cy="146" r="7" fill="#0B5FB0"/>
+  <circle cx="140" cy="146" r="7" fill="#0B5FB0"/>
+  <rect x="168" y="150" width="8" height="30" fill="#FFFFFF"/>
+  <circle cx="172" cy="120" r="26" fill="#FFFFFF"/>
+</svg>

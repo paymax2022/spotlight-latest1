@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/features/events/**/*.ts",
+    "src/features/events/**/*.tsx",
+    "app/events/**/*.ts",
+    "app/events/**/*.tsx",
+    "src/constants/**/*.ts",
+    "src/components/**/*.tsx",
+    "src/api/client.ts",
+    "src/lib/**/*.ts"
+  ]
+}

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t">
+  <title id="t">U-turn permitted</title>
+  <desc>Blue rectangular sign with a white U-turn arrow.</desc>
+  <rect x="30" y="30" width="180" height="180" rx="16" fill="#0B5FB0"/>
+  <path d="M150 176v-70a30 30 0 0 0-60 0v18H74l32 40 32-40h-16v-18a14 14 0 0 1 28 0v70z" fill="#FFFFFF"/>
+</svg>

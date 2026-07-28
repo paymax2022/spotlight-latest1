@@ -1,0 +1,8 @@
+# Keep the build context lean — only Go source + go.mod are needed.
+bin/
+*.md
+smoke.sh
+Makefile
+docker-compose.yml
+.dockerignore
+Dockerfile

@@ -1,0 +1,20 @@
+[
+  { "key": "one-way", "label": "One-way traffic", "category": "informative", "file": "one-way.svg" },
+  { "key": "priority-road", "label": "Priority road", "category": "informative", "file": "priority-road.svg" },
+  { "key": "end-priority-road", "label": "End of priority road", "category": "informative", "file": "end-priority-road.svg" },
+  { "key": "parking", "label": "Parking", "category": "informative", "file": "parking.svg" },
+  { "key": "hospital", "label": "Hospital", "category": "informative", "file": "hospital.svg" },
+  { "key": "no-through-road", "label": "No through road", "category": "informative", "file": "no-through-road.svg" },
+  { "key": "first-aid", "label": "First aid", "category": "informative", "file": "first-aid.svg" },
+  { "key": "fuel-station", "label": "Fuel station", "category": "informative", "file": "fuel-station.svg" },
+  { "key": "telephone", "label": "Emergency telephone", "category": "informative", "file": "telephone.svg" },
+  { "key": "expressway-start", "label": "Expressway begins", "category": "informative", "file": "expressway-start.svg" },
+  { "key": "expressway-end", "label": "Expressway ends", "category": "informative", "file": "expressway-end.svg" },
+  { "key": "tourist-info", "label": "Tourist information", "category": "informative", "file": "tourist-info.svg" },
+  { "key": "bus-stop", "label": "Bus stop", "category": "informative", "file": "bus-stop.svg" },
+  { "key": "lay-by", "label": "Lay-by / rest area", "category": "informative", "file": "lay-by.svg" },
+  { "key": "direction-ahead", "label": "Direction sign", "category": "informative", "file": "direction-ahead.svg" },
+  { "key": "u-turn-permitted", "label": "U-turn permitted", "category": "informative", "file": "u-turn-permitted.svg" },
+  { "key": "keep-distance", "label": "Keep safe distance", "category": "informative", "file": "keep-distance.svg" },
+  { "key": "pedestrian-zone", "label": "Pedestrian crossing point", "category": "informative", "file": "pedestrian-zone.svg" }
+]
