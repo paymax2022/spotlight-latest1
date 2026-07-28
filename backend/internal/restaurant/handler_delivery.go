@@ -9,6 +9,34 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// ── Reviews & moderation ──────────────────────────────────────────────────────
+
+// ListReviews → GET /restaurant/:id/reviews (public; hidden excluded, rater anonymized).
+func (h *Handler) ListReviews(c *gin.Context) {
+	list, err := h.svc.ListReviews(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"reviews": list})
+}
+
+// AdminModerateReview → POST /api/restaurant/admin/reviews/:id/moderate (ops). Body {status}.
+func (h *Handler) AdminModerateReview(c *gin.Context) {
+	var body struct {
+		Status string `json:"status" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.ModerateReview(c.Request.Context(), c.Param("id"), body.Status); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // ── Saved delivery addresses (customer) ───────────────────────────────────────
 
 // ListAddresses → GET /restaurant/addresses.

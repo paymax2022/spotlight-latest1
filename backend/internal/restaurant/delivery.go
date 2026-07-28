@@ -460,7 +460,17 @@ func (s *Service) RiderOffers(ctx context.Context, riderID string) ([]Order, err
 	               OR o.rider_candidate_id = $1
 	             )
 	           ORDER BY o.created_at DESC`
-	return s.queryOrders(ctx, q, riderID)
+	orders, err := s.queryOrders(ctx, q, riderID)
+	if err != nil {
+		return nil, err
+	}
+	// PII minimization (SEC-009): an OFFERED rider hasn't committed yet, so they see only
+	// the approximate area — the full delivery address is revealed once they accept (via
+	// RiderActive / GetOrder as the assigned rider).
+	for i := range orders {
+		orders[i].DeliveryAddress = maskDeliveryAddress(orders[i].DeliveryAddress)
+	}
+	return orders, nil
 }
 
 // RiderActive lists the rider's in-progress deliveries (accepted, not terminal).

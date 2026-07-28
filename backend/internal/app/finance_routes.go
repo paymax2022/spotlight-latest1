@@ -1237,6 +1237,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Promo codes (owner-created, restaurant-funded).
 		restGroup.POST("/:id/promos", restaurantHandler.CreatePromo)
 		// Weekly business hours: public read (schedule + open-now), owner replace-all.
+		restGroup.GET("/:id/reviews", restaurantHandler.ListReviews) // public reviews (hidden excluded, rater anonymized)
 		restGroup.GET("/:id/hours", restaurantHandler.GetBusinessHours)
 		restGroup.PUT("/:id/hours", restaurantHandler.SetBusinessHours)
 		// Holiday / special-hours overrides (owner): a per-date override wins over the
@@ -1326,6 +1327,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.POST("/sweep-offline-assigned", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminSweepOfflineAssigned)
 		restAdmin.POST("/sweep-stalled-dispatch", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminSweepStalledDispatch)
 		restAdmin.GET("/onboarding", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListApplications)
+		// Review moderation (RV-004): hide/approve an abusive review.
+		restAdmin.POST("/reviews/:id/moderate", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminModerateReview)
 		// Single wildcard segment handles all three shapes the admin UI may post:
 		//   /onboarding/:id/decision  (body {decision, note})
 		//   /onboarding/:id/approve   (decision taken from the path)
