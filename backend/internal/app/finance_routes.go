@@ -1250,6 +1250,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.PATCH("/:id/orders/:orderId/status", restaurantHandler.UpdateStatus)
 		restGroup.DELETE("/:id/orders/:orderId", restaurantHandler.CancelOrder)
 
+		// Food disputes: a party opens a dispute on a delivered order; parties read it.
+		// Resolution (with the platform-funded refund) is admin-only, mounted below.
+		restGroup.POST("/orders/:orderId/dispute", restaurantHandler.RaiseFoodDispute)
+		restGroup.GET("/disputes/:id", restaurantHandler.GetFoodDispute)
+
 		// Order reads (static "orders" sibling of the ":id" param — allowed in Gin v1.10).
 		restGroup.GET("/orders", restaurantHandler.ListOrders)
 		restGroup.GET("/orders/:orderId", restaurantHandler.GetOrder)
@@ -1305,6 +1310,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Registering both a static "decision" and a ":decision" param at the same
 		// position would panic in Gin, so the handler resolves the literal below.
 		restAdmin.POST("/onboarding/:id/:decision", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideApplication)
+		// Food disputes ops queue + resolution (platform-funded refund). Fail-closed
+		// behind the seeded restaurant.admin.disputes permission.
+		restAdmin.GET("/disputes", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminListFoodDisputes)
+		restAdmin.POST("/disputes/:id/resolve", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminResolveFoodDispute)
 		// Real restaurant/rider payout-run DISBURSEMENT subsystem (money path). List
 		// + detail are reads; build aggregates unpaid settlements into a draft run;
 		// process posts ONE balanced ledger transfer (DR settlement acct → CR provider
