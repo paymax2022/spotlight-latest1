@@ -2,6 +2,7 @@ package feesinvoice
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -241,7 +242,21 @@ func (s *Service) RecordPayment(ctx context.Context, actorID, invoiceID, guardia
 	if err != nil {
 		return nil, err
 	}
-	// Only payable states accept payments. Terminal (paid/waived/written_off) + draft reject.
+	// IDEMPOTENCY BEFORE PAYABILITY (money path): if this idempotency key already recorded
+	// a payment, return it as a replay REGARDLESS of the invoice's current status. A
+	// legitimate retry that arrives after the invoice reached a terminal state (e.g. it is
+	// now fully paid) must return the ORIGINAL result, not be rejected as not-payable —
+	// otherwise the payable gate below would make the endpoint non-idempotent.
+	if existing, gerr := s.store.GetPaymentByIdempotencyKey(ctx, idempotencyKey); gerr == nil && existing != nil {
+		hydrated, herr := s.hydrate(ctx, inv)
+		if herr != nil {
+			return nil, herr
+		}
+		return &RecordPaymentResult{Payment: existing, Invoice: hydrated, Replayed: true}, nil
+	} else if gerr != nil && !errors.Is(gerr, ErrNotFound) {
+		return nil, gerr
+	}
+	// Only payable states accept NEW payments. Terminal (paid/waived/written_off) + draft reject.
 	if !isPayable(inv.Status) {
 		return nil, ErrInvoiceNotPayable
 	}

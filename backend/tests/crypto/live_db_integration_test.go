@@ -369,9 +369,21 @@ func TestLiveDB_Withdraw_ParksUnitsOnCreate_ReturnsOnProviderFailure(t *testing.
 	if err != nil {
 		t.Fatalf("Withdraw: %v", err)
 	}
-	// The mock provider always accepts, so the withdrawal should reach broadcast.
-	if w.Status != crypto.WithdrawalBroadcast {
-		t.Fatalf("withdrawal status = %s, want %s (mock provider always accepts)", w.Status, crypto.WithdrawalBroadcast)
+	// The member create path PARKS the withdrawal at pending_review (the AML gate) with
+	// the units already held — it never dispatches to the provider directly.
+	if w.Status != crypto.WithdrawalPendingReview {
+		t.Fatalf("withdrawal status = %s, want %s (member create parks for AML review)", w.Status, crypto.WithdrawalPendingReview)
+	}
+	// A compliance officer approves → the AML gate clears and, since the mock provider
+	// always accepts, the withdrawal broadcasts (approved → broadcast). This is the ONLY
+	// path that dispatches to the provider.
+	adminID := seedUser(t, ctx, pool)
+	decided, err := svc.AdminDecideWithdrawal(ctx, adminID, w.ID, "approve", "aml cleared")
+	if err != nil {
+		t.Fatalf("AdminDecideWithdrawal(approve): %v", err)
+	}
+	if decided.Status != crypto.WithdrawalBroadcast {
+		t.Fatalf("withdrawal status after approve = %s, want %s (mock provider always accepts)", decided.Status, crypto.WithdrawalBroadcast)
 	}
 
 	holdingsAfter, err := svc.Holdings(ctx, userID)
