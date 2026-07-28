@@ -1239,6 +1239,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Weekly business hours: public read (schedule + open-now), owner replace-all.
 		restGroup.GET("/:id/hours", restaurantHandler.GetBusinessHours)
 		restGroup.PUT("/:id/hours", restaurantHandler.SetBusinessHours)
+		// Holiday / special-hours overrides (owner): a per-date override wins over the
+		// weekly schedule for that date.
+		restGroup.PUT("/:id/holidays", restaurantHandler.SetHoliday)
+		restGroup.DELETE("/:id/holidays/:date", restaurantHandler.DeleteHoliday)
 
 		// Distance-based delivery-fee preview (before placing the order). Member auth
 		// via the finance group's requireUserID. Static "delivery-quote" segment under
@@ -1294,6 +1298,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.PUT("/delivery-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.PutDeliveryConfig)
 		// Pricing v2 knobs (service fee % + item surge, basis points) — platform-controlled.
 		restAdmin.PUT("/pricing-config", middleware.RequirePermission(rbac, "restaurant.admin.pricing"), restaurantHandler.AdminSetPricingConfig)
+		// Accept-SLA sweeper: auto-cancel + refund orders never accepted in time (ops job).
+		restAdmin.POST("/sweep-unaccepted", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminSweepUnaccepted)
 
 		// Ops-console admin surfaces (dispatch board, onboarding/KYC review, payout
 		// reconciliation) consumed by frontend-admin/app/admin/restaurant/*. Each is

@@ -3,6 +3,7 @@ package restaurant
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -270,6 +271,42 @@ func (h *Handler) AdminSetPricingConfig(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// SetHoliday → PUT /restaurant/:id/holidays (owner). Upserts a per-date override.
+func (h *Handler) SetHoliday(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var body HolidayHour
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.SetHoliday(c.Request.Context(), c.Param("id"), userID, body); err != nil {
+		c.JSON(kybErrCode(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// DeleteHoliday → DELETE /restaurant/:id/holidays/:date (owner).
+func (h *Handler) DeleteHoliday(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if err := h.svc.DeleteHoliday(c.Request.Context(), c.Param("id"), userID, c.Param("date")); err != nil {
+		c.JSON(kybErrCode(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// AdminSweepUnaccepted → POST /api/restaurant/admin/sweep-unaccepted (ops). Auto-cancels
+// + refunds orders never accepted within their restaurant's accept-SLA.
+func (h *Handler) AdminSweepUnaccepted(c *gin.Context) {
+	n, err := h.svc.SweepUnacceptedOrders(c.Request.Context(), time.Now())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"swept": n})
 }
 
 // ── Business hours ────────────────────────────────────────────────────────────

@@ -204,20 +204,26 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	var isOpen bool
 	var ownerID string
 	var rLat, rLng *float64
-	var serviceFeeBp, surgeBp int
-	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng, service_fee_bp, surge_bp FROM restaurants WHERE id=$1`, restaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng, &serviceFeeBp, &surgeBp); err != nil {
+	var serviceFeeBp, surgeBp, prepTimeMinutes int
+	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng, service_fee_bp, surge_bp, prep_time_minutes FROM restaurants WHERE id=$1`, restaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng, &serviceFeeBp, &surgeBp, &prepTimeMinutes); err != nil {
 		return nil, fmt.Errorf("restaurant: not found")
 	}
 	if !isOpen {
 		return nil, fmt.Errorf("restaurant: restaurant is currently closed")
 	}
-	// Business-hours gate: if the restaurant has a defined weekly schedule, it must be
-	// within an opening window right now. A restaurant with no schedule is governed
-	// solely by is_open (checked above), preserving prior behavior. A hours-load error
-	// blocks — an order should not slip through when the schedule can't be evaluated.
-	if hours, herr := s.loadBusinessHours(ctx, restaurantID); herr != nil {
+	// Business-hours gate: a holiday override for today (if any) wins over the weekly
+	// schedule; a restaurant with neither is governed solely by is_open (checked above),
+	// preserving prior behavior. A load error blocks — an order must not slip through
+	// when availability can't be evaluated.
+	hours, herr := s.loadBusinessHours(ctx, restaurantID)
+	if herr != nil {
 		return nil, fmt.Errorf("restaurant: check business hours: %w", herr)
-	} else if !effectiveOpen(true, hours, time.Now(), lagosTZ) {
+	}
+	holiday, holErr := s.loadHolidayForDate(ctx, restaurantID, time.Now(), lagosTZ)
+	if holErr != nil {
+		return nil, fmt.Errorf("restaurant: check holiday hours: %w", holErr)
+	}
+	if !effectiveOpenWithHoliday(true, hours, holiday, time.Now(), lagosTZ) {
 		return nil, ErrClosedNow
 	}
 
@@ -277,7 +283,8 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		deliveryKobo = b.TotalKobo
 		breakdown = &b
 		dm := math.Round(b.DistanceKm*1000*10) / 10 // numeric(10,1) meters
-		em := b.EtaMinutes
+		// Door-to-door ETA = kitchen prep + travel (AV-004).
+		em := totalEtaMinutes(prepTimeMinutes, b.EtaMinutes)
 		distanceMeters = &dm
 		etaMinutes = &em
 	}

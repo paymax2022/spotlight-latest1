@@ -2,6 +2,7 @@ package restaurant
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -146,9 +147,10 @@ func nullIfEmpty(s string) any {
 // UpdateProfileRequest lets an owner set discovery-facing fields on their restaurant.
 // Only non-nil fields are updated (partial PATCH).
 type UpdateProfileRequest struct {
-	Cuisine     *string `json:"cuisine,omitempty"`
-	Description *string `json:"description,omitempty"`
-	LogoURL     *string `json:"logo_url,omitempty"`
+	Cuisine         *string `json:"cuisine,omitempty"`
+	Description     *string `json:"description,omitempty"`
+	LogoURL         *string `json:"logo_url,omitempty"`
+	PrepTimeMinutes *int    `json:"prep_time_minutes,omitempty"` // kitchen prep time folded into the ETA
 }
 
 // UpdateRestaurantProfile updates an owner's restaurant discovery fields (owner only).
@@ -168,6 +170,14 @@ func (s *Service) UpdateRestaurantProfile(ctx context.Context, restaurantID, use
 	}
 	if req.LogoURL != nil {
 		if _, err := s.db.Exec(ctx, `UPDATE restaurants SET logo_url=$1, updated_at=NOW() WHERE id=$2`, nullIfEmpty(*req.LogoURL), restaurantID); err != nil {
+			return err
+		}
+	}
+	if req.PrepTimeMinutes != nil {
+		if *req.PrepTimeMinutes < 0 || *req.PrepTimeMinutes > 240 {
+			return fmt.Errorf("restaurant: prep_time_minutes must be in [0,240]")
+		}
+		if _, err := s.db.Exec(ctx, `UPDATE restaurants SET prep_time_minutes=$1, updated_at=NOW() WHERE id=$2`, *req.PrepTimeMinutes, restaurantID); err != nil {
 			return err
 		}
 	}
