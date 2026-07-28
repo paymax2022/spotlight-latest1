@@ -1260,6 +1260,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.GET("/disputes/:id", restaurantHandler.GetFoodDispute)
 
 		// Order reads (static "orders" sibling of the ":id" param — allowed in Gin v1.10).
+		// Customer saved delivery addresses (GEO-001/005/006).
+		restGroup.GET("/addresses", restaurantHandler.ListAddresses)
+		restGroup.POST("/addresses", restaurantHandler.AddAddress)
+		restGroup.PUT("/addresses/:id/default", restaurantHandler.SetDefaultAddress)
+		restGroup.DELETE("/addresses/:id", restaurantHandler.DeleteAddress)
 		restGroup.GET("/orders", restaurantHandler.ListOrders)
 		restGroup.GET("/orders/:orderId", restaurantHandler.GetOrder)
 
