@@ -32,6 +32,8 @@ export function MarketplaceTabs({ active }: { active: string }) {
     { href: '/admin/marketplace/taxonomy', label: 'Taxonomy', key: 'taxonomy' },
     { href: '/admin/marketplace/disputes', label: 'Disputes', key: 'disputes' },
     { href: '/admin/marketplace/appeals', label: 'Appeals', key: 'appeals' },
+    { href: '/admin/marketplace/users', label: 'Users', key: 'users' },
+    { href: '/admin/marketplace/fraud', label: 'Fraud', key: 'fraud' },
     { href: '/admin/marketplace/flags', label: 'Flags', key: 'flags' },
     { href: '/admin/marketplace/orders-aging', label: 'Orders Aging', key: 'orders-aging' },
     { href: '/admin/marketplace/boosts', label: 'Boosts', key: 'boosts' },
@@ -213,6 +215,8 @@ export const MARKETPLACE_PERMS = {
   analytics: 'marketplace.admin.analytics',
   appealsReview: 'marketplace.admin.appeals.review',
   appealsDecide: 'marketplace.admin.appeals.decide',
+  usersView: 'marketplace.admin.users.view',
+  usersAction: 'marketplace.admin.users.action',
 } as const;
 
 export function useMarketplaceUser(): AuthUser | null {

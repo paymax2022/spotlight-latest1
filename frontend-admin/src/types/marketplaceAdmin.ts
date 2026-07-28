@@ -355,3 +355,74 @@ export interface MktAnalytics {
   gmv_series: MktAnalyticsPoint[];
   top_categories: MktCategoryStat[];
 }
+
+// ── Users, Trust & Safety, Fraud — TS-12 (USR-001…008) ───────────────────────
+
+export type MktUserStatus = 'active' | 'suspended' | 'banned';
+export type MktKycTier = 'tier0_browse' | 'tier1_buy' | 'tier2_sell' | 'tier3_business';
+export type MktUserAction = 'suspend' | 'ban' | 'reinstate';
+
+// PII is masked at the API layer (USR-001). The admin sees enough to act, not
+// enough to leak: email/phone are partially redacted server-side.
+export interface MktUserAdmin {
+  id: string;
+  display_name: string;
+  email_masked: string; // e.g. "t***@gmail.com"
+  phone_masked: string; // e.g. "+234 80****1234"
+  status: MktUserStatus;
+  kyc_tier: MktKycTier;
+  kyc_pending: boolean; // a KYC upgrade is awaiting review (USR-003)
+  trust_score: number; // 0..1
+  verified_id_badge: boolean;
+  verified_business_badge: boolean;
+  active_listings: number;
+  completed_deals: number;
+  open_flags: number;
+  fraud_score: number; // 0..1 aggregate risk (USR-004)
+  suspension_reason_code?: string | null;
+  // dual-approval fields (a BAN is maker-checker, USR-007)
+  pending_action?: MktUserAction | null;
+  pending_action_by?: string | null;
+  requires_dual_approval?: boolean;
+  created_at: string;
+  last_active_at?: string | null;
+}
+
+export interface MktUserActionRequest {
+  action: MktUserAction;
+  reason_code: string;
+}
+
+export interface MktKycReviewRequest {
+  decision: 'approve' | 'reject';
+  reason_code: string;
+  // the tier being granted on approve (server validates the requested tier)
+  grant_tier?: MktKycTier;
+}
+
+export type MktBlacklistType = 'device' | 'phone' | 'ip' | 'email';
+export interface MktBlacklistRequest {
+  type: MktBlacklistType;
+  value: string;
+  reason_code: string;
+}
+
+// A fraud/scam signal surfaced for triage (USR-004). Not an action — a lead.
+export type MktFraudSignalKind =
+  | 'velocity' // too many listings/messages in a short window
+  | 'duplicate_device' // one device across many accounts
+  | 'shared_ip' // account ring on one IP
+  | 'payment_evasion' // repeated off-platform-payment language
+  | 'multiple_flags' // many buyer flags in a window
+  | 'blacklist_hit'; // matched a blacklisted identifier
+
+export interface MktFraudSignal {
+  id: string;
+  kind: MktFraudSignalKind;
+  user_id: string;
+  user_display_name: string;
+  severity: 'low' | 'medium' | 'high';
+  detail: string;
+  related_user_ids: string[]; // the ring, for duplicate_device/shared_ip (USR-006)
+  created_at: string;
+}
