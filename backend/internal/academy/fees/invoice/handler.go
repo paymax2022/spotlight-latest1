@@ -61,6 +61,8 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "idempotency_key_required", "message": err.Error()})
 	case errors.Is(err, ErrOverpayment):
 		c.JSON(http.StatusConflict, gin.H{"error": "overpayment", "message": err.Error()})
+	case errors.Is(err, ErrIdempotencyKeyConflict):
+		c.JSON(http.StatusConflict, gin.H{"error": "idempotency_key_conflict", "message": err.Error()})
 	case errors.Is(err, ErrInvoiceNotPayable):
 		c.JSON(http.StatusConflict, gin.H{"error": "invoice_not_payable", "message": err.Error()})
 	case errors.Is(err, ErrAlreadyIssued):

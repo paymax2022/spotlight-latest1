@@ -43,6 +43,7 @@ package edtechfees_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -51,6 +52,54 @@ import (
 
 	feesinvoice "spotlight/backend/internal/academy/fees/invoice"
 )
+
+// TestLiveDB_Invoice_IdempotencyKeyScopedToInvoice is the ledger-auditor F1 regression:
+// a globally-unique payment idempotency key belongs to exactly ONE invoice, so replaying
+// it against a DIFFERENT invoice must fail closed (ErrIdempotencyKeyConflict) rather than
+// pair a foreign payment with the wrong invoice's derived state.
+func TestLiveDB_Invoice_IdempotencyKeyScopedToInvoice(t *testing.T) {
+	pool := liveDBPool(t)
+	defer pool.Close()
+	svc := feesinvoice.NewService(pool)
+	ctx := context.Background()
+
+	const total = int64(100_000)
+	guardianID := seedUser(t, ctx, pool)
+	actorID := seedUser(t, ctx, pool)
+	schoolID := seedSchool(t, ctx, pool)
+	studentA := seedStudent(t, ctx, pool, schoolID, guardianID)
+	studentB := seedStudent(t, ctx, pool, schoolID, guardianID)
+
+	invA, err := svc.Issue(ctx, actorID, feesinvoice.IssueInvoiceRequest{
+		StudentID: studentA, FeeScheduleID: seedFeeSchedule(t, ctx, pool, schoolID, total), TotalAmountMinor: total,
+	})
+	if err != nil {
+		t.Fatalf("Issue A: %v", err)
+	}
+	cleanupInvoice(t, pool, invA.ID)
+	invB, err := svc.Issue(ctx, actorID, feesinvoice.IssueInvoiceRequest{
+		StudentID: studentB, FeeScheduleID: seedFeeSchedule(t, ctx, pool, schoolID, total), TotalAmountMinor: total,
+	})
+	if err != nil {
+		t.Fatalf("Issue B: %v", err)
+	}
+	cleanupInvoice(t, pool, invB.ID)
+
+	// Record a payment on invoice A with a key.
+	key := newIdemKey(t, "cross-invoice")
+	if _, err := svc.RecordPayment(ctx, actorID, invA.ID, guardianID, 40_000, "", "", key); err != nil {
+		t.Fatalf("RecordPayment A: %v", err)
+	}
+	// The SAME key against invoice B must be rejected (not silently return A's payment).
+	if _, err := svc.RecordPayment(ctx, actorID, invB.ID, guardianID, 40_000, "", "", key); !errors.Is(err, feesinvoice.ErrIdempotencyKeyConflict) {
+		t.Fatalf("cross-invoice key reuse: want ErrIdempotencyKeyConflict, got %v", err)
+	}
+	// And replaying it against A (its rightful invoice) is still an idempotent success.
+	res, err := svc.RecordPayment(ctx, actorID, invA.ID, guardianID, 40_000, "", "", key)
+	if err != nil || !res.Replayed {
+		t.Fatalf("same-invoice replay should be idempotent: replayed=%v err=%v", res != nil && res.Replayed, err)
+	}
+}
 
 // liveDBPool connects using TEST_DATABASE_URL/DATABASE_URL, or skips. Same gate
 // and precedence as backend/tests/crypto + backend/tests/association.
@@ -158,13 +207,14 @@ func cleanupInvoice(t *testing.T, pool *pgxpool.Pool, invoiceID string) {
 
 // TestLiveDB_Invoice_IssueLocksSchedule_PartialThenFull_DerivedBalance_Idempotent
 // drives the full invoice money path end-to-end and proves:
-//   (a) issuing an invoice against a fee schedule LOCKS that schedule (SF-1);
-//   (b) a 40,000-kobo partial payment flips status → partially_paid and the
-//       DERIVED balance is 60,000 (read straight from academy_invoice_payments —
-//       there is NO stored balance column, SF-2);
-//   (c) a further 60,000-kobo payment flips → paid with balance 0;
-//   (d) REPLAYING the partial payment with the SAME idempotency_key inserts NO
-//       second payment row and leaves status + derived balance unchanged.
+//
+//	(a) issuing an invoice against a fee schedule LOCKS that schedule (SF-1);
+//	(b) a 40,000-kobo partial payment flips status → partially_paid and the
+//	    DERIVED balance is 60,000 (read straight from academy_invoice_payments —
+//	    there is NO stored balance column, SF-2);
+//	(c) a further 60,000-kobo payment flips → paid with balance 0;
+//	(d) REPLAYING the partial payment with the SAME idempotency_key inserts NO
+//	    second payment row and leaves status + derived balance unchanged.
 func TestLiveDB_Invoice_IssueLocksSchedule_PartialThenFull_DerivedBalance_Idempotent(t *testing.T) {
 	pool := liveDBPool(t)
 	defer pool.Close()

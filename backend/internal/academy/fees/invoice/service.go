@@ -248,6 +248,12 @@ func (s *Service) RecordPayment(ctx context.Context, actorID, invoiceID, guardia
 	// now fully paid) must return the ORIGINAL result, not be rejected as not-payable —
 	// otherwise the payable gate below would make the endpoint non-idempotent.
 	if existing, gerr := s.store.GetPaymentByIdempotencyKey(ctx, idempotencyKey); gerr == nil && existing != nil {
+		// A globally-unique key can only belong to ONE invoice; if it was used on a
+		// different invoice this is a client error — fail closed rather than pair a
+		// foreign payment with this invoice's derived state.
+		if existing.InvoiceID != invoiceID {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		hydrated, herr := s.hydrate(ctx, inv)
 		if herr != nil {
 			return nil, herr
@@ -279,7 +285,12 @@ func (s *Service) RecordPayment(ctx context.Context, actorID, invoiceID, guardia
 
 	if !inserted {
 		// Replay: the same idempotency key already recorded this payment. Return the current
-		// (derived) invoice state WITHOUT re-inserting or re-advancing status.
+		// (derived) invoice state WITHOUT re-inserting or re-advancing status. Same
+		// invoice-scoping guard as the pre-check (this branch also covers the concurrent
+		// race where two identical calls both pass the pre-check and one loses the insert).
+		if p == nil || p.InvoiceID != invoiceID {
+			return nil, ErrIdempotencyKeyConflict
+		}
 		hydrated, herr := s.hydrate(ctx, inv)
 		if herr != nil {
 			return nil, herr
