@@ -355,3 +355,57 @@ export interface MktAnalytics {
   gmv_series: MktAnalyticsPoint[];
   top_categories: MktCategoryStat[];
 }
+
+// ── Pricing & Monetisation config — ADM-001/002, MO-002/011/016 ──────────────
+
+// A purchasable boost package (mirrors backend BoostTiers). Editing applies to
+// NEW purchases only (ADM-001) — existing active boosts keep their bought terms.
+export interface MktBoostPackage {
+  tier: string; // start | vip | vip_gold | diamond | enterprise
+  label: string;
+  duration_days: number;
+  price_kobo: number;
+  weight: number; // additive search boost_weight (§4)
+  is_active: boolean;
+}
+
+export interface MktCommissionConfig {
+  default_bps: number; // platform take-rate default (per-category override lives in Taxonomy)
+  boost_revenue_bps: number; // platform cut already implicit in boost price; shown for transparency
+  updated_at?: string | null;
+  updated_by?: string | null;
+}
+
+export type MktDiscountKind = 'percent' | 'fixed';
+export interface MktDiscountCode {
+  id: string;
+  code: string;
+  kind: MktDiscountKind;
+  value: number; // percent (0..100) or fixed kobo, per kind
+  applies_to: 'boost' | 'listing_fee'; // what the code discounts
+  max_redemptions: number | null; // null = unlimited
+  redeemed_count: number;
+  valid_from: string;
+  valid_until: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface MktDiscountCodeInput {
+  code: string;
+  kind: MktDiscountKind;
+  value: number;
+  applies_to: 'boost' | 'listing_fee';
+  max_redemptions?: number | null;
+  valid_until?: string | null;
+  reason_code: string;
+}
+
+// Featured-slot inventory cap per surface (MO-016): the max number of
+// concurrently-featured listings a surface will render, to keep boosts scarce.
+export interface MktFeaturedSlotConfig {
+  surface: string; // e.g. 'home_hero' | 'category_top'
+  label: string;
+  max_slots: number;
+  filled_slots: number;
+}
