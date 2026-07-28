@@ -1218,6 +1218,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.GET("/:id", restaurantHandler.GetRestaurant)
 		// Owner edits discovery fields (cuisine/description/logo).
 		restGroup.PATCH("/:id", restaurantHandler.UpdateRestaurantProfile)
+		// Merchant KYB onboarding (owner): fill business/settlement details, attach
+		// documents, and submit for review. Approval (admin) is what takes it live.
+		restGroup.GET("/:id/kyb", restaurantHandler.GetKYB)
+		restGroup.PUT("/:id/kyb", restaurantHandler.SaveKYB)
+		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
+		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
 
 		// Menu management (owner only).
 		restGroup.POST("/:id/menu/categories", restaurantHandler.CreateCategory)
