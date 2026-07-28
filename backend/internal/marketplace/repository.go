@@ -720,7 +720,8 @@ func (r *Repository) InsertBoost(ctx context.Context, b *Boost) (*Boost, error) 
 func (r *Repository) ActiveBoostsForListing(ctx context.Context, listingID string) ([]Boost, error) {
 	rows, err := r.db.Query(ctx, `SELECT `+boostCols+`
 		FROM public.mkt_boosts
-		WHERE listing_id=$1 AND status IN ('purchased','active')`, listingID)
+		WHERE listing_id=$1 AND status IN ('purchased','active')
+		  AND (ends_at IS NULL OR ends_at > now())`, listingID)
 	if err != nil {
 		return nil, wrapInternal("active boosts for listing", err)
 	}
@@ -765,6 +766,42 @@ func (r *Repository) SetBoostStatus(ctx context.Context, id string, from, to Boo
 		return ErrConflict
 	}
 	return nil
+}
+
+// CompleteDueBoosts flips active boosts whose ends_at has passed to `completed`
+// (§2.4 active → completed) and returns the DISTINCT listing ids affected, so the
+// caller can re-index them (boost_weight drops). Batched via a LIMIT subselect.
+// The status flip is a single atomic UPDATE; the re-index is best-effort downstream
+// (a fresh index already ignores expired boosts via the ends_at guard on
+// ActiveBoostsForListing, so a missed re-index only leaves a stale weight until the
+// listing is next indexed — never a safety issue).
+func (r *Repository) CompleteDueBoosts(ctx context.Context, now time.Time, limit int) ([]string, error) {
+	limit = clampLimit(limit)
+	rows, err := r.db.Query(ctx, `
+		UPDATE public.mkt_boosts SET status='completed'::boost_status
+		WHERE id IN (
+			SELECT id FROM public.mkt_boosts
+			WHERE status='active' AND ends_at IS NOT NULL AND ends_at < $1
+			ORDER BY ends_at ASC LIMIT $2
+		)
+		RETURNING listing_id`, now, limit)
+	if err != nil {
+		return nil, wrapInternal("complete due boosts", err)
+	}
+	defer rows.Close()
+	seen := make(map[string]bool)
+	var ids []string
+	for rows.Next() {
+		var lid string
+		if err := rows.Scan(&lid); err != nil {
+			return nil, wrapInternal("complete due boosts: scan", err)
+		}
+		if !seen[lid] {
+			seen[lid] = true
+			ids = append(ids, lid)
+		}
+	}
+	return ids, rows.Err()
 }
 
 // ─── Offers ──────────────────────────────────────────────────────────────────

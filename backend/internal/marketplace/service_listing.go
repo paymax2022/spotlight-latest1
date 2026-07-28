@@ -135,7 +135,7 @@ func (s *Service) UpdateListing(ctx context.Context, sellerID, id string, in Upd
 	}
 	// Non-sensitive edit (or non-live listing): if still live, refresh search.
 	if updated.Status == ListingActive {
-		_ = s.repo.InsertOutbox(ctx, nil, id, OutboxUpsert, s.searchPayload(updated))
+		_ = s.repo.InsertOutbox(ctx, nil, id, OutboxUpsert, s.searchPayload(ctx, updated))
 	}
 	return updated, nil
 }
@@ -185,7 +185,7 @@ func (s *Service) SubmitListing(ctx context.Context, sellerID, id string) (*List
 			return nil, err
 		}
 		l.Status = ListingActive
-		_ = s.repo.InsertOutbox(ctx, nil, id, OutboxUpsert, s.searchPayload(l))
+		_ = s.repo.InsertOutbox(ctx, nil, id, OutboxUpsert, s.searchPayload(ctx, l))
 		s.notifySafe(ctx, sellerID, "mkt.listing.active", "Your listing is live.")
 		return l, nil
 	}
@@ -271,7 +271,7 @@ func (s *Service) sellerListingTransition(ctx context.Context, sellerID, id stri
 	if op, emit := listingOutboxOp(to); emit {
 		var payload any = map[string]any{"listing_id": id}
 		if op == OutboxUpsert {
-			payload = s.searchPayload(l)
+			payload = s.searchPayload(ctx, l)
 		}
 		_ = s.repo.InsertOutbox(ctx, nil, id, op, payload)
 	}
@@ -299,7 +299,7 @@ func (s *Service) ApproveListing(ctx context.Context, adminID, id, reasonCode st
 		return nil, err
 	}
 	l.Status = ListingActive
-	_ = s.repo.InsertOutbox(ctx, nil, id, OutboxUpsert, s.searchPayload(l))
+	_ = s.repo.InsertOutbox(ctx, nil, id, OutboxUpsert, s.searchPayload(ctx, l))
 	_ = s.writeAudit(ctx, AuditEntry{
 		AdminID: adminID, Action: "mkt.listing.approve", TargetType: "listing", TargetID: id,
 		ReasonCode:  orStr(reasonCode, "approved"),
@@ -365,8 +365,15 @@ func (s *Service) ExpireDueListings(ctx context.Context) (int, error) {
 }
 
 // searchPayload builds the outbox upsert payload Agent B's indexer consumes (mirrors
-// the §4 ES mapping fields).
-func (s *Service) searchPayload(l *Listing) map[string]any {
+// the §4 ES mapping fields). It includes boost_weight so paid boosts actually affect
+// ranking (§4 field_value_factor on boost_weight) — the weight is the strongest
+// currently-effective boost on the listing (0 when none). A boost lookup hiccup
+// defaults the weight to 0 rather than blocking the re-index (fail-open).
+func (s *Service) searchPayload(ctx context.Context, l *Listing) map[string]any {
+	var boostWeight float64
+	if boosts, berr := s.repo.ActiveBoostsForListing(ctx, l.ID); berr == nil {
+		boostWeight = maxBoostWeight(boosts)
+	}
 	return map[string]any{
 		"listing_id":      l.ID,
 		"market_id":       l.MarketID,
@@ -381,10 +388,25 @@ func (s *Service) searchPayload(l *Listing) map[string]any {
 		"lga":             l.LGA,
 		"quality_score":   l.QualityScore,
 		"escrow_eligible": l.EscrowEligible,
+		"boost_weight":    boostWeight,
 		"status":          string(l.Status),
 		"created_at":      l.CreatedAt,
 		"freshness_ts":    l.UpdatedAt,
 	}
+}
+
+// maxBoostWeight returns the largest catalog weight among the given (already
+// active + unexpired) boosts, or 0 if none. Pure/testable. §4: boost_mode:sum, so a
+// listing gets the single strongest boost's additive weight, not the sum of stacked
+// boosts (stacking must not let a seller buy their way to unbounded dominance).
+func maxBoostWeight(boosts []Boost) float64 {
+	var max float64
+	for i := range boosts {
+		if t, ok := lookupBoostTier(boosts[i].Tier); ok && t.Weight > max {
+			max = t.Weight
+		}
+	}
+	return max
 }
 
 // wordCount counts whitespace-delimited words (matches the §1 generated column intent).

@@ -205,6 +205,86 @@ func TestLiveDB_AutoExpire_Atomic(t *testing.T) {
 	}
 }
 
+// seedActiveBoost inserts an active boost of the given tier on a listing, with the
+// supplied ends_at (past or future). Bypasses the wallet charge — this test exercises
+// the boost→search coupling + completion lifecycle, not the purchase ledger path.
+func seedActiveBoost(t *testing.T, ctx context.Context, pool *pgxpool.Pool, listingID, sellerID, tier string, endsAt string) string {
+	t.Helper()
+	id := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO mkt_boosts (id, market_id, listing_id, seller_id, tier, duration_days, price_kobo,
+			ledger_charge_ref, status, starts_at, ends_at, created_at)
+		 VALUES ($1::uuid,'NG',$2::uuid,$3::uuid,$4,7,50000,'test:'||$1::text,'active'::boost_status,
+			now()-interval '1 day', `+endsAt+`, now())`, id, listingID, sellerID, tier); err != nil {
+		t.Fatalf("seed active boost: %v", err)
+	}
+	return id
+}
+
+// latestUpsertBoostWeight returns the boost_weight recorded in the most recent search
+// upsert outbox row for a listing (or -1 if none), so a test can assert boost ranking
+// weight without reaching into the unexported searchPayload.
+func latestUpsertBoostWeight(t *testing.T, ctx context.Context, pool *pgxpool.Pool, listingID string) float64 {
+	t.Helper()
+	var w float64 = -1
+	_ = pool.QueryRow(ctx, `SELECT COALESCE((payload->>'boost_weight')::float8, 0)
+		FROM mkt_listings_outbox WHERE listing_id=$1 AND op='upsert'
+		ORDER BY created_at DESC, id DESC LIMIT 1`, listingID).Scan(&w)
+	return w
+}
+
+// TestLiveDB_BoostSearchWeightAndCompletion proves (a) an active boost's weight reaches
+// the search payload when a listing is re-indexed, and (b) the completion cron flips an
+// expired boost to completed and re-indexes the listing so its weight drops to 0.
+func TestLiveDB_BoostSearchWeightAndCompletion(t *testing.T) {
+	svc, pool := liveMktService(t)
+	defer pool.Close()
+	ctx := context.Background()
+	cat := seedRiskTier0Category(t, ctx, pool)
+	admin := uuid.New().String()
+
+	// (a) Active (future-dated) VIP boost → re-index carries boost_weight = 2.0.
+	sellerA := uuid.New().String()
+	la := activate(t, ctx, svc, sellerA, admin, cat, "Boosted Corolla Lagos Deal Now", 500000000)
+	seedActiveBoost(t, ctx, pool, la.ID, sellerA, "vip", "now()+interval '14 days'")
+	// A price-only edit re-indexes the listing through searchPayload.
+	newPrice := int64(490000000)
+	if _, err := svc.UpdateListing(ctx, sellerA, la.ID, mkt.UpdateListingInput{PriceKobo: &newPrice}); err != nil {
+		t.Fatalf("reindex via price edit: %v", err)
+	}
+	if w := latestUpsertBoostWeight(t, ctx, pool, la.ID); w != 2.0 {
+		t.Errorf("active VIP boost should yield boost_weight 2.0 in search payload, got %v", w)
+	}
+
+	// (b) Expired boost → completion cron flips it to completed + re-indexes to weight 0.
+	sellerB := uuid.New().String()
+	lb := activate(t, ctx, svc, sellerB, admin, cat, "Expiring Boost Corolla Lagos", 500000000)
+	boostB := seedActiveBoost(t, ctx, pool, lb.ID, sellerB, "start", "now()-interval '1 hour'")
+
+	n, err := svc.CompleteDueBoosts(ctx)
+	if err != nil {
+		t.Fatalf("complete due boosts: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("expected ≥1 boost completed, got %d", n)
+	}
+	var boostStatus string
+	_ = pool.QueryRow(ctx, `SELECT status::text FROM mkt_boosts WHERE id=$1::uuid`, boostB).Scan(&boostStatus)
+	if boostStatus != "completed" {
+		t.Errorf("expired boost status = %s, want completed", boostStatus)
+	}
+	if w := latestUpsertBoostWeight(t, ctx, pool, lb.ID); w != 0 {
+		t.Errorf("after completion the re-index should carry boost_weight 0, got %v", w)
+	}
+
+	// A future-dated boost must NOT be completed by the cron.
+	var aStatus string
+	_ = pool.QueryRow(ctx, `SELECT status::text FROM mkt_boosts WHERE listing_id=$1::uuid`, la.ID).Scan(&aStatus)
+	if aStatus != "active" {
+		t.Errorf("not-yet-due boost status = %s, want still active", aStatus)
+	}
+}
+
 const carSchemaJSON = `{
 	"required": ["make", "year"],
 	"additionalProperties": false,

@@ -22,8 +22,11 @@ import (
 	"syscall"
 	"time"
 
-	platformDB "spotlight/backend/internal/platform/db"
+	goredis "github.com/redis/go-redis/v9"
+
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/marketplace"
+	platformDB "spotlight/backend/internal/platform/db"
 )
 
 func main() {
@@ -42,17 +45,31 @@ func main() {
 	defer pool.Close()
 
 	// Order auto-release + escrow reconciliation jobs REMOVED (ADR-023
-	// listings-and-connect pivot): the marketplace no longer holds escrow orders,
-	// so there is nothing to release or reconcile. The only remaining periodic job
-	// is listing auto-expiry (§2.1), which is ledger-free.
-	log.Println("marketplace-cron: starting (listing auto-expire every 5m)")
+	// listings-and-connect pivot): the marketplace no longer holds escrow orders.
+	// The periodic jobs are listing auto-expiry (§2.1) and boost completion (§2.4).
+	log.Println("marketplace-cron: starting (listing auto-expire + boost completion every 5m)")
 
-	repo := marketplace.NewRepository(pool)
+	// Build the marketplace Service (nil Redis — these jobs are queue-free). The
+	// ledger is needed only to satisfy the constructor; the cron jobs here do not
+	// move money (listing expiry and boost completion are both non-ledger).
+	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
+	svc := marketplace.NewService(pool, led, (*goredis.Client)(nil))
 
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go runLoop(ctx, &wg, "listing-auto-expire", 5*time.Minute, func(c context.Context) {
-		expireListings(c, repo)
+		if n, err := svc.ExpireDueListings(c); err != nil {
+			log.Printf("marketplace-cron: expire-listings: %v", err)
+		} else if n > 0 {
+			log.Printf("marketplace-cron: expire-listings: expired %d listing(s)", n)
+		}
+	})
+	go runLoop(ctx, &wg, "boost-completion", 5*time.Minute, func(c context.Context) {
+		if n, err := svc.CompleteDueBoosts(c); err != nil {
+			log.Printf("marketplace-cron: boost-completion: %v", err)
+		} else if n > 0 {
+			log.Printf("marketplace-cron: boost-completion: completed %d boost(s)", n)
+		}
 	})
 
 	wg.Wait()
@@ -84,21 +101,5 @@ func runLoop(ctx context.Context, wg *sync.WaitGroup, name string, interval time
 		case <-ticker.C:
 			run()
 		}
-	}
-}
-
-// expireListings runs §2.1's `active` -> auto_expire -> `expired` transition via
-// the ONE canonical path (marketplace.Repository.ExpireDueListings): a single
-// transaction that flips status and inserts the search-delete outbox row per
-// listing, so a crash can't strand a listing that's `expired` in Postgres but
-// still `active` in the search index. No divergent reimplementation lives here.
-func expireListings(ctx context.Context, repo *marketplace.Repository) {
-	ids, err := repo.ExpireDueListings(ctx, time.Now(), 500)
-	if err != nil {
-		log.Printf("marketplace-cron: expire-listings: %v", err)
-		return
-	}
-	if len(ids) > 0 {
-		log.Printf("marketplace-cron: expire-listings: expired %d listing(s)", len(ids))
 	}
 }

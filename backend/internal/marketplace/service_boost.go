@@ -89,9 +89,33 @@ func (s *Service) PurchaseBoost(ctx context.Context, sellerID, idemKey string, i
 	if err != nil {
 		return nil, err
 	}
+	// Re-index so the boost actually affects ranking (§4 boost_weight). Only a live
+	// listing is in search; a boost on a non-active listing takes effect when the
+	// listing next goes active. searchPayload recomputes boost_weight from the now-
+	// active boost.
+	if l.Status == ListingActive {
+		_ = s.repo.InsertOutbox(ctx, nil, in.ListingID, OutboxUpsert, s.searchPayload(ctx, l))
+	}
 	saveIdempotent(ctx, s.redis, idemKey, 201, created)
 	s.notifySafe(ctx, sellerID, "mkt.boost.active", "Your boost is live.")
 	return created, nil
+}
+
+// CompleteDueBoosts is the §2.4 cron helper: active boosts whose ends_at has passed
+// transition active → completed, and each affected listing is re-indexed so its
+// boost_weight drops. Returns the number completed.
+func (s *Service) CompleteDueBoosts(ctx context.Context) (int, error) {
+	listingIDs, err := s.repo.CompleteDueBoosts(ctx, time.Now(), 500)
+	if err != nil {
+		return 0, err
+	}
+	// Re-index each affected listing so search recomputes boost_weight (now lower/zero).
+	for _, lid := range listingIDs {
+		if l, gerr := s.repo.GetListing(ctx, lid); gerr == nil && l.Status == ListingActive {
+			_ = s.repo.InsertOutbox(ctx, nil, lid, OutboxUpsert, s.searchPayload(ctx, l))
+		}
+	}
+	return len(listingIDs), nil
 }
 
 // RejectBoost (admin/system) rejects an active/purchased boost for a policy
