@@ -148,6 +148,24 @@ func (h *Handler) AddModifier(c *gin.Context) {
 	c.JSON(http.StatusCreated, m)
 }
 
+// ── Promos ────────────────────────────────────────────────────────────────────
+
+// CreatePromo → POST /restaurant/:id/promos (owner). Creates a restaurant-funded promo.
+func (h *Handler) CreatePromo(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req CreatePromoRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	p, err := h.svc.CreatePromo(c.Request.Context(), c.Param("id"), userID, req)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, p)
+}
+
 // ── Rider / delivery lifecycle ────────────────────────────────────────────────
 
 // AssignRider → POST /restaurant/orders/:orderId/assign (owner offers a rider).

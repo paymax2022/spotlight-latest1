@@ -29,23 +29,28 @@ import (
 
 // splitLegsKobo replicates the EXACT split math in Service.Settle:
 //
-//	base         = total - TipKobo                         (percentages apply to the non-tip base)
-//	platformKobo = floor(base * platformPct)
-//	riderKobo    = floor(base * riderPct) + TipKobo        (only when a rider is present; tip is 100% rider)
+//	base         = total - TipKobo                         (escrow beyond the tip)
+//	gross        = base + DiscountKobo                     (pre-discount value the percentages price)
+//	platformKobo = floor(gross * platformPct) - (platform-funded ? DiscountKobo : 0)
+//	riderKobo    = floor(gross * riderPct) + TipKobo       (only when a rider is present; tip is 100% rider)
 //	providerKobo = total - platformKobo - riderKobo        (remainder — never rounds away kobo)
 //
-// With TipKobo == 0 this collapses to the pure percentage split (base == total), so
-// every non-tipping caller is unaffected. Computing the provider leg as the remainder
-// is what guarantees the three legs sum to EXACTLY the escrowed total with zero
-// leakage, regardless of float rounding on the percentage legs OR the fixed tip. This
-// helper is the single source of truth the assertions below check; if service.go ever
-// changes its formula, this must change with it (and the mismatch is the bug the
-// ledger-auditor should catch).
+// With TipKobo == 0 AND DiscountKobo == 0 this collapses to the pure percentage split
+// (gross == base == total), so every caller that sets neither is unaffected. Computing
+// the provider leg as the remainder is what guarantees the legs sum to EXACTLY the
+// escrowed total with zero leakage, regardless of float rounding OR the fixed tip/
+// discount. This helper is the single source of truth the assertions below check; if
+// service.go ever changes its formula, this must change with it (and the mismatch is
+// the bug the ledger-auditor should catch).
 func splitLegsKobo(total int64, sp settlement.Split) (providerKobo, platformKobo, riderKobo int64) {
 	base := total - sp.TipKobo
-	platformKobo = int64(float64(base) * sp.PlatformPct)
+	gross := base + sp.DiscountKobo
+	platformKobo = int64(float64(gross) * sp.PlatformPct)
+	if sp.DiscountFundedByPlatform {
+		platformKobo -= sp.DiscountKobo
+	}
 	if sp.RiderID != nil {
-		riderKobo = int64(float64(base)*sp.RiderPct) + sp.TipKobo
+		riderKobo = int64(float64(gross)*sp.RiderPct) + sp.TipKobo
 	}
 	providerKobo = total - platformKobo - riderKobo
 	return
@@ -184,6 +189,71 @@ func TestSplitTipValidation(t *testing.T) {
 	if err := ok.Validate(); err != nil {
 		t.Errorf("valid tipped split rejected: %v", err)
 	}
+}
+
+// TestSettlePromoFunderSemantics proves the per-promo funder routing: the percentages
+// price the pre-discount GROSS, exactly one party bears the discount, the other legs
+// are unaffected, and value still conserves against the (already-discounted) escrowed
+// total. gross here = 100_000 (80/10/10), discount = 10_000, so the payer paid
+// escrowed total = 90_000.
+func TestSettlePromoFunderSemantics(t *testing.T) {
+	rider := "rider-1"
+	const gross, discount, total = 100_000, 10_000, 90_000
+
+	t.Run("platform-funded: platform eats it, provider+rider whole on gross", func(t *testing.T) {
+		sp := settlement.Split{ProviderID: "p", ProviderPct: 0.80, PlatformPct: 0.10, RiderID: &rider, RiderPct: 0.10,
+			DiscountKobo: discount, DiscountFundedByPlatform: true}
+		if err := sp.Validate(); err != nil {
+			t.Fatalf("valid: %v", err)
+		}
+		provider, platform, riderK := splitLegsKobo(total, sp)
+		if provider != 80_000 { // full 80% of gross — unaffected
+			t.Errorf("provider = %d, want 80_000 (unaffected by platform-funded promo)", provider)
+		}
+		if riderK != 10_000 { // full 10% of gross, no tip
+			t.Errorf("rider = %d, want 10_000 (unaffected)", riderK)
+		}
+		if platform != 0 { // 10% of gross (10_000) minus the 10_000 discount it funded
+			t.Errorf("platform = %d, want 0 (10%% of gross minus the discount it funded)", platform)
+		}
+		if provider+platform+riderK != total {
+			t.Errorf("legs sum %d, want escrowed total %d", provider+platform+riderK, total)
+		}
+	})
+
+	t.Run("restaurant-funded: provider eats it, platform+rider whole on gross", func(t *testing.T) {
+		sp := settlement.Split{ProviderID: "p", ProviderPct: 0.80, PlatformPct: 0.10, RiderID: &rider, RiderPct: 0.10,
+			DiscountKobo: discount, DiscountFundedByPlatform: false}
+		if err := sp.Validate(); err != nil {
+			t.Fatalf("valid: %v", err)
+		}
+		provider, platform, riderK := splitLegsKobo(total, sp)
+		if provider != 70_000 { // 80% of gross (80_000) minus the 10_000 it funded
+			t.Errorf("provider = %d, want 70_000 (80%% of gross minus the discount it funded)", provider)
+		}
+		if platform != 10_000 || riderK != 10_000 { // both unaffected
+			t.Errorf("platform=%d rider=%d, want 10_000/10_000 (unaffected)", platform, riderK)
+		}
+		if provider+platform+riderK != total {
+			t.Errorf("legs sum %d, want escrowed total %d", provider+platform+riderK, total)
+		}
+	})
+
+	t.Run("discount composes with a tip (rider still gets 100% of tip)", func(t *testing.T) {
+		// gross 100_000, discount 10_000, tip 5_000 → escrowed total 95_000.
+		sp := settlement.Split{ProviderID: "p", ProviderPct: 0.80, PlatformPct: 0.10, RiderID: &rider, RiderPct: 0.10,
+			DiscountKobo: 10_000, DiscountFundedByPlatform: true, TipKobo: 5_000}
+		provider, platform, riderK := splitLegsKobo(95_000, sp)
+		if riderK != 15_000 { // 10% of gross (10_000) + full tip (5_000)
+			t.Errorf("rider = %d, want 15_000 (gross share + full tip)", riderK)
+		}
+		if provider != 80_000 || platform != 0 {
+			t.Errorf("provider=%d platform=%d, want 80_000/0", provider, platform)
+		}
+		if provider+platform+riderK != 95_000 {
+			t.Errorf("legs sum %d, want 95_000", provider+platform+riderK)
+		}
+	})
 }
 
 // idempotency-key derivation, transcribed from Service.Settle:

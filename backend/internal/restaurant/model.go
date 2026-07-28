@@ -60,7 +60,13 @@ type Order struct {
 	SubtotalKobo    int64       `json:"subtotal_kobo"`
 	DeliveryKobo    int64       `json:"delivery_kobo"`
 	TipKobo         int64       `json:"tip_kobo"`
-	TotalKobo       int64       `json:"total_kobo"`
+	// DiscountKobo is the promo discount taken off the item subtotal; PromoID and
+	// PromoFunder snapshot which promo applied and who bore it. TotalKobo (escrowed) =
+	// SubtotalKobo − DiscountKobo + DeliveryKobo + TipKobo.
+	DiscountKobo int64   `json:"discount_kobo"`
+	PromoID      *string `json:"promo_id,omitempty"`
+	PromoFunder  *string `json:"promo_funder,omitempty"`
+	TotalKobo    int64   `json:"total_kobo"`
 	Status          OrderStatus `json:"status"`
 	IdempotencyKey  string      `json:"idempotency_key"`
 	SettlementID    string      `json:"settlement_id"`
@@ -128,6 +134,11 @@ type PlaceOrderRequest struct {
 	// settlement. It is escrowed with the order total. Negative values are clamped
 	// to 0 by PlaceOrder (never trusted from the client for money math).
 	TipKobo int64 `json:"tip_kobo,omitempty"`
+
+	// PromoCode, when set, is validated against the restaurant's (or a platform-wide)
+	// promos and applied as a discount to the item subtotal. An unusable code fails
+	// the order (ErrPromoInvalid) rather than being silently ignored.
+	PromoCode string `json:"promo_code,omitempty"`
 
 	DeliveryLat      *float64 `json:"delivery_lat,omitempty"`
 	DeliveryLng      *float64 `json:"delivery_lng,omitempty"`
