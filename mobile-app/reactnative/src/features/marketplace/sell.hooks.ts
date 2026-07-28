@@ -116,6 +116,23 @@ export const useResumeListing = () => useListingLifecycle(sellApi.resumeListing)
 export const useRenewListing = () => useListingLifecycle(sellApi.renewListing);
 export const useDeleteListing = () => useListingLifecycle(sellApi.deleteListing);
 
+// Bulk manage (LM-006). No batch endpoint exists, so this fans out over the
+// per-listing lifecycle calls and reports partial success. Uses allSettled so one
+// failure never aborts the rest; refreshes My Listings once at the end. Returns
+// { ok, failed } counts so the UI can surface partial failures.
+export function useBulkListings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ ids, action }: { ids: string[]; action: 'delete' | 'pause' | 'resume' }) => {
+      const fn = action === 'delete' ? sellApi.deleteListing : action === 'pause' ? sellApi.pauseListing : sellApi.resumeListing;
+      const results = await Promise.allSettled(ids.map((id) => fn(id)));
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      return { action, ok: ids.length - failed, failed };
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: SELL_KEYS.myListings }),
+  });
+}
+
 export function useMarkSold() {
   const qc = useQueryClient();
   return useMutation({
