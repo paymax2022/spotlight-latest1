@@ -5,13 +5,10 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"time"
 
 	"github.com/google/uuid"
 )
-
-// dispatchFanOut is how many nearest available riders a ready order is offered
-// to at once. The first to accept wins; the rest are expired on acceptance.
-const dispatchFanOut = 7
 
 // DispatchOrder auto-offers a ready order to the nearest available riders.
 //
@@ -29,9 +26,11 @@ func (s *Service) DispatchOrder(ctx context.Context, orderID string) error {
 	var restaurantID string
 	var existingRider *string
 	var status string
+	var readyAt *time.Time
+	var attempts int
 	if err := s.db.QueryRow(ctx,
-		`SELECT restaurant_id, rider_id, status FROM orders WHERE id=$1`, orderID).
-		Scan(&restaurantID, &existingRider, &status); err != nil {
+		`SELECT restaurant_id, rider_id, status, ready_at, dispatch_attempts FROM orders WHERE id=$1`, orderID).
+		Scan(&restaurantID, &existingRider, &status, &readyAt, &attempts); err != nil {
 		return fmt.Errorf("restaurant: order not found")
 	}
 	if existingRider != nil {
@@ -52,35 +51,29 @@ func (s *Service) DispatchOrder(ctx context.Context, orderID string) error {
 		return err
 	}
 
-	// Find the nearest available riders. When the restaurant has no pin (rlat
-	// nil), fall back to most-recently-online. drivers.user_id is the rider's
-	// auth user id used everywhere else (rider_id).
-	const q = `
-		SELECT user_id
-		FROM drivers
-		WHERE status = 'online' AND verification_status = 'approved'
-		ORDER BY
-		  CASE WHEN $2::float8 IS NULL OR current_lat IS NULL THEN 1 ELSE 0 END,
-		  CASE WHEN $2::float8 IS NULL OR current_lat IS NULL THEN 0
-		       ELSE (current_lat - $2::float8) * (current_lat - $2::float8)
-		          + (current_lng - $3::float8) * (current_lng - $3::float8) END ASC,
-		  updated_at DESC
-		LIMIT $1`
-	rows, err := s.db.Query(ctx, q, dispatchFanOut, rlat, rlng)
+	// SLA-aware tuning: a fresh order uses the base fan-out + load cap; a re-dispatch
+	// of an order that has been searching past the SLA target escalates (wider net,
+	// relaxed cap) to get it moving.
+	effectiveReady := readyAt
+	if effectiveReady == nil {
+		now := time.Now()
+		effectiveReady = &now
+	}
+	fanOut, maxLoad, _ := dispatchTuning(effectiveReady, time.Now(), attempts)
+
+	// Gather the available-rider pool with the fairness signals — proximity, current
+	// in-flight load, and last-assignment time — then rank/trim in pure Go
+	// (selectFairRiders) so the offer set balances speed and fairness rather than
+	// piling every order on the same nearest rider. drivers.user_id is the rider's
+	// auth id (== orders.rider_id).
+	candidates, err := s.gatherRiderCandidates(ctx, rlat, rlng)
 	if err != nil {
 		return fmt.Errorf("restaurant: find riders: %w", err)
 	}
-	defer rows.Close()
-	var riders []string
-	for rows.Next() {
-		var rid string
-		if err := rows.Scan(&rid); err != nil {
-			return err
-		}
-		riders = append(riders, rid)
-	}
-	if err := rows.Err(); err != nil {
-		return err
+	selected := selectFairRiders(candidates, fanOut, maxLoad)
+	riders := make([]string, 0, len(selected))
+	for _, c := range selected {
+		riders = append(riders, c.RiderID)
 	}
 
 	// No riders online — leave the order searching and tell the restaurant so it
@@ -111,9 +104,55 @@ func (s *Service) DispatchOrder(ctx context.Context, orderID string) error {
 			Body:  "A nearby order is ready for pickup — accept to deliver.",
 			Data:  map[string]any{"order_id": orderID}})
 	}
+	// Record the SLA timeline: stamp first_offered_at once (start of the time-to-assign
+	// clock), and count this (possibly escalating) dispatch attempt.
+	if _, err := s.db.Exec(ctx,
+		`UPDATE orders SET first_offered_at = COALESCE(first_offered_at, now()), dispatch_attempts = dispatch_attempts + 1 WHERE id=$1`,
+		orderID); err != nil {
+		return err
+	}
 	s.broadcastStatus(orderID, OrderStatus("searching_rider"))
 	_ = code
 	return nil
+}
+
+// gatherRiderCandidates loads the available-rider pool (online + approved) with the
+// fairness signals used by selectFairRiders: each rider's straight-line distance to the
+// restaurant (when both are pinned), their current in-flight load (non-terminal orders
+// assigned to them), and when they were last assigned an order. Capped at 200 rows —
+// ranking + trimming to the fan-out happens in pure Go.
+func (s *Service) gatherRiderCandidates(ctx context.Context, rlat, rlng *float64) ([]riderCandidate, error) {
+	const q = `
+		SELECT d.user_id, d.current_lat, d.current_lng,
+		  (SELECT count(*) FROM orders o WHERE o.rider_id = d.user_id AND o.status NOT IN ('delivered','cancelled')) AS active_load,
+		  (SELECT max(o.ready_at) FROM orders o WHERE o.rider_id = d.user_id) AS last_assigned
+		FROM drivers d
+		WHERE d.status = 'online' AND d.verification_status = 'approved'
+		LIMIT 200`
+	rows, err := s.db.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []riderCandidate
+	for rows.Next() {
+		var uid string
+		var clat, clng *float64
+		var load int
+		var last *time.Time
+		if err := rows.Scan(&uid, &clat, &clng, &load, &last); err != nil {
+			return nil, err
+		}
+		c := riderCandidate{RiderID: uid, ActiveLoad: load, LastAssigned: last}
+		if rlat != nil && rlng != nil && clat != nil && clng != nil {
+			dlat := *clat - *rlat
+			dlng := *clng - *rlng
+			c.HasDistance = true
+			c.DistanceSq = dlat*dlat + dlng*dlng
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // ConfirmPickup lets the assigned rider mark a ready order as picked up. Only
