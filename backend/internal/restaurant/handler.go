@@ -70,7 +70,14 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 	}
 	order, err := h.svc.PlaceOrder(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// A bad modifier/zone selection is a client error, not a 500.
+		code := http.StatusInternalServerError
+		if errors.Is(err, ErrInvalidModifierSelection) {
+			code = http.StatusBadRequest
+		} else if errors.Is(err, ErrOutsideDeliveryZone) {
+			code = http.StatusUnprocessableEntity
+		}
+		c.JSON(code, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, order)

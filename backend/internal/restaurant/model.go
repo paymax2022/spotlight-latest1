@@ -81,13 +81,24 @@ type Order struct {
 
 // OrderItem is one line in an order.
 type OrderItem struct {
-	ID           string `json:"id"`
-	OrderID      string `json:"order_id"`
-	MenuItemID   string `json:"menu_item_id"`
-	Name         string `json:"name"`
-	PriceKobo    int64  `json:"price_kobo"`
-	Quantity     int    `json:"quantity"`
-	SubtotalKobo int64  `json:"subtotal_kobo"`
+	ID         string `json:"id"`
+	OrderID    string `json:"order_id"`
+	MenuItemID string `json:"menu_item_id"`
+	Name       string `json:"name"`
+	PriceKobo  int64  `json:"price_kobo"` // base unit price (before modifiers)
+	Quantity   int    `json:"quantity"`
+	// ModifiersKobo is the per-unit modifier surcharge; Modifiers is the chosen-option
+	// snapshot. SubtotalKobo = (PriceKobo + ModifiersKobo) * Quantity.
+	ModifiersKobo int64               `json:"modifiers_kobo"`
+	Modifiers     []OrderItemModifier `json:"modifiers,omitempty"`
+	SubtotalKobo  int64               `json:"subtotal_kobo"`
+}
+
+// OrderItemModifier is one chosen modifier snapshotted onto an order line.
+type OrderItemModifier struct {
+	ModifierID     string `json:"modifier_id"`
+	Name           string `json:"name"`
+	PriceDeltaKobo int64  `json:"price_delta_kobo"`
 }
 
 // CreateRestaurantRequest is the body for POST /restaurant.
@@ -154,6 +165,10 @@ type OrderItemInput struct {
 	// Quantity is accepted as either `quantity` (canonical) or `qty` (mobile client).
 	Quantity int `json:"quantity"`
 	Qty      int `json:"qty"`
+	// ModifierIDs are the chosen menu_modifiers for this line (e.g. a size + extras).
+	// Validated against the item's modifier groups at PlaceOrder; each adds a per-unit
+	// price delta. Empty is valid only when the item has no required groups.
+	ModifierIDs []string `json:"modifier_ids,omitempty"`
 }
 
 // MenuItem returns the normalized menu-item id regardless of which json field the

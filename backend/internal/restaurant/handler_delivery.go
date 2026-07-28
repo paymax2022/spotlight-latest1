@@ -103,6 +103,51 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 	c.JSON(http.StatusOK, it)
 }
 
+// ── Menu-item modifiers ───────────────────────────────────────────────────────
+
+// ListItemModifierGroups → GET /restaurant/:id/menu/items/:itemId/modifier-groups.
+// Public read for clients rendering an item's options.
+func (h *Handler) ListItemModifierGroups(c *gin.Context) {
+	groups, err := h.svc.ListItemModifierGroups(c.Request.Context(), c.Param("itemId"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"groups": groups})
+}
+
+// CreateModifierGroup → POST /restaurant/:id/menu/items/:itemId/modifier-groups (owner).
+func (h *Handler) CreateModifierGroup(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req CreateModifierGroupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	g, err := h.svc.CreateModifierGroup(c.Request.Context(), c.Param("id"), userID, c.Param("itemId"), req)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, g)
+}
+
+// AddModifier → POST /restaurant/:id/menu/modifier-groups/:groupId/modifiers (owner).
+func (h *Handler) AddModifier(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req AddModifierRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	m, err := h.svc.AddModifier(c.Request.Context(), c.Param("id"), userID, c.Param("groupId"), req)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, m)
+}
+
 // ── Rider / delivery lifecycle ────────────────────────────────────────────────
 
 // AssignRider → POST /restaurant/orders/:orderId/assign (owner offers a rider).
