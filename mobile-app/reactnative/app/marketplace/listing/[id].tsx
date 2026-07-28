@@ -6,10 +6,10 @@
 // non-binding price proposal, plus tertiary tap-to-reveal Call. Sold/expired
 // shows a banner over a dimmed gallery, never a 404.
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, Image, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView, Image, Dimensions, Share } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Heart, Flag, ShieldAlert, Phone, ChevronRight } from 'lucide-react-native';
+import { ArrowLeft, Heart, Flag, Share2, ShieldAlert, Phone, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -67,6 +67,15 @@ export default function ListingDetail() {
           >
             <Heart size={18} color={l.savedByMe ? MarketColors.danger : Colors.onSurface} fill={l.savedByMe ? MarketColors.danger : 'transparent'} />
           </Pressable>
+          <Pressable
+            style={styles.roundBtn}
+            hitSlop={8}
+            accessibilityLabel="Share listing"
+            onPress={() => Share.share({
+              title: l.title,
+              message: `${l.title} — ${formatNaira(l.priceKobo)} on Paymax Marketplace\nhttps://paymax.ng/marketplace/listing/${l.id}`,
+            })}
+          ><Share2 size={18} color={Colors.onSurface} /></Pressable>
           <Pressable style={styles.roundBtn} hitSlop={8} accessibilityLabel="Report listing" onPress={() => router.push(`/marketplace/account/report?targetType=listing&targetId=${l.id}&targetName=${encodeURIComponent(l.title)}&sellerId=${l.sellerId}` as never)}><Flag size={18} color={Colors.onSurface} /></Pressable>
         </View>
       </View>

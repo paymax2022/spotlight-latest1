@@ -7,11 +7,11 @@
 // No dedicated Paymax messaging shell exists for the marketplace yet, so threads
 // are modelled around their listing + offers (see offers.mock.ts). TODO(messaging)
 // noted there — swap in the shared shell when it lands without touching this UI.
-import React from 'react';
-import { View, Text, StyleSheet, FlatList, Pressable, Image } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { View, Text, StyleSheet, FlatList, Pressable, Image, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Package } from 'lucide-react-native';
+import { Package, Search, X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -63,12 +63,38 @@ function ThreadRow({ thread }: { thread: DealThread }) {
 export default function ChatInbox() {
   const threadsQ = useThreads();
   const threads = threadsQ.data ?? [];
+  const [q, setQ] = useState('');
+
+  // MSG-009: filter the inbox by counterparty or listing title.
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return threads;
+    return threads.filter((t) =>
+      t.counterpartyName.toLowerCase().includes(needle) || t.listingTitle.toLowerCase().includes(needle),
+    );
+  }, [threads, q]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Chats & deals</Text>
       </View>
+
+      {threads.length > 0 ? (
+        <View style={styles.searchWrap}>
+          <Search size={16} color={MarketColors.muted} />
+          <TextInput
+            style={styles.searchInput}
+            value={q}
+            onChangeText={setQ}
+            placeholder="Search chats by name or listing"
+            placeholderTextColor={MarketColors.muted}
+            returnKeyType="search"
+          />
+          {q ? <Pressable onPress={() => setQ('')} hitSlop={8} accessibilityLabel="Clear search"><X size={16} color={MarketColors.muted} /></Pressable> : null}
+        </View>
+      ) : null}
+
       <View style={styles.stripWrap}><SafetyStrip /></View>
 
       {threadsQ.isLoading ? (
@@ -82,9 +108,11 @@ export default function ChatInbox() {
           title="No conversations yet"
           message="Message a seller from any listing to start negotiating safely."
         />
+      ) : filtered.length === 0 ? (
+        <StateView kind="empty" icon="Search" title="No matches" message={`No chats match “${q}”.`} compact />
       ) : (
         <FlatList
-          data={threads}
+          data={filtered}
           keyExtractor={(t) => t.id}
           contentContainerStyle={styles.list}
           renderItem={({ item }) => <ThreadRow thread={item} />}
@@ -98,6 +126,8 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   header: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.xs },
   headerTitle: { ...Typography.headlineMd, color: Colors.onSurface },
+  searchWrap: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.sm, paddingHorizontal: Spacing.sm + 2, borderRadius: Radius.lg, borderWidth: 1, borderColor: MarketColors.border, backgroundColor: MarketColors.surface },
+  searchInput: { flex: 1, ...Typography.bodyMd, color: MarketColors.text, paddingVertical: 10 },
   stripWrap: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.sm },
   list: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.sm, paddingBottom: Spacing.xl },
   row: { flexDirection: 'row', gap: Spacing.sm, backgroundColor: MarketColors.surface, borderRadius: Radius.lg, padding: Spacing.sm + 2 },
