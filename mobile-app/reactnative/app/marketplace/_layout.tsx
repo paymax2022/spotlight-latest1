@@ -60,6 +60,7 @@ export default function MarketplaceLayout() {
 
       {/* ── Detail routes (not tabs; deep-linkable) ── */}
       <Tabs.Screen name="sell/compose" options={{ href: null }} />
+      <Tabs.Screen name="sell/edit/[id]" options={{ href: null }} />
       <Tabs.Screen name="deals/[threadId]" options={{ href: null }} />
       <Tabs.Screen name="boost/[listingId]" options={{ href: null }} />
     </Tabs>

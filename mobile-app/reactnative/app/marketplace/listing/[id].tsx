@@ -60,7 +60,7 @@ export default function ListingDetail() {
           <Pressable style={styles.roundBtn} onPress={() => setSaved((s) => !s)} hitSlop={8} accessibilityLabel="Save listing">
             <Heart size={18} color={saved ? MarketColors.danger : Colors.onSurface} fill={saved ? MarketColors.danger : 'transparent'} />
           </Pressable>
-          <Pressable style={styles.roundBtn} hitSlop={8} accessibilityLabel="Report listing"><Flag size={18} color={Colors.onSurface} /></Pressable>
+          <Pressable style={styles.roundBtn} hitSlop={8} accessibilityLabel="Report listing" onPress={() => router.push(`/marketplace/account/report?targetType=listing&targetId=${l.id}&targetName=${encodeURIComponent(l.title)}&sellerId=${l.sellerId}` as never)}><Flag size={18} color={Colors.onSurface} /></Pressable>
         </View>
       </View>
 
