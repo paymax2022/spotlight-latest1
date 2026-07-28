@@ -12,6 +12,7 @@ import type {
   MktBoost,
   MktCategory,
   MktCategoryInput,
+  MktAnalytics,
 } from '@/types/marketplaceAdmin';
 
 // Paymax Marketplace admin console — service layer.
@@ -492,6 +493,51 @@ export async function setCategoryActive(id: string, isActive: boolean, reasonCod
     method: 'POST', headers: authHeaders(), body: JSON.stringify({ is_active: isActive, reason_code: reasonCode }),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Category status change failed'));
+  return res.json();
+}
+
+// ─── Analytics (GMV / DAU / conversion) — ADM-005 ────────────────────────────
+
+function buildGmvSeries(days: number): { date: string; gmv_kobo: number; deals: number }[] {
+  const out: { date: string; gmv_kobo: number; deals: number }[] = [];
+  // Deterministic pseudo-series (no Math.random) so fixtures render stably.
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now - i * 24 * 60 * 60_000);
+    const wobble = 1 + 0.35 * Math.sin(i / 2) + (i % 7 === 0 ? 0.4 : 0); // weekly spikes
+    out.push({
+      date: d.toISOString().slice(0, 10),
+      gmv_kobo: Math.round(42_000_000 * wobble),
+      deals: Math.round(18 * wobble),
+    });
+  }
+  return out;
+}
+
+export async function getMarketplaceAnalytics(rangeDays: 7 | 30 | 90 = 30): Promise<MktAnalytics> {
+  if (USE_FIXTURES) {
+    const series = buildGmvSeries(rangeDays);
+    const gmv = series.reduce((s, p) => s + p.gmv_kobo, 0);
+    return delay({
+      range_days: rangeDays,
+      gmv_kobo: gmv,
+      gmv_prev_kobo: Math.round(gmv * 0.86),
+      revenue_kobo: Math.round(gmv * 0.031),
+      dau: 8_420,
+      active_listings: 214_530,
+      new_listings: series.length * 640,
+      funnel: { views: 4_120_000, contacts: 286_400, deals: series.reduce((s, p) => s + p.deals, 0) },
+      gmv_series: series,
+      top_categories: [
+        { category_id: 'cat_vehicles', name: 'Vehicles', gmv_kobo: Math.round(gmv * 0.34), active_listings: 18_420 },
+        { category_id: 'cat_phones', name: 'Phones & Tablets', gmv_kobo: Math.round(gmv * 0.22), active_listings: 53_100 },
+        { category_id: 'cat_property', name: 'Property', gmv_kobo: Math.round(gmv * 0.19), active_listings: 9_240 },
+        { category_id: 'cat_electronics', name: 'Electronics', gmv_kobo: Math.round(gmv * 0.13), active_listings: 41_880 },
+        { category_id: 'cat_fashion', name: 'Fashion', gmv_kobo: Math.round(gmv * 0.07), active_listings: 22_050 },
+      ],
+    });
+  }
+  const res = await fetch(`${marketplaceAdminBase()}/analytics?range_days=${rangeDays}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Analytics fetch failed'));
   return res.json();
 }
 

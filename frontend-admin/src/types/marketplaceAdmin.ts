@@ -295,3 +295,32 @@ export interface MktCategoryInput {
   attribute_schema: MktAttributeSchema;
   reason_code?: string; // audited config change (ADM-001)
 }
+
+// ── Analytics (GMV / DAU / conversion) — ADM-005 ─────────────────────────────
+
+export interface MktAnalyticsPoint {
+  date: string; // ISO date (day granularity)
+  gmv_kobo: number; // transaction value facilitated that day
+  deals: number; // deals closed (chat → agreed) that day
+}
+
+export interface MktCategoryStat {
+  category_id: string;
+  name: string;
+  gmv_kobo: number;
+  active_listings: number;
+}
+
+export interface MktAnalytics {
+  range_days: number;
+  gmv_kobo: number; // value facilitated over the window
+  gmv_prev_kobo: number; // same-length preceding window (for delta)
+  revenue_kobo: number; // platform take: commission + boost ad revenue
+  dau: number; // daily active users (avg over window)
+  active_listings: number;
+  new_listings: number;
+  // Discovery → contact → deal funnel counts over the window.
+  funnel: { views: number; contacts: number; deals: number };
+  gmv_series: MktAnalyticsPoint[];
+  top_categories: MktCategoryStat[];
+}
