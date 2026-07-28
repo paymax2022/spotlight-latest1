@@ -545,7 +545,10 @@ func (s *Service) UpdateStatus(ctx context.Context, orderID, actorID string, new
 // `delivered` may be set.
 func (s *Service) transitionInternal(ctx context.Context, orderID, actorID string, newStatus OrderStatus) error {
 	var order Order
-	const q = `SELECT id, restaurant_id, status, settlement_id FROM orders WHERE id=$1`
+	// COALESCE settlement_id: it is nullable, and the non-settling transitions
+	// (confirmed/preparing/ready) don't need it — scanning a NULL into the non-pointer
+	// SettlementID would otherwise fail with a misleading "order not found".
+	const q = `SELECT id, restaurant_id, status, COALESCE(settlement_id::text,'') FROM orders WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&order.ID, &order.RestaurantID, &order.Status, &order.SettlementID); err != nil {
 		return fmt.Errorf("restaurant: order not found")
 	}
