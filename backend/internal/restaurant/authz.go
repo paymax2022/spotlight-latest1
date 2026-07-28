@@ -20,6 +20,10 @@ var (
 	// is allowed, back-compat). Maps to HTTP 422 (unprocessable — valid request, but
 	// undeliverable to this address).
 	ErrOutsideDeliveryZone = errors.New("restaurant: delivery address is outside the restaurant's delivery zone")
+	// ErrClosedNow — the restaurant has business hours defined and is currently outside
+	// them (or its manual switch is off). Distinct from the generic "not found"/"closed"
+	// so the handler can return 422 (valid request, not orderable at this time).
+	ErrClosedNow = errors.New("restaurant: restaurant is closed right now (outside business hours)")
 )
 
 type orderActorRole int

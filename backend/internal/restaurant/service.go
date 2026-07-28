@@ -208,6 +208,15 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	if !isOpen {
 		return nil, fmt.Errorf("restaurant: restaurant is currently closed")
 	}
+	// Business-hours gate: if the restaurant has a defined weekly schedule, it must be
+	// within an opening window right now. A restaurant with no schedule is governed
+	// solely by is_open (checked above), preserving prior behavior. A hours-load error
+	// blocks — an order should not slip through when the schedule can't be evaluated.
+	if hours, herr := s.loadBusinessHours(ctx, restaurantID); herr != nil {
+		return nil, fmt.Errorf("restaurant: check business hours: %w", herr)
+	} else if !effectiveOpen(true, hours, time.Now(), lagosTZ) {
+		return nil, ErrClosedNow
+	}
 
 	// Fetch and validate menu items.
 	var items []OrderItem

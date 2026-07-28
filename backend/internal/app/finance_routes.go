@@ -1228,6 +1228,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.POST("/:id/menu/modifier-groups/:groupId/modifiers", restaurantHandler.AddModifier)
 		// Promo codes (owner-created, restaurant-funded).
 		restGroup.POST("/:id/promos", restaurantHandler.CreatePromo)
+		// Weekly business hours: public read (schedule + open-now), owner replace-all.
+		restGroup.GET("/:id/hours", restaurantHandler.GetBusinessHours)
+		restGroup.PUT("/:id/hours", restaurantHandler.SetBusinessHours)
 
 		// Distance-based delivery-fee preview (before placing the order). Member auth
 		// via the finance group's requireUserID. Static "delivery-quote" segment under

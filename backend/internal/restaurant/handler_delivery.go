@@ -166,6 +166,41 @@ func (h *Handler) CreatePromo(c *gin.Context) {
 	c.JSON(http.StatusCreated, p)
 }
 
+// ── Business hours ────────────────────────────────────────────────────────────
+
+// GetBusinessHours → GET /restaurant/:id/hours. Public: weekly schedule + open-now.
+func (h *Handler) GetBusinessHours(c *gin.Context) {
+	st, err := h.svc.GetBusinessHours(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, st)
+}
+
+// SetBusinessHours → PUT /restaurant/:id/hours (owner). Replaces the whole schedule.
+func (h *Handler) SetBusinessHours(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var body struct {
+		Windows []BusinessHourInput `json:"windows"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	hours, err := h.svc.SetBusinessHours(c.Request.Context(), c.Param("id"), userID, body.Windows)
+	if err != nil {
+		// Owner-check failures are 403; validation failures are 400.
+		code := http.StatusBadRequest
+		if err.Error() == "restaurant: only the owner may manage the menu" || err.Error() == "restaurant: not found" {
+			code = http.StatusForbidden
+		}
+		c.JSON(code, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"windows": hours})
+}
+
 // ── Rider / delivery lifecycle ────────────────────────────────────────────────
 
 // AssignRider → POST /restaurant/orders/:orderId/assign (owner offers a rider).
