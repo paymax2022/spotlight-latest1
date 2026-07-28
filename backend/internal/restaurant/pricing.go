@@ -18,8 +18,9 @@ func applyBp(amountKobo int64, bp int) int64 {
 
 // PricingConfig is a restaurant's platform-controlled pricing knobs (basis points).
 type PricingConfig struct {
-	ServiceFeeBp int `json:"service_fee_bp"` // platform service fee, 0–10000 (0–100% of subtotal)
-	SurgeBp      int `json:"surge_bp"`       // peak surge on the item subtotal, 0–50000 (0–5x)
+	ServiceFeeBp     int `json:"service_fee_bp"`     // platform service fee, 0–10000 (0–100% of subtotal)
+	SurgeBp          int `json:"surge_bp"`           // peak surge on the item subtotal, 0–50000 (0–5x)
+	AcceptSlaMinutes int `json:"accept_sla_minutes"` // auto-cancel unaccepted orders after N min (0 = off)
 }
 
 // SetPricingConfig sets a restaurant's service-fee + surge basis points. Intended for
@@ -33,8 +34,11 @@ func (s *Service) SetPricingConfig(ctx context.Context, restaurantID string, cfg
 	if cfg.SurgeBp < 0 || cfg.SurgeBp > 50000 {
 		return fmt.Errorf("restaurant: surge_bp must be in [0,50000]")
 	}
-	tag, err := s.db.Exec(ctx, `UPDATE restaurants SET service_fee_bp=$1, surge_bp=$2, updated_at=now() WHERE id=$3`,
-		cfg.ServiceFeeBp, cfg.SurgeBp, restaurantID)
+	if cfg.AcceptSlaMinutes < 0 || cfg.AcceptSlaMinutes > 1440 {
+		return fmt.Errorf("restaurant: accept_sla_minutes must be in [0,1440]")
+	}
+	tag, err := s.db.Exec(ctx, `UPDATE restaurants SET service_fee_bp=$1, surge_bp=$2, accept_sla_minutes=$3, updated_at=now() WHERE id=$4`,
+		cfg.ServiceFeeBp, cfg.SurgeBp, cfg.AcceptSlaMinutes, restaurantID)
 	if err != nil {
 		return err
 	}
