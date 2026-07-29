@@ -81,6 +81,10 @@ type Prescription struct {
 	RejectReason       string     `json:"reject_reason"`
 	Items              []Item     `json:"items,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
+	// DP-004 refills: RefillsAuthorized is the number of refills the prescriber
+	// granted beyond the initial fill; RefillsUsed is how many have been dispensed.
+	RefillsAuthorized int `json:"refills_authorized"`
+	RefillsUsed       int `json:"refills_used"`
 }
 
 type Service struct {
@@ -318,10 +322,12 @@ func lockPrescription(ctx context.Context, tx pgx.Tx, rxID string) (*prescriptio
 func (s *Service) load(ctx context.Context, rxID string) (*Prescription, error) {
 	var p Prescription
 	var state string
-	const q = `SELECT id, consult_id, prescriber_id, patient_id, pharmacy_provider_id, verified_by, state, dispensed_at, reject_reason, created_at
+	const q = `SELECT id, consult_id, prescriber_id, patient_id, pharmacy_provider_id, verified_by, state, dispensed_at, reject_reason, created_at,
+	                  refills_authorized, refills_used
 	           FROM health_prescriptions WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, rxID).Scan(&p.ID, &p.ConsultID, &p.PrescriberID, &p.PatientID,
-		&p.PharmacyProviderID, &p.VerifiedBy, &state, &p.DispensedAt, &p.RejectReason, &p.CreatedAt); err != nil {
+		&p.PharmacyProviderID, &p.VerifiedBy, &state, &p.DispensedAt, &p.RejectReason, &p.CreatedAt,
+		&p.RefillsAuthorized, &p.RefillsUsed); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("rx: not found")
 		}
