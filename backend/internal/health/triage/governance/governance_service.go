@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"spotlight/backend/internal/health/makercheck"
 	"spotlight/backend/internal/health/triage"
 )
 
@@ -71,6 +72,7 @@ func (s *GovernanceService) CreateContentDraft(ctx context.Context, actorID stri
 	if in.Language == "" {
 		in.Language = "en"
 	}
+	in.CreatedBy = actorID // author (maker) — the approver must differ (SC-011)
 	ci, err := s.repo.CreateContent(ctx, &in)
 	if err != nil {
 		return nil, err
@@ -160,6 +162,14 @@ func (s *GovernanceService) transitionContent(ctx context.Context, actorID, id s
 	if setPublished && reviewerID == "" {
 		return nil, ErrSignOffRequired
 	}
+	// Four-eyes (SC-011): the approver/publisher of safety-critical clinical content
+	// must be a different clinician than its author. Enforced when the author is
+	// known (CreatedBy set); legacy rows without an author are grandfathered.
+	if (to == triage.ContentApproved || to == triage.ContentPublished) && cur.CreatedBy != "" {
+		if err := makercheck.Authorize(cur.CreatedBy, reviewerID); err != nil {
+			return nil, err
+		}
+	}
 	ok, err := s.repo.TransitionContent(ctx, id, cur.State, to, reviewerID, setPublished)
 	if err != nil {
 		return nil, err
@@ -200,6 +210,7 @@ func (s *GovernanceService) CreateRuleDraft(ctx context.Context, actorID string,
 	if in.Severity == "" {
 		in.Severity = "emergency"
 	}
+	in.CreatedBy = actorID // author (maker) — the approver must differ (SC-011)
 	rr, err := s.repo.CreateRule(ctx, &in)
 	if err != nil {
 		return nil, err
@@ -286,6 +297,13 @@ func (s *GovernanceService) transitionRule(ctx context.Context, actorID, id stri
 	setPublished := to == triage.ContentPublished
 	if setPublished && reviewerID == "" {
 		return nil, ErrSignOffRequired
+	}
+	// Four-eyes (SC-011): a red-flag rule (which routes emergencies) must be
+	// approved/published by a different clinician than its author.
+	if (to == triage.ContentApproved || to == triage.ContentPublished) && cur.CreatedBy != "" {
+		if err := makercheck.Authorize(cur.CreatedBy, reviewerID); err != nil {
+			return nil, err
+		}
 	}
 	ok, err := s.repo.TransitionRule(ctx, id, cur.State, to, reviewerID, setPublished)
 	if err != nil {
