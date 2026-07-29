@@ -80,9 +80,10 @@ type Prescription struct {
 }
 
 type Service struct {
-	db       *pgxpool.Pool
-	audit    Auditor
-	clinical ClinicalContextProvider // optional; supplies allergies/meds for the pre-issue safety screen
+	db             *pgxpool.Pool
+	audit          Auditor
+	clinical       ClinicalContextProvider // optional; supplies allergies/meds for the pre-issue safety screen
+	prescriberAuth PrescriberAuthorizer    // optional; scope-of-practice gate at the prescribe boundary (CR-004)
 }
 
 func NewService(db *pgxpool.Pool, audit Auditor) *Service {
@@ -109,6 +110,11 @@ func (s *Service) Issue(ctx context.Context, prescriberID, patientID string, con
 func (s *Service) IssueChecked(ctx context.Context, prescriberID, patientID string, consultID *string, items []Item, pc *clinicalsafety.PatientContext, overrideReason string) (*Prescription, error) {
 	if prescriberID == "" || patientID == "" {
 		return nil, fmt.Errorf("rx: prescriber and patient required")
+	}
+	// Scope-of-practice gate (CR-004): only a verified, unexpired prescriber may
+	// issue. Fail-closed when an authorizer is wired; no-op otherwise.
+	if err := authorizePrescriber(ctx, s.prescriberAuth, prescriberID); err != nil {
+		return nil, err
 	}
 	if len(items) == 0 {
 		return nil, fmt.Errorf("rx: at least one item required")
