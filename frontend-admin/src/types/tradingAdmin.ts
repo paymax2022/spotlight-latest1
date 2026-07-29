@@ -52,3 +52,69 @@ export interface TradingBypassEntry {
   revoked_at: string | null;
   active: boolean;
 }
+
+// ── §12 Promotion ladder ──────────────────────────────────────────────────────
+// Wire-shape note: the Go promotion handlers serialize their structs WITHOUT json
+// tags, so the API returns PascalCase field names (StrategyID, Stage, …). These
+// types match that wire shape so the live fetch path needs no mapping.
+
+export type TradingStage =
+  | 'not_promoted' | 'paper' | 'shadow' | 'canary' | 'live' | 'halted';
+
+export interface StrategyPromotion {
+  StrategyID: string;
+  Stage: TradingStage;
+  ValidationPassed: boolean;
+  TrackRecordDays: number;
+  CircuitTripped: boolean;
+  Version: number;
+  UpdatedAt: string;
+}
+
+export interface PromotionEvent {
+  StrategyID: string;
+  EventType: string;         // register | promote | demote | halt | readiness
+  OldStage: string;
+  NewStage: string;
+  MakerID: string | null;
+  CheckerID: string | null;
+  RiskSignedOff: boolean | null;
+  LegalSignedOff: boolean | null;
+  Reason: string;
+  CreatedAt: string;
+}
+
+export interface PromoteRequest {
+  to_stage: TradingStage;
+  maker_id: string;          // must differ from the acting checker (two-person)
+  risk_signed_off: boolean;  // required for canary → live
+  legal_signed_off: boolean; // required for canary → live
+}
+export interface ReadinessRequest {
+  validation_passed: boolean;
+  track_record_days: number;
+  circuit_tripped: boolean;
+}
+export interface DemoteRequest { to_stage: TradingStage; reason: string; }
+
+// The next legal forward rung from a stage (null if off-ladder / already Live).
+export function nextStage(s: TradingStage): TradingStage | null {
+  switch (s) {
+    case 'not_promoted':
+    case 'halted':
+      return 'paper';
+    case 'paper':
+      return 'shadow';
+    case 'shadow':
+      return 'canary';
+    case 'canary':
+      return 'live';
+    default:
+      return null;
+  }
+}
+// Canary/Live are real-capital ELIGIBILITY states — even so, this build executes
+// nothing (no venue adapter). Used only to render an "eligibility" hint.
+export function allowsRealCapital(s: TradingStage): boolean {
+  return s === 'canary' || s === 'live';
+}

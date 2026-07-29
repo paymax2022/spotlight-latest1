@@ -1,6 +1,7 @@
 import { env } from '@/config/env';
 import type {
   TradingKycRecord, TradingKycStatus, TradingKycEvent, TradingKycBypassRequest, TradingBypassEntry,
+  StrategyPromotion, PromotionEvent, PromoteRequest, ReadinessRequest, DemoteRequest, TradingStage,
 } from '@/types/tradingAdmin';
 
 // Trading admin console — service layer. Backend routes hang off /v1/trading/admin
@@ -112,6 +113,102 @@ export async function listBypassRegister(): Promise<TradingBypassEntry[]> {
   const res = await fetch(`${tradingAdminBase()}/kyc/bypass-register`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(await parseErr(res, 'Bypass register fetch failed'));
   const d = await res.json(); return Array.isArray(d) ? d : d.data ?? [];
+}
+
+// ── §12 Promotion ladder ──────────────────────────────────────────────────────
+// Routes: /v1/trading/admin/promotions*. Each mutating route is RBAC-guarded and the
+// two-person + Risk/legal rules are enforced by the backend ladder gate — the UI
+// only proposes. Fixtures are mutated in place so the mock flow feels real.
+
+let FIXTURE_STRATEGIES: StrategyPromotion[] = [
+  { StrategyID: 'trend-btc-v1',  Stage: 'live',   ValidationPassed: true,  TrackRecordDays: 140, CircuitTripped: false, Version: 6, UpdatedAt: iso(60) },
+  { StrategyID: 'meanrev-eth-v2', Stage: 'canary', ValidationPassed: true,  TrackRecordDays: 72,  CircuitTripped: false, Version: 4, UpdatedAt: iso(180) },
+  { StrategyID: 'breakout-fx-v1', Stage: 'shadow', ValidationPassed: true,  TrackRecordDays: 41,  CircuitTripped: false, Version: 2, UpdatedAt: iso(600) },
+  { StrategyID: 'carry-basket-v1', Stage: 'paper',  ValidationPassed: false, TrackRecordDays: 12,  CircuitTripped: false, Version: 1, UpdatedAt: iso(1440) },
+  { StrategyID: 'vol-scalp-x',    Stage: 'halted', ValidationPassed: true,  TrackRecordDays: 88,  CircuitTripped: true,  Version: 9, UpdatedAt: iso(30) },
+];
+const FIXTURE_PROMO_EVENTS: Record<string, PromotionEvent[]> = {
+  'meanrev-eth-v2': [
+    { StrategyID: 'meanrev-eth-v2', EventType: 'register', OldStage: '', NewStage: 'not_promoted', MakerID: null, CheckerID: null, RiskSignedOff: null, LegalSignedOff: null, Reason: '', CreatedAt: iso(9000) },
+    { StrategyID: 'meanrev-eth-v2', EventType: 'promote', OldStage: 'not_promoted', NewStage: 'paper', MakerID: 'adm_maker', CheckerID: 'adm_checker', RiskSignedOff: false, LegalSignedOff: false, Reason: 'promote not_promoted→paper', CreatedAt: iso(8000) },
+    { StrategyID: 'meanrev-eth-v2', EventType: 'readiness', OldStage: '', NewStage: '', MakerID: null, CheckerID: 'adm_risk', RiskSignedOff: null, LegalSignedOff: null, Reason: 'readiness update', CreatedAt: iso(4000) },
+    { StrategyID: 'meanrev-eth-v2', EventType: 'promote', OldStage: 'shadow', NewStage: 'canary', MakerID: 'adm_maker', CheckerID: 'adm_checker', RiskSignedOff: false, LegalSignedOff: false, Reason: 'promote shadow→canary', CreatedAt: iso(180) },
+  ],
+};
+
+export async function listPromotions(): Promise<StrategyPromotion[]> {
+  if (USE_FIXTURES) return delay(FIXTURE_STRATEGIES.map((s) => ({ ...s })));
+  const res = await fetch(`${tradingAdminBase()}/promotions`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErr(res, 'Promotions fetch failed'));
+  const d = await res.json(); return Array.isArray(d) ? d : d.data ?? [];
+}
+
+export async function getPromotion(id: string): Promise<{ strategy: StrategyPromotion; events: PromotionEvent[] }> {
+  if (USE_FIXTURES) {
+    const strategy = FIXTURE_STRATEGIES.find((s) => s.StrategyID === id) ?? FIXTURE_STRATEGIES[0];
+    return delay({ strategy: { ...strategy }, events: FIXTURE_PROMO_EVENTS[id] ?? [] });
+  }
+  const res = await fetch(`${tradingAdminBase()}/promotions/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErr(res, 'Strategy fetch failed'));
+  return res.json();
+}
+
+export async function registerStrategy(id: string): Promise<void> {
+  if (!id.trim()) throw new Error('A strategy id is required.');
+  if (USE_FIXTURES) {
+    if (!FIXTURE_STRATEGIES.some((s) => s.StrategyID === id)) {
+      FIXTURE_STRATEGIES = [...FIXTURE_STRATEGIES, { StrategyID: id, Stage: 'not_promoted', ValidationPassed: false, TrackRecordDays: 0, CircuitTripped: false, Version: 0, UpdatedAt: new Date().toISOString() }];
+    }
+    return delay(undefined);
+  }
+  const res = await fetch(`${tradingAdminBase()}/promotions/${encodeURIComponent(id)}/register`, { method: 'POST', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErr(res, 'Register failed'));
+}
+
+export async function setReadiness(id: string, input: ReadinessRequest): Promise<StrategyPromotion> {
+  if (USE_FIXTURES) {
+    FIXTURE_STRATEGIES = FIXTURE_STRATEGIES.map((s) => s.StrategyID === id ? { ...s, ValidationPassed: input.validation_passed, TrackRecordDays: input.track_record_days, CircuitTripped: input.circuit_tripped, Version: s.Version + 1, UpdatedAt: new Date().toISOString() } : s);
+    return delay(FIXTURE_STRATEGIES.find((s) => s.StrategyID === id)!);
+  }
+  const res = await fetch(`${tradingAdminBase()}/promotions/${encodeURIComponent(id)}/readiness`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(input) });
+  if (!res.ok) throw new Error(await parseErr(res, 'Readiness update failed'));
+  const d = await res.json(); return d.strategy ?? d;
+}
+
+// promote — the acting admin is the CHECKER; maker_id must differ. Risk+legal are
+// required for canary→live; the backend gate is authoritative.
+export async function promoteStrategy(id: string, input: PromoteRequest): Promise<TradingStage> {
+  if (!input.maker_id.trim()) throw new Error('A proposing admin (maker) is required, and must differ from you.');
+  if (input.to_stage === 'live' && (!input.risk_signed_off || !input.legal_signed_off)) throw new Error('Canary → Live requires both Risk and legal sign-off.');
+  if (USE_FIXTURES) {
+    FIXTURE_STRATEGIES = FIXTURE_STRATEGIES.map((s) => s.StrategyID === id ? { ...s, Stage: input.to_stage, Version: s.Version + 1, UpdatedAt: new Date().toISOString() } : s);
+    return delay(input.to_stage);
+  }
+  const res = await fetch(`${tradingAdminBase()}/promotions/${encodeURIComponent(id)}/promote`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(input) });
+  if (!res.ok) throw new Error(await parseErr(res, 'Promotion denied'));
+  const d = await res.json(); return d.stage;
+}
+
+export async function demoteStrategy(id: string, input: DemoteRequest): Promise<TradingStage> {
+  if (!input.reason.trim()) throw new Error('A reason is required to de-risk.');
+  if (USE_FIXTURES) {
+    FIXTURE_STRATEGIES = FIXTURE_STRATEGIES.map((s) => s.StrategyID === id ? { ...s, Stage: input.to_stage, Version: s.Version + 1, UpdatedAt: new Date().toISOString() } : s);
+    return delay(input.to_stage);
+  }
+  const res = await fetch(`${tradingAdminBase()}/promotions/${encodeURIComponent(id)}/demote`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(input) });
+  if (!res.ok) throw new Error(await parseErr(res, 'Demotion failed'));
+  const d = await res.json(); return d.stage;
+}
+
+export async function haltStrategy(id: string, reason: string): Promise<TradingStage> {
+  if (!reason.trim()) throw new Error('A reason is required to halt.');
+  if (USE_FIXTURES) {
+    FIXTURE_STRATEGIES = FIXTURE_STRATEGIES.map((s) => s.StrategyID === id ? { ...s, Stage: 'halted', Version: s.Version + 1, UpdatedAt: new Date().toISOString() } : s);
+    return delay('halted');
+  }
+  const res = await fetch(`${tradingAdminBase()}/promotions/${encodeURIComponent(id)}/halt`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ reason }) });
+  if (!res.ok) throw new Error(await parseErr(res, 'Halt failed'));
+  const d = await res.json(); return d.stage;
 }
 
 export type { TradingKycStatus };
