@@ -8,8 +8,11 @@ gaps. Update the Status column as automated specs land.
 
 - **Automation status:** `PARTIAL` = some behaviors have committed Go/Vitest tests (cited in the
   module file's §3); `TODO` = no automated tests in-package yet, all cases manual until specs
-  from §7 land. (No module is fully `AUTOMATED` end-to-end — the money path lacks live-DB
-  integration; see global gaps G5–G7 in `TEST_PLAN.md`.)
+  from §7 land. (No *doc-derived* module is fully `AUTOMATED` end-to-end — the legacy money
+  path lacks live-DB integration; see global gaps G5–G7 in `TEST_PLAN.md`.) **Exception:** the
+  **AI-Trading (§16/§12)** cluster, built tests-first this session, uses two stronger statuses —
+  `AUTOMATED` (pure deterministic, fully unit-tested) and `LIVE-DB` (unit + gated live-DB
+  integration) — see its own section under Tier 0.
 - **Case IDs** live in each `modules/<slug>.md`. Prefixes match the slug uppercased, except
   **marketplace → `MKT`** and **p2pmarket → `P2P`**.
 
@@ -19,7 +22,8 @@ gaps. Update the Status column as automated specs land.
 |---|---|---|
 | Module files | 73 | ~1,738 |
 | Cross-cutting + frontend | 12 | ~168 |
-| **Total** | **85** | **~1,906** |
+| **Total (doc-derived)** | **85** | **~1,906** |
+| AI-Trading (§16/§12) — code-first packages | 13 | ~113 committed Go tests |
 
 ## Cross-cutting (apply to every relevant module)
 
@@ -75,6 +79,43 @@ gaps. Update the Status column as automated specs land.
 | groups | GROUPS | yes | 17 | – | PARTIAL |
 | telemedicine | TELEMEDICINE | yes | 24 | Y | PARTIAL |
 | votebridge | VOTEBRIDGE | yes | 24 | – | PARTIAL |
+
+## Tier 0 — AI Trading (§16 / §12) — code-first
+
+Built **tests-first** this session (`backend/internal/trading/*`). Unlike the doc-derived rows
+above, these are **code-first**: the committed Go tests *are* the spec (no separate
+`modules/*.md` case files), so the "Go tests" column is the committed test-function count.
+Two automation statuses apply here, both stronger than `PARTIAL`:
+- **`AUTOMATED`** — pure, deterministic package fully covered by in-package unit tests; no I/O
+  to integrate. This is where the money-critical decision logic lives.
+- **`LIVE-DB`** — unit-tested **plus** a gated live-DB integration test (`DATABASE_URL`),
+  exercising persistence + separation-of-duties end to end against Postgres.
+
+**Nothing in this cluster can place a real order:** the only venue adapter is a reject-all
+`NoopAdapter`, and `/trading/evaluate` returns `executed:false`. Both flags default OFF
+(`FEATURE_TRADING_ENABLED`, `FEATURE_AI_TRADING_ENABLED`).
+
+| Module | Package | Money | Go tests | FSM | Automation status |
+|---|---|---|---|---|---|
+| Module-KYC (access gate) | `trading/kyc` | access | 14 | Y | LIVE-DB |
+| Fund wallet (unitized NAV, HWM fees) | `trading/wallet` | **yes** | 27 | – | LIVE-DB |
+| Risk engine (size + hard veto) | `trading/quant/risk` | decision | 13 | – | AUTOMATED |
+| Regime detector | `trading/quant/regime` | decision | 5 | – | AUTOMATED |
+| Signals (rule-based candidates) | `trading/quant/signals` | decision | 6 | – | AUTOMATED |
+| Backtester (conservative costs) | `trading/quant/backtest` | decision | 6 | – | AUTOMATED |
+| Validation harness (deflated Sharpe) | `trading/quant/validate` | decision | 6 | – | AUTOMATED |
+| Committee consensus + schema boundary | `trading/quant/committee` | decision | 9 | – | AUTOMATED |
+| LLM reasoners + explanation narrator | `trading/quant/reasoner` | decision | 7 | – | AUTOMATED |
+| End-to-end decision pipeline | `trading/quant/pipeline` | decision | 4 | – | AUTOMATED |
+| §12 promotion ladder (pure FSM) | `trading/ladder` | gate | 9 | Y | AUTOMATED |
+| §12 promotion service (maker-checker) | `trading/promotion` | gate | 1 | Y | LIVE-DB |
+| Venue-adapter contract + envelope | `trading/venue` | exec-boundary | 6 | – | AUTOMATED |
+
+> Key invariants proven here (keep green): `committee` veto-absolute + malformed-abstains;
+> `reasoner` compromised-LLM-can't-force-a-trade; `risk` veto/circuit; `ladder` gate matrix;
+> `promotion` maker≠checker + Risk+legal-for-Live (live-DB); `venue` fail-closed Transmit +
+> no-op-never-trades. Admin console, mobile transparency, and the go-live runbook +
+> venue-adapter spec are tracked in the frontend/docs rows and `docs/ops/AI_TRADING_*`.
 
 ## Tier 1 — user-money-adjacent / sensitive
 
