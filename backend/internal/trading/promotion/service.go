@@ -152,6 +152,38 @@ func (s *Service) Events(ctx context.Context, strategyID string, limit int) ([]E
 	return s.repo.Events(ctx, strategyID, limit)
 }
 
+// PublicStrategy is the SANITIZED member-facing view of a strategy's ladder
+// position: stage + real-capital eligibility only. It deliberately omits the
+// validation verdict, track record, circuit state, version, and all audit/maker-
+// checker detail — those are internal governance, not member-facing.
+type PublicStrategy struct {
+	StrategyID          string       `json:"strategy_id"`
+	Stage               ladder.Stage `json:"stage"`
+	RealCapitalEligible bool         `json:"real_capital_eligible"` // canary/live — still stubbed (no venue adapter)
+}
+
+// PublicList returns the sanitized ladder for member transparency (§12): which
+// strategies exist and at what validated maturity. NotPromoted strategies are
+// hidden (not yet part of the managed set).
+func (s *Service) PublicList(ctx context.Context) ([]PublicStrategy, error) {
+	all, err := s.repo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PublicStrategy, 0, len(all))
+	for _, st := range all {
+		if st.Stage == ladder.StageNotPromoted {
+			continue
+		}
+		out = append(out, PublicStrategy{
+			StrategyID:          st.StrategyID,
+			Stage:               st.Stage,
+			RealCapitalEligible: ladder.AllowsRealCapital(st.Stage),
+		})
+	}
+	return out, nil
+}
+
 // Evaluable reports whether a strategy's stage permits running the evaluation
 // pipeline at all: Paper and above, but not NotPromoted or Halted. Fail-closed.
 func (s *Service) Evaluable(ctx context.Context, strategyID string) (ladder.Stage, bool, error) {

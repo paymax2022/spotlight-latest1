@@ -117,6 +117,20 @@ func (h *Handler) Evaluate(c *gin.Context) {
 	})
 }
 
+// ── Member: strategy-maturity transparency (read-only, sanitized) ────────────────
+
+// Strategies returns the sanitized promotion ladder for member transparency (§12):
+// which strategies run the fund and at what validated maturity. No governance
+// internals (verdict/track-record/circuit/maker-checker/audit) are exposed.
+func (h *Handler) Strategies(c *gin.Context) {
+	rows, err := h.promo.PublicList(c.Request.Context())
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": rows})
+}
+
 // ── Admin: promotion ladder (§12) ───────────────────────────────────────────────
 
 func (h *Handler) AdminPromoteRegister(c *gin.Context) {

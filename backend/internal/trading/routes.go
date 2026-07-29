@@ -65,6 +65,9 @@ func Register(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.
 		// in the handler; SERVER-fixed risk/committee config; records nothing,
 		// executes nothing.
 		member.POST("/evaluate", h.Evaluate)
+		// Member: read-only strategy-maturity transparency (§12) — sanitized ladder,
+		// no governance internals. Lets a member see how the fund is managed.
+		member.GET("/strategies", h.Strategies)
 
 		// Admin: §12 promotion ladder (separation of duties).
 		admin.GET("/promotions", rp(promotion.PermRead), h.AdminPromoteList)

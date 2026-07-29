@@ -99,6 +99,32 @@ export async function redeem(units: number, idem = newIdempotencyKey()): Promise
   return unwrap<RedeemResult>(res);
 }
 
+// ── Strategy maturity (§12 promotion ladder) — read-only transparency ─────────
+// The sanitized member view of how the fund is managed: which strategies run and
+// at what validated maturity. No governance internals (verdict/track-record/maker-
+// checker) are exposed. Canary/Live are eligibility states — this build executes
+// nothing (no venue adapter).
+export type StrategyStage = 'paper' | 'shadow' | 'canary' | 'live' | 'halted';
+export interface StrategyMaturity {
+  strategyId: string;
+  stage: StrategyStage;
+  realCapitalEligible: boolean;
+}
+
+const MOCK_STRATEGIES: StrategyMaturity[] = [
+  { strategyId: 'trend-following-btc', stage: 'live', realCapitalEligible: true },
+  { strategyId: 'mean-reversion-eth', stage: 'canary', realCapitalEligible: true },
+  { strategyId: 'breakout-fx-majors', stage: 'shadow', realCapitalEligible: false },
+  { strategyId: 'carry-basket', stage: 'paper', realCapitalEligible: false },
+  { strategyId: 'vol-scalper', stage: 'halted', realCapitalEligible: false },
+];
+
+export async function fetchStrategies(): Promise<StrategyMaturity[]> {
+  if (TRADING_USE_MOCK) return delay(MOCK_STRATEGIES.map((s) => ({ ...s })));
+  const res = await api.get(`${TRADING_BASE}/strategies`);
+  return unwrap<StrategyMaturity[]>(res);
+}
+
 // Formatting + unit helpers.
 export const UNIT_SCALE = 1_000_000;
 export function formatNaira(kobo: number): string {

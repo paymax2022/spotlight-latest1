@@ -9,6 +9,7 @@ export default function AiTradingLayout() {
       <Stack.Screen name="kyc" />
       <Stack.Screen name="fund" />
       <Stack.Screen name="redeem" />
+      <Stack.Screen name="strategies" />
     </Stack>
   );
 }
