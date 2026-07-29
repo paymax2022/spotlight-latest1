@@ -221,6 +221,15 @@ type Config struct {
 	// (internal/crypto): mock-first price feed, reuses the finance ledger.
 	FeatureCryptoEnabled bool
 
+	// Custodial AI-trading module (internal/trading). DEFAULT OFF. Gates the
+	// /api/v1/trading[/admin] surface — Module-KYC + unitized-NAV fund wallet
+	// (PAPER/accounting only; no venue execution, no withdrawal keys). Cash moves
+	// only through the finance ledger. TradingFeeBps/TradingHurdleBps are the
+	// performance-fee terms (bps) for the fund's HWM engine.
+	FeatureTradingEnabled bool
+	TradingFeeBps         int
+	TradingHurdleBps      int
+
 	// ── Internal service-authenticated Ledger API (Stage 1.5c) ───────────────
 	// Lets the separate trading service post cash legs through the AUTHORITATIVE
 	// double-entry ledger (it does not run its own money ledger). DEFAULT OFF.
@@ -597,6 +606,9 @@ func Load() Config {
 		FeaturePropertySuiteEnabled:           getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
 		FeatureFractionalREEnabled:            getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
 		FeatureCryptoEnabled:                  getEnvBool("FEATURE_CRYPTO_ENABLED", false),
+		FeatureTradingEnabled:                 getEnvBool("FEATURE_TRADING_ENABLED", false),
+		TradingFeeBps:                         getEnvInt("TRADING_FEE_BPS", 2000),
+		TradingHurdleBps:                      getEnvInt("TRADING_HURDLE_BPS", 0),
 		FeatureInternalLedgerAPIEnabled:       getEnvBool("FEATURE_INTERNAL_LEDGER_API_ENABLED", false),
 		LedgerServiceToken:                    getEnv("LEDGER_SERVICE_TOKEN", ""),
 		FeatureLearnEnabled:                   getEnvBool("FEATURE_LEARN_ENABLED", false),

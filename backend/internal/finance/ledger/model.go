@@ -41,6 +41,14 @@ const (
 	// free-form purpose column); the reference string carries the human-readable
 	// purpose.
 	AccountEdtechFeesVault AccountType = "edtech_fees_vault"
+	// Custodial AI-trading fund standing accounts (Pillar 2 fund accounting).
+	// FundClearing holds the pooled cash the fund carries against issued units
+	// (segregated from general float); FeeIncome recognizes the platform's
+	// performance fee. Auto-created on first GetOrCreateStandingAccount; no seed
+	// row required (the type is admitted by the ledger_accounts CHECK widened in
+	// migration 20261029000000).
+	AccountTradingFundClearing AccountType = "trading_fund_clearing"
+	AccountTradingFeeIncome    AccountType = "trading_fee_income"
 )
 
 // Account is a logical wallet / standing account in the ledger.
