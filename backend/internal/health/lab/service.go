@@ -1052,9 +1052,12 @@ func (s *Service) sampleByOrder(ctx context.Context, orderID string) (*Sample, e
 }
 
 func (s *Service) loadResults(ctx context.Context, orderID string) ([]Result, error) {
+	// LR-006: return only the CURRENT version of each result — a superseded row is
+	// retained for audit but never surfaced as the live result.
 	const q = `SELECT id, order_id, test_id, test_name, value, unit, ref_range, status,
-	                  validated_by, released_by, escalated_at, released_at, created_at
-	           FROM lab_results WHERE order_id=$1 ORDER BY created_at ASC`
+	                  validated_by, released_by, escalated_at, released_at, created_at,
+	                  version, amended_by, amended_at, amendment_reason
+	           FROM lab_results WHERE order_id=$1 AND superseded_by IS NULL ORDER BY created_at ASC`
 	rows, err := s.db.Query(ctx, q, orderID)
 	if err != nil {
 		return nil, err
@@ -1065,7 +1068,8 @@ func (s *Service) loadResults(ctx context.Context, orderID string) ([]Result, er
 		var r Result
 		var status string
 		if err := rows.Scan(&r.ID, &r.OrderID, &r.TestID, &r.TestName, &r.Value, &r.Unit, &r.RefRange,
-			&status, &r.ValidatedBy, &r.ReleasedBy, &r.EscalatedAt, &r.ReleasedAt, &r.CreatedAt); err != nil {
+			&status, &r.ValidatedBy, &r.ReleasedBy, &r.EscalatedAt, &r.ReleasedAt, &r.CreatedAt,
+			&r.Version, &r.AmendedBy, &r.AmendedAt, &r.AmendmentReason); err != nil {
 			return nil, err
 		}
 		r.Status = ResultStatus(status)
