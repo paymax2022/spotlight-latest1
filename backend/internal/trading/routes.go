@@ -10,6 +10,7 @@ import (
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/trading/kyc"
+	"spotlight/backend/internal/trading/promotion"
 	"spotlight/backend/internal/trading/wallet"
 )
 
@@ -31,7 +32,8 @@ func Register(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.
 	}
 	kycSvc := kyc.NewService(pool)
 	walSvc := wallet.NewService(pool, led, kycSvc, feeBps, hurdleBps) // kycSvc satisfies wallet.AccessGate
-	h := NewHandler(kycSvc, walSvc)
+	promoSvc := promotion.NewService(pool)
+	h := NewHandler(kycSvc, walSvc, promoSvc)
 	rp := func(perm string) gin.HandlerFunc { return middleware.RequirePermission(rbac, perm) }
 
 	// ── Member ────────────────────────────────────────────────────────────────
@@ -40,6 +42,9 @@ func Register(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.
 	member.GET("/wallet", h.WalletPosition)
 	member.POST("/wallet/subscribe", h.Subscribe) // Idempotency-Key; access-gated in the service
 	member.POST("/wallet/redeem", h.Redeem)        // Idempotency-Key
+	// Deterministic decision pipeline — KYC-gated + ladder-stage-gated in the
+	// handler; SERVER-fixed risk/committee config; records nothing, executes nothing.
+	member.POST("/evaluate", h.Evaluate)
 
 	// ── Admin (per-route RBAC) ──────────────────────────────────────────────────
 	admin.GET("/kyc/queue", rp(kyc.PermReview), h.AdminQueue)
@@ -49,6 +54,15 @@ func Register(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.
 	admin.POST("/kyc/:id/approve", rp(kyc.PermReview), h.AdminApprove)
 	admin.POST("/kyc/:id/reject", rp(kyc.PermReview), h.AdminReject)
 	admin.POST("/kyc/:id/bypass", rp(kyc.PermBypassApprove), h.AdminBypass) // checker perm; maker≠checker enforced in service
+
+	// ── Admin: §12 promotion ladder (separation of duties) ──────────────────────
+	admin.GET("/promotions", rp(promotion.PermRead), h.AdminPromoteList)
+	admin.GET("/promotions/:id", rp(promotion.PermRead), h.AdminPromoteGet)
+	admin.POST("/promotions/:id/register", rp(promotion.PermPropose), h.AdminPromoteRegister)
+	admin.POST("/promotions/:id/readiness", rp(promotion.PermRisk), h.AdminReadiness)
+	admin.POST("/promotions/:id/promote", rp(promotion.PermApprove), h.AdminPromote) // checker perm; maker≠checker + Risk/legal enforced by the ladder gate
+	admin.POST("/promotions/:id/demote", rp(promotion.PermHalt), h.AdminDemote)
+	admin.POST("/promotions/:id/halt", rp(promotion.PermHalt), h.AdminHalt)
 
 	return walSvc, kycSvc
 }

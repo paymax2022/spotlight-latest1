@@ -9,19 +9,25 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/internal/trading/kyc"
+	"spotlight/backend/internal/trading/promotion"
 	"spotlight/backend/internal/trading/wallet"
 )
 
 // Handler is the HTTP surface for the AI-trading module: Module-KYC (member +
-// admin) and the paper fund wallet (member). It owns no money logic — it validates
-// input, threads the authenticated user id, and maps service errors to status
-// codes. Cash still moves only through the finance ledger inside the services.
+// admin), the paper fund wallet (member), the deterministic decision pipeline
+// (member, read-only — records nothing, executes nothing), and the §12 promotion
+// ladder (admin). It owns no money logic — it validates input, threads the
+// authenticated user id, and maps service errors to status codes. Cash still moves
+// only through the finance ledger inside the services.
 type Handler struct {
-	kyc *kyc.Service
-	wal *wallet.Service
+	kyc   *kyc.Service
+	wal   *wallet.Service
+	promo *promotion.Service
 }
 
-func NewHandler(k *kyc.Service, w *wallet.Service) *Handler { return &Handler{kyc: k, wal: w} }
+func NewHandler(k *kyc.Service, w *wallet.Service, p *promotion.Service) *Handler {
+	return &Handler{kyc: k, wal: w, promo: p}
+}
 
 func uid(c *gin.Context) string { return c.GetString("user_id") }
 
@@ -45,6 +51,14 @@ func httpErr(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
 	case errors.Is(err, wallet.ErrDebitPending), errors.Is(err, wallet.ErrCreditPending):
 		c.JSON(http.StatusAccepted, gin.H{"success": false, "error": err.Error(), "retryable": true})
+	case errors.Is(err, promotion.ErrNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": err.Error()})
+	case errors.Is(err, promotion.ErrDenied):
+		// A ladder gate rejection (illegal transition / unmet evidence) — the
+		// request was well-formed but the promotion is not permitted.
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "error": err.Error(), "code": "LADDER_DENIED"})
+	case errors.Is(err, promotion.ErrVersionConflict):
+		c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error(), "retryable": true})
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
 	}
