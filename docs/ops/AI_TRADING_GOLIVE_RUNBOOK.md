@@ -49,7 +49,8 @@ one is a **stop-ship**.
 | End-to-end decision pipeline | ✅ built, tested | `internal/trading/quant/pipeline` |
 | §12 promotion ladder (FSM + service + admin + member transparency) | ✅ built, live-DB verified | `internal/trading/ladder`, `internal/trading/promotion` |
 | `POST /trading/evaluate` (records nothing, `executed:false`) | ✅ built | `internal/trading/promotion_handler.go` |
-| **Venue adapter (real order execution)** | ❌ **NOT built** | — see §8 |
+| Venue-adapter **contract** (interface + fail-closed envelope + reject-all no-op) | ✅ built, tested | `internal/trading/venue`, `docs/ops/AI_TRADING_VENUE_ADAPTER_SPEC.md` |
+| **Venue adapter — real implementation (order execution)** | ❌ **NOT built** | — see §8 |
 | **Live market-data feed (validated, point-in-time)** | ❌ **NOT built** | — see §8 |
 | **Legal sign-off** | ❌ external | — see §7 |
 
@@ -176,27 +177,40 @@ outside engineering and blocks go-live regardless of technical readiness.
 
 ---
 
-## 8. Venue adapter — interface spec (what must still be built)
+## 8. Venue adapter — contract (built) + real implementation (still to build)
 
-The one component that turns "Live eligibility" into execution. Build it as a **new,
-separately-reviewed, ladder-promoted** module. Non-negotiable properties:
+The one component that turns "Live eligibility" into execution. The **contract** now
+exists in code and is tested — `internal/trading/venue` — but there is **no real venue
+implementation**, so nothing can transmit. Full spec: `AI_TRADING_VENUE_ADAPTER_SPEC.md`.
 
-- **Trade-only credentials.** Keys must have withdrawals/transfers **disabled at the venue**.
-  Verify this is impossible at the API level, not just unused.
-- **Idempotent order submission.** Every order carries a client-generated idempotency key; a
-  retry never double-submits. Reconcile fills against the ledger.
-- **The adapter never sizes or decides.** It receives an already-sized, already-approved order
-  from `pipeline.Evaluate` → `committee.Decide` and only transmits it. It has no access to
-  raise a size or bypass a veto.
-- **Pre-trade re-check at the edge.** Immediately before transmit, re-run the risk veto
-  against fresh state (fail-closed): if anything changed (drawdown, circuit, limits), abort.
-- **Per-venue kill switch** that halts transmission independently of the ladder.
-- **Full audit** of every request/response; no secret in logs.
-- **Its own feature flag**, default OFF, and it must itself climb this ladder in shadow/canary
-  before full allocation.
+**What exists (`internal/trading/venue`, 12 tests):**
+- `Adapter` interface — `Name/Enabled/WithdrawalsDisabled/Killed/Kill/Submit/Cancel/Reconcile`.
+- `Guard` — the pre-trade re-check run at the edge.
+- `Transmit` — the **one** safe entry point. Fail-closed checks IN ORDER: order well-formed →
+  `Enabled()` → `!Killed()` → `WithdrawalsDisabled()` → `Guard.PreTradeApprove` → `Submit`.
+  Any failure returns a rejected `Fill` and transmits nothing. Trading code must never call
+  `Adapter.Submit` directly — always go through `Transmit`.
+- `NoopAdapter` — the ONLY adapter that ships: permanently disabled, rejects every order, so
+  "executes nothing" is structural.
 
-Until this exists and is reviewed, `executed:false` is the only correct response from
-`/trading/evaluate`, and no go-live is possible.
+**What must still be built** — a real adapter, as a **new, separately-reviewed,
+ladder-promoted** module satisfying the interface above. Non-negotiable properties (enforced
+by `Transmit`, verified in the adapter's own review):
+- **Trade-only credentials.** `WithdrawalsDisabled()` must verify the key's scopes at the
+  venue, not merely report that the code never calls withdraw.
+- **Idempotent `Submit`** on `ClientOrderID`; a retry never double-submits. Reconcile fills
+  against the ledger via `Reconcile`.
+- **Never sizes or decides** — receives an already-sized, already-approved `Order` from
+  `pipeline.Evaluate` → `committee.Decide`; no access to raise a size or bypass a veto.
+- **Pre-trade `Guard`** wired to live `risk.Screen` / `committee.Decide` against fresh state.
+- **Per-venue kill switch** (`Kill()`/`Killed()`), independent of the ladder and flags.
+- **Full audit; no secret in logs.**
+- **Its own feature flag**, default OFF, and it must itself climb this ladder (paper → shadow
+  → canary → live) before full allocation.
+
+Until a real adapter exists, is reviewed, and is promoted, `NoopAdapter` remains the only one
+wired, `executed:false` is the only correct response from `/trading/evaluate`, and no go-live
+is possible.
 
 ---
 
@@ -299,5 +313,5 @@ Watch continuously once `FEATURE_TRADING_ENABLED` is on:
 
 **Key tests to keep green:** `quant/committee` (veto absolute, malformed abstains),
 `quant/risk` (veto/circuit), `quant/reasoner` (compromised LLM can't force a trade),
-`ladder` (gate matrix), `promotion` live-DB (maker≠checker, Risk+legal for Live), and the
-finance ledger invariant suites.
+`ladder` (gate matrix), `promotion` live-DB (maker≠checker, Risk+legal for Live), `venue`
+(fail-closed Transmit envelope, no-op never trades), and the finance ledger invariant suites.
