@@ -640,7 +640,7 @@ func (s *Service) Release(ctx context.Context, scientistID, orderID string) (*Or
 	if err != nil {
 		return nil, err
 	}
-	if o.State != StateResultReady && o.State != StateEscalated {
+	if !canReleaseFrom(o.State) {
 		return nil, fmt.Errorf("lab: order not ready for release, is %s", o.State)
 	}
 	// HL-2: only a verified scientist of this lab may sign off and release.
