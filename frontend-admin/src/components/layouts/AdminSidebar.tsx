@@ -434,6 +434,8 @@ const navItemsBase: NavItem[] = [
   { label: 'CMS & Banners', href: '/admin/marketplace/cms', section: 'Marketplace', permissions: ['marketplace.admin.cms'] },
   { label: 'Analytics', href: '/admin/marketplace/analytics', section: 'Marketplace', permissions: ['marketplace.admin.analytics', 'marketplace.admin.audit.read'] },
   { label: 'Audit Log', href: '/admin/marketplace/audit-log', section: 'Marketplace', permissions: ['marketplace.admin.audit.read'] },
+  { label: 'Module KYC', href: '/admin/trading/kyc', section: 'AI Trading', permissions: ['trading.kyc.review', 'trading.kyc.bypass.approve'] },
+  { label: 'Bypass Register', href: '/admin/trading/bypass', section: 'AI Trading', permissions: ['trading.audit.read', 'trading.kyc.bypass.approve'] },
   // ── Arena (Naija Driver contest ops console; per-console RBAC arena.*) ──────
   { label: 'Competition Config', href: '/admin/arena/config', section: 'Arena', permissions: ['arena.admin.manage'] },
   { label: 'Quiz Bank', href: '/admin/arena/questions', section: 'Arena', permissions: ['arena.admin.questions', 'arena.admin.manage'] },
@@ -474,7 +476,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Compliance (SU-12)', href: '/admin/platform/edtech/compliance', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
 ];
 
-const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Crowdfunding', 'Connect', 'Connect · Network', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'Crypto', 'Platform · EdTech'];
+const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Crowdfunding', 'Connect', 'Connect · Network', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'AI Trading', 'Crypto', 'Platform · EdTech'];
 
 export function AdminSidebar() {
   const pathname = usePathname() ?? '';
