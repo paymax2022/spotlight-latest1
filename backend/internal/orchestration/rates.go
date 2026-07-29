@@ -14,8 +14,13 @@ var baseUSDRates = map[string]float64{
 	"KES":  129.50,
 	"XAF":  602.50,
 	"ZAR":  18.40,
+	"JPY":  157.00,
+	"KWD":  0.307,
+	"BHD":  0.376,
 	"USDC": 1,
 	"USDT": 1,
+	"BTC":  1.0 / 64000.0, // ~$64,000 / BTC
+	"ETH":  1.0 / 3200.0,  // ~$3,200 / ETH
 }
 
 // MidRate returns the indicative mid-market rate: units of `to` per 1 unit of
