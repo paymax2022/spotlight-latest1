@@ -436,6 +436,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Audit Log', href: '/admin/marketplace/audit-log', section: 'Marketplace', permissions: ['marketplace.admin.audit.read'] },
   { label: 'Module KYC', href: '/admin/trading/kyc', section: 'AI Trading', permissions: ['trading.kyc.review', 'trading.kyc.bypass.approve'] },
   { label: 'Bypass Register', href: '/admin/trading/bypass', section: 'AI Trading', permissions: ['trading.audit.read', 'trading.kyc.bypass.approve'] },
+  { label: 'Promotion Ladder', href: '/admin/trading/promotions', section: 'AI Trading', permissions: ['trading.promotion.read'] },
   // ── Arena (Naija Driver contest ops console; per-console RBAC arena.*) ──────
   { label: 'Competition Config', href: '/admin/arena/config', section: 'Arena', permissions: ['arena.admin.manage'] },
   { label: 'Quiz Bank', href: '/admin/arena/questions', section: 'Arena', permissions: ['arena.admin.questions', 'arena.admin.manage'] },

@@ -36,6 +36,7 @@ export function TradingTabs({ active }: { active: string }) {
   const tabs = [
     { href: '/admin/trading/kyc', label: 'KYC Review', key: 'kyc' },
     { href: '/admin/trading/bypass', label: 'Bypass Register', key: 'bypass' },
+    { href: '/admin/trading/promotions', label: 'Promotion Ladder', key: 'promotions' },
   ];
   return (
     <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>
@@ -104,12 +105,32 @@ export function timeAgo(s?: string | null): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-// ── RBAC — slugs MUST match migration 20261029000200 ──────────────────────────
+// Ladder stage badge (§12). Distinct palette from KYC statuses.
+const STAGE_COLORS: Record<string, { fg: string; bg: string }> = {
+  live: { fg: '#15803d', bg: '#dcfce7' },
+  canary: { fg: '#b45309', bg: '#fef3c7' },
+  shadow: { fg: '#1d4ed8', bg: '#dbeafe' },
+  paper: { fg: '#6b21a8', bg: '#f3e8ff' },
+  not_promoted: { fg: '#6b7280', bg: '#f3f4f6' },
+  halted: { fg: '#b91c1c', bg: '#fee2e2' },
+};
+export function StageBadge({ stage }: { stage: string }) {
+  const c = STAGE_COLORS[stage] ?? { fg: '#374151', bg: '#f3f4f6' };
+  return <span style={{ display: 'inline-block', padding: '0.1rem 0.55rem', borderRadius: 9999, fontSize: '0.72rem', fontWeight: 700, color: c.fg, background: c.bg, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: 0.3 }}>{String(stage).replace(/_/g, ' ')}</span>;
+}
+
+// ── RBAC — slugs MUST match migrations 20261029000200 + 20261029000300 ─────────
 export const TRADING_PERMS = {
   review: 'trading.kyc.review',
   bypass: 'trading.kyc.bypass',
   bypassApprove: 'trading.kyc.bypass.approve',
   auditRead: 'trading.audit.read',
+  // §12 promotion ladder
+  promoRead: 'trading.promotion.read',
+  promoPropose: 'trading.promotion.propose', // maker + register
+  promoApprove: 'trading.promotion.approve', // checker (promote)
+  promoHalt: 'trading.promotion.halt',       // halt + demote
+  promoRisk: 'trading.promotion.risk',       // Risk sign-off + readiness
 } as const;
 
 export function useTradingUser(): AuthUser | null {
