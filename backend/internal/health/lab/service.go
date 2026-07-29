@@ -433,7 +433,7 @@ func (s *Service) FlagBreach(ctx context.Context, actorID, sampleID, reason stri
 // A BREACHED / RECOLLECT_REQUIRED sample is rejected — no result without a
 // complete custody chain. On success the sample → ACCESSIONED, the order
 // SAMPLE_COLLECTED/IN_TRANSIT → ACCESSIONED, then → PROCESSING.
-func (s *Service) Accession(ctx context.Context, scientistID, sampleID, note string) (*Sample, error) {
+func (s *Service) Accession(ctx context.Context, scientistID, sampleID, scannedBarcode, note string) (*Sample, error) {
 	sm, err := s.loadSample(ctx, sampleID)
 	if err != nil {
 		return nil, err
@@ -451,6 +451,14 @@ func (s *Service) Accession(ctx context.Context, scientistID, sampleID, note str
 		if !ok {
 			return nil, fmt.Errorf("lab: only a verified lab scientist may accession (HL-2)")
 		}
+	}
+	// Sample↔patient integrity (EC-001/LB-005): if the accessioning scientist
+	// scanned the tube, the barcode MUST match the one minted at collection — a
+	// mismatch is a possible swap/mislabel and is rejected before intake.
+	if err := verifyBarcodeScan(scannedBarcode, sm.BarcodeRef); err != nil {
+		s.audited(scientistID, o.PatientID, "health.lab.sample.barcode_mismatch", sampleID, nil,
+			map[string]any{"scanned": normalizeBarcode(scannedBarcode), "expected": sm.BarcodeRef})
+		return nil, err
 	}
 	// HL-6: an unbroken chain is mandatory. Breach/recollect cannot be accessioned.
 	if !chainIntact(sm.State) {
@@ -524,7 +532,7 @@ type EnterResultInput struct {
 // entered when the order's sample is ACCESSIONED (unbroken chain). The clinical
 // status flag drives HL-7 — if any line is critical/abnormal the order is taken
 // down the ESCALATED path on release, never silently released.
-func (s *Service) EnterResults(ctx context.Context, scientistID, orderID string, results []EnterResultInput) (*Order, error) {
+func (s *Service) EnterResults(ctx context.Context, scientistID, orderID, scannedBarcode string, results []EnterResultInput) (*Order, error) {
 	o, err := s.load(ctx, orderID)
 	if err != nil {
 		return nil, err
@@ -552,6 +560,14 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID string,
 	}
 	if sm.State != SampleAccessioned {
 		return nil, fmt.Errorf("lab: sample not accessioned (state %s) — no result without an unbroken chain (HL-6)", sm.State)
+	}
+	// LR-001: results bind to the correct sample/patient. If the scientist scanned
+	// the tube at result entry, its barcode MUST match this order's sample — a
+	// mismatch means results are being entered against the wrong sample; reject.
+	if err := verifyBarcodeScan(scannedBarcode, sm.BarcodeRef); err != nil {
+		s.audited(scientistID, o.PatientID, "health.lab.result.barcode_mismatch", orderID, nil,
+			map[string]any{"scanned": normalizeBarcode(scannedBarcode), "expected": sm.BarcodeRef})
+		return nil, err
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -767,7 +783,7 @@ func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin 
 		return nil, err
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
-	if !isAdmin && requesterID != o.PatientID && requesterID != owner {
+	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
 		return nil, fmt.Errorf("lab: forbidden")
 	}
 	o.Lines, _ = s.loadLines(ctx, orderID)
@@ -783,7 +799,7 @@ func (s *Service) Results(ctx context.Context, requesterID, orderID string, isAd
 		return nil, err
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
-	if !isAdmin && requesterID != o.PatientID && requesterID != owner {
+	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
 		return nil, fmt.Errorf("lab: forbidden")
 	}
 	return s.loadResults(ctx, orderID)
@@ -797,7 +813,7 @@ func (s *Service) CustodyTrail(ctx context.Context, requesterID, orderID string,
 		return nil, err
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
-	if !isAdmin && requesterID != o.PatientID && requesterID != owner {
+	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
 		return nil, fmt.Errorf("lab: forbidden")
 	}
 	sm, err := s.sampleByOrder(ctx, orderID)
