@@ -155,6 +155,12 @@ func RegisterHealth(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpo
 		preH := healthpreconsult.NewHandler(preconsultSvc)
 		preAdminH := healthpreconsult.NewAdminHandler(preconsultSvc)
 
+		// Wire the human clinical-safety context (documented allergies + current
+		// meds) into the rx engine so Issue runs the pre-issue drug-allergy /
+		// interaction screen against the patient's profile (RX-002/003). rxSvc is a
+		// pointer already held by rxH, so this takes effect for the live handler.
+		rxSvc.WithClinicalContext(preconsultClinicalContext{pc: preconsultSvc})
+
 		ig := hg.Group("/intake")
 		ig.GET("/appointments/:appointmentId", preH.GetAppointmentIntake)
 		ig.PUT("/appointments/:appointmentId/draft", preH.SaveDraft)

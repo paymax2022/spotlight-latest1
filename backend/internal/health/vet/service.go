@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/internal/health/clinicalsafety"
 	healthconsult "spotlight/backend/internal/health/consult"
 	healthrecords "spotlight/backend/internal/health/records"
 	healthrx "spotlight/backend/internal/health/rx"
@@ -167,6 +168,26 @@ func (s *Service) ownsPet(ctx context.Context, ownerID, petID string) (bool, err
 		return false, err
 	}
 	return ok, nil
+}
+
+// petClinicalContext loads a pet's species + weight into the clinical-safety
+// context so veterinary prescribing enforces species-toxicity / human-only-drug
+// and weight-based dosing rules (VT-002/003/004). Best-effort: on any read error
+// it returns a species-typed context so the animal path never silently falls back
+// to human rules.
+func (s *Service) petClinicalContext(ctx context.Context, petID string) clinicalsafety.PatientContext {
+	pc := clinicalsafety.PatientContext{Species: "animal"}
+	var species string
+	var weight *float64
+	if err := s.db.QueryRow(ctx, `SELECT species, weight_kg FROM pets WHERE id=$1`, petID).Scan(&species, &weight); err == nil {
+		if species != "" {
+			pc.Species = strings.ToLower(species)
+		}
+		if weight != nil {
+			pc.WeightKg = *weight
+		}
+	}
+	return pc
 }
 
 // ─── Vet discovery (map / list; PostGIS) ─────────────────────────────────────
@@ -541,6 +562,10 @@ type CompleteInput struct {
 	// by the rx engine on the pharmacy side.
 	RxItems            []healthrx.Item
 	PharmacyProviderID string
+	// RxOverrideReason documents a licensed vet's decision to proceed past a
+	// clinical-safety hard stop (species-toxic/human-only/interaction). Required to
+	// override; audited by the rx engine (RX-011). Empty ⇒ hard stops block.
+	RxOverrideReason string
 
 	// Optional pet lab order handoff: the referenced lab + test ids the vet wants
 	// run on the pet. The lab vertical owns the LabOrder + payment; this records the
@@ -598,7 +623,12 @@ func (s *Service) CompleteConsult(ctx context.Context, vetOwnerID, apptID string
 	// server-side by the rx engine when the pharmacy dispenses (HL-3).
 	if len(in.RxItems) > 0 && s.rx != nil {
 		consultRef := *a.ConsultID
-		p, rerr := s.rx.Issue(ctx, vetOwnerID, a.OwnerID, &consultRef, in.RxItems)
+		// Species-aware clinical safety screen (VT-002/003/004): pass the pet's
+		// species/weight so species-toxic and human-only-drug hard stops fire. A
+		// documented override reason (in.RxOverrideReason) is required to proceed
+		// past a hard stop and is audited by the rx engine (RX-011).
+		petCtx := s.petClinicalContext(ctx, a.PetID)
+		p, rerr := s.rx.IssueChecked(ctx, vetOwnerID, a.OwnerID, &consultRef, in.RxItems, &petCtx, in.RxOverrideReason)
 		if rerr != nil {
 			return nil, fmt.Errorf("vet: issue e-prescription: %w", rerr)
 		}
