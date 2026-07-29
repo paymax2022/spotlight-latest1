@@ -1,6 +1,7 @@
 package credential
 
 import (
+	"context"
 	"strings"
 	"time"
 )
@@ -35,4 +36,17 @@ func Authorized(status Status, capability string, licenceExpiry *time.Time, requ
 		return false
 	}
 	return true
+}
+
+// IsAuthorized reports whether the provider behind `applicationID` is currently
+// authorized to act with `requiredCapability` at `now`. It loads the latest
+// verification record and applies the pure Authorized rule (VERIFIED + capability
+// match + unexpired). A missing/unreadable record is unauthorized — fail-closed.
+// This is the live authorization API callers (prescribe/dispense gates) invoke.
+func (s *Service) IsAuthorized(ctx context.Context, applicationID, requiredCapability string, now time.Time) (bool, error) {
+	rec, err := s.repo.LatestByApplication(ctx, applicationID)
+	if err != nil || rec == nil {
+		return false, nil
+	}
+	return Authorized(rec.Status, rec.Capability, rec.LicenceExpiry, requiredCapability, now), nil
 }
