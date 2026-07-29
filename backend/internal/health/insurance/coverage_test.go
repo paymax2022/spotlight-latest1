@@ -58,6 +58,27 @@ func TestEdges(t *testing.T) {
 	}
 }
 
+// PM-002/007 escrow half: the patient escrows only their out-of-pocket portion;
+// an uninsured patient escrows the full charge; a fully-covered charge holds 0.
+func TestPatientHold(t *testing.T) {
+	// Uninsured → hold the full charge (current full-pay behaviour).
+	if hold, s := PatientHold(1000_00, Policy{CoveragePercent: 80}, false); hold != 1000_00 || s.PatientKobo != 1000_00 {
+		t.Fatalf("uninsured must escrow the full charge: hold=%d %+v", hold, s)
+	}
+	// Insured 80% + ₦20 copay → patient escrows copay + coinsurance.
+	hold, s := PatientHold(1000_00, Policy{CoveragePercent: 80, CopayKobo: 20_00}, true)
+	if hold != 216_00 || s.InsurerKobo != 784_00 {
+		t.Fatalf("insured patient escrows only their portion: hold=%d %+v", hold, s)
+	}
+	if s.InsurerKobo+hold != 1000_00 {
+		t.Fatalf("hold + insurer receivable must equal the charge: %+v", s)
+	}
+	// Fully covered → escrow nothing from the patient.
+	if hold, _ := PatientHold(1000_00, Policy{CoveragePercent: 100}, true); hold != 0 {
+		t.Fatalf("a fully-covered charge must hold 0 from the patient, got %d", hold)
+	}
+}
+
 // PM-007: the split always reconciles to the charge exactly (no drift), and the
 // patient breakdown sums to the patient total — for odd amounts / rounding too.
 func TestSplitReconciles(t *testing.T) {

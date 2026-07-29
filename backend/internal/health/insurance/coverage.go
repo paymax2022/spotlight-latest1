@@ -69,6 +69,23 @@ func Compute(charge int64, p Policy) Split {
 	}
 }
 
+// PatientHold returns the amount to escrow-hold from the patient for a charge, and
+// the full split. This is the escrow half of insurance billing (PM-002/007): an
+// insured patient escrows only their out-of-pocket portion now (copay + deductible
+// + coinsurance); the insurer-covered `Split.InsurerKobo` is a receivable settled
+// separately via a claim, so the provider is made whole across both. An uninsured
+// patient (or no policy) escrows the full charge — the current full-pay behaviour.
+//
+// A fully-covered charge yields holdKobo == 0 (the caller escrows nothing from the
+// patient — a nil escrow reference — and raises a claim for the whole amount).
+func PatientHold(charge int64, policy Policy, insured bool) (holdKobo int64, split Split) {
+	if !insured {
+		return charge, Split{ChargeKobo: charge, PatientKobo: charge, CopayKobo: charge}
+	}
+	s := Compute(charge, policy)
+	return s.PatientKobo, s
+}
+
 func clamp(v, lo, hi int64) int64 {
 	if v < lo {
 		return lo
