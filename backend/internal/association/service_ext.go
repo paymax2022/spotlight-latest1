@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // Service methods for the remaining endpoint groups (settings, support, chat,
@@ -298,19 +300,27 @@ func (s *Service) GetChatThreads(ctx context.Context, userID string) ([]ChatThre
 }
 
 func (s *Service) GetChatThread(ctx context.Context, userID, threadID string) (*ChatThread, error) {
-	mid, orgID, err := s.primaryMembership(ctx, userID)
+	mid, _, err := s.primaryMembership(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 	t := &ChatThread{}
+	// Cross-group isolation (CH-005 / §4.9): only serve the thread when the caller
+	// holds an ACTIVE membership in the THREAD'S organisation. A foreign-org caller
+	// gets "thread not found" (fail-closed, no existence leak). memberCount is
+	// derived from the thread's own org. NB: assoc_chat_threads has no `description`
+	// column — selecting a literal '' fixes a latent broken-query bug uncovered here.
 	const q = `
-		SELECT t.id, t.title, t.scope, t.posting_block, t.description,
+		SELECT t.id, t.title, t.scope, t.posting_block, '',
 		       COALESCE(st.muted, false),
-		       (SELECT count(*) FROM assoc_memberships mm WHERE mm.organisation_id=$2 AND mm.status='ACTIVE')
+		       (SELECT count(*) FROM assoc_memberships mm WHERE mm.organisation_id=t.organisation_id AND mm.status='ACTIVE')
 		FROM assoc_chat_threads t
-		LEFT JOIN assoc_chat_thread_state st ON st.thread_id=t.id AND st.membership_id=$3
-		WHERE t.id=$1`
-	if err := s.db.QueryRow(ctx, q, threadID, orgID, mid).Scan(
+		LEFT JOIN assoc_chat_thread_state st ON st.thread_id=t.id AND st.membership_id=$2
+		WHERE t.id=$1
+		  AND EXISTS (SELECT 1 FROM assoc_memberships v
+		              WHERE v.user_id=$3 AND v.status='ACTIVE'
+		                AND v.organisation_id = t.organisation_id)`
+	if err := s.db.QueryRow(ctx, q, threadID, mid, userID).Scan(
 		&t.ID, &t.Title, &t.Scope, &t.PostingBlock, &t.Description, &t.Muted, &t.MemberCount,
 	); err != nil {
 		return nil, fmt.Errorf("association: thread not found: %w", err)
@@ -362,6 +372,16 @@ func (s *Service) MuteThread(ctx context.Context, userID, threadID string, muted
 	if err != nil {
 		return err
 	}
+	// Cross-group check (CH-005): only mute a thread in an org the caller is an
+	// ACTIVE member of — fail-closed otherwise (no writing state for foreign threads).
+	var ok bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM assoc_chat_threads t
+		   JOIN assoc_memberships v ON v.organisation_id = t.organisation_id
+		   WHERE t.id=$1 AND v.user_id=$2 AND v.status='ACTIVE')`,
+		threadID, userID).Scan(&ok); err != nil || !ok {
+		return ErrForbidden
+	}
 	const q = `
 		INSERT INTO assoc_chat_thread_state (thread_id, membership_id, muted, updated_at)
 		VALUES ($1, $2, $3, now())
@@ -375,9 +395,21 @@ func (s *Service) MuteThread(ctx context.Context, userID, threadID string, muted
 
 func (s *Service) SendChatMessage(ctx context.Context, userID, threadID, body string) (*ChatMessage, error) {
 	m := &ChatMessage{ID: uuid.New().String(), ThreadID: threadID, AuthorID: userID, AuthorName: "You", Body: body, Mine: true}
-	const q = `INSERT INTO assoc_chat_messages (id, thread_id, author_id, body)
-	           VALUES ($1,$2,$3,$4) RETURNING to_char(created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+	// Cross-group write isolation (CH-005 / §4.9): the INSERT is conditional on the
+	// caller holding an ACTIVE membership in the thread's organisation. If not, no
+	// row is written and QueryRow returns ErrNoRows → ErrForbidden (fail-closed).
+	const q = `
+		INSERT INTO assoc_chat_messages (id, thread_id, author_id, body)
+		SELECT $1, $2, $3, $4
+		WHERE EXISTS (
+			SELECT 1 FROM assoc_chat_threads t
+			JOIN assoc_memberships v ON v.organisation_id = t.organisation_id
+			WHERE t.id = $2 AND v.user_id = $3 AND v.status = 'ACTIVE')
+		RETURNING to_char(created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 	if err := s.db.QueryRow(ctx, q, m.ID, threadID, userID, body).Scan(&m.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrForbidden
+		}
 		return nil, fmt.Errorf("association: send message: %w", err)
 	}
 	return m, nil
@@ -409,14 +441,20 @@ func (s *Service) GetAiNotes(ctx context.Context, userID string) ([]AiNoteSummar
 	return out, rows.Err()
 }
 
-func (s *Service) GetAiNote(ctx context.Context, noteID string) (*AiNote, error) {
+func (s *Service) GetAiNote(ctx context.Context, userID, noteID string) (*AiNote, error) {
 	n := &AiNote{}
 	var decisions, actionItems, attendees []byte
+	// Access-scoped (AI-007 / §4.9): only readable by an ACTIVE member of the
+	// note's organisation. A foreign-org caller gets "not found" (fail-closed).
 	const q = `
 		SELECT id, meeting_title, status, source, to_char(created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		       COALESCE(summary,''), COALESCE(minutes,''), decisions, action_items, attendees, meeting_id
-		FROM assoc_ai_notes WHERE id=$1`
-	if err := s.db.QueryRow(ctx, q, noteID).Scan(
+		FROM assoc_ai_notes n
+		WHERE n.id=$1
+		  AND EXISTS (SELECT 1 FROM assoc_memberships v
+		              WHERE v.user_id=$2 AND v.status='ACTIVE'
+		                AND v.organisation_id = n.organisation_id)`
+	if err := s.db.QueryRow(ctx, q, noteID, userID).Scan(
 		&n.ID, &n.MeetingTitle, &n.Status, &n.Source, &n.CreatedAt,
 		&n.Summary, &n.Minutes, &decisions, &actionItems, &attendees, &n.MeetingID,
 	); err != nil {
@@ -429,9 +467,16 @@ func (s *Service) GetAiNote(ctx context.Context, noteID string) (*AiNote, error)
 	return n, nil
 }
 
-func (s *Service) GetAiNoteStatus(ctx context.Context, noteID string) (string, error) {
+func (s *Service) GetAiNoteStatus(ctx context.Context, userID, noteID string) (string, error) {
 	var status string
-	if err := s.db.QueryRow(ctx, `SELECT status FROM assoc_ai_notes WHERE id=$1`, noteID).Scan(&status); err != nil {
+	// Access-scoped (AI-007): status only readable by an ACTIVE member of the org.
+	const q = `
+		SELECT status FROM assoc_ai_notes n
+		WHERE n.id=$1
+		  AND EXISTS (SELECT 1 FROM assoc_memberships v
+		              WHERE v.user_id=$2 AND v.status='ACTIVE'
+		                AND v.organisation_id = n.organisation_id)`
+	if err := s.db.QueryRow(ctx, q, noteID, userID).Scan(&status); err != nil {
 		return "", fmt.Errorf("association: ai note not found: %w", err)
 	}
 	return status, nil
@@ -453,11 +498,16 @@ func (s *Service) CreateAiNote(ctx context.Context, userID string, in CreateAiNo
 
 func (s *Service) SetAiNoteStatus(ctx context.Context, adminID, noteID, status, action string) error {
 	// Authorization: approving/publishing meeting minutes is an admin-style
-	// mutation. Guard with requireAssocAdmin (any admin role, SECRETARY-or-above)
-	// — matching ConfirmImport and the other admin mutations in this package, and
-	// the doctrine that a human admin/secretary reviews minutes before publish.
-	// Fail-closed: a plain member gets ErrForbidden and no row is written.
-	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
+	// mutation reserved for an admin OF THE NOTE'S organisation (any admin role,
+	// SECRETARY-or-above — the intended minutes reviewer). Org-scoped so an admin
+	// of another org cannot publish this org's minutes (cross-org IDOR). A missing
+	// note yields "not found"; a non-admin (or foreign-org admin) gets ErrForbidden
+	// and no row is written (fail-closed).
+	var noteOrg string
+	if err := s.db.QueryRow(ctx, `SELECT organisation_id FROM assoc_ai_notes WHERE id=$1`, noteID).Scan(&noteOrg); err != nil {
+		return fmt.Errorf("association: ai note not found: %w", err)
+	}
+	if err := s.requireAdminInOrg(ctx, adminID, noteOrg); err != nil {
 		return err
 	}
 	tx, err := s.db.Begin(ctx)
@@ -480,11 +530,18 @@ func (s *Service) ConvertActionItem(ctx context.Context, userID, noteID, itemID 
 		return "", err
 	}
 	taskID := uuid.New().String()
+	// Source note must belong to the caller's organisation (AI-007 scope): the
+	// SELECT is gated on organisation_id=$2 so a cross-org note yields no row and
+	// no task is created (fail-closed via RowsAffected).
 	const q = `INSERT INTO assoc_tasks (id, organisation_id, title, status, priority, meeting_id, created_by)
 	           SELECT $1, $2, 'From minutes: ' || COALESCE(meeting_title,'action item'), 'ASSIGNED', 'MEDIUM', meeting_id, $4
-	           FROM assoc_ai_notes WHERE id=$3`
-	if _, err := s.db.Exec(ctx, q, taskID, orgID, noteID, userID); err != nil {
+	           FROM assoc_ai_notes WHERE id=$3 AND organisation_id=$2`
+	tag, err := s.db.Exec(ctx, q, taskID, orgID, noteID, userID)
+	if err != nil {
 		return "", fmt.Errorf("association: convert action item: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return "", ErrForbidden
 	}
 	_ = itemID // item granularity tracked in the note's action_items jsonb
 	return taskID, nil

@@ -80,7 +80,7 @@ func (h *Handler) ListOrganisations(c *gin.Context) {
 
 // GET /associations/:id
 func (h *Handler) GetOrganisation(c *gin.Context) {
-	org, err := h.svc.GetOrganisation(c.Request.Context(), c.Param("id"))
+	org, err := h.svc.GetOrganisation(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return

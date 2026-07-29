@@ -119,8 +119,8 @@ func seedActiveMembership(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		t.Fatalf("seed auth.users: %v", err)
 	}
 	_, err := pool.Exec(ctx, `
-		INSERT INTO assoc_memberships (id, organisation_id, user_id, member_code, status, payment_standing)
-		VALUES ($1, $2, $3, $4, 'ACTIVE', 'DUE')`,
+		INSERT INTO assoc_memberships (id, organisation_id, user_id, member_code, status, payment_standing, joined_at)
+		VALUES ($1, $2, $3, $4, 'ACTIVE', 'DUE', now())`,
 		membershipID, orgID, userID, "TEST-"+membershipID[:8])
 	if err != nil {
 		t.Fatalf("seed membership: %v", err)
@@ -964,8 +964,9 @@ func TestLiveDB_AiNote_ApproveThenPublish_PersistsStatusAndAudit(t *testing.T) {
 		t.Errorf("MINUTES_PUBLISH audit rows = %d, want 1", publishAuditCount)
 	}
 
-	// Confirm the read path (GetAiNote) reflects PUBLISHED.
-	note, err := svc.GetAiNote(ctx, noteID)
+	// Confirm the read path (GetAiNote) reflects PUBLISHED. GetAiNote is now
+	// org-scoped: read as the admin actor, who is an ACTIVE member of the note's org.
+	note, err := svc.GetAiNote(ctx, actorID, noteID)
 	if err != nil {
 		t.Fatalf("GetAiNote: %v", err)
 	}
