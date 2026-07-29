@@ -2462,8 +2462,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		tradingMember.Use(mapsAuth())
 		tradingAdmin := tradingV1.Group("/admin/trading")
 		tradingAdmin.Use(mapsAuth())
-		trading.Register(tradingMember, tradingAdmin, pool, rbac, ledgerSvc, int64(cfg.TradingFeeBps), int64(cfg.TradingHurdleBps))
-		log.Printf("[trading] registered (paper mode; fee %d bps, hurdle %d bps)", cfg.TradingFeeBps, cfg.TradingHurdleBps)
+		trading.Register(tradingMember, tradingAdmin, pool, rbac, ledgerSvc, int64(cfg.TradingFeeBps), int64(cfg.TradingHurdleBps), cfg.FeatureAITradingEnabled)
+		if cfg.FeatureAITradingEnabled {
+			log.Printf("[trading] registered (paper mode; fee %d bps, hurdle %d bps) + AI decision surface (evaluate + §12 promotion ladder) — no venue execution", cfg.TradingFeeBps, cfg.TradingHurdleBps)
+		} else {
+			log.Printf("[trading] registered (paper mode; fee %d bps, hurdle %d bps) — FEATURE_AI_TRADING_ENABLED off, decision/promotion routes dark", cfg.TradingFeeBps, cfg.TradingHurdleBps)
+		}
 	} else {
 		log.Println("[trading] FEATURE_TRADING_ENABLED is false — skipping routes")
 	}
