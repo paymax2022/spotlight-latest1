@@ -87,6 +87,12 @@ function Landing({ status, onRefresh, refreshing }: { status: TradingKycStatus; 
           </>
         )}
       </View>
+
+      <Pressable style={styles.manageLink} onPress={() => router.push('/ai-trading/strategies' as never)}>
+        <TrendingUp size={16} color={Colors.primary} />
+        <Text style={styles.manageLinkText}>How your fund is managed</Text>
+        <Text style={styles.manageChevron}>›</Text>
+      </Pressable>
       <View style={{ height: Spacing.xl }} />
     </ScrollView>
   );
@@ -124,6 +130,12 @@ function Dashboard() {
       <View style={[styles.card, styles.riskCard]}>
         <Text style={styles.riskBody}>Your funds are held segregated from platform operating funds and are valued at the fund's current NAV. Withdrawals are paid at NAV, net of any fees. You can lose deposited capital.</Text>
       </View>
+
+      <Pressable style={styles.manageLink} onPress={() => router.push('/ai-trading/strategies' as never)}>
+        <TrendingUp size={16} color={Colors.primary} />
+        <Text style={styles.manageLinkText}>How your fund is managed</Text>
+        <Text style={styles.manageChevron}>›</Text>
+      </Pressable>
       <View style={{ height: Spacing.xl }} />
     </ScrollView>
   );
@@ -180,4 +192,7 @@ const styles = StyleSheet.create({
   actionRow: { flexDirection: 'row', gap: Spacing.md },
   action: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: Colors.surface, borderWidth: 1.5, borderColor: Colors.primary, borderRadius: Radius.lg, paddingVertical: 14 },
   actionText: { ...Typography.labelLg, color: Colors.primary, fontWeight: '700' },
+  manageLink: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.surface, borderRadius: Radius.md, paddingHorizontal: Spacing.md, paddingVertical: Spacing.md, borderWidth: 1, borderColor: Colors.outlineVariant, marginTop: Spacing.md },
+  manageLinkText: { ...Typography.labelMd, color: Colors.onSurface, fontWeight: '600', flex: 1 },
+  manageChevron: { ...Typography.titleMd, color: Colors.onSurfaceVariant },
 });

@@ -5,7 +5,11 @@ import * as tradingApi from './api';
 export const TRADING_KEYS = {
   kyc: ['trading', 'kyc'] as const,
   position: ['trading', 'position'] as const,
+  strategies: ['trading', 'strategies'] as const,
 };
+
+export const useStrategies = () =>
+  useQuery({ queryKey: TRADING_KEYS.strategies, queryFn: tradingApi.fetchStrategies });
 
 export const useKyc = () =>
   useQuery({ queryKey: TRADING_KEYS.kyc, queryFn: tradingApi.getKyc });
