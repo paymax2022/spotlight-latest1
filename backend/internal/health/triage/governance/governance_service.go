@@ -90,8 +90,8 @@ func (s *GovernanceService) EditContent(ctx context.Context, actorID, id, body s
 	if err != nil {
 		return nil, err
 	}
-	switch cur.State {
-	case triage.ContentDraft:
+	switch amendModeFor(cur.State) {
+	case amendInPlace:
 		ok, err := s.repo.UpdateContentBody(ctx, id, body, ragTags)
 		if err != nil {
 			return nil, err
@@ -102,8 +102,8 @@ func (s *GovernanceService) EditContent(ctx context.Context, actorID, id, body s
 		_ = s.repo.audit(ctx, actorID, "health.triage.content.edited", "health_triage_content_item", id,
 			map[string]any{"version": cur.Version}, "info")
 		return s.repo.GetContent(ctx, id)
-	case triage.ContentPublished, triage.ContentApproved, triage.ContentReview:
-		// Branch a new draft at version+1 — live content is immutable.
+	case amendNewVersion:
+		// Branch a new draft at version+1 — live/signed-off content is immutable.
 		next, err := s.repo.BumpContentVersion(ctx, cur, body, ragTags)
 		if err != nil {
 			return nil, err
@@ -233,7 +233,8 @@ func (s *GovernanceService) EditRule(ctx context.Context, actorID, id, name stri
 	if err != nil {
 		return nil, err
 	}
-	if cur.State == triage.ContentDraft {
+	switch amendModeFor(cur.State) {
+	case amendInPlace:
 		ok, err := s.repo.UpdateRuleBody(ctx, id, name, cond, urgency, severity)
 		if err != nil {
 			return nil, err
@@ -244,14 +245,18 @@ func (s *GovernanceService) EditRule(ctx context.Context, actorID, id, name stri
 		_ = s.repo.audit(ctx, actorID, "health.triage.rule.edited", "health_triage_red_flag_rule", id,
 			map[string]any{"version": cur.Version}, "info")
 		return s.repo.GetRule(ctx, id)
+	case amendNewVersion:
+		// Branch a new draft at version+1 — live/signed-off rules are immutable.
+		next, err := s.repo.BumpRuleVersion(ctx, cur, name, cond, urgency, severity)
+		if err != nil {
+			return nil, err
+		}
+		_ = s.repo.audit(ctx, actorID, "health.triage.rule.version_bumped", "health_triage_red_flag_rule", next.ID,
+			map[string]any{"code": cur.Code, "from_version": cur.Version, "to_version": next.Version}, "info")
+		return next, nil
+	default:
+		return nil, fmt.Errorf("%w: cannot edit a %s rule (create a new one)", ErrIllegalTransition, cur.State)
 	}
-	next, err := s.repo.BumpRuleVersion(ctx, cur, name, cond, urgency, severity)
-	if err != nil {
-		return nil, err
-	}
-	_ = s.repo.audit(ctx, actorID, "health.triage.rule.version_bumped", "health_triage_red_flag_rule", next.ID,
-		map[string]any{"code": cur.Code, "from_version": cur.Version, "to_version": next.Version}, "info")
-	return next, nil
 }
 
 // SubmitRuleForReview moves draft→clinical_review.
