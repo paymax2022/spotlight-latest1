@@ -68,6 +68,10 @@ type Consult struct {
 	StartedAt        *time.Time `json:"started_at,omitempty"`
 	CompletedAt      *time.Time `json:"completed_at,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
+	// TM-008 follow-up links: a follow-up consult points at the consult it follows
+	// (ParentConsultID) and optionally the referral it fulfils (ReferralID).
+	ParentConsultID *string `json:"parent_consult_id,omitempty"`
+	ReferralID      *string `json:"referral_id,omitempty"`
 }
 
 type ClinicalNote struct {
@@ -309,12 +313,13 @@ func (s *Service) load(ctx context.Context, consultID string) (*Consult, string,
 	var c Consult
 	var state, providerOwner string
 	const q = `SELECT cs.id, cs.appointment_id, cs.provider_id, cs.patient_id, cs.state, cs.recording_enabled,
-	                  cs.started_at, cs.completed_at, cs.created_at, COALESCE(p.owner_user_id::text,'')
+	                  cs.started_at, cs.completed_at, cs.created_at, cs.parent_consult_id, cs.referral_id,
+	                  COALESCE(p.owner_user_id::text,'')
 	           FROM health_consults cs
 	           LEFT JOIN health_providers p ON p.id = cs.provider_id
 	           WHERE cs.id=$1`
 	if err := s.db.QueryRow(ctx, q, consultID).Scan(&c.ID, &c.AppointmentID, &c.ProviderID, &c.PatientID,
-		&state, &c.RecordingEnabled, &c.StartedAt, &c.CompletedAt, &c.CreatedAt, &providerOwner); err != nil {
+		&state, &c.RecordingEnabled, &c.StartedAt, &c.CompletedAt, &c.CreatedAt, &c.ParentConsultID, &c.ReferralID, &providerOwner); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, "", fmt.Errorf("consult: not found")
 		}
