@@ -223,7 +223,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	}
 
 	// Price every line from the catalog (server-side, kobo integers).
-	var total int64
+	prices := make([]int64, 0, len(in.TestIDs))
 	lines := make([]OrderLine, 0, len(in.TestIDs))
 	for _, testID := range in.TestIDs {
 		var name string
@@ -239,10 +239,15 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		if !active {
 			return nil, fmt.Errorf("lab: test is not active")
 		}
-		total += price
+		prices = append(prices, price)
 		lines = append(lines, OrderLine{
 			ID: uuid.New().String(), TestID: testID, TestName: name, UnitPriceKobo: price,
 		})
+	}
+	// Exact, overflow-guarded minor-unit total (PM-008/PM-011).
+	total, err := sumLineKobo(prices)
+	if err != nil {
+		return nil, err
 	}
 	if total <= 0 {
 		return nil, fmt.Errorf("lab: order total must be positive")
