@@ -571,12 +571,25 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID string,
 			}
 			return nil, err
 		}
+		// Fail-safe interpretation backstop (LR-002/003/008, EC-002): reject a
+		// wrong-unit value, and UPGRADE a mis-entered status so a critical/abnormal
+		// value can never be released as NORMAL. Never downgrades the scientist.
+		effStatus, unitMismatch := deriveEffectiveStatus(r.Status, name, r.Value, r.Unit, r.RefRange)
+		if unitMismatch {
+			return nil, fmt.Errorf("lab: result unit %q for %s disagrees with the reference-range/expected unit (possible transposition) — rejected (EC-002)", r.Unit, name)
+		}
 		const ins = `
 			INSERT INTO lab_results (id, order_id, test_id, test_name, value, unit, ref_range, status, validated_by)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`
 		if _, err := tx.Exec(ctx, ins, uuid.New().String(), orderID, r.TestID, name,
-			r.Value, r.Unit, r.RefRange, string(r.Status), scientistID); err != nil {
+			r.Value, r.Unit, r.RefRange, string(effStatus), scientistID); err != nil {
 			return nil, fmt.Errorf("lab: insert result: %w", err)
+		}
+		if effStatus != r.Status {
+			// Attributable record that the safety backstop escalated the severity.
+			s.audited(scientistID, o.PatientID, "health.lab.result.status_upgraded", orderID,
+				map[string]any{"test": name, "entered": string(r.Status)},
+				map[string]any{"effective": string(effStatus)})
 		}
 	}
 	o2, err := lockOrder(ctx, tx, orderID)
