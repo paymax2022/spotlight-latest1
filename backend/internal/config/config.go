@@ -230,6 +230,14 @@ type Config struct {
 	TradingFeeBps         int
 	TradingHurdleBps      int
 
+	// Stricter SECOND gate over the AI decision surface inside internal/trading.
+	// DEFAULT OFF and independent of FeatureTradingEnabled: the paper Module-KYC +
+	// fund wallet can run with FEATURE_TRADING_ENABLED alone, while the deterministic
+	// decision pipeline (POST /trading/evaluate) and the §12 promotion-ladder admin
+	// routes stay dark until this is also on. Neither surface executes a real order
+	// in this build (no venue adapter); this flag governs exposure, not execution.
+	FeatureAITradingEnabled bool
+
 	// ── Internal service-authenticated Ledger API (Stage 1.5c) ───────────────
 	// Lets the separate trading service post cash legs through the AUTHORITATIVE
 	// double-entry ledger (it does not run its own money ledger). DEFAULT OFF.
@@ -607,6 +615,7 @@ func Load() Config {
 		FeatureFractionalREEnabled:            getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
 		FeatureCryptoEnabled:                  getEnvBool("FEATURE_CRYPTO_ENABLED", false),
 		FeatureTradingEnabled:                 getEnvBool("FEATURE_TRADING_ENABLED", false),
+		FeatureAITradingEnabled:               getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
 		TradingFeeBps:                         getEnvInt("TRADING_FEE_BPS", 2000),
 		TradingHurdleBps:                      getEnvInt("TRADING_HURDLE_BPS", 0),
 		FeatureInternalLedgerAPIEnabled:       getEnvBool("FEATURE_INTERNAL_LEDGER_API_ENABLED", false),
