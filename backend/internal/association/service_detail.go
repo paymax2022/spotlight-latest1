@@ -333,11 +333,17 @@ func (s *Service) ReactToMessage(ctx context.Context, userID, threadID, messageI
 	if err != nil {
 		return err
 	}
-	// Verify the message belongs to the named thread (object-level check).
+	// Object-level + cross-group check (CH-005 / §4.9): the message must belong to
+	// the named thread AND the caller must hold an ACTIVE membership in the thread's
+	// organisation. A foreign-org caller is rejected (fail-closed) before any write.
 	var owned bool
 	if err := s.db.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM assoc_chat_messages WHERE id=$1 AND thread_id=$2)`,
-		messageID, threadID).Scan(&owned); err != nil || !owned {
+		`SELECT EXISTS(
+			SELECT 1 FROM assoc_chat_messages msg
+			JOIN assoc_chat_threads t ON t.id = msg.thread_id
+			JOIN assoc_memberships v ON v.organisation_id = t.organisation_id
+			WHERE msg.id=$1 AND msg.thread_id=$2 AND v.user_id=$3 AND v.status='ACTIVE')`,
+		messageID, threadID, userID).Scan(&owned); err != nil || !owned {
 		return ErrForbidden
 	}
 	// Toggle: delete if the exact (message, member, emoji) reaction exists, else insert.

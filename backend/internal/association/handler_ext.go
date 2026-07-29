@@ -219,7 +219,7 @@ func (h *Handler) ListAiNotes(c *gin.Context) {
 }
 
 func (h *Handler) GetAiNote(c *gin.Context) {
-	v, err := h.svc.GetAiNote(c.Request.Context(), c.Param("id"))
+	v, err := h.svc.GetAiNote(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return
@@ -228,7 +228,7 @@ func (h *Handler) GetAiNote(c *gin.Context) {
 }
 
 func (h *Handler) GetAiNoteStatus(c *gin.Context) {
-	status, err := h.svc.GetAiNoteStatus(c.Request.Context(), c.Param("id"))
+	status, err := h.svc.GetAiNoteStatus(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return
