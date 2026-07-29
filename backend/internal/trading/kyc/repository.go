@@ -150,6 +150,53 @@ func (r *Repository) DueBypasses(ctx context.Context, now time.Time, limit int) 
 	return ids, rows.Err()
 }
 
+// Event is one audit row (admin case timeline).
+type Event struct {
+	EventType, NewStatus string
+	OldStatus, ActorID, Reason *string
+	CreatedAt time.Time
+}
+
+// ListEvents returns a user's audit trail, newest first.
+func (r *Repository) ListEvents(ctx context.Context, userID string, limit int) ([]Event, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT event_type, old_status, new_status, actor_id, reason, created_at
+		FROM public.trading_kyc_events WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Event
+	for rows.Next() {
+		var e Event
+		if err := rows.Scan(&e.EventType, &e.OldStatus, &e.NewStatus, &e.ActorID, &e.Reason, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ListBypass returns the bypass register, newest first (compliance view).
+func (r *Repository) ListBypass(ctx context.Context, limit int) ([]Bypass, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, user_id, maker_id, checker_id, reason, exposure_cap_kobo, granted_at, expires_at, revoked_at
+		FROM public.trading_kyc_bypass ORDER BY granted_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Bypass
+	for rows.Next() {
+		var b Bypass
+		if err := rows.Scan(&b.ID, &b.UserID, &b.MakerID, &b.CheckerID, &b.Reason, &b.ExposureCapKobo, &b.GrantedAt, &b.ExpiresAt, &b.RevokedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 // ListByStatus returns records in a given status (admin review queue).
 func (r *Repository) ListByStatus(ctx context.Context, status Status, limit int) ([]Record, error) {
 	rows, err := r.db.Query(ctx, `

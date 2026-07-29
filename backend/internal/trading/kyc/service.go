@@ -146,6 +146,24 @@ func (s *Service) ReviewQueue(ctx context.Context, limit int) ([]Record, error) 
 	return append(sub, rev...), nil
 }
 
+// GetCase returns a user's record + audit trail (admin case detail).
+func (s *Service) GetCase(ctx context.Context, userID string) (Record, []Event, error) {
+	rec, _, err := s.repo.Get(ctx, userID)
+	if err != nil {
+		return Record{}, nil, err
+	}
+	events, err := s.repo.ListEvents(ctx, userID, 50)
+	return rec, events, err
+}
+
+// ListBypassRegister returns the compliance bypass register.
+func (s *Service) ListBypassRegister(ctx context.Context, limit int) ([]Bypass, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	return s.repo.ListBypass(ctx, limit)
+}
+
 func strPtrOrNil(s string) *string {
 	if s == "" {
 		return nil

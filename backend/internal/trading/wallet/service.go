@@ -381,6 +381,24 @@ func (s *Service) postFeeLeg(ctx context.Context, idemKey string, fee int64, cle
 	return nil
 }
 
+// Position returns a holder's current units, the current NAV per unit, and the
+// mark-to-market value of their holding (units × NAV). Read-only.
+func (s *Service) Position(ctx context.Context, userID string) (units, navKobo, valueKobo int64, err error) {
+	clearingAcct, err := s.clearing(ctx)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	nav, _, _, err := s.currentNAV(ctx, clearingAcct)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	units, err = s.repo.UserUnits(ctx, userID)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return units, nav, ValueOfUnits(units, nav), nil
+}
+
 // SnapshotNAV records an immutable NAV snapshot and returns it.
 func (s *Service) SnapshotNAV(ctx context.Context, idem string) (navKobo, totalUnits int64, err error) {
 	clearingAcct, err := s.clearing(ctx)
