@@ -12,7 +12,8 @@
     "test:payment-routes": "node scripts/smoke-payment-routes.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:merchant": "node --test \"src/features/merchant/lib/__tests__/*.test.ts\""
+    "test:merchant": "node --test \"src/features/merchant/lib/__tests__/*.test.ts\"",
+    "test:payments": "node --experimental-strip-types --test \"src/features/payments/__tests__/*.test.ts\""
   },
   "dependencies": {
     "@expo-google-fonts/plus-jakarta-sans": "^0.4.2",
@@ -47,6 +48,7 @@
     "react-native-svg": "15.12.1",
     "react-native-url-polyfill": "^3.0.0",
     "react-native-web": "^0.21.0",
+    "react-native-webview": "13.16.0",
     "zod": "^3.24.2",
     "zustand": "^5.0.3"
   },

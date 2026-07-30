@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -8,6 +8,7 @@ import * as Icons from 'lucide-react-native';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { initiateFunding } from '@/api/wallet.api';
+import { useGatewayCheckout } from '@/features/payments';
 import {
   resolvePaymaxRecipient,
   initiateWalletTransfer,
@@ -138,30 +139,47 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   const amountKobo = useMemo(() => Math.round(amountValue * 100), [amountValue]);
   const feeKobo = useMemo(() => calculateTransferFee(amountKobo), [amountKobo]);
 
-  // ── Wallet funding mutation ─────────────────────────────────────────────────
-  const fundMutation = useMutation({
-    mutationFn: async () => {
-      if (!amountValue || amountValue < 100) {
-        throw new Error('Enter an amount of at least ₦100.');
-      }
-      return initiateFunding({ amount: Math.round(amountValue * 100) });
-    },
-    onSuccess: async (result) => {
-      if (!result.authorizationUrl) {
-        Alert.alert('Funding Started', `Reference: ${result.reference}`);
-        return;
-      }
-      const canOpen = await Linking.canOpenURL(result.authorizationUrl);
-      if (canOpen) {
-        await Linking.openURL(result.authorizationUrl);
-      } else {
-        Alert.alert('Funding Link Ready', result.authorizationUrl);
-      }
-    },
-    onError: (error) => {
-      Alert.alert('Could not start funding', error instanceof Error ? error.message : 'Please try again.');
-    },
-  });
+  // ── Wallet funding via in-app Paystack SDK ──────────────────────────────────
+  // The server initializes the top-up (Idempotency-Key + ledger authority) and
+  // returns a Paystack authorization_url; useGatewayCheckout resumes it inside
+  // the in-app SDK, then routes to the top-up status screen. When the SDK flag
+  // is off (or no access code is derivable) it falls back to the old external
+  // Paystack redirect.
+  const fundCheckout = useGatewayCheckout();
+  const fundBusy = fundCheckout.phase === 'initializing' || fundCheckout.phase === 'awaiting';
+
+  useEffect(() => {
+    if (fundCheckout.error) {
+      Alert.alert('Could not complete funding', fundCheckout.error);
+    }
+  }, [fundCheckout.error]);
+
+  const startFunding = () => {
+    if (!amountValue || amountValue < 100) {
+      Alert.alert('Enter an amount', 'Enter an amount of at least ₦100.');
+      return;
+    }
+    void fundCheckout.start({
+      domain: 'wallet_topup',
+      // initiateFunding's `amount` field is kobo (posted as amount_kobo).
+      initialize: () => initiateFunding({ amount: Math.round(amountValue * 100) }),
+      onResolved: (result) => {
+        router.push(`/wallet/topup/${encodeURIComponent(result.reference)}` as never);
+      },
+      onFallback: async (result) => {
+        if (!result.authorizationUrl) {
+          Alert.alert('Funding Started', `Reference: ${result.reference}`);
+          return;
+        }
+        const canOpen = await Linking.canOpenURL(result.authorizationUrl);
+        if (canOpen) {
+          await Linking.openURL(result.authorizationUrl);
+        } else {
+          Alert.alert('Funding Link Ready', result.authorizationUrl);
+        }
+      },
+    });
+  };
 
   // ── Transfer: step 1 — resolve recipient ───────────────────────────────────
   const resolveMutation = useMutation({
@@ -264,7 +282,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     },
   });
 
-  const isPending = fundMutation.isPending || resolveMutation.isPending || transferMutation.isPending ||
+  const isPending = fundBusy || resolveMutation.isPending || transferMutation.isPending ||
     resolveAccountMutation.isPending || bankTransferMutation.isPending;
 
   const resetBankFlow = () => {
@@ -281,7 +299,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   };
 
   const handlePrimary = () => {
-    if (kind === 'fund') { fundMutation.mutate(); return; }
+    if (kind === 'fund') { startFunding(); return; }
     if (kind === 'transfer') {
       if (transferStep === 'form')    { resolveMutation.mutate(); return; }
       if (transferStep === 'confirm') { transferMutation.mutate(); return; }
@@ -304,7 +322,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   };
 
   const primaryLabel = () => {
-    if (kind === 'fund') return fundMutation.isPending ? 'Please wait…' : config.primaryAction;
+    if (kind === 'fund') return fundBusy ? 'Please wait…' : config.primaryAction;
     if (kind === 'transfer') {
       if (transferStep === 'form')    return resolveMutation.isPending ? 'Looking up recipient…' : 'Preview Transfer';
       if (transferStep === 'confirm') return transferMutation.isPending ? 'Sending…' : 'Confirm & Send';
@@ -461,6 +479,9 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
           </View>
         )}
       </ScrollView>
+
+      {/* Hosts the in-app Paystack checkout WebView on native (renders nothing on web). */}
+      <fundCheckout.Sheet />
     </SafeAreaView>
   );
 }
