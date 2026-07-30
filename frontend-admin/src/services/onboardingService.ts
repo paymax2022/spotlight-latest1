@@ -71,7 +71,10 @@ export async function getApplication(id: string): Promise<OnboardingApplication>
   );
   if (!res.ok) throw new Error(`Application fetch failed: ${res.status}`);
   const data = await res.json().catch(() => ({}));
-  return (data.application ?? data) as OnboardingApplication;
+  // The Go admin API wraps the payload in a {data: ...} envelope (same as the
+  // review-queue endpoint). Unwrap .data first; fall back to .application or the
+  // bare body for other shapes.
+  return (data.data ?? data.application ?? data) as OnboardingApplication;
 }
 
 async function postAction(
