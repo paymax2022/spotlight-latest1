@@ -1,6 +1,7 @@
 import React from 'react';
 import { FlatList, View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -46,7 +47,7 @@ export default function WithdrawalsScreen() {
                 {formatNaira(stats.data?.pendingBalanceKobo ?? 0)} pending · {formatNaira(stats.data?.escrowBalanceKobo ?? 0)} in escrow
               </Text>
               <View style={styles.requestBtn}>
-                <PrimaryButton label="Request withdrawal" onPress={() => {}} />
+                <PrimaryButton label="Request withdrawal" onPress={() => router.push('/crowdfunding/wallet/withdraw')} />
               </View>
               <Text style={styles.note}>Withdrawals require KYC and admin approval. Funds in escrow release per milestone.</Text>
             </View>
