@@ -20,6 +20,7 @@ export function AssociationTabs({ active }: { active: string }) {
     { href: '/admin/association/approvals', label: 'Approvals', key: 'approvals' },
     { href: '/admin/association/dues', label: 'Dues & finance', key: 'dues' },
     { href: '/admin/association/members', label: 'Members', key: 'members' },
+    { href: '/admin/association/elections', label: 'Elections', key: 'elections' },
     { href: '/admin/association/import', label: 'Import', key: 'import' },
     { href: '/admin/association/audit', label: 'Audit log', key: 'audit' },
   ];
