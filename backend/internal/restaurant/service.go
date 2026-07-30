@@ -399,7 +399,11 @@ func (s *Service) UpdateStatus(ctx context.Context, orderID, actorID string, new
 // `delivered` may be set.
 func (s *Service) transitionInternal(ctx context.Context, orderID string, newStatus OrderStatus) error {
 	var order Order
-	const q = `SELECT id, restaurant_id, status, settlement_id FROM orders WHERE id=$1`
+	// settlement_id is a NULLABLE column; COALESCE to '' so a settlement-less order
+	// (e.g. one created outside the escrow path) scans cleanly instead of erroring —
+	// which the previous `settlement_id` scan into a string masked as "order not
+	// found". Mirrors the COALESCE(settlement_id::text,'') pattern in delivery.go.
+	const q = `SELECT id, restaurant_id, status, COALESCE(settlement_id::text,'') FROM orders WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&order.ID, &order.RestaurantID, &order.Status, &order.SettlementID); err != nil {
 		return fmt.Errorf("restaurant: order not found")
 	}
@@ -596,8 +600,11 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 	defer tx.Rollback(ctx)
 
 	var status, settlementID string
+	// COALESCE the nullable settlement_id so a settlement-less order scans cleanly
+	// (see transitionInternal / delivery.go) rather than masking the scan error as
+	// "order not found".
 	if err := tx.QueryRow(ctx,
-		`SELECT status, settlement_id FROM orders WHERE id=$1 FOR UPDATE`, orderID).
+		`SELECT status, COALESCE(settlement_id::text,'') FROM orders WHERE id=$1 FOR UPDATE`, orderID).
 		Scan(&status, &settlementID); err != nil {
 		return fmt.Errorf("restaurant: order not found")
 	}
@@ -610,8 +617,13 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 	// Refund the escrow before committing the cancel so an order is never marked
 	// cancelled without the money being returned. Refund is idempotent on the
 	// settlement status, so a retry after a mid-flight failure does not double-refund.
-	if err := s.settlement.Refund(ctx, settlementID, "order_cancelled"); err != nil {
-		return fmt.Errorf("restaurant: refund order: %w", err)
+	// A settlement-less order (no escrow attached) has nothing to refund — real
+	// orders always carry a settlement from CreateOrder, so this only guards
+	// non-standard rows.
+	if settlementID != "" {
+		if err := s.settlement.Refund(ctx, settlementID, "order_cancelled"); err != nil {
+			return fmt.Errorf("restaurant: refund order: %w", err)
+		}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE orders SET status='cancelled' WHERE id=$1`, orderID); err != nil {
 		return err
