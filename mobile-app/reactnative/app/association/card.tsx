@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { Share2, Download } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -42,6 +43,12 @@ export default function MembershipCardScreen() {
               fullWidth={false}
             />
           </View>
+
+          <PrimaryButton
+            label="Verify a member's card"
+            variant="secondary"
+            onPress={() => router.push('/association/verify-card')}
+          />
 
           <View style={styles.noteCard}>
             <Share2 size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />

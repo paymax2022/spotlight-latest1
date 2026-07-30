@@ -17,6 +17,7 @@ import {
   getElections,
   getElection,
   castVote,
+  verifyMembershipCard,
 } from '../api/association.api';
 import type { JoinDraft, MemberDirectoryQuery } from '../types/association.types';
 
@@ -59,6 +60,11 @@ export function useMembershipCard() {
     queryFn: getMembershipCard,
     staleTime: 60_000,
   });
+}
+
+/** Verify a scanned membership-card QR token (POST /cards/verify). */
+export function useVerifyCard() {
+  return useMutation({ mutationFn: (token: string) => verifyMembershipCard(token) });
 }
 
 export function useDirectory(query?: MemberDirectoryQuery) {

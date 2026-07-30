@@ -23,6 +23,7 @@ import type {
   ElectionDetail,
   ElectionStatus,
   VoteReceipt,
+  CardVerification,
 } from '../types/association.types';
 import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
 import {
@@ -117,6 +118,39 @@ export async function getDashboard(): Promise<MemberDashboard> {
 export async function getMembershipCard(): Promise<MembershipCard> {
   if (USE_MOCK) { await delay(); return MOCK_MEMBER_CARD; }
   const { data } = await api.get(`${BASE}/me/card`);
+  return data;
+}
+
+/**
+ * Verify a scanned membership-card QR token. Authenticity + live standing are
+ * decided server-side; an invalid/forged/expired/arrears card returns
+ * `{ valid:false, reason }` rather than throwing. In mock mode the holder's own
+ * card token verifies valid; anything else is INVALID_SIGNATURE.
+ */
+export async function verifyMembershipCard(token: string): Promise<CardVerification> {
+  if (USE_MOCK) {
+    await delay();
+    const t = (token || '').trim();
+    if (t && t === MOCK_MEMBER_CARD.qrPayload) {
+      const overdue = MOCK_MEMBER_CARD.paymentStanding === 'OVERDUE';
+      const inactive = MOCK_MEMBER_CARD.status !== 'ACTIVE';
+      return {
+        valid: !overdue && !inactive,
+        reason: inactive ? 'REVOKED' : overdue ? 'ARREARS' : undefined,
+        memberId: MOCK_MEMBER_CARD.memberId,
+        fullName: MOCK_MEMBER_CARD.fullName,
+        organisationName: MOCK_MEMBER_CARD.organisationName,
+        organisationAcronym: MOCK_MEMBER_CARD.organisationAcronym,
+        categoryLabel: MOCK_MEMBER_CARD.categoryLabel,
+        status: MOCK_MEMBER_CARD.status,
+        paymentStanding: MOCK_MEMBER_CARD.paymentStanding,
+        validThrough: MOCK_MEMBER_CARD.validThrough,
+        verifiedAt: new Date().toISOString(),
+      };
+    }
+    return { valid: false, reason: 'INVALID_SIGNATURE', verifiedAt: new Date().toISOString() };
+  }
+  const { data } = await api.post(`${BASE}/cards/verify`, { token });
   return data;
 }
 

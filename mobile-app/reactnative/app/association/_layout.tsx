@@ -23,6 +23,7 @@ export default function AssociationLayout() {
       {/* Member area (C, D, E) */}
       <Stack.Screen name="home" />
       <Stack.Screen name="card" />
+      <Stack.Screen name="verify-card" options={{ animation: 'slide_from_bottom' }} />
       <Stack.Screen name="directory" />
       <Stack.Screen name="member/[id]" />
 

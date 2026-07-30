@@ -118,6 +118,21 @@ export interface MembershipCard {
   qrPayload:     string;           // opaque verification token
 }
 
+/** Result of scanning + verifying a membership-card QR (POST /cards/verify). */
+export interface CardVerification {
+  valid:                boolean;
+  reason?:              string;     // when invalid: INVALID_SIGNATURE | NOT_FOUND | SUSPENDED | EXPIRED | REVOKED | ARREARS
+  memberId?:            string;
+  fullName?:            string;
+  organisationName?:    string;
+  organisationAcronym?: string | null;
+  categoryLabel?:       string;
+  status?:              string;
+  paymentStanding?:     string;
+  validThrough?:        string | null;
+  verifiedAt:           string;     // ISO timestamp
+}
+
 export interface MemberProfileSummary {
   id:            string;
   fullName:      string;
