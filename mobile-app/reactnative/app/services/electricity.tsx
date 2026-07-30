@@ -20,6 +20,7 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1, shadow2 } from '@/constants/shadows';
 import { getElectricityDiscos, initiateElectricityPaystack, validateMeter, payElectricity, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
+import { useGatewayCheckout } from '@/features/payments';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
@@ -165,23 +166,35 @@ export default function ElectricityScreen() {
     });
   };
 
+  // In-app Paystack SDK checkout (flag-gated); falls back to the legacy redirect.
+  const paystackCheckout = useGatewayCheckout();
+  React.useEffect(() => {
+    if (paystackCheckout.error) setPaystackError(paystackCheckout.error);
+  }, [paystackCheckout.error]);
+
   const onConfirmPaystack = async () => {
     if (!pendingForm) return;
     setPaystackLoading(true);
     setPaystackError('');
     try {
       if (!selectedDisco) return;
-      const { authorizationUrl } = await initiateElectricityPaystack({
-        discoCode: selectedDisco.code,
-        meterNumber: pendingForm.meterNumber,
-        meterType,
-        amount: pendingForm.amount,
-        customerPhone: pendingForm.customerPhone,
-        idempotencyKey: generateIdempotencyKey(),
+      await paystackCheckout.start({
+        domain: 'bills',
+        initialize: async () => {
+          const r = await initiateElectricityPaystack({
+            discoCode: selectedDisco.code,
+            meterNumber: pendingForm.meterNumber,
+            meterType,
+            amount: pendingForm.amount,
+            customerPhone: pendingForm.customerPhone,
+            idempotencyKey: generateIdempotencyKey(),
+          });
+          if (!r.authorizationUrl) throw new Error('Paystack did not return a payment URL.');
+          return { authorizationUrl: r.authorizationUrl, reference: r.paymentReference };
+        },
+        onResolved: (res) => { setShowConfirm(false); router.replace(`/services/paystack/${res.reference}` as never); },
+        onFallback: async (res) => { setShowConfirm(false); await Linking.openURL(res.authorizationUrl); },
       });
-      if (!authorizationUrl) throw new Error('Paystack did not return a payment URL.');
-      await Linking.openURL(authorizationUrl);
-      setShowConfirm(false);
     } catch (err: unknown) {
       setPaystackError(getErrorMessage(err));
     } finally {
@@ -420,6 +433,9 @@ export default function ElectricityScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Hosts the in-app Paystack checkout WebView on native (nothing on web). */}
+      <paystackCheckout.Sheet />
     </SafeAreaView>
   );
 }
