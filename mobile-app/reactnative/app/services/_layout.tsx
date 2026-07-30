@@ -18,6 +18,7 @@ export default function ServicesLayout() {
       <Stack.Screen name="receipt/[id]" />
       <Stack.Screen name="transactions/index" />
       <Stack.Screen name="transactions/[id]" />
+      <Stack.Screen name="paystack/[reference]" />
     </Stack>
   );
 }

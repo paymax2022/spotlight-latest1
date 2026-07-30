@@ -139,6 +139,41 @@ async function postUtilityPaystackInitiation(input: {
   };
 }
 
+// ─── Paystack intent status (bills) ─────────────────────────────────────────
+// A utility Paystack payment creates a `utility_paystack_intents` row keyed by
+// its payment_reference; the Paystack webhook flips its status to
+// 'completed'/'failed' and links transaction_id → the utility_transactions row.
+// The in-app SDK checkout polls this to know when to route to the transaction
+// status screen. RLS scopes the row to the owner.
+export interface UtilityPaystackIntent {
+  reference: string;
+  status: 'pending' | 'completed' | 'failed' | string;
+  transactionId: string | null;
+  failureReason?: string;
+}
+
+export async function getUtilityPaystackIntent(reference: string): Promise<UtilityPaystackIntent> {
+  const supabase = createSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+
+  const { data, error } = await supabase
+    .from('utility_paystack_intents')
+    .select('payment_reference, status, transaction_id, failure_reason')
+    .eq('payment_reference', reference)
+    .eq('user_id', user.id)
+    .single();
+
+  if (error) throw error;
+  const r = (data ?? {}) as Record<string, unknown>;
+  return {
+    reference:     String(r.payment_reference ?? reference),
+    status:        String(r.status ?? 'pending'),
+    transactionId: r.transaction_id ? String(r.transaction_id) : null,
+    failureReason: r.failure_reason ? String(r.failure_reason) : undefined,
+  };
+}
+
 async function postUtilityValidation(input: {
   category: UtilityCategory;
   billerId: string;
