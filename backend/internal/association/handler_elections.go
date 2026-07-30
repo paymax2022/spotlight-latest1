@@ -80,6 +80,15 @@ func (h *Handler) PublishElectionResults(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
+func (h *Handler) HandoverElection(c *gin.Context) {
+	res, err := h.svc.HandoverElection(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
+	if err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
 func (h *Handler) GetElectionTally(c *gin.Context) {
 	res, err := h.svc.Tally(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
 	if err != nil {

@@ -36,7 +36,15 @@ var (
 type CreatePositionInput struct {
 	Title string `json:"title" binding:"required"`
 	Seats int    `json:"seats"`
+	// Role, when set, is the admin role the position's winner receives at handover
+	// (EL-015). Must be one of CHAPTER_ADMIN / FINANCE_ADMIN / SECRETARY /
+	// NATIONAL_ADMIN; empty = a ceremonial position with no role handover.
+	Role string `json:"role"`
 }
+
+// electionRoles are the admin roles a position may confer on its winner.
+// SUPER_ADMIN is intentionally not electable; NONE is not grantable.
+var electionRoles = map[string]bool{"CHAPTER_ADMIN": true, "FINANCE_ADMIN": true, "SECRETARY": true, "NATIONAL_ADMIN": true}
 
 type CreateElectionInput struct {
 	Title               string                `json:"title" binding:"required"`
@@ -197,9 +205,16 @@ func (s *Service) CreateElection(ctx context.Context, userID string, in CreateEl
 		if seats < 1 {
 			seats = 1
 		}
+		var role any
+		if p.Role != "" {
+			if !electionRoles[p.Role] {
+				return "", fmt.Errorf("association: invalid position role %q", p.Role)
+			}
+			role = p.Role
+		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO assoc_election_positions (id, election_id, title, seats, sort_order)
-			VALUES ($1,$2,$3,$4,$5)`, uuid.New().String(), electionID, p.Title, seats, i); err != nil {
+			INSERT INTO assoc_election_positions (id, election_id, title, seats, sort_order, role)
+			VALUES ($1,$2,$3,$4,$5,$6)`, uuid.New().String(), electionID, p.Title, seats, i, role); err != nil {
 			return "", fmt.Errorf("association: create position: %w", err)
 		}
 	}
@@ -693,6 +708,151 @@ func (s *Service) publishedResults(ctx context.Context, electionID string) ([]Po
 	out := make([]PositionResult, 0, len(order))
 	for _, id := range order {
 		out = append(out, *byPos[id])
+	}
+	return out, nil
+}
+
+// ─── winner -> role handover (EL-015 / EC-011) ────────────────────────────────
+
+type PositionHandover struct {
+	PositionID string   `json:"positionId"`
+	Title      string   `json:"title"`
+	Role       string   `json:"role"`
+	Winners    []string `json:"winners"` // names granted the role
+	Revoked    int      `json:"revoked"` // outgoing holders whose role was revoked
+}
+
+type HandoverResult struct {
+	Positions []PositionHandover `json:"positions"`
+}
+
+// requireSeniorOfficer requires NATIONAL_ADMIN or SUPER_ADMIN in the org — handover
+// grants/revokes admin roles, so it needs the highest governance authority.
+func (s *Service) requireSeniorOfficer(ctx context.Context, userID, orgID string) error {
+	if orgID == "" {
+		return ErrForbidden
+	}
+	var n int
+	if err := s.db.QueryRow(ctx, `
+		SELECT count(*) FROM assoc_member_roles r
+		JOIN assoc_memberships m ON m.id = r.membership_id
+		WHERE m.user_id = $1 AND m.organisation_id = $2 AND r.role IN ('NATIONAL_ADMIN','SUPER_ADMIN')`,
+		userID, orgID).Scan(&n); err != nil || n == 0 {
+		return ErrForbidden
+	}
+	return nil
+}
+
+// HandoverElection applies the post-election role handover: for every position that
+// confers a role, the winner(s) are granted that role in the org and the outgoing
+// holders of the role are revoked (no lingering access — EC-011). Exactly-once via
+// elections.handover_at; only from PUBLISHED. A position with no winner is skipped
+// (no vacancy is created). Every change is audited.
+func (s *Service) HandoverElection(ctx context.Context, userID, electionID string) (*HandoverResult, error) {
+	orgID, err := s.electionOrg(ctx, electionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireSeniorOfficer(ctx, userID, orgID); err != nil {
+		return nil, err
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("association: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Claim the handover exactly once: only from PUBLISHED and only if not already done.
+	tag, err := tx.Exec(ctx, `UPDATE assoc_elections SET handover_at=now() WHERE id=$1 AND status='PUBLISHED' AND handover_at IS NULL`, electionID)
+	if err != nil {
+		return nil, fmt.Errorf("association: claim handover: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrElectionState // not published, or already handed over
+	}
+
+	// Positions that confer a role.
+	prows, err := tx.Query(ctx, `SELECT id, title, role FROM assoc_election_positions WHERE election_id=$1 AND role IS NOT NULL ORDER BY sort_order`, electionID)
+	if err != nil {
+		return nil, fmt.Errorf("association: handover positions: %w", err)
+	}
+	type posRole struct{ id, title, role string }
+	var positions []posRole
+	for prows.Next() {
+		var p posRole
+		if err := prows.Scan(&p.id, &p.title, &p.role); err != nil {
+			prows.Close()
+			return nil, err
+		}
+		positions = append(positions, p)
+	}
+	prows.Close()
+	if err := prows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := &HandoverResult{Positions: []PositionHandover{}}
+	for _, p := range positions {
+		// Winner(s) for this position, from the immutable results snapshot.
+		wrows, err := tx.Query(ctx, `
+			SELECT c.membership_id, COALESCE(mp.full_name, m.member_code, c.membership_id::text)
+			FROM assoc_election_results r
+			JOIN assoc_election_candidates c ON c.id = r.candidate_id
+			JOIN assoc_memberships m ON m.id = c.membership_id
+			LEFT JOIN assoc_member_profiles mp ON mp.membership_id = m.id
+			WHERE r.election_id=$1 AND r.position_id=$2 AND r.is_winner=true`, electionID, p.id)
+		if err != nil {
+			return nil, fmt.Errorf("association: handover winners: %w", err)
+		}
+		type winner struct{ mid, name string }
+		var winners []winner
+		for wrows.Next() {
+			var w winner
+			if err := wrows.Scan(&w.mid, &w.name); err != nil {
+				wrows.Close()
+				return nil, err
+			}
+			winners = append(winners, w)
+		}
+		wrows.Close()
+		if err := wrows.Err(); err != nil {
+			return nil, err
+		}
+
+		// No winner (e.g. no votes / no candidates) → skip; never leave a vacancy.
+		if len(winners) == 0 {
+			out.Positions = append(out.Positions, PositionHandover{PositionID: p.id, Title: p.title, Role: p.role, Winners: []string{}, Revoked: 0})
+			continue
+		}
+
+		// Revoke outgoing holders of this role in the org (delete-then-grant also
+		// cleanly handles a re-elected incumbent).
+		delTag, err := tx.Exec(ctx, `
+			DELETE FROM assoc_member_roles r
+			USING assoc_memberships m
+			WHERE r.membership_id = m.id AND m.organisation_id = $1 AND r.role = $2`, orgID, p.role)
+		if err != nil {
+			return nil, fmt.Errorf("association: revoke role: %w", err)
+		}
+		revoked := int(delTag.RowsAffected())
+
+		names := make([]string, 0, len(winners))
+		for _, w := range winners {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO assoc_member_roles (id, membership_id, role, jurisdiction, granted_by)
+				VALUES ($1,$2,$3,'NATIONAL',$4)`, uuid.New().String(), w.mid, p.role, userID); err != nil {
+				return nil, fmt.Errorf("association: grant role: %w", err)
+			}
+			names = append(names, w.name)
+		}
+		if err := s.audit(ctx, tx, orgID, userID, "ROLE_HANDOVER", "election_position", p.id,
+			map[string]any{"role": p.role, "revoked": revoked, "granted": len(winners)}); err != nil {
+			return nil, err
+		}
+		out.Positions = append(out.Positions, PositionHandover{PositionID: p.id, Title: p.title, Role: p.role, Winners: names, Revoked: revoked})
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

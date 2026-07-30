@@ -34,6 +34,7 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.POST("/elections/:id/open", h.OpenElection)                 // officer
 	rg.POST("/elections/:id/close", h.CloseElection)               // officer
 	rg.POST("/elections/:id/publish", h.PublishElectionResults)    // officer
+	rg.POST("/elections/:id/handover", h.HandoverElection)         // senior officer
 	rg.GET("/elections/:id/tally", h.GetElectionTally)             // officer
 	rg.POST("/elections/:id/vote", h.CastVote)                     // eligible voter
 
