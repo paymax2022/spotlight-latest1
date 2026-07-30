@@ -111,6 +111,7 @@ export default function AssociationLayout() {
       <Stack.Screen name="support/tickets" />
       <Stack.Screen name="support/new" />
       <Stack.Screen name="support/[id]" />
+      <Stack.Screen name="elections/[id]" />
 
       {/* Edge / restriction states (H, Z) */}
       <Stack.Screen name="edge/[type]" options={{ animation: 'fade' }} />
