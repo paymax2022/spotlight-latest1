@@ -38,6 +38,9 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.GET("/elections/:id/tally", h.GetElectionTally)             // officer
 	rg.POST("/elections/:id/vote", h.CastVote)                     // eligible voter
 
+	// ── Membership card verification (MC-003/004/005) ───────────
+	rg.POST("/cards/verify", h.VerifyCard)
+
 	// ── Directory ───────────────────────────────────────────────
 	rg.GET("/members", h.ListMembers)
 	rg.GET("/members/:id", h.GetMember)

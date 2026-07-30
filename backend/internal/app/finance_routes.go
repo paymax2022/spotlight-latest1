@@ -801,6 +801,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Association (group membership) money-path + approvals ---
 	if cfg.FeatureAssociationsEnabled {
 		assocSvc := association.NewService(pool, ledgerSvc)
+		// Membership-card QR signing key, derived from a stable server secret so
+		// signed cards verify consistently across hosts/restarts. Empty in dev →
+		// the service keeps its built-in dev key (SetCardSigningSecret ignores "").
+		assocSvc.SetCardSigningSecret(cfg.SupabaseServiceRoleKey)
 		assocHandler := association.NewHandler(assocSvc)
 		association.RegisterRoutes(finance.Group("/associations"), assocHandler)
 	}

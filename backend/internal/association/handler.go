@@ -110,6 +110,23 @@ func (h *Handler) GetCard(c *gin.Context) {
 	c.JSON(http.StatusOK, card)
 }
 
+// VerifyCard authenticates a scanned membership-card QR token and returns the
+// member's live verification result. An invalid/forged/expired/arrears card is a
+// normal outcome (HTTP 200 with valid:false + reason); only a lookup failure is 5xx.
+func (h *Handler) VerifyCard(c *gin.Context) {
+	var req VerifyCardRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	res, err := h.svc.VerifyCard(c.Request.Context(), req.Token)
+	if err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
 // GET /associations/me/profile
 func (h *Handler) GetProfile(c *gin.Context) {
 	p, err := h.svc.GetProfile(c.Request.Context(), c.GetString("user_id"))

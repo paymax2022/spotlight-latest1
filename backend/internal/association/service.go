@@ -25,10 +25,14 @@ var ErrForbidden = errors.New("association: forbidden")
 type Service struct {
 	db     *pgxpool.Pool
 	ledger *ledger.Service
+	// cardKey is the HMAC key used to sign/verify membership-card QR tokens.
+	// Defaults to a dev key (defaultDevCardKey); production wiring MUST override
+	// it via SetCardSigningSecret with a real server secret.
+	cardKey []byte
 }
 
 func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
-	return &Service{db: db, ledger: ledger}
+	return &Service{db: db, ledger: ledger, cardKey: defaultDevCardKey}
 }
 
 // GetDues returns the caller's outstanding + paid dues for the current year.
@@ -379,7 +383,7 @@ func (s *Service) GetCard(ctx context.Context, userID string) (MembershipCard, e
 		       o.name, o.acronym,
 		       COALESCE(mc.label,'Member'),
 		       ch.name,
-		       mp.full_name, mp.photo_url
+		       COALESCE(mp.full_name,''), mp.photo_url, m.id, m.organisation_id
 		FROM assoc_memberships m
 		JOIN assoc_organisations o ON o.id=m.organisation_id
 		LEFT JOIN assoc_membership_categories mc ON mc.id=m.category_id
@@ -389,16 +393,20 @@ func (s *Service) GetCard(ctx context.Context, userID string) (MembershipCard, e
 		LIMIT 1`
 	var card MembershipCard
 	var validThrough *string
+	var membershipID, orgID string
 	if err := s.db.QueryRow(ctx, q, userID).Scan(
 		&card.MemberID, &card.MemberID, &card.Status, &card.PaymentStanding, &card.Verified, &validThrough,
 		&card.OrganisationName, &card.OrganisationAcronym,
 		&card.CategoryLabel, &card.ChapterName,
-		&card.FullName, &card.PhotoURL,
+		&card.FullName, &card.PhotoURL, &membershipID, &orgID,
 	); err != nil {
 		return card, fmt.Errorf("association: membership not found: %w", err)
 	}
 	card.ValidThrough = validThrough
-	card.QRPayload = "assoc:" + card.MemberID
+	// Signed, tamper-evident QR: authenticity is provable at the verify endpoint,
+	// which also does a live standing/status lookup (MC-003/004/005). Replaces the
+	// old unsigned "assoc:<code>" plaintext.
+	card.QRPayload = s.SignCardToken(membershipID, card.MemberID, orgID)
 	return card, nil
 }
 
