@@ -9,6 +9,7 @@ import {
   PAYMAX_FEE_BPS,
   PROVIDER_FEE_BPS,
 } from '../constants/stocks.constants';
+import { midRate } from '@/features/fx/utils/fxFormatters';
 import type {
   Candle,
   ChartRange,
@@ -19,6 +20,7 @@ import type {
   OrderSide,
   OrderType,
   StockAsset,
+  StockPosition,
 } from '../types/stocks.types';
 
 // silence unused-import lint when CHART_RANGES is only referenced for typing
@@ -156,6 +158,58 @@ export function buildEstimate(
     fees,
     total: { amount: totalMinor, currency },
     settlementCycle: asset.settlementCycle,
+  };
+}
+
+// ─── Portfolio aggregation (FX-aware) ─────────────────────────────────────────
+// Positions can be priced in different currencies (NGN for NGX stocks, USD for
+// US stocks). Summing raw minor units across currencies adds kobo to cents and
+// badly understates the portfolio — every value is FX-converted to the display
+// currency first. The rate is sourced from the FX feature (single source of
+// truth); when the live rate lands, `midRate` swaps to server-driven data.
+
+/**
+ * Convert a money amount to `to` currency (integer minor units) via the FX
+ * mid-rate. NGN and USD are both 2-dp so the minor-unit scale is preserved by a
+ * straight multiply; if a non-2dp settlement currency is ever added, scale by
+ * the decimal delta here.
+ */
+export function convertMinor(money: FiatMoney, to: FiatCurrency): number {
+  if (money.currency === to) return money.amount;
+  return Math.round(money.amount * midRate(money.currency, to));
+}
+
+export interface PortfolioTotals {
+  totalValue: number;
+  totalCostBasis: number;
+  totalGainLoss: number;
+  totalGainLossPct: number;
+  dayChange: number;
+  dayChangePct: number;
+}
+
+/**
+ * Aggregate positions into portfolio totals in a single `display` currency.
+ * Every position's marketValue, costBasis and day-change contribution is
+ * FX-converted before summing, so the total is a real figure and not a mix of
+ * kobo + cents.
+ */
+export function aggregatePortfolio(positions: StockPosition[], display: FiatCurrency): PortfolioTotals {
+  const totalValue = positions.reduce((s, p) => s + convertMinor(p.marketValue, display), 0);
+  const totalCostBasis = positions.reduce((s, p) => s + convertMinor(p.costBasis, display), 0);
+  const totalGainLoss = totalValue - totalCostBasis;
+  const dayChange = positions.reduce(
+    (s, p) => s + Math.round((convertMinor(p.marketValue, display) * p.change24hPct) / 100),
+    0,
+  );
+  const prevValue = totalValue - dayChange;
+  return {
+    totalValue,
+    totalCostBasis,
+    totalGainLoss,
+    totalGainLossPct: totalCostBasis ? +((totalGainLoss / totalCostBasis) * 100).toFixed(2) : 0,
+    dayChange,
+    dayChangePct: prevValue ? +((dayChange / prevValue) * 100).toFixed(2) : 0,
   };
 }
 
