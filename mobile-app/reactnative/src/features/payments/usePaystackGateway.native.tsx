@@ -35,7 +35,28 @@ function buildCheckoutHtml(args: {
   amountKobo: number;
   reference: string;
   metadata: Record<string, unknown>;
+  accessCode?: string;
 }): string {
+  // When an access code is present we RESUME the server-initialized transaction;
+  // otherwise we open a fresh client-initialized one. Both relay the same
+  // success/cancel/error messages back to React Native.
+  const launch = args.accessCode
+    ? `popup.resumeTransaction(${JSON.stringify(args.accessCode)}, {
+            onSuccess: function (t) { post({ type: 'success', reference: t.reference }); },
+            onCancel: function () { post({ type: 'cancel' }); },
+            onError: function (e) { post({ type: 'error', message: (e && e.message) || 'Payment error' }); }
+          });`
+    : `popup.newTransaction({
+            key: ${JSON.stringify(args.key)},
+            email: ${JSON.stringify(args.email)},
+            amount: ${Math.round(args.amountKobo)},
+            currency: 'NGN',
+            reference: ${JSON.stringify(args.reference)},
+            metadata: ${JSON.stringify(args.metadata)},
+            onSuccess: function (t) { post({ type: 'success', reference: t.reference }); },
+            onCancel: function () { post({ type: 'cancel' }); },
+            onError: function (e) { post({ type: 'error', message: (e && e.message) || 'Payment error' }); }
+          });`;
   return `<!doctype html>
 <html>
   <head><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" /></head>
@@ -46,17 +67,7 @@ function buildCheckoutHtml(args: {
       window.onload = function () {
         try {
           var popup = new PaystackPop();
-          popup.newTransaction({
-            key: ${JSON.stringify(args.key)},
-            email: ${JSON.stringify(args.email)},
-            amount: ${Math.round(args.amountKobo)},
-            currency: 'NGN',
-            reference: ${JSON.stringify(args.reference)},
-            metadata: ${JSON.stringify(args.metadata)},
-            onSuccess: function (t) { post({ type: 'success', reference: t.reference }); },
-            onCancel: function () { post({ type: 'cancel' }); },
-            onError: function (e) { post({ type: 'error', message: (e && e.message) || 'Payment error' }); }
-          });
+          ${launch}
         } catch (err) { post({ type: 'error', message: String(err) }); }
       };
     </script>
@@ -70,7 +81,9 @@ export function usePaystackGateway(): PaystackGatewayController {
   const argsRef = useRef<PaystackChargeArgs | null>(null);
 
   const open = useCallback((args: PaystackChargeArgs) => {
-    if (!PAYSTACK_PUBLIC_KEY) {
+    // newTransaction needs the public key; resumeTransaction rides on the
+    // server-issued access code and does not.
+    if (!args.accessCode && !PAYSTACK_PUBLIC_KEY) {
       args.onError?.('Paystack key missing — set EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY.');
       return;
     }
@@ -86,6 +99,7 @@ export function usePaystackGateway(): PaystackGatewayController {
         amountKobo: args.amountKobo,
         reference: args.reference ?? '',
         metadata: buildPaystackMetadata(args),
+        accessCode: args.accessCode,
       }),
     );
     setVisible(true);

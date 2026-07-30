@@ -34,10 +34,38 @@ export interface PaystackChargeArgs {
   domain: string;
   /** Optional idempotent reference; one is generated when omitted. */
   reference?: string;
+  /**
+   * When set, the SDK RESUMES a transaction already created server-side via the
+   * Paystack Initialize API (`resumeTransaction(accessCode)`) instead of opening
+   * a fresh client-initialized one (`newTransaction`). Use this for flows where
+   * the server owns the transaction (wallet top-up, bills, registration): the
+   * server keeps the Idempotency-Key + ledger authority and the client only
+   * completes the checkout. Obtain it from the initialize response's
+   * authorization_url via `extractAccessCode`.
+   */
+  accessCode?: string;
   metadataFields?: PaystackMetaField[];
   onSuccess: (reference: string) => void;
   onCancel?: () => void;
   onError?: (message: string) => void;
+}
+
+/**
+ * Pull the Paystack access code out of an Initialize response's
+ * `authorization_url`. Paystack returns `https://checkout.paystack.com/<code>`;
+ * the access code is the last path segment. Returns null for empty, malformed,
+ * or non-Paystack URLs so callers can fail safely.
+ */
+export function extractAccessCode(authorizationUrl: string): string | null {
+  if (!authorizationUrl || typeof authorizationUrl !== 'string') return null;
+  const noProto = authorizationUrl.replace(/^[a-z]+:\/\//i, '');
+  const [pathPart] = noProto.split(/[?#]/);
+  const segments = pathPart.split('/').filter(Boolean);
+  if (segments.length < 2) return null; // need host + at least one path segment
+  const host = segments[0].toLowerCase();
+  if (!host.includes('paystack.')) return null; // only Paystack checkout URLs
+  const code = segments[segments.length - 1].trim();
+  return code.length > 0 ? code : null;
 }
 
 /**
