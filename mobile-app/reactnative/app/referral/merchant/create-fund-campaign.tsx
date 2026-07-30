@@ -16,6 +16,7 @@ import { formatNaira } from '@/features/referral/constants/format';
 import { useMerchantDashboard, useCreateAndFundCampaign } from '@/features/referral/merchant/hooks';
 import type { CreateCampaignInput, FundCampaignResult } from '@/features/referral/merchant/types';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 // M-MER-02 — Create / fund campaign (lite): quick campaign + wallet funding.
 // Funding debits the merchant wallet in kobo; the live mutation carries an
@@ -105,8 +106,8 @@ export default function CreateFundCampaignScreen() {
           </View>
 
           <TextInputField label="Campaign name" value={name} onChangeText={setName} placeholder="e.g. New-customer cashback" />
-          <TextInputField label="Reward per conversion (₦)" value={reward} onChangeText={setReward} placeholder="2000" keyboardType="numeric" />
-          <TextInputField label="Total budget to fund (₦)" value={budget} onChangeText={setBudget} placeholder="200000" keyboardType="numeric" error={overBudget ? 'Exceeds wallet balance' : undefined} />
+          <TextInputField label="Reward per conversion (₦)" value={reward} onChangeText={(t) => setReward(sanitizeMoneyInput(t))} placeholder="2000" keyboardType="decimal-pad" maxLength={13} />
+          <TextInputField label="Total budget to fund (₦)" value={budget} onChangeText={(t) => setBudget(sanitizeMoneyInput(t))} placeholder="200000" keyboardType="decimal-pad" maxLength={13} error={overBudget ? 'Exceeds wallet balance' : undefined} />
 
           <Text style={styles.label}>Qualifying action</Text>
           <View style={styles.actions}>

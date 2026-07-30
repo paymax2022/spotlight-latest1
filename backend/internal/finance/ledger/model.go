@@ -56,8 +56,8 @@ type Entry struct {
 	ID             string    `json:"id"`
 	AccountID      string    `json:"account_id"`
 	Type           EntryType `json:"type"`
-	AmountKobo     int64     `json:"amount_kobo"`   // always positive; direction from EntryType
-	Reference      string    `json:"reference"`     // human-readable ref (e.g. "topup:xxx")
+	AmountKobo     int64     `json:"amount_kobo"` // always positive; direction from EntryType
+	Reference      string    `json:"reference"`   // human-readable ref (e.g. "topup:xxx")
 	IdempotencyKey string    `json:"idempotency_key"`
 	CreatedAt      time.Time `json:"created_at"`
 }
@@ -65,10 +65,10 @@ type Entry struct {
 // JournalEntry is a balanced pair (debit account + credit account) representing
 // one financial event. Both sides are written atomically.
 type JournalEntry struct {
-	Reference      string
-	IdempotencyKey string
-	AmountKobo     int64
+	Reference       string
+	IdempotencyKey  string
+	AmountKobo      int64
 	DebitAccountID  string
 	CreditAccountID string
-	Description    string
+	Description     string
 }

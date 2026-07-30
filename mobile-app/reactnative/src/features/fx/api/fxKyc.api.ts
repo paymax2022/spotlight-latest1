@@ -7,7 +7,15 @@ import type { Verification, KycSubmission } from '../types/fx.types';
 
 const USE_MOCK = (process.env.EXPO_PUBLIC_FX_USE_MOCK ?? 'true').toLowerCase() !== 'false';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
-const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
+// Unwrap { data: ... } by key presence (see fx.api.ts) so an empty { data: null }
+// yields null rather than the wrapper object.
+const unwrap = <T>(res: { data: unknown }): T => {
+  const body = res?.data;
+  if (body && typeof body === 'object' && !Array.isArray(body) && 'data' in body) {
+    return (body as { data: T }).data;
+  }
+  return body as T;
+};
 
 // Module-level mock verification state (starts unverified).
 let MOCK_VERIFICATION: Verification = {
@@ -18,7 +26,17 @@ let MOCK_VERIFICATION: Verification = {
 
 export async function getVerification(): Promise<Verification> {
   if (USE_MOCK) { await delay(200); return { ...MOCK_VERIFICATION }; }
-  return unwrap<Verification>(await api.get('/api/v1/fx/customers/verification'));
+  try {
+    const v = unwrap<Verification>(await api.get('/api/v1/fx/customers/verification'));
+    // A user who has never started KYC has no record — treat empty as unstarted.
+    return v ?? { status: 'unstarted', accountType: 'individual', tier: 0 };
+  } catch (err) {
+    // No verification record yet (404) → unstarted, so the screen shows the
+    // "Verify your account" state instead of throwing.
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    if (status === 404) return { status: 'unstarted', accountType: 'individual', tier: 0 };
+    throw err;
+  }
 }
 
 export async function submitKyc(submission: KycSubmission): Promise<Verification> {

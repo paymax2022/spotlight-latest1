@@ -38,8 +38,8 @@ func TestScheduledFSM_IllegalTransitions(t *testing.T) {
 		{SchedFailedNoDriver, SchedDispatched},
 		{SchedExpired, SchedScheduled},
 		// skipping states
-		{SchedScheduled, SchedDispatched},   // must go via dispatch_pending
-		{SchedScheduled, SchedCompleted},    // can't complete an un-dispatched booking
+		{SchedScheduled, SchedDispatched}, // must go via dispatch_pending
+		{SchedScheduled, SchedCompleted},  // can't complete an un-dispatched booking
 		{SchedScheduled, SchedFailedNoDriver},
 		{SchedDispatchPending, SchedExpired}, // expiry only from scheduled
 		{SchedDispatched, SchedCancelled},    // cannot cancel a dispatched booking

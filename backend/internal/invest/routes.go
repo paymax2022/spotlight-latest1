@@ -15,13 +15,13 @@ import (
 
 // Deps carries the collaborators needed to wire the invest module.
 type Deps struct {
-	DB         *pgxpool.Pool
-	Supabase   *integrations.SupabaseRestClient
-	RBAC       services.RBACService
-	MainLedger *ledger.Service // main Paymax wallet (funds the invest wallet)
-	Broker     BrokerAdapter   // nil → mock
-	Market     MarketDataAdapter
-	Offers     PublicOfferAdapter
+	DB           *pgxpool.Pool
+	Supabase     *integrations.SupabaseRestClient
+	RBAC         services.RBACService
+	MainLedger   *ledger.Service // main Paymax wallet (funds the invest wallet)
+	Broker       BrokerAdapter   // nil → mock
+	Market       MarketDataAdapter
+	Offers       PublicOfferAdapter
 	Notifier     Notifier              // nil → LogNotifier (price-alert delivery)
 	Redis        *platformRedis.Client // optional; enables Redlock-guarded workers
 	PINDevBypass bool                  // dev only: accept any well-formed PIN (no DB PIN)

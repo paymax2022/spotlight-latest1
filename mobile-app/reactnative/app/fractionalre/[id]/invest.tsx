@@ -14,6 +14,7 @@ import SegmentedControl from '@/components/SegmentedControl';
 import { useOffering, useLimitCheck } from '@/features/fractionalre/hooks';
 import { useInvestDraft } from '@/features/fractionalre/store/investDraftStore';
 import { formatNaira } from '@/features/fractionalre/utils';
+import { sanitizeMoneyInput } from '@/utils/money';
 import RiskRibbon from '@/features/fractionalre/components/RiskRibbon';
 
 export default function InvestAmountScreen() {
@@ -101,8 +102,9 @@ export default function InvestAmountScreen() {
             <Text style={styles.currency}>₦</Text>
             <TextInput
               value={naira}
-              onChangeText={(t) => setNaira(t.replace(/[^0-9.]/g, ''))}
-              keyboardType="numeric"
+              onChangeText={(t) => setNaira(sanitizeMoneyInput(t))}
+              keyboardType="decimal-pad"
+              maxLength={13}
               style={styles.amountInput}
               placeholder="0"
               placeholderTextColor={Colors.onSurfaceVariant}

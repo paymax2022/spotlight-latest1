@@ -24,7 +24,6 @@ export default function BeneficiaryRow({ beneficiary, onPress, onToggleFavorite,
   return (
     <Pressable
       onPress={onPress}
-      accessibilityRole="button"
       accessibilityLabel={`${beneficiary.name}, ${RAIL_LABEL[beneficiary.rail]}, ${maskAccount(beneficiary.accountNumber)}`}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >

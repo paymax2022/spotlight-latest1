@@ -9,7 +9,7 @@
  *   return proxyToGoBackend(request, '/api/finance/telemedicine/doctors');
  */
 
-const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
+export const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 
 export async function proxyToGoBackend(
   request: Request,

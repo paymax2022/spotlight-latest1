@@ -142,15 +142,16 @@ func mapleradTestServer(t *testing.T) *httptest.Server {
 // TestLiveDB_FXConvert_BothLegsPosted_MirrorCredited_ReplayNoDoubleCredit drives
 // a real NGN→USD conversion through the live DB (with an httptest provider) and
 // proves:
-//   (a) LEG 1 posted: the user's NGN wallet fell by source+fee (500,000+500),
-//       the balanced counterpart landing on fx_spread_income ("<idem>:debit");
-//   (b) LEG 2 posted: a balanced PostJournal exists for the target leg
-//       ("<idem>:credit") — BOTH legs hit the ledger (RISK-FX-1);
-//   (c) the target currency_wallets row was credited by the target amount
-//       (32,500) as a MIRROR of the target leg;
-//   (d) a REPLAY with the SAME idempotency_key returns the existing conversion
-//       and does NOT double-credit: exactly ONE fx_conversions row, the
-//       currency_wallets balance unchanged, and no extra ledger legs (RISK-FX-2).
+//
+//	(a) LEG 1 posted: the user's NGN wallet fell by source+fee (500,000+500),
+//	    the balanced counterpart landing on fx_spread_income ("<idem>:debit");
+//	(b) LEG 2 posted: a balanced PostJournal exists for the target leg
+//	    ("<idem>:credit") — BOTH legs hit the ledger (RISK-FX-1);
+//	(c) the target currency_wallets row was credited by the target amount
+//	    (32,500) as a MIRROR of the target leg;
+//	(d) a REPLAY with the SAME idempotency_key returns the existing conversion
+//	    and does NOT double-credit: exactly ONE fx_conversions row, the
+//	    currency_wallets balance unchanged, and no extra ledger legs (RISK-FX-2).
 func TestLiveDB_FXConvert_BothLegsPosted_MirrorCredited_ReplayNoDoubleCredit(t *testing.T) {
 	pool := liveDBPool(t)
 	defer pool.Close()

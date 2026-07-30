@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"log"
 	"math/big"
 	"strings"
 	"time"
@@ -83,18 +84,59 @@ type RecordsVault interface {
 
 // Service is the LabOrder + catalog + sample/custody + result engine.
 type Service struct {
-	db       *pgxpool.Pool
-	escrow   EscrowHolder
-	dispatch Dispatcher
-	prov     ProviderGate
-	payout   PayoutGate
-	notify   Notifier
-	vault    RecordsVault
-	audit    Auditor
+	db         *pgxpool.Pool
+	escrow     EscrowHolder
+	dispatch   Dispatcher
+	prov       ProviderGate
+	payout     PayoutGate
+	notify     Notifier
+	vault      RecordsVault
+	audit      Auditor
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 }
 
 func NewService(db *pgxpool.Pool, escrow EscrowHolder, dispatch Dispatcher, prov ProviderGate, payout PayoutGate, notify Notifier, vault RecordsVault, audit Auditor) *Service {
 	return &Service{db: db, escrow: escrow, dispatch: dispatch, prov: prov, payout: payout, notify: notify, vault: vault, audit: audit}
+}
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module (§ profit registry). app-wiring injects a thin adapter over the finance
+// commission service; when the commission feature is off (or no recorder is wired)
+// the field is nil and recording is a silent no-op. Modeled as a LOCAL interface so
+// lab never imports the commission package at compile time (mirrors the
+// transport/doctor seams) — the adapter, which lives in app-wiring, discards the
+// returned earning row and surfaces only the error.
+//
+// This records realized profit ONLY; it never moves money. The lab module's own
+// money movements (the escrow HELD→RELEASE of the patient payment to the lab) are
+// unchanged, and the injected recorder is deliberately constructed WITHOUT a ledger
+// so RecordFor never re-posts to the ledger (no double count of the commission
+// revenue account) — it appends the immutable earning row used by profit reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a released lab order.
+// It is best-effort and MUST NEVER affect the caller's outcome: a nil recorder is a
+// no-op, and any error is logged and swallowed so a profit-registry failure can
+// never fail or reverse the result release / payout. The recorded breakdown is
+// resolved server-side from the central rate card; the source ref (the order id)
+// doubles as the idempotency key so retries and reconciliation sweeps never
+// double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
+		"health.lab", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[health.lab] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
+	}
 }
 
 // ─── Catalog (HL-1: lab defines tests; HL-2: only a verified lab lists) ──────
@@ -223,7 +265,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	}
 
 	// Price every line from the catalog (server-side, kobo integers).
-	var total int64
+	prices := make([]int64, 0, len(in.TestIDs))
 	lines := make([]OrderLine, 0, len(in.TestIDs))
 	for _, testID := range in.TestIDs {
 		var name string
@@ -239,10 +281,15 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		if !active {
 			return nil, fmt.Errorf("lab: test is not active")
 		}
-		total += price
+		prices = append(prices, price)
 		lines = append(lines, OrderLine{
 			ID: uuid.New().String(), TestID: testID, TestName: name, UnitPriceKobo: price,
 		})
+	}
+	// Exact, overflow-guarded minor-unit total (PM-008/PM-011).
+	total, err := sumLineKobo(prices)
+	if err != nil {
+		return nil, err
 	}
 	if total <= 0 {
 		return nil, fmt.Errorf("lab: order total must be positive")
@@ -433,7 +480,7 @@ func (s *Service) FlagBreach(ctx context.Context, actorID, sampleID, reason stri
 // A BREACHED / RECOLLECT_REQUIRED sample is rejected — no result without a
 // complete custody chain. On success the sample → ACCESSIONED, the order
 // SAMPLE_COLLECTED/IN_TRANSIT → ACCESSIONED, then → PROCESSING.
-func (s *Service) Accession(ctx context.Context, scientistID, sampleID, note string) (*Sample, error) {
+func (s *Service) Accession(ctx context.Context, scientistID, sampleID, scannedBarcode, note string) (*Sample, error) {
 	sm, err := s.loadSample(ctx, sampleID)
 	if err != nil {
 		return nil, err
@@ -451,6 +498,14 @@ func (s *Service) Accession(ctx context.Context, scientistID, sampleID, note str
 		if !ok {
 			return nil, fmt.Errorf("lab: only a verified lab scientist may accession (HL-2)")
 		}
+	}
+	// Sample↔patient integrity (EC-001/LB-005): if the accessioning scientist
+	// scanned the tube, the barcode MUST match the one minted at collection — a
+	// mismatch is a possible swap/mislabel and is rejected before intake.
+	if err := verifyBarcodeScan(scannedBarcode, sm.BarcodeRef); err != nil {
+		s.audited(scientistID, o.PatientID, "health.lab.sample.barcode_mismatch", sampleID, nil,
+			map[string]any{"scanned": normalizeBarcode(scannedBarcode), "expected": sm.BarcodeRef})
+		return nil, err
 	}
 	// HL-6: an unbroken chain is mandatory. Breach/recollect cannot be accessioned.
 	if !chainIntact(sm.State) {
@@ -524,7 +579,7 @@ type EnterResultInput struct {
 // entered when the order's sample is ACCESSIONED (unbroken chain). The clinical
 // status flag drives HL-7 — if any line is critical/abnormal the order is taken
 // down the ESCALATED path on release, never silently released.
-func (s *Service) EnterResults(ctx context.Context, scientistID, orderID string, results []EnterResultInput) (*Order, error) {
+func (s *Service) EnterResults(ctx context.Context, scientistID, orderID, scannedBarcode string, results []EnterResultInput) (*Order, error) {
 	o, err := s.load(ctx, orderID)
 	if err != nil {
 		return nil, err
@@ -553,6 +608,14 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID string,
 	if sm.State != SampleAccessioned {
 		return nil, fmt.Errorf("lab: sample not accessioned (state %s) — no result without an unbroken chain (HL-6)", sm.State)
 	}
+	// LR-001: results bind to the correct sample/patient. If the scientist scanned
+	// the tube at result entry, its barcode MUST match this order's sample — a
+	// mismatch means results are being entered against the wrong sample; reject.
+	if err := verifyBarcodeScan(scannedBarcode, sm.BarcodeRef); err != nil {
+		s.audited(scientistID, o.PatientID, "health.lab.result.barcode_mismatch", orderID, nil,
+			map[string]any{"scanned": normalizeBarcode(scannedBarcode), "expected": sm.BarcodeRef})
+		return nil, err
+	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -571,12 +634,25 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID string,
 			}
 			return nil, err
 		}
+		// Fail-safe interpretation backstop (LR-002/003/008, EC-002): reject a
+		// wrong-unit value, and UPGRADE a mis-entered status so a critical/abnormal
+		// value can never be released as NORMAL. Never downgrades the scientist.
+		effStatus, unitMismatch := deriveEffectiveStatus(r.Status, name, r.Value, r.Unit, r.RefRange)
+		if unitMismatch {
+			return nil, fmt.Errorf("lab: result unit %q for %s disagrees with the reference-range/expected unit (possible transposition) — rejected (EC-002)", r.Unit, name)
+		}
 		const ins = `
 			INSERT INTO lab_results (id, order_id, test_id, test_name, value, unit, ref_range, status, validated_by)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`
 		if _, err := tx.Exec(ctx, ins, uuid.New().String(), orderID, r.TestID, name,
-			r.Value, r.Unit, r.RefRange, string(r.Status), scientistID); err != nil {
+			r.Value, r.Unit, r.RefRange, string(effStatus), scientistID); err != nil {
 			return nil, fmt.Errorf("lab: insert result: %w", err)
+		}
+		if effStatus != r.Status {
+			// Attributable record that the safety backstop escalated the severity.
+			s.audited(scientistID, o.PatientID, "health.lab.result.status_upgraded", orderID,
+				map[string]any{"test": name, "entered": string(r.Status)},
+				map[string]any{"effective": string(effStatus)})
 		}
 	}
 	o2, err := lockOrder(ctx, tx, orderID)
@@ -611,7 +687,7 @@ func (s *Service) Release(ctx context.Context, scientistID, orderID string) (*Or
 	if err != nil {
 		return nil, err
 	}
-	if o.State != StateResultReady && o.State != StateEscalated {
+	if !canReleaseFrom(o.State) {
 		return nil, fmt.Errorf("lab: order not ready for release, is %s", o.State)
 	}
 	// HL-2: only a verified scientist of this lab may sign off and release.
@@ -706,6 +782,16 @@ func (s *Service) Release(ctx context.Context, scientistID, orderID string) (*Or
 			return nil, fmt.Errorf("lab: release payment (HL-9): %w", err)
 		}
 	}
+	// Lab-order settlement point: the sign-off release realizes Spotlight's
+	// commission on the completed lab test. Record realized profit into the central
+	// Commission & Profit registry — best-effort + idempotent (the order id doubles
+	// as source ref + idempotency key, so retries / reconciliation never
+	// double-count). gross = the full order total the patient paid (the same basis
+	// the lab's own escrow split settles on). A recorder failure is logged and
+	// swallowed — it must NEVER fail or reverse the release above. Nil recorder ⇒
+	// no-op (commission feature off).
+	patientID := o.PatientID
+	s.recordCommissionSafe(ctx, "Health", "Lab", "", o.TotalKobo, orderID, &patientID)
 	// Terminal CLOSED once funds released (best-effort, idempotent on retry).
 	if closed, cerr := s.transition(ctx, scientistID, orderID, StateClosed, nil, "health.lab.order.close"); cerr == nil {
 		out = closed
@@ -754,7 +840,7 @@ func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin 
 		return nil, err
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
-	if !isAdmin && requesterID != o.PatientID && requesterID != owner {
+	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
 		return nil, fmt.Errorf("lab: forbidden")
 	}
 	o.Lines, _ = s.loadLines(ctx, orderID)
@@ -770,7 +856,7 @@ func (s *Service) Results(ctx context.Context, requesterID, orderID string, isAd
 		return nil, err
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
-	if !isAdmin && requesterID != o.PatientID && requesterID != owner {
+	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
 		return nil, fmt.Errorf("lab: forbidden")
 	}
 	return s.loadResults(ctx, orderID)
@@ -784,7 +870,7 @@ func (s *Service) CustodyTrail(ctx context.Context, requesterID, orderID string,
 		return nil, err
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
-	if !isAdmin && requesterID != o.PatientID && requesterID != owner {
+	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
 		return nil, fmt.Errorf("lab: forbidden")
 	}
 	sm, err := s.sampleByOrder(ctx, orderID)
@@ -1018,9 +1104,12 @@ func (s *Service) sampleByOrder(ctx context.Context, orderID string) (*Sample, e
 }
 
 func (s *Service) loadResults(ctx context.Context, orderID string) ([]Result, error) {
+	// LR-006: return only the CURRENT version of each result — a superseded row is
+	// retained for audit but never surfaced as the live result.
 	const q = `SELECT id, order_id, test_id, test_name, value, unit, ref_range, status,
-	                  validated_by, released_by, escalated_at, released_at, created_at
-	           FROM lab_results WHERE order_id=$1 ORDER BY created_at ASC`
+	                  validated_by, released_by, escalated_at, released_at, created_at,
+	                  version, amended_by, amended_at, amendment_reason
+	           FROM lab_results WHERE order_id=$1 AND superseded_by IS NULL ORDER BY created_at ASC`
 	rows, err := s.db.Query(ctx, q, orderID)
 	if err != nil {
 		return nil, err
@@ -1031,7 +1120,8 @@ func (s *Service) loadResults(ctx context.Context, orderID string) ([]Result, er
 		var r Result
 		var status string
 		if err := rows.Scan(&r.ID, &r.OrderID, &r.TestID, &r.TestName, &r.Value, &r.Unit, &r.RefRange,
-			&status, &r.ValidatedBy, &r.ReleasedBy, &r.EscalatedAt, &r.ReleasedAt, &r.CreatedAt); err != nil {
+			&status, &r.ValidatedBy, &r.ReleasedBy, &r.EscalatedAt, &r.ReleasedAt, &r.CreatedAt,
+			&r.Version, &r.AmendedBy, &r.AmendedAt, &r.AmendmentReason); err != nil {
 			return nil, err
 		}
 		r.Status = ResultStatus(status)

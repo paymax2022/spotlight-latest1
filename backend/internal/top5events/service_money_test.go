@@ -6,19 +6,19 @@
 // not yet prove:
 //
 //   - Inv 2  Vendor settlement SPLIT sums EXACTLY to the charged total across an
-//            arbitrary set of tap-charges — net + fee == gross, both legs
-//            non-negative, no rounding leak. (mirror only tested fee math on a
-//            single hand-picked gross value.)
+//     arbitrary set of tap-charges — net + fee == gross, both legs
+//     non-negative, no rounding leak. (mirror only tested fee math on a
+//     single hand-picked gross value.)
 //   - Inv 4  TapCharge fails CLOSED on insufficient balance — NO attendee debit AND
-//            NO vendor float credit is written. (mirror asserted the attendee
-//            balance was unchanged but never proved the vendor leg was skipped.)
+//     NO vendor float credit is written. (mirror asserted the attendee
+//     balance was unchanged but never proved the vendor leg was skipped.)
 //   - Inv 5  The tier/limit gate fails CLOSED:
-//              (a) Purchase/TopUp go through wallet.Debit which calls
-//                  tiers.EnforceWalletDebitLimit FIRST — an over-limit / disabled
-//                  tier ⇒ the ledger debit is NEVER reached (no money moves).
-//              (b) SettleVendor is KYC-gated (Service.SettleVendor: tier<1 ⇒
-//                  ErrKYCRequired) and returns BEFORE it opens its tx, so no
-//                  settlement row and no payout ledger legs are written.
+//     (a) Purchase/TopUp go through wallet.Debit which calls
+//     tiers.EnforceWalletDebitLimit FIRST — an over-limit / disabled
+//     tier ⇒ the ledger debit is NEVER reached (no money moves).
+//     (b) SettleVendor is KYC-gated (Service.SettleVendor: tier<1 ⇒
+//     ErrKYCRequired) and returns BEFORE it opens its tx, so no
+//     settlement row and no payout ledger legs are written.
 //
 // Why mirrors and not the real Service? Same reason as service_mirror_test.go:
 // top5events.Service and its finance deps (ledger/wallet/tiers/settlement) bind
@@ -294,10 +294,10 @@ func TestTapCharge_ClosedWallet_WritesNoVendorCredit(t *testing.T) {
 // tiers.EnforceWalletDebitLimit. dailyLimitKobo == 0 means "wallet disabled at this
 // tier" (Tier0) which the real EnforceWalletDebitLimit rejects with ErrWalletDisabled.
 type mirrorTierGate struct {
-	tier            int
-	dailyLimitKobo  int64 // 0 => disabled (for tier 0) per tiers.GetConfig
-	alreadyDebited  int64 // today's running debit total
-	ledgerDebits    []int64
+	tier           int
+	dailyLimitKobo int64 // 0 => disabled (for tier 0) per tiers.GetConfig
+	alreadyDebited int64 // today's running debit total
+	ledgerDebits   []int64
 }
 
 var (
@@ -370,9 +370,9 @@ func TestTierGate_WithinLimit_AllowsDebit(t *testing.T) {
 // tier check happens BEFORE the settlement tx opens, so a blocked payout writes NO
 // settlement row and NO ledger legs.
 type mirrorVendorPayoutGate struct {
-	vendorTier   int
+	vendorTier     int
 	settlementRows int
-	payoutLegs   []int64
+	payoutLegs     []int64
 }
 
 var errKYCRequired = errors.New("events: vendor must complete KYC before payout (NL-10)")

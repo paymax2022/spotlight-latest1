@@ -16,6 +16,7 @@ import DisclosureBanner from '@/features/savings/components/DisclosureBanner';
 import { useVault, useSetAutoSave } from '@/features/savings/hooks';
 import { SavingsColors, FREQUENCIES, NO_YIELD_DISCLOSURE } from '@/features/savings/constants/savings.constants';
 import type { SaveFrequency } from '@/features/savings/types';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 export default function AutoSaveSetup() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -65,7 +66,7 @@ export default function AutoSaveSetup() {
 
         {enabled ? (
           <>
-            <TextInputField label="Amount per cycle" placeholder="0" keyboardType="numeric" value={amount} onChangeText={setAmount} />
+            <TextInputField label="Amount per cycle" placeholder="0" keyboardType="decimal-pad" maxLength={13} value={amount} onChangeText={(t) => setAmount(sanitizeMoneyInput(t))} />
             <Text style={styles.label}>Frequency</Text>
             <SegmentedControl<SaveFrequency>
               options={FREQUENCIES.map((f) => ({ value: f.value, label: f.label }))}

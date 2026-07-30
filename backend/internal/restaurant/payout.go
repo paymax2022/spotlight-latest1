@@ -186,8 +186,8 @@ func (s *Service) BuildRun(ctx context.Context, periodKey, providerType, provide
 	const recompute = `
 		UPDATE restaurant_payout_runs r
 		SET net_minor   = COALESCE((SELECT sum(amount_minor) FROM restaurant_payout_lines WHERE run_id = r.id), 0),
-		    fee_minor   = $2,
-		    gross_minor = COALESCE((SELECT sum(amount_minor) FROM restaurant_payout_lines WHERE run_id = r.id), 0) + $2
+		    fee_minor   = $2::bigint,
+		    gross_minor = COALESCE((SELECT sum(amount_minor) FROM restaurant_payout_lines WHERE run_id = r.id), 0) + $2::bigint
 		WHERE r.id = $1
 		RETURNING gross_minor, fee_minor, net_minor`
 	if err := tx.QueryRow(ctx, recompute, run.ID, totalFee(items)).Scan(

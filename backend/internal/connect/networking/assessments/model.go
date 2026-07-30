@@ -8,11 +8,11 @@
 //
 // Invariants enforced here:
 //   - PN-5  — a skill badge is issued ONLY after a passed, timestamped attempt
-//             tied to a specific schema version (see Service.Submit: badge insert
-//             lives strictly inside the `passed` branch).
+//     tied to a specific schema version (see Service.Submit: badge insert
+//     lives strictly inside the `passed` branch).
 //   - PN-12 — a badge PERMANENTLY records the assessment_version it was earned
-//             against; a new question-bank version is a new Assessment row (new
-//             rubric_version), so old badges never silently change meaning.
+//     against; a new question-bank version is a new Assessment row (new
+//     rubric_version), so old badges never silently change meaning.
 package connectassess
 
 import (

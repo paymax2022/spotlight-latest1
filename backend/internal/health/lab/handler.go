@@ -174,10 +174,11 @@ func (h *Handler) Accession(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Note string `json:"note"`
+		Note           string `json:"note"`
+		ScannedBarcode string `json:"scanned_barcode"` // EC-001: verified against the sample's minted barcode
 	}
 	_ = c.ShouldBindJSON(&req)
-	sample, err := h.svc.Accession(c.Request.Context(), id, c.Param("id"), req.Note)
+	sample, err := h.svc.Accession(c.Request.Context(), id, c.Param("id"), req.ScannedBarcode, req.Note)
 	if err != nil {
 		fail(c, http.StatusConflict, err.Error())
 		return
@@ -193,7 +194,8 @@ func (h *Handler) EnterResults(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Results []struct {
+		ScannedBarcode string `json:"scanned_barcode"` // LR-001: verified against this order's sample
+		Results        []struct {
 			TestID   string `json:"test_id"`
 			Value    string `json:"value"`
 			Unit     string `json:"unit"`
@@ -211,7 +213,7 @@ func (h *Handler) EnterResults(c *gin.Context) {
 			TestID: r.TestID, Value: r.Value, Unit: r.Unit, RefRange: r.RefRange, Status: ResultStatus(r.Status),
 		})
 	}
-	o, err := h.svc.EnterResults(c.Request.Context(), id, c.Param("id"), in)
+	o, err := h.svc.EnterResults(c.Request.Context(), id, c.Param("id"), req.ScannedBarcode, in)
 	if err != nil {
 		fail(c, http.StatusConflict, err.Error())
 		return

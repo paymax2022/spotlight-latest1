@@ -158,8 +158,10 @@ func (s *Service) ConfirmHandoff(ctx context.Context, orderID, riderID, code str
 		orderID); err != nil {
 		return err
 	}
-	// UpdateStatus(picked_up → delivered) runs the settlement split + notifies.
-	if err := s.UpdateStatus(ctx, orderID, riderID, OrderDelivered); err != nil {
+	// The delivery-code POD has been verified above, so advance to delivered via the
+	// internal transition (the public UpdateStatus forbids `delivered` to close the POD
+	// bypass). This runs the settlement split + notifies.
+	if err := s.transitionInternal(ctx, orderID, OrderDelivered); err != nil {
 		return err
 	}
 	customer, _, _, _ := s.orderParties(ctx, orderID)

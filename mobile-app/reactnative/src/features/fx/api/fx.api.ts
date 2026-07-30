@@ -48,13 +48,26 @@ const USE_MOCK = (process.env.EXPO_PUBLIC_FX_USE_MOCK ?? 'true').toLowerCase() !
 
 /** Simulated network latency so loading states render in mock mode. */
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
-const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
+// Backend wraps success payloads as { data: ... }. Unwrap by KEY PRESENCE, not by
+// nullishness — otherwise an empty result serialized as { data: null } would fall
+// back to returning the wrapper object, breaking Array ops (e.g. balances.reduce).
+const unwrap = <T>(res: { data: unknown }): T => {
+  const body = res?.data;
+  if (body && typeof body === 'object' && !Array.isArray(body) && 'data' in body) {
+    return (body as { data: T }).data;
+  }
+  return body as T;
+};
+
+// Coerce a list payload to an array — a backend empty result may arrive as null.
+const arr = <T>(v: T[] | null | undefined): T[] => (Array.isArray(v) ? v : []);
 
 // ─── Balances (GET /v1/balances) ──────────────────────────────────────────────
 
 export async function getBalances(): Promise<WalletBalance[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_BALANCES]; }
-  return unwrap<WalletBalance[]>(await api.get('/api/v1/fx/balances'));
+  const r = unwrap<WalletBalance[]>(await api.get('/api/v1/fx/balances'));
+  return Array.isArray(r) ? r : []; // empty FX wallets → null; normalise to []
 }
 
 /** Add (open) a new currency wallet. */
@@ -74,7 +87,7 @@ export async function addWallet(currency: CurrencyCode): Promise<WalletBalance> 
 
 export async function getRates(): Promise<IndicativeRate[]> {
   if (USE_MOCK) { await delay(180); return [...MOCK_RATES]; }
-  return unwrap<IndicativeRate[]>(await api.get('/api/v1/fx/rates'));
+  return arr(unwrap<IndicativeRate[]>(await api.get('/api/v1/fx/rates')));
 }
 
 /** Deterministic mock rate history for the rate-history chart. */
@@ -100,7 +113,7 @@ export async function getRateHistory(
       };
     });
   }
-  return unwrap<RatePoint[]>(await api.get('/api/v1/fx/rates/history', { params: { from, to, range } }));
+  return arr(unwrap<RatePoint[]>(await api.get('/api/v1/fx/rates/history', { params: { from, to, range } })));
 }
 
 // ─── Quotes (POST /v1/quotes) ─────────────────────────────────────────────────
@@ -225,7 +238,7 @@ export async function getBeneficiaries(): Promise<Beneficiary[]> {
     await delay();
     return [...MOCK_BENEFICIARIES].sort((a, b) => Number(b.favorite) - Number(a.favorite));
   }
-  return unwrap<Beneficiary[]>(await api.get('/api/v1/fx/beneficiaries'));
+  return arr(unwrap<Beneficiary[]>(await api.get('/api/v1/fx/beneficiaries')));
 }
 
 export async function createBeneficiary(draft: NewBeneficiaryDraft): Promise<Beneficiary> {
@@ -298,7 +311,7 @@ export async function deleteBeneficiary(id: string): Promise<void> {
 
 export async function getVirtualAccounts(): Promise<VirtualAccount[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_VIRTUAL_ACCOUNTS]; }
-  return unwrap<VirtualAccount[]>(await api.get('/api/v1/fx/collections/virtual-accounts'));
+  return arr(unwrap<VirtualAccount[]>(await api.get('/api/v1/fx/collections/virtual-accounts')));
 }
 
 export async function createVirtualAccount(
@@ -330,7 +343,7 @@ export async function getCollections(): Promise<CollectionEvent[]> {
     await delay();
     return [...MOCK_COLLECTIONS].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
-  return unwrap<CollectionEvent[]>(await api.get('/api/v1/fx/collections'));
+  return arr(unwrap<CollectionEvent[]>(await api.get('/api/v1/fx/collections')));
 }
 
 // ─── Transactions (GET /v1/transactions[/{id}]) ───────────────────────────────
@@ -350,7 +363,7 @@ export async function getTransactions(filter?: TransactionFilter): Promise<Trans
       .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
       .map(({ route, quotedRate, executedRate, fees, providerRef, counterparty, narration, statusHistory, ...summary }) => summary);
   }
-  return unwrap<TransactionSummary[]>(await api.get('/api/v1/fx/transactions', { params: filter }));
+  return arr(unwrap<TransactionSummary[]>(await api.get('/api/v1/fx/transactions', { params: filter })));
 }
 
 export async function disputeTransaction(draft: import('../types/fx.types').DisputeDraft): Promise<import('../types/fx.types').Dispute> {
@@ -386,7 +399,7 @@ export async function getRateAlerts(): Promise<RateAlert[]> {
     await delay();
     return [...MOCK_RATE_ALERTS].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
-  return unwrap<RateAlert[]>(await api.get('/api/v1/fx/rate-alerts'));
+  return arr(unwrap<RateAlert[]>(await api.get('/api/v1/fx/rate-alerts')));
 }
 
 export async function createRateAlert(draft: NewRateAlertDraft): Promise<RateAlert> {

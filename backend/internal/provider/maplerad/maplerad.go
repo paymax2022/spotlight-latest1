@@ -77,19 +77,19 @@ func (c *Client) live() bool { return c.secretKey != "" }
 
 // FXQuoteRequest parameters.
 type FXQuoteRequest struct {
-	SourceCurrency string  // e.g. "NGN"
-	TargetCurrency string  // e.g. "USD"
-	AmountKobo     int64   // amount in source currency minor units
+	SourceCurrency string // e.g. "NGN"
+	TargetCurrency string // e.g. "USD"
+	AmountKobo     int64  // amount in source currency minor units
 }
 
 // FXQuoteResponse holds the indicative rate and amounts.
 type FXQuoteResponse struct {
-	QuoteID         string  `json:"quote_id"`
-	Rate            float64 `json:"rate"`
-	SourceAmountKobo int64  `json:"source_amount"`
-	TargetAmountMinor int64 `json:"target_amount"`
-	Fee             int64   `json:"fee"`
-	ExpiresAt       string  `json:"expires_at"`
+	QuoteID           string  `json:"quote_id"`
+	Rate              float64 `json:"rate"`
+	SourceAmountKobo  int64   `json:"source_amount"`
+	TargetAmountMinor int64   `json:"target_amount"`
+	Fee               int64   `json:"fee"`
+	ExpiresAt         string  `json:"expires_at"`
 }
 
 // GetFXQuote retrieves an indicative FX rate from Maplerad.
@@ -97,9 +97,9 @@ func (c *Client) GetFXQuote(ctx context.Context, req FXQuoteRequest) (*FXQuoteRe
 	path := fmt.Sprintf("/fx/rates?source=%s&target=%s&amount=%d",
 		req.SourceCurrency, req.TargetCurrency, req.AmountKobo)
 	var resp struct {
-		Status bool            `json:"status"`
-		Data   FXQuoteResponse `json:"data"`
-		Message string         `json:"message"`
+		Status  bool            `json:"status"`
+		Data    FXQuoteResponse `json:"data"`
+		Message string          `json:"message"`
 	}
 	if err := c.get(ctx, path, &resp); err != nil {
 		return nil, err
@@ -121,12 +121,12 @@ type ConvertFXRequest struct {
 
 // ConvertFXResponse is the result of an executed FX conversion.
 type ConvertFXResponse struct {
-	TransactionID string  `json:"transaction_id"`
-	Rate          float64 `json:"rate"`
-	SourceAmountKobo int64 `json:"source_amount"`
-	TargetAmountMinor int64 `json:"target_amount"`
-	FeeKobo       int64   `json:"fee"`
-	Status        string  `json:"status"`
+	TransactionID     string  `json:"transaction_id"`
+	Rate              float64 `json:"rate"`
+	SourceAmountKobo  int64   `json:"source_amount"`
+	TargetAmountMinor int64   `json:"target_amount"`
+	FeeKobo           int64   `json:"fee"`
+	Status            string  `json:"status"`
 }
 
 // ConvertFX executes a currency conversion using a previously obtained quote.
@@ -139,9 +139,9 @@ func (c *Client) ConvertFX(ctx context.Context, req ConvertFXRequest) (*ConvertF
 		"reference":       req.Reference,
 	}
 	var resp struct {
-		Status bool              `json:"status"`
-		Data   ConvertFXResponse `json:"data"`
-		Message string           `json:"message"`
+		Status  bool              `json:"status"`
+		Data    ConvertFXResponse `json:"data"`
+		Message string            `json:"message"`
 	}
 	if err := c.post(ctx, "/fx/convert", body, &resp); err != nil {
 		return nil, err
@@ -258,13 +258,13 @@ func (c *Client) VerifyWebhookSignature(payload []byte, signature string) bool {
 
 func (c *Client) ProvisionVirtualAccount(ctx context.Context, req provider.ProvisionVARequest) (*provider.VirtualAccount, error) {
 	body := map[string]any{
-		"first_name":  req.FirstName,
-		"last_name":   req.LastName,
-		"email":       req.Email,
-		"phone":       req.PhoneNumber,
-		"bvn":         req.BVN,
-		"currency":    "NGN",
-		"bank_code":   "035", // Wema Bank
+		"first_name": req.FirstName,
+		"last_name":  req.LastName,
+		"email":      req.Email,
+		"phone":      req.PhoneNumber,
+		"bvn":        req.BVN,
+		"currency":   "NGN",
+		"bank_code":  "035", // Wema Bank
 	}
 	var resp struct {
 		Status bool `json:"status"`

@@ -54,14 +54,21 @@ func RegisterAcademyCurriculum(member *gin.RouterGroup, admin *gin.RouterGroup, 
 		mg.GET("/versions", h.ListVersions)
 		mg.GET("/classes", h.ListClasses)
 		mg.GET("/classes/:id/subjects", h.ListSubjects)
+		mg.GET("/subjects/:id", h.GetSubject)
 		mg.GET("/subjects/:id/topics", h.ListTopics)
+		mg.GET("/topics/:id", h.GetTopic)
 		mg.GET("/topics/:id/objectives", h.ListObjectives)
+		mg.GET("/topics/:id/lessons", h.ListTopicLessons)
+		mg.GET("/lessons/:id", h.GetLesson)
 		mg.GET("/streams", h.ListStreams)
 		mg.GET("/trade-tracks", h.ListTradeTracks)
 	}
 
 	if admin != nil {
 		ag := admin.Group("/academy/admin/curriculum", guard("academy.curriculum"))
+		ag.GET("/tree", h.AdminTree)
+		ag.GET("/subjects/:id/topics", h.ListTopics)
+		ag.GET("/topics/:id/objectives", h.ListObjectives)
 		ag.POST("/versions", h.CreateVersion)
 		ag.PATCH("/versions/:id", h.UpdateVersion)
 		ag.POST("/versions/:id/publish", h.PublishVersion)
@@ -147,6 +154,42 @@ func (h *Handler) ListObjectives(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"objectives": out})
 }
 
+func (h *Handler) GetSubject(c *gin.Context) {
+	out, err := h.svc.GetSubject(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"subject": out})
+}
+
+func (h *Handler) GetTopic(c *gin.Context) {
+	out, err := h.svc.GetTopic(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"topic": out})
+}
+
+func (h *Handler) ListTopicLessons(c *gin.Context) {
+	out, err := h.svc.LessonsForTopic(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"lessons": out})
+}
+
+func (h *Handler) GetLesson(c *gin.Context) {
+	out, err := h.svc.GetLesson(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"lesson": out})
+}
+
 func (h *Handler) ListStreams(c *gin.Context) {
 	out, err := h.svc.ListStreams(c.Request.Context())
 	if err != nil {
@@ -166,6 +209,15 @@ func (h *Handler) ListTradeTracks(c *gin.Context) {
 }
 
 // ── Admin CRUD (academy.curriculum) ─────────────────────────────────────────
+
+func (h *Handler) AdminTree(c *gin.Context) {
+	out, err := h.svc.AdminTree(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"tree": out})
+}
 
 func (h *Handler) CreateVersion(c *gin.Context) {
 	var req CreateVersionRequest

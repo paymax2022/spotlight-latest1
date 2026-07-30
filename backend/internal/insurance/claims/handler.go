@@ -164,9 +164,9 @@ func (h *Handler) AdminGet(c *gin.Context) {
 // body: {decision: assess|needs_info|resume|approve|reject|settle, approved_amount_kobo, reason}
 func (h *Handler) AdminDecision(c *gin.Context) {
 	var body struct {
-		Decision          string `json:"decision" binding:"required"`
-		ApprovedAmountKobo int64 `json:"approved_amount_kobo"`
-		Reason            string `json:"reason"`
+		Decision           string `json:"decision" binding:"required"`
+		ApprovedAmountKobo int64  `json:"approved_amount_kobo"`
+		Reason             string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

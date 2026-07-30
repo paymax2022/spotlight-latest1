@@ -15,6 +15,7 @@ import CurrencyChip from '@/features/fx/components/CurrencyChip';
 import CurrencyPickerSheet from '@/features/fx/components/CurrencyPickerSheet';
 import { useBalances } from '@/features/fx/hooks/useFx';
 import { buildQuote, formatMoney, formatRate, parseToMinor, minorToInput } from '@/features/fx/utils/fxFormatters';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { SUGGESTED_AMOUNTS, WALLET_CURRENCIES } from '@/features/fx/constants/fx.constants';
 import type { CurrencyCode } from '@/features/fx/types/fx.types';
 
@@ -92,10 +93,12 @@ export default function ConvertScreen() {
               <TextInput
                 style={styles.amountInput}
                 value={input}
-                onChangeText={setInput}
+                onChangeText={(v) => setInput(sanitizeMoneyInput(v))}
                 placeholder="0.00"
                 placeholderTextColor={Colors.outline}
                 keyboardType="decimal-pad"
+                inputMode="decimal"
+                maxLength={13}
                 autoFocus
                 accessibilityLabel="Amount to convert"
               />
@@ -125,10 +128,12 @@ export default function ConvertScreen() {
               <TextInput
                 style={styles.amountInput}
                 value={input}
-                onChangeText={setInput}
+                onChangeText={(v) => setInput(sanitizeMoneyInput(v))}
                 placeholder="0.00"
                 placeholderTextColor={Colors.outline}
                 keyboardType="decimal-pad"
+                inputMode="decimal"
+                maxLength={13}
                 autoFocus
                 accessibilityLabel="Amount to receive"
               />

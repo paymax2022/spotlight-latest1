@@ -83,12 +83,12 @@ type ReviewRequest struct {
 // ── Sentinel errors (mapped to snake_case codes by the handler) ──────────────────
 
 var (
-	ErrNotFound         = errors.New("not_found")
-	ErrUnauthenticated  = errors.New("unauthenticated")
-	ErrForbidden        = errors.New("forbidden")
-	ErrMissingInvoice   = errors.New("missing_invoice")
-	ErrMissingReason    = errors.New("missing_reason")
-	ErrAlreadyReviewed  = errors.New("already_reviewed")
+	ErrNotFound        = errors.New("not_found")
+	ErrUnauthenticated = errors.New("unauthenticated")
+	ErrForbidden       = errors.New("forbidden")
+	ErrMissingInvoice  = errors.New("missing_invoice")
+	ErrMissingReason   = errors.New("missing_reason")
+	ErrAlreadyReviewed = errors.New("already_reviewed")
 	// ErrInvoiceNotFreezable is returned when a human approves a hardship request but the
 	// invoice is not in a state from which overdue→frozen is legal (per feesstatemachine).
 	// Fail-closed: approval that cannot legally freeze the invoice is rejected rather than

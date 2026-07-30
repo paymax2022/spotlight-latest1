@@ -7,6 +7,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -97,7 +98,7 @@ export default function PartnerFileClaim() {
         {selected ? <UnderwriterBadge disclosure={selected.disclosure} /> : null}
 
         <TextInputField label="Location" value={location} onChangeText={setLocation} placeholder="Where did it happen?" />
-        <TextInputField label="Estimated damage (₦)" value={amount} onChangeText={setAmount} placeholder="0" keyboardType="numeric" />
+        <TextInputField label="Estimated damage (₦)" value={amount} onChangeText={(v) => setAmount(sanitizeMoneyInput(v))} placeholder="0" keyboardType="decimal-pad" maxLength={13} />
         <TextInputField label="What happened?" value={description} onChangeText={setDescription} placeholder="Describe the incident" multiline numberOfLines={4} />
 
         {error ? <Text style={styles.err}>{error}</Text> : null}

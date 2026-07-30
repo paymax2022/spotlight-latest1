@@ -820,7 +820,7 @@ func profileBefore(p *Profile) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"grounding": string(p.Grounding),
+		"grounding":  string(p.Grounding),
 		"confidence": string(p.Confidence), "status": string(p.Status),
 	}
 }

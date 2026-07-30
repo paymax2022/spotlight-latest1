@@ -4,7 +4,13 @@
 // colour (used for the fallback badge), and the official domain used to fetch
 // the real company logo. Consumed by <ProviderLogo />.
 
-export type ProviderBrand = { abbr: string; color: string; domain?: string };
+export type ProviderBrand = {
+  abbr: string;
+  color: string;
+  domain?: string;
+  /** Stable slug (first match token) — the bundled-logo filename key, e.g. 'mtn'. */
+  key?: string;
+};
 
 const BRANDS: { match: string[]; brand: ProviderBrand }[] = [
   // ── Electricity DISCOs ──
@@ -46,23 +52,27 @@ const FALLBACK_COLOR = '#6D28D9';
 export function getProviderBrand(code: string, name: string): ProviderBrand {
   const hay = `${code} ${name}`.toLowerCase();
   for (const { match, brand } of BRANDS) {
-    if (match.some((m) => hay.includes(m))) return brand;
+    // key = the first match token (e.g. 'mtn', 'airtel', 'eko') → bundled-logo filename.
+    if (match.some((m) => hay.includes(m))) return { ...brand, key: match[0] };
   }
   const abbr = (name || '?').replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase() || '?';
   return { abbr, color: FALLBACK_COLOR };
 }
 
-// Ordered logo sources for a domain — high-res favicons; <ProviderLogo />
-// advances through these on each image load error and finally renders the
-// branded badge. Google's s2 service is first: it returns a real favicon when
-// one exists and a *fast* 404 otherwise (so the badge appears immediately).
-// gstatic's faviconV2 is a secondary that occasionally has icons s2 lacks.
-// NOTE: the Clearbit Logo API was removed here — it has been discontinued and
-// now hangs on connect, which stalled the fallback chain and left an empty box.
+// External logo sources for a provider domain, tried in order by <ProviderLogo />
+// (after the authoritative VTPass `logoUri`) and falling back to the branded
+// colour badge only if all fail.
+//
+// We use DuckDuckGo's icon service, which returns the site's real favicon — or a
+// neutral fallback — with a 200. This is the key difference from Google's
+// s2/gstatic faviconV2 services (used previously), which HARD-404 for any domain
+// without an indexed icon (e.g. mtn.ng), flooding the browser console with
+// `GET …/faviconV2… 404`. DuckDuckGo never 404s, so real logos show with zero
+// console noise. (Clearbit was already removed here — it was discontinued.)
+//
+// For pixel-perfect brand logos, prefer bundling local assets over any remote
+// service; this remote path is the zero-config fallback that works everywhere.
 export function providerLogoSources(domain?: string): string[] {
   if (!domain) return [];
-  return [
-    `https://www.google.com/s2/favicons?domain=${domain}&sz=128`,
-    `https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_back_to_eldest_favicon=true&url=https://${domain}&size=128`,
-  ];
+  return [`https://icons.duckduckgo.com/ip3/${domain}.ico`];
 }

@@ -15,10 +15,10 @@ import (
 // confirm-time settle parked the net rate). No balance column is ever written.
 //
 // Invariants:
-//   * Payout HELD until the property has a first confirmed+completed stay (fraud).
-//   * Payouts + commission entries are idempotent (idempotency_key UNIQUE).
-//   * Commission lives on its own ledger account; a refund reverses it.
-//   * Reconciliation breaks are recorded + surfaced to the admin workbench.
+//   - Payout HELD until the property has a first confirmed+completed stay (fraud).
+//   - Payouts + commission entries are idempotent (idempotency_key UNIQUE).
+//   - Commission lives on its own ledger account; a refund reverses it.
+//   - Reconciliation breaks are recorded + surfaced to the admin workbench.
 type Service struct {
 	repo   *Repository
 	ledger *ledger.Service
@@ -95,9 +95,9 @@ func (s *Service) postCommissionJournal(ctx context.Context, amountKobo int64, r
 		return err
 	}
 	j := ledger.JournalEntry{
-		Reference:      ref,
-		IdempotencyKey: idempotencyKey,
-		AmountKobo:     amountKobo,
+		Reference:       ref,
+		IdempotencyKey:  idempotencyKey,
+		AmountKobo:      amountKobo,
 		DebitAccountID:  clearingAcc.ID,
 		CreditAccountID: commissionAcc.ID,
 	}

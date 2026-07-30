@@ -261,9 +261,10 @@ func (s *SessionService) runEngineLoop(ctx context.Context, userID string, sess 
 func (s *SessionService) finalize(ctx context.Context, userID string, sess *Session, res triage.EngineResult, hit *triage.RedFlagHit) (*SessionView, error) {
 	// SC-2/SC-3: the red-flag layer ALWAYS wins toward the more urgent level.
 	level, redFlag := triage.ApplyRedFlag(res.Level, hit)
-	if level == 0 {
-		level = triage.LevelConsult // conservative fallback (SC-3): never level 0.
-	}
+	// Fail SAFE (SC-3/TR-007): normalize any out-of-range disposition (0/unset,
+	// negative, or above self-care) to a conservative clinician consult — never
+	// let garbage/uncertain output route to self-care.
+	level = triage.SafeLevel(level)
 	code := dispositionCodeFor(level)
 	engineRef := res.EngineRef
 	if engineRef == "" {

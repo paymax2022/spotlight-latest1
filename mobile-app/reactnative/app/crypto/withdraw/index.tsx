@@ -18,6 +18,7 @@ import {
   formatCrypto, formatFiatObj, parseCryptoToMinor, relativeTime,
 } from '@/features/crypto/utils/cryptoFormatters';
 import { WITHDRAWAL_MIN_KYC_TIER } from '@/features/crypto/constants/crypto.constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 function maskAddress(value: string): string {
   const v = value.replace(/\s/g, '');
@@ -187,10 +188,12 @@ export default function WithdrawEntryScreen() {
           <TextInput
             style={styles.amountInput}
             value={input}
-            onChangeText={setInput}
+            onChangeText={(v) => setInput(sanitizeMoneyInput(v))}
             placeholder="0.00"
             placeholderTextColor={Colors.outline}
             keyboardType="decimal-pad"
+            inputMode="decimal"
+            maxLength={13}
             accessibilityLabel={`Amount of ${asset.symbol} to withdraw`}
           />
           <Pressable onPress={setMax} hitSlop={8} accessibilityRole="button" accessibilityLabel="Max">

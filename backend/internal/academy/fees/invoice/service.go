@@ -2,6 +2,7 @@ package feesinvoice
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -242,7 +243,22 @@ func (s *Service) RecordPayment(ctx context.Context, actorID, invoiceID, guardia
 		return nil, err
 	}
 	// Only payable states accept payments. Terminal (paid/waived/written_off) + draft reject.
+	// BUT a replay of an already-recorded payment must stay idempotent even after the invoice
+	// has since reached a terminal state (e.g. a gateway webhook retry arriving after the
+	// invoice was fully paid). Look up this idempotency key first: if it already recorded a
+	// payment for THIS invoice, return that result as a no-op replay instead of rejecting.
 	if !isPayable(inv.Status) {
+		existing, lerr := s.store.GetPaymentByIdempotencyKey(ctx, idempotencyKey)
+		switch {
+		case lerr == nil && existing != nil && existing.InvoiceID == invoiceID:
+			hydrated, herr := s.hydrate(ctx, inv)
+			if herr != nil {
+				return nil, herr
+			}
+			return &RecordPaymentResult{Payment: existing, Invoice: hydrated, Replayed: true}, nil
+		case lerr != nil && !errors.Is(lerr, ErrNotFound):
+			return nil, lerr
+		}
 		return nil, ErrInvoiceNotPayable
 	}
 

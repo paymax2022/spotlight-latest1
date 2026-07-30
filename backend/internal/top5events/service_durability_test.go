@@ -11,8 +11,8 @@
 //   - SettleVendor : post net → post fee → THEN mark settled + commit.
 //   - CloseWallet  : credit residual → THEN mark CLOSED + append REFUND + commit.
 //   - Purchase     : reserve+PENDING(commit) → debit → PAID → issue ticket; expire
-//                    (release seat) ONLY when the debit definitively never posted
-//                    (ledger.Posted), never on the ambiguous error alone.
+//     (release seat) ONLY when the debit definitively never posted
+//     (ledger.Posted), never on the ambiguous error alone.
 package top5events_test
 
 import "testing"

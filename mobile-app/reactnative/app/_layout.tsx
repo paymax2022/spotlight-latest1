@@ -184,6 +184,7 @@ export default function RootLayout() {
             <Stack.Screen name="reports" />
             <Stack.Screen name="estate-settings" />
             <Stack.Screen name="(merchant)" />
+            <Stack.Screen name="profile" />
             <Stack.Screen name="featured" />
           </Stack>
         </AuthGate>

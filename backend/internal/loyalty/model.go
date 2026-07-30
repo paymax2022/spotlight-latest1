@@ -50,11 +50,11 @@ type EarnRuleBinding struct {
 // SKUs that are loyalty-eligible). Kind constrains fulfilment to non-cash rails.
 type CatalogItem struct {
 	ID         string `json:"id"`
-	SKU        string `json:"sku"`        // -> points_catalog.sku
+	SKU        string `json:"sku"` // -> points_catalog.sku
 	Title      string `json:"title"`
-	Kind       string `json:"kind"`       // airtime | bill | ticket_discount | perk
+	Kind       string `json:"kind"` // airtime | bill | ticket_discount | perk
 	CostPoints int64  `json:"cost_points"`
-	MinTier    Tier   `json:"min_tier"`   // gate a reward behind a tier
+	MinTier    Tier   `json:"min_tier"` // gate a reward behind a tier
 	Active     bool   `json:"active"`
 }
 

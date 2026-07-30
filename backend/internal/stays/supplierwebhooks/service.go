@@ -61,7 +61,7 @@ func (s *Service) VerifySignature(body []byte, signature string) error {
 
 // Event is the normalised inbound webhook envelope.
 type Event struct {
-	Source          string         `json:"source"`           // supplier_code / channel id
+	Source          string         `json:"source"` // supplier_code / channel id
 	ExternalEventID string         `json:"external_event_id"`
 	EventType       string         `json:"event_type"`
 	Payload         map[string]any `json:"payload"`

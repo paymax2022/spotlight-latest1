@@ -95,13 +95,13 @@ type BoostStore interface {
 // from the client — the client may only request a duration variant, and even that
 // is validated against config.
 type BoostService struct {
-	store    BoostStore
-	wallet   WalletDebiter
-	revenue  RevenueAccountResolver
-	tiers    TierGuard
-	audit    BoostAuditor
-	flagger  BoostFlagger
-	cfg      *configReader
+	store   BoostStore
+	wallet  WalletDebiter
+	revenue RevenueAccountResolver
+	tiers   TierGuard
+	audit   BoostAuditor
+	flagger BoostFlagger
+	cfg     *configReader
 }
 
 // TierGuard enforces the caller's KYC tier daily-debit limit, fail-closed, BEFORE

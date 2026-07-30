@@ -56,6 +56,22 @@ func (h *Handler) MoverRate(c *gin.Context) {
 	c.JSON(http.StatusCreated, r)
 }
 
+// BusRate: a passenger rates the bus operator after a completed trip (by ticket id).
+func (h *Handler) BusRate(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req RateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	r, err := h.svc.RateBusTrip(c.Request.Context(), c.Param("id"), userID, req)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, r)
+}
+
 // BusSeatMap returns the seat map for a schedule (total + taken seat numbers).
 func (h *Handler) BusSeatMap(c *gin.Context) {
 	m, err := h.svc.BusSeatMap(c.Request.Context(), c.Param("id"))

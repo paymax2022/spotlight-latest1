@@ -18,7 +18,7 @@ import SectionHeader from '@/components/SectionHeader';
 import { MarketColors } from '@/features/marketplace';
 import type { Category, ListingSummary } from '@/features/marketplace';
 import { useCategories, useHomeRails } from '@/features/marketplace/hooks';
-import { useMarketplaceMenu } from './_components/MarketplaceMenu';
+import { useMarketplaceMenu } from '@/features/marketplace/components/MarketplaceMenu';
 import ListingCard from '@/features/marketplace/components/ListingCard';
 import { CategoryGridSkeleton, RailSkeleton } from '@/features/marketplace/components/Skeletons';
 

@@ -18,14 +18,14 @@ const (
 
 // RegisterNutrition wires the Nutrition Resolution Engine routes.
 //
-//   member — the authed finance group (auth via the finance group's requireUserID;
-//            vendor actions are object-level owner-checked inside the service).
-//   admin  — the admin group (already has requireUserID); per-route RBAC is added
-//            here via middleware.RequirePermission.
-//   pool   — the pgx pool (money is N/A; this is read/write of NRE rows only).
-//   rbac   — the RBAC service for the admin permission gates.
-//   llm    — the Tier-3 AI estimator (an *llm.Client satisfies LLMGenerator); may
-//            be nil/disabled, in which case the deterministic mock is used.
+//	member — the authed finance group (auth via the finance group's requireUserID;
+//	         vendor actions are object-level owner-checked inside the service).
+//	admin  — the admin group (already has requireUserID); per-route RBAC is added
+//	         here via middleware.RequirePermission.
+//	pool   — the pgx pool (money is N/A; this is read/write of NRE rows only).
+//	rbac   — the RBAC service for the admin permission gates.
+//	llm    — the Tier-3 AI estimator (an *llm.Client satisfies LLMGenerator); may
+//	         be nil/disabled, in which case the deterministic mock is used.
 //
 // The Tier-0 barcode/label source defaults to the deterministic MockLabelLookup
 // so the engine resolves end-to-end without a network dependency.
@@ -43,11 +43,11 @@ func RegisterNutrition(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac 
 
 	// ── Member group: buyer-readable reads + object-level-checked vendor actions.
 	nut := member.Group("/nutrition")
-	nut.GET("/dishes/:dishId", h.GetDish)                       // buyer-readable
+	nut.GET("/dishes/:dishId", h.GetDish)                      // buyer-readable
 	nut.POST("/dishes/:dishId/approve", h.Approve)             // vendor approve → RESTAURANT_CONFIRMED
-	nut.POST("/dishes/:dishId/edit", h.Edit)                  // vendor portion+macro edit (no ingredients)
-	nut.POST("/dishes/:dishId/allergens", h.AttestAllergens) // vendor allergen attest
-	nut.POST("/dishes/:dishId/recipe", h.DeclareRecipe)      // HIDDEN power path → grounding RECIPE
+	nut.POST("/dishes/:dishId/edit", h.Edit)                   // vendor portion+macro edit (no ingredients)
+	nut.POST("/dishes/:dishId/allergens", h.AttestAllergens)   // vendor allergen attest
+	nut.POST("/dishes/:dishId/recipe", h.DeclareRecipe)        // HIDDEN power path → grounding RECIPE
 	nut.POST("/menus/:menuId/auto-suggest", h.AutoSuggestMenu) // batch auto-estimate (menuId = restaurantId)
 	nut.POST("/menus/:menuId/approve-all", h.ApproveAll)       // batch approve (menuId = restaurantId)
 	nut.GET("/cart/summary", h.CartSummary)                    // ?ids=a,b,c

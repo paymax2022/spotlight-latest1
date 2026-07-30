@@ -1,8 +1,9 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
 import { Colors } from '@/constants/colors';
-import { MarketplaceMenuProvider } from './_components/MarketplaceMenu';
-import MarketTabBar from './_components/MarketTabBar';
+import { MarketplaceMenuProvider } from '@/features/marketplace/components/MarketplaceMenu';
+import MarketTabBar from '@/features/marketplace/components/MarketTabBar';
+import { useMarketplaceRealtime } from '@/features/marketplace/realtime/useMarketplaceRealtime';
 
 // ── Marketplace nav shell ────────────────────────────────────────────────────
 // The 3-tab bottom nav inside the Marketplace tab (connect model):
@@ -26,6 +27,10 @@ import MarketTabBar from './_components/MarketTabBar';
 // to document intent); the custom bar is what guarantees the layout.
 
 export default function MarketplaceLayout() {
+  // Realtime SSE push for Deal Room chat. Single mount for the whole marketplace
+  // section; inert unless EXPO_PUBLIC_REALTIME_ENABLED=true (falls back to polling).
+  useMarketplaceRealtime();
+
   return (
     <MarketplaceMenuProvider>
     <Tabs
@@ -36,7 +41,7 @@ export default function MarketplaceLayout() {
       }}
     >
       {/* ── The four bottom-nav tabs (Account + secondary pages live in the
-          hamburger side menu — see _components/MarketplaceMenu.tsx) ── */}
+          hamburger side menu — see @/features/marketplace/components/MarketplaceMenu) ── */}
       <Tabs.Screen name="index" options={{ title: 'Discover' }} />
       <Tabs.Screen name="sell" options={{ title: 'Sell' }} />
       <Tabs.Screen name="deals" options={{ title: 'Deals' }} />

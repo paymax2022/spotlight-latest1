@@ -128,7 +128,9 @@ type fakeLedger struct {
 	refs  map[string]string
 }
 
-func newFakeLedger() *fakeLedger { return &fakeLedger{calls: map[string]int{}, refs: map[string]string{}} }
+func newFakeLedger() *fakeLedger {
+	return &fakeLedger{calls: map[string]int{}, refs: map[string]string{}}
+}
 
 func (f *fakeLedger) PostFunding(_ context.Context, _, _, idemKey string, _ int64) (string, error) {
 	f.calls[idemKey]++
@@ -151,9 +153,9 @@ type invoicePaymentCall struct {
 }
 
 type fakeInvoicePayer struct {
-	calls     []invoicePaymentCall
-	byIdem    map[string]string // idemKey → paymentID (idempotent replay)
-	balanceWrites int           // MUST stay 0: this fake has no balance-write path
+	calls         []invoicePaymentCall
+	byIdem        map[string]string // idemKey → paymentID (idempotent replay)
+	balanceWrites int               // MUST stay 0: this fake has no balance-write path
 }
 
 func newFakeInvoicePayer() *fakeInvoicePayer { return &fakeInvoicePayer{byIdem: map[string]string{}} }

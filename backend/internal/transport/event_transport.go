@@ -28,18 +28,18 @@ import (
 
 // EventOfferRequest is POST /mobility/events/transport.
 type EventOfferRequest struct {
-	EventID        string `json:"event_id"`
-	Type           string `json:"type"`
-	Title          string `json:"title" binding:"required"`
-	VenueAddress   string `json:"venue_address"`
-	VenueLat       float64 `json:"venue_lat"`
-	VenueLng       float64 `json:"venue_lng"`
-	GeofenceRadiusM int    `json:"geofence_radius_m"`
-	Capacity       int    `json:"capacity" binding:"required,min=1"`
-	FareKobo       int64  `json:"fare_kobo" binding:"required,min=0"`
-	DepartureTime  string `json:"departure_time"` // RFC3339, optional
-	BusScheduleID  string `json:"bus_schedule_id"`
-	PromoCode      string `json:"promo_code"`
+	EventID         string  `json:"event_id"`
+	Type            string  `json:"type"`
+	Title           string  `json:"title" binding:"required"`
+	VenueAddress    string  `json:"venue_address"`
+	VenueLat        float64 `json:"venue_lat"`
+	VenueLng        float64 `json:"venue_lng"`
+	GeofenceRadiusM int     `json:"geofence_radius_m"`
+	Capacity        int     `json:"capacity" binding:"required,min=1"`
+	FareKobo        int64   `json:"fare_kobo" binding:"required,min=0"`
+	DepartureTime   string  `json:"departure_time"` // RFC3339, optional
+	BusScheduleID   string  `json:"bus_schedule_id"`
+	PromoCode       string  `json:"promo_code"`
 }
 
 // EventBookRequest is POST /mobility/events/transport/:id/book.

@@ -54,11 +54,11 @@ type Route struct {
 
 // Alternative is a non-chosen viable route surfaced for transparency/ops.
 type Alternative struct {
-	Provider  string  `json:"provider"`
-	Corridor  string  `json:"corridor"`
-	Rail      Rail    `json:"rail"`
-	AllInRate float64 `json:"allInRate"`
-	Destination Money `json:"destination"`
+	Provider    string  `json:"provider"`
+	Corridor    string  `json:"corridor"`
+	Rail        Rail    `json:"rail"`
+	AllInRate   float64 `json:"allInRate"`
+	Destination Money   `json:"destination"`
 }
 
 // QuoteStatus follows Appendix B: quoted -> locked -> consumed | expired.
@@ -104,16 +104,16 @@ const (
 
 // Conversion is the executed record of FX between two held balances.
 type Conversion struct {
-	ID            string           `json:"id"`
-	Reference     string           `json:"reference"`
-	CustomerID    string           `json:"customerId"`
-	Status        ConversionStatus `json:"status"`
-	Source        Money            `json:"source"`
-	Destination   Money            `json:"destination"`
-	Rate          float64          `json:"rate"`
-	AllInRate     float64          `json:"allInRate"`
-	Fees          []Fee            `json:"fees"`
-	Route         Route            `json:"route"`
+	ID             string           `json:"id"`
+	Reference      string           `json:"reference"`
+	CustomerID     string           `json:"customerId"`
+	Status         ConversionStatus `json:"status"`
+	Source         Money            `json:"source"`
+	Destination    Money            `json:"destination"`
+	Rate           float64          `json:"rate"`
+	AllInRate      float64          `json:"allInRate"`
+	Fees           []Fee            `json:"fees"`
+	Route          Route            `json:"route"`
 	ProviderRef    string           `json:"providerRef"`
 	TransactionID  string           `json:"transactionId"`
 	IdempotencyKey string           `json:"-"`
@@ -154,17 +154,17 @@ type StatusEvent struct {
 
 // Transfer is a payout to a beneficiary/rail, optionally with embedded FX.
 type Transfer struct {
-	ID            string         `json:"id"`
-	Reference     string         `json:"reference"`
-	CustomerID    string         `json:"customerId"`
-	Status        TransferStatus `json:"status"`
-	Source        Money          `json:"source"`
-	Destination   Money          `json:"destination"`
-	QuotedRate    float64        `json:"quotedRate"`
-	ExecutedRate  float64        `json:"executedRate"`
-	Fees          []Fee          `json:"fees"`
-	Route         Route          `json:"route"`
-	Narration     string         `json:"narration,omitempty"`
+	ID             string         `json:"id"`
+	Reference      string         `json:"reference"`
+	CustomerID     string         `json:"customerId"`
+	Status         TransferStatus `json:"status"`
+	Source         Money          `json:"source"`
+	Destination    Money          `json:"destination"`
+	QuotedRate     float64        `json:"quotedRate"`
+	ExecutedRate   float64        `json:"executedRate"`
+	Fees           []Fee          `json:"fees"`
+	Route          Route          `json:"route"`
+	Narration      string         `json:"narration,omitempty"`
 	ProviderRef    string         `json:"providerRef"`
 	TransactionID  string         `json:"transactionId"`
 	StatusHistory  []StatusEvent  `json:"statusHistory"`
@@ -174,24 +174,24 @@ type Transfer struct {
 
 // VirtualAccount is an inbound collection account (spec §5.5).
 type VirtualAccount struct {
-	ID        string                 `json:"id"`
-	CustomerID string                `json:"-"`
-	Currency  string                 `json:"currency"`
-	Type      string                 `json:"type"` // virtual_account | iban
-	Provider  string                 `json:"provider"`
-	Status    string                 `json:"status"`
-	Details   map[string]interface{} `json:"details"`
-	CreatedAt time.Time              `json:"createdAt"`
+	ID         string                 `json:"id"`
+	CustomerID string                 `json:"-"`
+	Currency   string                 `json:"currency"`
+	Type       string                 `json:"type"` // virtual_account | iban
+	Provider   string                 `json:"provider"`
+	Status     string                 `json:"status"`
+	Details    map[string]interface{} `json:"details"`
+	CreatedAt  time.Time              `json:"createdAt"`
 }
 
 // --- Request bodies (normalized API) ---
 
 // QuoteRequest is POST /v1/quotes.
 type QuoteRequest struct {
-	Source          string     `json:"source" binding:"required"`          // ISO-4217
-	Destination     string     `json:"destination" binding:"required"`     // ISO-4217
-	Amount          int64      `json:"amount" binding:"required,min=1"`    // minor units
-	AmountType      AmountType `json:"amountType"`                         // default source
+	Source          string     `json:"source" binding:"required"`       // ISO-4217
+	Destination     string     `json:"destination" binding:"required"`  // ISO-4217
+	Amount          int64      `json:"amount" binding:"required,min=1"` // minor units
+	AmountType      AmountType `json:"amountType"`                      // default source
 	Intent          Intent     `json:"intent" binding:"required"`
 	DestinationRail Rail       `json:"destinationRail,omitempty"`
 	Lock            bool       `json:"lock"`
@@ -206,13 +206,13 @@ type ConversionRequest struct {
 
 // TransferRequest is POST /v1/transfers.
 type TransferRequest struct {
-	QuoteID      string       `json:"quote_id,omitempty"` // omit for same-currency
-	CustomerID   string       `json:"customer_id"`
-	BeneficiaryID string      `json:"beneficiary_id,omitempty"`
-	Destination  *Destination `json:"destination,omitempty"`
-	Amount       *Money       `json:"amount,omitempty"`
-	Narration    string       `json:"narration,omitempty"`
-	Reference    string       `json:"reference,omitempty"`
+	QuoteID       string       `json:"quote_id,omitempty"` // omit for same-currency
+	CustomerID    string       `json:"customer_id"`
+	BeneficiaryID string       `json:"beneficiary_id,omitempty"`
+	Destination   *Destination `json:"destination,omitempty"`
+	Amount        *Money       `json:"amount,omitempty"`
+	Narration     string       `json:"narration,omitempty"`
+	Reference     string       `json:"reference,omitempty"`
 }
 
 // CollectionRequest is POST /v1/collections/virtual-accounts.

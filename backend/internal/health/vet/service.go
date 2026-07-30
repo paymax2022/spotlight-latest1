@@ -3,6 +3,7 @@ package healthvet
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/internal/health/clinicalsafety"
 	healthconsult "spotlight/backend/internal/health/consult"
 	healthrecords "spotlight/backend/internal/health/records"
 	healthrx "spotlight/backend/internal/health/rx"
@@ -68,17 +70,18 @@ type PayoutGate interface {
 // emergency SOS routing (HL-11). The appointment state machine itself is the
 // shared healthscheduling engine — never reimplemented here.
 type Service struct {
-	db       *pgxpool.Pool
-	escrow   EscrowHolder
-	dispatch Dispatcher
-	prov     ProviderGate
-	payout   PayoutGate
-	sched    *healthscheduling.Service
-	consult  *healthconsult.Service
-	rx       *healthrx.Service
-	records  *healthrecords.Service
-	jobs     *scheduler.Service
-	audit    Auditor
+	db         *pgxpool.Pool
+	escrow     EscrowHolder
+	dispatch   Dispatcher
+	prov       ProviderGate
+	payout     PayoutGate
+	sched      *healthscheduling.Service
+	consult    *healthconsult.Service
+	rx         *healthrx.Service
+	records    *healthrecords.Service
+	jobs       *scheduler.Service
+	audit      Auditor
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 }
 
 func NewService(
@@ -97,6 +100,47 @@ func NewService(
 	return &Service{
 		db: db, escrow: escrowHolder, dispatch: dispatch, prov: prov, payout: payout,
 		sched: sched, consult: consult, rx: rx, records: records, jobs: jobs, audit: audit,
+	}
+}
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module (§ profit registry). app-wiring injects a thin adapter over the finance
+// commission service; when the commission feature is off (or no recorder is wired)
+// the field is nil and recording is a silent no-op. Modeled as a LOCAL interface so
+// vet never imports the commission package at compile time (mirrors the
+// transport/doctor seams) — the adapter, which lives in app-wiring, discards the
+// returned earning row and surfaces only the error.
+//
+// This records realized profit ONLY; it never moves money. The vet module's own
+// money movements (the appointment escrow HELD→RELEASE of the owner payment to the
+// vet) are unchanged, and the injected recorder is deliberately constructed WITHOUT
+// a ledger so RecordFor never re-posts to the ledger (no double count of the
+// commission revenue account) — it appends the immutable earning row used by profit
+// reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a completed vet
+// appointment. It is best-effort and MUST NEVER affect the caller's outcome: a nil
+// recorder is a no-op, and any error is logged and swallowed so a profit-registry
+// failure can never fail or reverse the consult completion / vet payout. The
+// recorded breakdown is resolved server-side from the central rate card; the source
+// ref (the appointment id) doubles as the idempotency key so retries and
+// reconciliation sweeps never double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
+		"health.vet", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[health.vet] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
 	}
 }
 
@@ -167,6 +211,26 @@ func (s *Service) ownsPet(ctx context.Context, ownerID, petID string) (bool, err
 		return false, err
 	}
 	return ok, nil
+}
+
+// petClinicalContext loads a pet's species + weight into the clinical-safety
+// context so veterinary prescribing enforces species-toxicity / human-only-drug
+// and weight-based dosing rules (VT-002/003/004). Best-effort: on any read error
+// it returns a species-typed context so the animal path never silently falls back
+// to human rules.
+func (s *Service) petClinicalContext(ctx context.Context, petID string) clinicalsafety.PatientContext {
+	pc := clinicalsafety.PatientContext{Species: "animal"}
+	var species string
+	var weight *float64
+	if err := s.db.QueryRow(ctx, `SELECT species, weight_kg FROM pets WHERE id=$1`, petID).Scan(&species, &weight); err == nil {
+		if species != "" {
+			pc.Species = strings.ToLower(species)
+		}
+		if weight != nil {
+			pc.WeightKg = *weight
+		}
+	}
+	return pc
 }
 
 // ─── Vet discovery (map / list; PostGIS) ─────────────────────────────────────
@@ -541,6 +605,10 @@ type CompleteInput struct {
 	// by the rx engine on the pharmacy side.
 	RxItems            []healthrx.Item
 	PharmacyProviderID string
+	// RxOverrideReason documents a licensed vet's decision to proceed past a
+	// clinical-safety hard stop (species-toxic/human-only/interaction). Required to
+	// override; audited by the rx engine (RX-011). Empty ⇒ hard stops block.
+	RxOverrideReason string
 
 	// Optional pet lab order handoff: the referenced lab + test ids the vet wants
 	// run on the pet. The lab vertical owns the LabOrder + payment; this records the
@@ -551,10 +619,10 @@ type CompleteInput struct {
 
 // CompleteResult is the outcome of consult completion.
 type CompleteResult struct {
-	Appointment   *Appointment             `json:"appointment"`
+	Appointment   *Appointment                `json:"appointment"`
 	ClinicalNote  *healthconsult.ClinicalNote `json:"clinical_note,omitempty"`
-	Prescription  *healthrx.Prescription   `json:"prescription,omitempty"`
-	LabReferralID *string                  `json:"lab_referral_id,omitempty"`
+	Prescription  *healthrx.Prescription      `json:"prescription,omitempty"`
+	LabReferralID *string                     `json:"lab_referral_id,omitempty"`
 }
 
 // CompleteConsult completes the tele-consult: it persists the SOAP ClinicalNote on
@@ -598,7 +666,12 @@ func (s *Service) CompleteConsult(ctx context.Context, vetOwnerID, apptID string
 	// server-side by the rx engine when the pharmacy dispenses (HL-3).
 	if len(in.RxItems) > 0 && s.rx != nil {
 		consultRef := *a.ConsultID
-		p, rerr := s.rx.Issue(ctx, vetOwnerID, a.OwnerID, &consultRef, in.RxItems)
+		// Species-aware clinical safety screen (VT-002/003/004): pass the pet's
+		// species/weight so species-toxic and human-only-drug hard stops fire. A
+		// documented override reason (in.RxOverrideReason) is required to proceed
+		// past a hard stop and is audited by the rx engine (RX-011).
+		petCtx := s.petClinicalContext(ctx, a.PetID)
+		p, rerr := s.rx.IssueChecked(ctx, vetOwnerID, a.OwnerID, &consultRef, in.RxItems, &petCtx, in.RxOverrideReason)
 		if rerr != nil {
 			return nil, fmt.Errorf("vet: issue e-prescription: %w", rerr)
 		}
@@ -648,6 +721,17 @@ func (s *Service) CompleteConsult(ctx context.Context, vetOwnerID, apptID string
 			return nil, fmt.Errorf("vet: mark released: %w", err)
 		}
 		a.PayState = PayReleased
+		// Vet-appointment settlement point: the consult completion + escrow release
+		// realizes Spotlight's commission. Record realized profit into the central
+		// Commission & Profit registry — best-effort + idempotent (the appointment id
+		// doubles as source ref + idempotency key, so retries never double-count).
+		// gross = the full appointment total the owner paid (the same basis the vet's
+		// own escrow split settles on). A recorder failure is logged and swallowed —
+		// it must NEVER fail or reverse the release above. Nil recorder ⇒ no-op
+		// (commission feature off). Guarded by the same HELD→RELEASED transition so it
+		// records exactly once per appointment.
+		ownerRef := a.OwnerID
+		s.recordCommissionSafe(ctx, "Health", "Veterinary", "", a.TotalKobo, apptID, &ownerRef)
 	}
 	s.audited(vetOwnerID, a.OwnerID, "health.vet.consult.complete", apptID,
 		map[string]any{"state": string(StateInProgress), "pay_state": string(PayHeld)},
@@ -807,14 +891,14 @@ func (s *Service) audited(actor, target, action, resourceID string, oldV, newV m
 
 // AdminAppointment is the admin oversight projection of an appointment + money leg.
 type AdminAppointment struct {
-	AppointmentID string `json:"appointment_id"`
-	ProviderID    string `json:"provider_id"`
-	OwnerID       string `json:"owner_id"`
-	PetID         string `json:"pet_id"`
-	VisitType     string `json:"visit_type"`
-	State         string `json:"state"`
-	PayState      string `json:"pay_state"`
-	TotalKobo     int64  `json:"total_kobo"`
+	AppointmentID string  `json:"appointment_id"`
+	ProviderID    string  `json:"provider_id"`
+	OwnerID       string  `json:"owner_id"`
+	PetID         string  `json:"pet_id"`
+	VisitType     string  `json:"visit_type"`
+	State         string  `json:"state"`
+	PayState      string  `json:"pay_state"`
+	TotalKobo     int64   `json:"total_kobo"`
 	ConsultID     *string `json:"consult_id,omitempty"`
 }
 

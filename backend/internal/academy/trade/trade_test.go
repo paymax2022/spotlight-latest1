@@ -29,13 +29,13 @@ func TestCanSubmission_Allowed(t *testing.T) {
 
 func TestCanSubmission_Illegal(t *testing.T) {
 	illegal := [][2]SubmissionState{
-		{SubmissionSubmitted, SubmissionPassed},  // skip review
-		{SubmissionSubmitted, SubmissionFailed},  // skip review
-		{SubmissionPassed, SubmissionReviewed},   // terminal, backwards
-		{SubmissionFailed, SubmissionReviewed},   // terminal, backwards
-		{SubmissionPassed, SubmissionFailed},     // terminal
+		{SubmissionSubmitted, SubmissionPassed},   // skip review
+		{SubmissionSubmitted, SubmissionFailed},   // skip review
+		{SubmissionPassed, SubmissionReviewed},    // terminal, backwards
+		{SubmissionFailed, SubmissionReviewed},    // terminal, backwards
+		{SubmissionPassed, SubmissionFailed},      // terminal
 		{SubmissionReviewed, SubmissionSubmitted}, // backwards
-		{"bogus", SubmissionReviewed},            // unknown source
+		{"bogus", SubmissionReviewed},             // unknown source
 	}
 	for _, tr := range illegal {
 		if canSubmission(tr[0], tr[1]) {

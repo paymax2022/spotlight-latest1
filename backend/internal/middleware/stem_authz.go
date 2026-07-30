@@ -35,4 +35,3 @@ func RequireStemRoles(allowedRoles ...string) gin.HandlerFunc {
 		c.Next()
 	}
 }
-

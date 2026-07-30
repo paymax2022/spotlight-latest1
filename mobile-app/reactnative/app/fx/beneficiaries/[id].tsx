@@ -32,7 +32,7 @@ export default function BeneficiaryDetailScreen() {
   }
 
   const meta = CURRENCIES[beneficiary.currency];
-  const initials = beneficiary.name.split(' ').slice(0, 2).map((s) => s[0]).join('').toUpperCase();
+  const initials = (beneficiary.name ?? '').split(' ').slice(0, 2).map((s) => s[0] ?? '').join('').toUpperCase();
 
   const confirmRemove = () => {
     Alert.alert(
@@ -84,7 +84,7 @@ export default function BeneficiaryDetailScreen() {
 
         <View style={styles.card}>
           <SummaryRow label="Payout rail" value={RAIL_LABEL[beneficiary.rail]} />
-          <SummaryRow label="Receiving currency" value={`${meta.flag} ${beneficiary.currency} · ${meta.name}`} />
+          <SummaryRow label="Receiving currency" value={`${meta?.flag ?? ''} ${beneficiary.currency} · ${meta?.name ?? ''}`} />
           {beneficiary.bankName ? <SummaryRow label={beneficiary.rail === 'mobile_money' ? 'Operator' : 'Institution'} value={beneficiary.bankName} /> : null}
           <SummaryRow label="Account" value={beneficiary.accountNumber} copyable />
           <SummaryRow label="Country" value={beneficiary.countryCode} />
@@ -104,7 +104,7 @@ export default function BeneficiaryDetailScreen() {
 
       <SafeAreaView edges={['bottom']} style={styles.footer}>
         <PrimaryButton
-          label={`Send to ${beneficiary.name.split(' ')[0]}`}
+          label={`Send to ${(beneficiary.name ?? '').split(' ')[0] || 'beneficiary'}`}
           onPress={() => router.push({ pathname: '/fx/send/amount', params: { beneficiaryId: beneficiary.id } })}
           loading={removing}
         />

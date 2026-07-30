@@ -9,6 +9,7 @@ import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import SelectField from '@/components/SelectField';
 import ChipMultiSelect from '@/features/doctor/components/ChipMultiSelect';
 import { STATE_NAMES } from '@/data/nigeria';
@@ -73,7 +74,7 @@ export default function BusProviderAddRouteScreen() {
           <TextInputField label="From city / terminal" value={fromCity} onChangeText={setFromCity} placeholder="e.g. Jibowu" autoCapitalize="words" />
           <TextInputField label="To city / terminal" value={toCity} onChangeText={setToCity} placeholder="e.g. Utako" autoCapitalize="words" />
           <SelectField label="Bus type" placeholder="Select vehicle type" value={busType} options={BUS_TYPES} onChange={setBusType} searchable={false} />
-          <TextInputField label="Base fare (₦)" value={fare} onChangeText={setFare} placeholder="e.g. 18500" keyboardType="number-pad" />
+          <TextInputField label="Base fare (₦)" value={fare} onChangeText={(t) => setFare(sanitizeMoneyInput(t))} placeholder="e.g. 18500" keyboardType="decimal-pad" inputMode="decimal" maxLength={13} />
           <ChipMultiSelect label="Amenities" options={AMENITIES} selected={amenities} onChange={setAmenities} />
           {error ? <Text style={styles.error}>{error}</Text> : null}
         </View>

@@ -73,6 +73,9 @@ func RegisterAcademyContent(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 		guard := func(p string) gin.HandlerFunc { return middleware.RequirePermission(rbac, p) }
 		ag := admin.Group("/content", guard("academy.content"))
 
+		// Lessons (admin CMS list, all statuses).
+		ag.GET("/items", h.AdminListItems)
+
 		// Publish transitions.
 		ag.POST("/lessons/:id/publish", h.AdminTransitionLesson)
 		ag.POST("/bundles/:id/publish", h.AdminTransitionBundle)
@@ -83,6 +86,7 @@ func RegisterAcademyContent(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 		ag.GET("/productions/:id", h.AdminGetProduction)
 		ag.PUT("/productions/:id", h.AdminUpdateProduction)
 		ag.POST("/productions/:id/advance", h.AdminAdvanceProduction)
+		ag.POST("/productions/:id/block", h.AdminBlockProduction)
 
 		// Localizations.
 		ag.GET("/localizations", h.AdminListLocalizations)
@@ -125,6 +129,21 @@ func (h *Handler) GetBundleManifest(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": b.Manifest})
+}
+
+// ── Admin handlers: lessons list ────────────────────────────────────────────────
+
+// AdminListItems lists lessons admin-wide (all statuses). ?objective_id= / ?status=
+// filter; ?limit= / ?offset= paginate (newest first).
+func (h *Handler) AdminListItems(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	offset, _ := strconv.Atoi(c.Query("offset"))
+	out, err := h.svc.ListLessons(c.Request.Context(), c.Query("objective_id"), c.Query("status"), limit, offset)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
 // ── Admin handlers: publish ─────────────────────────────────────────────────────
@@ -194,6 +213,17 @@ func (h *Handler) AdminAdvanceProduction(c *gin.Context) {
 		return
 	}
 	out, err := h.svc.AdvanceProduction(c.Request.Context(), uid(c), c.Param("id"), req.To)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminBlockProduction moves a production card to the blocked status (active→blocked).
+// Mirrors AdminAdvanceProduction but transitions status, not stage.
+func (h *Handler) AdminBlockProduction(c *gin.Context) {
+	out, err := h.svc.BlockProduction(c.Request.Context(), uid(c), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return

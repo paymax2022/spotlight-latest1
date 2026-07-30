@@ -125,7 +125,7 @@ func Register(member gin.IRouter, svc *Service) {
 	h := NewHandler(svc)
 	member.GET("/contests", h.ListContests)
 	member.GET("/contests/:id", h.GetContest)
-	member.POST("/contests/:id/vote", h.FreeVote)            // free
-	member.POST("/contests/:id/paid-vote", h.PaidVote)       // Idempotency-Key required
+	member.POST("/contests/:id/vote", h.FreeVote)      // free
+	member.POST("/contests/:id/paid-vote", h.PaidVote) // Idempotency-Key required
 	member.GET("/contests/:id/results", h.Results)
 }

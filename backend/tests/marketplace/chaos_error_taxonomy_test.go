@@ -29,6 +29,18 @@ import (
 	mkt "spotlight/backend/internal/marketplace"
 )
 
+// ADR-023 NOTICE: chaos scenarios 1–5 below (gateway-timeout order state,
+// duplicate delivery/funding webhook, dispute-after-auto-release race, two-buyers
+// order race, edit-listing-with-active-order) exercise the escrow ORDER / DISPUTE /
+// logistics-webhook money-path that was REMOVED in the listings-and-connect pivot
+// (ADR-023). Their DB-free "guard-shape" halves used to RUN while asserting mirrors
+// of deleted guards (false confidence) and are now t.Skip'd with this pointer; the
+// live-DB halves already skip (no MARKETPLACE_TEST_DATABASE_URL). Scenarios 6 (boost
+// auto-refund) and 7 (KYC badge permanence) SHIP and still run, as does the pure
+// VerifyHMAC crypto test (retained function).
+const adr023ChaosSkip = "ADR-023: escrow order/dispute/webhook path removed (listings-and-connect pivot); " +
+	"this asserts a mirror of deleted guard code. Kept as the historical §8 record. See ADR-023."
+
 // ─── 1. Gateway timeout mid-checkout: order stays 'initiated', never silently funded ──
 
 // TestChaos_GatewayTimeout_OrderStaysInitiated locks the §8 row: "Order stays
@@ -44,6 +56,7 @@ import (
 // path (AutoReleaseDue's sibling, not shown here) only ever moves initiated ->
 // cancelled, never initiated -> funded.
 func TestChaos_GatewayTimeout_OrderStaysInitiated(t *testing.T) {
+	t.Skip(adr023ChaosSkip)
 	// Mirrors orderTransitionsMirror[OrderInitiated] from fsm_invariant_test.go —
 	// intentionally re-asserted here as the CHAOS-SCENARIO framing rather than the
 	// FSM-shape framing, since this is the specific regression class §8 calls out.
@@ -67,6 +80,7 @@ func TestChaos_GatewayTimeout_OrderStaysInitiated(t *testing.T) {
 // funding a stale order — the client-visible half of "no silent funded" when a
 // gateway callback arrives very late.
 func TestChaos_GatewayTimeout_FundOrderRejectsPastWindow(t *testing.T) {
+	t.Skip(adr023ChaosSkip)
 	if mkt.CodeOrderExpired == "" {
 		t.Fatal("CodeOrderExpired must be defined for the stale-funding-window guard")
 	}
@@ -112,6 +126,7 @@ func TestChaos_DuplicateWebhook_DeliveryConfirmedIsNoOp(t *testing.T) {
 // HandleDeliveryConfirmed reachable with zero DB dependency: the missing-both-ids
 // guard, which fires before any repo call.
 func TestChaos_DuplicateWebhook_ValidationGuardIsExercisable(t *testing.T) {
+	t.Skip(adr023ChaosSkip) // HandleDeliveryConfirmed + logistics webhook were deleted with the escrow path.
 	// We can't call the unexported repo-backed path, but we CAN assert the
 	// documented contract: an empty input must be a 400 SCHEMA_VALIDATION_FAILED,
 	// never a panic or a silent 200 (which would be indistinguishable from a
@@ -172,6 +187,7 @@ func TestChaos_DuplicateWebhook_HMACRejectsBadSignature(t *testing.T) {
 // exactly this code — proven directly against the guard's boolean condition
 // (pure, no DB needed) for every OTHER status.
 func TestChaos_DisputeAfterAutoRelease_RaceGuardReturnsNotDisputable(t *testing.T) {
+	t.Skip(adr023ChaosSkip)
 	// Mirrors: `if o.Status != OrderInspectionWindow { return 422 CodeOrderNotDisputable }`
 	disputable := func(s mkt.OrderStatus) bool { return s == mkt.OrderInspectionWindow }
 
@@ -224,6 +240,7 @@ func TestChaos_DisputeAfterAutoRelease_LiveRace(t *testing.T) {
 // listing-management flow has moved it out of `active` for any other reason.
 // We assert the guard condition exhaustively over all listing statuses.
 func TestChaos_TwoBuyersRaceListing_GuardIsStatusEquality(t *testing.T) {
+	t.Skip(adr023ChaosSkip) // CreateOrder + the two-buyer escrow race were removed with the order path.
 	createOrderAllowed := func(s mkt.ListingStatus) bool { return s == mkt.ListingActive }
 	allStates := []mkt.ListingStatus{
 		mkt.ListingDraft, mkt.ListingPendingReview, mkt.ListingActive, mkt.ListingPaused,
@@ -271,6 +288,7 @@ func TestChaos_TwoBuyersRaceListing_LiveConcurrentCreate(t *testing.T) {
 // blocked by this guard (per §8: "photos/description typo fixes still allowed").
 // This is a scope assertion on the DTO shape (UpdateListingInput), runs DB-free.
 func TestChaos_EditListingWithActiveOrder_GuardOnlyBlocksPriceChanges(t *testing.T) {
+	t.Skip(adr023ChaosSkip) // the active-ORDER edit guard is dead: no orders exist post-ADR-023 (listings still ship).
 	// Only PriceKobo triggers the active-order guard; Title/Description/Attrs do not.
 	priceOnly := mkt.UpdateListingInput{PriceKobo: int64Ptr(5_000_00)}
 	descOnly := mkt.UpdateListingInput{Description: strPtrLocal("fixed a typo in the description")}
@@ -405,5 +423,5 @@ func TestChaos_KYCOutage_LiveVerifyIsIdempotentUpsertOnly(t *testing.T) {
 
 // ─── small local helpers (avoid depending on unexported package helpers) ─────
 
-func int64Ptr(v int64) *int64   { return &v }
+func int64Ptr(v int64) *int64      { return &v }
 func strPtrLocal(s string) *string { return &s }

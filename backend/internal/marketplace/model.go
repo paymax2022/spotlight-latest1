@@ -200,16 +200,17 @@ type Boost struct {
 	CreatedAt           time.Time   `json:"created_at"`
 }
 
-// Offer mirrors mkt_offers.
+// Offer mirrors mkt_offers. JSON is camelCase to match the mobile Offer type
+// (src/features/marketplace/types.ts) — the only consumer of this shape.
 type Offer struct {
 	ID             string    `json:"id"`
-	ListingID      string    `json:"listing_id"`
-	BuyerID        string    `json:"buyer_id"`
-	OfferPriceKobo int64     `json:"offer_price_kobo"`
+	ListingID      string    `json:"listingId"`
+	BuyerID        string    `json:"buyerId"`
+	OfferPriceKobo int64     `json:"offerPriceKobo"`
 	Status         string    `json:"status"`
-	ParentOfferID  *string   `json:"parent_offer_id,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	ExpiresAt      time.Time `json:"expires_at"`
+	ParentOfferID  *string   `json:"parentOfferId,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	ExpiresAt      time.Time `json:"expiresAt"`
 }
 
 // Review mirrors mkt_reviews.

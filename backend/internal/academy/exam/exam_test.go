@@ -28,8 +28,8 @@ func TestCanAttempt_Illegal(t *testing.T) {
 	illegal := []struct{ from, to AttemptState }{
 		{AttemptCreated, AttemptSubmitted}, // must start first
 		{AttemptCreated, AttemptScored},
-		{AttemptStarted, AttemptScored},   // must submit first
-		{AttemptStarted, AttemptReviewed}, // must submit + score first
+		{AttemptStarted, AttemptScored},    // must submit first
+		{AttemptStarted, AttemptReviewed},  // must submit + score first
 		{AttemptSubmitted, AttemptStarted}, // cannot reopen a frozen attempt
 		{AttemptSubmitted, AttemptReviewed},
 		{AttemptScored, AttemptSubmitted}, // no going back

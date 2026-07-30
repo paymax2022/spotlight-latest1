@@ -41,6 +41,17 @@ func NewService(db *pgxpool.Pool, led *ledger.Service, price PriceProvider) *Ser
 	}
 }
 
+// WithWithdrawalProvider overrides the default mock on-chain broadcast seam with a real
+// adapter (wiring-only, after construction). A nil provider is ignored so callers can
+// pass a possibly-nil real adapter and safely keep the mock. Returns the service for
+// chaining. Follows the module's mock-first, real-last convention.
+func (s *Service) WithWithdrawalProvider(w WithdrawalProvider) *Service {
+	if w != nil {
+		s.withdraw = w
+	}
+	return s
+}
+
 // ── Read paths ────────────────────────────────────────────────────────────────
 
 // ListAssets returns the tradable catalogue (active only for members).

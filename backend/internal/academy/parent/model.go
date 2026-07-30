@@ -3,11 +3,12 @@
 // plus admin CRUD for notification templates.
 //
 // GOLDEN RULE — child safety (docs/prd/edtech nfr.md child-safety):
-//   A guardian may ONLY act on minors they hold an ACTIVE academy_guardian_links
-//   to. Every parent endpoint verifies the link before touching any minor data,
-//   and FAILS CLOSED (no active link → denied + audited). The link check is
-//   centralised in the repository (GetActiveGuardianLink) and the pure decision
-//   helper canActOnMinor; the service calls it on EVERY (guardian, minor) op.
+//
+//	A guardian may ONLY act on minors they hold an ACTIVE academy_guardian_links
+//	to. Every parent endpoint verifies the link before touching any minor data,
+//	and FAILS CLOSED (no active link → denied + audited). The link check is
+//	centralised in the repository (GetActiveGuardianLink) and the pure decision
+//	helper canActOnMinor; the service calls it on EVERY (guardian, minor) op.
 //
 // Tables owned/managed: academy_parent_controls, academy_progress_reports,
 // academy_purchase_approvals, academy_notification_templates. Reads (guarded by
@@ -32,10 +33,10 @@ type SubjectMastery struct {
 	SubjectID    string  `json:"subject_id"`
 	SubjectCode  string  `json:"subject_code"`
 	SubjectName  string  `json:"subject_name"`
-	Objectives   int     `json:"objectives"`     // mastery records tracked
-	Mastered     int     `json:"mastered"`       // mastered + exam_ready
-	AvgScore     float64 `json:"avg_score"`      // 0..1 across tracked objectives
-	MasteryRatio float64 `json:"mastery_ratio"`  // mastered / objectives (0..1)
+	Objectives   int     `json:"objectives"`    // mastery records tracked
+	Mastered     int     `json:"mastered"`      // mastered + exam_ready
+	AvgScore     float64 `json:"avg_score"`     // 0..1 across tracked objectives
+	MasteryRatio float64 `json:"mastery_ratio"` // mastered / objectives (0..1)
 }
 
 // ChildDashboard is the aggregated cross-subject view for one minor.
@@ -137,12 +138,12 @@ type DecideApprovalRequest struct {
 
 // NotificationTemplate mirrors one academy_notification_templates row.
 type NotificationTemplate struct {
-	ID      string `json:"id"`
-	Key     string `json:"key"`
-	Channel string `json:"channel"` // push | sms | in_app | email
+	ID      string  `json:"id"`
+	Key     string  `json:"key"`
+	Channel string  `json:"channel"` // push | sms | in_app | email
 	Title   *string `json:"title,omitempty"`
-	Body    string `json:"body"`
-	Status  string `json:"status"`
+	Body    string  `json:"body"`
+	Status  string  `json:"status"`
 }
 
 // UpsertTemplateRequest — admin POST/PUT /notification-templates.

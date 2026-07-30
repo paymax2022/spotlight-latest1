@@ -29,11 +29,11 @@ func TestDecideDedupe_OnceThenNoOp(t *testing.T) {
 // are no-ops (the check stays PENDING until an authoritative terminal arrives).
 func TestDecideTerminal(t *testing.T) {
 	cases := map[provider.KycCheckStatus]bool{
-		provider.KycPassed:    true,
-		provider.KycFailed:    true,
-		provider.KycReview:    true,
-		provider.KycPending:   false,
-		provider.KycInitiated: false,
+		provider.KycPassed:          true,
+		provider.KycFailed:          true,
+		provider.KycReview:          true,
+		provider.KycPending:         false,
+		provider.KycInitiated:       false,
 		provider.KycCheckStatus(""): false,
 	}
 	for in, wantApply := range cases {

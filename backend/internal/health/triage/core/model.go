@@ -58,11 +58,11 @@ type Profile struct {
 
 // Consent mirrors public.health_triage_consents (immutable; SC-7 NDPA).
 type Consent struct {
-	ID        string                 `json:"id"`
-	UserID    string                 `json:"user_id"`
-	ProfileID *string                `json:"profile_id,omitempty"`
-	Scope     map[string]any         `json:"scope"`
-	GrantedAt time.Time              `json:"granted_at"`
+	ID        string         `json:"id"`
+	UserID    string         `json:"user_id"`
+	ProfileID *string        `json:"profile_id,omitempty"`
+	Scope     map[string]any `json:"scope"`
+	GrantedAt time.Time      `json:"granted_at"`
 }
 
 // Intake mirrors public.health_triage_intake — raw symptom text / body-map per
@@ -99,27 +99,27 @@ func (e EvidenceRow) toEvidence() triage.Evidence {
 // CAUSES (label + probability), never a diagnosis (SC-1). disposition_level is
 // 1..5 and reflects the red-flag-overridden level.
 type Assessment struct {
-	ID                string                  `json:"id"`
-	SessionID         string                  `json:"session_id"`
-	Conditions        []triage.PossibleCause  `json:"conditions"`
-	DispositionLevel  int                     `json:"disposition_level"`
-	DispositionCode   string                  `json:"disposition_code"`
-	EnginePayload     map[string]any          `json:"engine_payload,omitempty"`
-	RedFlagTriggered  bool                    `json:"red_flag_triggered"`
-	RuleID            *string                 `json:"rule_id,omitempty"`
-	Source            string                  `json:"source"` // engine | red_flag | fallback
-	CreatedAt         time.Time               `json:"created_at"`
+	ID               string                 `json:"id"`
+	SessionID        string                 `json:"session_id"`
+	Conditions       []triage.PossibleCause `json:"conditions"`
+	DispositionLevel int                    `json:"disposition_level"`
+	DispositionCode  string                 `json:"disposition_code"`
+	EnginePayload    map[string]any         `json:"engine_payload,omitempty"`
+	RedFlagTriggered bool                   `json:"red_flag_triggered"`
+	RuleID           *string                `json:"rule_id,omitempty"`
+	Source           string                 `json:"source"` // engine | red_flag | fallback
+	CreatedAt        time.Time              `json:"created_at"`
 }
 
 // SessionView is the read model returned by GetSession. It frames the assessment
 // as POSSIBLE CAUSES (never "diagnosis", SC-1) and always carries the mandatory
 // medical disclaimer (SC-8) plus the care route for the level (§6).
 type SessionView struct {
-	Session       Session                `json:"session"`
+	Session        Session                `json:"session"`
 	PossibleCauses []triage.PossibleCause `json:"possible_causes"`
-	Disposition   *Disposition           `json:"disposition,omitempty"`
-	NextQuestion  *triage.Question       `json:"next_question,omitempty"`
-	Disclaimer    string                 `json:"disclaimer"`
+	Disposition    *Disposition           `json:"disposition,omitempty"`
+	NextQuestion   *triage.Question       `json:"next_question,omitempty"`
+	Disclaimer     string                 `json:"disclaimer"`
 }
 
 // Disposition is the navigation outcome — level + plain-language guidance + the

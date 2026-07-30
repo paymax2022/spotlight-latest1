@@ -29,9 +29,7 @@ type Tab = { href: string; label: string; key: string };
 export function MarketplaceTabs({ active }: { active: string }) {
   const tabs: Tab[] = [
     { href: '/admin/marketplace/moderation', label: 'Moderation', key: 'moderation' },
-    { href: '/admin/marketplace/disputes', label: 'Disputes', key: 'disputes' },
     { href: '/admin/marketplace/flags', label: 'Flags', key: 'flags' },
-    { href: '/admin/marketplace/orders-aging', label: 'Orders Aging', key: 'orders-aging' },
     { href: '/admin/marketplace/boosts', label: 'Boosts', key: 'boosts' },
     { href: '/admin/marketplace/audit-log', label: 'Audit Log', key: 'audit-log' },
   ];

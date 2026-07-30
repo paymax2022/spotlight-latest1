@@ -69,7 +69,7 @@ type Order struct {
 	DispatchStatus string `json:"dispatch_status"`
 	// DeliveryCode is the customer's handoff code. The rider must enter it at
 	// drop-off to confirm the handoff. Returned only to the order's participants.
-	DeliveryCode *string   `json:"delivery_code,omitempty"`
+	DeliveryCode *string `json:"delivery_code,omitempty"`
 	// Distance/time-based fee inputs + breakdown (persisted for transparency/audit).
 	// Zero/empty when the order fell back to the flat DeliveryFeeKobo (no coords).
 	DistanceMeters    *float64              `json:"distance_meters,omitempty"`

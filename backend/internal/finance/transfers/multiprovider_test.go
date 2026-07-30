@@ -46,8 +46,8 @@ func TestReserveLegBalances(t *testing.T) {
 	for _, amt := range amounts {
 		fee := transfers.BankTransferFee(amt)
 		total := amt + fee
-		debit := total   // DR user_wallet
-		credit := total  // CR failed_transfer_suspense
+		debit := total  // DR user_wallet
+		credit := total // CR failed_transfer_suspense
 		if debit != credit {
 			t.Fatalf("reserve unbalanced for amount %d: debit=%d credit=%d", amt, debit, credit)
 		}

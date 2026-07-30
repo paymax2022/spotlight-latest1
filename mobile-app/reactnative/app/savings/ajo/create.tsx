@@ -13,6 +13,7 @@ import DisclosureBanner from '@/features/savings/components/DisclosureBanner';
 import { useCreateCircle } from '@/features/savings/hooks';
 import { FREQUENCIES, AJO_ROTATION_DISCLOSURE, formatNaira } from '@/features/savings/constants/savings.constants';
 import type { SaveFrequency } from '@/features/savings/types';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 export default function CreateCircle() {
   const [name, setName] = useState('');
@@ -41,7 +42,7 @@ export default function CreateCircle() {
       <ScreenHeader title="Create Ajo circle" />
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <TextInputField label="Circle name" placeholder="e.g. Office Ajo" value={name} onChangeText={setName} />
-        <TextInputField label="Contribution per member" placeholder="0" keyboardType="numeric" value={amount} onChangeText={setAmount} />
+        <TextInputField label="Contribution per member" placeholder="0" keyboardType="decimal-pad" maxLength={13} value={amount} onChangeText={(t) => setAmount(sanitizeMoneyInput(t))} />
         <TextInputField label="Number of members" placeholder="5" keyboardType="numeric" value={members} onChangeText={setMembers} />
 
         <Text style={styles.label}>Frequency</Text>

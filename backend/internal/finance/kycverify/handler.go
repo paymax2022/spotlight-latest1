@@ -127,14 +127,14 @@ func (h *Handler) RecordConsent(c *gin.Context) {
 // Idempotency-Key header (falling back to client_ref) is the provider idempotency
 // key + verification_check.client_ref.
 type checkBody struct {
-	SessionID   string            `json:"session_id"`
-	ClientRef   string            `json:"client_ref"`
-	IDType      string            `json:"id_type"`
-	IDNumber    string            `json:"id_number"`
-	FirstName   string            `json:"first_name"`
-	LastName    string            `json:"last_name"`
-	DOB         string            `json:"dob"`
-	SelfieB64   string            `json:"selfie_b64"`
+	SessionID string `json:"session_id"`
+	ClientRef string `json:"client_ref"`
+	IDType    string `json:"id_type"`
+	IDNumber  string `json:"id_number"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	DOB       string `json:"dob"`
+	SelfieB64 string `json:"selfie_b64"`
 	// Contract (openapi.yaml) field names are front_b64/back_b64; keep the legacy
 	// doc_front_b64/doc_back_b64 as accepted aliases so no client silently drops a
 	// document image (the DOCUMENT check gates CBN Tier 3).
@@ -143,7 +143,7 @@ type checkBody struct {
 	DocFrontB64Alias string            `json:"doc_front_b64"`
 	DocBackB64Alias  string            `json:"doc_back_b64"`
 	DocType          string            `json:"doc_type"`
-	Extra       map[string]string `json:"extra"`
+	Extra            map[string]string `json:"extra"`
 }
 
 func (h *Handler) runCheck(c *gin.Context, ct provider.KycCheckType) {

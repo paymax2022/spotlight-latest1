@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"time"
 
@@ -48,6 +49,7 @@ type Service struct {
 	feeRepo    *DeliveryConfigRepo // distance-based delivery-fee config (nil-safe → defaults)
 	notifier   Notifier            // nil-safe via s.notify; defaults to LogNotifier
 	rt         *Realtime           // optional; nil → no WS fan-out
+	commission CommissionRecorder  // optional; nil ⇒ realized-profit recording is a no-op
 }
 
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
@@ -266,14 +268,23 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 
 	const insertOrder = `
 		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown)
-		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12)`
-	if _, err := tx.Exec(ctx, insertOrder,
+		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12)
+		ON CONFLICT (idempotency_key) DO NOTHING`
+	tag, err := tx.Exec(ctx, insertOrder,
 		order.ID, order.CustomerID, order.RestaurantID,
 		order.SubtotalKobo, order.DeliveryKobo, order.TotalKobo,
 		order.IdempotencyKey, order.SettlementID, order.DeliveryAddress,
 		order.DistanceMeters, order.EtaMinutes, breakdownJSON,
-	); err != nil {
+	)
+	if err != nil {
 		return nil, fmt.Errorf("restaurant: insert order: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Idempotent replay: an order with this Idempotency-Key already exists (the
+		// escrow debit was already deduped on the same key). Return the canonical
+		// existing order instead of failing on the UNIQUE constraint with a 500.
+		_ = tx.Rollback(ctx)
+		return s.getOrderByIdempotencyKey(ctx, order.IdempotencyKey)
 	}
 
 	for i := range items {
@@ -311,6 +322,19 @@ func (s *Service) OrderParties(ctx context.Context, orderID string) (customer, o
 
 // orderParties returns the three participant user-ids for an order: the
 // customer, the restaurant owner, and the assigned rider (rider may be empty).
+// getOrderByIdempotencyKey resolves and returns the order previously created with the
+// given Idempotency-Key — the canonical result for an idempotent PlaceOrder replay
+// (returned instead of a UNIQUE-violation 500). Scoped to the order's own customer.
+func (s *Service) getOrderByIdempotencyKey(ctx context.Context, idemKey string) (*Order, error) {
+	var id, customerID string
+	if err := s.db.QueryRow(ctx,
+		`SELECT id, customer_id FROM orders WHERE idempotency_key=$1`, idemKey).
+		Scan(&id, &customerID); err != nil {
+		return nil, fmt.Errorf("restaurant: order not found for idempotency key")
+	}
+	return s.GetOrder(ctx, id, customerID)
+}
+
 func (s *Service) orderParties(ctx context.Context, orderID string) (customer, owner, rider string, err error) {
 	var restaurantID string
 	var riderPtr *string
@@ -348,7 +372,32 @@ func (s *Service) isParticipant(ctx context.Context, orderID, userID string) (bo
 
 // UpdateStatus advances an order's status. Restaurant owner confirms/prepares;
 // rider marks picked_up/delivered; last step triggers settlement.
+// UpdateStatus is the authorized public entry for owner/rider-driven status changes.
+// It resolves the order's parties, enforces object-level authorization by role (only
+// the order's own owner/rider/customer, each on the transitions their role owns),
+// routes cancellation through the refunding cancelAndRefund path, and forbids
+// `delivered` (which must go through ConfirmHandoff's proof-of-delivery gate). The
+// actual guarded transition + side effects are delegated to transitionInternal.
 func (s *Service) UpdateStatus(ctx context.Context, orderID, actorID string, newStatus OrderStatus) error {
+	customer, owner, rider, err := s.orderParties(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if aerr := authorizeStatusChange(actorID, customer, owner, rider, newStatus); aerr != nil {
+		return aerr
+	}
+	if newStatus == OrderCancelled {
+		return s.cancelAndRefund(ctx, orderID, actorID)
+	}
+	return s.transitionInternal(ctx, orderID, newStatus)
+}
+
+// transitionInternal performs the guarded lifecycle transition and its side effects
+// (settlement on delivered, auto-dispatch on ready, notifications). Authorization is
+// assumed to have ALREADY been checked, or the caller is a trusted internal path such
+// as ConfirmHandoff (after it verifies the delivery-code POD). It is the ONLY place
+// `delivered` may be set.
+func (s *Service) transitionInternal(ctx context.Context, orderID string, newStatus OrderStatus) error {
 	var order Order
 	const q = `SELECT id, restaurant_id, status, settlement_id FROM orders WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&order.ID, &order.RestaurantID, &order.Status, &order.SettlementID); err != nil {
@@ -431,6 +480,46 @@ func canTransition(from, to OrderStatus) bool {
 	}
 }
 
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module (§ profit registry). app-wiring injects a thin adapter over the finance
+// commission service; when the commission feature is off (or no recorder is wired)
+// the field is nil and recording is a silent no-op. Modeled as a LOCAL interface so
+// restaurant never imports the commission package at compile time (mirrors the
+// Notifier / AddressGeocoder seams) — the adapter, which lives in app-wiring,
+// discards the returned earning row and surfaces only the error.
+//
+// This records realized profit ONLY; it never moves money. Restaurant's own money
+// movements (the 80/10/10 settlement split into owner/rider/platform wallets) are
+// unchanged, and the injected recorder is deliberately constructed WITHOUT a ledger
+// so RecordFor never re-posts to the ledger (no double count of the commission
+// revenue account) — it appends the immutable earning row used by profit reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a settled food order.
+// It is best-effort and MUST NEVER affect the caller's outcome: a nil recorder is a
+// no-op, and any error is logged and swallowed so a profit-registry failure can
+// never fail or reverse the order settlement / payout. The recorded breakdown is
+// resolved server-side from the central rate card; the order id doubles as the
+// source ref + idempotency key so retries and the crash-recovery reconciler never
+// double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
+		"restaurant", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[restaurant] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
+	}
+}
+
 // settleOrder releases an order's escrow with the standard split: 80% restaurant
 // owner / 10% rider / 10% platform, folding the rider share back into the
 // restaurant (90/10) when no rider is assigned so escrow is fully released.
@@ -456,22 +545,78 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 		split.ProviderPct = 0.90
 		split.RiderPct = 0
 	}
-	return s.settlement.Settle(ctx, settlementID, split)
+	if err := s.settlement.Settle(ctx, settlementID, split); err != nil {
+		return err
+	}
+
+	// Record realized Spotlight profit into the central Commission & Profit registry.
+	// This is the food-delivery settlement point (shared by the live UpdateStatus
+	// (delivered) path and the crash-recovery reconciler re-drive). Best-effort +
+	// idempotent: the order id doubles as source ref + idempotency key, so retries /
+	// reconciliation never double-count. gross = the full order value the customer
+	// paid (total_kobo = food subtotal + delivery fee) — the SAME basis restaurant's
+	// own 10% platform cut is computed on (the escrow split above applies its
+	// PlatformPct to this same escrowed total). A recorder failure is logged and
+	// swallowed — it must NEVER fail the settlement above (restaurant's own settle
+	// already posted the platform cut to the ledger; this appends the earning row
+	// only). userID is the paying customer.
+	var grossKobo int64
+	var customerID string
+	s.db.QueryRow(ctx, `SELECT total_kobo, customer_id FROM orders WHERE id=$1`, orderID).Scan(&grossKobo, &customerID)
+	s.recordCommissionSafe(ctx, "Lifestyle", "Restaurant", "", grossKobo, orderID, &customerID)
+	return nil
 }
 
 // CancelOrder refunds the customer if the order has not yet been picked up.
+// CancelOrder is the authorized public cancel entry (DELETE endpoint). Only the order's
+// customer or the restaurant owner may cancel; the money move is delegated to the single
+// guarded cancelAndRefund path shared with the `cancelled` status transition.
 func (s *Service) CancelOrder(ctx context.Context, orderID, actorID string) error {
+	customer, owner, rider, err := s.orderParties(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if aerr := authorizeCancel(actorID, customer, owner, rider); aerr != nil {
+		return aerr
+	}
+	return s.cancelAndRefund(ctx, orderID, actorID)
+}
+
+// cancelAndRefund is the single guarded cancellation path used by BOTH the DELETE cancel
+// endpoint and a `cancelled` status transition — this is what fixes the money defect
+// where a status-PATCH cancel left the escrow stranded (it now always refunds). It locks
+// the order row FOR UPDATE so a concurrent pickup/transition cannot race it, refunds the
+// escrow (idempotent on the settlement status), marks the order cancelled, then notifies.
+// Idempotent: re-cancelling an already-cancelled order is a no-op.
+func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("restaurant: begin cancel tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
 	var status, settlementID string
-	if err := s.db.QueryRow(ctx, `SELECT status, settlement_id FROM orders WHERE id=$1`, orderID).Scan(&status, &settlementID); err != nil {
+	if err := tx.QueryRow(ctx,
+		`SELECT status, settlement_id FROM orders WHERE id=$1 FOR UPDATE`, orderID).
+		Scan(&status, &settlementID); err != nil {
 		return fmt.Errorf("restaurant: order not found")
+	}
+	if status == string(OrderCancelled) {
+		return tx.Commit(ctx) // already cancelled — idempotent no-op
 	}
 	if status == string(OrderPickedUp) || status == string(OrderDelivered) {
 		return fmt.Errorf("restaurant: cannot cancel an order that is already picked up or delivered")
 	}
+	// Refund the escrow before committing the cancel so an order is never marked
+	// cancelled without the money being returned. Refund is idempotent on the
+	// settlement status, so a retry after a mid-flight failure does not double-refund.
 	if err := s.settlement.Refund(ctx, settlementID, "order_cancelled"); err != nil {
 		return fmt.Errorf("restaurant: refund order: %w", err)
 	}
-	if _, err := s.db.Exec(ctx, `UPDATE orders SET status='cancelled' WHERE id=$1`, orderID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE orders SET status='cancelled' WHERE id=$1`, orderID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 

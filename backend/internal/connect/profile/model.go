@@ -17,11 +17,11 @@ func ValidMode(m string) bool { return validModes[m] }
 // Profile is the identity-level record. dob is NEVER serialised to peers; it is
 // only used for the age gate. The omitted json tag keeps it off the wire entirely.
 type Profile struct {
-	ID          string    `json:"id"`
-	UserID      string    `json:"user_id"`
-	DisplayName *string   `json:"display_name,omitempty"`
-	Bio         *string   `json:"bio,omitempty"`
-	City        *string   `json:"city,omitempty"`
+	ID          string  `json:"id"`
+	UserID      string  `json:"user_id"`
+	DisplayName *string `json:"display_name,omitempty"`
+	Bio         *string `json:"bio,omitempty"`
+	City        *string `json:"city,omitempty"`
 	dob         *time.Time
 	geoLat      *float64
 	geoLng      *float64

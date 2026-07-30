@@ -76,12 +76,12 @@ type historyCandidate struct {
 // is a fixed identifier (table/column names are compile-time constants here, never
 // user input) so the assembled SQL is static; only the query/userID are bound.
 type historySource struct {
-	name       string // logical source name (provenance)
-	table      string // physical table
-	userCol    string // owner column (scopes to the requesting user)
-	addrCol    string // address-text column
-	latCol     string // latitude column
-	lngCol     string // longitude column
+	name    string // logical source name (provenance)
+	table   string // physical table
+	userCol string // owner column (scopes to the requesting user)
+	addrCol string // address-text column
+	latCol  string // latitude column
+	lngCol  string // longitude column
 }
 
 // historySources is the allow-list of REAL tables mined for predictions. Adding a

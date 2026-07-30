@@ -194,7 +194,10 @@ func (s *Service) Reconcile(ctx context.Context, limit int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	type pend struct{ id, cid, gid string; w int64 }
+	type pend struct {
+		id, cid, gid string
+		w            int64
+	}
 	var batch []pend
 	for rows.Next() {
 		var p pend

@@ -281,7 +281,7 @@ func TestStateMachineTransitions(t *testing.T) {
 	}{
 		{settlement.StatusEscrowed, true, true},
 		{settlement.StatusDisputed, false, true},
-		{settlement.StatusSettled, false, false}, // terminal
+		{settlement.StatusSettled, false, false},  // terminal
 		{settlement.StatusRefunded, false, false}, // terminal
 	}
 	for _, tc := range cases {

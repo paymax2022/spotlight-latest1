@@ -22,7 +22,7 @@ var allowedAttachmentContentTypes = map[string]bool{
 	"image/png":       true,
 	"image/jpeg":      true,
 	"image/webp":      true,
-	"application/pdf":  true,
+	"application/pdf": true,
 }
 
 var allowedAttachmentExt = map[string]bool{

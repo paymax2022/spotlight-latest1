@@ -23,15 +23,18 @@ func (h *Handler) Issue(c *gin.Context) {
 		return
 	}
 	var req struct {
-		PatientID string  `json:"patient_id"`
-		ConsultID *string `json:"consult_id"`
-		Items     []Item  `json:"items"`
+		PatientID      string  `json:"patient_id"`
+		ConsultID      *string `json:"consult_id"`
+		Items          []Item  `json:"items"`
+		OverrideReason string  `json:"override_reason"` // documents proceeding past a safety hard stop (RX-011)
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, http.StatusBadRequest, "invalid body")
 		return
 	}
-	p, err := h.svc.Issue(c.Request.Context(), id, req.PatientID, req.ConsultID, req.Items)
+	// Human path: the injected ClinicalContextProvider supplies allergies/meds; a
+	// hard stop blocks unless override_reason is provided (audited).
+	p, err := h.svc.IssueChecked(c.Request.Context(), id, req.PatientID, req.ConsultID, req.Items, nil, req.OverrideReason)
 	if err != nil {
 		fail(c, http.StatusBadRequest, err.Error())
 		return

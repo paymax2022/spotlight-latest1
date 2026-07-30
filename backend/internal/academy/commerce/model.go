@@ -37,8 +37,8 @@ type ExamBundle struct {
 type Order struct {
 	ID             string    `json:"id"`
 	UserID         string    `json:"userId"`
-	Kind           string    `json:"kind"`   // plan | bundle
-	RefID          string    `json:"refId"`  // plan/bundle id
+	Kind           string    `json:"kind"`  // plan | bundle
+	RefID          string    `json:"refId"` // plan/bundle id
 	AmountMinor    int64     `json:"amountMinor"`
 	Currency       string    `json:"currency"`
 	State          string    `json:"state"`
@@ -52,7 +52,7 @@ type Order struct {
 type Entitlement struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"userId"`
-	Kind      string    `json:"kind"`   // plan | bundle | arena
+	Kind      string    `json:"kind"` // plan | bundle | arena
 	RefID     *string   `json:"refId,omitempty"`
 	State     string    `json:"state"`  // active | revoked
 	Source    string    `json:"source"` // order | bnpl | access_card | reward | scholarship
@@ -81,6 +81,23 @@ type AccessCard struct {
 	ActivatedBy *string    `json:"activatedBy,omitempty"`
 	ActivatedAt *time.Time `json:"activatedAt,omitempty"`
 	CreatedAt   time.Time  `json:"createdAt"`
+}
+
+// ── Admin oversight aggregates (read-only) ─────────────────────────────────────
+
+// OrderStateSummary is one state bucket in the payments overview: count + summed
+// amount (minor units) of orders in that state.
+type OrderStateSummary struct {
+	State       string `json:"state"`
+	Count       int64  `json:"count"`
+	AmountMinor int64  `json:"amountMinor"`
+}
+
+// OrdersOverview aggregates academy_orders by state for the admin payments console.
+type OrdersOverview struct {
+	TotalOrders      int64               `json:"totalOrders"`
+	TotalAmountMinor int64               `json:"totalAmountMinor"`
+	ByState          []OrderStateSummary `json:"byState"`
 }
 
 // ── Offline bundle manifest (academy_content_bundles, read-only) ───────────────

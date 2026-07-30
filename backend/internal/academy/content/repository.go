@@ -123,6 +123,47 @@ func (r *Repository) ListLiveLessonsForObjective(ctx context.Context, objectiveI
 	return out, rows.Err()
 }
 
+// ListLessons lists lessons admin-wide (all statuses), newest first, optionally
+// filtered by objective_id / status. Mirrors ListLiveLessonsForObjective without
+// the live-only + single-objective constraints (admin CMS surface).
+func (r *Repository) ListLessons(ctx context.Context, objectiveID, status string, limit, offset int) ([]Lesson, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	var sb strings.Builder
+	sb.WriteString(`SELECT ` + lessonCols + ` FROM public.academy_lessons WHERE 1=1`)
+	args := []any{}
+	if objectiveID != "" {
+		args = append(args, objectiveID)
+		sb.WriteString(fmt.Sprintf(" AND objective_id = $%d", len(args)))
+	}
+	if status != "" {
+		args = append(args, status)
+		sb.WriteString(fmt.Sprintf(" AND status = $%d", len(args)))
+	}
+	sb.WriteString(" ORDER BY updated_at DESC")
+	args = append(args, limit)
+	sb.WriteString(fmt.Sprintf(" LIMIT $%d", len(args)))
+	if offset > 0 {
+		args = append(args, offset)
+		sb.WriteString(fmt.Sprintf(" OFFSET $%d", len(args)))
+	}
+	rows, err := r.db.Query(ctx, sb.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Lesson{}
+	for rows.Next() {
+		l, err := scanLesson(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *l)
+	}
+	return out, rows.Err()
+}
+
 // TransitionLesson runs the guarded publish lifecycle for a lesson. Illegal
 // transitions are rejected AND audited (severity=warning). The status read +
 // update + audit happen in one tx so the guard reads the committed state.
@@ -409,6 +450,47 @@ func (r *Repository) AdvanceProduction(ctx context.Context, actor, id string, to
 	}
 	if err := insertAuditTx(ctx, tx, actor, "production.advanced", "academy_content_production", id,
 		map[string]any{"from": string(from), "to": string(to)}, "info"); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return r.GetProduction(ctx, id)
+}
+
+// BlockProduction moves a production card to the blocked status (active→blocked).
+// Guarded + audited in ONE tx, mirroring AdvanceProduction: illegal transitions
+// (e.g. blocking a done/already-blocked card) are rejected AND audited.
+func (r *Repository) BlockProduction(ctx context.Context, actor, id string) (*Production, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var from ProductionStatus
+	err = tx.QueryRow(ctx, `SELECT status FROM public.academy_content_productions WHERE id = $1 FOR UPDATE`, id).Scan(&from)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if !canBlock(from) {
+		_ = insertAuditTx(ctx, tx, actor, "production.block_rejected", "academy_content_production", id,
+			map[string]any{"from": string(from), "to": string(ProdBlocked), "reason": "illegal_transition"}, "warning")
+		_ = tx.Commit(ctx)
+		return nil, fmt.Errorf("%w: %s -> %s", ErrIllegalTransition, from, ProdBlocked)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE public.academy_content_productions SET status = $2, updated_at = now() WHERE id = $1`,
+		id, string(ProdBlocked)); err != nil {
+		return nil, err
+	}
+	if err := insertAuditTx(ctx, tx, actor, "production.blocked", "academy_content_production", id,
+		map[string]any{"from": string(from), "to": string(ProdBlocked)}, "info"); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

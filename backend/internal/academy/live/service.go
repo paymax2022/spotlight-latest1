@@ -112,6 +112,23 @@ func (s *Service) ListSessions(ctx context.Context, f SessionFilter) ([]LiveSess
 	return s.repo.ListSessions(ctx, f)
 }
 
+// ListAllSessions returns EVERY session regardless of state (admin oversight read).
+func (s *Service) ListAllSessions(ctx context.Context, limit int) ([]LiveSession, error) {
+	return s.repo.ListAllSessions(ctx, limit)
+}
+
+// ListReplays returns ended sessions that have a stored replay reference (admin read;
+// reuses the "replay" listing view).
+func (s *Service) ListReplays(ctx context.Context, limit int) ([]LiveSession, error) {
+	return s.repo.ListSessions(ctx, SessionFilter{View: "replay", Limit: limit})
+}
+
+// GetSession returns a single live session by id (public catalog read; same
+// LiveSession shape as the ListSessions list item, no owner scope).
+func (s *Service) GetSession(ctx context.Context, id string) (*LiveSession, error) {
+	return s.repo.GetSession(ctx, id)
+}
+
 // ── Community ──────────────────────────────────────────────────────────────────
 
 // CreateGroup creates a study group owned by (and auto-joining) the caller.
@@ -202,6 +219,24 @@ func (s *Service) DecideReport(ctx context.Context, moderatorID, reportID, actio
 	}
 	toState := reportStateForAction(action)
 	return s.repo.DecideReport(ctx, moderatorID, reportID, action, toState)
+}
+
+// TriageReport moves a pending report into triaged (a pre-decision workflow step;
+// sibling of DecideReport). Guarded + audited via the moderation state machine.
+func (s *Service) TriageReport(ctx context.Context, moderatorID, reportID string) (*ModerationReport, error) {
+	if reportID == "" {
+		return nil, ErrInvalidInput
+	}
+	return s.repo.TransitionReport(ctx, moderatorID, reportID, ReportTriaged, "moderation.triaged")
+}
+
+// EscalateReport moves a pending or triaged report into escalated (raise to senior
+// moderation; sibling of DecideReport). Guarded + audited via the moderation state machine.
+func (s *Service) EscalateReport(ctx context.Context, moderatorID, reportID string) (*ModerationReport, error) {
+	if reportID == "" {
+		return nil, ErrInvalidInput
+	}
+	return s.repo.TransitionReport(ctx, moderatorID, reportID, ReportEscalated, "moderation.escalated")
 }
 
 // HideContent directly hides a discussion (moderator action outside the report flow).

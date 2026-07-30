@@ -233,18 +233,18 @@ type CreateLabOrderRequest struct {
 
 // LabResult mirrors public.doctor_lab_results (+ values).
 type LabResult struct {
-	ID         string            `json:"id"`
-	UserID     string            `json:"userId"`
-	OrderID    *string           `json:"orderId,omitempty"`
-	Ref        *string           `json:"ref,omitempty"`
-	Patient    json.RawMessage   `json:"patient,omitempty"`
-	LabName    *string           `json:"labName,omitempty"`
-	ReportedAt *time.Time        `json:"reportedAt,omitempty"`
-	Reviewed   bool              `json:"reviewed"`
-	ReviewedAt *time.Time        `json:"reviewedAt,omitempty"`
-	Values     []LabResultValue  `json:"values,omitempty"`
-	CreatedAt  time.Time         `json:"createdAt"`
-	UpdatedAt  time.Time         `json:"updatedAt"`
+	ID         string           `json:"id"`
+	UserID     string           `json:"userId"`
+	OrderID    *string          `json:"orderId,omitempty"`
+	Ref        *string          `json:"ref,omitempty"`
+	Patient    json.RawMessage  `json:"patient,omitempty"`
+	LabName    *string          `json:"labName,omitempty"`
+	ReportedAt *time.Time       `json:"reportedAt,omitempty"`
+	Reviewed   bool             `json:"reviewed"`
+	ReviewedAt *time.Time       `json:"reviewedAt,omitempty"`
+	Values     []LabResultValue `json:"values,omitempty"`
+	CreatedAt  time.Time        `json:"createdAt"`
+	UpdatedAt  time.Time        `json:"updatedAt"`
 }
 
 // LabResultValue mirrors public.doctor_lab_result_values.
@@ -320,23 +320,23 @@ type Notification struct {
 
 // Settings mirrors public.doctor_settings.
 type Settings struct {
-	ID                  string          `json:"id"`
-	UserID              string          `json:"userId"`
-	NotifyAppointments  bool            `json:"notifyAppointments"`
-	NotifyMessages      bool            `json:"notifyMessages"`
-	NotifyPayouts       bool            `json:"notifyPayouts"`
-	PushEnabled         bool            `json:"pushEnabled"`
-	EmailEnabled        bool            `json:"emailEnabled"`
-	SMSEnabled          bool            `json:"smsEnabled"`
-	ShowOnlineStatus    bool            `json:"showOnlineStatus"`
-	AutoAcceptInstant   bool            `json:"autoAcceptInstant"`
-	PreferredCurrency   string          `json:"preferredCurrency"`
-	BiometricEnabled    bool            `json:"biometricEnabled"`
-	TwoFactorEnabled    bool            `json:"twoFactorEnabled"`
-	AppPreferences      json.RawMessage `json:"appPreferences,omitempty"`
-	Security            json.RawMessage `json:"security,omitempty"`
-	CreatedAt           time.Time       `json:"createdAt"`
-	UpdatedAt           time.Time       `json:"updatedAt"`
+	ID                 string          `json:"id"`
+	UserID             string          `json:"userId"`
+	NotifyAppointments bool            `json:"notifyAppointments"`
+	NotifyMessages     bool            `json:"notifyMessages"`
+	NotifyPayouts      bool            `json:"notifyPayouts"`
+	PushEnabled        bool            `json:"pushEnabled"`
+	EmailEnabled       bool            `json:"emailEnabled"`
+	SMSEnabled         bool            `json:"smsEnabled"`
+	ShowOnlineStatus   bool            `json:"showOnlineStatus"`
+	AutoAcceptInstant  bool            `json:"autoAcceptInstant"`
+	PreferredCurrency  string          `json:"preferredCurrency"`
+	BiometricEnabled   bool            `json:"biometricEnabled"`
+	TwoFactorEnabled   bool            `json:"twoFactorEnabled"`
+	AppPreferences     json.RawMessage `json:"appPreferences,omitempty"`
+	Security           json.RawMessage `json:"security,omitempty"`
+	CreatedAt          time.Time       `json:"createdAt"`
+	UpdatedAt          time.Time       `json:"updatedAt"`
 }
 
 // UpdateSettingsRequest is the body for PUT /settings. All fields optional (PATCH-like).

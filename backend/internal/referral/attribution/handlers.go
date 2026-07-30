@@ -89,11 +89,11 @@ func (h *Handler) ListReassignments(c *gin.Context) {
 	out := make([]gin.H, 0)
 	for rows.Next() {
 		var (
-			id, attrID                          string
-			fromP, toP, reason, reqBy, cosign   *string
-			benefitsHouse                       bool
-			status                              string
-			createdAt, decidedAt                any
+			id, attrID                        string
+			fromP, toP, reason, reqBy, cosign *string
+			benefitsHouse                     bool
+			status                            string
+			createdAt, decidedAt              any
 		)
 		if err := rows.Scan(&id, &attrID, &fromP, &toP, &reason, &reqBy, &cosign,
 			&benefitsHouse, &status, &createdAt, &decidedAt); err != nil {

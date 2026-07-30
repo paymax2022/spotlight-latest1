@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	AuthUserContextKey = "authUser"
+	AuthUserContextKey  = "authUser"
 	AuthTokenContextKey = "authToken"
 )
 

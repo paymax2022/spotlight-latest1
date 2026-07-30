@@ -369,9 +369,10 @@ func TestLiveDB_Withdraw_ParksUnitsOnCreate_ReturnsOnProviderFailure(t *testing.
 	if err != nil {
 		t.Fatalf("Withdraw: %v", err)
 	}
-	// The mock provider always accepts, so the withdrawal should reach broadcast.
-	if w.Status != crypto.WithdrawalBroadcast {
-		t.Fatalf("withdrawal status = %s, want %s (mock provider always accepts)", w.Status, crypto.WithdrawalBroadcast)
+	// Member path stops at the AML gate: requested → pending_review (units parked, NO
+	// provider dispatch). A compliance officer must approve before anything can broadcast.
+	if w.Status != crypto.WithdrawalPendingReview {
+		t.Fatalf("withdrawal status = %s, want %s (member path stops at the AML gate)", w.Status, crypto.WithdrawalPendingReview)
 	}
 
 	holdingsAfter, err := svc.Holdings(ctx, userID)
@@ -381,6 +382,16 @@ func TestLiveDB_Withdraw_ParksUnitsOnCreate_ReturnsOnProviderFailure(t *testing.
 	unitsAfter := findHoldingUnits(holdingsAfter, fromAssetID)
 	if unitsBefore-unitsAfter != withdrawUnits {
 		t.Errorf("holding decreased by %d, want exactly %d (units parked on withdrawal creation)", unitsBefore-unitsAfter, withdrawUnits)
+	}
+
+	// AML approval clears the gate: pending_review → approved → broadcast (mock provider
+	// accepts). Only after broadcast may the member confirm the on-chain transaction.
+	approved, err := svc.AdminDecideWithdrawal(ctx, "qa-aml-officer", w.ID, "approve", "aml cleared")
+	if err != nil {
+		t.Fatalf("AdminDecideWithdrawal(approve): %v", err)
+	}
+	if approved.Status != crypto.WithdrawalBroadcast {
+		t.Fatalf("status after admin approve = %s, want %s (mock provider always accepts)", approved.Status, crypto.WithdrawalBroadcast)
 	}
 
 	// Confirm the withdrawal — units remain burned (never returned).

@@ -1,11 +1,6 @@
 import { env } from '@/config/env';
 import type {
   MktListing,
-  MktOrder,
-  MktDispute,
-  MktDisputeDecideRequest,
-  MktDisputeDecision,
-  MktDisputeStatus,
   MktFlag,
   MktFlagActionRequest,
   MktAdminAuditLogEntry,
@@ -18,8 +13,8 @@ import type {
 // directly off the raw *gin.Engine at "/v1/marketplace" — there is NO "/api"
 // prefix for this module. Admin routes: /v1/marketplace/admin/*, each mutating
 // route requires reason_code in the body and RBAC guard("marketplace.admin.<perm>").
-// Dual-approval: dispute decisions on orders > NGN 500,000 (50_000_000 kobo)
-// return 202 { status: 'awaiting_second_approval', ... } instead of executing.
+// Escrow/orders/disputes were REMOVED from the backend per ADR-023 — this console
+// only covers moderation, flags, boosts, and the audit log.
 //
 // env.apiBaseUrl looks like http://localhost:8080/api/v1 → strip the /api/v1
 // suffix entirely to reach the engine root, then append /v1/marketplace/admin.
@@ -38,11 +33,6 @@ export function formatKobo(kobo: number | null | undefined): string {
   if (kobo == null) return '—';
   return `₦${(kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
 }
-
-// Dual-approval threshold per §2.2/§2.3/§6.3 of the build contract: NGN 500,000
-// in kobo. Kept here (not just server-side) so the UI can pre-render the
-// "will require second approval" hint before submission.
-export const DUAL_APPROVAL_THRESHOLD_KOBO = 500_000 * 100;
 
 function delay<T>(value: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), 120));
@@ -104,56 +94,6 @@ const FIXTURE_MODERATION_QUEUE: MktListing[] = [
   },
 ];
 
-const FIXTURE_ORDERS: Record<string, MktOrder> = {
-  ord_x1: {
-    id: 'ord_x1', market_id: 'NG', listing_id: 'lst_c3d4', buyer_id: 'usr_4d8e', seller_id: 'usr_2b9e', offer_id: null,
-    amount_kobo: 850_000_000, escrow_fee_kobo: 8_500_000, delivery_fee_kobo: 2_000_000, status: 'disputed',
-    ledger_fund_ref: 'ldg_fund_9911', ledger_release_ref: null, delivery_ref: 'dlv_2234',
-    inspection_deadline: iso(-48 * 60), created_at: iso(4_000), updated_at: iso(120), funded_at: iso(3_900),
-    delivered_at: iso(200), released_at: null, cancelled_at: null, listing_title: '2015 Toyota Camry — full option, clean papers',
-  },
-  ord_x2: {
-    id: 'ord_x2', market_id: 'NG', listing_id: 'lst_a1b2', buyer_id: 'usr_1122', seller_id: 'usr_7f2a', offer_id: null,
-    amount_kobo: 65_000_000, escrow_fee_kobo: 650_000, delivery_fee_kobo: 300_000, status: 'disputed',
-    ledger_fund_ref: 'ldg_fund_7712', ledger_release_ref: null, delivery_ref: 'dlv_5567',
-    inspection_deadline: iso(-10 * 60), created_at: iso(2_500), updated_at: iso(60), funded_at: iso(2_400),
-    delivered_at: iso(150), released_at: null, cancelled_at: null, listing_title: 'iPhone 13 Pro Max 256GB — mint condition',
-  },
-  ord_x3: {
-    id: 'ord_x3', market_id: 'NG', listing_id: 'lst_g7h8', buyer_id: 'usr_3344', seller_id: 'usr_5566', offer_id: null,
-    amount_kobo: 12_000_000, escrow_fee_kobo: 120_000, delivery_fee_kobo: 250_000, status: 'in_delivery',
-    ledger_fund_ref: 'ldg_fund_1200', ledger_release_ref: null, delivery_ref: 'dlv_9981',
-    inspection_deadline: null, created_at: iso(6_500), updated_at: iso(4_400), funded_at: iso(6_400),
-    delivered_at: null, released_at: null, cancelled_at: null, listing_title: 'Samsung Galaxy Tab S8',
-  },
-};
-
-const FIXTURE_DISPUTES: MktDispute[] = [
-  {
-    id: 'dsp_1001', order_id: 'ord_x1', opened_by: 'usr_4d8e', reason_code: 'item_not_as_described', status: 'under_review',
-    decision: null, decision_notes: null, decided_by: null, requires_dual_approval: false, second_approver_id: null,
-    evidence_deadline: iso(-100), created_at: iso(4_200), decided_at: null, executed_at: null,
-    order: FIXTURE_ORDERS.ord_x1, listing_title: FIXTURE_ORDERS.ord_x1.listing_title,
-    buyer_evidence: [
-      { type: 'photo', url_or_text: 'https://picsum.photos/seed/dmg1/500', submitted_by: 'buyer', created_at: iso(3_800) },
-      { type: 'chat_excerpt', url_or_text: '"Seller confirmed no accident history but chassis shows repaint."', submitted_by: 'buyer', created_at: iso(3_780) },
-    ],
-    seller_evidence: [
-      { type: 'document', url_or_text: 'Vehicle inspection report (pre-sale).pdf', submitted_by: 'seller', created_at: iso(3_600) },
-    ],
-  },
-  {
-    id: 'dsp_1002', order_id: 'ord_x2', opened_by: 'usr_1122', reason_code: 'item_damaged', status: 'under_review',
-    decision: null, decision_notes: null, decided_by: null, requires_dual_approval: false, second_approver_id: null,
-    evidence_deadline: iso(-20), created_at: iso(2_600), decided_at: null, executed_at: null,
-    order: FIXTURE_ORDERS.ord_x2, listing_title: FIXTURE_ORDERS.ord_x2.listing_title,
-    buyer_evidence: [
-      { type: 'photo', url_or_text: 'https://picsum.photos/seed/crack1/500', submitted_by: 'buyer', created_at: iso(200) },
-    ],
-    seller_evidence: [],
-  },
-];
-
 const FIXTURE_FLAGS: MktFlag[] = [
   { id: 'flg_1', target_type: 'listing', target_id: 'lst_e5f6', reporter_id: 'usr_8899', reason_code: 'suspected_wholesale_spam', notes: 'Bulk listing posing as retail, likely a reseller violating single-item policy.', status: 'open', reviewed_by: null, created_at: iso(300), reviewed_at: null },
   { id: 'flg_2', target_type: 'user', target_id: 'usr_2b9e', reporter_id: 'usr_4d8e', reason_code: 'suspected_fraud', notes: 'Buyer reports vehicle history does not match listing claims.', status: 'open', reviewed_by: null, created_at: iso(180), reviewed_at: null },
@@ -164,7 +104,7 @@ const FIXTURE_AUDIT_LOG: MktAdminAuditLogEntry[] = [
   { id: 1042, admin_id: 'adm_ops1', admin_role: 'marketplace-fraud-ops', action: 'listing.reject', target_type: 'listing', target_id: 'lst_z9y8', reason_code: 'PROHIBITED_ITEM', before_state: { status: 'pending_review' }, after_state: { status: 'removed_policy' }, created_at: iso(600) },
   { id: 1041, admin_id: 'adm_ops2', admin_role: 'marketplace-fraud-ops', action: 'flags.action', target_type: 'flag', target_id: 'flg_9', reason_code: 'CONFIRMED_FRAUD', before_state: { status: 'open' }, after_state: { status: 'actioned' }, created_at: iso(720) },
   { id: 1040, admin_id: 'adm_ops1', admin_role: 'marketplace-fraud-ops', action: 'listing.approve', target_type: 'listing', target_id: 'lst_w1v2', reason_code: '', before_state: { status: 'pending_review' }, after_state: { status: 'active' }, created_at: iso(900) },
-  { id: 1039, admin_id: 'adm_super', admin_role: 'super-admin', action: 'dispute.decide', target_type: 'dispute', target_id: 'dsp_889', reason_code: 'EVIDENCE_SUPPORTS_BUYER', before_state: { status: 'under_review' }, after_state: { status: 'decided', decision: 'refund_buyer' }, created_at: iso(1_400) },
+  { id: 1039, admin_id: 'adm_super', admin_role: 'super-admin', action: 'boost.reject', target_type: 'boost', target_id: 'bst_889', reason_code: 'POLICY_VIOLATION', before_state: { status: 'active' }, after_state: { status: 'rejected_with_reason' }, created_at: iso(1_400) },
 ];
 
 const FIXTURE_BOOSTS: MktBoost[] = [
@@ -225,73 +165,6 @@ export async function rejectListing(id: string, reasonCode: string): Promise<Mkt
   return res.json();
 }
 
-// ─── M4 — Dispute workbench ──────────────────────────────────────────────────
-
-export async function listDisputesQueue(status?: MktDisputeStatus): Promise<MktDispute[]> {
-  if (USE_FIXTURES) return delay(status ? FIXTURE_DISPUTES.filter((d) => d.status === status) : [...FIXTURE_DISPUTES]);
-  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
-  const res = await fetch(`${marketplaceAdminBase()}/disputes/queue${qs}`, { cache: 'no-store', headers: authHeaders() });
-  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Dispute queue fetch failed'));
-  const data = await res.json();
-  return Array.isArray(data) ? data : data.data ?? [];
-}
-
-export async function getDispute(id: string): Promise<MktDispute> {
-  if (USE_FIXTURES) {
-    const found = FIXTURE_DISPUTES.find((d) => d.id === id);
-    if (!found) throw new Error(`Dispute ${id} not found`);
-    return delay(found);
-  }
-  const res = await fetch(`${marketplaceAdminBase()}/disputes/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
-  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Dispute fetch failed'));
-  return res.json();
-}
-
-// POST /admin/disputes/:id/decide — reason_code MANDATORY. If the underlying
-// order.amount_kobo > NGN 500k the API returns 202 with
-// status: 'awaiting_second_approval' (still resolved here as a normal MktDispute
-// response so the caller can inspect .status / .requires_dual_approval).
-export async function decideDispute(id: string, input: MktDisputeDecideRequest): Promise<MktDispute> {
-  if (!input.reason_code || !input.reason_code.trim()) throw new Error('reason_code is required to decide a dispute.');
-  if (USE_FIXTURES) {
-    const found = FIXTURE_DISPUTES.find((d) => d.id === id);
-    if (!found) throw new Error(`Dispute ${id} not found`);
-    const amount = found.order?.amount_kobo ?? 0;
-    const dual = amount > DUAL_APPROVAL_THRESHOLD_KOBO;
-    return delay({
-      ...found,
-      decision: input.decision,
-      decision_notes: input.notes ?? null,
-      decided_by: 'adm_current',
-      requires_dual_approval: dual,
-      status: dual ? 'decided' : 'executed',
-      decided_at: new Date().toISOString(),
-      executed_at: dual ? null : new Date().toISOString(),
-    });
-  }
-  const res = await fetch(`${marketplaceAdminBase()}/disputes/${encodeURIComponent(id)}/decide`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify(input),
-  });
-  if (!res.ok && res.status !== 202) throw new Error(await parseErrorMessage(res, 'Dispute decision failed'));
-  return res.json();
-}
-
-// POST /admin/disputes/:id/approve — second-approver sign-off for dual-approval
-// disputes (order amount > NGN 500k). Backend enforces the approver must differ
-// from the original decider (409 SAME_APPROVER_NOT_ALLOWED otherwise).
-export async function approveDisputeSecondSign(id: string, reasonCode?: string): Promise<MktDispute> {
-  if (USE_FIXTURES) {
-    const found = FIXTURE_DISPUTES.find((d) => d.id === id);
-    if (!found) throw new Error(`Dispute ${id} not found`);
-    return delay({ ...found, status: 'executed', second_approver_id: 'adm_second', executed_at: new Date().toISOString() });
-  }
-  const res = await fetch(`${marketplaceAdminBase()}/disputes/${encodeURIComponent(id)}/approve`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify(reasonCode ? { reason_code: reasonCode } : {}),
-  });
-  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Second approval failed'));
-  return res.json();
-}
-
 // ─── Flags queue ─────────────────────────────────────────────────────────────
 
 export async function listFlags(status?: 'open' | 'actioned' | 'dismissed'): Promise<MktFlag[]> {
@@ -332,23 +205,12 @@ export async function listAuditLog(filters?: { target_type?: string; target_id?:
   return Array.isArray(data) ? data : data.data ?? [];
 }
 
-// ─── Orders aging dashboard ──────────────────────────────────────────────────
-
-export async function listOrdersAging(minAgeHours = 72): Promise<MktOrder[]> {
-  if (USE_FIXTURES) return delay(Object.values(FIXTURE_ORDERS));
-  const res = await fetch(`${marketplaceAdminBase()}/orders/aging?min_age_hours=${minAgeHours}`, { cache: 'no-store', headers: authHeaders() });
-  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Orders aging fetch failed'));
-  const data = await res.json();
-  return Array.isArray(data) ? data : data.data ?? [];
-}
-
-// ─── Boosts admin (scaffold — reject-with-reason wired) ─────────────────────
+// ─── Boosts admin (list + reject-with-reason) ───────────────────────────────
 
 export async function listBoosts(): Promise<MktBoost[]> {
   if (USE_FIXTURES) return delay([...FIXTURE_BOOSTS]);
-  // No dedicated GET /admin/boosts list route is frozen in the integration
-  // contract yet — scaffolded against the member GET boosts/:id pattern; wire
-  // to the real admin list endpoint once Agent A exposes one.
+  // GET /v1/marketplace/admin/boosts → { data: [ Boost ] } (RBAC
+  // marketplace.admin.moderation). Reject uses POST /admin/boosts/:id/reject.
   const res = await fetch(`${marketplaceAdminBase()}/boosts`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Boosts fetch failed'));
   const data = await res.json();
@@ -368,5 +230,3 @@ export async function rejectBoost(id: string, reasonCode: string): Promise<MktBo
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Boost reject failed'));
   return res.json();
 }
-
-export type { MktDisputeDecision };

@@ -46,11 +46,11 @@ func pageParams(c *gin.Context) (int, int) {
 // query params rather than introducing a conflicting wildcard at /properties/:X or
 // /reviews/:X, and the verified-guest create/eligibility reuse the SB0 :id node.
 func (h *Handler) RegisterMember(g *gin.RouterGroup) {
-	g.GET("/reviews", h.ListByProperty)                          // ?property_id= (PUBLISHED)
-	g.GET("/reviews-mine", h.ListMine)                           // my reviews
-	g.GET("/review-response", h.GetResponse)                     // ?review_id= (hotelier response)
-	g.GET("/reservations/:id/review-eligibility", h.CanReview)   // REVIEWABLE check
-	g.POST("/reservations/:id/review", h.Create)                 // verified-guest create
+	g.GET("/reviews", h.ListByProperty)                        // ?property_id= (PUBLISHED)
+	g.GET("/reviews-mine", h.ListMine)                         // my reviews
+	g.GET("/review-response", h.GetResponse)                   // ?review_id= (hotelier response)
+	g.GET("/reservations/:id/review-eligibility", h.CanReview) // REVIEWABLE check
+	g.POST("/reservations/:id/review", h.Create)               // verified-guest create
 }
 
 // RegisterExtranet wires the hotelier review routes onto the extranet group.

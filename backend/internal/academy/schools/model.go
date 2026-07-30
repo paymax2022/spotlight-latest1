@@ -130,18 +130,30 @@ type Overview struct {
 	EnrollmentCount map[string]int `json:"enrollmentCount"` // state → count
 }
 
+// AdminOverview is the platform-wide (all-institutions) admin dashboard aggregate:
+// institution/licence counts, seat totals across active licences, and enrolment counts
+// by state across every institution.
+type AdminOverview struct {
+	Institutions   int            `json:"institutions"`
+	Licences       int            `json:"licences"`
+	ActiveLicences int            `json:"activeLicences"`
+	SeatsTotal     int            `json:"seatsTotal"`  // sum of seats over active licences
+	SeatsUsed      int            `json:"seatsUsed"`   // sum of used_seats over active licences
+	Enrollments    map[string]int `json:"enrollments"` // state → count across all institutions
+}
+
 // ── Bulk-enrolment result ───────────────────────────────────────────────────────
 
 // BulkEnrollResult reports the outcome of a seat-capped, idempotent bulk enrolment:
 // how many learners were enrolled (newly seated), how many were replays (already
 // enrolled — no new seat), and whether the seat cap stopped the run early.
 type BulkEnrollResult struct {
-	Enrolled       []string `json:"enrolled"`       // newly seated learner ids
+	Enrolled        []string `json:"enrolled"`        // newly seated learner ids
 	AlreadyEnrolled []string `json:"alreadyEnrolled"` // idempotent replays (no new seat)
-	Succeeded      int      `json:"succeeded"`      // count newly seated this call
-	SeatLimitHit   bool     `json:"seatLimitHit"`   // true ⇒ cap reached, remaining rejected
-	UsedSeats      int      `json:"usedSeats"`
-	Seats          int      `json:"seats"`
+	Succeeded       int      `json:"succeeded"`       // count newly seated this call
+	SeatLimitHit    bool     `json:"seatLimitHit"`    // true ⇒ cap reached, remaining rejected
+	UsedSeats       int      `json:"usedSeats"`
+	Seats           int      `json:"seats"`
 }
 
 // ── Request DTOs ────────────────────────────────────────────────────────────────

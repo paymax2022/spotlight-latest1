@@ -77,6 +77,27 @@ func (r *Repository) ListSchools(ctx context.Context) ([]School, error) {
 	return out, rows.Err()
 }
 
+// ListAllSchools lists EVERY school regardless of status (admin oversight read — not
+// owner-scoped and not filtered to active, unlike the member ListSchools).
+func (r *Repository) ListAllSchools(ctx context.Context) ([]School, error) {
+	const q = `SELECT id, name, code, virtual_account_ref, contact, status, created_at
+	           FROM academy_schools ORDER BY name ASC`
+	rows, err := r.db.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []School{}
+	for rows.Next() {
+		var s School
+		if err := rows.Scan(&s.ID, &s.Name, &s.Code, &s.VirtualAccountRef, &s.Contact, &s.Status, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // ── Fee schedules (CRUD / reads) ────────────────────────────────────────────────
 
 func (r *Repository) InsertFeeSchedule(ctx context.Context, schoolID, name, classCode, term string, amountMinor int64, currency string, dueDate *time.Time) (*FeeSchedule, error) {
@@ -118,6 +139,27 @@ func (r *Repository) ListFeeSchedules(ctx context.Context, schoolID, classCode s
 	}
 	q += " ORDER BY created_at DESC"
 	rows, err := r.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []FeeSchedule{}
+	for rows.Next() {
+		f, err := scanFeeSchedule(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *f)
+	}
+	return out, rows.Err()
+}
+
+// ListAllFeeSchedules lists EVERY fee schedule regardless of status/school (admin
+// oversight read — mirrors ListFeeSchedules without the active-only / owner filters).
+func (r *Repository) ListAllFeeSchedules(ctx context.Context) ([]FeeSchedule, error) {
+	const q = `SELECT id, school_id, class_code, term, name, amount_minor, currency, due_date, status, created_at
+	           FROM academy_fee_schedules ORDER BY created_at DESC`
+	rows, err := r.db.Query(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -235,6 +277,30 @@ func (r *Repository) ListPots(ctx context.Context, userID string) ([]SavingsPot,
 	return out, rows.Err()
 }
 
+// ListAllPots lists EVERY savings pot across all users (admin oversight read — mirrors
+// ListPots without the user_id owner filter). saved_minor stays DERIVED via
+// SUM(contributions); never a stored shadow balance.
+func (r *Repository) ListAllPots(ctx context.Context) ([]SavingsPot, error) {
+	const q = `SELECT p.id, p.user_id, p.goal_name, p.target_minor,
+	                  COALESCE((SELECT SUM(c.amount_minor) FROM academy_pot_contributions c WHERE c.pot_id = p.id), 0) AS saved_minor,
+	                  p.fee_schedule_id, p.status, p.created_at
+	           FROM academy_savings_pots p ORDER BY p.created_at DESC`
+	rows, err := r.db.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SavingsPot{}
+	for rows.Next() {
+		var p SavingsPot
+		if err := rows.Scan(&p.ID, &p.UserID, &p.GoalName, &p.TargetMinor, &p.SavedMinor, &p.FeeScheduleID, &p.Status, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // SumContributions is the DERIVED pot balance — the single source of truth for
 // "saved_minor". Runs inside the supplied querier so a fund + read are consistent.
 func sumContributions(ctx context.Context, q querier, potID string) (int64, error) {
@@ -312,6 +378,29 @@ func (r *Repository) ListDisbursements(ctx context.Context, payerUserID string) 
 	                  state, source, payment_ref, payout_ref, idempotency_key, created_at, reconciled_at
 	           FROM academy_disbursements WHERE payer_user_id = $1 ORDER BY created_at DESC`
 	rows, err := r.db.Query(ctx, q, payerUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Disbursement{}
+	for rows.Next() {
+		d, err := scanDisbursement(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *d)
+	}
+	return out, rows.Err()
+}
+
+// ListAllDisbursements lists EVERY disbursement regardless of payer (admin oversight
+// read — mirrors ListDisbursements without the payer_user_id owner filter). The reconcile
+// handler reads a single row via GetDisbursement; this backs the admin-wide list view.
+func (r *Repository) ListAllDisbursements(ctx context.Context) ([]Disbursement, error) {
+	const q = `SELECT id, fee_schedule_id, school_id, payer_user_id, student_ref, amount_minor, currency,
+	                  state, source, payment_ref, payout_ref, idempotency_key, created_at, reconciled_at
+	           FROM academy_disbursements ORDER BY created_at DESC`
+	rows, err := r.db.Query(ctx, q)
 	if err != nil {
 		return nil, err
 	}

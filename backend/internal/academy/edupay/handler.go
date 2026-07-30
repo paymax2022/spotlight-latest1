@@ -91,12 +91,17 @@ func (h *Handler) fail(c *gin.Context, err error) {
 //	        POST /edupay/link
 //	        GET  /edupay/me
 //	        POST /edupay/pay
+//	        GET  /edupay/pots            — the caller's OWN pots (owner-scoped)
 //	        POST /edupay/pots
 //	        POST /edupay/pots/:id/fund
 //	        POST /edupay/pots/:id/pay
-//	admin : POST /edupay/admin/schools
+//	admin : GET  /edupay/admin/schools          — all schools (admin-wide)
+//	        POST /edupay/admin/schools
+//	        GET  /edupay/admin/fee-schedules     — all fee schedules (admin-wide)
 //	        POST /edupay/admin/fee-schedules
+//	        GET  /edupay/admin/disbursements     — all disbursements (admin-wide)
 //	        POST /edupay/admin/disbursements/:id/reconcile
+//	        GET  /edupay/admin/pots              — all savings pots (admin-wide)
 //	        GET  /edupay/admin/scholarships
 //	        POST /edupay/admin/scholarships
 //	        POST /edupay/admin/scholarships/award
@@ -123,6 +128,7 @@ func RegisterAcademyEduPay(member, admin *gin.RouterGroup, pool *pgxpool.Pool, r
 		mg.POST("/link", h.LinkSchool)
 		mg.GET("/me", h.GetMyEduPay)
 		mg.POST("/pay", h.PayFees)
+		mg.GET("/pots", h.ListMyPots)
 		mg.POST("/pots", h.CreatePot)
 		mg.POST("/pots/:id/fund", h.FundPot)
 		mg.POST("/pots/:id/pay", h.PayFromPot)
@@ -132,9 +138,13 @@ func RegisterAcademyEduPay(member, admin *gin.RouterGroup, pool *pgxpool.Pool, r
 		guard := middleware.RequirePermission(rbac, "academy.edupay")
 		ag := admin.Group("/edupay/admin")
 		ag.Use(guard)
+		ag.GET("/schools", h.AdminListSchools)
 		ag.POST("/schools", h.AdminCreateSchool)
+		ag.GET("/fee-schedules", h.AdminListFeeSchedules)
 		ag.POST("/fee-schedules", h.AdminCreateFeeSchedule)
+		ag.GET("/disbursements", h.AdminListDisbursements)
 		ag.POST("/disbursements/:id/reconcile", h.AdminReconcile)
+		ag.GET("/pots", h.AdminListPots)
 		ag.GET("/scholarships", h.AdminListScholarships)
 		ag.POST("/scholarships", h.AdminCreateScholarship)
 		ag.POST("/scholarships/award", h.AdminAwardScholarship)
@@ -264,7 +274,57 @@ func (h *Handler) PayFromPot(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
+// ListMyPots lists the caller's OWN savings pots (owner-scoped).
+func (h *Handler) ListMyPots(c *gin.Context) {
+	u, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+	out, err := h.svc.ListMyPots(c.Request.Context(), u)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
 // ── Admin handlers (RBAC academy.edupay) ─────────────────────────────────────────
+
+func (h *Handler) AdminListSchools(c *gin.Context) {
+	out, err := h.svc.AdminListSchools(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+func (h *Handler) AdminListFeeSchedules(c *gin.Context) {
+	out, err := h.svc.AdminListFeeSchedules(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+func (h *Handler) AdminListDisbursements(c *gin.Context) {
+	out, err := h.svc.AdminListDisbursements(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+func (h *Handler) AdminListPots(c *gin.Context) {
+	out, err := h.svc.AdminListPots(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
 
 func (h *Handler) AdminCreateSchool(c *gin.Context) {
 	var req CreateSchoolRequest

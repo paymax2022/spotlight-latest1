@@ -12,6 +12,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import { useMatchableCampaign, useSetupMatch } from '@/features/crowdfunding/hooks/useCsr';
 import { formatNaira } from '@/features/crowdfunding/utils/crowdfundingFormatters';
+import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 import type { MatchRatio } from '@/features/crowdfunding/types/csr.types';
 
 const RATIOS: { value: MatchRatio; label: string; sub: string }[] = [
@@ -33,7 +34,7 @@ export default function MatchSetupScreen() {
 
   if (isLoading || !c) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Set up match" /><StateView kind="loading" /></SafeAreaView>;
 
-  const capKobo = capText ? Number(capText.replace(/[^0-9]/g, '')) * 100 : 0;
+  const capKobo = capText ? nairaStringToKobo(capText) : 0;
   const valid = capKobo >= 100_000;
 
   if (done) {
@@ -77,7 +78,7 @@ export default function MatchSetupScreen() {
           <Text style={[styles.label, { marginTop: Spacing.lg }]}>Matching cap</Text>
           <View style={[styles.amountWrap, capText !== '' && !valid && styles.amountErr]}>
             <Text style={styles.naira}>₦</Text>
-            <TextInput style={styles.amountInput} placeholder="0" placeholderTextColor={Colors.outline} keyboardType="number-pad" value={capText} onChangeText={(t) => setCapText(t.replace(/[^0-9]/g, ''))} />
+            <TextInput style={styles.amountInput} placeholder="0" placeholderTextColor={Colors.outline} keyboardType="decimal-pad" maxLength={13} value={capText} onChangeText={(t) => setCapText(sanitizeMoneyInput(t))} />
           </View>
           <Text style={styles.hint}>The most your company will contribute in matches. Min ₦1,000.</Text>
 

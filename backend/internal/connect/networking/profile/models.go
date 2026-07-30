@@ -52,15 +52,15 @@ func PubliclyVisible(state RecoState) bool { return state == RecoAcceptedVisible
 
 // Experience is one role in a user's timeline (PR-07).
 type Experience struct {
-	ID          string     `json:"id"`
-	UserID      string     `json:"userId"`
-	Title       string     `json:"title"`
-	Company     string     `json:"company"`
-	Location    string     `json:"location,omitempty"`
-	StartDate   string     `json:"startDate"`
-	EndDate     *string    `json:"endDate,omitempty"`
-	Description string     `json:"description,omitempty"`
-	CreatedAt   time.Time  `json:"createdAt"`
+	ID          string    `json:"id"`
+	UserID      string    `json:"userId"`
+	Title       string    `json:"title"`
+	Company     string    `json:"company"`
+	Location    string    `json:"location,omitempty"`
+	StartDate   string    `json:"startDate"`
+	EndDate     *string   `json:"endDate,omitempty"`
+	Description string    `json:"description,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
 }
 
 // Education is one schooling entry (PR-08).
@@ -156,14 +156,14 @@ type StrengthSignals struct {
 // worth as much as raw completion, so a fully-filled but unverified profile can
 // never reach the top band on completion alone (PN-3 spirit).
 const (
-	wExperience    = 20
-	wEducation     = 15
-	wAbout         = 15
-	wVerified      = 20
-	wAssessment    = 15
-	wPerReco       = 5
-	maxRecoCredit  = 15 // caps recommendation credit at 3 accepted (3 * wPerReco)
-	strengthMax    = wExperience + wEducation + wAbout + wVerified + wAssessment + maxRecoCredit
+	wExperience   = 20
+	wEducation    = 15
+	wAbout        = 15
+	wVerified     = 20
+	wAssessment   = 15
+	wPerReco      = 5
+	maxRecoCredit = 15 // caps recommendation credit at 3 accepted (3 * wPerReco)
+	strengthMax   = wExperience + wEducation + wAbout + wVerified + wAssessment + maxRecoCredit
 )
 
 // ComputeStrength returns the internal 0..100 completion+verification score. This

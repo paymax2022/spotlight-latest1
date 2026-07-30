@@ -23,13 +23,13 @@ import "time"
 type MatchState string
 
 const (
-	StateRequested   MatchState = "requested"
-	StateAccepted    MatchState = "accepted"
-	StateDeclined    MatchState = "declined"
-	StateActive      MatchState = "active"
-	StatePaused      MatchState = "paused"
-	StateCompleted   MatchState = "completed"
-	StateEndedEarly  MatchState = "ended_early"
+	StateRequested  MatchState = "requested"
+	StateAccepted   MatchState = "accepted"
+	StateDeclined   MatchState = "declined"
+	StateActive     MatchState = "active"
+	StatePaused     MatchState = "paused"
+	StateCompleted  MatchState = "completed"
+	StateEndedEarly MatchState = "ended_early"
 )
 
 // MentorRole is the opt-in capability role (MN-01).
@@ -44,8 +44,8 @@ const (
 // LoyaltyTrigger + Module are the (module, trigger) pair bound to the Paymax Black
 // earn rule (§8). Kept as consts so the emit sites and the migration seed agree.
 const (
-	LoyaltyModule          = "connect"
-	TriggerMentorshipDone  = "mentorship_complete"
+	LoyaltyModule         = "connect"
+	TriggerMentorshipDone = "mentorship_complete"
 	// RecommendationFlow is the FE flow the completion hint routes into (RC-01). This
 	// package emits only a hint; it makes NO cross-package call into recommendations.
 	RecommendationFlow = "RC-01"
@@ -94,11 +94,11 @@ type SafeMentorProfile struct {
 // query is allowed to select. Every entry is a mentorship_profiles or
 // professional_profiles column — never a Dating-mode/connect_profiles column.
 var safeMentorProjectionColumns = []string{
-	"mp.user_id",   // mentorship
-	"mp.role",      // mentorship
-	"mp.domains",   // mentorship
-	"mp.capacity",  // mentorship
-	"pp.headline",  // professional (display name), NOT dating
+	"mp.user_id",  // mentorship
+	"mp.role",     // mentorship
+	"mp.domains",  // mentorship
+	"mp.capacity", // mentorship
+	"pp.headline", // professional (display name), NOT dating
 }
 
 // datingModeFieldDenylist is the set of Dating-mode signal names that must NEVER

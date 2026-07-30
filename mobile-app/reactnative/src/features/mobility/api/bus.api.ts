@@ -189,4 +189,26 @@ export async function cancelTicket(id: string): Promise<BusTicket> {
   return unwrap<BusTicket>(await api.post(`${BASE}/mobility/bus/tickets/${id}/cancel`, {}));
 }
 
+// POST /mobility/bus/tickets/:id/rate — a passenger rates the operator after the
+// trip. Optional tip is a money mutation, so an Idempotency-Key is sent.
+export async function rateBusTrip(
+  ticketId: string,
+  stars: number,
+  idempotencyKey: string,
+  comment?: string,
+  tipKobo?: number,
+): Promise<void> {
+  if (USE_MOCK) {
+    await delay(400);
+    const t = busTicketStore.tickets.find((x) => x.id === ticketId);
+    if (t) (t as unknown as { rated?: boolean }).rated = true;
+    return;
+  }
+  await api.post(
+    `${BASE}/mobility/bus/tickets/${ticketId}/rate`,
+    { stars, comment, tip_kobo: tipKobo },
+    idemHeader(idempotencyKey),
+  );
+}
+
 export { USE_MOCK };

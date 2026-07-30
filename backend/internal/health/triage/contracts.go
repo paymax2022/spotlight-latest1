@@ -17,6 +17,17 @@ const (
 	LevelSelfCare           = 5 // home care + OTC guidance + follow-up
 )
 
+// SafeLevel normalizes a disposition level to a valid 1..5 band, failing SAFE
+// (TR-007 / SC-3): any out-of-range level — 0/unset, negative, or above self-care
+// (garbage/uncertain engine output) — is clamped to a conservative clinician
+// consult rather than silently routing to self-care. Valid levels pass through.
+func SafeLevel(level int) int {
+	if level < LevelEmergencyAmbulance || level > LevelSelfCare {
+		return LevelConsult // when in doubt, route to a clinician — never self-care
+	}
+	return level
+}
+
 // RouteForLevel maps a disposition level to the care-loop route (§6).
 func RouteForLevel(level int) string {
 	switch level {
@@ -60,12 +71,12 @@ type EngineInput struct {
 
 // EngineResult is the engine's triage output (5-level), plus next questions.
 type EngineResult struct {
-	Conditions   []PossibleCause `json:"conditions"`
-	Level        int             `json:"level"`
-	Code         string          `json:"code"`
-	Questions    []Question      `json:"questions"`
-	Done         bool            `json:"done"` // interview complete
-	EngineRef    string          `json:"engine_ref"`
+	Conditions []PossibleCause `json:"conditions"`
+	Level      int             `json:"level"`
+	Code       string          `json:"code"`
+	Questions  []Question      `json:"questions"`
+	Done       bool            `json:"done"` // interview complete
+	EngineRef  string          `json:"engine_ref"`
 }
 
 // EngineProvider is the licensed clinical reasoning engine (Infermedica/Ada) behind
@@ -113,16 +124,16 @@ func ApplyRedFlag(engineLevel int, hit *RedFlagHit) (level int, redFlag bool) {
 type SessionState string
 
 const (
-	SessStarted        SessionState = "started"
-	SessConsented      SessionState = "consented"
-	SessInterviewing   SessionState = "interviewing"
-	SessRedFlag        SessionState = "red_flag_detected"
-	SessEscalated      SessionState = "escalated"
-	SessAssessed       SessionState = "assessed"
-	SessDisposition    SessionState = "disposition_given"
-	SessReferred       SessionState = "referred"
-	SessClosed         SessionState = "closed"
-	SessAbandoned      SessionState = "abandoned"
+	SessStarted      SessionState = "started"
+	SessConsented    SessionState = "consented"
+	SessInterviewing SessionState = "interviewing"
+	SessRedFlag      SessionState = "red_flag_detected"
+	SessEscalated    SessionState = "escalated"
+	SessAssessed     SessionState = "assessed"
+	SessDisposition  SessionState = "disposition_given"
+	SessReferred     SessionState = "referred"
+	SessClosed       SessionState = "closed"
+	SessAbandoned    SessionState = "abandoned"
 )
 
 var allowedSession = map[SessionState]map[SessionState]bool{
@@ -149,7 +160,7 @@ type ReferralState string
 const (
 	RefCreated   ReferralState = "created"
 	RefRouted    ReferralState = "routed"
-	RefPaid       ReferralState = "paid"
+	RefPaid      ReferralState = "paid"
 	RefFulfilled ReferralState = "fulfilled"
 	RefFollowUp  ReferralState = "follow_up"
 	RefClosed    ReferralState = "closed"
@@ -182,7 +193,10 @@ var allowedEscalation = map[EscalationState]map[EscalationState]bool{
 	EscResolved:     {},
 }
 
-func CanEscalation(from, to EscalationState) bool { nx, ok := allowedEscalation[from]; return ok && nx[to] }
+func CanEscalation(from, to EscalationState) bool {
+	nx, ok := allowedEscalation[from]
+	return ok && nx[to]
+}
 
 // ContentState governs clinical content + red-flag rules — clinician sign-off to
 // publish (SC-6). Shared by content_items and red_flag_rules.

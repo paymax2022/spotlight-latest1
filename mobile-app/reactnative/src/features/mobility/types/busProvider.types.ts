@@ -149,6 +149,32 @@ export interface BusScheduleCreateRequest {
   fareKobo: Kobo;
 }
 
+/**
+ * A recurring departure template: the backend materialises real departures from
+ * this pattern over a rolling `horizonDays` window. Money is integer kobo.
+ */
+export interface BusDepartureTemplate {
+  id: string;
+  providerId: string;
+  routeId: string;
+  daysOfWeek: number[];      // 0=Sun .. 6=Sat
+  departTime: string;        // "HH:MM"
+  totalSeats: number;
+  fareKobo: Kobo;
+  horizonDays: number;
+  active: boolean;
+  createdAt: string;         // ISO
+}
+
+export interface BusTemplateCreateRequest {
+  routeId: string;
+  daysOfWeek: number[];      // 0=Sun .. 6=Sat
+  departTime: string;        // "HH:MM"
+  totalSeats: number;
+  fareKobo: Kobo;
+  horizonDays?: number;
+}
+
 /** One passenger row on a departure manifest (GET /bus/provider/bookings). */
 export interface BusManifestEntry {
   id: string;

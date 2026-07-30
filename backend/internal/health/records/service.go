@@ -147,28 +147,30 @@ func (s *Service) Get(ctx context.Context, accessorID, recordID string, isAdmin 
 		return nil, fmt.Errorf("records: erased")
 	}
 
-	basis := ""
+	// Resolve consent for a non-owner/non-admin BEFORE the decision so authorizeRead
+	// stays pure and deterministic.
 	var consentID *string
-	switch {
-	case isAdmin:
-		basis = "ADMIN"
-	case accessorID == owner:
-		basis = "OWNER"
-	default:
-		// HL-8 cross-vertical gate: a non-owner needs an ACTIVE consent grant.
-		if s.consent == nil {
-			return nil, fmt.Errorf("records: forbidden")
+	hasConsent := false
+	if accessorID != "" && !isAdmin && accessorID != owner && s.consent != nil {
+		if cid, ok, _ := s.consent.HasActiveGrant(ctx, accessorID, owner, "RECORDS"); ok {
+			hasConsent, consentID = true, &cid
 		}
-		cid, ok, _ := s.consent.HasActiveGrant(ctx, accessorID, owner, "RECORDS")
-		if !ok {
-			return nil, fmt.Errorf("records: forbidden (no active consent)")
-		}
-		basis = "CONSENT"
-		consentID = &cid
+	}
+	basis, allowed := authorizeRead(accessorID, owner, isAdmin, hasConsent)
+
+	// Every PHI access is audited — including DENIED cross-patient attempts (SC-005,
+	// §4.6). The denied attempt is appended to the immutable read trail and emitted
+	// to the audit sink so IDOR probing is attributable; logging is best-effort and
+	// never converts a denial into a leak.
+	if !allowed {
+		_ = s.logAccess(ctx, recordID, accessorID, string(BasisDenied), nil)
+		s.audited(accessorID, owner, "health.record.access_denied", recordID, nil,
+			map[string]any{"basis": string(BasisDenied)})
+		return nil, fmt.Errorf("records: forbidden")
 	}
 
 	// 2) Append the immutable access log row BEFORE handing back any data (HL-8/HL-12).
-	if err := s.logAccess(ctx, recordID, accessorID, basis, consentID); err != nil {
+	if err := s.logAccess(ctx, recordID, accessorID, string(basis), consentID); err != nil {
 		return nil, err
 	}
 

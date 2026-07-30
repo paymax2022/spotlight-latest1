@@ -4,6 +4,7 @@ import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
 import { Typography } from '@/constants/typography';
 import { getProviderBrand, providerLogoSources } from '@/constants/providerBrands';
+import { getLocalProviderLogo } from '@/constants/providerLogoAssets';
 
 /**
  * Renders a utility/bill provider's real brand logo (electricity DISCO, telco,
@@ -23,13 +24,31 @@ export default function ProviderLogo({
   /** Authoritative logo URL (e.g. the VTPass service `image`). Tried first. */
   logoUri?: string | null;
 }) {
-  const brand = getProviderBrand(code, name);
-  // Priority: VTPass image → brand logo (Clearbit) → favicon → badge.
-  const sources = [logoUri, ...providerLogoSources(brand.domain)].filter(Boolean) as string[];
+  // Hooks first (unconditional, per the Rules of Hooks) — before any early return.
   const [idx, setIdx] = useState(0);
-  const uri = sources[idx];
 
+  const brand = getProviderBrand(code, name);
   const box = { width: size, height: size, borderRadius: Radius.md };
+
+  // Priority 0: a BUNDLED local logo (instant, offline, no network). If present
+  // it wins outright — no fallback chain needed.
+  const localLogo = getLocalProviderLogo(brand.key);
+  if (localLogo) {
+    return (
+      <View style={[styles.box, styles.logoWrap, box]}>
+        <Image
+          source={localLogo}
+          style={{ width: size - 6, height: size - 6, borderRadius: 4 }}
+          resizeMode="contain"
+          accessibilityLabel={`${name} logo`}
+        />
+      </View>
+    );
+  }
+
+  // Priority: VTPass image → remote favicon → branded badge.
+  const sources = [logoUri, ...providerLogoSources(brand.domain)].filter(Boolean) as string[];
+  const uri = sources[idx];
 
   if (uri) {
     return (

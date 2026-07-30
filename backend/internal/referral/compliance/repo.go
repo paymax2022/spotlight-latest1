@@ -129,9 +129,9 @@ const consentCols = `id, user_id, disclosure_id, consent_type, granted, version,
 
 func scanConsent(row pgx.Row) (*Consent, error) {
 	var (
-		c          Consent
-		disc, src  *string
-		version    *int
+		c         Consent
+		disc, src *string
+		version   *int
 	)
 	if err := row.Scan(&c.ID, &c.UserID, &disc, &c.ConsentType, &c.Granted, &version, &src, &c.CreatedAt); err != nil {
 		return nil, err
@@ -337,8 +337,8 @@ func (r *Repository) ClaimReview(ctx context.Context, status string) ([]ClaimRev
 	var out []ClaimReviewItem
 	for rows.Next() {
 		var (
-			it             ClaimReviewItem
-			reward, subj   *string
+			it           ClaimReviewItem
+			reward, subj *string
 		)
 		if err := rows.Scan(&it.ID, &reward, &subj, &it.ReasonCode, &it.Status, &it.CreatedAt); err != nil {
 			return nil, err
@@ -368,8 +368,8 @@ func (r *Repository) RegulatoryExport(ctx context.Context, since, until string) 
 	var out []RegulatoryExportRow
 	for rows.Next() {
 		var (
-			row          RegulatoryExportRow
-			subj, repd   *string
+			row        RegulatoryExportRow
+			subj, repd *string
 		)
 		if err := rows.Scan(&subj, &row.ReasonCode, &row.AmountKobo, &row.Status, &repd, &row.CreatedAt); err != nil {
 			return nil, err

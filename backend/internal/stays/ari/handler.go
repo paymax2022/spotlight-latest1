@@ -18,7 +18,7 @@ type PropertyAuthorizer func(c *gin.Context, propertyID string) bool
 // by the hotelier extranet. Every write resolves the owning property and runs the
 // object-level authorizer before mutating.
 type Handler struct {
-	svc  *Service
+	svc   *Service
 	authz PropertyAuthorizer
 }
 
@@ -207,7 +207,9 @@ func (h *Handler) SetRestrictions(c *gin.Context) {
 }
 
 // ApplyDerivedRate: POST /rate-plans/:ratePlanId/derive
-//   {child_rate_plan_id, adjust_bps, fixed_kobo, floor_kobo, from, to}
+//
+//	{child_rate_plan_id, adjust_bps, fixed_kobo, floor_kobo, from, to}
+//
 // The :ratePlanId in the path is the PARENT plan.
 func (h *Handler) ApplyDerivedRate(c *gin.Context) {
 	parent := c.Param("ratePlanId")

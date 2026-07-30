@@ -16,14 +16,14 @@ import "time"
 // ── Dues & payments ──────────────────────────────────────────────────────────
 
 type Invoice struct {
-	ID           string    `json:"id"`
-	Title        string    `json:"title"`
-	Description  *string   `json:"description"`
-	AmountKobo   int64     `json:"amountKobo"`
-	Cadence      string    `json:"cadence"`
-	Status       string    `json:"status"`
-	Scope        string    `json:"scope"`
-	DueDate      time.Time `json:"dueDate"`
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	Description *string   `json:"description"`
+	AmountKobo  int64     `json:"amountKobo"`
+	Cadence     string    `json:"cadence"`
+	Status      string    `json:"status"`
+	Scope       string    `json:"scope"`
+	DueDate     time.Time `json:"dueDate"`
 }
 
 type DuesSummary struct {
@@ -35,7 +35,7 @@ type DuesSummary struct {
 
 type PayInvoiceRequest struct {
 	Method         string `json:"method" binding:"required"` // WALLET | PAYSTACK
-	IdempotencyKey string `json:"-"`                          // taken from header, not body
+	IdempotencyKey string `json:"-"`                         // taken from header, not body
 }
 
 type PayInvoiceResult struct {
@@ -115,26 +115,26 @@ type Organisation struct {
 // ── Member identity ───────────────────────────────────────────────────────────
 
 type MembershipCard struct {
-	MemberID             string  `json:"memberId"`
-	FullName             string  `json:"fullName"`
-	PhotoURL             *string `json:"photoUrl"`
-	OrganisationName     string  `json:"organisationName"`
-	OrganisationAcronym  *string `json:"organisationAcronym"`
-	CategoryLabel        string  `json:"categoryLabel"`
-	ChapterName          *string `json:"chapterName"`
-	Status               string  `json:"status"`
-	PaymentStanding      string  `json:"paymentStanding"`
-	Verified             bool    `json:"verified"`
-	ValidThrough         *string `json:"validThrough"`
-	QRPayload            string  `json:"qrPayload"`
+	MemberID            string  `json:"memberId"`
+	FullName            string  `json:"fullName"`
+	PhotoURL            *string `json:"photoUrl"`
+	OrganisationName    string  `json:"organisationName"`
+	OrganisationAcronym *string `json:"organisationAcronym"`
+	CategoryLabel       string  `json:"categoryLabel"`
+	ChapterName         *string `json:"chapterName"`
+	Status              string  `json:"status"`
+	PaymentStanding     string  `json:"paymentStanding"`
+	Verified            bool    `json:"verified"`
+	ValidThrough        *string `json:"validThrough"`
+	QRPayload           string  `json:"qrPayload"`
 }
 
 type MemberDashboard struct {
-	Card                  MembershipCard `json:"card"`
-	OutstandingKobo       int64          `json:"outstandingKobo"`
-	NextDueDate           *string        `json:"nextDueDate"`
-	UnreadAnnouncements   int            `json:"unreadAnnouncements"`
-	OpenTasks             int            `json:"openTasks"`
+	Card                MembershipCard `json:"card"`
+	OutstandingKobo     int64          `json:"outstandingKobo"`
+	NextDueDate         *string        `json:"nextDueDate"`
+	UnreadAnnouncements int            `json:"unreadAnnouncements"`
+	OpenTasks           int            `json:"openTasks"`
 }
 
 type MyProfile struct {
@@ -199,13 +199,13 @@ type MemberProfileSummary struct {
 
 type MemberProfile struct {
 	MemberProfileSummary
-	Email            *string `json:"email"`
-	Phone            *string `json:"phone"`
-	Location         *string `json:"location"`
-	JoinedAt         string  `json:"joinedAt"`
-	PaymentStanding  string  `json:"paymentStanding"`
-	Bio              *string `json:"bio"`
-	ContactRestricted bool   `json:"contactRestricted"`
+	Email             *string `json:"email"`
+	Phone             *string `json:"phone"`
+	Location          *string `json:"location"`
+	JoinedAt          string  `json:"joinedAt"`
+	PaymentStanding   string  `json:"paymentStanding"`
+	Bio               *string `json:"bio"`
+	ContactRestricted bool    `json:"contactRestricted"`
 }
 
 // ── Announcements & notifications ─────────────────────────────────────────────
@@ -298,11 +298,11 @@ type EventSummary struct {
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
 type AdminKpis struct {
-	TotalMembers       int   `json:"totalMembers"`
-	ActiveMembers      int   `json:"activeMembers"`
-	PendingApprovals   int   `json:"pendingApprovals"`
-	UnpaidMembers      int   `json:"unpaidMembers"`
-	DuesCollectedKobo  int64 `json:"duesCollectedKobo"`
+	TotalMembers        int   `json:"totalMembers"`
+	ActiveMembers       int   `json:"activeMembers"`
+	PendingApprovals    int   `json:"pendingApprovals"`
+	UnpaidMembers       int   `json:"unpaidMembers"`
+	DuesCollectedKobo   int64 `json:"duesCollectedKobo"`
 	DuesOutstandingKobo int64 `json:"duesOutstandingKobo"`
 }
 

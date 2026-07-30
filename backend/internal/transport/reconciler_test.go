@@ -34,9 +34,9 @@ func TestFormatInterval(t *testing.T) {
 func TestStuckTripSelect_Predicate(t *testing.T) {
 	q := stuckTripSelect
 	for _, must := range []string{
-		"t.phase = 'completed'",              // only terminal (completed) trips
-		"s.status = 'escrowed'",              // only still-held escrow
-		"module_type = 'transport'",          // scoped to this module
+		"t.phase = 'completed'",               // only terminal (completed) trips
+		"s.status = 'escrowed'",               // only still-held escrow
+		"module_type = 'transport'",           // scoped to this module
 		"t.updated_at < NOW() - $1::interval", // grace window (updated_at bumped at completion)
 		"DISTINCT",                            // base + delta escrows collapse to one trip
 	} {

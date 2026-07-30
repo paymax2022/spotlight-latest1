@@ -145,9 +145,9 @@ func LegKey(ref, leg string) string {
 
 // Leg names for the Maplerad transfer money path.
 const (
-	LegHold     = "hold"     // INITIATED→PENDING: DR wallet → CR suspense
-	LegSettle   = "settle"   // SUCCESS: DR suspense(amount) → CR settlement
-	LegFee      = "fee"      // SUCCESS: DR suspense(fee) → CR paymax_revenue
-	LegReversal = "reversal" // FAILED: restore wallet from suspense
+	LegHold       = "hold"       // INITIATED→PENDING: DR wallet → CR suspense
+	LegSettle     = "settle"     // SUCCESS: DR suspense(amount) → CR settlement
+	LegFee        = "fee"        // SUCCESS: DR suspense(fee) → CR paymax_revenue
+	LegReversal   = "reversal"   // FAILED: restore wallet from suspense
 	LegCompensate = "compensate" // REVERSED: compensating reversal of a settled debit
 )

@@ -765,21 +765,21 @@ func (s *RewardService) PublishConfig(ctx context.Context, tiers []TierBand, mil
 
 // Analytics is the A2 program-health payload.
 type Analytics struct {
-	ActiveReferrers      int              `json:"active_referrers"`
-	ActiveReferredUsers  int              `json:"active_referred_users"`
-	TotalRewardsPaidKobo int64            `json:"total_rewards_paid_kobo"`
-	TotalMarginKobo      int64            `json:"total_margin_kobo"`
-	RewardCostPct        float64          `json:"reward_cost_pct"` // north-star: reward / margin
-	ByModule             []ModuleRollup   `json:"by_module"`
-	ByTier               []TierRollup     `json:"by_tier"`
+	ActiveReferrers      int            `json:"active_referrers"`
+	ActiveReferredUsers  int            `json:"active_referred_users"`
+	TotalRewardsPaidKobo int64          `json:"total_rewards_paid_kobo"`
+	TotalMarginKobo      int64          `json:"total_margin_kobo"`
+	RewardCostPct        float64        `json:"reward_cost_pct"` // north-star: reward / margin
+	ByModule             []ModuleRollup `json:"by_module"`
+	ByTier               []TierRollup   `json:"by_tier"`
 }
 
 // ModuleRollup is a per-module reward rollup for A2/A7.
 type ModuleRollup struct {
-	Module         string    `json:"module"`
-	RewardKobo     int64     `json:"reward_kobo"`
-	RewardCount    int       `json:"reward_count"`
-	LastEventAt    time.Time `json:"last_event_at"`
+	Module      string    `json:"module"`
+	RewardKobo  int64     `json:"reward_kobo"`
+	RewardCount int       `json:"reward_count"`
+	LastEventAt time.Time `json:"last_event_at"`
 }
 
 // TierRollup is a per-tier referrer rollup for A2.

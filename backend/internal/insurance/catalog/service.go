@@ -73,9 +73,9 @@ func (s *Service) Get(ctx context.Context, productCode string) (*Product, error)
 // product_line "context". Direct-only here; embedded products are bound by events.
 func (s *Service) ListForMember(ctx context.Context, kycTier int, line string) ([]Product, error) {
 	return s.list(ctx, listFilter{
-		onlyActive: true,
-		maxKYCTier: &kycTier,
-		line:       line,
+		onlyActive:  true,
+		maxKYCTier:  &kycTier,
+		line:        line,
 		bindingMode: "direct",
 	})
 }

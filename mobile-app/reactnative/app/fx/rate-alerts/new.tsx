@@ -14,6 +14,7 @@ import CurrencyPickerSheet from '@/features/fx/components/CurrencyPickerSheet';
 import RateSparkline from '@/features/fx/components/RateSparkline';
 import { useRateHistory, useCreateRateAlert } from '@/features/fx/hooks/useFx';
 import { midRate, formatRate } from '@/features/fx/utils/fxFormatters';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { CURRENCY_ORDER } from '@/features/fx/constants/fx.constants';
 import type { CurrencyCode, RateAlertDirection } from '@/features/fx/types/fx.types';
 
@@ -77,10 +78,12 @@ export default function NewRateAlertScreen() {
           <TextInput
             style={styles.targetInput}
             value={target}
-            onChangeText={setTarget}
+            onChangeText={(v) => setTarget(sanitizeMoneyInput(v))}
             placeholder={current.toFixed(2)}
             placeholderTextColor={Colors.outline}
             keyboardType="decimal-pad"
+            inputMode="decimal"
+            maxLength={13}
             accessibilityLabel="Target rate"
           />
           <Text style={styles.targetSuffix}>{to}</Text>

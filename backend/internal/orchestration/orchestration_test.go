@@ -124,7 +124,7 @@ type stubProvider struct {
 	fail bool
 }
 
-func (s stubProvider) Name() string { return s.name }
+func (s stubProvider) Name() string               { return s.name }
 func (s stubProvider) Supports(string, Rail) bool { return true }
 func (s stubProvider) Quote(_ context.Context, src, dst string, amt int64, at AmountType, rail Rail) (*ProviderQuote, error) {
 	return &ProviderQuote{Provider: s.name, Corridor: Corridor(src, dst), Rail: rail, Rate: MidRate(src, dst), ProviderFee: NewMoney(25, src), RailFee: NewMoney(0, src), Reliability: 0.95, Viable: true}, nil

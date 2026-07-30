@@ -148,8 +148,10 @@ export const MOCK_STOCKS: StockAsset[] = [
   {
     id: 'stk_tsla', type: 'stock', symbol: 'TSLA', name: 'Tesla, Inc.',
     exchange: 'NASDAQ', sector: 'Automotive', currency: 'USD',
+    // NOTE: kept in sync with its NASDAQ peer AAPL — two stocks on the same
+    // exchange can't be in different session states at the same time.
     iconColor: '#BA1A1A', riskRating: 'high', status: 'active',
-    buyEnabled: true, sellEnabled: true, marketStatus: 'pre',
+    buyEnabled: true, sellEnabled: true, marketStatus: 'closed',
     price: { amount: usd(412.70), currency: 'USD' }, change24hPct: -2.41,
     dayChange: { amount: usd(-10.20), currency: 'USD' },
     week52High: { amount: usd(488.50), currency: 'USD' },

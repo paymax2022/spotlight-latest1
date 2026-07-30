@@ -158,13 +158,14 @@ func cleanupInvoice(t *testing.T, pool *pgxpool.Pool, invoiceID string) {
 
 // TestLiveDB_Invoice_IssueLocksSchedule_PartialThenFull_DerivedBalance_Idempotent
 // drives the full invoice money path end-to-end and proves:
-//   (a) issuing an invoice against a fee schedule LOCKS that schedule (SF-1);
-//   (b) a 40,000-kobo partial payment flips status → partially_paid and the
-//       DERIVED balance is 60,000 (read straight from academy_invoice_payments —
-//       there is NO stored balance column, SF-2);
-//   (c) a further 60,000-kobo payment flips → paid with balance 0;
-//   (d) REPLAYING the partial payment with the SAME idempotency_key inserts NO
-//       second payment row and leaves status + derived balance unchanged.
+//
+//	(a) issuing an invoice against a fee schedule LOCKS that schedule (SF-1);
+//	(b) a 40,000-kobo partial payment flips status → partially_paid and the
+//	    DERIVED balance is 60,000 (read straight from academy_invoice_payments —
+//	    there is NO stored balance column, SF-2);
+//	(c) a further 60,000-kobo payment flips → paid with balance 0;
+//	(d) REPLAYING the partial payment with the SAME idempotency_key inserts NO
+//	    second payment row and leaves status + derived balance unchanged.
 func TestLiveDB_Invoice_IssueLocksSchedule_PartialThenFull_DerivedBalance_Idempotent(t *testing.T) {
 	pool := liveDBPool(t)
 	defer pool.Close()

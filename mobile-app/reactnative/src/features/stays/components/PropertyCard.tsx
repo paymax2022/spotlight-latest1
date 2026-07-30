@@ -37,7 +37,6 @@ export default function PropertyCard({ property: p, onPress, variant = 'feed', s
   return (
     <Pressable
       onPress={onPress}
-      accessibilityRole="button"
       accessibilityLabel={`${p.name}, ${price} per night`}
       style={({ pressed }) => [styles.card, rail && styles.cardRail, pressed && styles.pressed]}
     >

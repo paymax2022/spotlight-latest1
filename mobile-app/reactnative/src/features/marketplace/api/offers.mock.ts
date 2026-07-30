@@ -7,6 +7,7 @@
 // TODO(messaging): when a shared Paymax messaging shell is wired for the
 // marketplace, replace MockMessage/thread storage with it and keep offers here.
 import type { CreateOfferInput, Offer, OfferStatus } from '../types';
+import { MOCK_LISTINGS } from './discovery.mock';
 
 const now = () => new Date().toISOString();
 const minsAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
@@ -38,6 +39,9 @@ export interface DealThread {
   myRole: 'buyer' | 'seller';
   unread: number;
   lastMessageAt: string;
+  /** ADR-023 "mark met" signal: true once a participant marked the deal met,
+   *  which unlocks review-writes. Optional — absent/false ⇒ not yet met. */
+  met?: boolean;
 }
 
 const threads: DealThread[] = [
@@ -125,6 +129,58 @@ export async function mockGetThread(threadId: string): Promise<DealThread> {
   const t = threadById.get(threadId);
   if (!t) throw new Error('THREAD_NOT_FOUND');
   return t;
+}
+
+// Open-or-create the deal thread for a listing (Contact seller / Make Offer) or
+// a seller (Message from the profile). Reuses an existing thread when one is
+// already modelled; otherwise synthesizes one from the listing/seller fixtures so
+// the Deal Room always has context. Threads are mock-backed in both modes (there
+// is no live messaging shell yet — see offers.api.ts), so this drives both.
+export async function mockGetOrCreateThread(opts: { listingId?: string; sellerId?: string }): Promise<DealThread> {
+  await delay(180);
+  if (opts.listingId) {
+    const existing = threads.find((t) => t.listingId === opts.listingId);
+    if (existing) return existing;
+    const l = MOCK_LISTINGS.find((x) => x.id === opts.listingId);
+    const created: DealThread = {
+      id: `th_${opts.listingId}`,
+      listingId: opts.listingId,
+      listingTitle: l?.title ?? 'Listing',
+      listingThumbUrl: (l?.media ?? [])[0]?.urlThumb ?? '',
+      listingPriceKobo: l?.priceKobo ?? 0,
+      escrowEligible: l?.escrowEligible ?? false,
+      counterpartyId: l?.sellerId ?? 'seller',
+      counterpartyName: l?.seller?.name ?? 'Seller',
+      myRole: 'buyer',
+      unread: 0,
+      lastMessageAt: now(),
+    };
+    threads.push(created);
+    threadById.set(created.id, created);
+    return created;
+  }
+  if (opts.sellerId) {
+    const existing = threads.find((t) => t.counterpartyId === opts.sellerId);
+    if (existing) return existing;
+    const l = MOCK_LISTINGS.find((x) => x.sellerId === opts.sellerId);
+    const created: DealThread = {
+      id: `th_seller_${opts.sellerId}`,
+      listingId: l?.id ?? '',
+      listingTitle: l?.title ?? 'Direct message',
+      listingThumbUrl: (l?.media ?? [])[0]?.urlThumb ?? '',
+      listingPriceKobo: l?.priceKobo ?? 0,
+      escrowEligible: l?.escrowEligible ?? false,
+      counterpartyId: opts.sellerId,
+      counterpartyName: l?.seller?.name ?? 'Seller',
+      myRole: 'buyer',
+      unread: 0,
+      lastMessageAt: now(),
+    };
+    threads.push(created);
+    threadById.set(created.id, created);
+    return created;
+  }
+  throw new Error('getOrCreateThread requires listingId or sellerId');
 }
 
 export async function mockGetMessages(threadId: string): Promise<MockMessage[]> {

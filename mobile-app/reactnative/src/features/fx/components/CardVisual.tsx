@@ -31,7 +31,7 @@ export default function CardVisual({ card, sensitive, compact }: Props) {
 
   return (
     <LinearGradient
-      colors={CARD_GRADIENTS[card.color]}
+      colors={CARD_GRADIENTS[card.color] ?? CARD_GRADIENTS.slate ?? ['#334155', '#0f172a']}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={[styles.card, compact && styles.compact, shadow3, frozen && styles.frozen]}
@@ -39,7 +39,7 @@ export default function CardVisual({ card, sensitive, compact }: Props) {
       <View style={styles.topRow}>
         <View>
           <Text style={styles.label}>{card.label}</Text>
-          <Text style={styles.currency}>{meta.flag} {card.currency} · Virtual</Text>
+          <Text style={styles.currency}>{meta?.flag ?? ''} {card.currency} · Virtual</Text>
         </View>
         {frozen
           ? <View style={styles.frozenPill}><Snowflake size={12} color={Colors.onPrimary} strokeWidth={2} /><Text style={styles.frozenText}>Frozen</Text></View>

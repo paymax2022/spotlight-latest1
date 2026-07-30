@@ -69,3 +69,8 @@ yarn-error.log*
 .env.local
 **/.env.local
 launch/master.env
+
+# --- Compiled Go binaries (build outputs, never source) ---
+# Previously committed (54MB + 17MB) and a major cause of repo bloat.
+/backend/server
+/backend/marketplace-cron

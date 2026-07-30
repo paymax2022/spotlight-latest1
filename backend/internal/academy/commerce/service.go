@@ -70,6 +70,20 @@ func (s *Service) ListBundles(ctx context.Context, arenaID string) ([]ExamBundle
 	return s.repo.ListBundles(ctx, arenaID)
 }
 
+// GetBundle returns a single exam bundle by id (public catalog read; same ExamBundle
+// row/shape as the ListBundles list item). Mirrors ListBundles' visibility rule —
+// only active bundles are catalog-visible — so a non-active or missing id is 404.
+func (s *Service) GetBundle(ctx context.Context, id string) (*ExamBundle, error) {
+	b, err := s.repo.GetBundle(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if b.Status != "active" {
+		return nil, ErrNotFound
+	}
+	return b, nil
+}
+
 func (s *Service) BundleManifest(ctx context.Context, id string) (*BundleManifest, error) {
 	return s.repo.GetContentBundleManifest(ctx, id)
 }
@@ -427,6 +441,17 @@ func (s *Service) AllocateToAgent(ctx context.Context, adminID string, req Alloc
 	_ = s.audit(ctx, s.repo.db, adminID, "access_card.allocated", "academy_access_card", "", CardIssued, CardAllocated, "",
 		map[string]any{"agentId": req.AgentID, "batch": req.Batch, "serials": req.Serials, "count": n})
 	return n, nil
+}
+
+// ListAccessCards (admin) returns access-card rows for the console, optionally
+// filtered by batch, newest first. Read-only.
+func (s *Service) ListAccessCards(ctx context.Context, batch string, limit int) ([]AccessCard, error) {
+	return s.repo.ListAccessCards(ctx, batch, limit)
+}
+
+// PaymentsOverview (admin) aggregates orders by state/amount for the payments console.
+func (s *Service) PaymentsOverview(ctx context.Context) (*OrdersOverview, error) {
+	return s.repo.OrdersOverview(ctx)
 }
 
 // Activate redeems an access card (member). Guarded issued|allocated → activated,

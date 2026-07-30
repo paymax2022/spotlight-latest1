@@ -318,13 +318,13 @@ func Register(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.
 	g.GET("/strength", h.Strength)
 
 	// Recommendations (RC-01..RC-04, PN-4).
-	g.POST("/recommendations", h.WriteRecommendation)              // RC-01
-	g.GET("/recommendations/inbox", h.Inbox)                       // RC-02
+	g.POST("/recommendations", h.WriteRecommendation) // RC-01
+	g.GET("/recommendations/inbox", h.Inbox)          // RC-02
 	g.GET("/recommendations/authored", h.Authored)
 	g.PATCH("/recommendations/:id/send", h.SendRecommendation)     // DRAFTED→SENT (author)
 	g.PATCH("/recommendations/:id/accept", h.AcceptRecommendation) // SENT→ACCEPTED_VISIBLE (subject)
 	g.PATCH("/recommendations/:id/decline", h.DeclineRecommendation)
-	g.POST("/recommendations/requests", h.RequestRecommendation)   // RC-04
+	g.POST("/recommendations/requests", h.RequestRecommendation) // RC-04
 	// RC-03 — public accepted-only recommendations on a profile.
 	g.GET("/users/:userId/recommendations", h.PublicRecommendations)
 

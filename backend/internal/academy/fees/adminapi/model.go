@@ -199,6 +199,39 @@ type SetGovOptInRequest struct {
 	OptedIn  bool   `json:"opted_in"`
 }
 
+// ── Admin create requests (flat setup-wizard surface, SC-29) ──────────────────────
+// These POSTs create rows in the EXISTING fees tables by REUSING the domain services
+// (feesschool / feessession) — which own the guarded state machines + audit — so no
+// parallel insert logic and no schema is added here.
+
+// CreateSchoolAdminRequest onboards a school from the flat admin console. The owner is the
+// authenticated admin (never trusted from the body); the school starts 'unverified'.
+type CreateSchoolAdminRequest struct {
+	Name              string `json:"name" binding:"required"`
+	Code              string `json:"code"`
+	Level             string `json:"level"`
+	VirtualAccountRef string `json:"virtual_account_ref"`
+	Contact           string `json:"contact"`
+}
+
+// CreateSessionAdminRequest opens an academic session for a school (school_id in body).
+type CreateSessionAdminRequest struct {
+	SchoolID      string          `json:"school_id" binding:"required"`
+	Name          string          `json:"name" binding:"required"`
+	TermStructure json.RawMessage `json:"term_structure"`
+	StartDate     string          `json:"start_date"` // YYYY-MM-DD
+	EndDate       string          `json:"end_date"`   // YYYY-MM-DD
+}
+
+// CreateClassAdminRequest opens a class within a school (optionally bound to a session).
+type CreateClassAdminRequest struct {
+	SchoolID           string `json:"school_id" binding:"required"`
+	SessionID          string `json:"session_id"`
+	Name               string `json:"name" binding:"required"`
+	Level              string `json:"level"`
+	ClassTeacherUserID string `json:"class_teacher_user_id"`
+}
+
 // feeItem is used only to sum a create request's kobo total into amount_minor.
 type feeItem struct {
 	AmountKobo int64 `json:"amount_kobo"`

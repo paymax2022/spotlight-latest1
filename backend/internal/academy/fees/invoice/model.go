@@ -101,16 +101,16 @@ type RecordPaymentRequest struct {
 // ── Sentinel errors ─────────────────────────────────────────────────────────────
 
 var (
-	ErrNotFound             = errors.New("not_found")
-	ErrUnauthenticated      = errors.New("unauthenticated")
-	ErrInvalidAmount        = errors.New("invalid_amount")
-	ErrInvalidDate          = errors.New("invalid_date")
-	ErrMissingStudent       = errors.New("missing_student")
-	ErrMissingFeeSchedule   = errors.New("missing_fee_schedule")
-	ErrIdempotencyRequired  = errors.New("idempotency_key_required")
-	ErrOverpayment          = errors.New("overpayment")
-	ErrInvoiceNotPayable    = errors.New("invoice_not_payable")
-	ErrIllegalTransition    = errors.New("illegal_transition")
+	ErrNotFound            = errors.New("not_found")
+	ErrUnauthenticated     = errors.New("unauthenticated")
+	ErrInvalidAmount       = errors.New("invalid_amount")
+	ErrInvalidDate         = errors.New("invalid_date")
+	ErrMissingStudent      = errors.New("missing_student")
+	ErrMissingFeeSchedule  = errors.New("missing_fee_schedule")
+	ErrIdempotencyRequired = errors.New("idempotency_key_required")
+	ErrOverpayment         = errors.New("overpayment")
+	ErrInvoiceNotPayable   = errors.New("invoice_not_payable")
+	ErrIllegalTransition   = errors.New("illegal_transition")
 	// ErrAlreadyIssued guards double-issue of the same invoice.
 	ErrAlreadyIssued = errors.New("already_issued")
 )

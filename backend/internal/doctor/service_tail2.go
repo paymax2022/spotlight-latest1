@@ -163,7 +163,7 @@ func (s *Service) GetDashboard(ctx context.Context, userID string) (*DashboardSu
 	}
 	return &DashboardSummary{
 		AppointmentCounts:   counts,
-		UnreadNotifications:  unread,
+		UnreadNotifications: unread,
 		WalletBalanceKobo:   balance,
 		Currency:            "NGN",
 	}, nil

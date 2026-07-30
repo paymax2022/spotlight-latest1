@@ -62,6 +62,9 @@ const navItemsBase: NavItem[] = [
   { label: 'Nutrition', href: '/admin/nutrition', section: 'Finance', permissions: ['nutrition.admin.manage'] },
   { label: 'Nutrition Consults', href: '/admin/nutrition/consults', section: 'Finance', permissions: ['nutrition.admin.resolve'] },
   { label: 'Nutritionist Payouts', href: '/admin/nutrition/payouts', section: 'Finance', permissions: ['nutrition.admin.resolve'] },
+  // ── Commission & Profit (central rate card + realized-revenue dashboard) ──
+  { label: 'Rate Card', href: '/admin/commission', section: 'Commission' },
+  { label: 'Profit Dashboard', href: '/admin/commission/profit', section: 'Commission' },
   { label: 'CF Overview', href: '/admin/crowdfunding', section: 'Crowdfunding', permissions: ['crowdfunding.view'] },
   { label: 'Campaign Review', href: '/admin/crowdfunding/review', section: 'Crowdfunding', permissions: ['crowdfunding.review'] },
   { label: 'Users & Creators', href: '/admin/crowdfunding/users', section: 'Crowdfunding', permissions: ['crowdfunding.users'] },
@@ -419,12 +422,10 @@ const navItemsBase: NavItem[] = [
   { label: 'Analytics', href: '/extranet/analytics/performance', section: 'Stays Extranet', permissions: ['stays.hotelier.analytics', 'stays.hotelier.view'] },
   { label: 'Users & Roles', href: '/extranet/staff', section: 'Stays Extranet', permissions: ['stays.hotelier.staff', 'stays.hotelier.view'] },
   { label: 'Onboarding', href: '/extranet/onboarding/go-live', section: 'Stays Extranet', permissions: ['stays.hotelier.onboarding', 'stays.hotelier.view'] },
-  // ── Paymax Marketplace (Jiji-style classifieds + escrow; RBAC marketplace.admin.*) ──
-  { label: 'Marketplace Overview', href: '/admin/marketplace', section: 'Marketplace', permissions: ['marketplace.admin.moderation', 'marketplace.admin.dispute.review', 'marketplace.admin.audit.read'] },
+  // ── Paymax Marketplace (Jiji-style classifieds; listings + connect, no escrow — ADR-023; RBAC marketplace.admin.*) ──
+  { label: 'Marketplace Overview', href: '/admin/marketplace', section: 'Marketplace', permissions: ['marketplace.admin.moderation', 'marketplace.admin.audit.read'] },
   { label: 'Moderation Queue', href: '/admin/marketplace/moderation', section: 'Marketplace', permissions: ['marketplace.admin.moderation'] },
-  { label: 'Dispute Workbench', href: '/admin/marketplace/disputes', section: 'Marketplace', permissions: ['marketplace.admin.dispute.review'] },
   { label: 'Flags Queue', href: '/admin/marketplace/flags', section: 'Marketplace', permissions: ['marketplace.admin.flags.action'] },
-  { label: 'Orders Aging', href: '/admin/marketplace/orders-aging', section: 'Marketplace', permissions: ['marketplace.admin.orders.aging'] },
   { label: 'Boosts', href: '/admin/marketplace/boosts', section: 'Marketplace', permissions: ['marketplace.admin.moderation'] },
   { label: 'Audit Log', href: '/admin/marketplace/audit-log', section: 'Marketplace', permissions: ['marketplace.admin.audit.read'] },
   // ── Arena (Naija Driver contest ops console; per-console RBAC arena.*) ──────
@@ -438,6 +439,8 @@ const navItemsBase: NavItem[] = [
   { label: 'Pot & Disbursement', href: '/admin/arena/pot', section: 'Arena', permissions: ['arena.admin.manage'] },
   { label: 'Sponsor Placement', href: '/admin/arena/sponsors', section: 'Arena', permissions: ['arena.admin.manage'] },
   { label: 'Credentials', href: '/admin/arena/credentials', section: 'Arena', permissions: ['arena.admin.manage'] },
+  // ── Business Registry (CAC business-name verify/register review; RBAC business.registry.review) ──
+  { label: 'Business Registry', href: '/admin/business', section: 'Business Registry', permissions: ['business.registry.review'] },
   // ── Platform · EdTech (SUPER-ADMIN console, SU-01..SU-12) ────────────────────
   // Checkpoint E — RBAC scope separation. This is a Paymax PLATFORM-OPERATOR
   // surface, NOT an escalated school-admin surface. It is registered as its OWN
@@ -467,7 +470,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Compliance (SU-12)', href: '/admin/platform/edtech/compliance', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
 ];
 
-const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Crowdfunding', 'Connect', 'Connect · Network', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'Crypto', 'Platform · EdTech'];
+const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Commission', 'Crowdfunding', 'Connect', 'Connect · Network', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'Crypto', 'Business Registry', 'Platform · EdTech'];
 
 export function AdminSidebar() {
   const pathname = usePathname() ?? '';

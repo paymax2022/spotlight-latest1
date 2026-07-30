@@ -73,6 +73,7 @@ func RegisterAcademyRewards(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 	ag.POST("/pools", guard("academy.rewards"), h.AdminCreatePool)
 	ag.POST("/pools/:id/fund", guard("academy.rewards"), h.AdminFundPool)
 	ag.GET("/pools/:id/ledger", guard("academy.rewards"), h.AdminPoolLedger)
+	ag.GET("/ledger", guard("academy.rewards"), h.AdminGlobalLedger)
 	ag.GET("/catalog", guard("academy.rewards"), h.AdminListCatalog)
 	ag.POST("/catalog", guard("academy.rewards"), h.AdminUpsertCatalog)
 }
@@ -191,6 +192,17 @@ func (h *Handler) AdminFundPool(c *gin.Context) {
 func (h *Handler) AdminPoolLedger(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	out, err := h.svc.PoolLedger(c.Request.Context(), c.Param("id"), limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminGlobalLedger returns the reward ledger across ALL pools, newest first.
+func (h *Handler) AdminGlobalLedger(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	out, err := h.svc.GlobalLedger(c.Request.Context(), limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "message": err.Error()})
 		return

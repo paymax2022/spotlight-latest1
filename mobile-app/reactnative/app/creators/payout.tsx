@@ -11,6 +11,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useEarnings, useRequestPayout, useCompletePayoutKyc } from '@/features/creators/hooks';
 import { CreatorsColors, formatNaira, PAYOUT_KYC_NOTICE } from '@/features/creators/constants/creators.constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 export default function Payout() {
   const earnings = useEarnings();
@@ -80,7 +81,7 @@ export default function Payout() {
             <Text style={styles.availValue}>{formatNaira(availableKobo)}</Text>
           </View>
           <Text style={styles.label}>Amount to withdraw (₦)</Text>
-          <TextInput style={styles.input} placeholder="0" placeholderTextColor={CreatorsColors.muted} keyboardType="number-pad" value={amount} onChangeText={setAmount} />
+          <TextInput style={styles.input} placeholder="0" placeholderTextColor={CreatorsColors.muted} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} value={amount} onChangeText={(v) => setAmount(sanitizeMoneyInput(v))} />
           <Pressable onPress={() => setAmount(String(Math.floor(availableKobo / 100)))}><Text style={styles.maxLink}>Withdraw all</Text></Pressable>
           {overLimit ? <Text style={styles.error}>Amount exceeds your available balance.</Text> : null}
           <PrimaryButton label="Withdraw to bank" onPress={onWithdraw} disabled={amountKobo <= 0 || overLimit} loading={requestPayout.isPending} style={{ marginTop: Spacing.lg }} />

@@ -20,6 +20,7 @@ import {
 } from '@/features/crypto/utils/cryptoFormatters';
 import { SUGGESTED_FIAT_AMOUNTS, DEFAULT_FIAT } from '@/features/crypto/constants/crypto.constants';
 import type { AmountBasis } from '@/features/crypto/types/crypto.types';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 export default function BuyEntryScreen() {
   const { symbol } = useLocalSearchParams<{ symbol: string }>();
@@ -106,10 +107,12 @@ export default function BuyEntryScreen() {
             <TextInput
               style={styles.amountInput}
               value={input}
-              onChangeText={setInput}
+              onChangeText={(v) => setInput(sanitizeMoneyInput(v))}
               placeholder="0.00"
               placeholderTextColor={Colors.outline}
               keyboardType="decimal-pad"
+              inputMode="decimal"
+              maxLength={13}
               autoFocus
               accessibilityLabel={basis === 'fiat' ? 'Amount to pay' : `Amount of ${a.symbol} to buy`}
             />

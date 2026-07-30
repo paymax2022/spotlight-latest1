@@ -46,8 +46,8 @@ func DefaultDeliveryFeeConfig() DeliveryFeeConfig {
 // DeliveryFeeBreakdown is the transparent line-by-line result (persisted on the
 // order + shown to the buyer).
 type DeliveryFeeBreakdown struct {
-	DistanceKm   float64 `json:"distance_km"`   // road distance used (km)
-	EtaMinutes   float64 `json:"eta_minutes"`   // estimated delivery time (min)
+	DistanceKm   float64 `json:"distance_km"` // road distance used (km)
+	EtaMinutes   float64 `json:"eta_minutes"` // estimated delivery time (min)
 	BaseKobo     int64   `json:"base_kobo"`
 	DistanceKobo int64   `json:"distance_kobo"` // extra-distance fee (after free km)
 	TimeKobo     int64   `json:"time_kobo"`     // extra-time fee (after free min)

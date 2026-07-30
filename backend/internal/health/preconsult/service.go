@@ -310,11 +310,11 @@ func (s *Service) Submit(ctx context.Context, caller, appointmentID string, answ
 // PatientView is the get-or-create payload for the patient wizard (M1–M16): the
 // link row, the pinned schema, prefill, and the active consent text.
 type PatientView struct {
-	Intake  *Intake             `json:"intake"`
+	Intake  *Intake              `json:"intake"`
 	Schema  *healthintake.Schema `json:"schema"`
-	Prefill map[string]any      `json:"prefill"`
-	Consent *ConsentText        `json:"consent"`
-	Draft   map[string]any      `json:"draft,omitempty"`
+	Prefill map[string]any       `json:"prefill"`
+	Consent *ConsentText         `json:"consent"`
+	Draft   map[string]any       `json:"draft,omitempty"`
 }
 
 func (s *Service) GetForPatient(ctx context.Context, caller, appointmentID string) (*PatientView, error) {
@@ -396,14 +396,14 @@ func (s *Service) Prefill(ctx context.Context, caller, appointmentID string) (ma
 // DoctorSummary is the ordered clinician view (PRD §6): allergies + current meds
 // HIGHLIGHTED first within the admin-configured section order.
 type DoctorSummary struct {
-	IntakeID        string              `json:"intake_id"`
-	AppointmentID   string              `json:"appointment_id"`
-	Status          string              `json:"status"`
-	PatientReported bool                `json:"patient_reported"` // always true (decision-support, not diagnosis)
-	Highlights      map[string]any      `json:"highlights"`       // allergies + current meds, surfaced first
-	Sections        []SummarySection    `json:"sections"`         // ordered per summary_section_order
-	RedFlag         *RedFlagDisplay     `json:"red_flag,omitempty"`
-	Attachments     []AttachmentView    `json:"attachments"`
+	IntakeID        string           `json:"intake_id"`
+	AppointmentID   string           `json:"appointment_id"`
+	Status          string           `json:"status"`
+	PatientReported bool             `json:"patient_reported"` // always true (decision-support, not diagnosis)
+	Highlights      map[string]any   `json:"highlights"`       // allergies + current meds, surfaced first
+	Sections        []SummarySection `json:"sections"`         // ordered per summary_section_order
+	RedFlag         *RedFlagDisplay  `json:"red_flag,omitempty"`
+	Attachments     []AttachmentView `json:"attachments"`
 }
 
 type SummarySection struct {
@@ -440,9 +440,9 @@ func (s *Service) GetForDoctor(ctx context.Context, caller, appointmentID string
 
 	order := s.summarySectionOrder(ctx)
 	sum := &DoctorSummary{
-		IntakeID:      it.ID,
-		AppointmentID: appointmentID,
-		Status:        it.Status,
+		IntakeID:        it.ID,
+		AppointmentID:   appointmentID,
+		Status:          it.Status,
 		PatientReported: true,
 		Highlights: map[string]any{
 			"allergies":           answers["allergies"],
@@ -537,18 +537,29 @@ func buildSections(order []string, a map[string]any) []SummarySection {
 // HealthProfile is the patient's persistent record (conditions/meds/allergies)
 // aggregated from prior intakes, used to prefill future intakes.
 type HealthProfile struct {
-	CurrentMedications any `json:"current_medications,omitempty"`
-	Allergies         any `json:"allergies,omitempty"`
-	ChronicConditions any `json:"chronic_conditions,omitempty"`
-	ChronicOther      any `json:"chronic_other,omitempty"`
-	LastUpdated       *time.Time `json:"last_updated,omitempty"`
+	CurrentMedications any        `json:"current_medications,omitempty"`
+	Allergies          any        `json:"allergies,omitempty"`
+	ChronicConditions  any        `json:"chronic_conditions,omitempty"`
+	ChronicOther       any        `json:"chronic_other,omitempty"`
+	LastUpdated        *time.Time `json:"last_updated,omitempty"`
 }
 
 func (s *Service) HealthProfile(ctx context.Context, caller string) (*HealthProfile, error) {
 	if caller == "" {
 		return nil, fmt.Errorf("preconsult: unauthenticated")
 	}
-	prior, err := s.latestPriorResponse(ctx, caller, "")
+	return s.HealthProfileFor(ctx, caller)
+}
+
+// HealthProfileFor returns a patient's persistent conditions/meds/allergies keyed
+// by patient id (not caller). It backs the clinical-safety context provider so the
+// pre-issue drug-allergy/interaction screen (RX-002/003) checks against the correct
+// patient's documented allergies and current medications.
+func (s *Service) HealthProfileFor(ctx context.Context, patientID string) (*HealthProfile, error) {
+	if patientID == "" {
+		return nil, fmt.Errorf("preconsult: patient required")
+	}
+	prior, err := s.latestPriorResponse(ctx, patientID, "")
 	if err != nil {
 		return nil, err
 	}

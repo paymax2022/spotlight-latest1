@@ -55,15 +55,15 @@ const AccountEdtechFeesVault = "edtech_fees_vault"
 // fee_schedule_id, status) — we do not duplicate the table, only project the fees
 // state machine over its status column.
 type Vault struct {
-	ID            string                     `json:"id"`
-	UserID        string                     `json:"userId"`
-	GoalName      string                     `json:"goalName"`
-	TargetMinor   int64                      `json:"targetMinor"`
-	SavedMinor    int64                      `json:"savedMinor"` // DERIVED = SUM(contributions); never set directly
-	FeeScheduleID *string                    `json:"feeScheduleId,omitempty"`
-	InvoiceID     *string                    `json:"invoiceId,omitempty"`
+	ID            string                      `json:"id"`
+	UserID        string                      `json:"userId"`
+	GoalName      string                      `json:"goalName"`
+	TargetMinor   int64                       `json:"targetMinor"`
+	SavedMinor    int64                       `json:"savedMinor"` // DERIVED = SUM(contributions); never set directly
+	FeeScheduleID *string                     `json:"feeScheduleId,omitempty"`
+	InvoiceID     *string                     `json:"invoiceId,omitempty"`
 	Status        feesstatemachine.VaultState `json:"status"`
-	CreatedAt     time.Time                  `json:"createdAt"`
+	CreatedAt     time.Time                   `json:"createdAt"`
 }
 
 // Contribution mirrors public.academy_pot_contributions. Rows are APPEND-ONLY (no

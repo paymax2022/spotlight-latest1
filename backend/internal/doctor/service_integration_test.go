@@ -184,6 +184,7 @@ func TestPayoutInsufficientFunds_Rejected(t *testing.T) {
 //   - no user_profiles row  -> GetUserTier errors -> EnforceWalletDebitLimit
 //     fails closed (the strongest fail-closed guarantee),
 //   - kyc_tier=0 (Tier0)    -> ErrWalletDisabled.
+//
 // In both cases the tier check runs BEFORE ledger.Debit, so funds are untouched.
 func TestPayoutTierDenied_FailClosed_NoLedgerEntry(t *testing.T) {
 	svc, ledgerSvc, pool, cleanup := newIntegrationService(t)

@@ -130,15 +130,15 @@ func (f *fakeVaultStore) WriteAudit(_ context.Context, _, action, _, _, _, _ str
 
 // ── fakeLedger: records which account contributions and transfers hit (SF-5) ────────
 
-const fakeGeneralFloatAccount = "acct-general-float"      // the general wallet-float account
+const fakeGeneralFloatAccount = "acct-general-float"        // the general wallet-float account
 const fakeSegregatedVaultAccount = "acct-edtech-fees-vault" // the SF-5 dedicated sub-account
 
 type ledgerCall struct {
-	kind      string // "debit" | "transfer"
-	dstAcct   string
-	srcAcct   string
-	amount    int64
-	idem      string
+	kind    string // "debit" | "transfer"
+	dstAcct string
+	srcAcct string
+	amount  int64
+	idem    string
 }
 
 type fakeLedger struct {

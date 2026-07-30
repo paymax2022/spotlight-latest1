@@ -837,11 +837,11 @@ func TestAuthZ_AddTierAddPromoAddVendorRequireOrganiserOwnership(t *testing.T) {
 
 func TestMoney_SettlementFeeMathIsExactIntegerKobo(t *testing.T) {
 	cases := []struct {
-		name       string
-		grossKobo  int64
-		feeBps     int
-		wantFee    int64
-		wantNet    int64
+		name      string
+		grossKobo int64
+		feeBps    int
+		wantFee   int64
+		wantNet   int64
 	}{
 		{"zero fee", 100_000_00, 0, 0, 100_000_00},
 		{"250bps (2.5%) on round number", 100_000_00, 250, 2_500_00, 97_500_00},
@@ -870,8 +870,8 @@ func TestMoney_SettlementFeeMathIsExactIntegerKobo(t *testing.T) {
 func TestMoney_PromoDiscountIsIntegerKobo(t *testing.T) {
 	// Mirrors the promo application in Purchase: payable = price - (price*pct)/100.
 	cases := []struct {
-		priceKobo  int64
-		percentOff int
+		priceKobo   int64
+		percentOff  int
 		wantPayable int64
 	}{
 		{10_000_00, 10, 9_000_00},

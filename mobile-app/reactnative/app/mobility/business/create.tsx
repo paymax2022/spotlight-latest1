@@ -9,6 +9,7 @@ import { Spacing } from '@/constants/spacing';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import SelectableCard from '@/features/mobility/components/SelectableCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import { useBusinessAccount, useCreateDelivery } from '@/features/mobility/hooks/useLogistics';
@@ -83,7 +84,7 @@ export default function CreateDeliveryScreen() {
         {codEnabled && (
           <>
             <Text style={styles.section}>Cash on delivery</Text>
-            <TextInputField label="Amount to collect (₦)" value={cod} onChangeText={setCod} placeholder="0" keyboardType="numeric" />
+            <TextInputField label="Amount to collect (₦)" value={cod} onChangeText={(t) => setCod(sanitizeMoneyInput(t))} placeholder="0" keyboardType="decimal-pad" inputMode="decimal" maxLength={13} />
             <Text style={styles.hint}>The courier collects this amount from the receiver on delivery.</Text>
           </>
         )}

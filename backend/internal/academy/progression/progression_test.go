@@ -26,16 +26,16 @@ func TestCanStepAllowed(t *testing.T) {
 
 func TestCanStepIllegal(t *testing.T) {
 	illegal := [][2]PathStepState{
-		{StepLocked, StepInProgress},  // skip available
-		{StepLocked, StepDone},        // skip everything
-		{StepAvailable, StepDone},     // skip in_progress
-		{StepAvailable, StepLocked},   // backward re-lock
-		{StepInProgress, StepLocked},  // backward re-lock
+		{StepLocked, StepInProgress},    // skip available
+		{StepLocked, StepDone},          // skip everything
+		{StepAvailable, StepDone},       // skip in_progress
+		{StepAvailable, StepLocked},     // backward re-lock
+		{StepInProgress, StepLocked},    // backward re-lock
 		{StepInProgress, StepAvailable}, // backward
-		{StepDone, StepAvailable},     // illegal regression (only →in_progress allowed)
-		{StepDone, StepLocked},        // illegal regression
-		{StepLocked, StepLocked},      // same-state no-op
-		{StepDone, StepDone},          // same-state no-op
+		{StepDone, StepAvailable},       // illegal regression (only →in_progress allowed)
+		{StepDone, StepLocked},          // illegal regression
+		{StepLocked, StepLocked},        // same-state no-op
+		{StepDone, StepDone},            // same-state no-op
 	}
 	for _, c := range illegal {
 		if canStep(c[0], c[1]) {
@@ -180,8 +180,8 @@ func TestPathBuildOrdering(t *testing.T) {
 
 func TestRecommendationScoreGapRanking(t *testing.T) {
 	threshold := 0.7
-	big := recommendationScore(Mastery{State: "not_started", Score: 0.0}, threshold, false)   // gap 0.7
-	small := recommendationScore(Mastery{State: "practiced", Score: 0.6}, threshold, false)    // gap 0.1
+	big := recommendationScore(Mastery{State: "not_started", Score: 0.0}, threshold, false) // gap 0.7
+	small := recommendationScore(Mastery{State: "practiced", Score: 0.6}, threshold, false) // gap 0.1
 	if big <= small {
 		t.Fatalf("bigger gap should rank higher: big=%v small=%v", big, small)
 	}

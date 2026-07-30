@@ -33,7 +33,7 @@ func nullStr(s *string) any {
 
 const listingCols = `id, market_id, seller_id, category_id, title, description,
 	price_kobo, currency, condition, attrs, status, quality_score, escrow_eligible,
-	state, lga, moderation_reason_code, view_count, save_count,
+	state, COALESCE(lga, '') AS lga, moderation_reason_code, view_count, save_count,
 	created_at, updated_at, expires_at, sold_at`
 
 func scanListing(row pgx.Row) (*Listing, error) {
@@ -697,6 +697,72 @@ func (r *Repository) GetBoost(ctx context.Context, id string) (*Boost, error) {
 	return b, nil
 }
 
+// boostColsB is boostCols qualified with the `b` alias, for the admin list JOIN
+// (mkt_boosts b LEFT JOIN mkt_listings l): `id` exists in both tables, so every
+// column must be table-qualified to avoid an ambiguous-column error.
+const boostColsB = `b.id, b.listing_id, b.seller_id, b.tier, b.duration_days, b.price_kobo,
+	b.ledger_charge_ref, b.status, b.rejection_reason_code, b.refund_ref, b.starts_at, b.ends_at, b.created_at`
+
+// AdminBoostRow is the admin boost-console read-model: the full boost row plus the
+// joined listing title. The embedded Boost inlines the SAME snake_case JSON keys
+// the member boost API already emits (id, listing_id, seller_id, tier,
+// duration_days, price_kobo, ledger_charge_ref, status, rejection_reason_code,
+// refund_ref, starts_at, ends_at, created_at); listing_title is additive so the
+// admin marketplace boost screen (frontend-admin MktBoost) renders unchanged.
+type AdminBoostRow struct {
+	Boost
+	ListingTitle string `json:"listing_title,omitempty"`
+}
+
+func scanAdminBoost(row pgx.Row) (*AdminBoostRow, error) {
+	var b AdminBoostRow
+	var status string
+	if err := row.Scan(
+		&b.ID, &b.ListingID, &b.SellerID, &b.Tier, &b.DurationDays, &b.PriceKobo,
+		&b.LedgerChargeRef, &status, &b.RejectionReasonCode, &b.RefundRef, &b.StartsAt, &b.EndsAt, &b.CreatedAt,
+		&b.ListingTitle,
+	); err != nil {
+		return nil, err
+	}
+	b.Status = BoostStatus(status)
+	return &b, nil
+}
+
+// ListBoosts returns boosts platform-wide for the admin boost console, newest-first,
+// optionally filtered by status. Boosts are the SOLE live marketplace money path
+// (§2.4: wallet charge → ledger.AccountCommission, auto-refund on reject), so admins
+// must be able to list and moderate them. The listing title is LEFT-JOINed (COALESCE
+// to ” if the listing was hard-removed) so the console can show what each boost
+// promotes.
+func (r *Repository) ListBoosts(ctx context.Context, status string, limit, offset int) ([]AdminBoostRow, error) {
+	limit = clampLimit(limit)
+	q := `SELECT ` + boostColsB + `, COALESCE(l.title, '') AS listing_title
+		FROM public.mkt_boosts b
+		LEFT JOIN public.mkt_listings l ON l.id = b.listing_id`
+	args := []any{}
+	if status != "" {
+		q += ` WHERE b.status=$1 ORDER BY b.created_at DESC LIMIT $2 OFFSET $3`
+		args = append(args, status, limit, offset)
+	} else {
+		q += ` ORDER BY b.created_at DESC LIMIT $1 OFFSET $2`
+		args = append(args, limit, offset)
+	}
+	rows, err := r.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, wrapInternal("list boosts", err)
+	}
+	defer rows.Close()
+	var out []AdminBoostRow
+	for rows.Next() {
+		b, serr := scanAdminBoost(rows)
+		if serr != nil {
+			return nil, serr
+		}
+		out = append(out, *b)
+	}
+	return out, rows.Err()
+}
+
 // SetBoostStatus performs a guarded boost transition, optionally recording rejection
 // reason + refund ref.
 func (r *Repository) SetBoostStatus(ctx context.Context, id string, from, to BoostStatus, rejectionReason, refundRef *string) error {
@@ -751,6 +817,33 @@ func (r *Repository) GetOffer(ctx context.Context, id string) (*Offer, error) {
 		return nil, wrapInternal("get offer", err)
 	}
 	return o, nil
+}
+
+// ListOffersByListing returns a listing's offers oldest→newest. When buyerID is
+// non-empty the result is scoped to that buyer's own offers (the buyer's view);
+// empty buyerID returns every offer (the seller's view).
+func (r *Repository) ListOffersByListing(ctx context.Context, listingID, buyerID string) ([]Offer, error) {
+	q := `SELECT ` + offerCols + ` FROM public.mkt_offers WHERE listing_id=$1`
+	args := []any{listingID}
+	if buyerID != "" {
+		q += ` AND buyer_id=$2`
+		args = append(args, buyerID)
+	}
+	q += ` ORDER BY created_at ASC`
+	rows, err := r.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, wrapInternal("list offers", err)
+	}
+	defer rows.Close()
+	out := make([]Offer, 0)
+	for rows.Next() {
+		o, serr := scanOffer(rows)
+		if serr != nil {
+			return nil, serr
+		}
+		out = append(out, *o)
+	}
+	return out, rows.Err()
 }
 
 // SetOfferStatus updates an offer status.

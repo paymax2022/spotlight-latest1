@@ -91,7 +91,7 @@ func mapFacial(raw []byte, clientRef string, threshold int) provider.KycCheckRes
 		Terminal:        true,
 	}
 	var env struct {
-		Success bool `json:"success"`
+		Success bool   `json:"success"`
 		Message string `json:"message"`
 		Data    struct {
 			ID          string `json:"id"`
@@ -133,10 +133,10 @@ func mapLiveness(raw []byte, clientRef string) provider.KycCheckResult {
 		Terminal:        true,
 	}
 	var env struct {
-		Success bool `json:"success"`
+		Success bool   `json:"success"`
 		Message string `json:"message"`
 		Data    struct {
-			ID       string  `json:"id"`
+			ID       string `json:"id"`
 			Liveness struct {
 				Passed     bool    `json:"passed"`
 				Confidence float64 `json:"confidence"`
@@ -171,7 +171,7 @@ func mapDocument(raw []byte, clientRef string) provider.KycCheckResult {
 		Terminal:        true,
 	}
 	var env struct {
-		Success bool `json:"success"`
+		Success bool   `json:"success"`
 		Message string `json:"message"`
 		Data    struct {
 			ID           string          `json:"id"`
@@ -215,7 +215,7 @@ func mapAML(raw []byte, clientRef string) provider.KycCheckResult {
 		Terminal:        true,
 	}
 	var env struct {
-		Success bool `json:"success"`
+		Success bool   `json:"success"`
 		Message string `json:"message"`
 		Data    struct {
 			ID    string          `json:"id"`

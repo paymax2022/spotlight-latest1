@@ -2,7 +2,9 @@ package marketplace
 
 import (
 	"context"
+	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -19,12 +21,14 @@ import (
 //
 // Constructed in internal/app via NewService(pool, ledger, redis).
 type Service struct {
-	repo     *Repository
-	ledger   *ledger.Service
-	redis    *goredis.Client // optional; nil ⇒ DB-unique idempotency backstop only
-	notify   Notifier
-	audit    Auditor
-	searcher Searcher // optional; nil ⇒ GET /search returns 501 SEARCH_NOT_WIRED
+	repo       *Repository
+	ledger     boostLedger     // concrete *ledger.Service in prod; a fake in unit tests
+	redis      *goredis.Client // optional; nil ⇒ DB-unique idempotency backstop only
+	notify     Notifier
+	audit      Auditor
+	searcher   Searcher           // optional; nil ⇒ GET /search returns 501 SEARCH_NOT_WIRED
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	realtime   RealtimePublisher  // optional; nil ⇒ no live push (clients poll instead)
 	// referralEmitter was removed in the listings-and-connect pivot (ADR-023): the
 	// marketplace no longer settles purchases (no escrow release), so there is nothing
 	// to emit to the Direct Referral Rewards engine. See marketplace_routes.go, where
@@ -34,6 +38,61 @@ type Service struct {
 // Notifier emits buyer/seller notifications. Nil-safe.
 type Notifier interface {
 	Notify(ctx context.Context, userID, kind, message string)
+}
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module (§ profit registry). app-wiring injects a thin adapter over the finance
+// commission service; when the commission feature is off (or no recorder is wired)
+// the field is nil and recording is a silent no-op. Modeled as a LOCAL interface so
+// marketplace never imports the commission package at compile time (mirrors the
+// Searcher/Notifier seams) — the adapter, which lives in app-wiring, discards the
+// returned earning row and surfaces only the error.
+//
+// This records realized profit ONLY; it never moves money. The marketplace's own
+// money movements (e.g. the boost wallet charge into ledger.AccountCommission) are
+// unchanged, and the injected recorder is deliberately constructed WITHOUT a ledger
+// so RecordFor never re-posts to the ledger (no double count of the commission
+// revenue account) — it appends the immutable earning row used by profit reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a marketplace money
+// event. It is best-effort and MUST NEVER affect the caller's outcome: a nil
+// recorder is a no-op, and any error is logged and swallowed so a profit-registry
+// failure can never fail or reverse the underlying marketplace transaction. The
+// recorded breakdown is resolved server-side from the central rate card; the source
+// ref doubles as the idempotency key so retries never double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
+		"marketplace", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[marketplace] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
+	}
+}
+
+// boostLedger is the NARROW finance-ledger seam the boost money-path (§2.4)
+// depends on — the sole live marketplace revenue path. Purchase debits the seller
+// wallet into the commission (ad-revenue) standing account; reject/auto-refund
+// posts a balanced reversal back to the seller wallet. The concrete
+// *ledger.Service (injected by app-wiring via NewService) satisfies it, and a small
+// in-memory fake implements it in service_boost_test.go so the charge/refund ledger
+// effect has an EXECUTED, DB-free unit test. Modeled as a LOCAL interface (mirrors
+// the Notifier/Searcher/CommissionRecorder seams); it is the ONLY finance-ledger
+// surface the marketplace uses (grep: s.ledger appears only in service_boost.go).
+type boostLedger interface {
+	GetOrCreateStandingAccount(ctx context.Context, accountType ledger.AccountType) (*ledger.Account, error)
+	GetOrCreateUserWallet(ctx context.Context, userID string) (*ledger.Account, error)
+	Debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error
+	PostReversal(ctx context.Context, restoreAccountID, releaseAccountID string, amountKobo int64, reference, idempotencyKey string) error
 }
 
 // NewService constructs the marketplace service. redis may be nil (dev/CI): the
@@ -47,6 +106,16 @@ func NewService(pool *pgxpool.Pool, ledgerSvc *ledger.Service, rdb *goredis.Clie
 		redis:  rdb,
 	}
 }
+
+// RealtimePublisher pushes a live event to a user's connected clients (SSE). It is
+// satisfied by internal/platform/realtime.Hub. Optional — when nil, chat still works
+// via the clients' polling/refetch; realtime is a best-effort accelerator.
+type RealtimePublisher interface {
+	PublishToUser(ctx context.Context, userID, eventType string, payload any) error
+}
+
+// WithRealtime attaches an optional live-push sink for chat events.
+func (s *Service) WithRealtime(p RealtimePublisher) *Service { s.realtime = p; return s }
 
 // WithNotifier attaches an optional notification sink.
 func (s *Service) WithNotifier(n Notifier) *Service { s.notify = n; return s }
@@ -202,7 +271,7 @@ func (s *Service) VerifyBusiness(ctx context.Context, userID string) error {
 // ─── Offers (§3.3; guards + status, extrapolated from exemplar) ──────────────
 
 // CreateOffer places a pending offer on a listing.
-func (s *Service) CreateOffer(ctx context.Context, buyerID, listingID string, offerKobo int64) (*Offer, error) {
+func (s *Service) CreateOffer(ctx context.Context, buyerID, listingID string, offerKobo int64, message string) (*Offer, error) {
 	l, err := s.repo.GetListing(ctx, listingID)
 	if err != nil {
 		return nil, err
@@ -216,7 +285,17 @@ func (s *Service) CreateOffer(ctx context.Context, buyerID, listingID string, of
 	if offerKobo <= 0 {
 		return nil, fieldErr(CodeValidation, "offer_price_kobo must be positive", "offer_price_kobo")
 	}
-	return s.repo.InsertOffer(ctx, &Offer{ListingID: listingID, BuyerID: buyerID, OfferPriceKobo: offerKobo})
+	o, err := s.repo.InsertOffer(ctx, &Offer{ListingID: listingID, BuyerID: buyerID, OfferPriceKobo: offerKobo})
+	if err != nil {
+		return nil, err
+	}
+	// Best-effort: post an optional buyer note into the buyer↔seller deal thread so
+	// the offer and its message live together in the deal room. Never fail the offer
+	// if messaging errors — the offer is the durable record.
+	if strings.TrimSpace(message) != "" {
+		_, _ = s.StartOrGetThread(ctx, buyerID, listingID, message)
+	}
+	return o, nil
 }
 
 // AcceptOffer (seller) accepts a pending offer. OLA: caller must own the listing.
@@ -253,6 +332,22 @@ func (s *Service) CounterOffer(ctx context.Context, sellerID, offerID string, co
 	_ = s.repo.SetOfferStatus(ctx, offerID, "countered")
 	parent := o.ID
 	return s.repo.InsertOffer(ctx, &Offer{ListingID: o.ListingID, BuyerID: o.BuyerID, OfferPriceKobo: counterKobo, ParentOfferID: &parent})
+}
+
+// ListOffersForListing returns the negotiation history for a listing, scoped to the
+// caller (object-level auth): the listing's seller sees every offer; any other caller
+// (a buyer) sees only the offers they themselves made. Ordered oldest→newest so the
+// deal room can render the counter-offer chain in sequence.
+func (s *Service) ListOffersForListing(ctx context.Context, callerID, listingID string) ([]Offer, error) {
+	l, err := s.repo.GetListing(ctx, listingID)
+	if err != nil {
+		return nil, err
+	}
+	if l.SellerID == callerID {
+		return s.repo.ListOffersByListing(ctx, listingID, "")
+	}
+	// Buyer view: only their own offers on this listing.
+	return s.repo.ListOffersByListing(ctx, listingID, callerID)
 }
 
 // transitionOffer applies an offer status change after an OLA check.

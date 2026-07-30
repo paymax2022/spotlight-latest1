@@ -176,7 +176,7 @@ func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *t
 	svc := newLiveRestaurantService(pool, led)
 	ctx := context.Background()
 
-	owner := seedUser(t, ctx, pool)   // restaurant provider (money lands in this wallet)
+	owner := seedUser(t, ctx, pool)    // restaurant provider (money lands in this wallet)
 	customer := seedUser(t, ctx, pool) // settlement payer
 	restID := seedRestaurant(t, ctx, pool, owner)
 

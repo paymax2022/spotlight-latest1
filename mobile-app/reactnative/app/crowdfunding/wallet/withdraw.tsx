@@ -12,6 +12,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import { useCampaignWallet, useBankAccounts, useSubmitWithdrawal } from '@/features/crowdfunding/hooks/useExtras';
 import { formatNaira } from '@/features/crowdfunding/utils/crowdfundingFormatters';
+import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 
 export default function WithdrawScreen() {
   const wallet = useCampaignWallet();
@@ -25,7 +26,7 @@ export default function WithdrawScreen() {
   const [done, setDone] = useState(false);
 
   const available = wallet.data?.availableKobo ?? 0;
-  const amountKobo = amountText ? Number(amountText.replace(/[^0-9]/g, '')) * 100 : 0;
+  const amountKobo = amountText ? nairaStringToKobo(amountText) : 0;
   const over = amountKobo > available;
   const defaultBank = banks.data?.find((b) => b.isDefault)?.id ?? null;
   const selectedBank = bankId ?? defaultBank;
@@ -68,7 +69,7 @@ export default function WithdrawScreen() {
           <Text style={styles.label}>Amount</Text>
           <View style={[styles.amountWrap, over && styles.amountErr]}>
             <Text style={styles.naira}>₦</Text>
-            <TextInput style={styles.amountInput} placeholder="0" placeholderTextColor={Colors.outline} keyboardType="number-pad" value={amountText} onChangeText={(t) => setAmountText(t.replace(/[^0-9]/g, ''))} />
+            <TextInput style={styles.amountInput} placeholder="0" placeholderTextColor={Colors.outline} keyboardType="decimal-pad" maxLength={13} value={amountText} onChangeText={(t) => setAmountText(sanitizeMoneyInput(t))} />
             <Pressable onPress={() => setAmountText(String(Math.round(available / 100)))} hitSlop={8}><Text style={styles.max}>MAX</Text></Pressable>
           </View>
           {over && <Text style={styles.err}>Amount exceeds your available balance.</Text>}

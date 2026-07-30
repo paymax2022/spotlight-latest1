@@ -14,6 +14,7 @@ import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import ProgressBar from '@/features/academy/components/ProgressBar';
 import { formatNaira } from '@/features/academy/constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { AUTOSAVE_CADENCES } from '@/features/academy/fees/constants';
 import { useVaults, useUpdateAutoSave } from '@/features/academy/fees/hooks';
 
@@ -102,7 +103,7 @@ export default function AutoSaveRules() {
               })}
             </View>
             <Text style={styles.section}>Amount each time</Text>
-            <TextInputField placeholder="e.g. 15000" value={amount} onChangeText={setAmount} keyboardType="numeric" leftIcon={<Text style={styles.naira}>₦</Text>} />
+            <TextInputField placeholder="e.g. 15000" value={amount} onChangeText={(v) => setAmount(sanitizeMoneyInput(v))} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} leftIcon={<Text style={styles.naira}>₦</Text>} />
           </>
         ) : null}
 

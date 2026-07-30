@@ -18,10 +18,10 @@ func TestDefaultSurfaceConfigRouting(t *testing.T) {
 		want    string
 	}{
 		{PrimBasemap, "default", "maptiler"},
-		{PrimGeocode, "default", "google"},        // address lookup standardized on Google
+		{PrimGeocode, "default", "google"}, // address lookup standardized on Google
 		{PrimReverse, "default", "google"},
-		{PrimAutocomplete, "default", "google"},   // Google across all surfaces
-		{PrimAutocomplete, "checkout", "google"},  // consumer surface uses Google
+		{PrimAutocomplete, "default", "google"},  // Google across all surfaces
+		{PrimAutocomplete, "checkout", "google"}, // consumer surface uses Google
 		{PrimAutocomplete, "delivery", "google"},
 		{PrimPlaces, "default", "google"}, // external POIs are Google
 		{PrimRoute, "default", "osrm"},    // single-route polyline stays OSRM

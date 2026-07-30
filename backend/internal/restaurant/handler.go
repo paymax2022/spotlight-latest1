@@ -1,6 +1,7 @@
 package restaurant
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -150,7 +151,7 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 		return
 	}
 	if err := h.svc.UpdateStatus(c.Request.Context(), c.Param("orderId"), actorID, OrderStatus(body.Status)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(statusCodeFor(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -159,8 +160,18 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 func (h *Handler) CancelOrder(c *gin.Context) {
 	actorID := c.GetString("user_id")
 	if err := h.svc.CancelOrder(c.Request.Context(), c.Param("orderId"), actorID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(statusCodeFor(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// statusCodeFor maps order-lifecycle errors to HTTP codes: authorization failures →
+// 403, everything else → 400 (validation/illegal-transition). Keeps object-level authZ
+// denials distinguishable from bad requests.
+func statusCodeFor(err error) int {
+	if errors.Is(err, ErrForbidden) || errors.Is(err, ErrDeliveredViaHandoff) {
+		return http.StatusForbidden
+	}
+	return http.StatusBadRequest
 }

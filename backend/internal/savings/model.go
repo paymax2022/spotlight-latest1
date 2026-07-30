@@ -36,8 +36,8 @@ type Vault struct {
 	Name          string     `json:"name"`
 	Kind          VaultKind  `json:"kind"`
 	State         VaultState `json:"state"`
-	TargetKobo    int64      `json:"target_kobo"`     // optional goal
-	ConfigVersion int        `json:"config_version"`  // versioned lock/flex config
+	TargetKobo    int64      `json:"target_kobo"`    // optional goal
+	ConfigVersion int        `json:"config_version"` // versioned lock/flex config
 	MaturesAt     *time.Time `json:"matures_at,omitempty"`
 	AutoSaveJobID *string    `json:"autosave_job_id,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
@@ -94,7 +94,7 @@ type Circle struct {
 	IntervalSecs     int64       `json:"interval_secs"`     // cycle cadence
 	State            CircleState `json:"state"`
 	CurrentCycle     int         `json:"current_cycle"`
-	TotalCycles      int         `json:"total_cycles"`     // == active member count at activation
+	TotalCycles      int         `json:"total_cycles"` // == active member count at activation
 	CycleJobID       *string     `json:"cycle_job_id,omitempty"`
 	CreatedAt        time.Time   `json:"created_at"`
 	UpdatedAt        time.Time   `json:"updated_at"`
@@ -160,23 +160,23 @@ const (
 )
 
 type GroupTarget struct {
-	ID             string         `json:"id"`
-	CreatorUserID  string         `json:"creator_user_id"`
-	Name           string         `json:"name"`
-	TargetKobo     int64          `json:"target_kobo"`
-	Rule           WithdrawalRule `json:"withdrawal_rule"`
-	TargetDate     *time.Time     `json:"target_date,omitempty"`
-	State          TargetState    `json:"state"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
+	ID            string         `json:"id"`
+	CreatorUserID string         `json:"creator_user_id"`
+	Name          string         `json:"name"`
+	TargetKobo    int64          `json:"target_kobo"`
+	Rule          WithdrawalRule `json:"withdrawal_rule"`
+	TargetDate    *time.Time     `json:"target_date,omitempty"`
+	State         TargetState    `json:"state"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
 type GroupTargetMember struct {
-	ID          string    `json:"id"`
-	TargetID    string    `json:"target_id"`
-	UserID      string    `json:"user_id"`
-	Approved    bool      `json:"approved"` // for MAJORITY release vote
-	JoinedAt    time.Time `json:"joined_at"`
+	ID       string    `json:"id"`
+	TargetID string    `json:"target_id"`
+	UserID   string    `json:"user_id"`
+	Approved bool      `json:"approved"` // for MAJORITY release vote
+	JoinedAt time.Time `json:"joined_at"`
 }
 
 func canVault(from, to VaultState) bool   { return vaultTransitions[from][to] }

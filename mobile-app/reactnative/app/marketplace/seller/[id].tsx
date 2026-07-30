@@ -45,7 +45,17 @@ export default function SellerProfileScreen() {
       <View style={styles.topRow}>
         <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.topTitle}>Seller</Text>
-        <Pressable hitSlop={8} accessibilityLabel="Report seller"><Flag size={18} color={Colors.onSurface} /></Pressable>
+        <Pressable
+          hitSlop={8}
+          accessibilityLabel="Report seller"
+          onPress={() =>
+            router.push(
+              `/marketplace/account/report?targetType=seller&targetId=${id}&targetName=${encodeURIComponent(p.name)}&sellerId=${id}` as never,
+            )
+          }
+        >
+          <Flag size={18} color={Colors.onSurface} />
+        </Pressable>
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll}>

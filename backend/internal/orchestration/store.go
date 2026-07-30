@@ -9,20 +9,20 @@ import (
 
 // TxView is the unified-ledger transaction row (spec §5.6 GET /v1/transactions).
 type TxView struct {
-	ID            string    `json:"id"`
-	Reference     string    `json:"reference"`
-	Type          string    `json:"type"` // conversion | transfer | collection
-	Status        string    `json:"status"`
-	Title         string    `json:"title"`
-	Source        Money     `json:"source"`
-	Destination   Money     `json:"destination"`
-	Direction     string    `json:"direction"` // in | out
-	Route         Route     `json:"route"`
-	QuotedRate    float64   `json:"quotedRate"`
-	ExecutedRate  float64   `json:"executedRate"`
-	Fees          []Fee     `json:"fees"`
-	ProviderRef   string    `json:"providerRef"`
-	CreatedAt     time.Time `json:"createdAt"`
+	ID           string    `json:"id"`
+	Reference    string    `json:"reference"`
+	Type         string    `json:"type"` // conversion | transfer | collection
+	Status       string    `json:"status"`
+	Title        string    `json:"title"`
+	Source       Money     `json:"source"`
+	Destination  Money     `json:"destination"`
+	Direction    string    `json:"direction"` // in | out
+	Route        Route     `json:"route"`
+	QuotedRate   float64   `json:"quotedRate"`
+	ExecutedRate float64   `json:"executedRate"`
+	Fees         []Fee     `json:"fees"`
+	ProviderRef  string    `json:"providerRef"`
+	CreatedAt    time.Time `json:"createdAt"`
 }
 
 // Store is the persistence boundary for the orchestration ledger and records.
@@ -244,7 +244,7 @@ func (m *memStore) Transaction(ctx context.Context, customer, id string) (*TxVie
 func conversionView(c *Conversion) TxView {
 	return TxView{
 		ID: c.ID, Reference: c.Reference, Type: "conversion", Status: string(c.Status),
-		Title: c.Source.Currency + " → " + c.Destination.Currency,
+		Title:  c.Source.Currency + " → " + c.Destination.Currency,
 		Source: c.Source, Destination: c.Destination, Direction: "in",
 		Route: c.Route, QuotedRate: c.Rate, ExecutedRate: c.AllInRate, Fees: c.Fees,
 		ProviderRef: c.ProviderRef, CreatedAt: c.CreatedAt,
@@ -254,7 +254,7 @@ func conversionView(c *Conversion) TxView {
 func transferView(t *Transfer) TxView {
 	return TxView{
 		ID: t.ID, Reference: t.Reference, Type: "transfer", Status: string(t.Status),
-		Title: "Payout · " + t.Destination.Currency,
+		Title:  "Payout · " + t.Destination.Currency,
 		Source: t.Source, Destination: t.Destination, Direction: "out",
 		Route: t.Route, QuotedRate: t.QuotedRate, ExecutedRate: t.ExecutedRate, Fees: t.Fees,
 		ProviderRef: t.ProviderRef, CreatedAt: t.CreatedAt,
@@ -264,7 +264,7 @@ func transferView(t *Transfer) TxView {
 func collectionView(v *VirtualAccount) TxView {
 	return TxView{
 		ID: v.ID, Reference: v.ID, Type: "collection", Status: v.Status,
-		Title: "Collection account · " + v.Currency,
+		Title:     "Collection account · " + v.Currency,
 		CreatedAt: v.CreatedAt,
 	}
 }

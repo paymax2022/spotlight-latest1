@@ -23,6 +23,7 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import PrimaryButton from '@/components/PrimaryButton';
+import { sanitizeMoneyInput } from '@/utils/money';
 import {
   MarketColors,
   formatNaira,
@@ -32,11 +33,11 @@ import type { ListingCondition, DeliveryOption } from '@/features/marketplace';
 import { aiPrefill, estimateFairPriceBand, uploadListingImage, isEscrowEligibleCategory } from '@/features/marketplace/api/sell.api';
 import type { AiPrefillResult } from '@/features/marketplace/api/sell.api';
 import { useSellCategories, useSellCategory, useCreateListing, useSubmitListing } from '@/features/marketplace/sell.hooks';
-import PhotoStrip, { type ComposerPhoto } from './_components/PhotoStrip';
-import AiPrefillCard from './_components/AiPrefillCard';
-import ComposerValidation, { checkBannedPatterns, countWords } from './_components/ComposerValidation';
-import AttributeFields, { normalizeSchema, missingRequired } from './_components/AttributeFields';
-import FairPriceMeter from './_components/FairPriceMeter';
+import PhotoStrip, { type ComposerPhoto } from '@/features/marketplace/components/sell/PhotoStrip';
+import AiPrefillCard from '@/features/marketplace/components/sell/AiPrefillCard';
+import ComposerValidation, { checkBannedPatterns, countWords } from '@/features/marketplace/components/sell/ComposerValidation';
+import AttributeFields, { normalizeSchema, missingRequired } from '@/features/marketplace/components/sell/AttributeFields';
+import FairPriceMeter from '@/features/marketplace/components/sell/FairPriceMeter';
 
 function track(event: string, props: Record<string, unknown>) {
   if (__DEV__) console.log(`[analytics] ${event}`, props);
@@ -315,7 +316,7 @@ export default function SellWizard() {
           {step === 'price' ? (
             <>
               <Text style={styles.label}>Price (₦)</Text>
-              <TextInput style={styles.input} placeholder="0" placeholderTextColor={MarketColors.muted} value={priceInput} onChangeText={setPriceInput} keyboardType="numeric" />
+              <TextInput style={styles.input} placeholder="0" placeholderTextColor={MarketColors.muted} value={priceInput} onChangeText={(v) => setPriceInput(sanitizeMoneyInput(v))} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} />
               <View style={{ height: Spacing.sm }} />
               <FairPriceMeter priceKobo={priceKobo} band={band} />
 

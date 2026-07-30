@@ -12,6 +12,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { PaymentSheet, usePurchasePayment } from '@/features/payments';
 import { useStorefront, useSendTip } from '@/features/creators/hooks';
 import { CreatorsColors, formatNaira, NL5_DISCLOSURE } from '@/features/creators/constants/creators.constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 const PRESETS = [50_000, 100_000, 200_000, 500_000];
 
@@ -89,7 +90,7 @@ export default function TipScreen() {
           </View>
 
           <Text style={styles.label}>Or enter a custom amount (₦)</Text>
-          <TextInput style={styles.input} placeholder="e.g. 2500" placeholderTextColor={CreatorsColors.muted} keyboardType="number-pad" value={custom} onChangeText={setCustom} />
+          <TextInput style={styles.input} placeholder="e.g. 2500" placeholderTextColor={CreatorsColors.muted} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} value={custom} onChangeText={(v) => setCustom(sanitizeMoneyInput(v))} />
 
           <Text style={styles.label}>Message (optional)</Text>
           <TextInput style={[styles.input, styles.multiline]} placeholder="Say something nice…" placeholderTextColor={CreatorsColors.muted} value={message} onChangeText={setMessage} multiline />

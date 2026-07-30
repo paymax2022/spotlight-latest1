@@ -12,6 +12,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useHoldings, useListFraction } from '@/features/fractionalre/hooks';
 import { formatNaira, makeIdempotencyKey } from '@/features/fractionalre/utils';
+import { sanitizeMoneyInput } from '@/utils/money';
 import type { Holding } from '@/features/fractionalre/types';
 
 export default function ListFractionScreen() {
@@ -79,7 +80,7 @@ export default function ListFractionScreen() {
                 {overUnits ? <Text style={styles.warn}>You only hold {selected.units} units.</Text> : null}
 
                 <Text style={styles.label}>Price per unit (₦)</Text>
-                <TextInput value={priceNaira} onChangeText={(t) => setPriceNaira(t.replace(/[^0-9.]/g, ''))} keyboardType="numeric" style={styles.input} placeholder={String(navPerUnitKobo / 100)} placeholderTextColor={Colors.onSurfaceVariant} />
+                <TextInput value={priceNaira} onChangeText={(t) => setPriceNaira(sanitizeMoneyInput(t))} keyboardType="decimal-pad" maxLength={13} style={styles.input} placeholder={String(navPerUnitKobo / 100)} placeholderTextColor={Colors.onSurfaceVariant} />
                 <Text style={styles.navHint}>Reference NAV: {formatNaira(navPerUnitKobo)} per unit. Listings far from NAV may take longer to fill.</Text>
 
                 {unitsNum > 0 && priceKobo > 0 ? (

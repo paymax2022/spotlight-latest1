@@ -81,9 +81,9 @@ func (s *Service) priceSwap(ctx context.Context, fromAssetID, toAssetID string, 
 // nothing minted):
 //   - Holdings: from-asset units DEBIT, to-asset units CREDIT (one DB tx).
 //   - Cash legs (finance ledger, one idempotency envelope):
-//       sell A : escrow → wallet CREDIT   (+cashKobo)
-//       buy  B : wallet → escrow DEBIT     (−netCash)
-//       spread : wallet → paymax_revenue   (−spreadKobo)
+//     sell A : escrow → wallet CREDIT   (+cashKobo)
+//     buy  B : wallet → escrow DEBIT     (−netCash)
+//     spread : wallet → paymax_revenue   (−spreadKobo)
 //     Net wallet delta is zero (cashKobo = netCash + spreadKobo), so a swap needs
 //     no NGN balance; the spread is retained revenue. Fail-closed: an oversell is
 //     rejected by the holdings CHECK before any ledger post is finalised.
@@ -254,12 +254,12 @@ func (s *Service) ScreenAddress(_ context.Context, address string) (risk, reason
 // routed through manual compliance review for the MVP (mirrors the client rule);
 // the actual state machine still enforces the whitelist + holdings at execution.
 type WithdrawalEligibility struct {
-	Gate                 string `json:"gate"` // eligible|blocked
-	ManualReviewOnly     bool   `json:"manual_review_only"`
-	DailyLimitKobo       int64  `json:"daily_limit_kobo"`
-	DailyUsedKobo        int64  `json:"daily_used_kobo"`
-	ManualReviewMinKobo  int64  `json:"manual_review_threshold_kobo"`
-	Message              string `json:"message"`
+	Gate                string `json:"gate"` // eligible|blocked
+	ManualReviewOnly    bool   `json:"manual_review_only"`
+	DailyLimitKobo      int64  `json:"daily_limit_kobo"`
+	DailyUsedKobo       int64  `json:"daily_used_kobo"`
+	ManualReviewMinKobo int64  `json:"manual_review_threshold_kobo"`
+	Message             string `json:"message"`
 }
 
 // WithdrawalEligibilityFor returns the caller's current withdrawal gate. Daily-used
@@ -284,15 +284,15 @@ func (s *Service) WithdrawalEligibilityFor(ctx context.Context, userID string) (
 // amount the destination receives. Display-only; the server re-computes the fee at
 // execution time (networkFeeUnits) so the quote is advisory.
 type WithdrawalQuote struct {
-	AssetID          string `json:"asset_id"`
-	Symbol           string `json:"symbol"`
-	Network          string `json:"network"`
-	Units            int64  `json:"units"`
-	NetworkFeeUnits  int64  `json:"network_fee_units"`
-	ReceiveUnits     int64  `json:"receive_units"`
-	PaymaxFeeKobo    int64  `json:"paymax_fee_kobo"`
-	FiatValueKobo    int64  `json:"fiat_value_kobo"`
-	RequiresReview   bool   `json:"requires_review"`
+	AssetID         string `json:"asset_id"`
+	Symbol          string `json:"symbol"`
+	Network         string `json:"network"`
+	Units           int64  `json:"units"`
+	NetworkFeeUnits int64  `json:"network_fee_units"`
+	ReceiveUnits    int64  `json:"receive_units"`
+	PaymaxFeeKobo   int64  `json:"paymax_fee_kobo"`
+	FiatValueKobo   int64  `json:"fiat_value_kobo"`
+	RequiresReview  bool   `json:"requires_review"`
 }
 
 // QuoteWithdrawal computes the fee/receive preview for a candidate withdrawal. It
@@ -317,8 +317,8 @@ func (s *Service) QuoteWithdrawal(ctx context.Context, userID, assetID, network 
 	return &WithdrawalQuote{
 		AssetID: a.ID, Symbol: a.Symbol, Network: network,
 		Units: units, NetworkFeeUnits: fee, ReceiveUnits: units - fee,
-		PaymaxFeeKobo: DefaultWithdrawFeeKobo,
-		FiatValueKobo: cashForUnits(units, priceKobo, a.MinorUnitScale),
+		PaymaxFeeKobo:  DefaultWithdrawFeeKobo,
+		FiatValueKobo:  cashForUnits(units, priceKobo, a.MinorUnitScale),
 		RequiresReview: true,
 	}, nil
 }
@@ -345,6 +345,7 @@ func networkFeeUnits(units int64) int64 {
 //     (pending_review → approved → broadcast) before anything leaves; a reject
 //     (pending_review → failed) returns the parked units. No provider dispatch
 //     happens on the member path — enforcing the AML gate before any broadcast.
+//
 // Requires an Idempotency-Key (replay-safe) and the destination to be an owned,
 // active, whitelisted address for the same asset (allow-list enforced).
 func (s *Service) Withdraw(ctx context.Context, userID, assetID, addressID string, units, feeKobo int64, idemKey string) (*Withdrawal, error) {
@@ -454,15 +455,32 @@ func (s *Service) broadcastApprovedWithdrawal(ctx context.Context, w *AdminWithd
 	if netUnits <= 0 {
 		netUnits = w.Units
 	}
+	// A real provider needs the asset's minor-unit scale to format the on-chain amount.
+	// Best-effort lookup; a missing scale (0) makes a real adapter error → the withdrawal
+	// safely parks in `approved` rather than sending a wrong amount.
+	var scale int64
+	if a, aerr := s.repo.GetAsset(ctx, w.AssetID); aerr == nil && a != nil {
+		scale = a.MinorUnitScale
+	}
 	res, berr := s.withdraw.Broadcast(ctx, BroadcastRequest{
 		WithdrawalID: w.ID, Symbol: w.Symbol, Network: w.Network, Address: w.Address,
-		Units: netUnits, ProviderIdemKey: "crypto:withdraw:" + w.ID,
+		Units: netUnits, MinorUnitScale: scale, ProviderIdemKey: "crypto:withdraw:" + w.ID,
 	})
-	if berr != nil || !res.Accepted {
+	if berr != nil {
+		// Ambiguous / transport failure. Per the WithdrawalProvider contract, KEEP the
+		// withdrawal in `approved` (parked) for retry / manual reconciliation — do NOT
+		// return the parked units (the provider may have already accepted the send, so
+		// refunding would double-spend) and do NOT fabricate a broadcast. The guarded
+		// approved→broadcast transition makes a later retry idempotent.
+		_ = s.audit.log(ctx, "custody:"+s.withdraw.Name(), "crypto.withdraw.broadcast_error",
+			"crypto_withdrawal", w.ID, berr.Error(), nil,
+			map[string]any{"asset": w.Symbol, "units": w.Units})
+		return nil, berr
+	}
+	if !res.Accepted {
+		// Explicit provider rejection: the provider definitively did NOT send (e.g. failed
+		// custodian-side address screening) → move to failed and return the parked units.
 		reason := "provider rejected withdrawal"
-		if berr != nil {
-			reason = berr.Error()
-		}
 		out, terr := s.repo.AdminTransitionWithdrawal(ctx, w.ID, WithdrawalApproved, WithdrawalFailed,
 			"custody:"+s.withdraw.Name(), reason, reason, w.Units)
 		if terr != nil {

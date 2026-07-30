@@ -85,14 +85,14 @@ type Contest struct {
 
 // MissionInput is the admin mission-builder payload.
 type MissionInput struct {
-	Slug           string         `json:"slug"`
-	Title          string         `json:"title"`
-	Description    string         `json:"description"`
-	MissionType    string         `json:"mission_type"`
-	TargetCount    int            `json:"target_count"`
-	PointsReward   int            `json:"points_reward"`
-	CashRewardKobo int64          `json:"cash_reward_kobo"`
-	CampaignID     string         `json:"campaign_id"`
+	Slug           string     `json:"slug"`
+	Title          string     `json:"title"`
+	Description    string     `json:"description"`
+	MissionType    string     `json:"mission_type"`
+	TargetCount    int        `json:"target_count"`
+	PointsReward   int        `json:"points_reward"`
+	CashRewardKobo int64      `json:"cash_reward_kobo"`
+	CampaignID     string     `json:"campaign_id"`
 	StartsAt       *time.Time `json:"starts_at"`
 	EndsAt         *time.Time `json:"ends_at"`
 	IsActive       bool       `json:"is_active"`

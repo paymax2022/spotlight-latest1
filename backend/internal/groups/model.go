@@ -25,22 +25,22 @@ const (
 
 // Member is a user's membership in a group.
 type Member struct {
-	ID        string     `json:"id"`
-	GroupID   string     `json:"group_id"`
-	UserID    string     `json:"user_id"`
-	Role      MemberRole `json:"role"`
-	JoinedAt  time.Time  `json:"joined_at"`
+	ID       string     `json:"id"`
+	GroupID  string     `json:"group_id"`
+	UserID   string     `json:"user_id"`
+	Role     MemberRole `json:"role"`
+	JoinedAt time.Time  `json:"joined_at"`
 }
 
 // SubscriptionPlan is the dues configuration for a group.
 type SubscriptionPlan struct {
-	ID          string    `json:"id"`
-	GroupID     string    `json:"group_id"`
-	Name        string    `json:"name"`
-	AmountKobo  int64     `json:"amount_kobo"`
-	Frequency   string    `json:"frequency"` // monthly | quarterly | annually | one_time
-	DueDay      int       `json:"due_day"`   // day of month dues are due
-	CreatedAt   time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	GroupID    string    `json:"group_id"`
+	Name       string    `json:"name"`
+	AmountKobo int64     `json:"amount_kobo"`
+	Frequency  string    `json:"frequency"` // monthly | quarterly | annually | one_time
+	DueDay     int       `json:"due_day"`   // day of month dues are due
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // SubscriptionPayment is one member's dues payment.

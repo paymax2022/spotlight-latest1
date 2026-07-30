@@ -10,9 +10,9 @@ import (
 // rail oversell-impossible; a regression here would silently allow overselling.
 func TestHasHeadroom(t *testing.T) {
 	cases := []struct {
-		name              string
+		name               string
 		sold, rooms, total int
-		want              bool
+		want               bool
 	}{
 		{"exact fit", 8, 2, 10, true},
 		{"headroom to spare", 3, 1, 10, true},

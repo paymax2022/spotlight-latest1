@@ -320,9 +320,9 @@ const attrCols = `id, referred_user_id, referrer_id, house_account_id, attributi
 
 func scanAttribution(row pgx.Row) (*Attribution, error) {
 	var (
-		a                                  Attribution
-		referrer, hAcc, code, risk         *string
-		grace                              *time.Time
+		a                          Attribution
+		referrer, hAcc, code, risk *string
+		grace                      *time.Time
 	)
 	if err := row.Scan(&a.ID, &a.ReferredUserID, &referrer, &hAcc, &a.AttributionType,
 		&code, &a.IsHouse, &risk, &a.Status, &grace); err != nil {

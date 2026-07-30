@@ -10,6 +10,7 @@ import { Typography } from '@/constants/typography';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import DatePickerField from '@/components/DatePickerField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { formatKobo } from '@/api/doctor.phase2.api';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, SoapSection, AlertCard } from '@/features/doctor/components';
@@ -111,8 +112,9 @@ export default function NewFollowUpScreen() {
             <TextInputField
               label="Follow-up fee (NGN)"
               value={feeNaira}
-              onChangeText={setFeeNaira}
-              keyboardType="number-pad"
+              onChangeText={(v) => setFeeNaira(sanitizeMoneyInput(v))}
+              keyboardType="decimal-pad"
+              maxLength={13}
               placeholder="e.g. 5000"
             />
           )}

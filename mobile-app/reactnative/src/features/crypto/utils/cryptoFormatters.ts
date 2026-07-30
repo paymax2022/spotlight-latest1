@@ -45,7 +45,8 @@ export function formatFiatCompact(amount: number, currency: FiatCurrency): strin
   const meta = FIAT_META[currency];
   const major = amount / 10 ** meta.decimals;
   let body: string;
-  if (major >= 1_000_000_000) body = `${(major / 1_000_000_000).toFixed(major % 1_000_000_000 === 0 ? 0 : 2)}B`;
+  if (major >= 1_000_000_000_000) body = `${(major / 1_000_000_000_000).toFixed(major % 1_000_000_000_000 === 0 ? 0 : 2)}T`;
+  else if (major >= 1_000_000_000) body = `${(major / 1_000_000_000).toFixed(major % 1_000_000_000 === 0 ? 0 : 2)}B`;
   else if (major >= 1_000_000) body = `${(major / 1_000_000).toFixed(major % 1_000_000 === 0 ? 0 : 2)}M`;
   else if (major >= 10_000) body = `${(major / 1_000).toFixed(major % 1_000 === 0 ? 0 : 1)}K`;
   else body = major.toLocaleString('en-NG', { maximumFractionDigits: 2 });

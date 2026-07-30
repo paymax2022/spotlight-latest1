@@ -7,6 +7,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -113,7 +114,7 @@ export default function AssistedClaim() {
 
             {selected ? <UnderwriterBadge disclosure={{ underwriter: selected.provider === 'OCTAMILE' ? 'AXA Mansard' : 'Hygeia HMO', aggregator: selected.provider === 'OCTAMILE' ? 'Octamile' : 'MyCover.ai' }} /> : null}
 
-            <TextInputField label="Amount claimed (₦)" value={amount} onChangeText={setAmount} placeholder="0" keyboardType="numeric" />
+            <TextInputField label="Amount claimed (₦)" value={amount} onChangeText={(v) => setAmount(sanitizeMoneyInput(v))} placeholder="0" keyboardType="decimal-pad" maxLength={13} />
             <TextInputField label="What happened?" value={description} onChangeText={setDescription} placeholder="Describe the incident" multiline numberOfLines={4} />
 
             {error ? <Text style={styles.err}>{error}</Text> : null}

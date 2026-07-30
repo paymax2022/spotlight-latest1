@@ -167,4 +167,31 @@ func (s *Service) AdminUpsertChallenge(ctx context.Context, in UpsertChallengeRe
 func (s *Service) AdminUpsertLeaderboard(ctx context.Context, in UpsertLeaderboardRequest) (*Leaderboard, error) {
 	return s.repo.UpsertLeaderboard(ctx, in)
 }
-func (s *Service) AdminListBadges(ctx context.Context) ([]Badge, error) { return s.repo.ListBadges(ctx) }
+func (s *Service) AdminListBadges(ctx context.Context) ([]Badge, error) {
+	return s.repo.ListBadges(ctx)
+}
+
+// AdminConfig is the aggregate gamification-config view: the configured badges,
+// challenges and leaderboards. Composed from the existing list queries (read-only).
+type AdminConfig struct {
+	Badges       []Badge       `json:"badges"`
+	Challenges   []Challenge   `json:"challenges"`
+	Leaderboards []Leaderboard `json:"leaderboards"`
+}
+
+// AdminGetConfig composes the badges + challenges + leaderboards config surface.
+func (s *Service) AdminGetConfig(ctx context.Context) (*AdminConfig, error) {
+	badges, err := s.repo.ListBadges(ctx)
+	if err != nil {
+		return nil, err
+	}
+	challenges, err := s.repo.ListChallenges(ctx)
+	if err != nil {
+		return nil, err
+	}
+	leaderboards, err := s.repo.ListLeaderboards(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &AdminConfig{Badges: badges, Challenges: challenges, Leaderboards: leaderboards}, nil
+}

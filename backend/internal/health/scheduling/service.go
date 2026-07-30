@@ -105,10 +105,42 @@ func (s *Service) Request(ctx context.Context, patientID, providerID, subjectTyp
 		SlotEnd:     end,
 		CreatedAt:   time.Now(),
 	}
+	// AP-002: prevent double-booking a provider's slot under concurrency. A
+	// per-(provider, slot) advisory transaction lock serializes concurrent bookings
+	// of the same slot, so the conflict check + insert is atomic — the second racer
+	// blocks on the lock, then sees the first booking and is rejected. Half-open
+	// overlap: back-to-back slots do not conflict.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("scheduling: begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	lockKey := providerID + "|" + start.UTC().Format(time.RFC3339Nano)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, lockKey); err != nil {
+		return nil, fmt.Errorf("scheduling: slot lock: %w", err)
+	}
+	var conflict bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM health_appointments
+			WHERE provider_id=$1
+			  AND state = ANY($2)
+			  AND slot_start < $4 AND slot_end > $3
+		)`, providerID, blockingStateList(), start, end).Scan(&conflict); err != nil {
+		return nil, fmt.Errorf("scheduling: slot conflict check: %w", err)
+	}
+	if conflict {
+		return nil, ErrSlotTaken
+	}
+
 	const ins = `INSERT INTO health_appointments (id, provider_id, patient_id, subject_type, visit_type, state, slot_start, slot_end)
 	             VALUES ($1,$2,$3,$4,$5,'REQUESTED',$6,$7)`
-	if _, err := s.db.Exec(ctx, ins, a.ID, a.ProviderID, a.PatientID, a.SubjectType, a.VisitType, a.SlotStart, a.SlotEnd); err != nil {
+	if _, err := tx.Exec(ctx, ins, a.ID, a.ProviderID, a.PatientID, a.SubjectType, a.VisitType, a.SlotStart, a.SlotEnd); err != nil {
 		return nil, fmt.Errorf("scheduling: insert appointment: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("scheduling: commit booking: %w", err)
 	}
 
 	// Reminder one hour before the slot — reused scheduler primitive (no rebuild).

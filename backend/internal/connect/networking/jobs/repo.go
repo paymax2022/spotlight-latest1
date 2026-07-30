@@ -294,9 +294,10 @@ func (r *Repository) SetApplicationState(ctx context.Context, id string, from, t
 }
 
 // HireApplicant performs the HIRED transition ATOMICALLY in one tx (§4):
-//  (a) application from → hired;
-//  (b) increment positions_filled, and close the job when positions_filled == positions_open;
-//  (c) transition any linked ReferralBounty (referred|application_linked) → hire_confirmed.
+//
+//	(a) application from → hired;
+//	(b) increment positions_filled, and close the job when positions_filled == positions_open;
+//	(c) transition any linked ReferralBounty (referred|application_linked) → hire_confirmed.
 //
 // It returns the linked bounty id (empty if none) so the caller can run the
 // ledger-writing BOUNTY_PAYABLE → PAID payout keyed by that id (PN-10). The payout is

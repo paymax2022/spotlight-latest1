@@ -15,13 +15,13 @@ import (
 // every mutation is audit-logged (module 'academy.fees').
 //
 // SF-3 (release blocker) is enforced in FOUR layers, all active on the apply path:
-//   1. feesstatemachine has no computed→applied / reviewed→applied edge; an attempt
-//      returns ErrApprovalRequired (surfaced to callers/tests unchanged).
-//   2. Apply computes the transition via EvAdminApply, which is legal ONLY from
-//      promotion_approved — reached only after two ordered approval events.
-//   3. Apply additionally ASSERTS both approver columns are non-empty AND distinct
-//      before it touches the rollover (ErrApprovalsIncomplete / ErrApproversMustDiffer).
-//   4. The DB CHECK academy_promotion_records_two_approvals_check is the final backstop.
+//  1. feesstatemachine has no computed→applied / reviewed→applied edge; an attempt
+//     returns ErrApprovalRequired (surfaced to callers/tests unchanged).
+//  2. Apply computes the transition via EvAdminApply, which is legal ONLY from
+//     promotion_approved — reached only after two ordered approval events.
+//  3. Apply additionally ASSERTS both approver columns are non-empty AND distinct
+//     before it touches the rollover (ErrApprovalsIncomplete / ErrApproversMustDiffer).
+//  4. The DB CHECK academy_promotion_records_two_approvals_check is the final backstop.
 type Service struct {
 	store    Store
 	rollover *Rollover
@@ -242,6 +242,7 @@ func (s *Service) AdminApprove(ctx context.Context, adminID, promotionID string)
 //   - PromotionTransition(cur, EvAdminApply) returns ErrApprovalRequired unless
 //     cur == promotion_approved (structural, from the state machine);
 //   - Apply ADDITIONALLY asserts both approver columns are set and are distinct.
+//
 // There is NO code path in this service that reaches `applied` without both.
 func (s *Service) Apply(ctx context.Context, actorID, promotionID string) (*PromotionRecord, error) {
 	if actorID == "" {

@@ -16,7 +16,8 @@ import (
 
 // Status values mirror the connect_verification.status CHECK constraint and the
 // state machine in architecture.md §26.5:
-//   none → pending → l0_passed → l1_passed | failed | rejected
+//
+//	none → pending → l0_passed → l1_passed | failed | rejected
 const (
 	StatusNone     = "none"
 	StatusPending  = "pending"

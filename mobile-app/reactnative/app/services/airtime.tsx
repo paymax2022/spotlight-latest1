@@ -25,6 +25,7 @@ import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { Network } from '@/types/billing';
 
 const AMOUNTS = [100, 200, 500, 1000, 2000, 5000];
@@ -102,9 +103,10 @@ export default function AirtimeScreen() {
   };
 
   const handleCustomChange = (text: string) => {
-    setCustomAmount(text);
+    const clean = sanitizeMoneyInput(text);
+    setCustomAmount(clean);
     setQuickAmount(null);
-    const n = parseFloat(text);
+    const n = parseFloat(clean);
     setValue('amount', isNaN(n) ? 0 : n);
   };
 
@@ -268,7 +270,9 @@ export default function AirtimeScreen() {
             style={[styles.customInput, errors.amount && styles.customInputError]}
             placeholder="Or enter custom amount"
             placeholderTextColor={Colors.outline}
-            keyboardType="number-pad"
+            keyboardType="decimal-pad"
+            inputMode="decimal"
+            maxLength={13}
             value={customAmount}
             onChangeText={handleCustomChange}
           />

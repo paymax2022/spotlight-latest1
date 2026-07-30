@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"log"
 
-	"golang.org/x/crypto/argon2"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/argon2"
 )
 
 // VAProvisioner provisions a user's virtual account on tier upgrade. Kept as a

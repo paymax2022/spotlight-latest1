@@ -47,17 +47,17 @@ func NewRepo(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
 // academy_schools.level (best available locality descriptor, may be empty) and the
 // existence of any academy_school_compliance_optins row for the school.
 type SchoolRow struct {
-	ID              string
-	Name            string
-	State           string // mapped from academy_schools.level (no geo column exists)
-	OwnerIdentityID string // academy_schools.owner_user_id (nullable)
+	ID               string
+	Name             string
+	State            string // mapped from academy_schools.level (no geo column exists)
+	OwnerIdentityID  string // academy_schools.owner_user_id (nullable)
 	VerificationTier string
-	Status          string
-	Students        int64
-	GMVKobo         int64
-	TrustScore      float64
-	GovSyncOptIn    bool
-	CreatedAt       time.Time
+	Status           string
+	Students         int64
+	GMVKobo          int64
+	TrustScore       float64
+	GovSyncOptIn     bool
+	CreatedAt        time.Time
 }
 
 func (r *Repo) ListSchools(ctx context.Context) ([]SchoolRow, error) {
@@ -112,11 +112,11 @@ LIMIT 500`
 // CAC number / doc / references have no backing columns, so those fixture fields are
 // returned empty (documented). The advance action writes verification_tier only.
 type VerificationRow struct {
-	SchoolID        string
-	SchoolName      string
-	CurrentTier     string
-	Status          string // pending (derived)
-	SubmittedAt     time.Time
+	SchoolID    string
+	SchoolName  string
+	CurrentTier string
+	Status      string // pending (derived)
+	SubmittedAt time.Time
 }
 
 func (r *Repo) ListVerificationQueue(ctx context.Context) ([]VerificationRow, error) {
@@ -237,6 +237,7 @@ ORDER BY d.day`
 //
 // No fraud-case table exists. This is a best-effort heuristic read over real data:
 //   - reversed payments (chargeback-like) → one risk row each
+//
 // It fabricates no money; amount_kobo is the real reversed payment amount. Disputed
 // promotions have no dispute column, so none are synthesized here (documented gap).
 type RiskRow struct {
@@ -357,14 +358,14 @@ LIMIT 500`
 
 // ── SU-06 — Competitions (real table academy_competitions) ────────────────────
 type CompetitionRow struct {
-	ID                  string
-	Name                string
-	Scope               string
-	Status              string
+	ID                   string
+	Name                 string
+	Scope                string
+	Status               string
 	ParticipatingSchools int64
-	Sponsor             string
-	StartDate           *time.Time
-	EndDate             *time.Time
+	Sponsor              string
+	StartDate            *time.Time
+	EndDate              *time.Time
 }
 
 func (r *Repo) ListCompetitions(ctx context.Context) ([]CompetitionRow, error) {
@@ -403,12 +404,12 @@ LIMIT 500`
 // truth. Components mirror the console's weighting labels with the override/neutral
 // value so the UI renders.
 type TrustRow struct {
-	SchoolID     string
-	SchoolName   string
-	Score        float64
-	Overridden   bool
+	SchoolID       string
+	SchoolName     string
+	Score          float64
+	Overridden     bool
 	OverrideReason string
-	UpdatedAt    time.Time
+	UpdatedAt      time.Time
 }
 
 func (r *Repo) ListTrustScores(ctx context.Context) ([]TrustRow, error) {
@@ -483,14 +484,14 @@ RETURNING created_at`
 // (every settled leg posts to the finance ledger; a still-pledged row has none).
 // target_student_ref is the student id (minor-safe ref, not PII) per SF-7.
 type ScholarshipRow struct {
-	ID              string
-	SponsorIdentity string
+	ID               string
+	SponsorIdentity  string
 	TargetStudentRef string
-	SchoolName      string
-	AmountKobo      int64
-	State           string
-	LedgerRef       string
-	CreatedAt       time.Time
+	SchoolName       string
+	AmountKobo       int64
+	State            string
+	LedgerRef        string
+	CreatedAt        time.Time
 }
 
 func (r *Repo) ListScholarships(ctx context.Context) ([]ScholarshipRow, error) {
@@ -533,15 +534,15 @@ LIMIT 500`
 // school_id filter is best-effort (commerce audit is not school-partitioned, so it
 // is applied against detail->>'school_id' when present).
 type AuditRow struct {
-	ID        string
-	Module    string
-	Entity    string
-	EntityID  string
-	Action    string
-	Actor     string
-	SchoolID  string
-	At        time.Time
-	Detail    map[string]any
+	ID       string
+	Module   string
+	Entity   string
+	EntityID string
+	Action   string
+	Actor    string
+	SchoolID string
+	At       time.Time
+	Detail   map[string]any
 }
 
 func (r *Repo) SearchAudit(ctx context.Context, entity, schoolID string, limit int) ([]AuditRow, error) {

@@ -165,13 +165,13 @@ func (r *Repository) SetBound(ctx context.Context, id string, providerPolicyRef,
 // PremiumTx is the insurance-domain record of a premium money move. It references
 // the ledger entry (wallet_ledger_ref) and carries the idempotency key (UNIQUE).
 type PremiumTx struct {
-	ID                   string
-	PolicyID             string
-	WalletLedgerRef      string
-	IdempotencyKey       string
-	AmountKobo           int64
-	Direction            string // DEBIT | REVERSAL
-	Status               string // posted | reversed
+	ID                    string
+	PolicyID              string
+	WalletLedgerRef       string
+	IdempotencyKey        string
+	AmountKobo            int64
+	Direction             string // DEBIT | REVERSAL
+	Status                string // posted | reversed
 	ProviderRemittanceRef *string
 }
 

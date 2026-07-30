@@ -60,6 +60,14 @@ const (
 
 // ── Domain rows ───────────────────────────────────────────────────────────────
 
+// TradeTrack is one academy_trade_tracks row (Phase-0 seeded catalog of trades).
+type TradeTrack struct {
+	ID     string `json:"id"`
+	Code   string `json:"code"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
 // TradeModule is one academy_trade_modules row.
 type TradeModule struct {
 	ID         string `json:"id"`

@@ -33,7 +33,10 @@ type fakeCacheV2 struct {
 	puts  int
 }
 
-func (c *fakeCacheV2) Get(_ context.Context, k string) (GeoResult, bool) { r, ok := c.store[k]; return r, ok }
+func (c *fakeCacheV2) Get(_ context.Context, k string) (GeoResult, bool) {
+	r, ok := c.store[k]
+	return r, ok
+}
 func (c *fakeCacheV2) Put(_ context.Context, k string, r GeoResult) error {
 	c.puts++
 	c.store[k] = r
@@ -41,8 +44,8 @@ func (c *fakeCacheV2) Put(_ context.Context, k string, r GeoResult) error {
 }
 
 type fakeGaz struct {
-	hit  GeoResult
-	ok   bool
+	hit     GeoResult
+	ok      bool
 	upserts int
 }
 
@@ -54,7 +57,10 @@ func (f *fakeGaz) ReverseLookup(context.Context, string, float64, float64) (GeoR
 }
 func (f *fakeGaz) Upsert(context.Context, GazetteerEntry) error { f.upserts++; return nil }
 
-type fakeCov struct{ tier CoverageTier; observes int }
+type fakeCov struct {
+	tier     CoverageTier
+	observes int
+}
 
 func (f *fakeCov) Tier(context.Context, string) CoverageTier { return f.tier }
 func (f *fakeCov) Observe(context.Context, string, string, bool, Confidence) error {
@@ -79,7 +85,10 @@ func (f *fakeRec) Record(_ context.Context, e ResolutionEvent) error {
 }
 func (f *fakeRec) last() ResolutionEvent { return f.events[len(f.events)-1] }
 
-type fakeGuard struct{ allow map[string]bool; def bool }
+type fakeGuard struct {
+	allow map[string]bool
+	def   bool
+}
 
 func (f *fakeGuard) Allow(_ context.Context, provider string, _ Primitive) bool {
 	if v, ok := f.allow[provider]; ok {

@@ -20,6 +20,7 @@ import {
   calculateBankTransferFee,
 } from '@/api/beneficiaries.api';
 import type { TransferRecipient, WalletTransfer, Beneficiary, BankTransferResult } from '@/types/wallet';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
 import { shadow1, shadow2 } from '@/constants/shadows';
@@ -407,8 +408,9 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
                   label={kind === 'fx' ? 'Amount to Convert' : 'Amount'}
                   placeholder="₦0.00"
                   value={amount}
-                  onChangeText={setAmount}
-                  keyboardType="number-pad"
+                  onChangeText={(v) => setAmount(sanitizeMoneyInput(v))}
+                  keyboardType="decimal-pad"
+                  maxLength={13}
                 />
 
                 <View style={styles.amountGrid}>
@@ -765,8 +767,9 @@ function BankTransferConfirmCard({
         label="Amount"
         placeholder="₦0.00"
         value={amount}
-        onChangeText={onAmountChange}
-        keyboardType="number-pad"
+        onChangeText={(v) => onAmountChange(sanitizeMoneyInput(v))}
+        keyboardType="decimal-pad"
+        maxLength={13}
       />
 
       {amountKobo > 0 && (

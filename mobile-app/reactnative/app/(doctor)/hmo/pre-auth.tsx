@@ -10,6 +10,7 @@ import { Typography } from '@/constants/typography';
 import PrimaryButton from '@/components/PrimaryButton';
 import SelectField from '@/components/SelectField';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { formatKobo } from '@/api/doctor.batch4.api';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { StateView, PreAuthRow } from '@/features/doctor/components';
@@ -113,7 +114,7 @@ function RequestSheet({ visible, pending, onClose, onSubmit }: {
         <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <SelectField label="Provider" placeholder="Select provider" value={provider} options={HMO_PROVIDER_OPTIONS} onChange={setProvider} />
           <SelectField label="Service" placeholder="Select service" value={service} options={PREAUTH_SERVICE_OPTIONS} onChange={setService} />
-          <TextInputField label="Estimated cost (NGN)" value={naira} onChangeText={setNaira} keyboardType="number-pad" placeholder="e.g. 150000" />
+          <TextInputField label="Estimated cost (NGN)" value={naira} onChangeText={(v) => setNaira(sanitizeMoneyInput(v))} keyboardType="decimal-pad" maxLength={13} placeholder="e.g. 150000" />
           <TextInputField label="Clinical justification (optional)" value={note} onChangeText={setNote} placeholder="Why is this service required?" multiline />
           <PrimaryButton label="Submit request" onPress={() => onSubmit({ patientId: 'pat-2', provider, service, estimatedKobo, note: note.trim() || undefined })} loading={pending} disabled={!canSubmit} style={styles.btn} />
         </ScrollView>

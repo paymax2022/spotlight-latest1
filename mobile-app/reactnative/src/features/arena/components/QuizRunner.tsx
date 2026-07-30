@@ -15,8 +15,9 @@
 // (unanswered = 0). Big touch targets, tabular-nums timer, accessible options.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { SvgXml } from 'react-native-svg';
 import {
   Timer, CheckCircle2, Circle, XCircle, Flame, Trophy, ShieldAlert, LayoutGrid,
 } from 'lucide-react-native';
@@ -27,6 +28,7 @@ import { Radius } from '@/constants/radius';
 import PrimaryButton from '@/components/PrimaryButton';
 import type { PlayAlongQuestion } from '../types';
 import { PER_QUESTION_SECS, categoryLabel } from '../constants';
+import { resolveSignXml } from '../quizSignAssets';
 
 export type QuizMode = 'playalong' | 'exam';
 
@@ -183,6 +185,10 @@ export default function QuizRunner({
 
   const lowTime = secs <= 10;
   const catLabel = categoryLabel(current.category);
+  // Illustration: bundled on-device SVG for 'sign:<key>' image_urls, otherwise a
+  // normal remote image for http(s) URLs (nothing when neither applies).
+  const signXml = resolveSignXml(current.imageUrl);
+  const isRemoteImage = !signXml && !!current.imageUrl && /^https?:\/\//.test(current.imageUrl);
   const onLastItem = index === total - 1;
   // Play-along gate: must reveal before advancing (when reveal is available).
   const advanceDisabled = submitting || (canReveal && !revealed);
@@ -237,6 +243,18 @@ export default function QuizRunner({
 
       {/* Question */}
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {signXml ? (
+          <View style={styles.questionImage} accessibilityLabel="Road-sign illustration">
+            <SvgXml xml={signXml} width="100%" height="100%" />
+          </View>
+        ) : isRemoteImage ? (
+          <Image
+            source={{ uri: current.imageUrl as string }}
+            style={styles.questionImage}
+            resizeMode="contain"
+            accessibilityLabel="Question illustration"
+          />
+        ) : null}
         <Text style={styles.prompt} accessibilityRole="header">{current.prompt}</Text>
 
         {current.options.map((o) => {
@@ -409,6 +427,7 @@ const styles = StyleSheet.create({
   },
   progressFill: { height: 4, backgroundColor: Colors.primary, borderRadius: Radius.full },
   content: { padding: Spacing.containerMargin, gap: Spacing.sm },
+  questionImage: { width: '100%', height: 200, borderRadius: Radius.lg, marginBottom: Spacing.md, backgroundColor: Colors.surfaceContainerLow },
   prompt: { ...Typography.titleLg, color: Colors.onSurface, marginBottom: Spacing.sm },
   option: {
     flexDirection: 'row', alignItems: 'center', gap: Spacing.md, minHeight: 60,

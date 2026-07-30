@@ -14,10 +14,13 @@ import (
 // is wrapped in {"data": ...} to match the console client (getJson unwraps
 // `j?.data ?? j`). Money is always integer minor units (kobo). Where a screen has no
 // backing table the handler returns a documented empty/placeholder shape.
-type Handler struct{ repo *Repo }
+type Handler struct {
+	repo  *Repo
+	flags *FlagService
+}
 
 // NewHandler builds the platform oversight handler.
-func NewHandler(repo *Repo) *Handler { return &Handler{repo: repo} }
+func NewHandler(repo *Repo) *Handler { return &Handler{repo: repo, flags: NewFlagService(repo)} }
 
 func rfc(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 func rfcPtr(t *time.Time) any {
@@ -67,15 +70,15 @@ func (h *Handler) ListVerificationQueue(c *gin.Context) {
 	out := make([]gin.H, 0, len(rows))
 	for _, v := range rows {
 		out = append(out, gin.H{
-			"id":            v.SchoolID, // no submission entity — the school id is the queue key
-			"school_id":     v.SchoolID,
-			"school_name":   v.SchoolName,
+			"id":             v.SchoolID, // no submission entity — the school id is the queue key
+			"school_id":      v.SchoolID,
+			"school_name":    v.SchoolName,
 			"requested_tier": "verified", // no requested-tier column; default next tier (documented)
-			"cac_number":    "",          // no CAC entity in schema (documented empty)
-			"cac_doc_url":   "",
-			"references":    []any{},
-			"submitted_at":  rfc(v.SubmittedAt),
-			"status":        v.Status,
+			"cac_number":     "",         // no CAC entity in schema (documented empty)
+			"cac_doc_url":    "",
+			"references":     []any{},
+			"submitted_at":   rfc(v.SubmittedAt),
+			"status":         v.Status,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -90,7 +93,7 @@ func (h *Handler) VerifySchool(c *gin.Context) {
 	// derived queue). Whichever param is present wins.
 	schoolID := c.Param("id")
 	var body struct {
-		Decision    string `json:"decision"`     // console sends 'approve' | 'reject'
+		Decision    string `json:"decision"` // console sends 'approve' | 'reject'
 		GrantedTier string `json:"granted_tier"`
 		Reason      string `json:"reason"`
 	}
@@ -104,7 +107,7 @@ func (h *Handler) VerifySchool(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"data": gin.H{
 			"id": schoolID, "school_id": schoolID, "school_name": name,
 			"requested_tier": firstNonEmpty(body.GrantedTier, "verified"),
-			"cac_number": "", "cac_doc_url": "", "references": []any{},
+			"cac_number":     "", "cac_doc_url": "", "references": []any{},
 			"submitted_at": rfc(time.Now()), "status": "rejected",
 			"reason": body.Reason, "decided_at": rfc(time.Now()),
 		}})
@@ -121,17 +124,17 @@ func (h *Handler) VerifySchool(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"id":            v.SchoolID,
-		"school_id":     v.SchoolID,
-		"school_name":   v.SchoolName,
+		"id":             v.SchoolID,
+		"school_id":      v.SchoolID,
+		"school_name":    v.SchoolName,
 		"requested_tier": tier,
-		"cac_number":    "",
-		"cac_doc_url":   "",
-		"references":    []any{},
-		"submitted_at":  rfc(v.SubmittedAt),
-		"status":        "approved",
-		"reason":        body.Reason,
-		"decided_at":    rfc(time.Now()),
+		"cac_number":     "",
+		"cac_doc_url":    "",
+		"references":     []any{},
+		"submitted_at":   rfc(v.SubmittedAt),
+		"status":         "approved",
+		"reason":         body.Reason,
+		"decided_at":     rfc(time.Now()),
 	}})
 }
 
@@ -277,7 +280,7 @@ func (h *Handler) ListComplianceExports(c *gin.Context) {
 			"report_type":     e.ReportType,
 			"period":          e.Period,
 			"data_categories": cats,
-			"regulator":       "",         // no regulator column; empty (documented)
+			"regulator":       "", // no regulator column; empty (documented)
 			"generated_at":    rfc(e.GeneratedAt),
 			"generated_by":    e.GeneratedBy,
 			"immutable_hash":  e.PayloadRef, // payload_ref is the append-only integrity anchor
@@ -296,15 +299,15 @@ func (h *Handler) ListCompetitions(c *gin.Context) {
 	out := make([]gin.H, 0, len(rows))
 	for _, cm := range rows {
 		out = append(out, gin.H{
-			"id":                   cm.ID,
-			"name":                 cm.Name,
-			"scope":                cm.Scope,
-			"status":               cm.Status,
+			"id":                    cm.ID,
+			"name":                  cm.Name,
+			"scope":                 cm.Scope,
+			"status":                cm.Status,
 			"participating_schools": cm.ParticipatingSchools,
-			"sponsor":              cm.Sponsor,
-			"start_date":           dateOrEmpty(cm.StartDate),
-			"end_date":             dateOrEmpty(cm.EndDate),
-			"broadcast_ready":      false, // no broadcast_ready column (documented default)
+			"sponsor":               cm.Sponsor,
+			"start_date":            dateOrEmpty(cm.StartDate),
+			"end_date":              dateOrEmpty(cm.EndDate),
+			"broadcast_ready":       false, // no broadcast_ready column (documented default)
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -411,15 +414,15 @@ func (h *Handler) ListScholarships(c *gin.Context) {
 			ledger = "—"
 		}
 		out = append(out, gin.H{
-			"id":                 s.ID,
-			"sponsor":            "", // pledge stores sponsor_identity_id only; no display name (documented)
+			"id":                  s.ID,
+			"sponsor":             "", // pledge stores sponsor_identity_id only; no display name (documented)
 			"sponsor_identity_id": s.SponsorIdentity,
-			"target_student_ref": s.TargetStudentRef,
-			"school_name":        s.SchoolName,
-			"amount_kobo":        s.AmountKobo,
-			"status":             st,
-			"ledger_ref":         ledger,
-			"created_at":         rfc(s.CreatedAt),
+			"target_student_ref":  s.TargetStudentRef,
+			"school_name":         s.SchoolName,
+			"amount_kobo":         s.AmountKobo,
+			"status":              st,
+			"ledger_ref":          ledger,
+			"created_at":          rfc(s.CreatedAt),
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -431,34 +434,35 @@ func (h *Handler) ListSupportTickets(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": []any{}})
 }
 
-// ── SU-10 GET /flags → FeatureFlag[] (placeholder projection) ─────────────────
-// No tenant feature-flag override table exists. Projects the seeded academy fees
-// capability namespace as read-only, global-scope flag rows (documented placeholder).
+// ── SU-10 GET /flags → FeatureFlag[] (real runtime store) ─────────────────────
+// Reads the persisted public.academy_feature_flags store. Rows here are authoritative;
+// the composition root additionally falls back to the compile-time default for any flag
+// with no row (fail-closed). Read-only; no money.
 func (h *Handler) ListFlags(c *gin.Context) {
-	rows, err := h.repo.ListFlagPlaceholders(c.Request.Context())
+	rows, err := h.flags.ListFlags(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"data": []any{}})
+		fail(c, err)
 		return
 	}
-	now := rfc(time.Now())
 	out := make([]gin.H, 0, len(rows))
 	for _, f := range rows {
 		out = append(out, gin.H{
 			"key":         f.Key,
-			"label":       f.Label,
+			"label":       f.Key,
 			"description": f.Description,
 			"scope_type":  "global",
 			"scope_ref":   "",
-			"enabled":     true, // capability seeded ⇒ enabled; no override store to say otherwise
-			"updated_at":  now,
+			"enabled":     f.Enabled,
+			"updated_at":  rfc(f.UpdatedAt),
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// ── SU-10 PUT/POST /flags/toggle → FeatureFlag (documented no-op) ─────────────
-// No persistence target exists for per-scope flag overrides. Echoes the requested
-// state so the console optimistic-updates; does NOT persist (documented). No money.
+// ── SU-10 PUT/POST /flags/toggle → FeatureFlag (real persisted toggle) ────────
+// Persists the requested enabled state to academy_feature_flags and appends an immutable
+// audit row (academy_commerce_audit, surfaced by SU-11). RBAC (platform_edtech_admin) is
+// enforced at the route group; the actor is the authenticated operator. No money path.
 func (h *Handler) ToggleFlag(c *gin.Context) {
 	var body struct {
 		Key       string `json:"key"`
@@ -466,15 +470,31 @@ func (h *Handler) ToggleFlag(c *gin.Context) {
 		ScopeRef  string `json:"scope_ref"`
 		Enabled   bool   `json:"enabled"`
 	}
-	_ = c.ShouldBindJSON(&body)
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	if body.Key == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "key is required"})
+		return
+	}
+	actorID := ""
+	if u, ok := middleware.GetAuthenticatedUser(c); ok {
+		actorID = u.ID
+	}
+	f, err := h.flags.SetFlag(c.Request.Context(), body.Key, body.Enabled, actorID)
+	if err != nil {
+		fail(c, err)
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"key":         body.Key,
-		"label":       body.Key,
-		"description": "Toggle not persisted — no tenant flag-override store (documented placeholder).",
-		"scope_type":  body.ScopeType,
+		"key":         f.Key,
+		"label":       f.Key,
+		"description": f.Description,
+		"scope_type":  "global",
 		"scope_ref":   body.ScopeRef,
-		"enabled":     body.Enabled,
-		"updated_at":  rfc(time.Now()),
+		"enabled":     f.Enabled,
+		"updated_at":  rfc(f.UpdatedAt),
 	}})
 }
 

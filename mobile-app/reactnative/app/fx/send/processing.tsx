@@ -35,7 +35,7 @@ export default function SendProcessingScreen() {
       { draft: { beneficiaryId: beneficiary.id, beneficiary: null, source, amount, narration: p.narration || null, reference: null }, quote, beneficiary },
       {
         onSuccess: (res) => {
-          router.replace({ pathname: '/fx/send/success', params: { reference: res.reference, txId: res.transactionId, name: beneficiary.name, dest: String(res.destination.amount), destCur: beneficiary.currency } });
+          router.replace({ pathname: '/fx/send/success', params: { reference: res.reference, txId: res.transactionId, name: beneficiary.name, dest: String(res.destination?.amount ?? 0), destCur: beneficiary.currency } });
         },
         onError: (err: unknown) => {
           const e = err as { fxType?: string; message?: string };

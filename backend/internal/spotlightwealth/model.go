@@ -94,9 +94,9 @@ const DefaultCurrency = "NGN"
 
 // Sentinel errors — mapped to HTTP status in the handler.
 var (
-	ErrNotFound      = fmt.Errorf("spotlight: not found")
-	ErrForbidden     = fmt.Errorf("spotlight: forbidden")
-	ErrBadInput      = fmt.Errorf("spotlight: invalid input")
-	ErrAlreadyJoined = fmt.Errorf("spotlight: already joined")
+	ErrNotFound       = fmt.Errorf("spotlight: not found")
+	ErrForbidden      = fmt.Errorf("spotlight: forbidden")
+	ErrBadInput       = fmt.Errorf("spotlight: invalid input")
+	ErrAlreadyJoined  = fmt.Errorf("spotlight: already joined")
 	ErrChallengeEnded = fmt.Errorf("spotlight: challenge has ended")
 )

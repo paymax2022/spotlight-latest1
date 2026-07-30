@@ -187,6 +187,25 @@ func (r *Repository) GetLeaderboard(ctx context.Context, id string) (*Leaderboar
 	return lb, nil
 }
 
+// ListLeaderboards returns every configured leaderboard (admin config surface).
+func (r *Repository) ListLeaderboards(ctx context.Context) ([]Leaderboard, error) {
+	const q = `SELECT id, scope, scope_ref, period, reset_policy FROM academy_leaderboards ORDER BY scope`
+	rows, err := r.db.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Leaderboard
+	for rows.Next() {
+		var lb Leaderboard
+		if err := rows.Scan(&lb.ID, &lb.Scope, &lb.ScopeRef, &lb.Period, &lb.ResetPolicy); err != nil {
+			return nil, err
+		}
+		out = append(out, lb)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repository) UpsertLeaderboard(ctx context.Context, in UpsertLeaderboardRequest) (*Leaderboard, error) {
 	period := in.Period
 	if period == "" {

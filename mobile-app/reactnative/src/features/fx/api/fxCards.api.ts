@@ -19,11 +19,20 @@ import {
 
 const USE_MOCK = (process.env.EXPO_PUBLIC_FX_USE_MOCK ?? 'true').toLowerCase() !== 'false';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
-const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
+// Unwrap { data: ... } by key presence so an empty { data: null } yields null,
+// not the wrapper object (see fx.api.ts). arr() coerces list payloads to arrays.
+const unwrap = <T>(res: { data: unknown }): T => {
+  const body = res?.data;
+  if (body && typeof body === 'object' && !Array.isArray(body) && 'data' in body) {
+    return (body as { data: T }).data;
+  }
+  return body as T;
+};
+const arr = <T>(v: T[] | null | undefined): T[] => (Array.isArray(v) ? v : []);
 
 export async function getCards(): Promise<Card[]> {
   if (USE_MOCK) { await delay(); return MOCK_CARDS.filter((c) => c.status !== 'terminated'); }
-  return unwrap<Card[]>(await api.get('/api/v1/fx/cards'));
+  return arr(unwrap<Card[]>(await api.get('/api/v1/fx/cards')));
 }
 
 export async function getCard(id: string): Promise<Card> {
@@ -115,5 +124,5 @@ export async function getCardTransactions(cardId: string): Promise<CardTransacti
       .filter((t) => t.cardId === cardId)
       .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
-  return unwrap<CardTransaction[]>(await api.get(`/api/v1/fx/cards/${cardId}/transactions`));
+  return arr(unwrap<CardTransaction[]>(await api.get(`/api/v1/fx/cards/${cardId}/transactions`)));
 }

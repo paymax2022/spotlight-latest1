@@ -15,6 +15,7 @@ import { DisclosureCard } from '@/features/referral/components';
 import { formatNaira } from '@/features/referral/constants/format';
 import { useWithdrawQuote, useWithdraw } from '@/features/referral/earnings/hooks';
 import type { WithdrawResult } from '@/features/referral/earnings/types';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 // M-ERN-04 — Withdraw to wallet: move eligible earnings to the Spotlight wallet,
 // instant. Money is integer kobo; the live mutation carries an Idempotency-Key.
@@ -80,8 +81,9 @@ export default function WithdrawScreen() {
                 label="Amount (₦)"
                 placeholder="0"
                 value={naira}
-                onChangeText={(t) => { setNaira(t.replace(/[^0-9.]/g, '')); setResult(null); }}
+                onChangeText={(t) => { setNaira(sanitizeMoneyInput(t)); setResult(null); }}
                 keyboardType="decimal-pad"
+                maxLength={13}
                 error={validationError}
                 leftIcon={<Wallet size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />}
               />

@@ -159,6 +159,15 @@ export function useCancelTicket() {
   });
 }
 
+export function useRateBusTrip() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, stars, comment, tipKobo }: { id: string; stars: number; comment?: string; tipKobo?: number }) =>
+      bus.rateBusTrip(id, stars, newIdempotencyKey('bus-rate'), comment, tipKobo),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [BUS_KEY] }),
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // TOWING
 // ═══════════════════════════════════════════════════════════════════════════════

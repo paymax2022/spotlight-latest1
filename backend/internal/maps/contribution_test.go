@@ -110,16 +110,16 @@ func TestCanContribTransition(t *testing.T) {
 		}
 	}
 	illegal := [][2]string{
-		{"pending", "uploaded"},   // skips review approval
-		{"pending", "pending"},    // self-loop
-		{"approved", "pending"},   // backwards
-		{"approved", "rejected"},  // can't reject after approve
-		{"rejected", "approved"},  // terminal
-		{"rejected", "pending"},   // terminal
-		{"uploaded", "approved"},  // terminal
-		{"uploaded", "uploaded"},  // terminal self-loop
-		{"", "approved"},          // unknown from
-		{"approved", ""},          // unknown to
+		{"pending", "uploaded"},  // skips review approval
+		{"pending", "pending"},   // self-loop
+		{"approved", "pending"},  // backwards
+		{"approved", "rejected"}, // can't reject after approve
+		{"rejected", "approved"}, // terminal
+		{"rejected", "pending"},  // terminal
+		{"uploaded", "approved"}, // terminal
+		{"uploaded", "uploaded"}, // terminal self-loop
+		{"", "approved"},         // unknown from
+		{"approved", ""},         // unknown to
 	}
 	for _, tr := range illegal {
 		if canContribTransition(tr[0], tr[1]) {

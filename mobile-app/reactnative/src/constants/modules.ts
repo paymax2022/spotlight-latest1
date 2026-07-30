@@ -98,7 +98,7 @@ export const SERVICE_MODULES: ServiceModule[] = [
   { id: 'crypto',          label: 'Crypto',          icon: 'Bitcoin',         iconColor: '#F7931A',         bgColor: 'rgba(247,147,26,0.10)', route: '/crypto',            category: 'investment', badge: 'New' },
   { id: 'learn',           label: 'Learn',           icon: 'GraduationCap',   iconColor: Colors.teal,       bgColor: Colors.iconBgTeal,   route: '/learn',                category: 'investment' },
   { id: 'invest-ai',       label: 'Invest AI',       icon: 'Sparkles',        iconColor: Colors.secondary,  bgColor: Colors.iconBgBlue,   route: '/invest-ai',            category: 'investment', badge: 'New' },
-  { id: 'academy',         label: 'Academy',         icon: 'GraduationCap',   iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/learn/academy',        category: 'investment', badge: 'New' },
+  { id: 'academy',         label: 'StudyHub',        icon: 'BookOpenText',    iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/learn/academy',        category: 'investment', badge: 'New' },
   { id: 'spotlight-wealth', label: 'Spotlight Wealth', icon: 'Trophy',        iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/spotlight-wealth',     category: 'investment' },
   { id: 'fractionalre',    label: 'Real Estate Invest', icon: 'Building',     iconColor: Colors.teal,       bgColor: Colors.iconBgTeal,   route: '/fractionalre',         category: 'investment', badge: 'New' },
 

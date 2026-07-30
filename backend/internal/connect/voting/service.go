@@ -3,6 +3,7 @@ package connectvoting
 import (
 	"context"
 	"errors"
+	"log"
 	"time"
 )
 
@@ -30,6 +31,24 @@ type SolicitationFlagger interface {
 	FlagPaidVote(ctx context.Context, voterID string, amountKobo int64, ref string) error
 }
 
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module (§ profit registry). app-wiring injects a thin adapter over the finance
+// commission service; when the commission feature is off (or no recorder is wired)
+// the field is nil and recording is a silent no-op. Modeled as a LOCAL interface so
+// voting never imports the commission package at compile time (mirrors the
+// WalletDebiter / RevenueAccountResolver seams) — the adapter, which lives in
+// app-wiring, discards the returned earning row and surfaces only the error.
+//
+// This records realized profit ONLY; it never moves money. The paid-vote debit
+// above already posts the balanced double-entry into paymax_revenue, so the injected
+// recorder is deliberately constructed WITHOUT a ledger — RecordFor never re-posts to
+// the ledger (no double count of the revenue account); it appends the immutable
+// earning row used by profit reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
 // Sentinel errors.
 var (
 	ErrMissingIdem     = errors.New("connect: Idempotency-Key required")
@@ -52,11 +71,33 @@ type Service struct {
 	revenue      RevenueAccountResolver
 	audit        Auditor
 	solicitation SolicitationFlagger
+	commission   CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 }
 
 // NewService builds the voting service. solicitation may be nil.
 func NewService(repo *Repository, wallet WalletDebiter, revenue RevenueAccountResolver, audit Auditor, solicitation SolicitationFlagger) *Service {
 	return &Service{repo: repo, wallet: wallet, revenue: revenue, audit: audit, solicitation: solicitation}
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a settled paid vote.
+// It is best-effort and MUST NEVER affect the caller's outcome: a nil recorder is a
+// no-op, and any error is logged and swallowed so a profit-registry failure can never
+// fail or reverse the paid vote. The recorded breakdown is resolved server-side from
+// the central rate card; the vote id doubles as the source ref + idempotency key so
+// retries / reconciliation never double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
+		"connect-voting", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[connect-voting] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
+	}
 }
 
 // ListContests returns open/closed contests.
@@ -229,5 +270,15 @@ func (s *Service) PaidVote(ctx context.Context, contestID, voterID, idemKey stri
 	if s.solicitation != nil {
 		_ = s.solicitation.FlagPaidVote(ctx, voterID, totalKobo, ref)
 	}
+
+	// Record realized Spotlight profit into the central Commission & Profit registry.
+	// This is the paid-vote settlement point (money has moved: the wallet debit above
+	// posted the balanced double-entry into paymax_revenue and the immutable vote row
+	// is persisted). Best-effort + idempotent: the vote id doubles as source ref +
+	// idempotency key, so retries never double-count. gross = the full amount the voter
+	// paid (price_per_unit × quantity). A recorder failure is logged and swallowed — it
+	// must NEVER fail or reverse the paid vote (voting's own debit already posted the
+	// revenue to the ledger; this appends the earning row only).
+	s.recordCommissionSafe(ctx, "Contest", "Voting", "", totalKobo, v.ID, &voterID)
 	return v, nil
 }

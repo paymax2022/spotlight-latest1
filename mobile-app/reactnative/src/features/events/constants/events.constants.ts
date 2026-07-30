@@ -1,9 +1,12 @@
 import { Colors } from '@/constants/colors';
 
-// Live by default: mock only activates when EXPO_PUBLIC_EVENTS_USE_MOCK is
-// explicitly set to 'true'. Set it in a local .env to opt into mock/demo data
-// during development when the Go backend isn't running.
-export const USE_MOCK = process.env.EXPO_PUBLIC_EVENTS_USE_MOCK === 'true';
+// Mock unless explicitly disabled — matches the app-wide convention used by
+// every other module ((X ?? 'true') !== 'false'). The env var name is the
+// singular EXPO_PUBLIC_EVENT_USE_MOCK, matching .env / .env.example; the old
+// plural EXPO_PUBLIC_EVENTS_USE_MOCK never matched the configured flag, so the
+// toggle silently did nothing and the module always hit the live backend.
+export const USE_MOCK =
+  (process.env.EXPO_PUBLIC_EVENT_USE_MOCK ?? 'true').toLowerCase() !== 'false';
 
 // Events REST namespace — Go backend `top5events` module, mounted directly
 // under /api/finance/events/* (see backend/internal/top5events). Composed

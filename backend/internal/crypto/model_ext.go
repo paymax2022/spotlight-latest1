@@ -15,27 +15,27 @@ const DefaultSwapSpreadBps = 50
 // previews; the state machine still enforces the whitelist + holdings at fill).
 const (
 	DefaultWithdrawDailyLimitKobo = 500_000_000 // ₦5,000,000/day soft limit (display)
-	DefaultWithdrawReviewMinKobo  = 50_000_000   // ₦500,000 manual-review threshold (display)
-	DefaultWithdrawFeeKobo        = 15_000       // ₦150 flat processing fee (display default)
+	DefaultWithdrawReviewMinKobo  = 50_000_000  // ₦500,000 manual-review threshold (display)
+	DefaultWithdrawFeeKobo        = 15_000      // ₦150 flat processing fee (display default)
 )
 
 // SwapQuote is a pre-trade, display-only estimate for an asset→asset swap. The
 // server re-prices at execution time; the quote is advisory (matches the buy/sell
 // convention). Amounts are integer minor units per asset; spread/fee are NGN kobo.
 type SwapQuote struct {
-	FromAssetID  string    `json:"from_asset_id"`
-	FromSymbol   string    `json:"from_symbol"`
-	ToAssetID    string    `json:"to_asset_id"`
-	ToSymbol     string    `json:"to_symbol"`
-	FromUnits    int64     `json:"from_units"`
-	ToUnits      int64     `json:"to_units"`
-	FromPriceKobo int64    `json:"from_price_kobo"`
-	ToPriceKobo   int64    `json:"to_price_kobo"`
-	CashKobo     int64     `json:"cash_kobo"`   // indicative sell-leg value
-	SpreadKobo   int64     `json:"spread_kobo"` // fee retained to paymax_revenue
-	SpreadBps    int       `json:"spread_bps"`
-	Source       string    `json:"source"`
-	AsOf         time.Time `json:"as_of"`
+	FromAssetID   string    `json:"from_asset_id"`
+	FromSymbol    string    `json:"from_symbol"`
+	ToAssetID     string    `json:"to_asset_id"`
+	ToSymbol      string    `json:"to_symbol"`
+	FromUnits     int64     `json:"from_units"`
+	ToUnits       int64     `json:"to_units"`
+	FromPriceKobo int64     `json:"from_price_kobo"`
+	ToPriceKobo   int64     `json:"to_price_kobo"`
+	CashKobo      int64     `json:"cash_kobo"`   // indicative sell-leg value
+	SpreadKobo    int64     `json:"spread_kobo"` // fee retained to paymax_revenue
+	SpreadBps     int       `json:"spread_bps"`
+	Source        string    `json:"source"`
+	AsOf          time.Time `json:"as_of"`
 }
 
 // SwapOrder is an immutable record of a filled two-leg swap.
@@ -157,10 +157,10 @@ func (w Withdrawal) IdempotencyKey() string { return w.idem }
 
 // Sentinel errors specific to the extended crypto money paths.
 var (
-	ErrSameAsset          = fmt.Errorf("crypto: swap source and destination assets must differ")
-	ErrAddressNotFound    = fmt.Errorf("crypto: withdrawal address not found or not owned")
-	ErrAddressExists      = fmt.Errorf("crypto: address already saved")
-	ErrInvalidAddress     = fmt.Errorf("crypto: invalid destination address")
-	ErrInvalidTransition  = fmt.Errorf("crypto: illegal withdrawal state transition")
-	ErrWithdrawTooSmall   = fmt.Errorf("crypto: withdrawal amount does not clear the network fee")
+	ErrSameAsset         = fmt.Errorf("crypto: swap source and destination assets must differ")
+	ErrAddressNotFound   = fmt.Errorf("crypto: withdrawal address not found or not owned")
+	ErrAddressExists     = fmt.Errorf("crypto: address already saved")
+	ErrInvalidAddress    = fmt.Errorf("crypto: invalid destination address")
+	ErrInvalidTransition = fmt.Errorf("crypto: illegal withdrawal state transition")
+	ErrWithdrawTooSmall  = fmt.Errorf("crypto: withdrawal amount does not clear the network fee")
 )

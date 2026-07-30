@@ -60,9 +60,9 @@ type WalletTransferRequest struct {
 
 // WalletTransferResolveResponse is the response for GET /finance/transfers/paymax/resolve.
 type WalletTransferResolveResponse struct {
-	UserID       string `json:"user_id"`
-	FullName     string `json:"full_name"`
-	MaskedPhone  string `json:"masked_phone"`
+	UserID      string `json:"user_id"`
+	FullName    string `json:"full_name"`
+	MaskedPhone string `json:"masked_phone"`
 }
 
 // BankTransfer represents a wallet-to-bank or bank-to-bank transfer.

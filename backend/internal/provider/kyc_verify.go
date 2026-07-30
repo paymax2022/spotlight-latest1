@@ -50,10 +50,10 @@ type KycVerifyRequest struct {
 	DOB       string // YYYY-MM-DD
 
 	// Biometric / document capture (base64; adapters upload to the provider).
-	SelfieB64    string
-	DocFrontB64  string
-	DocBackB64   string
-	DocType      string // "passport" | "drivers_license" | "national_id" | ...
+	SelfieB64   string
+	DocFrontB64 string
+	DocBackB64  string
+	DocType     string // "passport" | "drivers_license" | "national_id" | ...
 
 	// Threshold gates facial PASS vs REVIEW (default from routing rule).
 	Threshold int

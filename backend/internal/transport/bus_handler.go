@@ -212,6 +212,59 @@ func (h *Handler) BusProviderBookings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"bookings": bookings})
 }
 
+// ─── Bus marketplace: recurring departure templates (owner-gated) ────────────
+
+// BusProviderTemplateCreate creates a recurring departure template (routeId in body).
+func (h *Handler) BusProviderTemplateCreate(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req BusDepartureTemplateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	tmpl, err := h.svc.CreateDepartureTemplate(c.Request.Context(), userID, req.RouteID, req)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"template": tmpl})
+}
+
+// BusProviderTemplateList lists the caller's recurring departure templates.
+func (h *Handler) BusProviderTemplateList(c *gin.Context) {
+	templates, err := h.svc.ListDepartureTemplates(c.Request.Context(), c.GetString("user_id"))
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"templates": templates})
+}
+
+// BusProviderTemplateSetActive toggles a template on/off (ownership enforced).
+func (h *Handler) BusProviderTemplateSetActive(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req BusDepartureTemplateActiveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	tmpl, err := h.svc.SetDepartureTemplateActive(c.Request.Context(), userID, c.Param("id"), req.Active)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"template": tmpl})
+}
+
+// BusProviderTemplateDelete hard-deletes one of the caller's templates.
+func (h *Handler) BusProviderTemplateDelete(c *gin.Context) {
+	if err := h.svc.DeleteDepartureTemplate(c.Request.Context(), c.GetString("user_id"), c.Param("id")); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "deleted"})
+}
+
 // ─── Bus operator (driver) handlers ──────────────────────────────────────────
 
 // BusValidate validates a QR → boarded.
@@ -284,6 +337,34 @@ func (h *AdminHandler) AdminBusApproveFare(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "fare_approved": true})
+}
+
+// AdminBusListOperators returns every operator (any status) for the review console.
+func (h *AdminHandler) AdminBusListOperators(c *gin.Context) {
+	ops, err := h.svc.ListBusProvidersAdmin(c.Request.Context())
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"operators": ops})
+}
+
+// AdminBusSetProviderVerification verifies/suspends/re-pends an operator.
+func (h *AdminHandler) AdminBusSetProviderVerification(c *gin.Context) {
+	adminID := c.GetString("user_id")
+	var req struct {
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondErr(c, codedErr(http.StatusBadRequest, CodeInvalidState, "status is required"))
+		return
+	}
+	if err := h.svc.SetBusProviderVerification(c.Request.Context(), adminID, c.Param("id"), req.Status, req.Reason); err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "verification_status": req.Status})
 }
 
 // AdminBusManifest returns a schedule manifest.

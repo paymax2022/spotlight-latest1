@@ -79,7 +79,8 @@ func (r *Repository) ListMerchantTypes(ctx context.Context, moduleID string) ([]
 	const q = `
 		SELECT t.id, t.module_id, m.name, t.slug, t.name, COALESCE(t.description,''),
 		       COALESCE(t.icon,''), t.requirements_summary, COALESCE(t.expected_review_label,''),
-		       t.required_kyc_tier, t.role_to_grant, COALESCE(t.current_form_schema_id,''), t.status
+		       t.required_kyc_tier, t.role_to_grant, COALESCE(t.current_form_schema_id,''), t.status,
+		       COALESCE(t.requires_business,true)
 		FROM onb_merchant_type t
 		JOIN onb_module m ON m.id = t.module_id
 		WHERE t.module_id = $1 AND t.status = 'open'
@@ -96,7 +97,8 @@ func (r *Repository) GetMerchantType(ctx context.Context, id string) (*MerchantT
 	const q = `
 		SELECT t.id, t.module_id, m.name, t.slug, t.name, COALESCE(t.description,''),
 		       COALESCE(t.icon,''), t.requirements_summary, COALESCE(t.expected_review_label,''),
-		       t.required_kyc_tier, t.role_to_grant, COALESCE(t.current_form_schema_id,''), t.status
+		       t.required_kyc_tier, t.role_to_grant, COALESCE(t.current_form_schema_id,''), t.status,
+		       COALESCE(t.requires_business,true)
 		FROM onb_merchant_type t
 		JOIN onb_module m ON m.id = t.module_id
 		WHERE t.id = $1`
@@ -122,7 +124,7 @@ func scanMerchantTypes(rows pgx.Rows) ([]MerchantType, error) {
 		var reqs []byte
 		if err := rows.Scan(&t.ID, &t.ModuleID, &t.ModuleName, &t.Slug, &t.Name,
 			&t.Description, &t.Icon, &reqs, &t.ExpectedReviewLabel, &t.RequiredKycTier,
-			&t.RoleToGrant, &t.CurrentFormSchemaID, &t.Status); err != nil {
+			&t.RoleToGrant, &t.CurrentFormSchemaID, &t.Status, &t.RequiresBusiness); err != nil {
 			return nil, err
 		}
 		t.RequirementsSummary = []string{}

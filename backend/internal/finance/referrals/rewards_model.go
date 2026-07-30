@@ -176,13 +176,13 @@ func ComputeReward(marginKobo int64, rate float64) int64 {
 
 // Dashboard is the response for GET /v1/referrals/me/dashboard.
 type Dashboard struct {
-	Code               string         `json:"code"`
-	CurrentTier        string         `json:"current_tier"`
-	CurrentRate        float64        `json:"current_rate"`
-	ActiveReferralCount int           `json:"active_referral_count"`
-	ThisMonthEarnedKobo int64         `json:"this_month_earned_kobo"`
-	LifetimeEarnedKobo  int64         `json:"lifetime_earned_kobo"`
-	NextMilestone      *NextMilestone `json:"next_milestone,omitempty"`
+	Code                string         `json:"code"`
+	CurrentTier         string         `json:"current_tier"`
+	CurrentRate         float64        `json:"current_rate"`
+	ActiveReferralCount int            `json:"active_referral_count"`
+	ThisMonthEarnedKobo int64          `json:"this_month_earned_kobo"`
+	LifetimeEarnedKobo  int64          `json:"lifetime_earned_kobo"`
+	NextMilestone       *NextMilestone `json:"next_milestone,omitempty"`
 }
 
 // NextMilestone previews the upcoming count-threshold bonus.
@@ -194,9 +194,9 @@ type NextMilestone struct {
 
 // ReferredUser is a row in GET /v1/referrals/me/referrals. Contact is masked.
 type ReferredUser struct {
-	ReferredUserID    string    `json:"referred_user_id"`
-	MaskedContact     string    `json:"masked_contact"`
-	JoinedAt          time.Time `json:"joined_at"`
-	Active            bool      `json:"active"` // qualifying purchase in trailing 30d
-	LifetimeEarnedKobo int64    `json:"lifetime_earned_kobo"`
+	ReferredUserID     string    `json:"referred_user_id"`
+	MaskedContact      string    `json:"masked_contact"`
+	JoinedAt           time.Time `json:"joined_at"`
+	Active             bool      `json:"active"` // qualifying purchase in trailing 30d
+	LifetimeEarnedKobo int64     `json:"lifetime_earned_kobo"`
 }

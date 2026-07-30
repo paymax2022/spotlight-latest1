@@ -16,6 +16,7 @@ import DisclosureBanner from '@/features/savings/components/DisclosureBanner';
 import { PaymentSheet, usePurchasePayment } from '@/features/payments';
 import { useVault, useFundVault } from '@/features/savings/hooks';
 import { SavingsColors, formatNaira, NO_YIELD_DISCLOSURE } from '@/features/savings/constants/savings.constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 export default function VaultDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -68,7 +69,7 @@ export default function VaultDetail() {
         {v.status !== 'CLOSED' && v.status !== 'MATURED' ? (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Add money</Text>
-            <TextInputField placeholder="Amount" keyboardType="numeric" value={topUp} onChangeText={setTopUp} />
+            <TextInputField placeholder="Amount" keyboardType="decimal-pad" maxLength={13} value={topUp} onChangeText={(t) => setTopUp(sanitizeMoneyInput(t))} />
             <PrimaryButton label="Add to vault" onPress={startTopUp} disabled={topUpKobo <= 0} loading={fund.isPending} />
           </View>
         ) : null}

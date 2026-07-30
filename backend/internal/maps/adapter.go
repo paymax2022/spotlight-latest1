@@ -63,13 +63,13 @@ type MapMatcher interface {
 // appear under several roles (e.g. an OpenStack adapter is both Router and
 // Matrixer). The config map references providers by Name().
 type Registry struct {
-	Tiles         map[string]TileProvider
-	Geocoders     map[string]Geocoder
+	Tiles          map[string]TileProvider
+	Geocoders      map[string]Geocoder
 	Autocompleters map[string]Autocompleter
 	PlaceSearchers map[string]PlaceSearcher
-	Routers       map[string]Router
-	Matrixers     map[string]Matrixer
-	MapMatchers   map[string]MapMatcher
+	Routers        map[string]Router
+	Matrixers      map[string]Matrixer
+	MapMatchers    map[string]MapMatcher
 }
 
 // NewRegistry returns an empty registry with initialized maps.

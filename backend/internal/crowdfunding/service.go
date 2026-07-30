@@ -3,6 +3,7 @@ package crowdfunding
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,10 +17,51 @@ type Service struct {
 	db         *pgxpool.Pool
 	ledger     *ledger.Service
 	settlement *settlement.Service
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 }
 
 func NewService(db *pgxpool.Pool, ledger *ledger.Service, settlement *settlement.Service) *Service {
 	return &Service{db: db, ledger: ledger, settlement: settlement}
+}
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module (§ profit registry). app-wiring injects a thin adapter over the finance
+// commission service; when the commission feature is off (or no recorder is wired)
+// the field is nil and recording is a silent no-op. Modeled as a LOCAL interface so
+// crowdfunding never imports the commission package at compile time (mirrors the
+// transport/restaurant/stays seams) — the adapter, which lives in app-wiring,
+// discards the returned earning row and surfaces only the error.
+//
+// This records realized profit ONLY; it never moves money. Crowdfunding's own money
+// movement (the 90/10 escrow split at Release) is unchanged, and the injected
+// recorder is deliberately constructed WITHOUT a ledger so RecordFor never re-posts
+// to the ledger (no double count of the commission revenue account) — it appends the
+// immutable earning row used by profit reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a settled crowdfunding
+// contribution. It is best-effort and MUST NEVER affect the caller's outcome: a nil
+// recorder is a no-op, and any error is logged and swallowed so a profit-registry
+// failure can never fail or reverse the campaign release. The recorded breakdown is
+// resolved server-side from the central rate card; the contribution id doubles as
+// the source ref + idempotency key so retries and reconciliation sweeps never
+// double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
+		"crowdfunding", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[crowdfunding] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
+	}
 }
 
 // Create creates a new campaign in draft state.
@@ -127,16 +169,19 @@ func (s *Service) Release(ctx context.Context, campaignID, creatorID string) err
 		return fmt.Errorf("crowdfunding: campaign must be in 'funded' state to release funds")
 	}
 
-	rows, err := s.db.Query(ctx, `SELECT id, settlement_id FROM contributions WHERE campaign_id=$1 AND status='escrowed'`, campaignID)
+	rows, err := s.db.Query(ctx, `SELECT id, settlement_id, contributor_id, amount_kobo FROM contributions WHERE campaign_id=$1 AND status='escrowed'`, campaignID)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	type c struct{ id, settlementID string }
+	type c struct {
+		id, settlementID, contributorID string
+		amountKobo                      int64
+	}
 	var contribs []c
 	for rows.Next() {
 		var entry c
-		if err := rows.Scan(&entry.id, &entry.settlementID); err != nil {
+		if err := rows.Scan(&entry.id, &entry.settlementID, &entry.contributorID, &entry.amountKobo); err != nil {
 			return err
 		}
 		contribs = append(contribs, entry)
@@ -153,6 +198,16 @@ func (s *Service) Release(ctx context.Context, campaignID, creatorID string) err
 			return fmt.Errorf("crowdfunding: settle contribution %s: %w", entry.id, err)
 		}
 		s.db.Exec(ctx, `UPDATE contributions SET status='released' WHERE id=$1`, entry.id)
+		// Record realized Spotlight profit into the central Commission & Profit
+		// registry. Release is crowdfunding's disbursement/settlement point — the
+		// 90/10 split above already posted the 10% platform cut to the ledger, so this
+		// is EARNING-ROW ONLY (the injected recorder has a nil ledger ⇒ no double post).
+		// Best-effort + idempotent: the contribution id doubles as source ref +
+		// idempotency key, so replays / reconciliation never double-count. gross = the
+		// contribution amount the 10% platform fee applies to. A recorder failure is
+		// logged and swallowed — it must NEVER fail or reverse the release above.
+		contributorID := entry.contributorID
+		s.recordCommissionSafe(ctx, "Community", "Crowdfunding", "", entry.amountKobo, entry.id, &contributorID)
 	}
 	return nil
 }

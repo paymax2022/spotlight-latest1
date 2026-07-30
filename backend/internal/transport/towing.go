@@ -184,10 +184,10 @@ func (s *Service) TowingDetail(ctx context.Context, id, callerID string) (map[st
 		       pickup_address, dest_address, fare_kobo, status, pin, created_at
 		FROM towing_jobs WHERE id=$1`
 	var (
-		jid, uid, serviceType, pickup, status      string
-		operatorID, vtype, issue, dest, pin        *string
-		fare                                       int64
-		createdAt                                  time.Time
+		jid, uid, serviceType, pickup, status string
+		operatorID, vtype, issue, dest, pin   *string
+		fare                                  int64
+		createdAt                             time.Time
 	)
 	if err := s.db.QueryRow(ctx, q, id).Scan(
 		&jid, &uid, &operatorID, &serviceType, &vtype, &issue,

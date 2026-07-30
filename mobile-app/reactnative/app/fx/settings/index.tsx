@@ -32,7 +32,7 @@ export default function FxSettingsScreen() {
           </Group>
 
           <Group title="Preferences">
-            <ProfileMenuItem icon="Coins" label="Default currency" value={CURRENCIES[data.defaultCurrency].code} onPress={() => {}} />
+            <ProfileMenuItem icon="Coins" label="Default currency" value={CURRENCIES[data.defaultCurrency]?.code ?? data.defaultCurrency ?? '—'} onPress={() => {}} />
             <Divider />
             <ProfileMenuItem icon="Percent" iconColor={Colors.secondary} bgColor={Colors.iconBgBlue} label="Display rate" value={data.displayRate === 'all_in' ? 'All-in' : 'Mid-market'} onPress={() => {}} />
             <Divider />
@@ -46,7 +46,7 @@ export default function FxSettingsScreen() {
           <Group title="Security & assets">
             <ProfileMenuItem icon="Fingerprint" iconColor={Colors.secondary} bgColor={Colors.iconBgBlue} label="Security (biometric, 2FA, devices)" onPress={() => {}} />
             <Divider />
-            <ProfileMenuItem icon="Wallet" iconColor={Colors.teal} bgColor={Colors.iconBgTeal} label="Linked stablecoin addresses" value={`${data.stablecoinAddresses.length}`} onPress={() => router.push('/fx/settings/stablecoin')} />
+            <ProfileMenuItem icon="Wallet" iconColor={Colors.teal} bgColor={Colors.iconBgTeal} label="Linked stablecoin addresses" value={`${data.stablecoinAddresses?.length ?? 0}`} onPress={() => router.push('/fx/settings/stablecoin')} />
           </Group>
 
           <Group title="Support">

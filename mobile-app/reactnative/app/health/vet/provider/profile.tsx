@@ -12,6 +12,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import CredentialBadge from '@/features/health/components/CredentialBadge';
 import { useProviderProfile, useUpdateProviderProfile } from '@/features/health/vet/hooks';
 import { APPT_TYPE_OPTIONS } from '@/features/health/vet/constants';
@@ -86,10 +87,10 @@ export default function ProviderProfileScreen() {
 
         <View style={styles.feeRow}>
           <View style={styles.feeCol}>
-            <TextInputField label="Consult fee (₦)" placeholder="0" value={consultFee} onChangeText={setConsultFee} keyboardType="numeric" />
+            <TextInputField label="Consult fee (₦)" placeholder="0" value={consultFee} onChangeText={(v) => setConsultFee(sanitizeMoneyInput(v))} keyboardType="decimal-pad" maxLength={13} />
           </View>
           <View style={styles.feeCol}>
-            <TextInputField label="Home visit fee (₦)" placeholder="0" value={homeFee} onChangeText={setHomeFee} keyboardType="numeric" />
+            <TextInputField label="Home visit fee (₦)" placeholder="0" value={homeFee} onChangeText={(v) => setHomeFee(sanitizeMoneyInput(v))} keyboardType="decimal-pad" maxLength={13} />
           </View>
         </View>
 

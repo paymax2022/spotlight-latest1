@@ -17,7 +17,7 @@ func NewHandler(svc *StatusService) *Handler { return &Handler{svc: svc} }
 // transient, sensitive references that are NEVER logged — only forwarded to the
 // provider and discarded.
 type selfieRequest struct {
-	Level         string `json:"level"`          // "l0" | "l1" (defaults l0)
+	Level         string `json:"level"` // "l0" | "l1" (defaults l0)
 	SelfieRef     string `json:"selfie_ref" binding:"required"`
 	LivenessToken string `json:"liveness_token"` // sensitive, transient; not persisted/logged
 }

@@ -90,18 +90,29 @@ func (s *Service) Revoke(ctx context.Context, grantorID, consentID string) error
 // consent over subjectOwnerID's data for the given scope (or ALL). This is the
 // HL-8 cross-vertical read gate used by the records service.
 func (s *Service) HasActiveGrant(ctx context.Context, granteeID, subjectOwnerID, scope string) (string, bool, error) {
-	const q = `
-		SELECT id FROM health_consents
-		WHERE grantee_id=$1 AND subject_owner_id=$2 AND state='ACTIVE'
-		  AND (scope=$3 OR scope='ALL')
-		  AND (expires_at IS NULL OR expires_at > now())
-		LIMIT 1`
-	var id string
-	err := s.db.QueryRow(ctx, q, granteeID, subjectOwnerID, scope).Scan(&id)
+	// Fetch the grantee's grants over this subject and apply the canonical
+	// active-grant rule (grantActive) in Go — one source of truth for
+	// active/scope/expiry, shared with the unit tests. Most-recent first so a fresh
+	// grant is preferred; a revoked/expired/narrower grant is skipped.
+	const q = `SELECT id, scope, state, expires_at FROM health_consents
+	           WHERE grantee_id=$1 AND subject_owner_id=$2 ORDER BY granted_at DESC`
+	rows, err := s.db.Query(ctx, q, granteeID, subjectOwnerID)
 	if err != nil {
-		return "", false, nil // no active grant — fail closed, not an error
+		return "", false, nil // fail closed, not an error
 	}
-	return id, true, nil
+	defer rows.Close()
+	now := time.Now()
+	for rows.Next() {
+		var id, gScope, state string
+		var expires *time.Time
+		if err := rows.Scan(&id, &gScope, &state, &expires); err != nil {
+			return "", false, nil
+		}
+		if grantActive(state, gScope, expires, scope, now) {
+			return id, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // ListForGrantor returns the acting subject's own grants.

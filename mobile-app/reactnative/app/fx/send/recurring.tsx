@@ -15,6 +15,7 @@ import SegmentedTabs from '@/components/SegmentedControl';
 import CurrencyChip from '@/features/fx/components/CurrencyChip';
 import { useBeneficiaries, useBalances } from '@/features/fx/hooks/useFx';
 import { parseToMinor, formatMoney } from '@/features/fx/utils/fxFormatters';
+import { sanitizeMoneyInput } from '@/utils/money';
 import type { CurrencyCode } from '@/features/fx/types/fx.types';
 
 type Frequency = 'weekly' | 'monthly';
@@ -64,7 +65,7 @@ export default function RecurringPayoutScreen() {
             </View>
             <View style={styles.amountRow}>
               <CurrencyChip currency={source} onPress={() => setSource(source === 'USD' ? 'NGN' : 'USD')} compact />
-              <TextInput style={styles.amountInput} value={input} onChangeText={setInput} placeholder="0.00" placeholderTextColor={Colors.outline} keyboardType="decimal-pad" accessibilityLabel="Recurring amount" />
+              <TextInput style={styles.amountInput} value={input} onChangeText={(v) => setInput(sanitizeMoneyInput(v))} placeholder="0.00" placeholderTextColor={Colors.outline} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} accessibilityLabel="Recurring amount" />
             </View>
           </View>
 

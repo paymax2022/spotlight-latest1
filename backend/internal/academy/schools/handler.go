@@ -86,8 +86,12 @@ func (h *Handler) fail(c *gin.Context, err error) {
 //
 //	member: GET /schools/mine
 //	        GET /schools/:id/overview
-//	admin : POST /schools/admin/institutions
+//	admin : GET  /schools/admin/overview            — platform-wide aggregate (all institutions)
+//	        POST /schools/admin/institutions
 //	        GET  /schools/admin/institutions
+//	        GET  /schools/admin/licences             — all licences (admin-wide)
+//	        GET  /schools/admin/class-groups         — all class groups (flat, admin-wide)
+//	        GET  /schools/admin/billing              — all billing/invoice lines (admin-wide)
 //	        POST /schools/admin/licences
 //	        POST /schools/admin/licences/:id/suspend
 //	        POST /schools/admin/licences/:id/reactivate
@@ -119,10 +123,14 @@ func RegisterAcademySchools(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 		guard := middleware.RequirePermission(rbac, "academy.schools")
 		ag := admin.Group("/schools/admin")
 		ag.Use(guard)
+		ag.GET("/overview", h.AdminAggregateOverview)
 		ag.POST("/institutions", h.AdminOnboard)
 		ag.GET("/institutions", h.AdminListInstitutions)
 		ag.GET("/institutions/:id/overview", h.AdminOverview)
 		ag.GET("/institutions/:id/class-groups", h.AdminListClassGroups)
+		ag.GET("/licences", h.AdminListLicences)
+		ag.GET("/class-groups", h.AdminListAllClassGroups)
+		ag.GET("/billing", h.AdminListBilling)
 		ag.POST("/licences", h.AdminIssueLicence)
 		ag.POST("/licences/:id/suspend", h.AdminSuspendLicence)
 		ag.POST("/licences/:id/reactivate", h.AdminReactivateLicence)
@@ -203,6 +211,47 @@ func (h *Handler) AdminListClassGroups(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out.ClassGroups})
+}
+
+// AdminAggregateOverview returns the platform-wide (all-institutions) admin dashboard
+// aggregate: institution/licence/seat totals + enrolment counts by state.
+func (h *Handler) AdminAggregateOverview(c *gin.Context) {
+	out, err := h.svc.AdminOverview(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminListLicences lists ALL licences across every institution.
+func (h *Handler) AdminListLicences(c *gin.Context) {
+	out, err := h.svc.AdminListLicences(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminListAllClassGroups lists ALL class groups across every institution (flat list).
+func (h *Handler) AdminListAllClassGroups(c *gin.Context) {
+	out, err := h.svc.AdminListClassGroups(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminListBilling lists ALL institution billing/invoice lines across every institution.
+func (h *Handler) AdminListBilling(c *gin.Context) {
+	out, err := h.svc.AdminListBilling(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
 func (h *Handler) AdminIssueLicence(c *gin.Context) {

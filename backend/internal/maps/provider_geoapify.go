@@ -37,7 +37,7 @@ type geoapifyResp struct {
 			Name      string  `json:"name"`
 			Rank      struct {
 				Importance float64 `json:"importance"` // Nominatim importance (0..1)
-				Confidence float64 `json:"confidence"`  // Geoapify match confidence (0..1)
+				Confidence float64 `json:"confidence"` // Geoapify match confidence (0..1)
 			} `json:"rank"`
 		} `json:"properties"`
 	} `json:"features"`

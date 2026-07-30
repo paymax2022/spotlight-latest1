@@ -288,11 +288,15 @@ func (h *Handler) ReviewClaim(c *gin.Context) {
 //
 //	Register(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService,
 //	         wallet WalletDebiter, ledger LedgerCrediter, accounts RevenueResolver,
-//	         loyalty LoyaltyAwarder, audit Auditor)
+//	         loyalty LoyaltyAwarder, audit Auditor, commission CommissionRecorder)
 //
 // Member routes live under member.Group("/networking"). Company-scoped write routes add
 // per-route RBAC via RequireScopedPermission(..., "company_page", "id") so the object
 // param ":id" is the company_page_id (PN-9). Admin routes add RequirePermission.
+//
+// commission is the nil-safe central Commission & Profit recorder (§ profit registry):
+// when non-nil, a paid job activation appends a realized-earning row under Community/Job.
+// Pass nil to disable recording (e.g. FEATURE_COMMISSION_ENABLED off).
 func Register(
 	member, admin *gin.RouterGroup,
 	pool *pgxpool.Pool,
@@ -302,8 +306,10 @@ func Register(
 	accounts RevenueResolver,
 	loyalty LoyaltyAwarder,
 	audit Auditor,
+	commission CommissionRecorder,
 ) {
 	svc := NewService(NewRepository(pool), wallet, ledger, accounts, loyalty, audit)
+	svc.SetCommissionRecorder(commission) // nil-safe: no-op when commission is disabled
 	h := NewHandler(svc)
 
 	g := member.Group("/networking")

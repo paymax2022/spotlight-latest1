@@ -7,7 +7,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
 	healthlab "spotlight/backend/internal/health/lab"
@@ -22,15 +24,19 @@ import (
 // vertical and edits no existing file. All reuse is by import:
 //
 //   - escrow.Service         — HL-9 payment HELD→RELEASE→REFUND (idempotent).
+//
 //   - transport.Service      — phlebotomist dispatch + results courier (last-mile rail).
+//
 //   - healthrecords.Service  — HL-8 result release → consent-gated, signed-URL vault.
+//
 //   - finance/kyc.Service    — HL-10 payout KYC gating.
 //
 //   - member: /api/finance/health/lab/*  (member-authenticated; user_id mirrored)
+//
 //   - admin : /api/health/lab/admin/*    (per-route RBAC health.lab.*)
 //
 // Gated by FeatureHealthLabEnabled at the orchestrator. Auditing is nil-safe.
-func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService) {
+func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService, cfg config.Config) {
 	if pool == nil {
 		log.Println("[health.lab] nil pool — skipping lab routes")
 		return
@@ -54,6 +60,16 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		audit, // real immutable-audit sink injected by orchestrator (HL-12) — nil-safe
 	)
 
+	// Central Commission & Profit recording at the lab order settlement point
+	// (Release → escrow release). Best-effort + idempotent + nil-safe: constructed
+	// with a nil ledger so the earning row is appended WITHOUT re-posting to the
+	// ledger (lab's own escrow split already posts the platform cut). Reuses the
+	// shared commissionRecorderAdapter (marketplace_routes.go). Gated on the flag ⇒
+	// off leaves the recorder nil ⇒ silent no-op.
+	if cfg.FeatureCommissionEnabled {
+		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+	}
+
 	isAdmin := func(c *gin.Context) bool { return isHealthLabAdmin(c, rbac) }
 	h := healthlab.NewHandler(svc, isAdmin)
 
@@ -63,26 +79,26 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 
 	// --- Member routes (/api/finance/health/lab) — HEALTH-BUILD §6 Laboratory ---
 	lg := member.Group("/health/lab")
-	lg.GET("/tests", h.ListTests)                       // catalog: prep, TAT, price
-	lg.POST("/tests", h.UpsertTest)                     // lab owner, HL-2 catalog governance
-	lg.POST("/orders", h.CreateOrder)                   // patient, payment HELD (HL-9)
-	lg.GET("/orders/:id", h.Get)                        // object-level authZ
-	lg.GET("/orders/:id/results", h.Results)            // object-level authZ (HL-8)
-	lg.GET("/orders/:id/custody", h.Custody)            // chain-of-custody trail (HL-6/12)
-	lg.POST("/orders/:id/schedule", h.Schedule)         // phlebotomist dispatch (HOME)
-	lg.POST("/orders/:id/collect", h.Collect)           // phlebotomist: sample + custody (HL-6)
-	lg.POST("/orders/:id/results", h.EnterResults)      // scientist enter + validate (HL-7)
-	lg.POST("/orders/:id/release", h.Release)           // sign-off → vault; release payment (HL-7/8/9)
-	lg.POST("/orders/:id/cancel", h.Cancel)             // pre-collection → refund (HL-9)
-	lg.POST("/samples/:id/accession", h.Accession)      // lab intake, HL-6 chain gate
-	lg.POST("/samples/:id/handover", h.Handover)        // custody transfer (HL-6)
-	lg.POST("/samples/:id/breach", h.FlagBreach)        // chain break → recollect (HL-6)
+	lg.GET("/tests", h.ListTests)                  // catalog: prep, TAT, price
+	lg.POST("/tests", h.UpsertTest)                // lab owner, HL-2 catalog governance
+	lg.POST("/orders", h.CreateOrder)              // patient, payment HELD (HL-9)
+	lg.GET("/orders/:id", h.Get)                   // object-level authZ
+	lg.GET("/orders/:id/results", h.Results)       // object-level authZ (HL-8)
+	lg.GET("/orders/:id/custody", h.Custody)       // chain-of-custody trail (HL-6/12)
+	lg.POST("/orders/:id/schedule", h.Schedule)    // phlebotomist dispatch (HOME)
+	lg.POST("/orders/:id/collect", h.Collect)      // phlebotomist: sample + custody (HL-6)
+	lg.POST("/orders/:id/results", h.EnterResults) // scientist enter + validate (HL-7)
+	lg.POST("/orders/:id/release", h.Release)      // sign-off → vault; release payment (HL-7/8/9)
+	lg.POST("/orders/:id/cancel", h.Cancel)        // pre-collection → refund (HL-9)
+	lg.POST("/samples/:id/accession", h.Accession) // lab intake, HL-6 chain gate
+	lg.POST("/samples/:id/handover", h.Handover)   // custody transfer (HL-6)
+	lg.POST("/samples/:id/breach", h.FlagBreach)   // chain break → recollect (HL-6)
 
 	// --- Admin routes (/api/health/lab/admin, RBAC health.lab.*) ---
 	ag := admin.Group("")
-	ag.GET("/orders", guard("health.lab.orders"), h.AdminListOrders)               // order/results oversight
-	ag.GET("/custody-audit", guard("health.lab.custody"), h.AdminCustodyAudit)     // chain-of-custody oversight (HL-6)
-	ag.GET("/escalations", guard("health.lab.escalation"), h.AdminEscalations)     // critical-result escalation (HL-7)
+	ag.GET("/orders", guard("health.lab.orders"), h.AdminListOrders)                     // order/results oversight
+	ag.GET("/custody-audit", guard("health.lab.custody"), h.AdminCustodyAudit)           // chain-of-custody oversight (HL-6)
+	ag.GET("/escalations", guard("health.lab.escalation"), h.AdminEscalations)           // critical-result escalation (HL-7)
 	ag.POST("/tests/:id/deactivate", guard("health.lab.catalog"), h.AdminDeactivateTest) // catalog governance
 
 	log.Println("[health.lab] lab routes registered — tests/orders/collect/accession/results/release + custody + admin")

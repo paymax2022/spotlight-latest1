@@ -12,6 +12,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import { useOffer, useInvestorProfile, useSubscribe } from '@/features/crowdfunding/hooks/useInvestment';
 import { formatNaira } from '@/features/crowdfunding/utils/crowdfundingFormatters';
+import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 
 export default function InvestScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -25,7 +26,7 @@ export default function InvestScreen() {
 
   if (isLoading || !o) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Invest" /><StateView kind="loading" /></SafeAreaView>;
 
-  const amountKobo = amountText ? Number(amountText.replace(/[^0-9]/g, '')) * 100 : 0;
+  const amountKobo = amountText ? nairaStringToKobo(amountText) : 0;
   const belowMin = amountKobo > 0 && amountKobo < o.minTicketKobo;
   const remainingLimit = (profile?.annualLimitKobo ?? 0) - (profile?.investedThisYearKobo ?? 0);
   const overLimit = amountKobo > remainingLimit;
@@ -51,7 +52,7 @@ export default function InvestScreen() {
           <Text style={styles.label}>Investment amount</Text>
           <View style={[styles.amountWrap, (belowMin || overLimit) && styles.amountErr]}>
             <Text style={styles.naira}>₦</Text>
-            <TextInput style={styles.amountInput} placeholder="0" placeholderTextColor={Colors.outline} keyboardType="number-pad" value={amountText} onChangeText={(t) => setAmountText(t.replace(/[^0-9]/g, ''))} />
+            <TextInput style={styles.amountInput} placeholder="0" placeholderTextColor={Colors.outline} keyboardType="decimal-pad" maxLength={13} value={amountText} onChangeText={(t) => setAmountText(sanitizeMoneyInput(t))} />
           </View>
           <Text style={styles.minHint}>Minimum {formatNaira(o.minTicketKobo)}</Text>
           {belowMin && <Text style={styles.err}>Below the minimum ticket.</Text>}

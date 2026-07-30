@@ -14,6 +14,7 @@ import ToggleRow from '@/features/doctor/components/ToggleRow';
 import CurrencyChip from '@/features/fx/components/CurrencyChip';
 import { useCard, useUpdateCardControls } from '@/features/fx/hooks/useFxCards';
 import { parseToMinor, minorToInput } from '@/features/fx/utils/fxFormatters';
+import { sanitizeMoneyInput } from '@/utils/money';
 import type { SpendingControls } from '@/features/fx/types/fx.types';
 
 export default function CardControlsScreen() {
@@ -26,7 +27,7 @@ export default function CardControlsScreen() {
   const [perTx, setPerTx] = useState('');
 
   useEffect(() => {
-    if (card && !controls) {
+    if (card && card.controls && !controls) {
       setControls(card.controls);
       setMonthly(card.controls.monthlyLimit ? minorToInput(card.controls.monthlyLimit, card.currency) : '');
       setPerTx(card.controls.perTxLimit ? minorToInput(card.controls.perTxLimit, card.currency) : '');
@@ -61,13 +62,13 @@ export default function CardControlsScreen() {
           <Text style={styles.label}>Monthly limit</Text>
           <View style={styles.limitRow}>
             <CurrencyChip currency={card.currency} compact />
-            <TextInput style={styles.limitInput} value={monthly} onChangeText={setMonthly} placeholder="No limit" placeholderTextColor={Colors.outline} keyboardType="decimal-pad" accessibilityLabel="Monthly limit" />
+            <TextInput style={styles.limitInput} value={monthly} onChangeText={(v) => setMonthly(sanitizeMoneyInput(v))} placeholder="No limit" placeholderTextColor={Colors.outline} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} accessibilityLabel="Monthly limit" />
           </View>
 
           <Text style={[styles.label, styles.spaced]}>Per-transaction limit</Text>
           <View style={styles.limitRow}>
             <CurrencyChip currency={card.currency} compact />
-            <TextInput style={styles.limitInput} value={perTx} onChangeText={setPerTx} placeholder="No limit" placeholderTextColor={Colors.outline} keyboardType="decimal-pad" accessibilityLabel="Per-transaction limit" />
+            <TextInput style={styles.limitInput} value={perTx} onChangeText={(v) => setPerTx(sanitizeMoneyInput(v))} placeholder="No limit" placeholderTextColor={Colors.outline} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} accessibilityLabel="Per-transaction limit" />
           </View>
 
           <Text style={[styles.section, styles.spaced]}>Where this card works</Text>
