@@ -148,24 +148,27 @@ func (s *Service) Comments(ctx context.Context, postID string) ([]Comment, error
 
 // Feed returns the main ranked feed. Ranking applies the PURE RankScore (PN-3):
 // verified outcomes weigh at least as heavily as raw engagement.
-func (s *Service) Feed(ctx context.Context, limit int) ([]FeedItem, error) {
-	return s.rankedFeed(ctx, "", limit)
+// Feed returns the main ranked feed for `viewerID`. Posts by users the viewer has
+// blocked (or who blocked the viewer) are excluded — PN-011 / safety invariant 3.
+func (s *Service) Feed(ctx context.Context, viewerID string, limit int) ([]FeedItem, error) {
+	return s.rankedFeed(ctx, viewerID, "", limit)
 }
 
-// HashtagFeed returns the ranked feed filtered to a single hashtag/topic (PN-3).
-func (s *Service) HashtagFeed(ctx context.Context, tag string, limit int) ([]FeedItem, error) {
+// HashtagFeed returns the ranked feed filtered to a single hashtag/topic (PN-3),
+// block-filtered for `viewerID` (PN-011 / safety invariant 3).
+func (s *Service) HashtagFeed(ctx context.Context, viewerID, tag string, limit int) ([]FeedItem, error) {
 	tag = normalizeTag(tag)
 	if tag == "" {
 		return nil, ErrInvalidInput
 	}
-	return s.rankedFeed(ctx, tag, limit)
+	return s.rankedFeed(ctx, viewerID, tag, limit)
 }
 
-func (s *Service) rankedFeed(ctx context.Context, tag string, limit int) ([]FeedItem, error) {
+func (s *Service) rankedFeed(ctx context.Context, viewerID, tag string, limit int) ([]FeedItem, error) {
 	if limit <= 0 || limit > maxFeedLimit {
 		limit = defaultFeedLimit
 	}
-	cands, err := s.repo.FeedCandidates(ctx, tag, limit)
+	cands, err := s.repo.FeedCandidates(ctx, viewerID, tag, limit)
 	if err != nil {
 		return nil, err
 	}

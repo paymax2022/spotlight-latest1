@@ -60,11 +60,12 @@ func (s *Service) viewer(ctx context.Context, userID string) (profileID string, 
 }
 
 // candidateQuery selects visible peers in a mode, excluding the viewer, anyone the
-// viewer already liked, and existing matches. Per-mode visibility is enforced in
-// SQL: only modes with visible=true surface. verifiedOnly gates on a passed
-// L0/L1 verification status. (The block list is owned by a sibling Connect package;
-// discovery defers block filtering to that layer to avoid cross-package coupling.)
-func (s *Service) candidateQuery(ctx context.Context, viewerProfile, mode, intent string, verifiedOnly bool, limit int) ([]rawCandidate, error) {
+// viewer already liked, existing matches, and — DM-008 / safety invariant 3 — any
+// user the viewer has blocked or who has blocked the viewer. Per-mode visibility is
+// enforced in SQL: only modes with visible=true surface. verifiedOnly gates on a
+// passed L0/L1 verification status. `viewerUserID` is the caller's auth user id
+// (connect_blocks keys on user ids, while candidates are matched by profile.user_id).
+func (s *Service) candidateQuery(ctx context.Context, viewerProfile, viewerUserID, mode, intent string, verifiedOnly bool, limit int) ([]rawCandidate, error) {
 	const q = `
 		SELECT p.id, p.display_name, p.city, p.geo_lat, p.geo_lng,
 		       COALESCE(v.status IN ('l0_passed','l1_passed'), false) AS verified,
@@ -81,9 +82,24 @@ func (s *Service) candidateQuery(ctx context.Context, viewerProfile, mode, inten
 		                  WHERE l.from_profile = $2 AND l.to_profile = p.id)
 		  AND NOT EXISTS (SELECT 1 FROM connect_matches m
 		                  WHERE (m.profile_a = LEAST($2, p.id) AND m.profile_b = GREATEST($2, p.id)))
+		  AND NOT EXISTS (SELECT 1 FROM connect_blocks b
+		                  WHERE (b.blocker_id = NULLIF($6,'')::uuid AND b.blocked_id = p.user_id)
+		                     OR (b.blocked_id = NULLIF($6,'')::uuid AND b.blocker_id = p.user_id))
+		  -- DM-007 / safety invariant 1: minor-in-deck defense-in-depth. Exclude any
+		  -- profile whose owner is flagged underage (and not admin-cleared) or whose
+		  -- on-profile DOB proves they are under 18. NULL dob is allowed (onboarding
+		  -- does not copy dob onto the profile) — the underage-flag queue and the
+		  -- fail-closed onboarding age-gate are the primary guards; this is depth.
+		  AND NOT EXISTS (SELECT 1 FROM connect_underage_flags uf
+		                  WHERE uf.user_id = p.user_id AND uf.status <> 'cleared')
+		  AND (p.dob IS NULL OR p.dob <= (CURRENT_DATE - INTERVAL '18 years'))
+		  -- TS-009 / invariant 6: suspended/banned users disappear from discovery.
+		  AND NOT EXISTS (SELECT 1 FROM connect_account_restrictions r
+		                  WHERE r.user_id = p.user_id AND r.active
+		                    AND (r.expires_at IS NULL OR r.expires_at > now()))
 		ORDER BY p.updated_at DESC
 		LIMIT $5`
-	rows, err := s.db.Query(ctx, q, mode, viewerProfile, intent, verifiedOnly, limit)
+	rows, err := s.db.Query(ctx, q, mode, viewerProfile, intent, verifiedOnly, limit, viewerUserID)
 	if err != nil {
 		return nil, fmt.Errorf("connect: candidate query: %w", err)
 	}
@@ -120,7 +136,7 @@ func (s *Service) Discovery(ctx context.Context, userID, mode string) (*Discover
 	viewerIntents, _ := s.viewerIntents(ctx, viewerProfile, mode)
 
 	// Pull a slightly larger pool so ranking has room, then cap to dailyLimit.
-	raws, err := s.candidateQuery(ctx, viewerProfile, mode, "", false, dailyLimit*3)
+	raws, err := s.candidateQuery(ctx, viewerProfile, userID, mode, "", false, dailyLimit*3)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +182,7 @@ func (s *Service) Search(ctx context.Context, userID string, f SearchFilters) ([
 	buckets := s.cfg.distanceBuckets(ctx)
 	maxDist := snapMaxDistance(f.MaxDistKm, buckets)
 
-	raws, err := s.candidateQuery(ctx, viewerProfile, mode, strings.TrimSpace(f.Intent), f.VerifiedOnly, f.Limit*3)
+	raws, err := s.candidateQuery(ctx, viewerProfile, userID, mode, strings.TrimSpace(f.Intent), f.VerifiedOnly, f.Limit*3)
 	if err != nil {
 		return nil, err
 	}

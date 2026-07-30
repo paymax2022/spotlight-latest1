@@ -79,3 +79,29 @@ func TestValidCaseSeverity(t *testing.T) {
 		t.Error("unknown severity must be rejected")
 	}
 }
+
+// TestSeverityForReport pins the TS-003 intake severity routing: child-safety and
+// potential-CSAM categories auto-escalate to critical, threat/safety reports to
+// high, everything else stays normal, and unknown types fail safe to normal.
+func TestSeverityForReport(t *testing.T) {
+	cases := map[string]string{
+		"underage":            "critical",
+		"inappropriate_media": "critical",
+		"safety":              "high",
+		"harassment":          "normal",
+		"scam":                "normal",
+		"impersonation":       "normal",
+		"off_platform":        "normal",
+		"other":               "normal",
+		"totally_unknown":     "normal", // fail-safe default
+	}
+	for typ, want := range cases {
+		if got := connectsafety.SeverityForReport(typ); got != want {
+			t.Errorf("SeverityForReport(%q) = %q, want %q", typ, got, want)
+		}
+		// Every derived severity must be a valid DB severity.
+		if !connectsafety.ValidCaseSeverity(connectsafety.SeverityForReport(typ)) {
+			t.Errorf("SeverityForReport(%q) produced an invalid severity", typ)
+		}
+	}
+}

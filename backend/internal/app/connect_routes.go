@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/config"
+	connectaccount "spotlight/backend/internal/connect/account"
 	connectconfig "spotlight/backend/internal/connect/config"
 	connectonboarding "spotlight/backend/internal/connect/onboarding"
 	connectsafety "spotlight/backend/internal/connect/safety"
@@ -45,6 +46,8 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	onboardingSvc := connectonboarding.NewService(pool, safetySvc)
 	onboardingHandler := connectonboarding.NewHandler(onboardingSvc)
 
+	accountHandler := connectaccount.NewHandler(connectaccount.NewService(pool))
+
 	// Auth wrapper: runs RequireAuthContext then mirrors the user id into
 	// c.Set("user_id", ...) (same pattern finance routes use).
 	connectAuth := func() gin.HandlerFunc {
@@ -65,6 +68,8 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	member.GET("/onboarding/status", onboardingHandler.Status)
 	// Safety report (invariant 7): always opens a connect_case, never fails silently.
 	member.POST("/safety/report", safetyHandler.Report)
+	// Account deletion / DSR (ON-010, EC-011): self-serve, subject = authed user.
+	member.DELETE("/account", accountHandler.Delete)
 
 	// --- Admin routes (auth + per-route RBAC permission) ---
 	adminCg := r.Group("/api/connect/admin")
@@ -88,14 +93,14 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Phases 1–6 (built as owned sub-packages; wired here) ---
 	// member already has connectAuth() applied; adminCg too. Each register fn
 	// adds per-route RBAC on its admin endpoints.
-	registerConnectPhase1Routes(member, adminCg, pool, rbac)  // profiles, verification, matching, discovery, search
-	registerConnectSafetyRoutes(member, adminCg, pool, rbac)  // chat, blocks, date-safety, moderation, AI trust
-	registerConnectGrowthRoutes(member, adminCg, pool, rbac)  // professional, events, creator, monetization
+	registerConnectPhase1Routes(member, adminCg, pool, rbac)       // profiles, verification, matching, discovery, search
+	registerConnectSafetyRoutes(member, adminCg, pool, rbac)       // chat, blocks, date-safety, moderation, AI trust
+	registerConnectGrowthRoutes(member, adminCg, pool, rbac)       // professional, events, creator, monetization
 	registerConnectNetworkRoutes(member, adminCg, cfg, pool, rbac) // Phase 6 networking: jobs/feed/profile/assessments/mentorship under /networking
 
 	// --- Super-app money + engagement (Connect PRD v2) ---
-	RegisterConnectMoney(member, adminCg, pool, rbac)    // gifting (wallet→wallet), paid voting, AML/NFIU, payouts
-	RegisterConnectLiveGame(member, adminCg, pool, rbac) // live streaming sessions/co-host/PK + gamification (non-cash)
+	RegisterConnectMoney(member, adminCg, cfg, pool, rbac) // gifting (wallet→wallet), paid voting, AML/NFIU, payouts
+	RegisterConnectLiveGame(member, adminCg, pool, rbac)   // live streaming sessions/co-host/PK + gamification (non-cash)
 
 	log.Println("[connect] routes registered — config + safety + phases 1–6 + money + live/game live")
 }
