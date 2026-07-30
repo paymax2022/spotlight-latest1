@@ -59,7 +59,8 @@ describe('AdminUsersPage', () => {
     // Keep the promise pending so we catch the loading flash
     mockListAdminUsers.mockReturnValue(new Promise(() => {}))
     render(<AdminUsersPage />)
-    expect(screen.getByText('Loading...')).toBeTruthy()
+    // The page renders a Unicode ellipsis ("Loading…"), not three ASCII dots.
+    expect(screen.getByText('Loading…')).toBeTruthy()
   })
 
   it('renders a user row after loading', async () => {
