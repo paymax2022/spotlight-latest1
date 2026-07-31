@@ -1,5 +1,7 @@
 // Pure-logic unit tests (form-schema validation + application state machine).
-// Run with Node's native TS type-stripping:  node --test src/features/merchant/lib/__tests__/merchant.logic.test.ts
+// Run with Node's native TS type-stripping (`npm run test:merchant`):
+//   node --experimental-strip-types --test src/features/merchant/lib/__tests__/merchant.logic.test.ts
+// The flag is required on Node < 22.18 (type-stripping is default from 22.18+).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateStep, isFieldVisible } from '../validation.ts';
