@@ -9,6 +9,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import PrimaryButton from '@/components/PrimaryButton';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
+import { useAcceptConsents } from '@/features/connect/hooks/useConnect';
 
 // ON-02 — Welcome carousel. Value prop (date / network / live / gift).
 const SLIDES = [
@@ -23,6 +24,19 @@ export default function Welcome() {
   const Slide = SLIDES[index];
   const Icon = Slide.icon;
   const isLast = index === SLIDES.length - 1;
+  const acceptConsents = useAcceptConsents();
+
+  // Final CTA = explicit consent. Record the required consents server-side
+  // (community guidelines / privacy / terms) before entering the wizard.
+  const onCTA = () => {
+    if (!isLast) {
+      setIndex((i) => i + 1);
+      return;
+    }
+    acceptConsents.mutate(undefined, {
+      onSuccess: () => router.replace('/connect/onboarding/intent'),
+    });
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -50,9 +64,13 @@ export default function Welcome() {
       <SafeAreaView edges={['bottom']} style={styles.footer}>
         <PrimaryButton
           label={isLast ? 'Get started' : 'Next'}
-          onPress={() => (isLast ? router.replace('/connect/onboarding/intent') : setIndex((i) => i + 1))}
+          onPress={onCTA}
+          loading={isLast && acceptConsents.isPending}
         />
-        <Text style={styles.legal}>You must be 18+ to use Connect.</Text>
+        <Text style={styles.legal}>
+          By tapping Get started you agree to our Community Guidelines, Privacy Policy and Terms.
+          You must be 18+ to use Connect.
+        </Text>
       </SafeAreaView>
     </SafeAreaView>
   );

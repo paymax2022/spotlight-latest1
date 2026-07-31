@@ -195,17 +195,71 @@ function computeAge(dobIso: string): number {
   return age;
 }
 
-// Hard age gate. On suspected minor the backend records an underage flag and
-// queues the account to the admin underage review queue.
-// Age gate. The backend has no /onboarding/age-check endpoint, so the 18+ decision
-// is computed client-side here and carried in the draft; the authoritative gate is
-// re-checked when the profile is created. Under-18 blocks onboarding locally.
+// Hard age gate (SAFETY INVARIANT §1). The AUTHORITATIVE 18+ decision, the
+// underage flag and the admin-review queueing are owned by the backend:
+//   POST /onboarding/age-gate { dob: "YYYY-MM-DD" }
+//     200 → adult   403 → under 18 (backend has queued the underage flag)
+//     400 → invalid/future DOB (surfaced as an error to re-enter)
+// In mock mode the age is computed locally so the wizard still runs offline.
 export async function submitDob(dobIso: string): Promise<AgeCheckResult> {
-  await delay(200);
-  const age = computeAge(dobIso);
-  const underage = age >= 0 && age < 18;
-  draft = { ...draft, dob: dobIso, underageFlagged: underage };
-  return { ok: !underage && age >= 18, age, underage };
+  const localAge = computeAge(dobIso);
+  if (USE_MOCK) {
+    await delay(200);
+    const underage = localAge >= 0 && localAge < 18;
+    draft = { ...draft, dob: dobIso, underageFlagged: underage };
+    return { ok: !underage && localAge >= 18, age: localAge, underage };
+  }
+  const dob = dobIso.slice(0, 10); // backend expects YYYY-MM-DD
+  try {
+    const res = await api.post(`${CONNECT_API_BASE}/onboarding/age-gate`, { dob });
+    const d = (res.data ?? {}) as { allowed?: boolean; age?: number };
+    const age = typeof d.age === 'number' ? d.age : localAge;
+    draft = { ...draft, dob: dobIso, underageFlagged: false };
+    return { ok: d.allowed !== false, age, underage: false };
+  } catch (e) {
+    const err = e as { response?: { status?: number; data?: { age?: number; reason?: string } } };
+    const status = err.response?.status;
+    const age = err.response?.data?.age ?? localAge;
+    if (status === 403) {
+      // Under 18 — the backend has recorded the underage flag + queued review.
+      draft = { ...draft, dob: dobIso, underageFlagged: true };
+      return { ok: false, age, underage: true };
+    }
+    throw e; // 400 invalid DOB (or transport error) → let the screen prompt a retry
+  }
+}
+
+// Consent (ON-08). The backend requires these kinds accepted (each version 'v1')
+// before an account is fully onboarded: POST /onboarding/consent { kind, version }.
+const CONSENT_KINDS = ['community_guidelines', 'privacy', 'terms'] as const;
+const CONSENT_VERSION = 'v1';
+
+// Records a single consent server-side (idempotent). Mock: no-op.
+export async function recordConsent(kind: string, version: string = CONSENT_VERSION): Promise<void> {
+  if (USE_MOCK) {
+    await delay(60);
+    return;
+  }
+  await api.post(`${CONNECT_API_BASE}/onboarding/consent`, { kind, version });
+}
+
+// Records ALL required consents. Best-effort per kind so one failure doesn't wedge
+// onboarding; the accept action gates progress but a transient error is logged, not
+// fatal (the backend re-checks missing_consents in /onboarding/status).
+export async function acceptOnboardingConsents(): Promise<void> {
+  if (USE_MOCK) {
+    await delay(120);
+    return;
+  }
+  await Promise.all(
+    CONSENT_KINDS.map((kind) =>
+      api
+        .post(`${CONNECT_API_BASE}/onboarding/consent`, { kind, version: CONSENT_VERSION })
+        .catch((e: { response?: { status?: number } }) =>
+          console.warn('[connect] consent record failed', kind, e?.response?.status),
+        ),
+    ),
+  );
 }
 
 export async function setIntents(intents: ConnectIntent[]): Promise<OnboardingDraft> {
