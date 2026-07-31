@@ -26,23 +26,35 @@ export default function Welcome() {
   const isLast = index === SLIDES.length - 1;
   const acceptConsents = useAcceptConsents();
 
-  // Final CTA = explicit consent. Record the required consents server-side
-  // (community guidelines / privacy / terms) before entering the wizard.
-  const onCTA = () => {
-    if (!isLast) {
-      setIndex((i) => i + 1);
-      return;
-    }
+  // Entering the wizard — via EITHER "Skip" or the final CTA — records the
+  // required consents server-side first, so neither path can bypass the consent
+  // gate (ON-08). Guard against double-taps while the record is in flight.
+  const enterWizard = () => {
+    if (acceptConsents.isPending) return;
     acceptConsents.mutate(undefined, {
       onSuccess: () => router.replace('/connect/onboarding/intent'),
     });
   };
 
+  const onCTA = () => {
+    if (!isLast) {
+      setIndex((i) => i + 1);
+      return;
+    }
+    enterWizard();
+  };
+
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.skipRow}>
-        <Pressable hitSlop={10} onPress={() => router.replace('/connect/onboarding/intent')}>
-          <Text style={styles.skip}>Skip</Text>
+        <Pressable
+          hitSlop={10}
+          disabled={acceptConsents.isPending}
+          onPress={enterWizard}
+          accessibilityRole="button"
+          accessibilityLabel="Skip intro"
+        >
+          <Text style={[styles.skip, acceptConsents.isPending && styles.skipDisabled]}>Skip</Text>
         </Pressable>
       </View>
 
@@ -68,7 +80,7 @@ export default function Welcome() {
           loading={isLast && acceptConsents.isPending}
         />
         <Text style={styles.legal}>
-          By tapping Get started you agree to our Community Guidelines, Privacy Policy and Terms.
+          By continuing you agree to our Community Guidelines, Privacy Policy and Terms.
           You must be 18+ to use Connect.
         </Text>
       </SafeAreaView>
@@ -80,6 +92,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   skipRow: { alignItems: 'flex-end', paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm },
   skip: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
+  skipDisabled: { opacity: 0.4 },
   hero: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: Spacing.xl, gap: Spacing.md },
   iconBox: {
     width: 112, height: 112, borderRadius: Radius.xxl,
