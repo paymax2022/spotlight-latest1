@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,6 +19,8 @@ import {
   initiateBankTransfer,
   calculateBankTransferFee,
 } from '@/api/beneficiaries.api';
+import { fetchBanks } from '@/features/transfers/api';
+import BankPicker from '@/features/transfers/components/BankPicker';
 import type { TransferRecipient, WalletTransfer, Beneficiary, BankTransferResult } from '@/types/wallet';
 import { sanitizeMoneyInput } from '@/utils/money';
 import { Colors } from '@/constants/colors';
@@ -121,6 +123,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   // Bank transfer state
   const [bankStep, setBankStep] = useState<BankStep>('pick');
   const [bankCode, setBankCode] = useState('');
+  const [bankName, setBankName] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
   const [resolvedAccount, setResolvedAccount] = useState<{ accountName: string; bankName: string } | null>(null);
   const [selectedBeneficiary, setSelectedBeneficiary] = useState<Beneficiary | null>(null);
@@ -133,6 +136,14 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     queryFn: fetchBeneficiaries,
     enabled: kind === 'withdraw',
     staleTime: 60_000,
+  });
+
+  // Full Nigerian bank list for the searchable "New account" dropdown
+  const banksQuery = useQuery({
+    queryKey: ['banks'],
+    queryFn: fetchBanks,
+    enabled: kind === 'withdraw',
+    staleTime: 60 * 60_000, // banks rarely change
   });
 
   const amountValue = useMemo(() => Number(amount.replace(/[^\d.]/g, '')), [amount]);
@@ -209,21 +220,48 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     },
   });
 
-  // ── Bank transfer: resolve account name ────────────────────────────────────
+  // ── Bank transfer: resolve account name via provider validation API ─────────
+  // Runs inline (see auto-resolve effect below) so the user sees the verified
+  // account name before continuing — no separate "verify" tap required.
   const resolveAccountMutation = useMutation({
     mutationFn: async () => {
-      if (!bankCode.trim()) throw new Error('Enter a bank code.');
+      if (!bankCode.trim()) throw new Error('Select a bank.');
       if (!/^\d{10}$/.test(accountNumber.trim())) throw new Error('Account number must be exactly 10 digits.');
       return resolveBankAccount(bankCode.trim(), accountNumber.trim());
     },
     onSuccess: (data) => {
-      setResolvedAccount({ accountName: data.accountName, bankName: bankCode });
-      setBankStep('confirm');
+      setResolvedAccount({ accountName: data.accountName, bankName });
     },
-    onError: (error) => {
-      Alert.alert('Account not found', error instanceof Error ? error.message : 'Could not verify account. Check the details.');
+    onError: () => {
+      setResolvedAccount(null);
     },
   });
+
+  // Auto-verify the account with the provider once a bank is chosen and a full
+  // 10-digit NUBAN is entered (debounced). Mirrors the wallet TransferScreen flow.
+  useEffect(() => {
+    if (kind !== 'withdraw' || bankStep !== 'manual') return;
+    if (!bankCode || !/^\d{10}$/.test(accountNumber)) {
+      if (resolvedAccount) setResolvedAccount(null);
+      if (resolveAccountMutation.isError) resolveAccountMutation.reset();
+      return;
+    }
+    const handle = setTimeout(() => resolveAccountMutation.mutate(), 500);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, bankStep, bankCode, accountNumber]);
+
+  const handleBankChange = (code: string, name: string) => {
+    setBankCode(code);
+    setBankName(name);
+    setResolvedAccount(null);
+    resolveAccountMutation.reset();
+  };
+
+  const handleAccountNumberChange = (v: string) => {
+    setAccountNumber(v.replace(/\D/g, '').slice(0, 10));
+    if (resolvedAccount) setResolvedAccount(null);
+  };
 
   // ── Bank transfer: select saved beneficiary ─────────────────────────────────
   const selectBeneficiary = (b: Beneficiary) => {
@@ -271,6 +309,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   const resetBankFlow = () => {
     setBankStep('pick');
     setBankCode('');
+    setBankName('');
     setAccountNumber('');
     setResolvedAccount(null);
     setSelectedBeneficiary(null);
@@ -297,7 +336,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
       }
     }
     if (kind === 'withdraw') {
-      if (bankStep === 'manual')  { resolveAccountMutation.mutate(); return; }
+      if (bankStep === 'manual')  { if (resolvedAccount) setBankStep('confirm'); return; }
       if (bankStep === 'confirm') { bankTransferMutation.mutate(); return; }
       if (bankStep === 'success') { resetBankFlow(); return; }
     }
@@ -313,7 +352,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     }
     if (kind === 'withdraw') {
       if (bankStep === 'pick')    return '';  // pick step has no primary button (list of beneficiaries)
-      if (bankStep === 'manual')  return resolveAccountMutation.isPending ? 'Verifying account…' : 'Verify Account';
+      if (bankStep === 'manual')  return resolveAccountMutation.isPending ? 'Verifying account…' : 'Continue';
       if (bankStep === 'confirm') return bankTransferMutation.isPending ? 'Sending…' : 'Confirm Transfer';
       if (bankStep === 'success') return 'New Transfer';
     }
@@ -369,10 +408,19 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
           />
         ) : kind === 'withdraw' && bankStep === 'manual' ? (
           <BankAccountEntryCard
+            banks={banksQuery.data ?? []}
+            banksLoading={banksQuery.isLoading}
             bankCode={bankCode}
-            onBankCodeChange={setBankCode}
+            onBankChange={handleBankChange}
             accountNumber={accountNumber}
-            onAccountNumberChange={setAccountNumber}
+            onAccountNumberChange={handleAccountNumberChange}
+            resolving={resolveAccountMutation.isPending}
+            resolvedName={resolvedAccount?.accountName ?? null}
+            resolveError={
+              resolveAccountMutation.isError
+                ? "We couldn't verify this account. Check the number and selected bank."
+                : null
+            }
             onBack={() => setBankStep('pick')}
           />
         ) : kind === 'withdraw' ? (
@@ -452,6 +500,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
               label={primaryLabel()}
               onPress={handlePrimary}
               loading={isPending}
+              disabled={kind === 'withdraw' && bankStep === 'manual' && !resolvedAccount}
             />
           </View>
         )}
@@ -668,18 +717,33 @@ function BeneficiaryPickerCard({
 }
 
 function BankAccountEntryCard({
+  banks,
+  banksLoading,
   bankCode,
-  onBankCodeChange,
+  onBankChange,
   accountNumber,
   onAccountNumberChange,
+  resolving,
+  resolvedName,
+  resolveError,
   onBack,
 }: {
+  banks: { code: string; name: string }[];
+  banksLoading: boolean;
   bankCode: string;
-  onBankCodeChange: (v: string) => void;
+  onBankChange: (code: string, name: string) => void;
   accountNumber: string;
   onAccountNumberChange: (v: string) => void;
+  resolving: boolean;
+  resolvedName: string | null;
+  resolveError: string | null;
   onBack: () => void;
 }) {
+  const bankOptions = useMemo(
+    () => banks.map((b) => ({ label: b.name, value: b.code })),
+    [banks],
+  );
+
   return (
     <View style={[styles.card, shadow1]}>
       <View style={styles.confirmHeader}>
@@ -689,14 +753,19 @@ function BankAccountEntryCard({
         </Pressable>
         <Text style={styles.sectionTitle}>New Account</Text>
       </View>
-      <Text style={styles.sectionHint}>Enter the recipient's bank details to verify their account name.</Text>
-      <TextInputField
-        label="Bank Code"
-        placeholder="e.g. 011 (First Bank)"
+      <Text style={styles.sectionHint}>
+        Choose the bank, then enter the 10-digit account number — we'll verify the account name automatically.
+      </Text>
+
+      <BankPicker
+        label="Bank"
+        placeholder="Select bank"
         value={bankCode}
-        onChangeText={onBankCodeChange}
-        keyboardType="number-pad"
+        options={bankOptions}
+        onChange={(code, option) => onBankChange(code, option.label)}
+        loading={banksLoading}
       />
+
       <TextInputField
         label="Account Number"
         placeholder="0123456789"
@@ -705,6 +774,24 @@ function BankAccountEntryCard({
         keyboardType="number-pad"
         maxLength={10}
       />
+
+      {/* Inline provider-validation feedback */}
+      {resolving ? (
+        <View style={styles.resolveRow}>
+          <ActivityIndicator size="small" color={Colors.primary} />
+          <Text style={styles.resolvePending}>Verifying account…</Text>
+        </View>
+      ) : resolvedName ? (
+        <View style={[styles.resolveRow, styles.resolveOk]}>
+          <Icons.BadgeCheck size={18} color={Colors.teal} strokeWidth={2.2} />
+          <Text style={styles.resolveName} numberOfLines={1}>{resolvedName}</Text>
+        </View>
+      ) : resolveError ? (
+        <View style={[styles.resolveRow, styles.resolveBad]}>
+          <Icons.AlertCircle size={16} color={Colors.error} strokeWidth={2.2} />
+          <Text style={styles.resolveErrorText}>{resolveError}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1110,6 +1197,23 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.md,
   },
   newAccountText: { ...Typography.labelMd, color: Colors.primary, flex: 1 },
+
+  // ── Inline account resolution feedback ────────────────────────────────────
+  resolveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.surfaceContainerLow,
+    marginTop: Spacing.xs,
+  },
+  resolveOk:  { backgroundColor: Colors.iconBgTeal },
+  resolveBad: { backgroundColor: Colors.surfaceContainerLow },
+  resolvePending:   { ...Typography.bodySm, color: Colors.onSurfaceVariant },
+  resolveName:      { ...Typography.labelMd, color: Colors.onSurface, flex: 1 },
+  resolveErrorText: { ...Typography.bodySm, color: Colors.error, flex: 1 },
 
   // ── Save beneficiary toggle ───────────────────────────────────────────────
   saveRow: {
