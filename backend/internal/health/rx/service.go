@@ -62,7 +62,11 @@ type Item struct {
 	IsPOM        bool   `json:"is_pom"`
 	IsControlled bool   `json:"is_controlled"` // HL-4: must be false at MVP
 	Dosage       string `json:"dosage"`
-	Quantity     int    `json:"quantity"`
+	// DoseMg is the structured single-dose amount in mg used by the RX-004 dose-range
+	// safety check at Issue. 0 = not provided (dose check skipped for this item);
+	// Dosage stays the free-text sig for the label.
+	DoseMg   float64 `json:"dose_mg"`
+	Quantity int     `json:"quantity"`
 }
 
 type Prescription struct {
@@ -164,10 +168,10 @@ func (s *Service) IssueChecked(ctx context.Context, prescriberID, patientID stri
 	if _, err := tx.Exec(ctx, insRx, p.ID, consultID, prescriberID, patientID); err != nil {
 		return nil, fmt.Errorf("rx: insert prescription: %w", err)
 	}
-	const insItem = `INSERT INTO health_prescription_items (id, prescription_id, drug_name, nafdac_ref, is_pom, is_controlled, dosage, quantity) VALUES ($1,$2,$3,$4,$5,false,$6,$7)`
+	const insItem = `INSERT INTO health_prescription_items (id, prescription_id, drug_name, nafdac_ref, is_pom, is_controlled, dosage, dose_mg, quantity) VALUES ($1,$2,$3,$4,$5,false,$6,$7,$8)`
 	for i := range items {
 		items[i].ID = uuid.New().String()
-		if _, err := tx.Exec(ctx, insItem, items[i].ID, p.ID, items[i].DrugName, items[i].NAFDACRef, items[i].IsPOM, items[i].Dosage, items[i].Quantity); err != nil {
+		if _, err := tx.Exec(ctx, insItem, items[i].ID, p.ID, items[i].DrugName, items[i].NAFDACRef, items[i].IsPOM, items[i].Dosage, items[i].DoseMg, items[i].Quantity); err != nil {
 			return nil, fmt.Errorf("rx: insert item: %w", err)
 		}
 	}
@@ -328,7 +332,7 @@ func (s *Service) load(ctx context.Context, rxID string) (*Prescription, error) 
 }
 
 func (s *Service) loadItems(ctx context.Context, rxID string) ([]Item, error) {
-	const q = `SELECT id, drug_name, nafdac_ref, is_pom, is_controlled, dosage, quantity FROM health_prescription_items WHERE prescription_id=$1`
+	const q = `SELECT id, drug_name, nafdac_ref, is_pom, is_controlled, dosage, dose_mg, quantity FROM health_prescription_items WHERE prescription_id=$1`
 	rows, err := s.db.Query(ctx, q, rxID)
 	if err != nil {
 		return nil, err
@@ -337,7 +341,7 @@ func (s *Service) loadItems(ctx context.Context, rxID string) ([]Item, error) {
 	var out []Item
 	for rows.Next() {
 		var it Item
-		if err := rows.Scan(&it.ID, &it.DrugName, &it.NAFDACRef, &it.IsPOM, &it.IsControlled, &it.Dosage, &it.Quantity); err != nil {
+		if err := rows.Scan(&it.ID, &it.DrugName, &it.NAFDACRef, &it.IsPOM, &it.IsControlled, &it.Dosage, &it.DoseMg, &it.Quantity); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
