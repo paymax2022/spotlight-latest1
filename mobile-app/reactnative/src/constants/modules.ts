@@ -156,6 +156,7 @@ export const SERVICE_MODULES: ServiceModule[] = [
 
 export const FEATURED_SERVICES = [
   { id: 'naija-driver', title: 'Nigerian Drivers Challenge', subtitle: 'Compete, play along & back a driver', icon: 'CarFront', iconColor: '#F97316', bgColor: 'rgba(249,115,22,0.08)', route: '/arena' },
+  { id: 'invest-ai', title: 'Learn investing with Invest AI', subtitle: 'Plain-English answers to your money questions', icon: 'Sparkles', iconColor: Colors.secondary, bgColor: Colors.iconBgBlue, route: '/invest-ai' },
   { id: 'bills',    title: 'Pay Bills Instantly',    subtitle: 'Settle utilities in seconds', icon: 'ReceiptText', iconColor: Colors.primary,   bgColor: Colors.iconBgPurple,  route: '/services/bills' },
   { id: 'food-ride',title: 'Book Food & Rides',      subtitle: 'Everything for your commute', icon: 'Car',         iconColor: Colors.secondary, bgColor: Colors.iconBgBlue,    route: '/services/food' },
   { id: 'invest',   title: 'Own the companies shaping your future', subtitle: 'Invest in Nigerian stocks & ETFs', icon: 'TrendingUp', iconColor: '#16A34A', bgColor: 'rgba(22,163,74,0.08)', route: '/investment' },
