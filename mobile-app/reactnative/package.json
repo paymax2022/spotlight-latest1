@@ -12,7 +12,7 @@
     "test:payment-routes": "node scripts/smoke-payment-routes.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:merchant": "node --test \"src/features/merchant/lib/__tests__/*.test.ts\""
+    "test:merchant": "node --experimental-strip-types --test \"src/features/merchant/lib/__tests__/*.test.ts\""
   },
   "dependencies": {
     "@expo-google-fonts/plus-jakarta-sans": "^0.4.2",
