@@ -14,6 +14,13 @@ vi.mock('@/src/server/voting/paid-vote.service', () => ({
   verifyAndCreditPaidVote: vi.fn(),
 }));
 
+// The bridge's free-vote core is now the atomic claim (fixes D-001/D-002/D-003).
+// The wrapper tests mock it; its own correctness is covered by
+// free-vote-atomic.spec.ts + the claim_free_vote DB migration.
+vi.mock('@/src/server/voting-bridge/free-vote-atomic', () => ({
+  castFreeVoteAtomic: vi.fn(),
+}));
+
 vi.mock('@/src/server/voting-bridge/idempotency', () => {
   const checkAndClaimIdempotencyKey = vi.fn();
   return {
@@ -41,6 +48,7 @@ vi.mock('@/src/server/voting-bridge/outbox', () => ({
 
 import { bridgedCastFreeVote, bridgedVerifyPaidVote } from '@/src/server/voting-bridge/bridge';
 import { castFreeVote } from '@/src/server/voting/free-vote.service';
+import { castFreeVoteAtomic } from '@/src/server/voting-bridge/free-vote-atomic';
 import { verifyAndCreditPaidVote } from '@/src/server/voting/paid-vote.service';
 import { checkAndClaimIdempotencyKey, storeIdempotencyResult } from '@/src/server/voting-bridge/idempotency';
 import { assertKycGate } from '@/src/server/voting-bridge/kyc-gate';
@@ -113,17 +121,18 @@ describe('bridgedCastFreeVote — bridge on', () => {
     expect(result.votesAdded).toBe(1);
   });
 
-  it('runs KYC gate, calls castFreeVote, stores result, enqueues outbox', async () => {
+  it('runs KYC gate, calls the atomic claim, stores result, enqueues outbox', async () => {
     vi.mocked(checkAndClaimIdempotencyKey).mockResolvedValue(null); // new key
     vi.mocked(assertKycGate).mockResolvedValue(undefined);
-    vi.mocked(castFreeVote).mockResolvedValue(FREE_VOTE_RESULT as any);
+    vi.mocked(castFreeVoteAtomic).mockResolvedValue(FREE_VOTE_RESULT as any);
     vi.mocked(storeIdempotencyResult).mockResolvedValue(undefined);
     vi.mocked(enqueueOutboxEvent).mockResolvedValue(undefined);
 
     const result = await bridgedCastFreeVote(FREE_VOTE_REQ, '1.2.3.4', '', '', 'user-001', 'key-002');
 
     expect(assertKycGate).toHaveBeenCalledWith('user-001');
-    expect(castFreeVote).toHaveBeenCalledOnce();
+    expect(castFreeVoteAtomic).toHaveBeenCalledOnce();
+    expect(castFreeVote).not.toHaveBeenCalled();
     expect(storeIdempotencyResult).toHaveBeenCalledWith('key-002', FREE_VOTE_RESULT);
     expect(enqueueOutboxEvent).toHaveBeenCalledWith('votes.free.cast', expect.objectContaining({
       contestId: 'contest-001',
@@ -135,7 +144,7 @@ describe('bridgedCastFreeVote — bridge on', () => {
   it('enqueues referral.triggered when shareCode is present', async () => {
     vi.mocked(checkAndClaimIdempotencyKey).mockResolvedValue(null);
     vi.mocked(assertKycGate).mockResolvedValue(undefined);
-    vi.mocked(castFreeVote).mockResolvedValue(FREE_VOTE_RESULT as any);
+    vi.mocked(castFreeVoteAtomic).mockResolvedValue(FREE_VOTE_RESULT as any);
     vi.mocked(storeIdempotencyResult).mockResolvedValue(undefined);
     vi.mocked(enqueueOutboxEvent).mockResolvedValue(undefined);
 
@@ -152,20 +161,20 @@ describe('bridgedCastFreeVote — bridge on', () => {
 
   it('skips KYC gate when userId is undefined (anonymous voter)', async () => {
     vi.mocked(checkAndClaimIdempotencyKey).mockResolvedValue(null);
-    vi.mocked(castFreeVote).mockResolvedValue(FREE_VOTE_RESULT as any);
+    vi.mocked(castFreeVoteAtomic).mockResolvedValue(FREE_VOTE_RESULT as any);
     vi.mocked(storeIdempotencyResult).mockResolvedValue(undefined);
     vi.mocked(enqueueOutboxEvent).mockResolvedValue(undefined);
 
     await bridgedCastFreeVote(FREE_VOTE_REQ, '1.2.3.4', '', '', undefined, 'key-004');
 
     expect(assertKycGate).not.toHaveBeenCalled();
-    expect(castFreeVote).toHaveBeenCalledOnce();
+    expect(castFreeVoteAtomic).toHaveBeenCalledOnce();
   });
 
-  it('does NOT store result when castFreeVote throws (failed calls not cached)', async () => {
+  it('does NOT store result when the atomic claim throws (failed calls not cached)', async () => {
     vi.mocked(checkAndClaimIdempotencyKey).mockResolvedValue(null);
     vi.mocked(assertKycGate).mockResolvedValue(undefined);
-    vi.mocked(castFreeVote).mockRejectedValue(new Error('DB down'));
+    vi.mocked(castFreeVoteAtomic).mockRejectedValue(new Error('DB down'));
 
     await expect(
       bridgedCastFreeVote(FREE_VOTE_REQ, '1.2.3.4', '', '', 'user-001', 'key-005'),

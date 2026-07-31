@@ -6,6 +6,7 @@ import { getVotingSettings, getRemainingFreeVotes } from '@/src/server/voting/fr
 import { getActiveVotePackages } from '@/src/server/voting/paid-vote.service';
 import { getVoteTotals } from '@/src/server/voting/totals.service';
 import { getOrCreateShareLink } from '@/src/server/voting/share.service';
+import { getEffectiveVisibility } from '@/src/server/voting/visibility.service';
 
 function getIp(request: Request): string {
   return (
@@ -108,12 +109,30 @@ export async function GET(request: Request) {
     const userId = await tryGetUserId(request);
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://spotlightng.com';
 
-    const [packages, totals, shareLink, remaining] = await Promise.all([
+    const [packages, totals, shareLink, remaining, visibility] = await Promise.all([
       getActiveVotePackages(contestId),
       getVoteTotals(contestId, contestantId),
       getOrCreateShareLink(contestId, contestantId, baseUrl),
       getRemainingFreeVotes(contestId, { userId, ipAddress: ip }),
+      getEffectiveVisibility(contestId),
     ]);
+
+    // D-004: never leak hidden vote counts / rank to the public vote page.
+    // Gate the serialized totals by the phase-aware effective visibility.
+    // Authorized-admin surfaces read totals through admin routes, not this one.
+    const safeTotals = totals
+      ? {
+          ...(visibility.showRank ? { rank: totals.rank } : {}),
+          ...(visibility.showVoteCount
+            ? {
+                totalConfirmedVotes: totals.totalConfirmedVotes,
+                freeVotes: totals.freeVotes,
+                paidVotes: totals.paidVotes,
+              }
+            : {}),
+        }
+      : null;
+    const totalsOut = safeTotals && Object.keys(safeTotals).length > 0 ? safeTotals : null;
 
     // 5. Record share-link click if ref param present
     if (ref && shareLink && shareLink.shareCode === ref) {
@@ -144,14 +163,7 @@ export async function GET(request: Request) {
       },
       settings,
       packages,
-      totals: totals
-        ? {
-            rank: totals.rank,
-            totalConfirmedVotes: totals.totalConfirmedVotes,
-            freeVotes: totals.freeVotes,
-            paidVotes: totals.paidVotes,
-          }
-        : null,
+      totals: totalsOut,
       shareLink,
       freeVotesRemaining: remaining.freeVotesRemaining,
       freeVotesPerDay: remaining.freeVotesPerDay,

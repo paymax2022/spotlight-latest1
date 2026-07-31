@@ -42,9 +42,15 @@ export default function VoteModal({
     setStep('processing');
     try {
       const headers = await authHeaders(true);
-      const res = await fetch('/api/votes/free', {
+      // Route through the atomic vote bridge (v2). The bridge requires an
+      // idempotency key so a network retry of THIS submission can't double-count.
+      const idempotencyKey =
+        typeof crypto !== 'undefined' && 'randomUUID' in crypto
+          ? crypto.randomUUID()
+          : `free:${contestId}:${contestantId}:${Date.now()}`;
+      const res = await fetch('/api/v2/votes/free', {
         method: 'POST',
-        headers,
+        headers: { ...headers, 'X-Idempotency-Key': idempotencyKey },
         body: JSON.stringify({ contestId, contestantId, voteQuantity: 1, shareCode }),
       });
       const json = await res.json();
