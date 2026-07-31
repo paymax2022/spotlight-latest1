@@ -33,9 +33,11 @@ New module: `frontend-web/src/server/voting-bridge/`. New routes: `/api/v2/votes
 3. On success: call the vote service. Store result. Return it.
 4. Failed calls are NOT stored — client can retry with the same key.
 
-### Known concurrency gap
+### Known concurrency gap — RESOLVED by ADR-020 (2026-07-30)
 
 True sub-millisecond races (same key sent simultaneously) can both proceed if the race-loser fetches `response: {}` before the claimer stores the result. Probability is very low for human-speed interaction. The proper fix — `SELECT FOR UPDATE` wrapping the entire vote transaction — requires modifying the protected service functions. This is deferred to a future refactor once the legacy modules are decomissioned.
+
+> **Update (ADR-020):** the deferral above is resolved for the free-vote path. Rather than edit the protected function, the bridge now calls a new additive stored procedure `claim_free_vote` that row-locks the per-contestant cap (`SELECT … FOR UPDATE`) and upserts totals atomically — verified against Postgres with a 20-way concurrency test. See [ADR-020](ADR-020-atomic-free-vote-claim.md). The paid-vote `verifyAndCreditPaidVote` TOCTOU (PV-005) remains open.
 
 ### KYC gate
 

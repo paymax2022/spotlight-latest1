@@ -16,6 +16,7 @@ import { isBridgeEnabled } from './feature-flag';
 import { bridgeIdempotencyAnchor, storeIdempotencyResult } from './idempotency';
 import { assertKycGate } from './kyc-gate';
 import { enqueueOutboxEvent } from './outbox';
+import { castFreeVoteAtomic } from './free-vote-atomic';
 import { resolveIdempotency } from '@/src/server/voting/core';
 
 // ---------------------------------------------------------------------------
@@ -49,8 +50,10 @@ export async function bridgedCastFreeVote(
   // Step 2: KYC gate (only for authenticated users)
   if (userId) await assertKycGate(userId);
 
-  // Step 3: Call the protected function
-  const result = await castFreeVote(req, ipAddress, deviceFingerprint, userAgent, userId);
+  // Step 3: Atomic claim — TZ-correct day bucket (D-001) + row-locked per-contestant
+  //         cap (D-002) + atomic NULL-round-correct totals (D-003). This replaces
+  //         the racy legacy castFreeVote() core WITHOUT editing the protected file.
+  const result = await castFreeVoteAtomic(req, ipAddress, deviceFingerprint, userAgent, userId);
 
   // Step 4: Store result (only on success — failed calls must not be cached)
   await storeIdempotencyResult(idempotencyKey, result);
