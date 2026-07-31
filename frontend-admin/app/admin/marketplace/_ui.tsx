@@ -29,10 +29,17 @@ type Tab = { href: string; label: string; key: string };
 export function MarketplaceTabs({ active }: { active: string }) {
   const tabs: Tab[] = [
     { href: '/admin/marketplace/moderation', label: 'Moderation', key: 'moderation' },
+    { href: '/admin/marketplace/taxonomy', label: 'Taxonomy', key: 'taxonomy' },
     { href: '/admin/marketplace/disputes', label: 'Disputes', key: 'disputes' },
+    { href: '/admin/marketplace/appeals', label: 'Appeals', key: 'appeals' },
+    { href: '/admin/marketplace/users', label: 'Users', key: 'users' },
+    { href: '/admin/marketplace/fraud', label: 'Fraud', key: 'fraud' },
     { href: '/admin/marketplace/flags', label: 'Flags', key: 'flags' },
     { href: '/admin/marketplace/orders-aging', label: 'Orders Aging', key: 'orders-aging' },
     { href: '/admin/marketplace/boosts', label: 'Boosts', key: 'boosts' },
+    { href: '/admin/marketplace/pricing', label: 'Pricing', key: 'pricing' },
+    { href: '/admin/marketplace/cms', label: 'CMS', key: 'cms' },
+    { href: '/admin/marketplace/analytics', label: 'Analytics', key: 'analytics' },
     { href: '/admin/marketplace/audit-log', label: 'Audit Log', key: 'audit-log' },
   ];
   return (
@@ -206,6 +213,14 @@ export const MARKETPLACE_PERMS = {
   flagsAction: 'marketplace.admin.flags.action',
   auditRead: 'marketplace.admin.audit.read',
   ordersAging: 'marketplace.admin.orders.aging',
+  taxonomy: 'marketplace.admin.taxonomy',
+  analytics: 'marketplace.admin.analytics',
+  appealsReview: 'marketplace.admin.appeals.review',
+  appealsDecide: 'marketplace.admin.appeals.decide',
+  usersView: 'marketplace.admin.users.view',
+  usersAction: 'marketplace.admin.users.action',
+  pricing: 'marketplace.admin.pricing',
+  cms: 'marketplace.admin.cms',
 } as const;
 
 export function useMarketplaceUser(): AuthUser | null {

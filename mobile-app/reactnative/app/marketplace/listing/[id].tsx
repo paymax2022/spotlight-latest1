@@ -6,10 +6,10 @@
 // non-binding price proposal, plus tertiary tap-to-reveal Call. Sold/expired
 // shows a banner over a dimmed gallery, never a 404.
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, Image, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView, Image, Dimensions, Share } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Heart, Flag, ShieldAlert, Phone, ChevronRight } from 'lucide-react-native';
+import { ArrowLeft, Heart, Flag, Share2, ShieldAlert, Phone, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -18,7 +18,7 @@ import { shadow1 } from '@/constants/shadows';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { MarketColors, formatNaira, conditionLabel, fairPriceVerdict, FAIR_PRICE_LABEL, MEETUP_SAFETY_NUDGE } from '@/features/marketplace';
-import { useListing } from '@/features/marketplace/hooks';
+import { useListing, useSaveListing, useUnsaveListing } from '@/features/marketplace/hooks';
 import SellerTrustCard from '@/features/marketplace/components/SellerTrustCard';
 
 const { width } = Dimensions.get('window');
@@ -26,7 +26,8 @@ const { width } = Dimensions.get('window');
 export default function ListingDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const listing = useListing(id!);
-  const [saved, setSaved] = useState(false);
+  const save = useSaveListing();
+  const unsave = useUnsaveListing();
   const [callRevealed, setCallRevealed] = useState(false);
   const [gallery, setGallery] = useState(0);
 
@@ -57,10 +58,25 @@ export default function ListingDetail() {
       <View style={styles.topBar}>
         <Pressable style={styles.roundBtn} onPress={() => router.back()} hitSlop={8} accessibilityLabel="Back"><ArrowLeft size={20} color={Colors.onSurface} /></Pressable>
         <View style={styles.topBarRight}>
-          <Pressable style={styles.roundBtn} onPress={() => setSaved((s) => !s)} hitSlop={8} accessibilityLabel="Save listing">
-            <Heart size={18} color={saved ? MarketColors.danger : Colors.onSurface} fill={saved ? MarketColors.danger : 'transparent'} />
+          <Pressable
+            style={styles.roundBtn}
+            onPress={() => (l.savedByMe ? unsave.mutate(l.id) : save.mutate(l.id))}
+            disabled={save.isPending || unsave.isPending}
+            hitSlop={8}
+            accessibilityLabel={l.savedByMe ? 'Remove from saved' : 'Save listing'}
+          >
+            <Heart size={18} color={l.savedByMe ? MarketColors.danger : Colors.onSurface} fill={l.savedByMe ? MarketColors.danger : 'transparent'} />
           </Pressable>
-          <Pressable style={styles.roundBtn} hitSlop={8} accessibilityLabel="Report listing"><Flag size={18} color={Colors.onSurface} /></Pressable>
+          <Pressable
+            style={styles.roundBtn}
+            hitSlop={8}
+            accessibilityLabel="Share listing"
+            onPress={() => Share.share({
+              title: l.title,
+              message: `${l.title} — ${formatNaira(l.priceKobo)} on Paymax Marketplace\nhttps://paymax.ng/marketplace/listing/${l.id}`,
+            })}
+          ><Share2 size={18} color={Colors.onSurface} /></Pressable>
+          <Pressable style={styles.roundBtn} hitSlop={8} accessibilityLabel="Report listing" onPress={() => router.push(`/marketplace/account/report?targetType=listing&targetId=${l.id}&targetName=${encodeURIComponent(l.title)}&sellerId=${l.sellerId}` as never)}><Flag size={18} color={Colors.onSurface} /></Pressable>
         </View>
       </View>
 

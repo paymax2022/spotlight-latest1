@@ -28,6 +28,7 @@ var listingTransitions = map[ListingStatus]map[ListingStatus]bool{
 		ListingPaused:        true,
 		ListingExpired:       true,
 		ListingSold:          true,
+		ListingPendingReview: true, // re-moderation: a content edit to a live listing
 		ListingRemovedPolicy: true,
 		ListingRemovedUser:   true,
 	},

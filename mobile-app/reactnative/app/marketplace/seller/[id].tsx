@@ -9,7 +9,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, MessageCircle, Star, ShieldCheck, BadgeCheck, PackageCheck, Flag } from 'lucide-react-native';
+import { ArrowLeft, MessageCircle, Star, ShieldCheck, BadgeCheck, PackageCheck, Flag, UserPlus, UserCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -17,6 +17,7 @@ import { Radius } from '@/constants/radius';
 import StateView from '@/components/StateView';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import { useSellerProfile, useSellerListings, useSellerReviews } from '@/features/marketplace/hooks';
+import { useIsFollowing, useFollowSeller, useUnfollowSeller } from '@/features/marketplace/api/account.hooks';
 import ListingCard from '@/features/marketplace/components/ListingCard';
 
 export default function SellerProfileScreen() {
@@ -24,6 +25,9 @@ export default function SellerProfileScreen() {
   const profile = useSellerProfile(id!);
   const listings = useSellerListings(id!);
   const reviews = useSellerReviews(id!);
+  const following = useIsFollowing(id!);
+  const follow = useFollowSeller();
+  const unfollow = useUnfollowSeller();
 
   if (profile.isLoading && !profile.data) {
     return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading seller…" /></SafeAreaView>;
@@ -45,7 +49,7 @@ export default function SellerProfileScreen() {
       <View style={styles.topRow}>
         <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.topTitle}>Seller</Text>
-        <Pressable hitSlop={8} accessibilityLabel="Report seller"><Flag size={18} color={Colors.onSurface} /></Pressable>
+        <Pressable hitSlop={8} accessibilityLabel="Report seller" onPress={() => router.push(`/marketplace/account/report?targetType=seller&targetId=${id}&targetName=${encodeURIComponent(p.name)}&sellerId=${id}` as never)}><Flag size={18} color={Colors.onSurface} /></Pressable>
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll}>
@@ -73,6 +77,15 @@ export default function SellerProfileScreen() {
           <Pressable style={styles.msgBtn} onPress={() => router.push(`/marketplace/deals?sellerId=${id}` as never)}>
             <MessageCircle size={18} color={MarketColors.brand} />
             <Text style={styles.msgText}>Message</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.msgBtn, following && styles.followingBtn]}
+            onPress={() => (following ? unfollow.mutate(id!) : follow.mutate({ sellerId: id!, sellerName: p.name }))}
+            disabled={follow.isPending || unfollow.isPending}
+            accessibilityLabel={following ? 'Unfollow seller' : 'Follow seller'}
+          >
+            {following ? <UserCheck size={18} color="#fff" /> : <UserPlus size={18} color={MarketColors.brand} />}
+            <Text style={[styles.msgText, following && styles.followingText]}>{following ? 'Following' : 'Follow'}</Text>
           </Pressable>
         </View>
 
@@ -143,9 +156,11 @@ const styles = StyleSheet.create({
   stat: { flex: 1, alignItems: 'center', gap: 2 },
   statVal: { ...Typography.titleMd, color: MarketColors.text },
   statLabel: { ...Typography.labelSm, color: MarketColors.muted },
-  msgWrap: { marginBottom: Spacing.lg },
-  msgBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderWidth: 1.5, borderColor: MarketColors.brand, borderRadius: Radius.lg, paddingVertical: 12 },
+  msgWrap: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.lg },
+  msgBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderWidth: 1.5, borderColor: MarketColors.brand, borderRadius: Radius.lg, paddingVertical: 12 },
   msgText: { ...Typography.labelLg, color: MarketColors.brand, fontWeight: '700' },
+  followingBtn: { backgroundColor: MarketColors.brand, borderColor: MarketColors.brand },
+  followingText: { color: '#fff' },
   sectionTitle: { ...Typography.titleMd, color: MarketColors.text, marginTop: Spacing.md, marginBottom: Spacing.sm },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   gridCell: { width: '48%' },

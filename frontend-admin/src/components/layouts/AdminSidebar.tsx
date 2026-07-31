@@ -422,11 +422,21 @@ const navItemsBase: NavItem[] = [
   // ── Paymax Marketplace (Jiji-style classifieds + escrow; RBAC marketplace.admin.*) ──
   { label: 'Marketplace Overview', href: '/admin/marketplace', section: 'Marketplace', permissions: ['marketplace.admin.moderation', 'marketplace.admin.dispute.review', 'marketplace.admin.audit.read'] },
   { label: 'Moderation Queue', href: '/admin/marketplace/moderation', section: 'Marketplace', permissions: ['marketplace.admin.moderation'] },
+  { label: 'Taxonomy', href: '/admin/marketplace/taxonomy', section: 'Marketplace', permissions: ['marketplace.admin.taxonomy'] },
   { label: 'Dispute Workbench', href: '/admin/marketplace/disputes', section: 'Marketplace', permissions: ['marketplace.admin.dispute.review'] },
+  { label: 'Appeals', href: '/admin/marketplace/appeals', section: 'Marketplace', permissions: ['marketplace.admin.appeals.review', 'marketplace.admin.appeals.decide'] },
+  { label: 'Users & Trust', href: '/admin/marketplace/users', section: 'Marketplace', permissions: ['marketplace.admin.users.view', 'marketplace.admin.users.action'] },
+  { label: 'Fraud Signals', href: '/admin/marketplace/fraud', section: 'Marketplace', permissions: ['marketplace.admin.users.view', 'marketplace.admin.users.action'] },
   { label: 'Flags Queue', href: '/admin/marketplace/flags', section: 'Marketplace', permissions: ['marketplace.admin.flags.action'] },
   { label: 'Orders Aging', href: '/admin/marketplace/orders-aging', section: 'Marketplace', permissions: ['marketplace.admin.orders.aging'] },
   { label: 'Boosts', href: '/admin/marketplace/boosts', section: 'Marketplace', permissions: ['marketplace.admin.moderation'] },
+  { label: 'Pricing & Monetisation', href: '/admin/marketplace/pricing', section: 'Marketplace', permissions: ['marketplace.admin.pricing'] },
+  { label: 'CMS & Banners', href: '/admin/marketplace/cms', section: 'Marketplace', permissions: ['marketplace.admin.cms'] },
+  { label: 'Analytics', href: '/admin/marketplace/analytics', section: 'Marketplace', permissions: ['marketplace.admin.analytics', 'marketplace.admin.audit.read'] },
   { label: 'Audit Log', href: '/admin/marketplace/audit-log', section: 'Marketplace', permissions: ['marketplace.admin.audit.read'] },
+  { label: 'Module KYC', href: '/admin/trading/kyc', section: 'AI Trading', permissions: ['trading.kyc.review', 'trading.kyc.bypass.approve'] },
+  { label: 'Bypass Register', href: '/admin/trading/bypass', section: 'AI Trading', permissions: ['trading.audit.read', 'trading.kyc.bypass.approve'] },
+  { label: 'Promotion Ladder', href: '/admin/trading/promotions', section: 'AI Trading', permissions: ['trading.promotion.read'] },
   // ── Arena (Naija Driver contest ops console; per-console RBAC arena.*) ──────
   { label: 'Competition Config', href: '/admin/arena/config', section: 'Arena', permissions: ['arena.admin.manage'] },
   { label: 'Quiz Bank', href: '/admin/arena/questions', section: 'Arena', permissions: ['arena.admin.questions', 'arena.admin.manage'] },
@@ -467,7 +477,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Compliance (SU-12)', href: '/admin/platform/edtech/compliance', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
 ];
 
-const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Crowdfunding', 'Connect', 'Connect · Network', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'Crypto', 'Platform · EdTech'];
+const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Crowdfunding', 'Connect', 'Connect · Network', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'AI Trading', 'Crypto', 'Platform · EdTech'];
 
 export function AdminSidebar() {
   const pathname = usePathname() ?? '';

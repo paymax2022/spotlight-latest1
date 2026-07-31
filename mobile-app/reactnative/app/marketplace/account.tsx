@@ -16,7 +16,7 @@ import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import {
-  ShieldCheck, Wallet, Heart, BellRing, Bell, Flag, UserX, LifeBuoy, ChevronRight,
+  ShieldCheck, Wallet, Heart, BellRing, Bell, Flag, UserX, LifeBuoy, ChevronRight, Store,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -54,6 +54,7 @@ const SECTIONS: Section[] = [
     title: 'Activity',
     rows: [
       { key: 'saved', label: 'Saved items', sub: 'Your wishlist', icon: Heart, route: '/marketplace/saved-items' },
+      { key: 'following', label: 'Following', sub: 'Sellers you follow', icon: Store, route: '/marketplace/account/following' },
       { key: 'searches', label: 'Saved searches', sub: 'Alerts when new listings match', icon: BellRing, route: '/marketplace/saved-searches' },
     ],
   },

@@ -22,6 +22,7 @@ import (
 	cfinvestment "spotlight/backend/internal/crowdfunding/investment"
 	cfwallet "spotlight/backend/internal/crowdfunding/wallet"
 	"spotlight/backend/internal/crypto"
+	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/doctor"
 	"spotlight/backend/internal/estate"
 	"spotlight/backend/internal/finance/disputes"
@@ -2447,6 +2448,28 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		crypto.Register(cryptoMember, cryptoAdmin, pool, rbac, ledgerSvc, cryptoPrice, cryptoWithdraw)
 	} else {
 		log.Println("[crypto] FEATURE_CRYPTO_ENABLED is false — skipping routes")
+	}
+
+	// ── Custodial AI-trading module (internal/trading) — DEFAULT OFF ────────────
+	// PAPER/accounting only: Module-KYC (the access gate) + unitized-NAV fund
+	// wallet, cash strictly through the finance ledger. No venue execution, no
+	// withdrawal keys. Live trading of real funds stays gated behind the §12
+	// validation ladder + legal sign-off — this flag only exposes the accounting
+	// surface. The Module-KYC service is wired in as the wallet's access gate.
+	if cfg.FeatureTradingEnabled {
+		tradingV1 := r.Group("/api/v1")
+		tradingMember := tradingV1.Group("/trading")
+		tradingMember.Use(mapsAuth())
+		tradingAdmin := tradingV1.Group("/admin/trading")
+		tradingAdmin.Use(mapsAuth())
+		trading.Register(tradingMember, tradingAdmin, pool, rbac, ledgerSvc, int64(cfg.TradingFeeBps), int64(cfg.TradingHurdleBps), cfg.FeatureAITradingEnabled)
+		if cfg.FeatureAITradingEnabled {
+			log.Printf("[trading] registered (paper mode; fee %d bps, hurdle %d bps) + AI decision surface (evaluate + §12 promotion ladder) — no venue execution", cfg.TradingFeeBps, cfg.TradingHurdleBps)
+		} else {
+			log.Printf("[trading] registered (paper mode; fee %d bps, hurdle %d bps) — FEATURE_AI_TRADING_ENABLED off, decision/promotion routes dark", cfg.TradingFeeBps, cfg.TradingHurdleBps)
+		}
+	} else {
+		log.Println("[trading] FEATURE_TRADING_ENABLED is false — skipping routes")
 	}
 
 	// --- Realtor admin control plane (moderation, verification, payments, escrow) ---
