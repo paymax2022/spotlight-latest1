@@ -8,11 +8,13 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web --port 8083",
+    "uat:insurance": "EXPO_PUBLIC_INSURANCE_USE_MOCK=false expo start --web --port 8083",
     "typecheck": "tsc --noEmit",
     "test:payment-routes": "node scripts/smoke-payment-routes.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:merchant": "node --experimental-strip-types --test \"src/features/merchant/lib/__tests__/*.test.ts\""
+    "test:merchant": "node --experimental-strip-types --test \"src/features/merchant/lib/__tests__/*.test.ts\"",
+    "test:insurance": "node --experimental-strip-types --test \"src/features/insurance/__tests__/*.test.ts\""
   },
   "dependencies": {
     "@expo-google-fonts/plus-jakarta-sans": "^0.4.2",
