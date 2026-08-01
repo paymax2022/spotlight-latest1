@@ -485,7 +485,7 @@ func (s *RewardService) ListReferrals(ctx context.Context, referrerID string, li
 		    WHERE r.referred_user_id = a.referred_user_id
 		      AND r.referrer_id = a.referrer_id
 		      AND r.status = 'CREDITED'
-		      AND r.created_at >= now() - ($4 || ' days')::interval
+		      AND r.created_at >= now() - make_interval(days => $4)
 		  ) AS active,
 		  COALESCE((
 		    SELECT SUM(r2.reward_kobo) FROM referral_rewards r2
@@ -613,7 +613,7 @@ func (s *RewardService) RecalculateTiers(ctx context.Context) error {
 		    WHERE r.referred_user_id = a.referred_user_id
 		      AND r.referrer_id = a.referrer_id
 		      AND r.status = 'CREDITED'
-		      AND r.created_at >= now() - ($1 || ' days')::interval
+		      AND r.created_at >= now() - make_interval(days => $1)
 		  )
 		GROUP BY a.referrer_id`
 	rows, err := s.db.Query(ctx, countQ, ActiveWindowDays)
