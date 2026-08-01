@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -589,9 +590,15 @@ func (s *Server) postWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the HMAC signature + timestamp window when a secret is configured.
-	// (Unset secret = dev mode: accept unsigned, so local testing works.)
-	if secret := os.Getenv("CRYPTO_WEBHOOK_SECRET"); secret != "" {
+	// Provider webhooks mutate money state (deposit.confirmed credits a holding,
+	// withdrawal.failed reverses a debit), so authentication FAILS CLOSED: an
+	// unconfigured secret rejects with 503 UNLESS the dev bypass is EXPLICITLY
+	// enabled via ALLOW_DEV_AUTH=true. A missing secret must never silently accept
+	// unsigned events (mirrors the JWT fail-closed policy in server.go). When a
+	// secret is set, ALLOW_DEV_AUTH does not weaken it — signature + freshness
+	// are always enforced.
+	switch secret := os.Getenv("CRYPTO_WEBHOOK_SECRET"); {
+	case secret != "":
 		if !webhook.Verify(secret, body, r.Header.Get("X-Paymax-Signature")) {
 			writeErr(w, http.StatusUnauthorized, "authentication", "Invalid webhook signature.")
 			return
@@ -600,6 +607,12 @@ func (s *Server) postWebhook(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "invalid_request", "Stale or missing webhook timestamp.")
 			return
 		}
+	case os.Getenv("ALLOW_DEV_AUTH") == "true":
+		// Dev-only, explicit opt-in — never implied by an empty secret.
+		log.Printf("[webhook] WARNING: CRYPTO_WEBHOOK_SECRET unset — accepting UNSIGNED %q webhook (ALLOW_DEV_AUTH=true)", provider)
+	default:
+		writeErr(w, http.StatusServiceUnavailable, "authentication", "Webhook authentication is not configured.")
+		return
 	}
 
 	var ev struct {
