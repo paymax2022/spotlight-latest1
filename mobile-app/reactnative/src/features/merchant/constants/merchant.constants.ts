@@ -25,7 +25,7 @@ export const MERCHANT_MODULES: MerchantModule[] = [
     id: 'mod-food', slug: 'food', name: 'Food & Logistics',
     description: 'List a restaurant or join the delivery fleet.',
     icon: 'UtensilsCrossed', iconColor: '#F97316', bgColor: 'rgba(249,115,22,0.08)',
-    status: 'closed', typeCount: 0,
+    status: 'open', typeCount: 1,
   },
 ];
 
@@ -55,6 +55,14 @@ export const MERCHANT_TYPES: MerchantType[] = [
     requirementsSummary: ['CAC business registration', 'Settlement bank account', 'Product categories'],
     expectedReviewLabel: '1–2 business days', requiredKycTier: 1,
     roleToGrant: 'marketplace_seller', currentFormSchemaId: 'fs-seller-v1', status: 'open',
+  },
+  {
+    id: 'mt-restaurant', moduleId: 'mod-food', moduleName: 'Food & Logistics', slug: 'restaurant',
+    name: 'Restaurant', description: 'List your restaurant, build a menu and receive delivery orders.',
+    icon: 'UtensilsCrossed',
+    requirementsSummary: ['Food handling / NAFDAC permit', "Owner's government ID", 'Settlement account'],
+    expectedReviewLabel: '1–2 business days', requiredKycTier: 1,
+    roleToGrant: 'restaurant_merchant', currentFormSchemaId: 'fs-restaurant-v1', status: 'open',
   },
 ];
 
@@ -160,10 +168,58 @@ const SELLER_SCHEMA_V1: FormSchema = {
   ],
 };
 
+// Mirrors supabase/migrations/20261101000000_open_food_merchant_onboarding.sql.
+const RESTAURANT_SCHEMA_V1: FormSchema = {
+  id: 'fs-restaurant-v1', merchantTypeId: 'mt-restaurant', version: 1, status: 'published',
+  steps: [
+    {
+      key: 'business', title: 'Restaurant details', description: 'Tell us about your restaurant.',
+      fields: [
+        { key: 'restaurant_name', type: 'text', label: 'Restaurant name', placeholder: 'Blue Yam Kitchen', required: true },
+        { key: 'cuisine_types', type: 'multiselect', label: 'Cuisine types', required: true, maxSelections: 4,
+          options: [
+            { label: 'Nigerian', value: 'nigerian' },
+            { label: 'Fast food', value: 'fast_food' },
+            { label: 'Continental', value: 'continental' },
+            { label: 'Chinese', value: 'chinese' },
+            { label: 'Healthy', value: 'healthy' },
+            { label: 'Bakery & Desserts', value: 'bakery' },
+          ] },
+        { key: 'description', type: 'textarea', label: 'Short description', placeholder: "What you're known for", required: false },
+      ],
+    },
+    {
+      key: 'location', title: 'Location & service', description: 'Where you cook and how far you deliver.',
+      fields: [
+        { key: 'address', type: 'address', label: 'Restaurant address', required: true },
+        { key: 'delivery_radius', type: 'number', label: 'Delivery radius (km)', placeholder: 'e.g. 8', required: true, min: 1, max: 30 },
+        { key: 'prep_time', type: 'number', label: 'Typical prep time (mins)', placeholder: 'e.g. 25', required: false, min: 5, max: 120 },
+      ],
+    },
+    {
+      key: 'documents', title: 'Documents', description: 'We verify these before you go live.',
+      fields: [
+        { key: 'cac_doc', type: 'document', label: 'CAC certificate', required: false },
+        { key: 'food_permit', type: 'document', label: 'Food handling / NAFDAC permit', required: true, hasExpiry: true },
+        { key: 'owner_id_doc', type: 'document', label: "Owner's government-issued ID", required: true },
+      ],
+    },
+    {
+      key: 'settlement', title: 'Contact & settlement', description: 'How we reach you and pay out earnings.',
+      fields: [
+        { key: 'contact_email', type: 'email', label: 'Business email', required: true },
+        { key: 'contact_phone', type: 'phone', label: 'Business phone', required: true },
+        { key: 'account_name', type: 'text', label: 'Settlement account name', placeholder: 'As it appears on your bank account', required: true },
+      ],
+    },
+  ],
+};
+
 export const FORM_SCHEMAS: Record<string, FormSchema> = {
-  'fs-doctor-v2':   DOCTOR_SCHEMA_V2,
-  'fs-pharmacy-v1': PHARMACY_SCHEMA_V1,
-  'fs-seller-v1':   SELLER_SCHEMA_V1,
+  'fs-doctor-v2':     DOCTOR_SCHEMA_V2,
+  'fs-pharmacy-v1':   PHARMACY_SCHEMA_V1,
+  'fs-seller-v1':     SELLER_SCHEMA_V1,
+  'fs-restaurant-v1': RESTAURANT_SCHEMA_V1,
 };
 
 export const REVIEW_SLA_HOURS = 48;
