@@ -2,9 +2,20 @@ package restaurant
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
+
+// ownerErrStatus maps a store-management service error to an HTTP status: a
+// missing store/item/category is 404, everything else (wrong owner, validation)
+// is 403/forbidden — mirroring the menu handlers' fail-closed default.
+func ownerErrStatus(err error) int {
+	if strings.Contains(err.Error(), "not found") {
+		return http.StatusNotFound
+	}
+	return http.StatusForbidden
+}
 
 // ── Reads ─────────────────────────────────────────────────────────────────────
 
@@ -101,6 +112,62 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, it)
+}
+
+// ── Store management (owner only) ─────────────────────────────────────────────
+
+// UpdateRestaurant → PATCH /restaurant/:id (edit store profile).
+func (h *Handler) UpdateRestaurant(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req UpdateRestaurantRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	r, err := h.svc.UpdateRestaurant(c.Request.Context(), c.Param("id"), userID, req)
+	if err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, r)
+}
+
+// SetAvailability → PATCH /restaurant/:id/availability (merchant open/close).
+func (h *Handler) SetAvailability(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var body struct {
+		IsOpen *bool `json:"is_open" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.IsOpen == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "is_open is required"})
+		return
+	}
+	r, err := h.svc.SetAvailability(c.Request.Context(), c.Param("id"), userID, *body.IsOpen)
+	if err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, r)
+}
+
+// DeleteItem → DELETE /restaurant/:id/menu/items/:itemId.
+func (h *Handler) DeleteItem(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if err := h.svc.DeleteItem(c.Request.Context(), c.Param("id"), userID, c.Param("itemId")); err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
+}
+
+// DeleteCategory → DELETE /restaurant/:id/menu/categories/:categoryId.
+func (h *Handler) DeleteCategory(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if err := h.svc.DeleteCategory(c.Request.Context(), c.Param("id"), userID, c.Param("categoryId")); err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
 
 // ── Rider / delivery lifecycle ────────────────────────────────────────────────

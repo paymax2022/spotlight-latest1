@@ -286,6 +286,116 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 	return &it, nil
 }
 
+// ── Store management (owner only) ─────────────────────────────────────────────
+
+// getRestaurantCore returns the core restaurant row (no menu) — used by the
+// store-management mutations to echo the updated store back to the merchant.
+func (s *Service) getRestaurantCore(ctx context.Context, restaurantID string) (*Restaurant, error) {
+	var r Restaurant
+	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, created_at
+	           FROM restaurants WHERE id=$1`
+	if err := s.db.QueryRow(ctx, q, restaurantID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description,
+		&r.Address, &r.LogoURL, &r.IsOpen, &r.CreatedAt); err != nil {
+		return nil, fmt.Errorf("restaurant: not found")
+	}
+	return &r, nil
+}
+
+// UpdateRestaurantRequest is a partial update of the store profile. Nil fields are
+// left unchanged (COALESCE), so a merchant can edit one field at a time.
+type UpdateRestaurantRequest struct {
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Address     *string `json:"address,omitempty"`
+	LogoURL     *string `json:"logo_url,omitempty"`
+}
+
+// UpdateRestaurant lets the owner edit their store's name/description/address/logo.
+// Changing the address re-geocodes the pin (best-effort, mirrors CreateRestaurant).
+func (s *Service) UpdateRestaurant(ctx context.Context, restaurantID, userID string, req UpdateRestaurantRequest) (*Restaurant, error) {
+	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+		return nil, err
+	}
+	if req.Name != nil && *req.Name == "" {
+		return nil, fmt.Errorf("restaurant: name cannot be empty")
+	}
+	const q = `UPDATE restaurants
+	              SET name        = COALESCE($2, name),
+	                  description = COALESCE($3, description),
+	                  address     = COALESCE($4, address),
+	                  logo_url    = COALESCE($5, logo_url),
+	                  updated_at  = NOW()
+	            WHERE id = $1`
+	if _, err := s.db.Exec(ctx, q, restaurantID, req.Name, req.Description, req.Address, req.LogoURL); err != nil {
+		return nil, err
+	}
+	// Re-geocode when the address changed so "near me" stays correct. A geocode
+	// failure never fails the update — the pin can be refreshed later.
+	if req.Address != nil && *req.Address != "" && s.geocoder != nil {
+		if lat, lng, plus, gerr := s.geocoder.Geocode(ctx, *req.Address); gerr == nil {
+			_, _ = s.db.Exec(ctx,
+				`UPDATE restaurants SET geo_lat=$2, geo_lng=$3, plus_code=$4, updated_at=NOW() WHERE id=$1`,
+				restaurantID, lat, lng, plus)
+		}
+	}
+	return s.getRestaurantCore(ctx, restaurantID)
+}
+
+// SetAvailability is the merchant's operational open/closed switch (business
+// hours / pausing new orders). Eligibility/KYC gating is handled upstream by the
+// merchant-onboarding engine — reaching this endpoint requires owning the store.
+func (s *Service) SetAvailability(ctx context.Context, restaurantID, userID string, isOpen bool) (*Restaurant, error) {
+	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+		return nil, err
+	}
+	if _, err := s.db.Exec(ctx, `UPDATE restaurants SET is_open=$2, updated_at=NOW() WHERE id=$1`,
+		restaurantID, isOpen); err != nil {
+		return nil, err
+	}
+	return s.getRestaurantCore(ctx, restaurantID)
+}
+
+// DeleteItem removes a menu item (owner only).
+func (s *Service) DeleteItem(ctx context.Context, restaurantID, userID, itemID string) error {
+	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+		return err
+	}
+	ct, err := s.db.Exec(ctx, `DELETE FROM menu_items WHERE id=$1 AND restaurant_id=$2`, itemID, restaurantID)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("restaurant: menu item not found")
+	}
+	return nil
+}
+
+// DeleteCategory removes an empty menu category (owner only). A category that
+// still has items is blocked to avoid orphaning them — the merchant removes or
+// re-homes the items first.
+func (s *Service) DeleteCategory(ctx context.Context, restaurantID, userID, categoryID string) error {
+	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+		return err
+	}
+	var itemCount int
+	if err := s.db.QueryRow(ctx,
+		`SELECT count(*) FROM menu_items WHERE category_id=$1 AND restaurant_id=$2`,
+		categoryID, restaurantID).Scan(&itemCount); err != nil {
+		return err
+	}
+	if itemCount > 0 {
+		return fmt.Errorf("restaurant: remove the category's items before deleting it")
+	}
+	ct, err := s.db.Exec(ctx, `DELETE FROM menu_categories WHERE id=$1 AND restaurant_id=$2`, categoryID, restaurantID)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("restaurant: menu category not found")
+	}
+	return nil
+}
+
 // ── Rider / delivery lifecycle ────────────────────────────────────────────────
 
 // AssignRider sets the rider candidate on an order (restaurant owner only). The
