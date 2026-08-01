@@ -1328,10 +1328,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.POST("", restaurantHandler.Create)
 		restGroup.GET("/:id", restaurantHandler.GetRestaurant)
 
+		// Store management (owner only): edit profile + operational open/close.
+		restGroup.PATCH("/:id", restaurantHandler.UpdateRestaurant)
+		restGroup.PATCH("/:id/availability", restaurantHandler.SetAvailability)
+
 		// Menu management (owner only).
 		restGroup.POST("/:id/menu/categories", restaurantHandler.CreateCategory)
+		restGroup.DELETE("/:id/menu/categories/:categoryId", restaurantHandler.DeleteCategory)
 		restGroup.POST("/:id/menu/items", restaurantHandler.CreateItem)
 		restGroup.PATCH("/:id/menu/items/:itemId", restaurantHandler.UpdateItem)
+		restGroup.DELETE("/:id/menu/items/:itemId", restaurantHandler.DeleteItem)
 
 		// Distance-based delivery-fee preview (before placing the order). Member auth
 		// via the finance group's requireUserID. Static "delivery-quote" segment under
