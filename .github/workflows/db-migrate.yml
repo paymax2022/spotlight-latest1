@@ -1,0 +1,90 @@
+name: DB Migrate (Supabase db push)
+
+# Applies pending supabase/migrations/** to the linked Supabase project on merge
+# to main, so the remote never drifts behind local again (the failure mode that
+# left prod 60+ migrations behind — see docs/devops/cloud-migration-reconciliation-runbook.md).
+#
+# ── SAFETY / ENABLEMENT ──────────────────────────────────────────────────────
+# This workflow is DORMANT until you opt in, because a `db push` against a
+# DRIFTED remote fails (already-applied migrations collide). Do NOT enable it
+# until the reconciliation runbook has brought the remote to `pending: 0`.
+#
+# To enable (after reconciliation):
+#   1. Add repo secrets (Settings → Secrets and variables → Actions):
+#        SUPABASE_ACCESS_TOKEN   personal/CI access token (account API)
+#        SUPABASE_PROJECT_ID     the project ref (20-char, e.g. ptczqwfokydsdafpscex)
+#        SUPABASE_DB_PASSWORD    the database password
+#   2. Add repo variable:  DB_MIGRATE_ENABLED = true
+#   3. (Recommended) Configure the `production` environment with required
+#      reviewers so each apply needs a human approval.
+#
+# Until DB_MIGRATE_ENABLED == 'true', the apply job is SKIPPED on push (never
+# red). `workflow_dispatch` can always be used to dry-run (list pending) for
+# testing the credentials/link before enabling.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+      - '.github/workflows/db-migrate.yml'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'List pending migrations only — do not apply'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: db-migrate-${{ github.ref }}
+  cancel-in-progress: false # never interrupt a migration mid-apply
+
+jobs:
+  # Reuse the additive-only guard (no DROP / RENAME / type-narrowing) as a gate
+  # before anything touches the remote.
+  guard:
+    name: additive-only guard
+    uses: ./.github/workflows/_reusable-migration-guard.yml
+
+  apply:
+    name: supabase db push (production)
+    needs: guard
+    # Dormant on push until explicitly enabled; workflow_dispatch always allowed
+    # (for credential/link dry-runs).
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.DB_MIGRATE_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    environment: production # holds the secrets; add required reviewers to gate applies
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Check required secrets are present
+        run: |
+          : "${SUPABASE_ACCESS_TOKEN:?missing secret SUPABASE_ACCESS_TOKEN}"
+          : "${SUPABASE_PROJECT_ID:?missing secret SUPABASE_PROJECT_ID}"
+          : "${SUPABASE_DB_PASSWORD:?missing secret SUPABASE_DB_PASSWORD}"
+
+      - name: Link project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+
+      - name: Show pending migrations (informational)
+        run: supabase migration list --linked || true
+
+      - name: Apply migrations (db push)
+        # Skip the apply on a workflow_dispatch dry-run; always apply on push.
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        run: supabase db push --linked
+
+      - name: Dry-run notice
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: echo "Dry-run only - listed pending migrations, nothing applied."
