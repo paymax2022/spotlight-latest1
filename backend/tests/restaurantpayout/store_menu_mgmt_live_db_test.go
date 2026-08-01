@@ -28,6 +28,31 @@ func TestLiveDB_StoreAndMenuManagement(t *testing.T) {
 	stranger := seedUser(t, ctx, pool)
 	restID := seedRestaurant(t, ctx, pool, owner)
 
+	// ── ListMyRestaurants (owner sees own store; stranger doesn't) ────────────
+	mine, err := svc.ListMyRestaurants(ctx, owner)
+	if err != nil {
+		t.Fatalf("ListMyRestaurants(owner): %v", err)
+	}
+	foundMine := false
+	for _, r := range mine {
+		if r.ID == restID {
+			foundMine = true
+		}
+	}
+	if !foundMine {
+		t.Fatalf("owner's store %s not in ListMyRestaurants", restID)
+	}
+	othersOnly := true
+	strangerStores, _ := svc.ListMyRestaurants(ctx, stranger)
+	for _, r := range strangerStores {
+		if r.ID == restID {
+			othersOnly = false
+		}
+	}
+	if !othersOnly {
+		t.Fatal("stranger's ListMyRestaurants leaked the owner's store")
+	}
+
 	// ── UpdateRestaurant ──────────────────────────────────────────────────────
 	newName, desc := "Blue Yam Kitchen (Updated)", "Now serving jollof"
 	r, err := svc.UpdateRestaurant(ctx, restID, owner, restaurant.UpdateRestaurantRequest{Name: &newName, Description: &desc})

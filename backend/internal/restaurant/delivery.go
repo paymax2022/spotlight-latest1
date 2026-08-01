@@ -288,6 +288,27 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 
 // ── Store management (owner only) ─────────────────────────────────────────────
 
+// ListMyRestaurants returns every store owned by the caller (the merchant's own
+// stores), newest first. Used by the merchant app to load the store to manage.
+func (s *Service) ListMyRestaurants(ctx context.Context, ownerID string) ([]Restaurant, error) {
+	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, created_at
+	           FROM restaurants WHERE owner_id=$1 ORDER BY created_at DESC`
+	rows, err := s.db.Query(ctx, q, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Restaurant{}
+	for rows.Next() {
+		var r Restaurant
+		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // getRestaurantCore returns the core restaurant row (no menu) — used by the
 // store-management mutations to echo the updated store back to the merchant.
 func (s *Service) getRestaurantCore(ctx context.Context, restaurantID string) (*Restaurant, error) {
