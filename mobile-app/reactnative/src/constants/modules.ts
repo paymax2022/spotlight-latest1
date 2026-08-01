@@ -101,6 +101,9 @@ export const SERVICE_MODULES: ServiceModule[] = [
   { id: 'academy',         label: 'StudyHub',        icon: 'BookOpenText',    iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/learn/academy',        category: 'investment', badge: 'New' },
   { id: 'spotlight-wealth', label: 'Spotlight Wealth', icon: 'Trophy',        iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/spotlight-wealth',     category: 'investment' },
   { id: 'fractionalre',    label: 'Real Estate Invest', icon: 'Building',     iconColor: Colors.teal,       bgColor: Colors.iconBgTeal,   route: '/fractionalre',         category: 'investment', badge: 'New' },
+  // AI Trading — custodial, paper/eligibility-gated managed fund (member surface).
+  // Landing screen carries the honest risk/fee framing; nothing places a real order.
+  { id: 'ai-trading',      label: 'AI Trading',      icon: 'BrainCircuit',    iconColor: Colors.primary,    bgColor: Colors.iconBgPurple, route: '/ai-trading',           category: 'investment', badge: 'Beta' },
 
   // ── Utility ──────────────────────────────────────────────────────────────────
   { id: 'bills',           label: 'Bill Payments',   icon: 'ReceiptText',     iconColor: Colors.primary,    bgColor: Colors.iconBgPurple, route: '/services/bills',       category: 'utility' },
