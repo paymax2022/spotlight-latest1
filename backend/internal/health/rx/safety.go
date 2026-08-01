@@ -43,7 +43,7 @@ func (e *SafetyBlockError) Error() string {
 func toSafetyItems(items []Item) []clinicalsafety.RxItem {
 	out := make([]clinicalsafety.RxItem, 0, len(items))
 	for _, it := range items {
-		out = append(out, clinicalsafety.RxItem{DrugName: it.DrugName, Quantity: it.Quantity})
+		out = append(out, clinicalsafety.RxItem{DrugName: it.DrugName, DoseMg: it.DoseMg, Quantity: it.Quantity})
 	}
 	return out
 }
