@@ -116,6 +116,17 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 
 // ── Store management (owner only) ─────────────────────────────────────────────
 
+// MyRestaurants → GET /restaurant/mine (the caller's own stores).
+func (h *Handler) MyRestaurants(c *gin.Context) {
+	userID := c.GetString("user_id")
+	list, err := h.svc.ListMyRestaurants(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": list})
+}
+
 // UpdateRestaurant → PATCH /restaurant/:id (edit store profile).
 func (h *Handler) UpdateRestaurant(c *gin.Context) {
 	userID := c.GetString("user_id")
