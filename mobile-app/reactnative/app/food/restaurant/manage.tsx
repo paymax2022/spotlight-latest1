@@ -3,7 +3,8 @@ import {
   View, Text, StyleSheet, ScrollView, TextInput, Switch, Pressable, Alert, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Trash2, Plus } from 'lucide-react-native';
+import { router } from 'expo-router';
+import { Trash2, Plus, ClipboardList } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
@@ -111,6 +112,12 @@ function ManageStore({ storeId }: { storeId: string }) {
   return (
     <Shell>
       <ScrollView contentContainerStyle={styles.body}>
+        {/* Quick link to the live order queue. */}
+        <Pressable onPress={() => router.push('/food/restaurant')} style={styles.ordersLink}>
+          <ClipboardList size={18} color={Colors.primary} />
+          <Text style={styles.ordersLinkText}>View incoming orders</Text>
+        </Pressable>
+
         {/* Availability */}
         <Card>
           <View style={styles.rowBetween}>
@@ -294,4 +301,10 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary, borderRadius: Radius.md, height: 44, width: 44,
     alignItems: 'center', justifyContent: 'center',
   },
+  ordersLink: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.md,
+    borderWidth: 1, borderColor: Colors.outlineVariant, paddingHorizontal: Spacing.md, paddingVertical: 12,
+  },
+  ordersLinkText: { color: Colors.primary, fontSize: 15, fontWeight: '700' },
 });
