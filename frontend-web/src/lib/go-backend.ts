@@ -8,6 +8,7 @@
  * Usage in a Next.js route handler:
  *   return proxyToGoBackend(request, '/api/finance/telemedicine/doctors');
  */
+import { NextResponse } from 'next/server';
 
 export const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 
@@ -58,9 +59,13 @@ export async function proxyToGoBackend(
 
   const upstream = await fetch(targetUrl, { method, headers, body });
 
-  // Forward the upstream response verbatim (status + body).
+  // Forward the upstream response verbatim (status + body). Return a NextResponse
+  // (not a bare Response) so the Next.js middleware's CORS headers are merged onto
+  // it — cross-origin browser callers (Expo web on localhost) otherwise can't read
+  // the proxied response. NextResponse is the same response type the JSON error
+  // helpers return, which the middleware is already proven to decorate.
   const responseBody = await upstream.text();
-  return new Response(responseBody, {
+  return new NextResponse(responseBody, {
     status: upstream.status,
     headers: { 'Content-Type': 'application/json' },
   });

@@ -20,7 +20,7 @@ import (
 
 func NewRouter(cfg config.Config) *gin.Engine {
 	r := gin.Default()
-	r.Use(middleware.CORSMiddleware(cfg.CORSAllowOrigins))
+	r.Use(middleware.CORSMiddleware(cfg.CORSAllowOrigins, cfg.AppEnv))
 
 	health := handlers.NewHealthHandler()
 	supabase := integrations.NewSupabaseRestClient(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey)
