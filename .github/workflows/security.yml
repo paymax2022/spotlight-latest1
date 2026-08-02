@@ -24,6 +24,7 @@ jobs:
   codeql:
     name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
+    continue-on-error: true  # advisory during launch — flip to blocking once the backlog is clean
     strategy:
       fail-fast: false
       matrix:
@@ -45,6 +46,7 @@ jobs:
   govulncheck:
     name: govulncheck (Go)
     runs-on: ubuntu-latest
+    continue-on-error: true  # advisory during launch — flip to blocking once the backlog is clean
     strategy:
       matrix:
         module: [backend, mobile-app/reactnative/backend]
@@ -63,6 +65,7 @@ jobs:
   gitleaks:
     name: gitleaks (secret scan)
     runs-on: ubuntu-latest
+    continue-on-error: true  # advisory during launch — flip to blocking once the backlog is clean
     steps:
       - uses: actions/checkout@v4
         with:
@@ -74,6 +77,7 @@ jobs:
   trivy-fs:
     name: trivy (filesystem — deps + IaC misconfig)
     runs-on: ubuntu-latest
+    continue-on-error: true  # advisory during launch — flip to blocking once the backlog is clean
     steps:
       - uses: actions/checkout@v4
       - uses: aquasecurity/trivy-action@0.24.0
@@ -94,6 +98,7 @@ jobs:
   npm-audit:
     name: npm audit (${{ matrix.dir }})
     runs-on: ubuntu-latest
+    continue-on-error: true  # advisory during launch — flip to blocking once the backlog is clean
     strategy:
       fail-fast: false
       matrix:

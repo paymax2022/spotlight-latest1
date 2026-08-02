@@ -40,6 +40,9 @@ permissions:
 
 jobs:
   eas:
+    # Skip (not fail) until EAS is configured. Set repo variable EAS_ENABLED=true
+    # (and the EXPO_TOKEN secret) to activate.
+    if: ${{ vars.EAS_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
