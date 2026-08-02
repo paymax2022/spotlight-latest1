@@ -136,6 +136,25 @@ test('adaptBlueprint: no sections/tools → empty subjects, total from total_ite
   assert.equal(adaptBlueprints(undefined).length, 0);
 });
 
+test('adaptExamResult prefers server subject_name over the map and over the raw id', () => {
+  const score = {
+    overall: 50,
+    subjects: [
+      { subject: 'sub-mth', subject_name: 'Mathematics', raw: 1, total: 2, scaled: 50 },
+      { subject: 'sub-eng', raw: 1, total: 2, scaled: 50 }, // no server name → map fallback
+      { subject: 'sub-phy', raw: 0, total: 1, scaled: 0 }, // no server name, not in map → id fallback
+    ],
+  };
+  const names = new Map([
+    ['sub-mth', 'IGNORED — server name wins'],
+    ['sub-eng', 'English'],
+  ]);
+  const r = adaptExamResult('a', score, 0.5, { questions: QUESTIONS, answers: {}, durationSec: 600, remainingSec: 600 }, names);
+  assert.equal(r.subjects[0].subjectName, 'Mathematics', 'server subject_name takes precedence over the supplied map');
+  assert.equal(r.subjects[1].subjectName, 'English', 'falls back to the map when the server omits a name');
+  assert.equal(r.subjects[2].subjectName, 'sub-phy', 'falls back to the raw id when neither server nor map has a name');
+});
+
 test('examPoints mirrors the mock scale (100% → 300) and clamps', () => {
   assert.equal(examPoints(100), 300);
   assert.equal(examPoints(0), 0);

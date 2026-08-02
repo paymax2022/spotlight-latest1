@@ -224,3 +224,26 @@ func TestServerDeadline_DerivedFromBlueprint(t *testing.T) {
 		t.Errorf("server_deadline = %v, want %v", deadline, want)
 	}
 }
+
+// ── resultToScoreMap: subject_name is persisted when resolved, omitted otherwise ──
+
+func TestResultToScoreMap_CarriesSubjectName(t *testing.T) {
+	res := Result{
+		Subjects: []SubjectScore{
+			{Subject: "sub-mth", Name: "Mathematics", Raw: 3, Total: 4, Scaled: 75, Grade: "A1"},
+			{Subject: "general", Raw: 1, Total: 2, Scaled: 50}, // synthetic bucket → no name
+		},
+		Overall: 88,
+	}
+	m := resultToScoreMap(res)
+	subs, ok := m["subjects"].([]map[string]any)
+	if !ok || len(subs) != 2 {
+		t.Fatalf("expected 2 subject rows, got %#v", m["subjects"])
+	}
+	if got := subs[0]["subject_name"]; got != "Mathematics" {
+		t.Errorf("subjects[0].subject_name = %v, want Mathematics", got)
+	}
+	if _, present := subs[1]["subject_name"]; present {
+		t.Error("subjects[1] has no resolved name → subject_name must be omitted, not empty")
+	}
+}

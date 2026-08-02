@@ -245,10 +245,11 @@ type CombinationRequest struct {
 
 // SubjectScore is the per-subject scoring breakdown.
 type SubjectScore struct {
-	Subject string  `json:"subject"`
-	Raw     int     `json:"raw"`      // correct count
-	Total   int     `json:"total"`    // items in subject
-	Scaled  float64 `json:"scaled"`   // scaled per scoring_rules (e.g. /100 of the 400 scale)
+	Subject string  `json:"subject"`                // subject id (uuid)
+	Name    string  `json:"subject_name,omitempty"` // human label, resolved from academy_subjects at scoring time
+	Raw     int     `json:"raw"`                    // correct count
+	Total   int     `json:"total"`                  // items in subject
+	Scaled  float64 `json:"scaled"`                 // scaled per scoring_rules (e.g. /100 of the 400 scale)
 	Grade   string  `json:"grade,omitempty"`
 }
 
