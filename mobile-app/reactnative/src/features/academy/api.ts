@@ -17,7 +17,7 @@ import { enqueue } from './offlineQueue';
 import { creditPoints, type PointsLedgerState } from './pointsLedger';
 import { assertCanSpend, type SpendConsentState } from './consent';
 import { upsertBookmark } from './bookmarks';
-import { adaptClasses, adaptVersions, adaptSubjects, type GoClass, type GoVersion, type GoSubject } from './curriculumAdapters';
+import { adaptClasses, adaptVersions, adaptSubjects, adaptTopics, type GoClass, type GoVersion, type GoSubject, type GoTopic } from './curriculumAdapters';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -289,8 +289,10 @@ export async function getTopics(subjectId: string): Promise<Topic[]> {
     await delay();
     return M.MOCK_TOPICS.filter((t) => t.subjectId === subjectId).sort((a, b) => a.order - b.order);
   }
-  const { data } = await api.get<Topic[]>(`${B}/curriculum/subjects/${subjectId}/topics`);
-  return data;
+  // Live: subjectId is already the Go subject UUID (from the live subjects call),
+  // and the route is keyed by it — fetch + adapt directly.
+  const { data } = await api.get<{ topics?: GoTopic[] }>(`${B}/curriculum/subjects/${subjectId}/topics`);
+  return adaptTopics(data);
 }
 
 export async function getTopic(id: string): Promise<Topic> {
