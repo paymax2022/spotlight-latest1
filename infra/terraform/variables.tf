@@ -45,6 +45,26 @@ variable "alert_notification_email" {
   description = "Email for alert paging. Empty = no notification channel/alerts created (uptime checks still run)."
 }
 
+variable "slack_channel" {
+  type        = string
+  default     = ""
+  description = "Slack channel name (e.g. #paymax-alerts). Requires the GCP Monitoring Slack app authorized + slack_auth_token. Empty = no Slack channel."
+}
+
+variable "slack_auth_token" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "OAuth token for the GCP Monitoring Slack app. Pass via TF_VAR_slack_auth_token, never commit."
+}
+
+variable "pagerduty_webhook_url" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Webhook URL for PagerDuty (Events API) / Opsgenie / etc. Empty = no webhook channel."
+}
+
 variable "alert_5xx_per_min" {
   type        = number
   default     = 5

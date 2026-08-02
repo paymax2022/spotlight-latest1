@@ -63,12 +63,38 @@ Replay stays off (admin sees the most sensitive data).
 - For source-map upload on EAS, set `SENTRY_ORG`/`SENTRY_PROJECT`/`SENTRY_AUTH_TOKEN`
   in EAS secrets and add the org/project to the plugin config when you set up EAS.
 
+## Distributed tracing — web → backend (one trace)
+
+End-to-end tracing is wired:
+- **Browser** (`@sentry/nextjs`, web + admin): `tracePropagationTargets` attaches trace
+  headers (`sentry-trace`/`baggage`) to same-origin `/api` calls (+ `NEXT_PUBLIC_API_BASE_URL` if set).
+- **Next gateway** (`proxyToGoBackend`): forwards `traceparent`/`tracestate`/`sentry-trace`/`baggage`
+  to Go so the trace survives the proxy (previously dropped there).
+- **Backend**: W3C propagator set in `observability.Init`, so `otelgin` continues the
+  incoming trace; `sentrygin` continues the Sentry trace (backend tracing on).
+
+## Business metrics (OTel → Cloud Monitoring)
+
+`internal/platform/metrics` exposes drop-in counters, no-op until the meter provider
+is configured (auto on when `GOOGLE_CLOUD_PROJECT` is set):
+- `RecordPaymentResult(ctx, provider, success)` — payment success/failure rate
+- `RecordMoneyMovement(ctx, type, result)` — fund/transfer/payout volumes
+- `RecordLedgerInvariantBreach(ctx, kind)` — **must stay 0**; alert on it
+
+> These are the API; add the calls at the natural money-path decision points
+> (charge/verify resolve, movement completion, ledger check failure). No finance
+> internals were edited here to respect the brownfield boundary.
+
 ## Alerts & uptime (Cloud Monitoring — Terraform)
 
 `infra/terraform/monitoring.tf` provisions:
 - **Uptime checks**: external HTTPS check on backend `/healthz` (60s); optional web check (`web_uptime_host`).
-- **Alert policies** (route to `alert_notification_email`): backend **down** (uptime failing), **5xx rate** (`alert_5xx_per_min`, default 5/min), **p95 latency** (`alert_latency_p95_ms`, default 800ms), and optional web-down.
-- Set `alert_notification_email` in the env tfvars to activate paging; empty = checks run but no channel/alerts are created.
+- **Alert policies**: backend **down** (uptime failing), **5xx rate** (`alert_5xx_per_min`, default 5/min), **p95 latency** (`alert_latency_p95_ms`, default 800ms), and optional web-down.
+- **Notification channels** (alerts route to all that are set):
+  - `alert_notification_email` → email
+  - `slack_channel` + `slack_auth_token` → Slack (needs the GCP Monitoring Slack app authorized)
+  - `pagerduty_webhook_url` → PagerDuty/Opsgenie/webhook (pass via `TF_VAR_pagerduty_webhook_url`)
+- With no channel set, uptime checks still run but no alert policies are created.
 
 ## Verify
 
@@ -87,8 +113,14 @@ Replay stays off (admin sees the most sensitive data).
 # 3. confirm the release = commit SHA and environment tag are correct
 ```
 
-## Next (P1)
-- Propagate trace context web → backend (single end-to-end trace per request).
-- Custom business metrics via OTel (payment success, ledger-invariant guard) → Cloud Monitoring.
-- Alert policies on symptoms (error rate, latency, failed payments) → PagerDuty/Slack.
-- Mirror Sentry to `frontend-admin` and add `@sentry/react-native` to mobile.
+## Done
+- ✅ Sentry on backend, web, admin, mobile.
+- ✅ OTel traces (backend → Cloud Trace) + web→backend trace-context propagation.
+- ✅ Business-metrics API (`internal/platform/metrics`) → Cloud Monitoring.
+- ✅ Uptime checks + symptom alert policies → email / Slack / PagerDuty channels.
+
+## Next (P2)
+- Add the `metrics.Record*` calls at the money-path decision points.
+- EAS source-map upload for mobile (org/project/token in EAS secrets).
+- SLO burn-rate alerts + per-service dashboards; deploy markers.
+- Load-test the money path and tune min/max Cloud Run instances.

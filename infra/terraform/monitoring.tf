@@ -4,16 +4,37 @@
 # to activate paging. With no email set, the channel/alerts are simply not created.
 
 locals {
-  alerting_enabled = var.alert_notification_email != ""
   # Cloud Run URL → bare host for the uptime check.
   backend_host = replace(replace(module.backend_api.uri, "https://", ""), "http://", "")
+  # All configured channels. Lengths are var-driven, so this is plan-time known.
+  notification_channels = concat(
+    google_monitoring_notification_channel.email[*].id,
+    google_monitoring_notification_channel.slack[*].id,
+    google_monitoring_notification_channel.webhook[*].id,
+  )
+  alerting_enabled = length(local.notification_channels) > 0
 }
 
 resource "google_monitoring_notification_channel" "email" {
-  count        = local.alerting_enabled ? 1 : 0
-  display_name = "Paymax alerts (${var.environment})"
+  count        = var.alert_notification_email != "" ? 1 : 0
+  display_name = "Paymax email (${var.environment})"
   type         = "email"
   labels       = { email_address = var.alert_notification_email }
+}
+
+resource "google_monitoring_notification_channel" "slack" {
+  count            = var.slack_channel != "" ? 1 : 0
+  display_name     = "Paymax Slack (${var.environment})"
+  type             = "slack"
+  labels           = { channel_name = var.slack_channel }
+  sensitive_labels { auth_token = var.slack_auth_token }
+}
+
+resource "google_monitoring_notification_channel" "webhook" {
+  count        = var.pagerduty_webhook_url != "" ? 1 : 0
+  display_name = "Paymax PagerDuty/webhook (${var.environment})"
+  type         = "webhook_tokenauth"
+  labels       = { url = var.pagerduty_webhook_url }
 }
 
 # ── Backend uptime (external HTTPS check on /healthz) ──────────────────────────
@@ -60,7 +81,7 @@ resource "google_monitoring_alert_policy" "backend_down" {
     }
   }
 
-  notification_channels = [google_monitoring_notification_channel.email[0].id]
+  notification_channels = local.notification_channels
   severity              = "CRITICAL"
   alert_strategy { auto_close = "1800s" }
 }
@@ -87,7 +108,7 @@ resource "google_monitoring_alert_policy" "backend_5xx" {
     }
   }
 
-  notification_channels = [google_monitoring_notification_channel.email[0].id]
+  notification_channels = local.notification_channels
   severity              = "ERROR"
   alert_strategy { auto_close = "1800s" }
 }
@@ -113,7 +134,7 @@ resource "google_monitoring_alert_policy" "backend_latency" {
     }
   }
 
-  notification_channels = [google_monitoring_notification_channel.email[0].id]
+  notification_channels = local.notification_channels
   severity              = "WARNING"
   alert_strategy { auto_close = "1800s" }
 }
@@ -162,7 +183,7 @@ resource "google_monitoring_alert_policy" "web_down" {
     }
   }
 
-  notification_channels = [google_monitoring_notification_channel.email[0].id]
+  notification_channels = local.notification_channels
   severity              = "CRITICAL"
   alert_strategy { auto_close = "1800s" }
 }
