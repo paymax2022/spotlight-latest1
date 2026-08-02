@@ -20,6 +20,7 @@ import { upsertBookmark } from './bookmarks';
 import { adaptClasses, adaptVersions, adaptSubjects, adaptTopics, adaptObjectives, adaptLessons, adaptLesson, type GoClass, type GoVersion, type GoSubject, type GoTopic, type GoObjective, type GoLesson } from './curriculumAdapters';
 import { adaptPracticeItems, toPracticeSubmit, adaptPracticeResult, type GoQuestionItem, type GoPracticeResult } from './practiceAdapters';
 import { adaptStartedAttempt, toExamSubmit, adaptExamResult, type GoExamAttempt, type GoScoredAttempt, type GoExamResultProjection } from './examAdapters';
+import { adaptGamificationProfile, type GoGamificationProfile } from './gamificationAdapters';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -654,8 +655,11 @@ export async function getExamResult(id: string): Promise<ExamResult> {
 // ── Gamification ─────────────────────────────────────────────────────────────
 export async function getGamificationProfile(): Promise<GamificationProfile> {
   if (USE_MOCK) { await delay(); return M.MOCK_GAMIFICATION; }
-  const { data } = await api.get<GamificationProfile>(`${B}/gamification/profile`);
-  return data;
+  // Live: Go returns the raw profile ({xp, level, streak_days, freezes}); adapt to
+  // the mobile shape (xpToNext computed from the level curve). XP/streak are
+  // awarded server-side on practice/exam completion.
+  const { data } = await api.get<GoGamificationProfile>(`${B}/gamification/profile`);
+  return adaptGamificationProfile(data);
 }
 
 export async function getBadges(): Promise<Badge[]> {

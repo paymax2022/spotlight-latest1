@@ -55,8 +55,11 @@ func (h *Handler) fail(c *gin.Context, err error) {
 //
 //	member: /exam/arenas[...], /exam/attempts[...], /exam/utme/combinations
 //	admin : /exam/arenas, /exam/blueprints, /exam/combinations CRUD under RBAC academy.exam
-func RegisterAcademyExam(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterAcademyExam(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, gamifier Gamifier) {
 	svc := NewService(pool)
+	if gamifier != nil {
+		svc = svc.WithGamifier(gamifier)
+	}
 	h := NewHandler(svc)
 
 	// ── Member ──

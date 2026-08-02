@@ -13,6 +13,16 @@ import (
 type Service struct {
 	repo       *Repository
 	thresholds MasteryThresholds
+	gamifier   Gamifier
+}
+
+// Gamifier is the engagement hook fired on a practice submission — the attempt
+// awards XP and marks the day active for the streak. When nil (default) practice
+// runs with no gamification side-effects. Best-effort: awarding never fails a
+// submission. Wired to academy/gamification in academy_routes.go.
+type Gamifier interface {
+	AwardXP(ctx context.Context, userID, action string, amount int64) error
+	ExtendStreak(ctx context.Context, userID string) error
 }
 
 // NewService wires the assessment service with the default thresholds.
@@ -23,6 +33,12 @@ func NewService(db *pgxpool.Pool) *Service {
 // WithThresholds overrides the progression thresholds (curriculum-as-data hook).
 func (s *Service) WithThresholds(t MasteryThresholds) *Service {
 	s.thresholds = t
+	return s
+}
+
+// WithGamifier injects the engagement hook (gamification wiring). Nil-safe.
+func (s *Service) WithGamifier(g Gamifier) *Service {
+	s.gamifier = g
 	return s
 }
 
@@ -189,6 +205,14 @@ func (s *Service) RunMasteryCheck(ctx context.Context, userID, objectiveID strin
 	if _, err := s.repo.ApplyProgression(ctx, userID, objectiveID, from, to, score, evtType,
 		map[string]any{"score": score, "correct": correct, "scored": scored, "attempts": attempts}); err != nil {
 		return nil, err
+	}
+
+	// Engagement: a completed practice set awards XP (10 per correct answer) and
+	// marks the day active for the streak. Best-effort — a gamification hiccup
+	// never fails the (already-persisted) progression.
+	if s.gamifier != nil {
+		_ = s.gamifier.AwardXP(ctx, userID, "practice_completed", int64(correct*10))
+		_ = s.gamifier.ExtendStreak(ctx, userID)
 	}
 
 	return &PracticeResult{

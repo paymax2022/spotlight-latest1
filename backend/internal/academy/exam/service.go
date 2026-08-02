@@ -16,6 +16,7 @@ import (
 type Service struct {
 	repo        *Repository
 	entitlement EntitlementChecker
+	gamifier    Gamifier
 	now         func() time.Time // injectable clock for deadline tests
 }
 
@@ -26,10 +27,25 @@ type EntitlementChecker interface {
 	HasAccess(ctx context.Context, userID, arenaID string) (bool, error)
 }
 
+// Gamifier is the engagement hook fired on a scored submission — the completion
+// awards XP and marks the day active for the streak. When nil (default) the exam
+// runs with no gamification side-effects. Best-effort: awarding never fails a
+// submit. Wired to academy/gamification in academy_routes.go.
+type Gamifier interface {
+	AwardXP(ctx context.Context, userID, action string, amount int64) error
+	ExtendStreak(ctx context.Context, userID string) error
+}
+
 // NewService wires the exam service with a system clock and no entitlement checker
 // (default-allow until commerce injects one).
 func NewService(db *pgxpool.Pool) *Service {
 	return &Service{repo: NewRepository(db), now: time.Now}
+}
+
+// WithGamifier injects the engagement hook (gamification wiring). Nil-safe.
+func (s *Service) WithGamifier(g Gamifier) *Service {
+	s.gamifier = g
+	return s
 }
 
 // WithEntitlement injects the entitlement checker (commerce wiring hook).
@@ -346,6 +362,14 @@ func (s *Service) Submit(ctx context.Context, userID, attemptID string, response
 		})
 	if err != nil {
 		return nil, err
+	}
+
+	// Engagement: a completed exam awards XP (= overall score) and marks the day
+	// active for the streak. Best-effort — a gamification hiccup never fails the
+	// (already-persisted) submit, and this only runs on the first scoring pass.
+	if s.gamifier != nil {
+		_ = s.gamifier.AwardXP(ctx, userID, "exam_completed", int64(res.Overall))
+		_ = s.gamifier.ExtendStreak(ctx, userID)
 	}
 	return s.repo.GetAttempt(ctx, attemptID)
 }

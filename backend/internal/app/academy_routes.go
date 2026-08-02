@@ -199,10 +199,13 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 		tutor.RegisterAcademyTutor(memberAcad, adminAcad, pool, rbac, academyKYC{svc: kyc.NewService(pool)}, payoutRail)
 	}
 
-	// Exam beachhead (Phase 1 crown) behind its own sub-flag.
+	// Exam beachhead (Phase 1 crown) behind its own sub-flag. A scored practice/
+	// exam submission fires the gamification earn-path (XP + streak) via a nil-safe
+	// hook — engagement side-effects that never block the (already-persisted) score.
 	if examEnabled {
-		assessment.RegisterAcademyAssessment(memberAcad, adminAcad, pool, rbac)
-		exam.RegisterAcademyExam(memberAcad, adminAcad, pool, rbac)
+		academyGamifier := academyGamifierAdapter{gam: gamification.NewService(gamification.NewRepository(pool), gamification.Config{})}
+		assessment.RegisterAcademyAssessment(memberAcad, adminAcad, pool, rbac, academyGamifier)
+		exam.RegisterAcademyExam(memberAcad, adminAcad, pool, rbac, academyGamifier)
 	}
 
 	// EdTech School Fees (invoices, vault, promotion, competition, scholarship,
@@ -507,6 +510,22 @@ func (a feesScholarshipInvoice) RecordPayment(ctx context.Context, actorID, invo
 
 // feesGamificationLadder adapts academy/gamification.Service to
 // fees/competition.GamificationLadder (money-free engagement ladder, SF-4).
+// academyGamifierAdapter bridges academy/gamification.Service to the nil-safe
+// Gamifier hooks consumed by assessment + exam (which want only an error). XP +
+// streak are best-effort engagement side-effects — they never block a submission.
+// Satisfies both assessment.Gamifier and exam.Gamifier structurally.
+type academyGamifierAdapter struct{ gam *gamification.Service }
+
+func (a academyGamifierAdapter) AwardXP(ctx context.Context, userID, action string, amount int64) error {
+	_, err := a.gam.AwardXP(ctx, userID, action, amount)
+	return err
+}
+
+func (a academyGamifierAdapter) ExtendStreak(ctx context.Context, userID string) error {
+	_, err := a.gam.ExtendStreak(ctx, userID)
+	return err
+}
+
 type feesGamificationLadder struct{ gam *gamification.Service }
 
 func (a feesGamificationLadder) EnsureLeaderboard(ctx context.Context, scope, scopeRef, subject string) (leaderboardID string, err error) {
