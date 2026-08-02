@@ -12,7 +12,8 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import StateView from '@/components/StateView';
-import { useLesson, useSaveNote, useNotes } from '@/features/academy/hooks';
+import { useLesson, useSaveNote, useNotes, useBookmarks, useAddBookmark, useRemoveBookmark } from '@/features/academy/hooks';
+import { findBookmarkByHref } from '@/features/academy/bookmarks';
 
 /** L7 — Lesson transcript & notes: read transcript, jot a personal note, bookmark. */
 export default function LessonTranscript() {
@@ -20,12 +21,26 @@ export default function LessonTranscript() {
   const lesson = useLesson(id);
   const notes = useNotes();
   const saveNote = useSaveNote();
+  const bookmarks = useBookmarks();
+  const addBookmark = useAddBookmark();
+  const removeBookmark = useRemoveBookmark();
 
   const [draft, setDraft] = useState('');
-  const [bookmarked, setBookmarked] = useState(false);
   const [saved, setSaved] = useState(false);
 
   const existing = notes.data?.filter((n) => n.lessonId === id) ?? [];
+
+  // Bookmarks are keyed by the lesson's canonical route and persisted via the API
+  // (previously a local useState that vanished on navigate). The control reflects
+  // the real saved state and toggles it.
+  const bookmarkHref = `/learn/academy/lesson/${id}`;
+  const savedBookmark = findBookmarkByHref(bookmarks.data ?? [], bookmarkHref);
+  const isBookmarked = !!savedBookmark;
+  const toggleBookmark = () => {
+    if (!lesson.data) return;
+    if (savedBookmark) removeBookmark.mutate(savedBookmark.id);
+    else addBookmark.mutate({ kind: 'lesson', title: lesson.data.title, subjectName: 'Lesson', href: bookmarkHref });
+  };
 
   const onSave = () => {
     if (!draft.trim() || !lesson.data) return;
@@ -44,8 +59,8 @@ export default function LessonTranscript() {
         title="Transcript & notes"
         subtitle={lesson.data.title}
         rightSlot={
-          <Pressable onPress={() => setBookmarked((b) => !b)} hitSlop={8} accessibilityLabel="Bookmark lesson">
-            {bookmarked ? <BookmarkCheck size={22} color={Colors.primary} /> : <Bookmark size={22} color={Colors.onSurfaceVariant} />}
+          <Pressable onPress={toggleBookmark} hitSlop={8} accessibilityLabel={isBookmarked ? 'Remove bookmark' : 'Bookmark lesson'}>
+            {isBookmarked ? <BookmarkCheck size={22} color={Colors.primary} /> : <Bookmark size={22} color={Colors.onSurfaceVariant} />}
           </Pressable>
         }
       />
