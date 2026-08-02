@@ -23,6 +23,7 @@ import type {
   MerchantMenuItem,
   CreateStoreInput,
   UpdateStoreInput,
+  MerchantEarnings,
 } from './types';
 
 export const USE_MOCK =
@@ -180,4 +181,21 @@ export async function deleteItem(id: string, itemId: string): Promise<void> {
     return;
   }
   await api.delete(`${BASE}/${enc(id)}/menu/items/${enc(itemId)}`);
+}
+
+// ── Earnings (read-only) ──────────────────────────────────────────────────────
+export async function getEarnings(): Promise<MerchantEarnings> {
+  if (USE_MOCK) { await delay(); return { paidOutKobo: 0, pendingKobo: 0, runs: [] }; }
+  const d = unwrap<any>(await api.get(`${BASE}/earnings`));
+  return {
+    paidOutKobo: d.paid_out_kobo ?? 0,
+    pendingKobo: d.pending_kobo ?? 0,
+    runs: (d.runs ?? []).map((r: any) => ({
+      id: r.id,
+      periodKey: r.period_key,
+      netKobo: r.net_kobo ?? 0,
+      status: r.status,
+      processedAt: r.processed_at ?? null,
+    })),
+  };
 }

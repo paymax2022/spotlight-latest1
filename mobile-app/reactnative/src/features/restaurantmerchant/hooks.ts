@@ -12,6 +12,10 @@ export function useMyStores() {
   return useQuery({ queryKey: [KEY, 'mine'], queryFn: merchant.getMyStores, staleTime: 15_000 });
 }
 
+export function useEarnings() {
+  return useQuery({ queryKey: [KEY, 'earnings'], queryFn: merchant.getEarnings, staleTime: 30_000 });
+}
+
 export function useStoreDetail(id?: string) {
   return useQuery({
     queryKey: [KEY, 'detail', id],

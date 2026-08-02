@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Trash2, Plus, ClipboardList } from 'lucide-react-native';
+import { Trash2, Plus, ClipboardList, Wallet } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
@@ -112,11 +112,17 @@ function ManageStore({ storeId }: { storeId: string }) {
   return (
     <Shell>
       <ScrollView contentContainerStyle={styles.body}>
-        {/* Quick link to the live order queue. */}
-        <Pressable onPress={() => router.push('/food/restaurant')} style={styles.ordersLink}>
-          <ClipboardList size={18} color={Colors.primary} />
-          <Text style={styles.ordersLinkText}>View incoming orders</Text>
-        </Pressable>
+        {/* Quick links to orders + earnings. */}
+        <View style={styles.linkRow}>
+          <Pressable onPress={() => router.push('/food/restaurant')} style={[styles.ordersLink, { flex: 1 }]}>
+            <ClipboardList size={18} color={Colors.primary} />
+            <Text style={styles.ordersLinkText}>Orders</Text>
+          </Pressable>
+          <Pressable onPress={() => router.push('/food/restaurant/earnings')} style={[styles.ordersLink, { flex: 1 }]}>
+            <Wallet size={18} color={Colors.primary} />
+            <Text style={styles.ordersLinkText}>Earnings</Text>
+          </Pressable>
+        </View>
 
         {/* Availability */}
         <Card>
@@ -301,8 +307,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary, borderRadius: Radius.md, height: 44, width: 44,
     alignItems: 'center', justifyContent: 'center',
   },
+  linkRow: { flexDirection: 'row', gap: Spacing.sm },
   ordersLink: {
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm,
     backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.md,
     borderWidth: 1, borderColor: Colors.outlineVariant, paddingHorizontal: Spacing.md, paddingVertical: 12,
   },

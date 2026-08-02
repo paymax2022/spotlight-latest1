@@ -425,7 +425,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// /api/<mod>/admin/* (RBAC <mod>.admin.*). Reuse scheduler/escrow/cashtag/
 	// credential/points shared primitives. NL-1..12 invariants enforced in-module.
 	if cfg.FeatureSavingsEnabled && pool != nil {
-		RegisterSavings(finance.Group("/savings"), adminGroupTop5(r, "/api/savings/admin"), cfg, pool, rbac)
+		// Pass the bare finance group: savings.Handler.Register adds the "/savings"
+		// segment itself, so routes land at /api/finance/savings/* (the client
+		// contract). Passing finance.Group("/savings") here double-mounted them at
+		// /api/finance/savings/savings/*. NOTE: RegisterSocialPay below has the same
+		// latent double-mount and should get the same fix when social goes live.
+		RegisterSavings(finance, adminGroupTop5(r, "/api/savings/admin"), cfg, pool, rbac)
 	}
 	if cfg.FeatureSocialPayEnabled && pool != nil {
 		RegisterSocialPay(finance.Group("/social"), adminGroupTop5(r, "/api/social/admin"), pool, rbac)
@@ -1326,7 +1331,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Reads / discovery.
 		restGroup.GET("", restaurantHandler.ListRestaurants)
 		restGroup.POST("", restaurantHandler.Create)
-		restGroup.GET("/mine", restaurantHandler.MyRestaurants) // caller's own stores (static sibling of :id)
+		restGroup.GET("/mine", restaurantHandler.MyRestaurants)      // caller's own stores (static sibling of :id)
+		restGroup.GET("/earnings", restaurantHandler.Earnings)       // caller's food-delivery earnings
 		restGroup.GET("/:id", restaurantHandler.GetRestaurant)
 
 		// Store management (owner only): edit profile + operational open/close.
