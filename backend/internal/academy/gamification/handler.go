@@ -65,7 +65,7 @@ func (h *Handler) GetLeaderboard(c *gin.Context) {
 
 // GetChallenges handles GET /gamification/challenges.
 func (h *Handler) GetChallenges(c *gin.Context) {
-	ch, err := h.svc.GetChallenges(c.Request.Context())
+	ch, err := h.svc.GetChallenges(c.Request.Context(), userID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

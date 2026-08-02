@@ -157,6 +157,28 @@ func (r *Repository) GrantBadge(ctx context.Context, userID, badgeID string) (bo
 
 // ── Challenges ──────────────────────────────────────────────────────────────────
 
+// CountMetric counts the learner's activity for a challenge metric since `since`.
+// Read-only cross-domain reads (progress events / exam attempts) for the progress
+// view. Unknown metric → 0.
+func (r *Repository) CountMetric(ctx context.Context, userID, metric string, since time.Time) (int, error) {
+	var q string
+	switch metric {
+	case "practice":
+		q = `SELECT count(*) FROM public.academy_progress_events WHERE user_id = $1 AND created_at >= $2`
+	case "mastered":
+		q = `SELECT count(*) FROM public.academy_progress_events WHERE user_id = $1 AND type = 'mastered' AND created_at >= $2`
+	case "exam":
+		q = `SELECT count(*) FROM public.academy_attempts WHERE user_id = $1 AND state = 'scored' AND submitted_at >= $2`
+	default:
+		return 0, nil
+	}
+	var n int
+	if err := r.db.QueryRow(ctx, q, userID, since).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 func (r *Repository) ListChallenges(ctx context.Context) ([]Challenge, error) {
 	const q = `
 		SELECT id, code, name, kind, criteria, sponsor_id, reward_pool_id,

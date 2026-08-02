@@ -68,6 +68,8 @@ export interface GoChallenge {
   sponsor_id?: string | null;
   reward_pool_id?: string | null;
   status?: string;
+  progress?: number; // caller's progress (ChallengeView)
+  completed?: boolean;
 }
 
 const CADENCES: Challenge['cadence'][] = ['daily', 'weekly', 'sponsor'];
@@ -76,22 +78,24 @@ function toNum(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** Adapt a Go challenge row → mobile Challenge. Per-user progress isn't tracked
- *  server-side yet, so progress is 0 / completed false; target + rewardPoints +
- *  description are read from the criteria jsonb. */
+/** Adapt a Go challenge view → mobile Challenge. progress/completed come from the
+ *  server (counted per the challenge metric in its window); target + rewardPoints
+ *  + description are read from the criteria jsonb. */
 export function adaptChallenge(go: GoChallenge): Challenge {
   const c = go.criteria ?? {};
   const cadence = CADENCES.includes(go.kind as Challenge['cadence']) ? (go.kind as Challenge['cadence']) : 'daily';
+  const target = toNum(c.target) || 1;
+  const progress = Math.max(0, Math.min(target, toNum(go.progress)));
   return {
     id: go.id,
     title: go.name,
     description: typeof c.description === 'string' ? c.description : '',
     cadence,
-    progress: 0,
-    target: toNum(c.target) || 1,
+    progress,
+    target,
     rewardPoints: toNum(c.reward_points),
     sponsor: go.sponsor_id ?? undefined,
-    completed: false,
+    completed: go.completed ?? progress >= target,
   };
 }
 

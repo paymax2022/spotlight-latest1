@@ -58,8 +58,18 @@ test('adaptChallenge maps a Go row (kind→cadence, criteria→target/reward/des
   assert.equal(c.target, 3);
   assert.equal(c.rewardPoints, 50);
   assert.equal(c.description, 'Complete 3 practice sets today');
-  assert.equal(c.progress, 0, 'per-user progress not tracked yet');
+  assert.equal(c.progress, 0, 'no server progress → 0');
   assert.equal(c.completed, false);
+});
+
+test('adaptChallenge reads server progress + caps at target + completed', () => {
+  const base = { id: 'c', code: 'C', name: 'C', kind: 'daily', criteria: { target: 3 } };
+  const partial = adaptChallenge({ ...base, progress: 2, completed: false });
+  assert.equal(partial.progress, 2);
+  assert.equal(partial.completed, false);
+  const done = adaptChallenge({ ...base, progress: 5, completed: true });
+  assert.equal(done.progress, 3, 'progress capped at target');
+  assert.equal(done.completed, true);
 });
 
 test('adaptChallenge: unknown kind → daily, empty criteria → target defaults 1', () => {

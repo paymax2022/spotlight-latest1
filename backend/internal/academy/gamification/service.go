@@ -137,8 +137,50 @@ func (s *Service) GetBadges(ctx context.Context, userID string) ([]BadgeView, er
 	return s.repo.ListBadgesWithEarned(ctx, userID)
 }
 
-func (s *Service) GetChallenges(ctx context.Context) ([]Challenge, error) {
-	return s.repo.ListChallenges(ctx)
+// GetChallenges returns the active challenges with the caller's progress toward
+// each (metric counted in its window vs criteria.target). Challenges without a
+// metric report 0 progress.
+func (s *Service) GetChallenges(ctx context.Context, userID string) ([]ChallengeView, error) {
+	chs, err := s.repo.ListChallenges(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	out := make([]ChallengeView, 0, len(chs))
+	for _, ch := range chs {
+		metric, _ := ch.Criteria["metric"].(string)
+		window, _ := ch.Criteria["window"].(string)
+		target := 0
+		if v, ok := numFromAny(ch.Criteria["target"]); ok {
+			target = int(v)
+		}
+		progress := 0
+		if metric != "" && userID != "" {
+			n, err := s.repo.CountMetric(ctx, userID, metric, windowStart(now, window))
+			if err != nil {
+				return nil, err
+			}
+			progress = n
+			if target > 0 && progress > target {
+				progress = target // cap the display at the target
+			}
+		}
+		out = append(out, ChallengeView{
+			Challenge: ch,
+			Progress:  progress,
+			Completed: target > 0 && progress >= target,
+		})
+	}
+	return out, nil
+}
+
+// windowStart returns the lower bound for a challenge window: 'week' = last 7
+// days, anything else = start of today (UTC).
+func windowStart(now time.Time, window string) time.Time {
+	if window == "week" {
+		return now.AddDate(0, 0, -7)
+	}
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 func (s *Service) GetLeaderboard(ctx context.Context, id, periodKey string, limit int) (*Leaderboard, []LeaderboardEntry, error) {

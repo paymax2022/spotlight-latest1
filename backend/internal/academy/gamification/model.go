@@ -55,6 +55,14 @@ type UserBadge struct {
 	EarnedAt time.Time `json:"earned_at"`
 }
 
+// ChallengeView is a challenge plus the caller's progress toward it — the member
+// read surface. progress is capped at the criteria target; completed = reached it.
+type ChallengeView struct {
+	Challenge
+	Progress  int  `json:"progress"`
+	Completed bool `json:"completed"`
+}
+
 // Challenge mirrors public.academy_challenges.
 type Challenge struct {
 	ID           string         `json:"id"`
