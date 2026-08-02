@@ -13,7 +13,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:merchant": "node --test \"src/features/merchant/lib/__tests__/*.test.ts\"",
-    "test:academy": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"src/features/academy/__tests__/*.test.ts\""
+    "test:academy": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"src/features/academy/__tests__/*.test.ts\" \"src/features/academy/fees/__tests__/*.test.ts\""
   },
   "dependencies": {
     "@expo-google-fonts/plus-jakarta-sans": "^0.4.2",
