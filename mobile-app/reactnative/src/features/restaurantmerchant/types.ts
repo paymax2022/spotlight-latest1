@@ -67,3 +67,21 @@ export interface MerchantEarnings {
   pendingKobo: Kobo;
   runs: EarningsRun[];
 }
+
+export interface BankAccount {
+  id: string;
+  bankName: string;
+  bankCode: string;
+  accountNumberMasked: string;
+  accountName: string;
+  isVerified: boolean;
+  isDefault: boolean;
+  createdAt?: string;
+}
+
+export interface AddBankAccountInput {
+  bankName: string;
+  bankCode: string;
+  accountNumber: string;
+  accountName: string;
+}
