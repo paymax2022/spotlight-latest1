@@ -18,6 +18,7 @@
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { USE_MOCK, ACADEMY_FEES_API_BASE } from './constants';
+import { rankByScore, viewerRank } from './leaderboardRanking';
 import type {
   FeesChild,
   Invoice,
@@ -196,7 +197,12 @@ const MOCK_DIRECTORY: DirectorySchool[] = [
 // ── Competition fixtures (SF-7 minor-safe; SF-4 fee-independent) ─────────────
 const MOCK_COMP_PROFILE: CompetitionProfile = {
   studentFirstName: 'Adaeze', schoolName: 'Bright Stars Academy', classLabel: 'JSS 2',
-  totalPoints: 4820, nationalRank: 214, badgesEarned: 7, tournamentsJoined: 3, consentGiven: false,
+  // totalPoints is the SINGLE source of truth for the viewer's leaderboard score
+  // (getLeaderboard feeds it into rankByScore). Seed it to the board's viewer row
+  // so the profile and the board agree from first render — previously 4820 here
+  // vs a hardcoded 8510 on the board. nationalRank is an illustrative global figure
+  // (the local board window shows rank 6).
+  totalPoints: 8510, nationalRank: 214, badgesEarned: 7, tournamentsJoined: 3, consentGiven: false,
 };
 
 // Raw entries carry both the safe + full identity; the serializer chooses which
@@ -655,10 +661,14 @@ export async function getCompetitionProfile(): Promise<CompetitionProfile> {
 export async function getLeaderboard(scope: LeaderboardScope = 'national'): Promise<CompetitionLeaderboard> {
   if (USE_MOCK) {
     await delay();
+    // The viewer's board score is their live earned points (compProfile.totalPoints),
+    // not a frozen literal — then the board is re-ranked, so playing challenges
+    // actually moves the learner up. myRank is derived from the recomputed order.
+    const ranked = rankByScore(RAW_LEADERBOARD, compProfile.totalPoints);
     return {
       scope, scopeLabel: SCOPE_LABELS[scope], period: 'This week',
-      myRank: RAW_LEADERBOARD.find((e) => e.isMe)?.rank,
-      entries: serializeEntries(RAW_LEADERBOARD, compProfile.consentGiven),
+      myRank: viewerRank(ranked),
+      entries: serializeEntries(ranked, compProfile.consentGiven),
       minorSafe: true,
     };
   }
