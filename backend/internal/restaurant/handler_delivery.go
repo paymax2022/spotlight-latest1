@@ -116,6 +116,17 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 
 // ── Store management (owner only) ─────────────────────────────────────────────
 
+// Earnings → GET /restaurant/earnings (the caller's food-delivery earnings).
+func (h *Handler) Earnings(c *gin.Context) {
+	userID := c.GetString("user_id")
+	e, err := h.svc.GetMerchantEarnings(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": e})
+}
+
 // MyRestaurants → GET /restaurant/mine (the caller's own stores).
 func (h *Handler) MyRestaurants(c *gin.Context) {
 	userID := c.GetString("user_id")

@@ -53,3 +53,17 @@ export interface UpdateStoreInput {
   address?: string;
   logoUrl?: string;
 }
+
+export interface EarningsRun {
+  id: string;
+  periodKey: string;
+  netKobo: Kobo;
+  status: string;
+  processedAt?: string | null;
+}
+
+export interface MerchantEarnings {
+  paidOutKobo: Kobo;
+  pendingKobo: Kobo;
+  runs: EarningsRun[];
+}
