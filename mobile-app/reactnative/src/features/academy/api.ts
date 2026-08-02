@@ -19,7 +19,7 @@ import { assertCanSpend, type SpendConsentState } from './consent';
 import { upsertBookmark } from './bookmarks';
 import { adaptClasses, adaptVersions, adaptSubjects, adaptTopics, adaptObjectives, adaptLessons, adaptLesson, type GoClass, type GoVersion, type GoSubject, type GoTopic, type GoObjective, type GoLesson } from './curriculumAdapters';
 import { adaptPracticeItems, toPracticeSubmit, adaptPracticeResult, type GoQuestionItem, type GoPracticeResult } from './practiceAdapters';
-import { adaptStartedAttempt, toExamSubmit, adaptExamResult, type GoExamAttempt, type GoScoredAttempt, type GoExamResultProjection } from './examAdapters';
+import { adaptStartedAttempt, toExamSubmit, adaptExamResult, adaptArena, adaptArenas, adaptBlueprints, type GoExamAttempt, type GoScoredAttempt, type GoExamResultProjection, type GoArena, type GoBlueprint } from './examAdapters';
 import { adaptGamificationProfile, type GoGamificationProfile } from './gamificationAdapters';
 import type {
   AcademyProfile,
@@ -436,8 +436,9 @@ export async function getMastery(): Promise<MasterySnapshot[]> {
 // ── Exam (the Crown) ─────────────────────────────────────────────────────────
 export async function getArenas(): Promise<ExamArena[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_ARENAS; }
-  const { data } = await api.get<ExamArena[]>(`${B}/exam/arenas`);
-  return data;
+  // Live: Go returns { data: [snake_case arena rows] } → unwrap + adapt.
+  const { data } = await api.get<{ data?: GoArena[] }>(`${B}/exam/arenas`);
+  return adaptArenas(data.data);
 }
 
 export async function getArena(id: string): Promise<ExamArena> {
@@ -447,8 +448,8 @@ export async function getArena(id: string): Promise<ExamArena> {
     if (!a) throw new Error('Arena not found');
     return a;
   }
-  const { data } = await api.get<ExamArena>(`${B}/exam/arenas/${id}`);
-  return data;
+  const { data } = await api.get<{ data: GoArena }>(`${B}/exam/arenas/${id}`);
+  return adaptArena(data.data);
 }
 
 export async function getBlueprints(arenaId: string): Promise<ExamBlueprint[]> {
@@ -456,8 +457,8 @@ export async function getBlueprints(arenaId: string): Promise<ExamBlueprint[]> {
     await delay();
     return M.MOCK_BLUEPRINTS.filter((b) => b.arenaId === arenaId);
   }
-  const { data } = await api.get<ExamBlueprint[]>(`${B}/exam/arenas/${arenaId}/blueprints`);
-  return data;
+  const { data } = await api.get<{ data?: GoBlueprint[] }>(`${B}/exam/arenas/${arenaId}/blueprints`);
+  return adaptBlueprints(data.data);
 }
 
 export async function getUtmeCombinations(course?: string): Promise<UtmeCombination[]> {
@@ -683,8 +684,11 @@ export async function getLeaderboard(id = 'national'): Promise<LeaderboardEntry[
 // ── Rewards ──────────────────────────────────────────────────────────────────
 export async function getRewardBalance(): Promise<RewardBalance> {
   if (USE_MOCK) { await delay(); return rewardBalance; }
-  const { data } = await api.get<RewardBalance>(`${B}/rewards/balance`);
-  return data;
+  // Live: Go returns { data: { balance_minor } } — the confirmed reward-points
+  // ledger sum (non-monetary, distinct from the wallet). pendingPoints is a local
+  // offline concept the server doesn't track, so it reads 0 here.
+  const { data } = await api.get<{ data?: { balance_minor?: number } }>(`${B}/rewards/balance`);
+  return { points: data.data?.balance_minor ?? 0, pendingPoints: 0 };
 }
 
 export async function getRewardHistory(): Promise<RewardLedgerEntry[]> {

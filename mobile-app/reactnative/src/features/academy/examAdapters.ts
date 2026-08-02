@@ -5,7 +5,7 @@
 // shape. Grading is server-authoritative — the client never sees the answer key
 // and never grades locally on the live path.
 
-import type { ExamAttempt, ExamResult, Question } from './types';
+import type { ExamAttempt, ExamResult, Question, ExamArena, ExamBlueprint, ExamSlug } from './types';
 
 // ── Go wire shapes ───────────────────────────────────────────────────────────
 
@@ -43,6 +43,91 @@ export interface GoScoredAttempt extends GoExamAttempt {
 /** The projection returned by GET …/result (flattened score fields). */
 export interface GoExamResultProjection extends GoExamScore {
   readiness?: number | null;
+}
+
+// ── Arena / blueprint catalogue shapes (the exam entry flow) ─────────────────
+
+export interface GoArena {
+  id: string;
+  code: string;
+  name: string;
+  subject_set?: string[] | null;
+  scoring_rules?: Record<string, unknown> | null;
+  calendar?: Record<string, unknown> | null;
+  countdown_at?: string | null;
+  status?: string;
+}
+
+export interface GoBlueprint {
+  id: string;
+  arena_id: string;
+  name: string;
+  variant?: string;
+  sections?: unknown; // jsonb [{subject_id, count}]
+  total_items?: number;
+  total_seconds?: number;
+  tools?: Record<string, unknown> | null;
+  status?: string;
+}
+
+const EXAM_SLUGS: ExamSlug[] = ['utme', 'bece', 'wassce', 'neco', 'cce', 'nabteb'];
+function slugFromCode(code?: string): ExamSlug {
+  const s = (code ?? '').toLowerCase();
+  return (EXAM_SLUGS.includes(s as ExamSlug) ? s : 'nabteb') as ExamSlug;
+}
+
+/** Go arena row → mobile ExamArena. Per-user fields the arena row can't know
+ *  (readiness, syllabus coverage) default to 0; the screen fills them from the
+ *  gamification/mastery surfaces. Unwrap the {data} envelope before calling. */
+export function adaptArena(go: GoArena): ExamArena {
+  const nextSitting = go.countdown_at ?? (typeof go.calendar?.next_sitting === 'string' ? (go.calendar!.next_sitting as string) : '');
+  return {
+    id: go.id,
+    slug: slugFromCode(go.code),
+    name: go.name,
+    nextSittingDate: nextSitting,
+    readinessPct: 0,
+    syllabusCoveragePct: 0,
+    subjectsRequired: Array.isArray(go.subject_set) ? go.subject_set.length : 0,
+    isCbt: true,
+    description: go.name,
+  };
+}
+
+export function adaptArenas(rows: GoArena[] | undefined): ExamArena[] {
+  return (rows ?? []).map(adaptArena);
+}
+
+/** Go blueprint row → mobile ExamBlueprint. subjects derive from the sections
+ *  ([{subject_id, count}]); subjectName falls back to the subject id (no name on
+ *  the row). Unwrap the {data} envelope before calling. */
+export function adaptBlueprint(go: GoBlueprint): ExamBlueprint {
+  const sections = Array.isArray(go.sections) ? go.sections : [];
+  const subjects = sections
+    .map((s) => {
+      const sec = s as { subject_id?: unknown; count?: unknown };
+      return {
+        subjectId: String(sec?.subject_id ?? ''),
+        subjectName: String(sec?.subject_id ?? ''),
+        questionCount: Number(sec?.count ?? 0),
+      };
+    })
+    .filter((s) => s.subjectId !== '');
+  const totalFromSections = subjects.reduce((n, s) => n + s.questionCount, 0);
+  return {
+    id: go.id,
+    arenaId: go.arena_id,
+    label: go.name,
+    subjects,
+    durationMin: Math.round((go.total_seconds ?? 0) / 60),
+    totalQuestions: go.total_items || totalFromSections,
+    calculatorAllowed: !!(go.tools && go.tools.calculator),
+    offlineItemCount: 0,
+  };
+}
+
+export function adaptBlueprints(rows: GoBlueprint[] | undefined): ExamBlueprint[] {
+  return (rows ?? []).map(adaptBlueprint);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
