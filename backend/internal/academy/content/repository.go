@@ -93,7 +93,7 @@ func scanLesson(row rowScanner) (*Lesson, error) {
 const lessonCols = `id, objective_id, title, type, version_id, media_ref, transcript, duration_s, status, created_at, updated_at`
 
 func (r *Repository) GetLesson(ctx context.Context, id string) (*Lesson, error) {
-	q := `SELECT ` + lessonCols + ` FROM public.academy_lessons WHERE id = $1`
+	q := `SELECT ` + lessonCols + ` FROM public.academy_edu_lessons WHERE id = $1`
 	return scanLesson(r.db.QueryRow(ctx, q, id))
 }
 
@@ -104,7 +104,7 @@ func (r *Repository) ListLiveLessonsForObjective(ctx context.Context, objectiveI
 		limit = 50
 	}
 	q := `SELECT ` + lessonCols + `
-		FROM public.academy_lessons
+		FROM public.academy_edu_lessons
 		WHERE objective_id = $1 AND status = 'live'
 		ORDER BY updated_at DESC LIMIT $2`
 	rows, err := r.db.Query(ctx, q, objectiveID, limit)
@@ -134,7 +134,7 @@ func (r *Repository) TransitionLesson(ctx context.Context, actor, id string, to 
 	defer tx.Rollback(ctx)
 
 	var from PublishStatus
-	err = tx.QueryRow(ctx, `SELECT status FROM public.academy_lessons WHERE id = $1 FOR UPDATE`, id).Scan(&from)
+	err = tx.QueryRow(ctx, `SELECT status FROM public.academy_edu_lessons WHERE id = $1 FOR UPDATE`, id).Scan(&from)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -149,7 +149,7 @@ func (r *Repository) TransitionLesson(ctx context.Context, actor, id string, to 
 		return nil, fmt.Errorf("%w: %s -> %s", ErrIllegalTransition, from, to)
 	}
 
-	if _, err := tx.Exec(ctx, `UPDATE public.academy_lessons SET status = $2, updated_at = now() WHERE id = $1`, id, string(to)); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE public.academy_edu_lessons SET status = $2, updated_at = now() WHERE id = $1`, id, string(to)); err != nil {
 		return nil, err
 	}
 	if err := insertAuditTx(ctx, tx, actor, "lesson.published", "academy_lesson", id,
@@ -280,7 +280,7 @@ func (r *Repository) buildManifestTx(ctx context.Context, tx pgx.Tx, bundleID st
 	if len(lessonIDs) > 0 {
 		rows, err := tx.Query(ctx,
 			`SELECT id, title, media_ref, duration_s, status
-			 FROM public.academy_lessons WHERE id = ANY($1)`, lessonIDs)
+			 FROM public.academy_edu_lessons WHERE id = ANY($1)`, lessonIDs)
 		if err != nil {
 			return nil, err
 		}

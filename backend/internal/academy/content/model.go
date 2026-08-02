@@ -59,7 +59,7 @@ const (
 
 // ── Models ──────────────────────────────────────────────────────────────────────
 
-// Lesson is one academy_lessons row (subset relevant to the CMS publish surface).
+// Lesson is one academy_edu_lessons row (subset relevant to the CMS publish surface).
 type Lesson struct {
 	ID          string        `json:"id"`
 	ObjectiveID *string       `json:"objective_id,omitempty"`
