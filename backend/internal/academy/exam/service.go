@@ -158,6 +158,80 @@ func (s *Service) Begin(ctx context.Context, userID, blueprintID string, offline
 	return s.repo.CreateAttempt(ctx, userID, blueprintID, &arenaID, started, deadline, offlineOrigin, idemArg)
 }
 
+// AttemptQuestions returns the question set for an attempt the caller owns,
+// composed from the blueprint's sections ([{subject_id, count}]) and served
+// WITHOUT the answer key. The set is deterministic per blueprint (repo orders by
+// id), so pause/resume/re-fetch yield a stable set; grading remains server-side.
+func (s *Service) AttemptQuestions(ctx context.Context, userID, attemptID string) ([]ServedQuestion, error) {
+	att, err := s.ownedAttempt(ctx, userID, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	bp, err := s.repo.GetBlueprint(ctx, att.BlueprintID)
+	if err != nil {
+		return nil, err
+	}
+	out := []ServedQuestion{}
+	for _, sec := range bp.Sections {
+		m, ok := sec.(map[string]any)
+		if !ok {
+			continue
+		}
+		subjectID, _ := m["subject_id"].(string)
+		count := sectionCount(m["count"])
+		if subjectID == "" || count <= 0 {
+			continue
+		}
+		qs, err := s.repo.SelectApprovedQuestions(ctx, subjectID, count)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, qs...)
+	}
+	return out, nil
+}
+
+// GetAttemptResult returns the stored score/readiness/predicted projection for a
+// submitted/scored attempt the caller owns. 404 until the attempt is submitted.
+func (s *Service) GetAttemptResult(ctx context.Context, userID, attemptID string) (map[string]any, error) {
+	att, err := s.ownedAttempt(ctx, userID, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	switch att.State {
+	case AttemptSubmitted, AttemptScored, AttemptReviewed:
+		// result is available
+	default:
+		return nil, ErrNotFound // not yet submitted → no result projection
+	}
+	res := map[string]any{}
+	for k, v := range att.Score { // subjects, overall, grade, late
+		res[k] = v
+	}
+	if att.Readiness != nil {
+		res["readiness"] = *att.Readiness
+	}
+	if att.Predicted != nil {
+		res["predicted"] = att.Predicted
+	}
+	return res, nil
+}
+
+// sectionCount coerces a jsonb section count (float64 from JSON, or int/string)
+// into an int; unparseable → 0.
+func sectionCount(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	default:
+		return 0
+	}
+}
+
 // Pause runs started→paused (only if the blueprint's pause_policy = allowed).
 func (s *Service) Pause(ctx context.Context, userID, attemptID string) (*Attempt, error) {
 	att, err := s.ownedAttempt(ctx, userID, attemptID)

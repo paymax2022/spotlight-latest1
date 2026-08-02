@@ -150,6 +150,19 @@ type Response struct {
 	CreatedAt      time.Time      `json:"created_at"`
 }
 
+// ServedQuestion is a single question delivered to a learner for an attempt.
+// The canonical answer key is NEVER included — grading is server-authoritative
+// (Submit re-scores against academy_question_items). Mirrors the fields the CBT
+// simulator needs to render a question.
+type ServedQuestion struct {
+	ID          string  `json:"id"`
+	Type        string  `json:"type"`
+	Stem        string  `json:"stem"`
+	Options     []any   `json:"options"` // jsonb array, e.g. [{id,text}]
+	SubjectID   *string `json:"subject_id,omitempty"`
+	ObjectiveID *string `json:"objective_id,omitempty"`
+}
+
 // ── Request DTOs ────────────────────────────────────────────────────────────────
 
 // BeginAttemptRequest — member POST /exam/attempts.
