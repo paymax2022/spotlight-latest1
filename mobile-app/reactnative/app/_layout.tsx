@@ -15,6 +15,17 @@ import { createSupabaseClient } from '@/lib/supabase';
 import { usePushNotifications } from '@/lib/push';
 import { useVisitorPushBridge } from '@/features/visitor/hooks/useVisitorPushBridge';
 import { useElectionPushBridge } from '@/features/election/hooks/useElectionPushBridge';
+import * as Sentry from '@sentry/react-native';
+
+// Error tracking + native crash capture. Inert until EXPO_PUBLIC_SENTRY_DSN is set,
+// so local/dev and Expo Go are unaffected.
+Sentry.init({
+  dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
+  enabled: Boolean(process.env.EXPO_PUBLIC_SENTRY_DSN),
+  environment: process.env.EXPO_PUBLIC_SENTRY_ENVIRONMENT ?? 'development',
+  tracesSampleRate: Number(process.env.EXPO_PUBLIC_SENTRY_TRACES_SAMPLE_RATE ?? '0.1'),
+  sendDefaultPii: false, // never auto-attach PII (fintech)
+});
 
 // Keep the native splash visible until the brand font is ready (best-effort).
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -122,7 +133,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-export default function RootLayout() {
+function RootLayout() {
   const fontsReady = useBrandFonts();
 
   useEffect(() => {
@@ -195,3 +206,6 @@ export default function RootLayout() {
     </QueryClientProvider>
   );
 }
+
+// Wraps the root with Sentry's error boundary + touch/navigation instrumentation.
+export default Sentry.wrap(RootLayout);

@@ -38,6 +38,36 @@ variable "github_repo" {
   description = "owner/repo allowed to assume the deploy identity via OIDC, e.g. paymax2022/spotlight-latest."
 }
 
+# ── Alerting / uptime ─────────────────────────────────────────────────────────
+variable "alert_notification_email" {
+  type        = string
+  default     = ""
+  description = "Email for alert paging. Empty = no notification channel/alerts created (uptime checks still run)."
+}
+
+variable "alert_5xx_per_min" {
+  type        = number
+  default     = 5
+  description = "Alert when backend 5xx responses/min exceed this."
+}
+
+variable "alert_latency_p95_ms" {
+  type        = number
+  default     = 800
+  description = "Alert when backend p95 request latency (ms) exceeds this."
+}
+
+variable "web_uptime_host" {
+  type        = string
+  default     = ""
+  description = "Optional Vercel/web host (no scheme) to run an uptime check against, e.g. app.paymax.ng."
+}
+
+variable "web_uptime_path" {
+  type    = string
+  default = "/"
+}
+
 # Names of secrets to create in Secret Manager. Values are set out-of-band
 # (never in Terraform state / VCS): `gcloud secrets versions add ...`.
 variable "secret_names" {
