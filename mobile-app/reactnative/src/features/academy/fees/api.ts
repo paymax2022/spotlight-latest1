@@ -19,6 +19,8 @@ import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { USE_MOCK, ACADEMY_FEES_API_BASE } from './constants';
 import { rankByScore, viewerRank } from './leaderboardRanking';
+import { assertCanSpend } from '../consent';
+import { spendConsentState } from '../api';
 import type {
   FeesChild,
   Invoice,
@@ -747,6 +749,10 @@ export async function getCompetitionRewards(): Promise<CompetitionReward[]> {
 }
 
 export async function redeemCompetitionReward(id: string): Promise<CompetitionReward> {
+  // Child-safety (SF-7 / NDPR): a minor-without-consent cannot redeem — fail-closed
+  // on BOTH mock and live, using the shared academy profile's consent state
+  // (the competition profile has no minor/consent of its own). Previously ungated.
+  assertCanSpend(spendConsentState());
   if (USE_MOCK) {
     await delay(480);
     const reward = compRewards.find((r) => r.id === id);

@@ -15,6 +15,7 @@ import { USE_MOCK, ACADEMY_API_BASE } from './constants';
 import { track } from './analytics';
 import { enqueue } from './offlineQueue';
 import { creditPoints, type PointsLedgerState } from './pointsLedger';
+import { assertCanSpend, type SpendConsentState } from './consent';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -1954,11 +1955,19 @@ function issueCredentialLocal(trackSlug: TradeSlug | undefined, trackId: string,
 
 /** Fail-closed gate: minors must have guardian consent before spending/redeeming. */
 function assertConsentForSpend() {
-  if (USE_MOCK) {
-    if (profile.isMinor && profile.guardianConsent !== 'granted') {
-      throw new Error('Guardian consent required before purchases or redemptions.');
-    }
-  }
+  // Fail-closed on BOTH the mock AND live paths (previously gated on USE_MOCK, so
+  // the live path was fail-OPEN). Client defence in depth; the server is also
+  // authoritative. NDPR / SF-7: a minor may not spend without guardian consent.
+  assertCanSpend(spendConsentState());
+}
+
+/**
+ * The current learner's spend-consent state. Exported so the competition-rewards
+ * module (which has no minor/consent of its own) can enforce the same fail-closed
+ * gate against the single shared academy profile.
+ */
+export function spendConsentState(): SpendConsentState {
+  return { isMinor: profile.isMinor, guardianConsent: profile.guardianConsent };
 }
 
 /**
