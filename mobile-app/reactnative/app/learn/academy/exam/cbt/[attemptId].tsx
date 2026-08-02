@@ -62,7 +62,13 @@ export default function CbtSimulator() {
 
   const select = (optionId: string) => {
     if (!q) return;
-    const next = { ...answers, [q.id]: [optionId] };
+    // Multi-answer questions toggle membership; single-answer replace. Without
+    // the multi branch a `multi` blueprint question is unanswerable/miscored.
+    const current = answers[q.id] ?? [];
+    const picks = q.type === 'multi'
+      ? (current.includes(optionId) ? current.filter((o) => o !== optionId) : [...current, optionId])
+      : [optionId];
+    const next = { ...answers, [q.id]: picks };
     setAnswers(next);
     patchAttemptLocal(attemptId, { answers: next });
   };
@@ -75,8 +81,13 @@ export default function CbtSimulator() {
     patchAttemptLocal(attemptId, { flagged: [...next] });
   };
 
-  const goSubmit = (auto = false) => {
-    patchAttemptLocal(attemptId, { answers, flagged: [...flagged], remainingSec: remaining });
+  const goSubmit = (_auto = false) => {
+    // Do NOT re-persist from component state here. Answers, flags and the
+    // countdown are already saved incrementally (select / toggleFlag / each tick
+    // call patchAttemptLocal with fresh values). On the timer's auto-submit this
+    // function runs from the countdown effect's closure, which captured the
+    // STALE post-hydration state ({} answers, empty flags) — re-patching it would
+    // overwrite the good working copy and score a completed attempt 0%.
     router.replace(`/learn/academy/exam/submit/${attemptId}`);
   };
 
