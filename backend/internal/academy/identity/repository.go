@@ -60,8 +60,9 @@ func (r *Repository) ListRoles(ctx context.Context, userID string) ([]RoleGrant,
 func (r *Repository) UpsertProfile(ctx context.Context, userID string, req UpsertProfileRequest) (*Profile, error) {
 	const q = `
 		INSERT INTO public.academy_profiles
-			(user_id, role, class_id, stream, trade_track, school, display_name, avatar_url, entry_year, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
+			(user_id, role, class_id, stream, trade_track, school, display_name, avatar_url, entry_year,
+			 dob, is_minor, kyc_tier, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, $10::date, $11, $12, now())
 		ON CONFLICT (user_id, role) DO UPDATE SET
 			class_id     = EXCLUDED.class_id,
 			stream       = EXCLUDED.stream,
@@ -70,9 +71,21 @@ func (r *Repository) UpsertProfile(ctx context.Context, userID string, req Upser
 			display_name = EXCLUDED.display_name,
 			avatar_url   = EXCLUDED.avatar_url,
 			entry_year   = EXCLUDED.entry_year,
+			dob          = EXCLUDED.dob,
+			is_minor     = EXCLUDED.is_minor,
+			kyc_tier     = EXCLUDED.kyc_tier,
 			updated_at   = now()`
+	isMinor := false
+	if req.IsMinor != nil {
+		isMinor = *req.IsMinor
+	}
+	kyc := 0
+	if req.KycTier != nil {
+		kyc = *req.KycTier
+	}
 	if _, err := r.db.Exec(ctx, q, userID, string(req.Role), req.ClassID, req.Stream,
-		req.TradeTrack, req.School, req.DisplayName, req.AvatarURL, req.EntryYear); err != nil {
+		req.TradeTrack, req.School, req.DisplayName, req.AvatarURL, req.EntryYear,
+		req.Dob, isMinor, kyc); err != nil {
 		return nil, err
 	}
 	return r.GetProfile(ctx, userID, req.Role)
@@ -82,12 +95,12 @@ func (r *Repository) UpsertProfile(ctx context.Context, userID string, req Upser
 func (r *Repository) GetProfile(ctx context.Context, userID string, role Role) (*Profile, error) {
 	const q = `
 		SELECT id, user_id, role, class_id, stream, trade_track, school, display_name,
-		       avatar_url, entry_year, created_at, updated_at
+		       avatar_url, entry_year, dob::text, is_minor, kyc_tier, created_at, updated_at
 		FROM public.academy_profiles WHERE user_id = $1 AND role = $2`
 	p := &Profile{}
 	err := r.db.QueryRow(ctx, q, userID, string(role)).Scan(
 		&p.ID, &p.UserID, &p.Role, &p.ClassID, &p.Stream, &p.TradeTrack, &p.School,
-		&p.DisplayName, &p.AvatarURL, &p.EntryYear, &p.CreatedAt, &p.UpdatedAt)
+		&p.DisplayName, &p.AvatarURL, &p.EntryYear, &p.Dob, &p.IsMinor, &p.KycTier, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -98,7 +111,7 @@ func (r *Repository) GetProfile(ctx context.Context, userID string, role Role) (
 func (r *Repository) ListProfiles(ctx context.Context, userID string) ([]Profile, error) {
 	const q = `
 		SELECT id, user_id, role, class_id, stream, trade_track, school, display_name,
-		       avatar_url, entry_year, created_at, updated_at
+		       avatar_url, entry_year, dob::text, is_minor, kyc_tier, created_at, updated_at
 		FROM public.academy_profiles WHERE user_id = $1 ORDER BY created_at ASC`
 	rows, err := r.db.Query(ctx, q, userID)
 	if err != nil {
@@ -109,7 +122,7 @@ func (r *Repository) ListProfiles(ctx context.Context, userID string) ([]Profile
 	for rows.Next() {
 		var p Profile
 		if err := rows.Scan(&p.ID, &p.UserID, &p.Role, &p.ClassID, &p.Stream, &p.TradeTrack,
-			&p.School, &p.DisplayName, &p.AvatarURL, &p.EntryYear, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			&p.School, &p.DisplayName, &p.AvatarURL, &p.EntryYear, &p.Dob, &p.IsMinor, &p.KycTier, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
