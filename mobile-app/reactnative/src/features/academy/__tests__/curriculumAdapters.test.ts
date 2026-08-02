@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { adaptClass, adaptVersion, adaptClasses, adaptVersions, bandFromPhase, adaptSubject, adaptSubjects, adaptTopic, adaptTopics, adaptObjective, adaptObjectives } from '../curriculumAdapters.ts';
+import { adaptClass, adaptVersion, adaptClasses, adaptVersions, bandFromPhase, adaptSubject, adaptSubjects, adaptTopic, adaptTopics, adaptObjective, adaptObjectives, adaptLesson, adaptLessons } from '../curriculumAdapters.ts';
 
 // ── Real fixtures (verbatim from the running backend) ──────────────────────────
 const GO_CLASS_P1 = { id: 'c8fba02e', version_id: '2be23de0', phase: 'LowerPrimary', code: 'P1', name: 'Primary 1', ordinal: 1 };
@@ -136,4 +136,39 @@ test('adaptObjective defaults per-user mastery fields', () => {
 test('adaptObjectives unwraps {objectives:[…]}; empty → []', () => {
   assert.equal(adaptObjectives({ objectives: [GO_OBJ_CELL1, { ...GO_OBJ_CELL1, id: 'o2' }] }).length, 2);
   assert.deepEqual(adaptObjectives({} as never), []);
+});
+
+// ── Lessons (real seeded shape from /topics/:uuid/lessons) ────────────────────
+const GO_LESSON_CELL = {
+  id: 'le111', objective_id: 'd26678a1', title: 'Plant and animal cells', type: 'video',
+  version_id: '2be23de0', media_ref: 'academy/jss1/bsc/cell-intro.mp4',
+  transcript: 'A cell is the basic unit of life...', duration_s: 420, status: 'live',
+  created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+};
+
+test('adaptLesson maps data fields + injects the caller topicId', () => {
+  const l = adaptLesson(GO_LESSON_CELL, 'cd55da30');
+  assert.equal(l.id, 'le111');
+  assert.equal(l.topicId, 'cd55da30');
+  assert.equal(l.title, 'Plant and animal cells');
+  assert.equal(l.durationSec, 420);
+  assert.equal(l.transcript, 'A cell is the basic unit of life...');
+});
+
+test('adaptLesson derives display/offline defaults', () => {
+  const l = adaptLesson(GO_LESSON_CELL, 'cd55da30');
+  assert.equal(l.hasCaptions, true, 'captions available when a transcript exists');
+  assert.equal(l.downloaded, false);
+  assert.ok(l.dataBudgetKb > 0);
+  // no transcript → no captions, empty string (never undefined)
+  const noT = adaptLesson({ ...GO_LESSON_CELL, transcript: null }, 'cd55da30');
+  assert.equal(noT.hasCaptions, false);
+  assert.equal(noT.transcript, '');
+});
+
+test('adaptLessons unwraps {lessons:[…]} and injects topicId on each; empty → []', () => {
+  const out = adaptLessons({ lessons: [GO_LESSON_CELL, { ...GO_LESSON_CELL, id: 'le2' }] }, 'cd55da30');
+  assert.equal(out.length, 2);
+  assert.ok(out.every((l) => l.topicId === 'cd55da30'));
+  assert.deepEqual(adaptLessons({} as never, 'cd55da30'), []);
 });

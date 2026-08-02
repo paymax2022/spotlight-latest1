@@ -56,6 +56,8 @@ func RegisterAcademyCurriculum(member *gin.RouterGroup, admin *gin.RouterGroup, 
 		mg.GET("/classes/:id/subjects", h.ListSubjects)
 		mg.GET("/subjects/:id/topics", h.ListTopics)
 		mg.GET("/topics/:id/objectives", h.ListObjectives)
+		mg.GET("/topics/:id/lessons", h.ListTopicLessons)
+		mg.GET("/lessons/:id", h.GetLesson)
 		mg.GET("/streams", h.ListStreams)
 		mg.GET("/trade-tracks", h.ListTradeTracks)
 	}
@@ -136,6 +138,24 @@ func (h *Handler) ListTopics(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"topics": out})
+}
+
+func (h *Handler) ListTopicLessons(c *gin.Context) {
+	out, err := h.svc.ListTopicLessons(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"lessons": out})
+}
+
+func (h *Handler) GetLesson(c *gin.Context) {
+	out, err := h.svc.GetLesson(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func (h *Handler) ListObjectives(c *gin.Context) {

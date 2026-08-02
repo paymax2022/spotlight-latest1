@@ -432,3 +432,52 @@ func itoa(n int) string {
 	}
 	return string(buf[i:])
 }
+
+// ── Lessons (read-only bridge into the content package's academy_edu_lessons) ──
+// NOTE: reads academy_edu_lessons (objective_id-keyed), NOT the unrelated legacy
+// academy_lessons (module_id-keyed) film/vocational table — see 20260815 core.
+const lessonCols = `id, objective_id, title, type, version_id, media_ref, transcript, duration_s, status, created_at, updated_at`
+const lessonColsL = `l.id, l.objective_id, l.title, l.type, l.version_id, l.media_ref, l.transcript, l.duration_s, l.status, l.created_at, l.updated_at`
+
+func scanLesson(row interface{ Scan(dest ...any) error }) (*Lesson, error) {
+	l := &Lesson{}
+	err := row.Scan(&l.ID, &l.ObjectiveID, &l.Title, &l.Type, &l.VersionID,
+		&l.MediaRef, &l.Transcript, &l.DurationS, &l.Status, &l.CreatedAt, &l.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+// ListTopicLessons returns a topic's lessons via its objectives, newest first
+// (topic → academy_learning_objectives → academy_edu_lessons).
+func (r *Repository) ListTopicLessons(ctx context.Context, topicID string) ([]Lesson, error) {
+	const q = `SELECT ` + lessonColsL + `
+		FROM public.academy_edu_lessons l
+		JOIN public.academy_learning_objectives o ON o.id = l.objective_id
+		WHERE o.topic_id = $1
+		ORDER BY l.updated_at DESC`
+	rows, err := r.db.Query(ctx, q, topicID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Lesson{}
+	for rows.Next() {
+		l, err := scanLesson(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *l)
+	}
+	return out, rows.Err()
+}
+
+// GetLessonByID returns a single lesson row.
+func (r *Repository) GetLessonByID(ctx context.Context, id string) (*Lesson, error) {
+	const q = `SELECT ` + lessonCols + ` FROM public.academy_edu_lessons WHERE id = $1`
+	return scanLesson(r.db.QueryRow(ctx, q, id))
+}

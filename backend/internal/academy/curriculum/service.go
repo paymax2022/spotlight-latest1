@@ -52,6 +52,14 @@ func (s *Service) GetObjectives(ctx context.Context, topicID string) ([]Learning
 	return s.repo.ListObjectives(ctx, topicID)
 }
 
+func (s *Service) ListTopicLessons(ctx context.Context, topicID string) ([]Lesson, error) {
+	return s.repo.ListTopicLessons(ctx, topicID)
+}
+
+func (s *Service) GetLesson(ctx context.Context, id string) (*Lesson, error) {
+	return s.repo.GetLessonByID(ctx, id)
+}
+
 func (s *Service) ListStreams(ctx context.Context) ([]Stream, error) { return s.repo.ListStreams(ctx) }
 
 func (s *Service) ListTradeTracks(ctx context.Context) ([]TradeTrack, error) {

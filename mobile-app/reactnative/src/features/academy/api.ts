@@ -17,7 +17,7 @@ import { enqueue } from './offlineQueue';
 import { creditPoints, type PointsLedgerState } from './pointsLedger';
 import { assertCanSpend, type SpendConsentState } from './consent';
 import { upsertBookmark } from './bookmarks';
-import { adaptClasses, adaptVersions, adaptSubjects, adaptTopics, adaptObjectives, type GoClass, type GoVersion, type GoSubject, type GoTopic, type GoObjective } from './curriculumAdapters';
+import { adaptClasses, adaptVersions, adaptSubjects, adaptTopics, adaptObjectives, adaptLessons, adaptLesson, type GoClass, type GoVersion, type GoSubject, type GoTopic, type GoObjective, type GoLesson } from './curriculumAdapters';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -322,8 +322,11 @@ export async function getLessons(topicId: string): Promise<Lesson[]> {
     await delay();
     return M.MOCK_LESSONS.filter((l) => l.topicId === topicId);
   }
-  const { data } = await api.get<Lesson[]>(`${B}/curriculum/topics/${topicId}/lessons`);
-  return data;
+  // Live: topicId is the Go topic UUID (from the live topics call). The bridge
+  // returns lessons via topic→objectives→academy_edu_lessons; inject topicId
+  // (Go rows carry objective_id, not topic_id).
+  const { data } = await api.get<{ lessons?: GoLesson[] }>(`${B}/curriculum/topics/${topicId}/lessons`);
+  return adaptLessons(data, topicId);
 }
 
 export async function getLesson(id: string): Promise<Lesson> {
@@ -333,8 +336,10 @@ export async function getLesson(id: string): Promise<Lesson> {
     if (!l) throw new Error('Lesson not found');
     return l;
   }
-  const { data } = await api.get<Lesson>(`${B}/curriculum/lessons/${id}`);
-  return data;
+  // Live: the single-lesson route carries objective_id, not topic_id — the player
+  // doesn't rely on topicId here, so adapt with an empty topicId.
+  const { data } = await api.get<GoLesson>(`${B}/curriculum/lessons/${id}`);
+  return adaptLesson(data, '');
 }
 
 // ── Assessment ────────────────────────────────────────────────────────────────
