@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { adaptClass, adaptVersion, adaptClasses, adaptVersions, bandFromPhase, adaptSubject, adaptSubjects } from '../curriculumAdapters.ts';
+import { adaptClass, adaptVersion, adaptClasses, adaptVersions, bandFromPhase, adaptSubject, adaptSubjects, adaptTopic, adaptTopics } from '../curriculumAdapters.ts';
 
 // ── Real fixtures (verbatim from the running backend) ──────────────────────────
 const GO_CLASS_P1 = { id: 'c8fba02e', version_id: '2be23de0', phase: 'LowerPrimary', code: 'P1', name: 'Primary 1', ordinal: 1 };
@@ -91,4 +91,28 @@ test('adaptSubjects unwraps {subjects:[…]} and injects classCode on each', () 
   assert.equal(out.length, 2);
   assert.ok(out.every((s) => s.classCode === 'JSS1'));
   assert.deepEqual(adaptSubjects({} as never, 'JSS1'), []);
+});
+
+// ── Topics (real fixture from /subjects/:uuid/topics) ─────────────────────────
+const GO_TOPIC_CELL = { id: 'cd55da30', subject_id: 'da4831ee', code: 'BSC-CELL', title: 'The Cell', ordinal: 1 };
+
+test('adaptTopic maps snake→camel (title→name, ordinal→order, subject_id→subjectId)', () => {
+  const t = adaptTopic(GO_TOPIC_CELL);
+  assert.equal(t.id, 'cd55da30');
+  assert.equal(t.subjectId, 'da4831ee');
+  assert.equal(t.name, 'The Cell');
+  assert.equal(t.order, 1);
+});
+
+test('adaptTopic defaults per-user + count fields (pending backend)', () => {
+  const t = adaptTopic(GO_TOPIC_CELL);
+  assert.equal(t.mastery, 'not_started');
+  assert.equal(t.locked, false);
+  assert.equal(t.objectiveCount, 0);
+  assert.equal(t.lessonCount, 0);
+});
+
+test('adaptTopics unwraps {topics:[…]}; empty → []', () => {
+  assert.equal(adaptTopics({ topics: [GO_TOPIC_CELL, { ...GO_TOPIC_CELL, id: 't2' }] }).length, 2);
+  assert.deepEqual(adaptTopics({} as never), []);
 });

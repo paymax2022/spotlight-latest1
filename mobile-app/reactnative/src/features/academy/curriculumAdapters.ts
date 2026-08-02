@@ -10,7 +10,7 @@
 // examRelevance are all absent), and /classes/:id/subjects is keyed by the class
 // UUID, not the class code the mobile holds. Tracked for a backend slice.
 
-import type { AcademyClass, CurriculumVersion, Subject, ExamSlug } from './types';
+import type { AcademyClass, CurriculumVersion, Subject, ExamSlug, Topic } from './types';
 
 export interface GoClass {
   id: string; version_id: string; phase: string; code: string; name: string; ordinal: number;
@@ -21,6 +21,9 @@ export interface GoVersion {
 export interface GoSubject {
   id: string; version_id: string; class_id: string; code: string; name: string;
   kind: string; stream?: string | null; exam_relevance?: string[];
+}
+export interface GoTopic {
+  id: string; subject_id: string; code: string; title: string; ordinal: number;
 }
 
 /** Map the Go class phase/code to the mobile band bucket. */
@@ -106,4 +109,32 @@ export function adaptSubject(g: GoSubject, classCode: string): Subject {
 export function adaptSubjects(res: { subjects?: GoSubject[] } | GoSubject[] | null | undefined, classCode: string): Subject[] {
   const rows = Array.isArray(res) ? res : res?.subjects ?? [];
   return rows.map((s) => adaptSubject(s, classCode));
+}
+
+// ── Topics ───────────────────────────────────────────────────────────────────
+/**
+ * Adapt a Go topic → mobile Topic. mastery/locked/examRelevant default to
+ * unlocked-not-started, and objectiveCount/lessonCount to 0 — they need per-user
+ * progress + backend counts the API does not yet serve (tracked). The subject id
+ * the caller passes is already the Go subject UUID (from the live subjects call),
+ * so no code resolution is needed here.
+ */
+export function adaptTopic(g: GoTopic): Topic {
+  return {
+    id: g.id,
+    subjectId: g.subject_id,
+    name: g.title,
+    order: g.ordinal,
+    mastery: 'not_started',
+    locked: false,
+    examRelevant: false,
+    objectiveCount: 0,
+    lessonCount: 0,
+  };
+}
+
+/** Unwrap {topics:[…]} (or bare array / empty) and adapt. Never throws. */
+export function adaptTopics(res: { topics?: GoTopic[] } | GoTopic[] | null | undefined): Topic[] {
+  const rows = Array.isArray(res) ? res : res?.topics ?? [];
+  return rows.map(adaptTopic);
 }
