@@ -1,0 +1,30 @@
+# CODEOWNERS — required reviewers per path.
+# Enable "Require review from Code Owners" in branch protection for `main`.
+#
+# TODO(you): replace the placeholder team/user handles below with real GitHub
+# teams (e.g. @your-org/platform). An owner that doesn't exist silently disables
+# the rule, so verify each handle resolves in the repo's org.
+
+# Default owner for everything not matched more specifically.
+*                                   @paymax2022/maintainers
+
+# ── Money path (highest scrutiny — iron rules apply) ───────────────────────────
+/backend/internal/finance/          @paymax2022/finance-reviewers @paymax2022/maintainers
+/backend/internal/provider/         @paymax2022/finance-reviewers
+/frontend-web/tests/                @paymax2022/finance-reviewers
+
+# ── Database schema (additive-only; expand/contract) ──────────────────────────
+/supabase/migrations/               @paymax2022/db-reviewers @paymax2022/maintainers
+
+# ── API contract (spec-first) ─────────────────────────────────────────────────
+/contracts/                         @paymax2022/api-reviewers @paymax2022/maintainers
+/contracts/openapi.yaml             @paymax2022/api-reviewers
+
+# ── CI/CD, infra, secrets posture ─────────────────────────────────────────────
+/.github/                           @paymax2022/platform
+/infra/                             @paymax2022/platform
+/docs/launch/                       @paymax2022/platform
+
+# ── Auth / security-sensitive middleware ──────────────────────────────────────
+/backend/internal/middleware/       @paymax2022/platform @paymax2022/maintainers
+/frontend-web/src/middleware.ts     @paymax2022/platform

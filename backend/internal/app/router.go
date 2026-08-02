@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,6 +22,12 @@ import (
 func NewRouter(cfg config.Config) *gin.Engine {
 	r := gin.Default()
 	r.Use(middleware.CORSMiddleware(cfg.CORSAllowOrigins))
+
+	// Liveness (no dependencies): the orchestrator restarts the container if this
+	// fails. Kept dependency-free so a slow DB/Redis never triggers a kill loop.
+	r.GET("/healthz", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
 
 	health := handlers.NewHealthHandler()
 	supabase := integrations.NewSupabaseRestClient(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey)
@@ -346,6 +353,43 @@ func NewRouter(cfg config.Config) *gin.Engine {
 			sharedRedis = rc
 		}
 	}
+
+	// Readiness: only take traffic when required dependencies are reachable. The DB
+	// is required (money path); Redis is a latency optimization (never a correctness
+	// dependency — see above), so it is reported but does not fail readiness.
+	r.GET("/readyz", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		checks := gin.H{}
+		ready := true
+		if cfg.DatabaseURL != "" {
+			switch {
+			case sharedPool == nil:
+				checks["database"] = "unavailable"
+				ready = false
+			case sharedPool.Ping(ctx) != nil:
+				checks["database"] = "error"
+				ready = false
+			default:
+				checks["database"] = "ok"
+			}
+		}
+		if cfg.RedisURL != "" {
+			switch {
+			case sharedRedis == nil:
+				checks["redis"] = "unavailable"
+			case sharedRedis.Ping(ctx).Err() != nil:
+				checks["redis"] = "error"
+			default:
+				checks["redis"] = "ok"
+			}
+		}
+		status := http.StatusOK
+		if !ready {
+			status = http.StatusServiceUnavailable
+		}
+		c.JSON(status, gin.H{"ready": ready, "checks": checks})
+	})
 
 	// Finance modules — wired only when the shared pool is present. Returns the
 	// Direct Referral Rewards engine service (nil when flag-off) so Phase-1 revenue
