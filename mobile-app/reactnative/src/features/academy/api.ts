@@ -18,6 +18,7 @@ import { creditPoints, type PointsLedgerState } from './pointsLedger';
 import { assertCanSpend, type SpendConsentState } from './consent';
 import { upsertBookmark } from './bookmarks';
 import { adaptClasses, adaptVersions, adaptSubjects, adaptTopics, adaptObjectives, adaptLessons, adaptLesson, type GoClass, type GoVersion, type GoSubject, type GoTopic, type GoObjective, type GoLesson } from './curriculumAdapters';
+import { adaptPracticeItems, toPracticeSubmit, adaptPracticeResult, type GoQuestionItem, type GoPracticeResult } from './practiceAdapters';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -352,8 +353,10 @@ export async function getPractice(objectiveId?: string): Promise<Question[]> {
     // Fall back to a small mixed set if the objective has no dedicated items.
     return pool.length ? pool : M.MOCK_QUESTIONS.slice(0, 3);
   }
-  const { data } = await api.get<Question[]>(`${B}/practice`, { params: { objective: objectiveId } });
-  return data;
+  // Live: Go returns { data: [question items] } with the answer key stripped →
+  // adapt to mobile Question (grading stays server-authoritative).
+  const { data } = await api.get<{ data?: GoQuestionItem[] }>(`${B}/practice`, { params: { objective: objectiveId } });
+  return adaptPracticeItems(data.data);
 }
 
 export async function submitPractice(sub: PracticeSubmission): Promise<PracticeResult> {
@@ -395,8 +398,18 @@ export async function submitPractice(sub: PracticeSubmission): Promise<PracticeR
     if (result.masteryGained) track('mastery_gained', { objective: sub.objectiveId });
     return result;
   }
-  const { data } = await api.post<PracticeResult>(`${B}/practice/submit`, sub);
-  return data;
+  // Live: send the learner's selections in the grader's shape and let the server
+  // score against the canonical key + advance mastery; adapt the result back.
+  const { data } = await api.post<{ data: GoPracticeResult }>(
+    `${B}/practice/submit`,
+    toPracticeSubmit(sub.objectiveId, sub.answers),
+  );
+  const result = adaptPracticeResult(data.data, sub.answers);
+  // Mirror the offline reward + telemetry so live and mock behave identically.
+  creditPointsLocal(result.pointsEarned, 'Practice set completed');
+  track('practice_completed', { score: result.scorePct, objective: sub.objectiveId });
+  if (result.masteryGained) track('mastery_gained', { objective: sub.objectiveId });
+  return result;
 }
 
 export async function getMastery(): Promise<MasterySnapshot[]> {

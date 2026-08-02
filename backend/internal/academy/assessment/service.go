@@ -125,17 +125,29 @@ func (s *Service) RunMasteryCheck(ctx context.Context, userID, objectiveID strin
 		return nil, ErrInvalidInput
 	}
 
-	// Score server-side against the canonical answers.
+	// Score server-side against the canonical answers, collecting a per-question
+	// review for the learner's post-submission feedback.
 	correct := 0
+	breakdown := make([]PracticeReview, 0, len(answers))
 	for _, a := range answers {
 		item, err := s.repo.GetItem(ctx, a.QuestionItemID)
 		if err != nil {
 			// Unknown item id is an invalid submission, fail closed on that item.
+			breakdown = append(breakdown, PracticeReview{QuestionItemID: a.QuestionItemID, Correct: false})
 			continue
 		}
-		if isCorrect(item.Answer, a.Selected) {
+		ok := isCorrect(item.Answer, a.Selected)
+		if ok {
 			correct++
 		}
+		expl, _ := item.Answer["explanation"].(string)
+		breakdown = append(breakdown, PracticeReview{
+			QuestionItemID: a.QuestionItemID,
+			Stem:           item.Stem,
+			Correct:        ok,
+			CorrectAnswer:  item.Answer["correct"],
+			Explanation:    expl,
+		})
 	}
 	scored := len(answers)
 	score := 0.0
@@ -166,6 +178,14 @@ func (s *Service) RunMasteryCheck(ctx context.Context, userID, objectiveID strin
 	}
 
 	evtType := progressEventTypeFor(from, to)
+	if evtType == "" {
+		// No state change this submission, but it is still a practice attempt —
+		// log it as practice_recorded so it counts toward the min-practice-attempts
+		// guard (CountPracticeAttempts). Without this, in_progress → practiced is
+		// unreachable: the count never grows past the first bootstrap event and the
+		// mastery ladder dead-ends. Mirrors the standalone RecordPractice path.
+		evtType = EvtPracticeRecorded
+	}
 	if _, err := s.repo.ApplyProgression(ctx, userID, objectiveID, from, to, score, evtType,
 		map[string]any{"score": score, "correct": correct, "scored": scored, "attempts": attempts}); err != nil {
 		return nil, err
@@ -179,6 +199,7 @@ func (s *Service) RunMasteryCheck(ctx context.Context, userID, objectiveID strin
 		FromState:   from,
 		ToState:     to,
 		Upgraded:    from != to,
+		Breakdown:   breakdown,
 	}, nil
 }
 
