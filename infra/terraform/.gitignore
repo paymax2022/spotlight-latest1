@@ -1,0 +1,12 @@
+# Terraform local state / caches — never commit state or plans.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfplan
+# Do NOT ignore *.tfvars here — env tfvars are committed (no secrets in them);
+# secret VALUES live in Secret Manager, not in tfvars.
+override.tf
+override.tf.json
+*_override.tf

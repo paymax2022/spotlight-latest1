@@ -1,11 +1,18 @@
-# Deploy — build-once → promote (ENVIRONMENT-AND-GOLIVE.md §5). One immutable image
-# tagged by commit SHA flows dev→staging→prod; only config/secrets differ
-# (RAILS_MODE + provider creds). Prod is human-gated; rollback = redeploy a prior SHA.
-# Secrets come from GitHub Environments (vault), via OIDC — never the repo/image/logs.
+# Deploy backend — build once → promote the SAME image dev→staging→prod.
+# Auth to GCP via Workload Identity Federation (OIDC): no long-lived keys.
+# Prod is human-gated (GitHub Environment "production" → required reviewers).
+# Rollback = re-run with workflow_dispatch sha=<prior>, or shift Cloud Run traffic
+# to the previous revision (one gcloud command; see docs/launch blueprint §5).
+#
+# Required per-Environment config (see infra/terraform/README.md + BRANCH-PROTECTION.md):
+#   secrets:   GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_DEPLOY_SERVICE_ACCOUNT
+#   variables: GCP_PROJECT_ID, GCP_REGION, GCP_ARTIFACT_REGISTRY
 name: deploy
+
 on:
   push:
     branches: [main]
+    paths: ["backend/**", ".github/workflows/deploy.yml"]
   workflow_dispatch:
     inputs:
       sha:
@@ -14,54 +21,106 @@ on:
 
 permissions:
   contents: read
-  id-token: write # OIDC — short-lived cloud creds, least privilege
-  packages: write
+  id-token: write # OIDC — short-lived cloud creds
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE: ${{ github.repository }}/paymax-backend
+  SERVICE: paymax-backend
+  IMAGE_NAME: paymax/backend
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    environment: staging # build with staging identity; the image is env-agnostic
     outputs:
       sha: ${{ steps.meta.outputs.sha }}
+      image: ${{ steps.meta.outputs.image }}
     steps:
       - uses: actions/checkout@v4
-      - id: meta
-        run: echo "sha=${{ github.event.inputs.sha || github.sha }}" >> "$GITHUB_OUTPUT"
-      - uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build-once + push (immutable, SHA-tagged)
+          ref: ${{ github.event.inputs.sha || github.sha }}
+      - id: meta
         run: |
-          docker build -t "$REGISTRY/$IMAGE:${{ steps.meta.outputs.sha }}" backend
-          docker push "$REGISTRY/$IMAGE:${{ steps.meta.outputs.sha }}"
+          SHA="${{ github.event.inputs.sha || github.sha }}"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "image=${{ vars.GCP_ARTIFACT_REGISTRY }}/${IMAGE_NAME}:$SHA" >> "$GITHUB_OUTPUT"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+      - name: Build & push (immutable, SHA-tagged)
+        run: |
+          docker build -t "${{ steps.meta.outputs.image }}" backend
+          docker push "${{ steps.meta.outputs.image }}"
 
   staging:
     needs: build
     runs-on: ubuntu-latest
-    environment: staging # secrets: RAILS_MODE=sandbox + *_SANDBOX creds
+    environment: staging
     steps:
       - uses: actions/checkout@v4
-      - name: Run migrations (expand/contract, backward-compatible)
-        run: echo "TODO: apply supabase migrations to staging DB (make migrate-up with staging DATABASE_URL)"
-      - name: Deploy image to staging (rails=sandbox)
-        run: echo "TODO: deploy $REGISTRY/$IMAGE:${{ needs.build.outputs.sha }} via flyctl/gcloud/aws with RAILS_MODE=sandbox"
-      - name: Smoke tests (against provider sandboxes)
-        run: echo "TODO: hit /healthz + a BNPL/payout sandbox round-trip; fail the job on red"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      # Migrations run expand-first, decoupled from code that needs them (§10).
+      # TODO(you): wire supabase migration apply against the STAGING DB here
+      # (service-role creds from the staging Environment), e.g. `supabase db push`
+      # with a staging DATABASE_URL, or a dedicated migrate job/image.
+      - name: Deploy to Cloud Run (staging)
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --region "${{ vars.GCP_REGION }}" \
+            --image "${{ needs.build.outputs.image }}" \
+            --quiet
+      - name: Smoke test (/healthz + /readyz)
+        run: |
+          URL=$(gcloud run services describe "$SERVICE" --project "${{ vars.GCP_PROJECT_ID }}" --region "${{ vars.GCP_REGION }}" --format='value(status.url)')
+          curl -fsS "$URL/healthz" >/dev/null && echo "healthz OK"
+          curl -fsS "$URL/readyz"  >/dev/null && echo "readyz OK"
+          # TODO(you): add a sandbox money-path round-trip (e.g. payout) and fail on red.
 
   production:
-    needs: staging
+    needs: [build, staging]
     runs-on: ubuntu-latest
-    environment: production # protected: requires manual approval (human gate)
+    environment: production # protected: required reviewers = human gate
     steps:
       - uses: actions/checkout@v4
-      - name: Run migrations (already expand-applied in staging)
-        run: echo "TODO: apply pending additive migrations to prod DB"
-      - name: Deploy image to prod (rails=live, blue/green or canary)
-        run: echo "TODO: blue/green deploy $REGISTRY/$IMAGE:${{ needs.build.outputs.sha }} with RAILS_MODE=live; health-check; keep prior SHA for rollback"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      # TODO(you): apply the (already staging-verified, additive) migrations to PROD
+      # BEFORE routing traffic to code that requires them.
+      - name: Deploy canary (no traffic yet)
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --region "${{ vars.GCP_REGION }}" \
+            --image "${{ needs.build.outputs.image }}" \
+            --no-traffic --tag "sha-${{ needs.build.outputs.sha }}" \
+            --quiet
+      - name: Shift 10% to canary
+        run: |
+          gcloud run services update-traffic "$SERVICE" \
+            --project "${{ vars.GCP_PROJECT_ID }}" --region "${{ vars.GCP_REGION }}" \
+            --to-tags "sha-${{ needs.build.outputs.sha }}=10" --quiet
+      - name: Watch canary golden signals
+        run: |
+          echo "TODO(you): query Cloud Monitoring for error-rate/latency on the canary revision"
+          echo "for ~5-10 min; fail this step to auto-halt promotion (traffic stays 90% on stable)."
+          sleep 30
+      - name: Promote to 100%
+        run: |
+          gcloud run services update-traffic "$SERVICE" \
+            --project "${{ vars.GCP_PROJECT_ID }}" --region "${{ vars.GCP_REGION }}" \
+            --to-latest --quiet
       - name: Post-deploy health check
-        run: echo "TODO: verify golden signals; auto-rollback on canary error-rate breach"
+        run: |
+          URL=$(gcloud run services describe "$SERVICE" --project "${{ vars.GCP_PROJECT_ID }}" --region "${{ vars.GCP_REGION }}" --format='value(status.url)')
+          curl -fsS "$URL/healthz" >/dev/null && echo "prod healthz OK"

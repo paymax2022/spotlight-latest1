@@ -1,0 +1,58 @@
+# Deploy web apps (frontend-web + frontend-admin) to Vercel.
+# - PRs get a Preview deployment (URL commented by Vercel).
+# - Pushes to main promote to Production.
+# Replaces deploy-cpanel.yml — keep cPanel one release cycle as fallback, then delete.
+#
+# Required repo/Environment config (see docs/launch/BRANCH-PROTECTION.md):
+#   secrets:   VERCEL_TOKEN, VERCEL_ORG_ID,
+#              VERCEL_PROJECT_ID_WEB, VERCEL_PROJECT_ID_ADMIN
+name: deploy-web
+
+on:
+  push:
+    branches: [main]
+    paths: ["frontend-web/**", "frontend-admin/**", ".github/workflows/deploy-web.yml"]
+  pull_request:
+    paths: ["frontend-web/**", "frontend-admin/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write # allow the preview URL comment
+
+concurrency:
+  group: deploy-web-${{ matrix.app || 'all' }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: frontend-web
+            project_secret: VERCEL_PROJECT_ID_WEB
+          - app: frontend-admin
+            project_secret: VERCEL_PROJECT_ID_ADMIN
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets[matrix.project_secret] }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+      - name: Pull Vercel env (${{ github.ref == 'refs/heads/main' && 'production' || 'preview' }})
+        working-directory: ${{ matrix.app }}
+        run: vercel pull --yes --environment=${{ github.ref == 'refs/heads/main' && 'production' || 'preview' }} --token="${{ secrets.VERCEL_TOKEN }}"
+      - name: Build
+        working-directory: ${{ matrix.app }}
+        run: vercel build ${{ github.ref == 'refs/heads/main' && '--prod' || '' }} --token="${{ secrets.VERCEL_TOKEN }}"
+      - name: Deploy (prebuilt)
+        working-directory: ${{ matrix.app }}
+        run: |
+          vercel deploy --prebuilt ${{ github.ref == 'refs/heads/main' && '--prod' || '' }} \
+            --token="${{ secrets.VERCEL_TOKEN }}"
