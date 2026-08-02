@@ -1288,7 +1288,9 @@ export async function saveNote(lessonId: string, lessonTitle: string, subjectNam
     enqueue({ type: 'progress', payload: { kind: 'note', lessonId } });
     return note;
   }
-  const { data } = await api.post<LessonNote>(`${B}/learner/notes`, { lessonId, body });
+  // Send the title + subject too so the persisted note round-trips them (the
+  // backend stores what it's given; it can't resolve them from lessonId alone).
+  const { data } = await api.post<LessonNote>(`${B}/learner/notes`, { lessonId, lessonTitle, subjectName, body });
   return data;
 }
 

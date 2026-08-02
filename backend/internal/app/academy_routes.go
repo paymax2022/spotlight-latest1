@@ -30,6 +30,7 @@ import (
 	feesvault "spotlight/backend/internal/academy/fees/vault"
 	"spotlight/backend/internal/academy/gamification"
 	"spotlight/backend/internal/academy/identity"
+	"spotlight/backend/internal/academy/learner"
 	academylive "spotlight/backend/internal/academy/live"
 	"spotlight/backend/internal/academy/parent"
 	"spotlight/backend/internal/academy/progression"
@@ -136,6 +137,9 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 	commerce.RegisterAcademyCommerce(memberFin, adminRoot, pool, rbac, payRail, bnplRail, purchaseGate)
 
 	gamification.RegisterAcademyGamification(memberAcad, adminAcad, pool, rbac)
+	// Per-learner surface (bookmarks/notes persistence, curriculum search, daily
+	// goal). Always-on, member-scoped to the authenticated user; no admin routes.
+	learner.RegisterAcademyLearner(memberAcad, pool)
 	// Rewards credit the Paymax wallet ledger (golden rule 2/9): inject ledgerSvc.
 	rewards.RegisterAcademyRewards(memberAcad, adminAcad, pool, rbac, ledgerSvc, nil)
 
