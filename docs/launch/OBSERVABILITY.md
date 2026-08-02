@@ -118,9 +118,12 @@ is configured (auto on when `GOOGLE_CLOUD_PROJECT` is set):
 - ✅ OTel traces (backend → Cloud Trace) + web→backend trace-context propagation.
 - ✅ Business-metrics API (`internal/platform/metrics`) → Cloud Monitoring.
 - ✅ Uptime checks + symptom alert policies → email / Slack / PagerDuty channels.
+- ✅ Golden-signals dashboard (`infra/terraform/dashboard.tf`).
+- ✅ Mobile release pipeline (`eas.json` + `.github/workflows/mobile-eas.yml`).
+- ✅ Money-path load test (`infra/loadtest/money-path.js`, k6; thresholds = SLOs).
 
 ## Next (P2)
-- Add the `metrics.Record*` calls at the money-path decision points.
-- EAS source-map upload for mobile (org/project/token in EAS secrets).
-- SLO burn-rate alerts + per-service dashboards; deploy markers.
-- Load-test the money path and tune min/max Cloud Run instances.
+- Add the `metrics.Record*` calls at the money-path decision points (finance-owner review).
+- Real bundle IDs (replace `com.anonymous.*`) + `eas init`; EAS source-map upload secrets.
+- SLO objects + burn-rate alerts (multi-window) once a baseline exists.
+- Run the k6 load test against staging; tune Cloud Run min/max instances.
