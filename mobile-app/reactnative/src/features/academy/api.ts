@@ -20,7 +20,7 @@ import { upsertBookmark } from './bookmarks';
 import { adaptClasses, adaptVersions, adaptSubjects, adaptTopics, adaptObjectives, adaptLessons, adaptLesson, type GoClass, type GoVersion, type GoSubject, type GoTopic, type GoObjective, type GoLesson } from './curriculumAdapters';
 import { adaptPracticeItems, toPracticeSubmit, adaptPracticeResult, type GoQuestionItem, type GoPracticeResult } from './practiceAdapters';
 import { adaptStartedAttempt, toExamSubmit, adaptExamResult, adaptArena, adaptArenas, adaptBlueprints, type GoExamAttempt, type GoScoredAttempt, type GoExamResultProjection, type GoArena, type GoBlueprint } from './examAdapters';
-import { adaptGamificationProfile, adaptChallenges, type GoGamificationProfile, type GoChallenge } from './gamificationAdapters';
+import { adaptGamificationProfile, adaptChallenges, adaptBadges, type GoGamificationProfile, type GoChallenge, type GoBadgeView } from './gamificationAdapters';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -665,8 +665,9 @@ export async function getGamificationProfile(): Promise<GamificationProfile> {
 
 export async function getBadges(): Promise<Badge[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_BADGES; }
-  const { data } = await api.get<Badge[]>(`${B}/gamification/badges`);
-  return data;
+  // Live: Go returns { badges: [catalogue rows + earned status] } → unwrap + adapt.
+  const { data } = await api.get<{ badges?: GoBadgeView[] }>(`${B}/gamification/badges`);
+  return adaptBadges(data.badges);
 }
 
 export async function getChallenges(): Promise<Challenge[]> {

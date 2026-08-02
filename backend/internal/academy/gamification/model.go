@@ -35,6 +35,19 @@ type Badge struct {
 	Icon     *string        `json:"icon,omitempty"`
 }
 
+// BadgeView is a badge definition joined with the caller's earned status — the
+// member read surface (the whole catalog, each flagged earned/not). description
+// is lifted from the criteria jsonb.
+type BadgeView struct {
+	ID          string     `json:"id"`
+	Code        string     `json:"code"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Icon        *string    `json:"icon,omitempty"`
+	Earned      bool       `json:"earned"`
+	EarnedAt    *time.Time `json:"earned_at,omitempty"`
+}
+
 // UserBadge mirrors public.academy_user_badges (PK user_id, badge_id).
 type UserBadge struct {
 	UserID   string    `json:"user_id"`

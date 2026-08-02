@@ -530,6 +530,11 @@ func (a academyGamifierAdapter) ExtendStreak(ctx context.Context, userID string)
 	return err
 }
 
+func (a academyGamifierAdapter) EvaluateBadges(ctx context.Context, userID string, counters map[string]int64) error {
+	_, err := a.gam.EvaluateBadges(ctx, userID, counters)
+	return err
+}
+
 type feesGamificationLadder struct{ gam *gamification.Service }
 
 func (a feesGamificationLadder) EnsureLeaderboard(ctx context.Context, scope, scopeRef, subject string) (leaderboardID string, err error) {

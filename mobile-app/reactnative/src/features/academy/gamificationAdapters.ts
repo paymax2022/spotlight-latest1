@@ -5,7 +5,7 @@
 // freezeTokens, rank?}). This pure adapter bridges them, computing xpToNext from
 // the backend's level curve.
 
-import type { GamificationProfile, Challenge } from './types';
+import type { GamificationProfile, Challenge, Badge } from './types';
 
 export interface GoGamificationProfile {
   user_id: string;
@@ -27,6 +27,34 @@ const LEVEL_STEP_XP = 150;
 export function xpThresholdForNextLevel(level: number): number {
   const n = Math.max(1, Math.floor(level));
   return n * LEVEL_BASE_XP + ((n - 1) * n) / 2 * LEVEL_STEP_XP;
+}
+
+// ── Badges ───────────────────────────────────────────────────────────────────
+
+export interface GoBadgeView {
+  id: string;
+  code: string;
+  name: string;
+  description?: string;
+  icon?: string | null;
+  earned?: boolean;
+  earned_at?: string | null;
+}
+
+/** Adapt a Go badge-view (catalogue row + earned status) → mobile Badge. */
+export function adaptBadge(go: GoBadgeView): Badge {
+  return {
+    id: go.id,
+    name: go.name,
+    description: go.description ?? '',
+    icon: go.icon ?? 'award',
+    earned: !!go.earned,
+    earnedAt: go.earned_at ?? undefined,
+  };
+}
+
+export function adaptBadges(rows: GoBadgeView[] | undefined): Badge[] {
+  return (rows ?? []).map(adaptBadge);
 }
 
 // ── Challenges ───────────────────────────────────────────────────────────────

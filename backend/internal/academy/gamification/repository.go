@@ -3,6 +3,7 @@ package gamification
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -90,6 +91,37 @@ func (r *Repository) UpsertBadge(ctx context.Context, in UpsertBadgeRequest) (*B
 		return nil, fmt.Errorf("gamification: upsert badge: %w", err)
 	}
 	return b, nil
+}
+
+// ListBadgesWithEarned returns the full badge catalogue, each flagged with the
+// caller's earned status (LEFT JOIN). description is lifted from criteria.
+func (r *Repository) ListBadgesWithEarned(ctx context.Context, userID string) ([]BadgeView, error) {
+	const q = `
+		SELECT b.id, b.code, b.name, b.criteria, b.icon, ub.earned_at
+		FROM academy_badges b
+		LEFT JOIN academy_user_badges ub ON ub.badge_id = b.id AND ub.user_id = $1
+		ORDER BY b.code`
+	rows, err := r.db.Query(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []BadgeView{}
+	for rows.Next() {
+		var v BadgeView
+		var criteria map[string]any
+		var earnedAt *time.Time
+		if err := rows.Scan(&v.ID, &v.Code, &v.Name, &criteria, &v.Icon, &earnedAt); err != nil {
+			return nil, err
+		}
+		if d, ok := criteria["description"].(string); ok {
+			v.Description = d
+		}
+		v.Earned = earnedAt != nil
+		v.EarnedAt = earnedAt
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 func (r *Repository) ListUserBadges(ctx context.Context, userID string) ([]UserBadge, error) {

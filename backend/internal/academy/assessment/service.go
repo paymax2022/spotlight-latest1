@@ -23,6 +23,7 @@ type Service struct {
 type Gamifier interface {
 	AwardXP(ctx context.Context, userID, action string, amount int64) error
 	ExtendStreak(ctx context.Context, userID string) error
+	EvaluateBadges(ctx context.Context, userID string, counters map[string]int64) error
 }
 
 // NewService wires the assessment service with the default thresholds.
@@ -213,6 +214,13 @@ func (s *Service) RunMasteryCheck(ctx context.Context, userID, objectiveID strin
 	if s.gamifier != nil {
 		_ = s.gamifier.AwardXP(ctx, userID, "practice_completed", int64(correct*10))
 		_ = s.gamifier.ExtendStreak(ctx, userID)
+		// Counters for milestone badges (increments suffice for "first X" at min:1;
+		// grants are idempotent). objectives_mastered only when this run mastered it.
+		counters := map[string]int64{"practices_completed": 1}
+		if to == StateMastered {
+			counters["objectives_mastered"] = 1
+		}
+		_ = s.gamifier.EvaluateBadges(ctx, userID, counters)
 	}
 
 	return &PracticeResult{

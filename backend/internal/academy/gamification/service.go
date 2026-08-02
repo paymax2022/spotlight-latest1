@@ -131,8 +131,10 @@ func (s *Service) GetProfile(ctx context.Context, userID string) (*Profile, erro
 	return s.loadOrInit(ctx, userID)
 }
 
-func (s *Service) GetBadges(ctx context.Context, userID string) ([]UserBadge, error) {
-	return s.repo.ListUserBadges(ctx, userID)
+// GetBadges returns the full badge catalogue flagged with the caller's earned
+// status (was: earned ids only, which the UI can't render without names/icons).
+func (s *Service) GetBadges(ctx context.Context, userID string) ([]BadgeView, error) {
+	return s.repo.ListBadgesWithEarned(ctx, userID)
 }
 
 func (s *Service) GetChallenges(ctx context.Context) ([]Challenge, error) {

@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { adaptGamificationProfile, xpThresholdForNextLevel, adaptChallenge, adaptChallenges } from '../gamificationAdapters.ts';
+import { adaptGamificationProfile, xpThresholdForNextLevel, adaptChallenge, adaptChallenges, adaptBadge, adaptBadges } from '../gamificationAdapters.ts';
 
 test('xpThresholdForNextLevel mirrors the backend curve (base 100, step 150)', () => {
   assert.equal(xpThresholdForNextLevel(1), 100, 'level 1 → 2 at 100 XP');
@@ -75,4 +75,26 @@ test('adaptChallenges tolerates undefined + preserves sponsor', () => {
   const c = adaptChallenges([{ id: 's', code: 'S', name: 'Sponsored', kind: 'sponsor', sponsor_id: 'spon-1' }]);
   assert.equal(c[0].cadence, 'sponsor');
   assert.equal(c[0].sponsor, 'spon-1');
+});
+
+test('adaptBadge maps a catalogue view (earned) → mobile Badge', () => {
+  const b = adaptBadge({ id: 'b1', code: 'EXAM-DEBUT', name: 'Exam Debut', description: 'Complete your first mock exam.', icon: 'graduation-cap', earned: true, earned_at: '2026-08-02T10:00:00Z' });
+  assert.equal(b.id, 'b1');
+  assert.equal(b.name, 'Exam Debut');
+  assert.equal(b.description, 'Complete your first mock exam.');
+  assert.equal(b.icon, 'graduation-cap');
+  assert.equal(b.earned, true);
+  assert.equal(b.earnedAt, '2026-08-02T10:00:00Z');
+});
+
+test('adaptBadge: unearned badge → earned false, no earnedAt, icon fallback', () => {
+  const b = adaptBadge({ id: 'b2', code: 'ON-A-ROLL', name: 'On a Roll' });
+  assert.equal(b.earned, false);
+  assert.equal(b.earnedAt, undefined);
+  assert.equal(b.icon, 'award', 'missing icon falls back');
+  assert.equal(b.description, '');
+});
+
+test('adaptBadges tolerates undefined', () => {
+  assert.deepEqual(adaptBadges(undefined), []);
 });
