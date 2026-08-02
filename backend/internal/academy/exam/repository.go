@@ -627,6 +627,30 @@ func (r *Repository) GetQuestionAnswers(ctx context.Context, ids []string) (map[
 	return answers, subjects, rows.Err()
 }
 
+// GetSubjectNames resolves subject ids → human names from public.academy_subjects
+// so the per-subject score carries a label (not a raw uuid). Unknown ids are simply
+// absent from the returned map; callers fall back to the id. Empty input → empty map.
+func (r *Repository) GetSubjectNames(ctx context.Context, ids []string) (map[string]string, error) {
+	names := map[string]string{}
+	if len(ids) == 0 {
+		return names, nil
+	}
+	const q = `SELECT id, name FROM public.academy_subjects WHERE id = ANY($1)`
+	rows, err := r.db.Query(ctx, q, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		names[id] = name
+	}
+	return names, rows.Err()
+}
+
 // SelectApprovedQuestions returns up to `limit` approved question items for a
 // subject, WITHOUT the answer key (served to learners). Deterministic order (by
 // id) so the same blueprint yields the same set across fetches within an attempt.

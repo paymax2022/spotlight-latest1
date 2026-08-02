@@ -481,7 +481,37 @@ func (s *Service) scoreAttempt(ctx context.Context, att *Attempt, responses []Re
 
 	res := score(rules, responses, correctByID, subjects, mastered, totalObj)
 	res.Late = late
+
+	// Enrich each per-subject score with a human label so all clients render a
+	// name, not a raw subject uuid. Best-effort: on lookup failure (or the synthetic
+	// "general" bucket, which is not a uuid) the Subject id remains the fallback.
+	s.attachSubjectNames(ctx, res.Subjects)
+
 	return res, correctByID, nil
+}
+
+// attachSubjectNames resolves the subject ids present in the score to human names
+// (from academy_subjects) and sets SubjectScore.Name in place. Best-effort: a lookup
+// error leaves names empty so scoring never fails on a labelling concern.
+func (s *Service) attachSubjectNames(ctx context.Context, subjects []SubjectScore) {
+	if len(subjects) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(subjects))
+	for _, ss := range subjects {
+		if ss.Subject != "" {
+			ids = append(ids, ss.Subject)
+		}
+	}
+	names, err := s.repo.GetSubjectNames(ctx, ids)
+	if err != nil {
+		return // labelling is non-fatal — clients fall back to the subject id
+	}
+	for i := range subjects {
+		if n, ok := names[subjects[i].Subject]; ok {
+			subjects[i].Name = n
+		}
+	}
 }
 
 // ── Pure scoring core ────────────────────────────────────────────────────────────
@@ -641,6 +671,9 @@ func resultToScoreMap(res Result) map[string]any {
 	subs := make([]map[string]any, 0, len(res.Subjects))
 	for _, s := range res.Subjects {
 		m := map[string]any{"subject": s.Subject, "raw": s.Raw, "total": s.Total, "scaled": s.Scaled}
+		if s.Name != "" {
+			m["subject_name"] = s.Name
+		}
 		if s.Grade != "" {
 			m["grade"] = s.Grade
 		}

@@ -21,6 +21,7 @@ export interface GoExamAttempt {
 
 export interface GoExamSubjectScore {
   subject: string; // subject id
+  subject_name?: string; // human label, resolved server-side from academy_subjects
   raw: number; // correct count
   total: number;
   scaled: number; // 0..100
@@ -196,7 +197,8 @@ export function toExamSubmit(attempt: Pick<ExamAttempt, 'questions' | 'answers' 
 /**
  * Adapt a Go score projection → mobile ExamResult. `answered` + `timeSpentSec`
  * come from the local working copy (the server doesn't echo them). subjectName
- * falls back to the subject id when no name map is supplied.
+ * prefers the server-resolved `subject_name`, then a supplied name map, then falls
+ * back to the raw subject id.
  */
 export function adaptExamResult(
   attemptId: string,
@@ -220,7 +222,7 @@ export function adaptExamResult(
     timeSpentSec: Math.max(0, local.durationSec - local.remainingSec),
     subjects: subs.map((s) => ({
       subjectId: s.subject,
-      subjectName: subjectNames?.get(s.subject) ?? s.subject,
+      subjectName: s.subject_name ?? subjectNames?.get(s.subject) ?? s.subject,
       correct: s.raw ?? 0,
       total: s.total ?? 0,
       scorePct: Math.round(s.scaled ?? 0),
