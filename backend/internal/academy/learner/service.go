@@ -50,6 +50,30 @@ func (s *Service) DeleteNote(ctx context.Context, userID, id string) error {
 	return s.repo.DeleteNote(ctx, userID, id)
 }
 
+func (s *Service) ListNotifications(ctx context.Context, userID string) ([]Notification, error) {
+	return s.repo.ListNotifications(ctx, userID)
+}
+
+// MarkNotificationRead marks one read and returns the refreshed list (the mobile
+// expects the updated list back).
+func (s *Service) MarkNotificationRead(ctx context.Context, userID, id string) ([]Notification, error) {
+	if err := s.repo.MarkRead(ctx, userID, id); err != nil {
+		return nil, err
+	}
+	return s.repo.ListNotifications(ctx, userID)
+}
+
+func (s *Service) MarkAllNotificationsRead(ctx context.Context, userID string) ([]Notification, error) {
+	if err := s.repo.MarkAllRead(ctx, userID); err != nil {
+		return nil, err
+	}
+	return s.repo.ListNotifications(ctx, userID)
+}
+
+func (s *Service) ListAnnouncements(ctx context.Context) ([]Announcement, error) {
+	return s.repo.ListAnnouncements(ctx)
+}
+
 // Search matches the published curriculum by a case-insensitive substring. Empty
 // query returns no results (never a full dump).
 func (s *Service) Search(ctx context.Context, query string) ([]SearchResult, error) {

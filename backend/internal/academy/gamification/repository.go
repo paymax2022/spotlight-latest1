@@ -157,6 +157,17 @@ func (r *Repository) GrantBadge(ctx context.Context, userID, badgeID string) (bo
 
 // ── Challenges ──────────────────────────────────────────────────────────────────
 
+// InsertBadgeNotification writes a "you earned a badge" notification for the
+// learner (best-effort engagement signal; the learner surface reads it). Kept
+// here so the write happens transactionally close to the grant.
+func (r *Repository) InsertBadgeNotification(ctx context.Context, userID, badgeName string) error {
+	const q = `
+		INSERT INTO public.academy_learner_notifications (user_id, kind, title, body)
+		VALUES ($1, 'reward', $2, $3)`
+	_, err := r.db.Exec(ctx, q, userID, "Badge unlocked: "+badgeName, "You earned the "+badgeName+" badge. Keep it up!")
+	return err
+}
+
 // ── Class leaderboard ───────────────────────────────────────────────────────
 
 // UserClassID returns the learner's class id from their academy profile (the

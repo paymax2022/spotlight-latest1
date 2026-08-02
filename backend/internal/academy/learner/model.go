@@ -53,6 +53,28 @@ type DailyGoal struct {
 	Calendar     []StreakDay `json:"calendar"`
 }
 
+// Notification is one learner notification (public.academy_notifications).
+type Notification struct {
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	Title string `json:"title"`
+	Body  string `json:"body"`
+	Href  string `json:"href,omitempty"`
+	Read  bool   `json:"read"`
+	Ts    string `json:"ts"` // ISO8601 (created_at)
+}
+
+// Announcement is one program/sponsor broadcast (public.academy_announcements).
+type Announcement struct {
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Body    string `json:"body"`
+	Kind    string `json:"kind"` // program|sponsor
+	Sponsor string `json:"sponsor,omitempty"`
+	Pinned  bool   `json:"pinned"`
+	Ts      string `json:"ts"` // ISO8601 (created_at)
+}
+
 // ── Request DTOs (match the mobile POST bodies) ─────────────────────────────────
 
 // CreateBookmarkRequest is the body for POST /learner/bookmarks.

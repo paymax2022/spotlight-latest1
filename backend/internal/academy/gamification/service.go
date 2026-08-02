@@ -123,6 +123,8 @@ func (s *Service) EvaluateBadges(ctx context.Context, userID string, counters ma
 			}
 			if ok {
 				granted = append(granted, b.Code)
+				// Best-effort notification for the achievements surface.
+				_ = s.repo.InsertBadgeNotification(ctx, userID, b.Name)
 			}
 		}
 	}

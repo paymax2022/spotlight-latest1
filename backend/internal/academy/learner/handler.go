@@ -30,6 +30,13 @@ func RegisterAcademyLearner(member *gin.RouterGroup, pool *pgxpool.Pool) {
 	lg.POST("/notes", h.CreateNote)
 	lg.DELETE("/notes/:id", h.DeleteNote)
 	lg.GET("/daily-goal", h.DailyGoal)
+
+	// Notifications + announcements sit at the academy member root (the mobile
+	// hits /notifications and /announcements, not /learner/*).
+	member.GET("/notifications", h.ListNotifications)
+	member.POST("/notifications/:id/read", h.MarkNotificationRead)
+	member.POST("/notifications/read-all", h.MarkAllNotificationsRead)
+	member.GET("/announcements", h.ListAnnouncements)
 }
 
 func (h *Handler) unauth(c *gin.Context) bool {
@@ -139,6 +146,54 @@ func (h *Handler) DailyGoal(c *gin.Context) {
 		return
 	}
 	out, err := h.svc.DailyGoal(c.Request.Context(), uid(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h *Handler) ListNotifications(c *gin.Context) {
+	if h.unauth(c) {
+		return
+	}
+	out, err := h.svc.ListNotifications(c.Request.Context(), uid(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h *Handler) MarkNotificationRead(c *gin.Context) {
+	if h.unauth(c) {
+		return
+	}
+	out, err := h.svc.MarkNotificationRead(c.Request.Context(), uid(c), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h *Handler) MarkAllNotificationsRead(c *gin.Context) {
+	if h.unauth(c) {
+		return
+	}
+	out, err := h.svc.MarkAllNotificationsRead(c.Request.Context(), uid(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h *Handler) ListAnnouncements(c *gin.Context) {
+	if h.unauth(c) {
+		return
+	}
+	out, err := h.svc.ListAnnouncements(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return

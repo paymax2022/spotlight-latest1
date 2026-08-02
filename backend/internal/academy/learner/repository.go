@@ -130,6 +130,68 @@ func (r *Repository) DeleteNote(ctx context.Context, userID, id string) error {
 	return nil
 }
 
+// ── Notifications ───────────────────────────────────────────────────────────
+
+func (r *Repository) ListNotifications(ctx context.Context, userID string) ([]Notification, error) {
+	const q = `
+		SELECT id, kind, title, body, COALESCE(href,''), read, created_at
+		FROM public.academy_learner_notifications
+		WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`
+	rows, err := r.db.Query(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Notification{}
+	for rows.Next() {
+		var n Notification
+		var ts time.Time
+		if err := rows.Scan(&n.ID, &n.Kind, &n.Title, &n.Body, &n.Href, &n.Read, &ts); err != nil {
+			return nil, err
+		}
+		n.Ts = iso(ts)
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// MarkRead flips one notification the caller owns to read (no-op if not owned).
+func (r *Repository) MarkRead(ctx context.Context, userID, id string) error {
+	_, err := r.db.Exec(ctx, `UPDATE public.academy_learner_notifications SET read = true WHERE id = $1 AND user_id = $2`, id, userID)
+	return err
+}
+
+// MarkAllRead flips all the caller's notifications to read.
+func (r *Repository) MarkAllRead(ctx context.Context, userID string) error {
+	_, err := r.db.Exec(ctx, `UPDATE public.academy_learner_notifications SET read = true WHERE user_id = $1 AND read = false`, userID)
+	return err
+}
+
+// ── Announcements ───────────────────────────────────────────────────────────
+
+func (r *Repository) ListAnnouncements(ctx context.Context) ([]Announcement, error) {
+	const q = `
+		SELECT id, title, body, kind, COALESCE(sponsor,''), pinned, created_at
+		FROM public.academy_announcements
+		ORDER BY pinned DESC, created_at DESC LIMIT 50`
+	rows, err := r.db.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Announcement{}
+	for rows.Next() {
+		var a Announcement
+		var ts time.Time
+		if err := rows.Scan(&a.ID, &a.Title, &a.Body, &a.Kind, &a.Sponsor, &a.Pinned, &ts); err != nil {
+			return nil, err
+		}
+		a.Ts = iso(ts)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // ── Search (published curriculum only) ──────────────────────────────────────
 
 // Search matches subjects/topics/lessons in the ACTIVE curriculum version by a
