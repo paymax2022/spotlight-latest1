@@ -17,6 +17,7 @@ import { enqueue } from './offlineQueue';
 import { creditPoints, type PointsLedgerState } from './pointsLedger';
 import { assertCanSpend, type SpendConsentState } from './consent';
 import { upsertBookmark } from './bookmarks';
+import { adaptClasses, adaptVersions, type GoClass, type GoVersion } from './curriculumAdapters';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -237,14 +238,16 @@ export async function recordConsent(minorId: string, granted: boolean): Promise<
 // ── Curriculum ────────────────────────────────────────────────────────────────
 export async function getCurriculumVersions(): Promise<CurriculumVersion[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_CURRICULUM_VERSIONS; }
-  const { data } = await api.get<CurriculumVersion[]>(`${B}/curriculum/versions`);
-  return data;
+  // Live: Go returns { versions: [{id,code,name,status,effective_date?}] } → adapt.
+  const { data } = await api.get<{ versions?: GoVersion[] }>(`${B}/curriculum/versions`);
+  return adaptVersions(data);
 }
 
 export async function getClasses(): Promise<AcademyClass[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_CLASSES; }
-  const { data } = await api.get<AcademyClass[]>(`${B}/curriculum/classes`);
-  return data;
+  // Live: Go returns { classes: [{id,version_id,phase,code,name,ordinal}] } → adapt.
+  const { data } = await api.get<{ classes?: GoClass[] }>(`${B}/curriculum/classes`);
+  return adaptClasses(data);
 }
 
 export async function getSubjects(classCode?: string): Promise<Subject[]> {
