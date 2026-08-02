@@ -8,9 +8,9 @@ What's wired, what env each surface needs, and how to verify. Everything is
 | Surface | Errors (Sentry) | Traces (OTel) | Notes |
 |---|---|---|---|
 | **backend** (Go) | ✅ wired (`sentry-go` + `sentrygin`) | ✅ wired (OTel → Cloud Trace, `otelgin`) | via `internal/platform/observability` + `cmd/server` + router middleware |
-| **frontend-web** (Next) | ✅ wired (`@sentry/nextjs`) | ▶ via Sentry perf tracing (`tracesSampleRate`) | `instrumentation.ts` + `sentry.*.config.ts` + `withSentryConfig` |
-| **frontend-admin** (Next 15) | ⬜ pending — needs `npm i @sentry/nextjs` then mirror the web files | — | fast follow |
-| **mobile** (RN/Expo) | ⬜ pending — `@sentry/react-native` + expo plugin | — | separate Sentry project + dSYM upload |
+| **frontend-web** (Next 14) | ✅ wired (`@sentry/nextjs`) | ▶ via Sentry perf tracing (`tracesSampleRate`) | `instrumentation.ts` + `sentry.*.config.ts` + `withSentryConfig` |
+| **frontend-admin** (Next 15) | ✅ wired (`@sentry/nextjs`) | ▶ via Sentry perf tracing | same file set; `SENTRY_PROJECT_ADMIN` for a separate project |
+| **mobile** (RN/Expo 54) | ✅ wired (`@sentry/react-native`) | ▶ via Sentry perf tracing | `Sentry.wrap` in `app/_layout.tsx`, expo plugin, `getSentryExpoConfig` metro |
 
 ## Backend env (Cloud Run service / Secret Manager)
 
@@ -41,6 +41,34 @@ What's wired, what env each surface needs, and how to verify. Everything is
 - `SENTRY_AUTH_TOKEN` is the only secret — it stays server-side, so the CI
   `secret-hygiene` check stays green.
 - Session Replay is **off**; if enabled, masks are forced on (no card/OTP/PII capture).
+
+## Admin env (Vercel project: frontend-admin)
+
+Same as web, with its own Sentry project. Use `SENTRY_PROJECT_ADMIN` (falls back to
+`SENTRY_PROJECT`) so admin errors are separated from the consumer web app. Session
+Replay stays off (admin sees the most sensitive data).
+
+## Mobile env (EAS / app config)
+
+| Var | Purpose |
+|---|---|
+| `EXPO_PUBLIC_SENTRY_DSN` | enables mobile error + native-crash capture (public DSN) |
+| `EXPO_PUBLIC_SENTRY_ENVIRONMENT` | tag (dev/staging/prod) |
+| `EXPO_PUBLIC_SENTRY_TRACES_SAMPLE_RATE` | perf sampling (default `0.1`) |
+
+- Wired via `Sentry.wrap()` in `app/_layout.tsx`; the `@sentry/react-native` Expo
+  config plugin + `getSentryExpoConfig` metro config handle native + source maps.
+- Native crash capture needs a **dev build or EAS build** (not Expo Go). JS errors
+  work everywhere.
+- For source-map upload on EAS, set `SENTRY_ORG`/`SENTRY_PROJECT`/`SENTRY_AUTH_TOKEN`
+  in EAS secrets and add the org/project to the plugin config when you set up EAS.
+
+## Alerts & uptime (Cloud Monitoring — Terraform)
+
+`infra/terraform/monitoring.tf` provisions:
+- **Uptime checks**: external HTTPS check on backend `/healthz` (60s); optional web check (`web_uptime_host`).
+- **Alert policies** (route to `alert_notification_email`): backend **down** (uptime failing), **5xx rate** (`alert_5xx_per_min`, default 5/min), **p95 latency** (`alert_latency_p95_ms`, default 800ms), and optional web-down.
+- Set `alert_notification_email` in the env tfvars to activate paging; empty = checks run but no channel/alerts are created.
 
 ## Verify
 
