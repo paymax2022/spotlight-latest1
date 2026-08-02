@@ -19,6 +19,7 @@ import { assertCanSpend, type SpendConsentState } from './consent';
 import { upsertBookmark } from './bookmarks';
 import { adaptClasses, adaptVersions, adaptSubjects, adaptTopics, adaptObjectives, adaptLessons, adaptLesson, type GoClass, type GoVersion, type GoSubject, type GoTopic, type GoObjective, type GoLesson } from './curriculumAdapters';
 import { adaptPracticeItems, toPracticeSubmit, adaptPracticeResult, type GoQuestionItem, type GoPracticeResult } from './practiceAdapters';
+import { adaptStartedAttempt, toExamSubmit, adaptExamResult, type GoExamAttempt, type GoScoredAttempt, type GoExamResultProjection } from './examAdapters';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -503,8 +504,16 @@ export async function startAttempt(blueprintId: string): Promise<ExamAttempt> {
     attempts.set(attempt.id, attempt);
     return attempt;
   }
-  const { data } = await api.post<ExamAttempt>(`${B}/exam/attempts`, { blueprintId });
-  return data;
+  // Live: create the server attempt, then fetch its served question set (answer
+  // key stripped) and compose the client working copy. Stored locally so the CBT
+  // screen, patchAttemptLocal and submit all read from it (questions live only
+  // client-side; grading is server-authoritative on submit).
+  const { data: started } = await api.post<{ data: GoExamAttempt }>(`${B}/exam/attempts`, { blueprint_id: blueprintId });
+  const go = started.data;
+  const { data: qwrap } = await api.get<{ data?: GoQuestionItem[] }>(`${B}/exam/attempts/${go.id}/questions`);
+  const attempt = adaptStartedAttempt(go, adaptPracticeItems(qwrap.data));
+  attempts.set(attempt.id, attempt);
+  return attempt;
 }
 
 export async function getAttempt(id: string): Promise<ExamAttempt> {
@@ -514,8 +523,16 @@ export async function getAttempt(id: string): Promise<ExamAttempt> {
     if (!a) throw new Error('Attempt not found');
     return a;
   }
-  const { data } = await api.get<ExamAttempt>(`${B}/exam/attempts/${id}`);
-  return data;
+  // Live: the working copy (with its served questions) lives client-side — prefer
+  // it. On a cold read (e.g. app relaunch) rebuild it from the server attempt +
+  // freshly-served questions so the CBT screen still has a set to render.
+  const local = attempts.get(id);
+  if (local) return local;
+  const { data: awrap } = await api.get<{ data: GoExamAttempt }>(`${B}/exam/attempts/${id}`);
+  const { data: qwrap } = await api.get<{ data?: GoQuestionItem[] }>(`${B}/exam/attempts/${id}/questions`);
+  const rebuilt = adaptStartedAttempt(awrap.data, adaptPracticeItems(qwrap.data));
+  attempts.set(id, rebuilt);
+  return rebuilt;
 }
 
 /** Persist answers/flags/remaining locally (the offline working copy). */
@@ -599,8 +616,20 @@ export async function submitAttempt(id: string): Promise<ExamResult> {
     track('readiness_updated', { delta: result.readinessDelta });
     return result;
   }
-  const { data } = await api.post<ExamResult>(`${B}/exam/attempts/${id}/submit`, {});
-  return data;
+  // Live: send the collected selections (grader shape) and let the server score
+  // against the canonical key; adapt the scored attempt to the results screen.
+  const local = attempts.get(id);
+  if (!local) throw new Error('Attempt not found');
+  const { data } = await api.post<{ data: GoScoredAttempt }>(`${B}/exam/attempts/${id}/submit`, toExamSubmit(local));
+  const scored = data.data;
+  const result = adaptExamResult(id, scored.score ?? { overall: 0 }, scored.readiness, local);
+  attempts.set(id, { ...local, status: 'submitted' });
+  examResults.set(id, result);
+  // Idempotent on the attempt id so revisiting a submitted attempt never re-awards.
+  creditPointsLocal(result.pointsEarned, 'Exam completed', `exam:${id}`);
+  track('exam_completed', { score: result.scorePct, offlineOrigin: local.offlineOrigin });
+  track('readiness_updated', { delta: result.readinessDelta });
+  return result;
 }
 
 /** Read back a previously computed exam result (X9). */
@@ -611,8 +640,15 @@ export async function getExamResult(id: string): Promise<ExamResult> {
     if (!r) throw new Error('Result not ready');
     return r;
   }
-  const { data } = await api.get<ExamResult>(`${B}/exam/attempts/${id}/result`);
-  return data;
+  // Live: the just-computed result is cached from submit — prefer it (it carries
+  // the client timing/answered counts). Otherwise read the server projection and
+  // adapt against whatever local working copy we still hold.
+  const cached = examResults.get(id);
+  if (cached) return cached;
+  const { data } = await api.get<{ data: GoExamResultProjection }>(`${B}/exam/attempts/${id}/result`);
+  const proj = data.data;
+  const local = attempts.get(id) ?? { questions: [], answers: {}, durationSec: 0, remainingSec: 0 };
+  return adaptExamResult(id, proj, proj.readiness, local);
 }
 
 // ── Gamification ─────────────────────────────────────────────────────────────
