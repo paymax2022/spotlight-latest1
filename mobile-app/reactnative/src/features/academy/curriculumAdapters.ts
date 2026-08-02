@@ -10,13 +10,17 @@
 // examRelevance are all absent), and /classes/:id/subjects is keyed by the class
 // UUID, not the class code the mobile holds. Tracked for a backend slice.
 
-import type { AcademyClass, CurriculumVersion } from './types';
+import type { AcademyClass, CurriculumVersion, Subject, ExamSlug } from './types';
 
 export interface GoClass {
   id: string; version_id: string; phase: string; code: string; name: string; ordinal: number;
 }
 export interface GoVersion {
   id: string; code: string; name: string; status: string; effective_date?: string;
+}
+export interface GoSubject {
+  id: string; version_id: string; class_id: string; code: string; name: string;
+  kind: string; stream?: string | null; exam_relevance?: string[];
 }
 
 /** Map the Go class phase/code to the mobile band bucket. */
@@ -57,4 +61,49 @@ export function adaptClasses(res: { classes?: GoClass[] } | GoClass[] | null | u
 export function adaptVersions(res: { versions?: GoVersion[] } | GoVersion[] | null | undefined): CurriculumVersion[] {
   const rows = Array.isArray(res) ? res : res?.versions ?? [];
   return rows.map(adaptVersion);
+}
+
+// ── Subjects ─────────────────────────────────────────────────────────────────
+const EXAM_SLUGS = new Set<ExamSlug>(['utme', 'bece', 'wassce', 'neco', 'cce', 'nabteb']);
+const SUBJECT_COLORS = ['iconBgBlue', 'iconBgTeal', 'iconBgPurple', 'iconBgGold', 'iconBgGreen', 'iconBgRed'];
+
+/** Map Go's UPPERCASE exam tags to the mobile ExamSlug union, dropping unknowns. */
+function mapExamRelevance(tags?: string[]): ExamSlug[] {
+  return (tags ?? [])
+    .map((t) => t.toLowerCase())
+    .filter((t): t is ExamSlug => EXAM_SLUGS.has(t as ExamSlug));
+}
+
+/** Deterministic display colour for a subject (Go doesn't carry UI theming). */
+function subjectColorKey(code: string): string {
+  let h = 0;
+  for (let i = 0; i < code.length; i++) h = (h * 31 + code.charCodeAt(i)) >>> 0;
+  return SUBJECT_COLORS[h % SUBJECT_COLORS.length];
+}
+
+/**
+ * Adapt a Go subject → mobile Subject. `classCode` is injected by the caller
+ * (the subjects route is keyed by the class UUID, and the row carries class_id,
+ * not the code the screens use). topicCount / masteredTopics / progressPct default
+ * to 0 — they need a backend count + per-user progress the API does not yet serve
+ * (tracked). icon/colorKey are client display defaults.
+ */
+export function adaptSubject(g: GoSubject, classCode: string): Subject {
+  return {
+    id: g.id,
+    classCode,
+    name: g.name,
+    icon: 'BookOpen',
+    colorKey: subjectColorKey(g.code),
+    topicCount: 0,
+    masteredTopics: 0,
+    progressPct: 0,
+    examRelevance: mapExamRelevance(g.exam_relevance),
+  };
+}
+
+/** Unwrap {subjects:[…]} (or bare array / empty) and adapt, injecting classCode. */
+export function adaptSubjects(res: { subjects?: GoSubject[] } | GoSubject[] | null | undefined, classCode: string): Subject[] {
+  const rows = Array.isArray(res) ? res : res?.subjects ?? [];
+  return rows.map((s) => adaptSubject(s, classCode));
 }

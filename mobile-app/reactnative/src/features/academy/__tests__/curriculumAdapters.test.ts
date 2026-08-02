@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { adaptClass, adaptVersion, adaptClasses, adaptVersions, bandFromPhase } from '../curriculumAdapters.ts';
+import { adaptClass, adaptVersion, adaptClasses, adaptVersions, bandFromPhase, adaptSubject, adaptSubjects } from '../curriculumAdapters.ts';
 
 // ── Real fixtures (verbatim from the running backend) ──────────────────────────
 const GO_CLASS_P1 = { id: 'c8fba02e', version_id: '2be23de0', phase: 'LowerPrimary', code: 'P1', name: 'Primary 1', ordinal: 1 };
@@ -52,4 +52,43 @@ test('adaptVersions unwraps {versions:[…]}; tolerates a bare array', () => {
 test('empty / missing envelope → empty array (never throws)', () => {
   assert.deepEqual(adaptClasses({} as never), []);
   assert.deepEqual(adaptVersions({} as never), []);
+});
+
+// ── Subjects (real fixture from /classes/:uuid/subjects) ──────────────────────
+const GO_SUBJECT_BDL = {
+  id: 'bc776b48', version_id: '2be23de0', class_id: '695eb847',
+  code: 'BDL', name: 'Basic Digital Literacy', kind: 'core', exam_relevance: ['CCE'],
+};
+
+test('adaptSubject injects the caller classCode (Go returns class_id UUID, not code)', () => {
+  const s = adaptSubject(GO_SUBJECT_BDL, 'JSS1');
+  assert.equal(s.id, 'bc776b48');
+  assert.equal(s.classCode, 'JSS1');
+  assert.equal(s.name, 'Basic Digital Literacy');
+});
+
+test('exam_relevance is lower-cased and filtered to valid ExamSlug', () => {
+  assert.deepEqual(adaptSubject({ ...GO_SUBJECT_BDL, exam_relevance: ['CCE', 'WASSCE', 'BOGUS'] }, 'JSS1').examRelevance, ['cce', 'wassce']);
+  assert.deepEqual(adaptSubject({ ...GO_SUBJECT_BDL, exam_relevance: undefined }, 'JSS1').examRelevance, []);
+});
+
+test('progress/topic fields default to 0 (pending backend counts + per-user progress)', () => {
+  const s = adaptSubject(GO_SUBJECT_BDL, 'JSS1');
+  assert.equal(s.topicCount, 0);
+  assert.equal(s.masteredTopics, 0);
+  assert.equal(s.progressPct, 0);
+});
+
+test('display fields are always populated (icon + colorKey), deterministic by code', () => {
+  const a = adaptSubject(GO_SUBJECT_BDL, 'JSS1');
+  const b = adaptSubject(GO_SUBJECT_BDL, 'JSS1');
+  assert.ok(a.icon && a.colorKey);
+  assert.equal(a.colorKey, b.colorKey, 'deterministic for the same code');
+});
+
+test('adaptSubjects unwraps {subjects:[…]} and injects classCode on each', () => {
+  const out = adaptSubjects({ subjects: [GO_SUBJECT_BDL, { ...GO_SUBJECT_BDL, id: 'x', code: 'BST' }] }, 'JSS1');
+  assert.equal(out.length, 2);
+  assert.ok(out.every((s) => s.classCode === 'JSS1'));
+  assert.deepEqual(adaptSubjects({} as never, 'JSS1'), []);
 });
