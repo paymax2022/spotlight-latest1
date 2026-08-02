@@ -14,6 +14,7 @@ import { api } from '@/api/client';
 import { USE_MOCK, ACADEMY_API_BASE } from './constants';
 import { track } from './analytics';
 import { enqueue } from './offlineQueue';
+import { creditPoints, type PointsLedgerState } from './pointsLedger';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -552,7 +553,9 @@ export async function submitAttempt(id: string): Promise<ExamResult> {
     a.status = 'submitted';
     const result = compute();
     examResults.set(id, result);
-    creditPointsLocal(result.pointsEarned, 'Mock exam completed');
+    // Idempotent on the attempt id: re-submitting / revisiting the same attempt
+    // must not re-award the 300 pts (previously farmable).
+    creditPointsLocal(result.pointsEarned, 'Mock exam completed', `exam:${id}`);
     track('mock_completed', { score: result.scorePct, offlineOrigin: a.offlineOrigin });
     track('readiness_updated', { delta: result.readinessDelta });
     return result;
@@ -1324,7 +1327,8 @@ export async function submitProject(projectId: string, input: SubmitProjectInput
       feedback: 'Solid submission. Tidy up cable runs next time for full marks.',
     };
     tradeProjects.set(projectId, updated);
-    creditPointsLocal(120, 'Trade project submitted');
+    // Idempotent per project: resubmitting a revision must not re-award.
+    creditPointsLocal(120, 'Trade project submitted', `trade:${projectId}`);
     track('practice_completed', { kind: 'trade_project', project: projectId, score: scorePct });
     return updated;
   }
@@ -1898,19 +1902,27 @@ function setsEqual(a: string[], b: string[]): boolean {
  * Mirrors the offline-first contract: events queue and sync deterministically;
  * the server is authoritative for the final balance.
  */
-function creditPointsLocal(points: number, reason: string) {
-  if (points <= 0) return;
-  rewardBalance = {
-    ...rewardBalance,
-    points: rewardBalance.points + points,
-    pendingPoints: rewardBalance.pendingPoints + points,
-    lifetimeEarned: rewardBalance.lifetimeEarned + points,
-  };
-  rewardHistory = [
-    { id: `rl_${Date.now()}`, ts: new Date().toISOString(), kind: 'earn', reason, points, synced: false },
-    ...rewardHistory,
-  ];
-  enqueue({ type: 'reward_earn', payload: { points, reason } });
+// Idempotency keys already credited this session (e.g. `exam:<attemptId>`), so a
+// replayed submit / challenge cannot re-award. Mirrors the server ledger's unique
+// constraint on the reconcile key.
+let awardedPointKeys: ReadonlySet<string> = new Set<string>();
+
+/**
+ * Credit reward points through the pure idempotent ledger. Pass a stable `key`
+ * (e.g. `exam:<attemptId>`) for one-time awards so re-submits don't double-count;
+ * omit it for genuinely-repeatable earns. The idempotency key is forwarded on the
+ * offline-sync payload so the server dedups on reconnect too.
+ */
+function creditPointsLocal(points: number, reason: string, key?: string) {
+  const before: PointsLedgerState = { balance: rewardBalance, history: rewardHistory, awarded: awardedPointKeys };
+  const { state, applied } = creditPoints(before, {
+    points, reason, key, id: `rl_${Date.now()}`, ts: new Date().toISOString(),
+  });
+  if (!applied) return; // non-positive amount or duplicate idempotency key → no-op
+  rewardBalance = state.balance;
+  rewardHistory = state.history;
+  awardedPointKeys = state.awarded;
+  enqueue({ type: 'reward_earn', payload: { points, reason, key } });
   track('reward_earned', { points, reason });
 }
 
