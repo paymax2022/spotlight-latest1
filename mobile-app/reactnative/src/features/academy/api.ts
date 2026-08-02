@@ -20,7 +20,7 @@ import { upsertBookmark } from './bookmarks';
 import { adaptClasses, adaptVersions, adaptSubjects, adaptTopics, adaptObjectives, adaptLessons, adaptLesson, type GoClass, type GoVersion, type GoSubject, type GoTopic, type GoObjective, type GoLesson } from './curriculumAdapters';
 import { adaptPracticeItems, toPracticeSubmit, adaptPracticeResult, type GoQuestionItem, type GoPracticeResult } from './practiceAdapters';
 import { adaptStartedAttempt, toExamSubmit, adaptExamResult, adaptArena, adaptArenas, adaptBlueprints, type GoExamAttempt, type GoScoredAttempt, type GoExamResultProjection, type GoArena, type GoBlueprint } from './examAdapters';
-import { adaptGamificationProfile, type GoGamificationProfile } from './gamificationAdapters';
+import { adaptGamificationProfile, adaptChallenges, type GoGamificationProfile, type GoChallenge } from './gamificationAdapters';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -671,8 +671,10 @@ export async function getBadges(): Promise<Badge[]> {
 
 export async function getChallenges(): Promise<Challenge[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_CHALLENGES; }
-  const { data } = await api.get<Challenge[]>(`${B}/gamification/challenges`);
-  return data;
+  // Live: Go returns { challenges: [snake_case rows] } → unwrap + adapt (kind →
+  // cadence; target/reward from criteria). Per-user progress isn't tracked yet.
+  const { data } = await api.get<{ challenges?: GoChallenge[] }>(`${B}/gamification/challenges`);
+  return adaptChallenges(data.challenges);
 }
 
 export async function getLeaderboard(id = 'national'): Promise<LeaderboardEntry[]> {

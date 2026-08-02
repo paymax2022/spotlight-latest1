@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { adaptGamificationProfile, xpThresholdForNextLevel } from '../gamificationAdapters.ts';
+import { adaptGamificationProfile, xpThresholdForNextLevel, adaptChallenge, adaptChallenges } from '../gamificationAdapters.ts';
 
 test('xpThresholdForNextLevel mirrors the backend curve (base 100, step 150)', () => {
   assert.equal(xpThresholdForNextLevel(1), 100, 'level 1 → 2 at 100 XP');
@@ -45,4 +45,34 @@ test('adaptGamificationProfile tolerates missing/garbage values', () => {
   assert.equal(p.xp, 0);
   assert.equal(p.streakDays, 0);
   assert.equal(p.freezeTokens, 0);
+});
+
+test('adaptChallenge maps a Go row (kind→cadence, criteria→target/reward/desc)', () => {
+  const c = adaptChallenge({
+    id: 'c1', code: 'DAILY-PRACTICE', name: 'Daily Practice', kind: 'daily',
+    criteria: { target: 3, reward_points: 50, description: 'Complete 3 practice sets today' }, status: 'active',
+  });
+  assert.equal(c.id, 'c1');
+  assert.equal(c.title, 'Daily Practice');
+  assert.equal(c.cadence, 'daily');
+  assert.equal(c.target, 3);
+  assert.equal(c.rewardPoints, 50);
+  assert.equal(c.description, 'Complete 3 practice sets today');
+  assert.equal(c.progress, 0, 'per-user progress not tracked yet');
+  assert.equal(c.completed, false);
+});
+
+test('adaptChallenge: unknown kind → daily, empty criteria → target defaults 1', () => {
+  const c = adaptChallenge({ id: 'x', code: 'X', name: 'X', kind: 'monthly' });
+  assert.equal(c.cadence, 'daily', 'invalid kind falls back to a valid cadence');
+  assert.equal(c.target, 1);
+  assert.equal(c.rewardPoints, 0);
+  assert.equal(c.description, '');
+});
+
+test('adaptChallenges tolerates undefined + preserves sponsor', () => {
+  assert.deepEqual(adaptChallenges(undefined), []);
+  const c = adaptChallenges([{ id: 's', code: 'S', name: 'Sponsored', kind: 'sponsor', sponsor_id: 'spon-1' }]);
+  assert.equal(c[0].cadence, 'sponsor');
+  assert.equal(c[0].sponsor, 'spon-1');
 });
