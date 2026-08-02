@@ -191,3 +191,20 @@ func BindVersion(classCode string, entryYear int) string {
 	}
 	return VersionCodeLegacy
 }
+
+// Lesson is one public.academy_edu_lessons row, read-only via the curriculum
+// bridge (topic → academy_learning_objectives → academy_edu_lessons). The column
+// set mirrors the content package that owns the table.
+type Lesson struct {
+	ID          string    `json:"id"`
+	ObjectiveID *string   `json:"objective_id,omitempty"`
+	Title       string    `json:"title"`
+	Type        string    `json:"type"`
+	VersionID   *string   `json:"version_id,omitempty"`
+	MediaRef    *string   `json:"media_ref,omitempty"`
+	Transcript  *string   `json:"transcript,omitempty"`
+	DurationS   int       `json:"duration_s"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}

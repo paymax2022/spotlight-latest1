@@ -10,7 +10,7 @@
 // examRelevance are all absent), and /classes/:id/subjects is keyed by the class
 // UUID, not the class code the mobile holds. Tracked for a backend slice.
 
-import type { AcademyClass, CurriculumVersion, Subject, ExamSlug, Topic, Objective } from './types';
+import type { AcademyClass, CurriculumVersion, Subject, ExamSlug, Topic, Objective, Lesson } from './types';
 
 export interface GoClass {
   id: string; version_id: string; phase: string; code: string; name: string; ordinal: number;
@@ -27,6 +27,11 @@ export interface GoTopic {
 }
 export interface GoObjective {
   id: string; topic_id: string; code: string; title: string; exam_tags?: string[]; ordinal: number;
+}
+export interface GoLesson {
+  id: string; objective_id?: string | null; title: string; type: string;
+  version_id?: string | null; media_ref?: string | null; transcript?: string | null;
+  duration_s: number; status: string; created_at?: string; updated_at?: string;
 }
 
 /** Map the Go class phase/code to the mobile band bucket. */
@@ -162,4 +167,35 @@ export function adaptObjective(g: GoObjective): Objective {
 export function adaptObjectives(res: { objectives?: GoObjective[] } | GoObjective[] | null | undefined): Objective[] {
   const rows = Array.isArray(res) ? res : res?.objectives ?? [];
   return rows.map(adaptObjective);
+}
+
+// ── Lessons ──────────────────────────────────────────────────────────────────
+/**
+ * Adapt a Go lesson → mobile Lesson. Data fields (title, duration, transcript)
+ * map through; topicId is injected by the caller (Go carries objective_id, and
+ * the topic→lessons list is fetched by topic). hasCaptions/hasAudioOnly/
+ * dataBudgetKb are UI hints the API doesn't model — derived sensibly; downloaded
+ * is per-user offline state (false until the offline library lands).
+ */
+export function adaptLesson(g: GoLesson, topicId: string): Lesson {
+  const transcript = g.transcript ?? '';
+  const durationSec = g.duration_s ?? 0;
+  return {
+    id: g.id,
+    topicId,
+    title: g.title,
+    durationSec,
+    hasCaptions: transcript.length > 0,
+    hasAudioOnly: false,
+    // Rough pre-download budget: ~40 kB/s for video, a flat small budget otherwise.
+    dataBudgetKb: g.type === 'video' ? Math.max(200, durationSec * 40) : 200,
+    downloaded: false,
+    transcript,
+  };
+}
+
+/** Unwrap {lessons:[…]} (or bare array / empty) and adapt, injecting topicId. */
+export function adaptLessons(res: { lessons?: GoLesson[] } | GoLesson[] | null | undefined, topicId: string): Lesson[] {
+  const rows = Array.isArray(res) ? res : res?.lessons ?? [];
+  return rows.map((l) => adaptLesson(l, topicId));
 }
