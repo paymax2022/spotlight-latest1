@@ -17,7 +17,7 @@ import { enqueue } from './offlineQueue';
 import { creditPoints, type PointsLedgerState } from './pointsLedger';
 import { assertCanSpend, type SpendConsentState } from './consent';
 import { upsertBookmark } from './bookmarks';
-import { adaptClasses, adaptVersions, type GoClass, type GoVersion } from './curriculumAdapters';
+import { adaptClasses, adaptVersions, adaptSubjects, type GoClass, type GoVersion, type GoSubject } from './curriculumAdapters';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -256,9 +256,21 @@ export async function getSubjects(classCode?: string): Promise<Subject[]> {
     const code = classCode ?? profile.classCode;
     return M.MOCK_SUBJECTS.filter((s) => !code || s.classCode === code);
   }
-  // classes/:id/subjects — resolve class id from code upstream in real impl.
-  const { data } = await api.get<Subject[]>(`${B}/curriculum/classes/${classCode}/subjects`);
-  return data;
+  // Live: the subjects route is keyed by the class UUID, but callers hold the
+  // class CODE. Class codes repeat across curriculum versions (legacy + NERDC),
+  // so resolve the code WITHIN the active (newest, non-legacy) version — the
+  // legacy classes carry no subjects.
+  const code = classCode ?? profile.classCode;
+  const [classes, versions] = await Promise.all([getClasses(), getCurriculumVersions()]);
+  const activeVersion =
+    versions.filter((v) => !v.isLegacy).sort((a, b) => b.effectiveYear - a.effectiveYear)[0] ?? versions[0];
+  const cls =
+    (code && classes.find((c) => c.code === code && c.curriculumVersionId === activeVersion?.id)) ||
+    (code && classes.find((c) => c.code === code)) ||
+    classes[0];
+  if (!cls) return [];
+  const { data } = await api.get<{ subjects?: GoSubject[] }>(`${B}/curriculum/classes/${cls.id}/subjects`);
+  return adaptSubjects(data, cls.code);
 }
 
 export async function getSubject(id: string): Promise<Subject> {
