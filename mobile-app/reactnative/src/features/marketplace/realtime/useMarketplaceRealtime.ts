@@ -82,7 +82,7 @@ export function useMarketplaceRealtime(): void {
       es.addEventListener('mkt.message.created', (event) => {
         // event.data is the raw SSE `data:` line (JSON). Guard the parse — a
         // malformed frame must never crash the stream handler.
-        if (event.type !== 'message' || !event.data) return;
+        if (!event.data) return;
         try {
           const payload = JSON.parse(event.data) as MessageCreatedPayload;
           if (!payload?.threadId) return;
