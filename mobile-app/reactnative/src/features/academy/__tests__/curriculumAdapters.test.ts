@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { adaptClass, adaptVersion, adaptClasses, adaptVersions, bandFromPhase, adaptSubject, adaptSubjects, adaptTopic, adaptTopics } from '../curriculumAdapters.ts';
+import { adaptClass, adaptVersion, adaptClasses, adaptVersions, bandFromPhase, adaptSubject, adaptSubjects, adaptTopic, adaptTopics, adaptObjective, adaptObjectives } from '../curriculumAdapters.ts';
 
 // ── Real fixtures (verbatim from the running backend) ──────────────────────────
 const GO_CLASS_P1 = { id: 'c8fba02e', version_id: '2be23de0', phase: 'LowerPrimary', code: 'P1', name: 'Primary 1', ordinal: 1 };
@@ -115,4 +115,25 @@ test('adaptTopic defaults per-user + count fields (pending backend)', () => {
 test('adaptTopics unwraps {topics:[…]}; empty → []', () => {
   assert.equal(adaptTopics({ topics: [GO_TOPIC_CELL, { ...GO_TOPIC_CELL, id: 't2' }] }).length, 2);
   assert.deepEqual(adaptTopics({} as never), []);
+});
+
+// ── Objectives (real fixture from /topics/:uuid/objectives) ───────────────────
+const GO_OBJ_CELL1 = { id: 'd26678a1', topic_id: 'cd55da30', code: 'BSC-CELL-1', title: 'Describe the structure of a plant and animal cell', exam_tags: ['BECE'], ordinal: 1 };
+
+test('adaptObjective maps title→statement, topic_id→topicId', () => {
+  const o = adaptObjective(GO_OBJ_CELL1);
+  assert.equal(o.id, 'd26678a1');
+  assert.equal(o.topicId, 'cd55da30');
+  assert.equal(o.statement, 'Describe the structure of a plant and animal cell');
+});
+
+test('adaptObjective defaults per-user mastery fields', () => {
+  const o = adaptObjective(GO_OBJ_CELL1);
+  assert.equal(o.mastery, 'not_started');
+  assert.equal(o.masteryPct, 0);
+});
+
+test('adaptObjectives unwraps {objectives:[…]}; empty → []', () => {
+  assert.equal(adaptObjectives({ objectives: [GO_OBJ_CELL1, { ...GO_OBJ_CELL1, id: 'o2' }] }).length, 2);
+  assert.deepEqual(adaptObjectives({} as never), []);
 });

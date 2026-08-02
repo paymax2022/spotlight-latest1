@@ -10,7 +10,7 @@
 // examRelevance are all absent), and /classes/:id/subjects is keyed by the class
 // UUID, not the class code the mobile holds. Tracked for a backend slice.
 
-import type { AcademyClass, CurriculumVersion, Subject, ExamSlug, Topic } from './types';
+import type { AcademyClass, CurriculumVersion, Subject, ExamSlug, Topic, Objective } from './types';
 
 export interface GoClass {
   id: string; version_id: string; phase: string; code: string; name: string; ordinal: number;
@@ -24,6 +24,9 @@ export interface GoSubject {
 }
 export interface GoTopic {
   id: string; subject_id: string; code: string; title: string; ordinal: number;
+}
+export interface GoObjective {
+  id: string; topic_id: string; code: string; title: string; exam_tags?: string[]; ordinal: number;
 }
 
 /** Map the Go class phase/code to the mobile band bucket. */
@@ -137,4 +140,26 @@ export function adaptTopic(g: GoTopic): Topic {
 export function adaptTopics(res: { topics?: GoTopic[] } | GoTopic[] | null | undefined): Topic[] {
   const rows = Array.isArray(res) ? res : res?.topics ?? [];
   return rows.map(adaptTopic);
+}
+
+// ── Objectives ───────────────────────────────────────────────────────────────
+/**
+ * Adapt a Go objective → mobile Objective. statement←title; mastery/masteryPct
+ * default to not-started/0 (per-user progress the API does not yet serve). The
+ * topicId passed by the caller is already the Go topic UUID (live topics call).
+ */
+export function adaptObjective(g: GoObjective): Objective {
+  return {
+    id: g.id,
+    topicId: g.topic_id,
+    statement: g.title,
+    mastery: 'not_started',
+    masteryPct: 0,
+  };
+}
+
+/** Unwrap {objectives:[…]} (or bare array / empty) and adapt. Never throws. */
+export function adaptObjectives(res: { objectives?: GoObjective[] } | GoObjective[] | null | undefined): Objective[] {
+  const rows = Array.isArray(res) ? res : res?.objectives ?? [];
+  return rows.map(adaptObjective);
 }
