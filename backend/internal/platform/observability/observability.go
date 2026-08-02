@@ -17,10 +17,13 @@ import (
 	"strconv"
 	"time"
 
+	mexporter "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric"
 	texporter "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace"
 	"github.com/getsentry/sentry-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
@@ -47,17 +50,23 @@ func Init(appEnv string) func(context.Context) {
 		}
 	}
 
-	// ── Traces → OpenTelemetry → Cloud Trace ────────────────────────────────────
+	// ── Traces + metrics → OpenTelemetry → Cloud Trace / Cloud Monitoring ────────
 	if projectID := os.Getenv("GOOGLE_CLOUD_PROJECT"); projectID != "" {
-		exp, err := texporter.New(texporter.WithProjectID(projectID))
-		if err != nil {
+		res, _ := resource.Merge(resource.Default(), resource.NewSchemaless(
+			attribute.String("service.name", serviceName),
+			attribute.String("service.version", release()),
+			attribute.String("deployment.environment", appEnv),
+		))
+
+		// W3C propagation so incoming `traceparent` (from the web/gateway) joins the
+		// trace, and outgoing instrumented calls carry it — one end-to-end trace.
+		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+			propagation.TraceContext{}, propagation.Baggage{},
+		))
+
+		if exp, err := texporter.New(texporter.WithProjectID(projectID)); err != nil {
 			log.Printf("[observability] cloud trace exporter init failed: %v", err)
 		} else {
-			res, _ := resource.Merge(resource.Default(), resource.NewSchemaless(
-				attribute.String("service.name", serviceName),
-				attribute.String("service.version", release()),
-				attribute.String("deployment.environment", appEnv),
-			))
 			tp := sdktrace.NewTracerProvider(
 				sdktrace.WithBatcher(exp),
 				sdktrace.WithResource(res),
@@ -66,8 +75,22 @@ func Init(appEnv string) func(context.Context) {
 				)),
 			)
 			otel.SetTracerProvider(tp)
-			log.Println("[observability] opentelemetry → cloud trace enabled")
+			log.Println("[observability] opentelemetry traces → cloud trace enabled")
 			shutdowns = append(shutdowns, func(ctx context.Context) { _ = tp.Shutdown(ctx) })
+		}
+
+		// Custom business metrics (payment success, ledger-invariant breaches, …)
+		// → Cloud Monitoring. See internal/platform/metrics for the instruments.
+		if mexp, err := mexporter.New(mexporter.WithProjectID(projectID)); err != nil {
+			log.Printf("[observability] cloud monitoring metric exporter init failed: %v", err)
+		} else {
+			mp := sdkmetric.NewMeterProvider(
+				sdkmetric.WithResource(res),
+				sdkmetric.WithReader(sdkmetric.NewPeriodicReader(mexp)),
+			)
+			otel.SetMeterProvider(mp)
+			log.Println("[observability] opentelemetry metrics → cloud monitoring enabled")
+			shutdowns = append(shutdowns, func(ctx context.Context) { _ = mp.Shutdown(ctx) })
 		}
 	}
 

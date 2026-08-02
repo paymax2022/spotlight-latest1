@@ -39,6 +39,14 @@ export async function proxyToGoBackend(
   const reqId = request.headers.get('X-Request-Id') || request.headers.get('x-request-id');
   if (reqId) headers['X-Request-Id'] = reqId;
 
+  // Forward distributed-tracing context so a browser request and its Go-backend
+  // span join ONE trace: `traceparent`/`tracestate` (W3C, for OTel) and
+  // `sentry-trace`/`baggage` (Sentry). Without this the trace breaks at the gateway.
+  for (const h of ['traceparent', 'tracestate', 'sentry-trace', 'baggage']) {
+    const v = request.headers.get(h);
+    if (v) headers[h] = v;
+  }
+
   // Route-specific extra headers (explicit allow-list — never blanket-forward
   // the incoming request's headers to the Go backend).
   if (options?.headers) Object.assign(headers, options.headers);
