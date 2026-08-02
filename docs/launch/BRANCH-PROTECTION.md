@@ -67,3 +67,17 @@ Create two environments used by `deploy.yml` / `deploy-web.yml`:
 - **production** — **required reviewers** (human gate); holds live secrets. Restrict to the `main` branch.
 
 Store per-env values as Environment secrets/variables — never in the repo, image, or logs.
+
+## Activation variables (deploys are OFF until set)
+
+Deploy workflows **skip** (grey, not red) until you opt in with a repository/Environment
+**variable**. This keeps checks green before the cloud accounts are wired:
+
+| Workflow | Activate with variable | Plus secrets |
+|---|---|---|
+| `deploy.yml` (Cloud Run) | `GCP_PROJECT_ID` (+ `GCP_REGION`, `GCP_ARTIFACT_REGISTRY`) | `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT` |
+| `deploy-web.yml` (Vercel) | `VERCEL_DEPLOY_ENABLED=true` | `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID_WEB`, `VERCEL_PROJECT_ID_ADMIN` |
+| `mobile-eas.yml` (EAS) | `EAS_ENABLED=true` | `EXPO_TOKEN` |
+
+`security.yml` scans run **advisory** (report, don't block) during launch — flip the
+`continue-on-error` flags to blocking once the dependency/secret backlog is clean.

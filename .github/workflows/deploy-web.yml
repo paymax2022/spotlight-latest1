@@ -26,6 +26,9 @@ concurrency:
 
 jobs:
   deploy:
+    # Skip (not fail) until Vercel is configured. Set repo variable
+    # VERCEL_DEPLOY_ENABLED=true (and the VERCEL_* secrets) to activate.
+    if: ${{ vars.VERCEL_DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
