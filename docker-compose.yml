@@ -9,6 +9,13 @@ services:
       - backend/.env
     environment:
       APP_PORT: "8080"
+      # Enable the §7A Referral Earning system so /api/finance/referral/* is
+      # mounted (my-rewards / withdraw-eligible / withdraw / config). Off by
+      # default (FEATURE_REFERRALS_ENABLED). frontend-web already sets its own
+      # FEATURE_REFERRALS_ENABLED=true and proxies /api/v1/referral/* here — this
+      # flag mismatch was leaving /my-rewards unmounted (404/500 on the client).
+      # Distinct from FEATURE_REFERRAL_REWARDS_ENABLED (the Direct-Rewards engine).
+      FEATURE_REFERRALS_ENABLED: "true"
       # Point at the host-side local Supabase Postgres (supabase start → port 54322).
       # Override in CI/prod with a real DATABASE_URL.
       DATABASE_URL: postgres://postgres:postgres@host.docker.internal:54322/postgres?sslmode=disable

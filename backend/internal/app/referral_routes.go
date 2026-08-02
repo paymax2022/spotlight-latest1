@@ -66,15 +66,21 @@ func RegisterReferral(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgx
 	inviteHandler := invite.NewHandler(pool)
 
 	// --- Member routes (/api/finance/referral) ---
-	mg := member.Group("/referral")
-	mg.GET("/config", cfgHandler.Get)                       // config-read
-	mg.GET("/my-attribution", attribHandler.MyAttribution)  // M-ONB-10 result
-	mg.POST("/claim-code", attribHandler.ClaimCode)         // M-INV-10 late claim
-	mg.GET("/my-rewards", rewardHandler.MySummary)          // M-HOME-03 summary
-	mg.GET("/withdraw-eligible", rewardHandler.MyEligible)  // eligible balance
-	mg.POST("/withdraw", rewardHandler.MyWithdraw)          // sweep eligible → wallet
-	mg.GET("/invite/vanity", inviteHandler.ListVanity)      // M-INV-05 list vanity links
-	mg.POST("/invite/vanity", inviteHandler.CreateVanity)   // M-INV-05 create vanity link
+	// `member` is already the /api/finance/referral group (see finance_routes.go
+	// and the sibling RegisterReferralEcon/Trust, which mount on it directly).
+	// Adding another "/referral" here doubled the prefix to
+	// /api/finance/referral/referral/* — which the frontend-web proxy
+	// (/api/v1/referral/<sub> → /api/finance/referral/<sub>) never hits, so
+	// my-rewards/withdraw-eligible/etc. 404'd. Mount on `member` directly.
+	mg := member.Group("")
+	mg.GET("/config", cfgHandler.Get)                      // config-read
+	mg.GET("/my-attribution", attribHandler.MyAttribution) // M-ONB-10 result
+	mg.POST("/claim-code", attribHandler.ClaimCode)        // M-INV-10 late claim
+	mg.GET("/my-rewards", rewardHandler.MySummary)         // M-HOME-03 summary
+	mg.GET("/withdraw-eligible", rewardHandler.MyEligible) // eligible balance
+	mg.POST("/withdraw", rewardHandler.MyWithdraw)         // sweep eligible → wallet
+	mg.GET("/invite/vanity", inviteHandler.ListVanity)     // M-INV-05 list vanity links
+	mg.POST("/invite/vanity", inviteHandler.CreateVanity)  // M-INV-05 create vanity link
 
 	// --- Admin routes (/api/referral/admin, per-route RBAC referral.*) ---
 	guard := func(permission string) gin.HandlerFunc {
