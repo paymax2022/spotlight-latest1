@@ -18,6 +18,7 @@ import { creditPoints, type PointsLedgerState } from './pointsLedger';
 import { assertCanSpend, type SpendConsentState } from './consent';
 import { upsertBookmark } from './bookmarks';
 import { adaptClasses, adaptVersions, adaptSubjects, adaptTopics, adaptObjectives, adaptLessons, adaptLesson, type GoClass, type GoVersion, type GoSubject, type GoTopic, type GoObjective, type GoLesson } from './curriculumAdapters';
+import { adaptMe, mapMobileRole, kycToInt, type GoMe } from './identityAdapters';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -170,8 +171,10 @@ const ecceHome: EcceHome = { ...P4.MOCK_ECCE_HOME, activities: P4.MOCK_ECCE_HOME
 // ── Identity ──────────────────────────────────────────────────────────────────
 export async function getMe(): Promise<AcademyProfile> {
   if (USE_MOCK) { await delay(); return profile; }
-  const { data } = await api.get<AcademyProfile>(`${B}/me`);
-  return data;
+  // Live: /me is a nested aggregate; adapt to the flat profile, resolving
+  // class_id→classCode from the live classes.
+  const [meRes, classes] = await Promise.all([api.get<GoMe>(`${B}/me`), getClasses()]);
+  return adaptMe(meRes.data, new Map(classes.map((c) => [c.id, c.code])));
 }
 
 export async function setRole(role: AcademyProfile['role']): Promise<AcademyProfile> {
@@ -180,8 +183,9 @@ export async function setRole(role: AcademyProfile['role']): Promise<AcademyProf
     profile = { ...profile, role };
     return profile;
   }
-  const { data } = await api.post<AcademyProfile>(`${B}/roles`, { role });
-  return data;
+  // Live: POST the grant (backend enum role), then re-read the adapted profile.
+  await api.post(`${B}/roles`, { role: mapMobileRole(role) });
+  return getMe();
 }
 
 export interface ProfileUpdate {
@@ -209,8 +213,32 @@ export async function updateProfile(input: ProfileUpdate): Promise<AcademyProfil
     if (input.onboardingComplete) track('onboarding_completed', { class: profile.classCode });
     return profile;
   }
-  const { data } = await api.put<AcademyProfile>(`${B}/profile`, input);
-  return data;
+  // Live: PUT is a full upsert (requires role), so merge the partial input over
+  // the current profile — otherwise updating just the DOB would wipe the class.
+  // Resolve classCode→class_id within the active version, and recompute isMinor.
+  const current = await getMe();
+  const effectiveClassCode = input.classCode ?? current.classCode;
+  const [classes, versions] = await Promise.all([getClasses(), getCurriculumVersions()]);
+  const active = versions.filter((v) => !v.isLegacy).sort((a, b) => b.effectiveYear - a.effectiveYear)[0];
+  const classId = effectiveClassCode
+    ? (classes.find((c) => c.code === effectiveClassCode && c.curriculumVersionId === active?.id)
+       ?? classes.find((c) => c.code === effectiveClassCode))?.id
+    : undefined;
+  const dob = input.dob ?? current.dob;
+  const isMinor = dob
+    ? Math.floor((Date.now() - new Date(dob).getTime()) / (365.25 * 86_400_000)) < 18
+    : current.isMinor;
+  await api.put(`${B}/profile`, {
+    role: mapMobileRole(current.role),
+    class_id: classId,
+    stream: input.stream ?? current.stream,
+    display_name: input.displayName ?? current.displayName,
+    dob,
+    is_minor: isMinor,
+    kyc_tier: kycToInt(current.kycTier),
+  });
+  if (input.onboardingComplete) track('onboarding_completed', { class: effectiveClassCode });
+  return getMe();
 }
 
 export async function linkGuardian(guardianPhone: string): Promise<AcademyProfile> {
