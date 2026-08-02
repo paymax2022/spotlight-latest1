@@ -1,9 +1,15 @@
+import { withSentryConfig } from '@sentry/nextjs';
 import { imageHosts } from './image-hosts.config.mjs';
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   productionBrowserSourceMaps: true,
   distDir: process.env.DIST_DIR || '.next',
+
+  // Required on Next 14 for the Sentry instrumentation.ts hook (stable in Next 15).
+  experimental: {
+    instrumentationHook: true,
+  },
 
   images: {
     remotePatterns: imageHosts,
@@ -52,4 +58,19 @@ const nextConfig = {
     };
   },
 };
-export default nextConfig;
+
+// withSentryConfig uploads source maps at build (gated by SENTRY_AUTH_TOKEN) and
+// tunnels events past ad-blockers. All Sentry options are optional — with no
+// org/token the wrapper is a no-op, so builds succeed without a Sentry account.
+export default withSentryConfig(nextConfig, {
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  authToken: process.env.SENTRY_AUTH_TOKEN, // secret — CI/Vercel env only
+  silent: !process.env.CI,
+  widenClientFileUpload: true,
+  tunnelRoute: '/monitoring', // route Sentry through our origin (avoids ad-block)
+  sourcemaps: {
+    // Only upload when we actually have a token (otherwise skip cleanly).
+    disable: !process.env.SENTRY_AUTH_TOKEN,
+  },
+});

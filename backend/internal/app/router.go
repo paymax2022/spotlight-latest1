@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"time"
 
+	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/handlers"
 	"spotlight/backend/internal/integrations"
@@ -22,6 +24,11 @@ import (
 func NewRouter(cfg config.Config) *gin.Engine {
 	r := gin.Default()
 	r.Use(middleware.CORSMiddleware(cfg.CORSAllowOrigins, cfg.AppEnv))
+	// Distributed tracing (no-op unless a TracerProvider is configured via
+	// observability.Init) and Sentry panic capture (no-op unless SENTRY_DSN set).
+	// Repanic lets gin's Recovery still return 500 after Sentry records the panic.
+	r.Use(otelgin.Middleware("paymax-backend"))
+	r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
 
 	// Liveness (no dependencies): the orchestrator restarts the container if this
 	// fails. Kept dependency-free so a slow DB/Redis never triggers a kill loop.

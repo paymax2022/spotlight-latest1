@@ -12,6 +12,7 @@ import (
 
 	"spotlight/backend/internal/app"
 	"spotlight/backend/internal/config"
+	"spotlight/backend/internal/platform/observability"
 )
 
 func main() {
@@ -21,6 +22,9 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("startup aborted: %v", err)
 	}
+
+	// Error tracking (Sentry) + tracing (OTel→Cloud Trace); no-op unless configured.
+	flushObservability := observability.Init(cfg.AppEnv)
 
 	r := app.NewRouter(cfg)
 	srv := &http.Server{
@@ -47,7 +51,9 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("graceful shutdown failed: %v", err)
+		log.Printf("graceful shutdown error: %v", err)
 	}
+	// Flush buffered Sentry events + OTel spans before the process exits.
+	flushObservability(shutdownCtx)
 	log.Println("shutdown complete")
 }
