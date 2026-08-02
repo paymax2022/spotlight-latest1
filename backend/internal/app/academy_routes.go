@@ -535,6 +535,10 @@ func (a academyGamifierAdapter) EvaluateBadges(ctx context.Context, userID strin
 	return err
 }
 
+func (a academyGamifierAdapter) RecordClassScore(ctx context.Context, userID string, delta int64) error {
+	return a.gam.RecordClassScore(ctx, userID, delta)
+}
+
 type feesGamificationLadder struct{ gam *gamification.Service }
 
 func (a feesGamificationLadder) EnsureLeaderboard(ctx context.Context, scope, scopeRef, subject string) (leaderboardID string, err error) {

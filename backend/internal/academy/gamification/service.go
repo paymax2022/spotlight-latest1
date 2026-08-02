@@ -2,8 +2,12 @@ package gamification
 
 import (
 	"context"
+	"strings"
 	"time"
 )
+
+// classPeriodKey is the (single, non-resetting) period for class XP boards.
+const classPeriodKey = "all-time"
 
 // Service orchestrates engagement mechanics. It NEVER moves money or touches the
 // wallet ledger — that boundary belongs exclusively to the rewards package.
@@ -172,6 +176,70 @@ func (s *Service) GetChallenges(ctx context.Context, userID string) ([]Challenge
 		})
 	}
 	return out, nil
+}
+
+// RecordClassScore adds an XP delta to the learner's class board (created on
+// first use). No-op when the delta is non-positive or the learner has no class.
+// Fired from the earn-path alongside AwardXP.
+func (s *Service) RecordClassScore(ctx context.Context, userID string, delta int64) error {
+	if delta <= 0 {
+		return nil
+	}
+	classID, ok, err := s.repo.UserClassID(ctx, userID)
+	if err != nil || !ok {
+		return err
+	}
+	lb, err := s.repo.GetOrCreateClassLeaderboard(ctx, classID, classPeriodKey)
+	if err != nil {
+		return err
+	}
+	return s.repo.AddLeaderboardScore(ctx, lb.ID, userID, classPeriodKey, delta)
+}
+
+// GetClassLeaderboard returns the caller's class XP ranking (classmates only,
+// first-name). Empty board when the learner has no class yet.
+func (s *Service) GetClassLeaderboard(ctx context.Context, userID string) (*ClassLeaderboard, error) {
+	out := &ClassLeaderboard{PeriodKey: classPeriodKey, Entries: []ClassLeaderboardEntry{}}
+	classID, ok, err := s.repo.UserClassID(ctx, userID)
+	if err != nil || !ok {
+		return out, err
+	}
+	code, err := s.repo.ClassCode(ctx, classID)
+	if err != nil {
+		return nil, err
+	}
+	out.ClassCode = code
+	lb, err := s.repo.GetOrCreateClassLeaderboard(ctx, classID, classPeriodKey)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.repo.ClassRankedEntries(ctx, lb.ID, classPeriodKey, 100)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		isMe := row.UserID == userID
+		if isMe {
+			out.MyRank = row.Rank
+		}
+		out.Entries = append(out.Entries, ClassLeaderboardEntry{
+			Rank: row.Rank, Name: firstName(row.Name), XP: row.XP, IsMe: isMe,
+		})
+	}
+	return out, nil
+}
+
+// firstName keeps only the first token of a display name (child-safety: peers
+// never see a learner's full name on the class board).
+func firstName(full string) string {
+	full = strings.TrimSpace(full)
+	if i := strings.IndexByte(full, ' '); i > 0 {
+		return full[:i]
+	}
+	if full == "" {
+		return "Learner"
+	}
+	return full
 }
 
 // windowStart returns the lower bound for a challenge window: 'week' = last 7

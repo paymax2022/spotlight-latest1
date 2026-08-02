@@ -24,6 +24,7 @@ type Gamifier interface {
 	AwardXP(ctx context.Context, userID, action string, amount int64) error
 	ExtendStreak(ctx context.Context, userID string) error
 	EvaluateBadges(ctx context.Context, userID string, counters map[string]int64) error
+	RecordClassScore(ctx context.Context, userID string, delta int64) error
 }
 
 // NewService wires the assessment service with the default thresholds.
@@ -221,6 +222,7 @@ func (s *Service) RunMasteryCheck(ctx context.Context, userID, objectiveID strin
 			counters["objectives_mastered"] = 1
 		}
 		_ = s.gamifier.EvaluateBadges(ctx, userID, counters)
+		_ = s.gamifier.RecordClassScore(ctx, userID, int64(correct*10))
 	}
 
 	return &PracticeResult{

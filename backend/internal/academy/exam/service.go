@@ -35,6 +35,7 @@ type Gamifier interface {
 	AwardXP(ctx context.Context, userID, action string, amount int64) error
 	ExtendStreak(ctx context.Context, userID string) error
 	EvaluateBadges(ctx context.Context, userID string, counters map[string]int64) error
+	RecordClassScore(ctx context.Context, userID string, delta int64) error
 }
 
 // NewService wires the exam service with a system clock and no entitlement checker
@@ -374,6 +375,7 @@ func (s *Service) Submit(ctx context.Context, userID, attemptID string, response
 		// Increment counter is enough for "first exam"-style badges (min:1); the
 		// grant is idempotent, so re-passing 1 on later exams is a no-op.
 		_ = s.gamifier.EvaluateBadges(ctx, userID, map[string]int64{"exams_completed": 1})
+		_ = s.gamifier.RecordClassScore(ctx, userID, int64(res.Overall))
 	}
 	return s.repo.GetAttempt(ctx, attemptID)
 }

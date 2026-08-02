@@ -5,7 +5,7 @@
 // freezeTokens, rank?}). This pure adapter bridges them, computing xpToNext from
 // the backend's level curve.
 
-import type { GamificationProfile, Challenge, Badge } from './types';
+import type { GamificationProfile, Challenge, Badge, ClassLeaderboard, LeaderboardEntry } from './types';
 
 export interface GoGamificationProfile {
   user_id: string;
@@ -27,6 +27,39 @@ const LEVEL_STEP_XP = 150;
 export function xpThresholdForNextLevel(level: number): number {
   const n = Math.max(1, Math.floor(level));
   return n * LEVEL_BASE_XP + ((n - 1) * n) / 2 * LEVEL_STEP_XP;
+}
+
+// ── Class leaderboard ────────────────────────────────────────────────────────
+
+export interface GoClassLeaderboardEntry {
+  rank: number;
+  name: string;
+  xp: number;
+  is_me: boolean;
+}
+
+export interface GoClassLeaderboard {
+  class_code?: string;
+  period_key?: string;
+  my_rank?: number;
+  entries?: GoClassLeaderboardEntry[];
+}
+
+/** Adapt the Go class board → mobile ClassLeaderboard (snake→camel; entries are
+ *  already child-safe first-name/rank/xp/isMe from the server). */
+export function adaptClassLeaderboard(go: GoClassLeaderboard): ClassLeaderboard {
+  const entries: LeaderboardEntry[] = (go.entries ?? []).map((e) => ({
+    rank: e.rank,
+    name: e.name,
+    xp: e.xp,
+    isMe: !!e.is_me,
+  }));
+  return {
+    classCode: go.class_code ?? '',
+    periodKey: go.period_key ?? 'all-time',
+    myRank: go.my_rank ?? 0,
+    entries,
+  };
 }
 
 // ── Badges ───────────────────────────────────────────────────────────────────

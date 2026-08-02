@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { adaptGamificationProfile, xpThresholdForNextLevel, adaptChallenge, adaptChallenges, adaptBadge, adaptBadges } from '../gamificationAdapters.ts';
+import { adaptGamificationProfile, xpThresholdForNextLevel, adaptChallenge, adaptChallenges, adaptBadge, adaptBadges, adaptClassLeaderboard } from '../gamificationAdapters.ts';
 
 test('xpThresholdForNextLevel mirrors the backend curve (base 100, step 150)', () => {
   assert.equal(xpThresholdForNextLevel(1), 100, 'level 1 → 2 at 100 XP');
@@ -107,4 +107,28 @@ test('adaptBadge: unearned badge → earned false, no earnedAt, icon fallback', 
 
 test('adaptBadges tolerates undefined', () => {
   assert.deepEqual(adaptBadges(undefined), []);
+});
+
+test('adaptClassLeaderboard maps the class board (snake→camel, isMe, myRank)', () => {
+  const go = {
+    class_code: 'JSS1', period_key: 'all-time', my_rank: 2,
+    entries: [
+      { rank: 1, name: 'Ada', xp: 300, is_me: false },
+      { rank: 2, name: 'Bola', xp: 130, is_me: true },
+    ],
+  };
+  const b = adaptClassLeaderboard(go);
+  assert.equal(b.classCode, 'JSS1');
+  assert.equal(b.periodKey, 'all-time');
+  assert.equal(b.myRank, 2);
+  assert.equal(b.entries.length, 2);
+  assert.deepEqual(b.entries[0], { rank: 1, name: 'Ada', xp: 300, isMe: false });
+  assert.equal(b.entries[1].isMe, true);
+});
+
+test('adaptClassLeaderboard: empty/absent board → safe defaults', () => {
+  const b = adaptClassLeaderboard({});
+  assert.equal(b.classCode, '');
+  assert.equal(b.myRank, 0);
+  assert.deepEqual(b.entries, []);
 });

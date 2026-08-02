@@ -63,6 +63,22 @@ func (h *Handler) GetLeaderboard(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"leaderboard": lb, "entries": entries})
 }
 
+// GetClassLeaderboard handles GET /gamification/leaderboard/class — the caller's
+// class XP ranking (classmates only, first-name).
+func (h *Handler) GetClassLeaderboard(c *gin.Context) {
+	uid := userID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	out, err := h.svc.GetClassLeaderboard(c.Request.Context(), uid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
 // GetChallenges handles GET /gamification/challenges.
 func (h *Handler) GetChallenges(c *gin.Context) {
 	ch, err := h.svc.GetChallenges(c.Request.Context(), userID(c))
@@ -143,6 +159,7 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard func(permission
 	mg.GET("/profile", h.GetProfile)
 	mg.GET("/badges", h.GetBadges)
 	mg.GET("/leaderboards/:id", h.GetLeaderboard)
+	mg.GET("/leaderboard/class", h.GetClassLeaderboard)
 	mg.GET("/challenges", h.GetChallenges)
 
 	ag := admin.Group("/gamification")

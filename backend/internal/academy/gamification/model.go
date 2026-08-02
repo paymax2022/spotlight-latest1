@@ -86,6 +86,23 @@ type Leaderboard struct {
 	ResetPolicy string  `json:"reset_policy"`
 }
 
+// ClassLeaderboardEntry is one ranked row of a class XP board — the child-safe
+// member surface: first name only, no user_id leaked to peers.
+type ClassLeaderboardEntry struct {
+	Rank int    `json:"rank"`
+	Name string `json:"name"`
+	XP   int64  `json:"xp"`
+	IsMe bool   `json:"is_me"`
+}
+
+// ClassLeaderboard is a learner's class XP ranking (classmates only).
+type ClassLeaderboard struct {
+	ClassCode string                  `json:"class_code"`
+	PeriodKey string                  `json:"period_key"`
+	MyRank    int                     `json:"my_rank"` // 0 = not yet ranked
+	Entries   []ClassLeaderboardEntry `json:"entries"`
+}
+
 // LeaderboardEntry mirrors public.academy_leaderboard_entries
 // (PK leaderboard_id, user_id, period_key).
 type LeaderboardEntry struct {

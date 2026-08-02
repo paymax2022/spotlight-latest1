@@ -20,7 +20,7 @@ import { upsertBookmark } from './bookmarks';
 import { adaptClasses, adaptVersions, adaptSubjects, adaptTopics, adaptObjectives, adaptLessons, adaptLesson, type GoClass, type GoVersion, type GoSubject, type GoTopic, type GoObjective, type GoLesson } from './curriculumAdapters';
 import { adaptPracticeItems, toPracticeSubmit, adaptPracticeResult, type GoQuestionItem, type GoPracticeResult } from './practiceAdapters';
 import { adaptStartedAttempt, toExamSubmit, adaptExamResult, adaptArena, adaptArenas, adaptBlueprints, type GoExamAttempt, type GoScoredAttempt, type GoExamResultProjection, type GoArena, type GoBlueprint } from './examAdapters';
-import { adaptGamificationProfile, adaptChallenges, adaptBadges, type GoGamificationProfile, type GoChallenge, type GoBadgeView } from './gamificationAdapters';
+import { adaptGamificationProfile, adaptChallenges, adaptBadges, adaptClassLeaderboard, type GoGamificationProfile, type GoChallenge, type GoBadgeView, type GoClassLeaderboard } from './gamificationAdapters';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -43,6 +43,7 @@ import type {
   Badge,
   Challenge,
   LeaderboardEntry,
+  ClassLeaderboard,
   RewardBalance,
   RewardLedgerEntry,
   RewardCatalogItem,
@@ -682,6 +683,20 @@ export async function getLeaderboard(id = 'national'): Promise<LeaderboardEntry[
   if (USE_MOCK) { await delay(); return M.MOCK_LEADERBOARD; }
   const { data } = await api.get<LeaderboardEntry[]>(`${B}/gamification/leaderboards/${id}`);
   return data;
+}
+
+/**
+ * The learner's class XP ranking (classmates only, first names, 'you' flagged).
+ * XP is earned on the practice/exam earn-path; child-safe by construction (the
+ * server scopes to the caller's class and never returns full names or user ids).
+ */
+export async function getClassLeaderboard(): Promise<ClassLeaderboard> {
+  if (USE_MOCK) {
+    await delay();
+    return { classCode: '', periodKey: 'all-time', myRank: 0, entries: M.MOCK_LEADERBOARD };
+  }
+  const { data } = await api.get<GoClassLeaderboard>(`${B}/gamification/leaderboard/class`);
+  return adaptClassLeaderboard(data);
 }
 
 // ── Rewards ──────────────────────────────────────────────────────────────────

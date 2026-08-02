@@ -34,6 +34,7 @@ export default function AcademyLayout() {
 
       {/* Phase 2 — Learner (L2, L7, L8, L11, L14–L17, My path) */}
       <Stack.Screen name="goal/index" />
+      <Stack.Screen name="class-leaderboard" />
       <Stack.Screen name="path/index" />
       <Stack.Screen name="practice/adaptive" />
       <Stack.Screen name="lesson/transcript/[id]" />
