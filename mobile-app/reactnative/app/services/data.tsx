@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator, Linking,
 } from 'react-native';
@@ -11,6 +11,7 @@ import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import TextInputField from '@/components/TextInputField';
+import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
 import BillReviewSecurityPanel, { calculateBillReview, formatNaira } from '@/components/BillReviewSecurityPanel';
 import PaymentMethodSelector, { type PaymentMethod } from '@/components/PaymentMethodSelector';
@@ -71,6 +72,27 @@ export default function DataScreen() {
     queryKey: ['wallet'],
     queryFn:  getWallet,
   });
+
+  // Build the dropdown options from the provider adapter's plans. SelectField
+  // keys options by their label string, so labels must be unique — de-dupe by
+  // suffixing a counter when a network exposes plans with identical labels.
+  const planOptions = useMemo(() => {
+    const seen = new Map<string, number>();
+    return plans
+      .filter((p) => p.isActive)
+      .map((plan) => {
+        const detail = [plan.allowance, plan.validity].filter(Boolean).join(' · ');
+        let label = `${plan.name}${detail ? ` · ${detail}` : ''} — ₦${plan.sellingPrice.toLocaleString()}`;
+        const n = seen.get(label) ?? 0;
+        seen.set(label, n + 1);
+        if (n > 0) label = `${label} (${n + 1})`;
+        return { label, plan };
+      });
+  }, [plans]);
+
+  const selectedPlanLabel = selectedPlan
+    ? planOptions.find((o) => o.plan.id === selectedPlan.id)?.label ?? ''
+    : '';
 
   const { control, handleSubmit, formState: { errors } } = useForm<Form>({ resolver: zodResolver(schema) });
 
@@ -218,21 +240,29 @@ export default function DataScreen() {
             <Text style={styles.sectionTitle}>Choose Plan</Text>
             {plansLoading ? (
               <ActivityIndicator size="small" color={Colors.primary} style={{ marginVertical: Spacing.md }} />
-            ) : plans.length === 0 ? (
+            ) : planOptions.length === 0 ? (
               <Text style={styles.emptyText}>No plans available for this network.</Text>
             ) : (
-              plans.filter((p) => p.isActive).map((plan) => {
-                const active = selectedPlan?.id === plan.id;
-                return (
-                  <Pressable key={plan.id} onPress={() => setSelectedPlan(plan)} style={[styles.planRow, active && styles.planRowActive]}>
+              <>
+                <SelectField
+                  placeholder="Select a data plan"
+                  value={selectedPlanLabel}
+                  options={planOptions.map((o) => o.label)}
+                  onChange={(label) => {
+                    const match = planOptions.find((o) => o.label === label);
+                    if (match) setSelectedPlan(match.plan);
+                  }}
+                />
+                {selectedPlan && (
+                  <View style={styles.planSelected}>
                     <View>
-                      <Text style={[styles.planTitle, active && styles.planTitleActive]}>{plan.name}</Text>
-                      <Text style={styles.planMeta}>{plan.allowance} · {plan.validity}</Text>
+                      <Text style={styles.planTitleActive}>{selectedPlan.name}</Text>
+                      <Text style={styles.planMeta}>{[selectedPlan.allowance, selectedPlan.validity].filter(Boolean).join(' · ')}</Text>
                     </View>
-                    <Text style={[styles.planPrice, active && styles.planPriceActive]}>₦{plan.sellingPrice.toLocaleString()}</Text>
-                  </Pressable>
-                );
-              })
+                    <Text style={styles.planPriceActive}>₦{selectedPlan.sellingPrice.toLocaleString()}</Text>
+                  </View>
+                )}
+              </>
             )}
           </View>
         )}
@@ -373,13 +403,10 @@ const styles = StyleSheet.create({
   providerInitial:{ ...Typography.labelLg, fontWeight: '800' },
   providerName:{ ...Typography.labelMd, color: Colors.onSurface },
   providerNameActive:{ color: Colors.onPrimaryFixed },
-  planRow:     { minHeight: 72, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, backgroundColor: Colors.surfaceContainerLow, padding: Spacing.md, marginTop: Spacing.sm, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  planRowActive:{ borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
-  planTitle:   { ...Typography.labelLg, color: Colors.onSurface },
-  planTitleActive:{ color: Colors.onPrimaryFixed },
+  planSelected:{ minHeight: 60, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.primary, backgroundColor: Colors.primaryFixed, padding: Spacing.md, marginTop: Spacing.xs, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  planTitleActive:{ ...Typography.labelLg, color: Colors.onPrimaryFixed },
   planMeta:    { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
-  planPrice:   { ...Typography.labelLg, color: Colors.secondary },
-  planPriceActive:{ color: Colors.primary },
+  planPriceActive:{ ...Typography.labelLg, color: Colors.primary, fontWeight: '700' },
   emptyText:   { ...Typography.bodyMd, color: Colors.outline, textAlign: 'center', paddingVertical: Spacing.lg },
   apiError:    { ...Typography.labelSm, color: Colors.error, textAlign: 'center', marginBottom: Spacing.md },
   summaryCard: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.cardPadding, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, marginBottom: Spacing.lg },
