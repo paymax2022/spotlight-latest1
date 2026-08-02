@@ -4,7 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as merchant from './api';
-import type { CreateStoreInput, UpdateStoreInput } from './types';
+import type { CreateStoreInput, UpdateStoreInput, AddBankAccountInput } from './types';
 
 const KEY = 'restaurant-merchant';
 
@@ -14,6 +14,34 @@ export function useMyStores() {
 
 export function useEarnings() {
   return useQuery({ queryKey: [KEY, 'earnings'], queryFn: merchant.getEarnings, staleTime: 30_000 });
+}
+
+export function useBankAccounts() {
+  return useQuery({ queryKey: [KEY, 'banks'], queryFn: merchant.getBankAccounts, staleTime: 30_000 });
+}
+
+export function useAddBankAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AddBankAccountInput) => merchant.addBankAccount(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'banks'] }),
+  });
+}
+
+export function useSetDefaultBankAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => merchant.setDefaultBankAccount(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'banks'] }),
+  });
+}
+
+export function useDeleteBankAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => merchant.deleteBankAccount(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'banks'] }),
+  });
 }
 
 export function useStoreDetail(id?: string) {

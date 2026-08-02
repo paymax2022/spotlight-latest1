@@ -1,6 +1,8 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
+import { Landmark, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
@@ -37,6 +39,12 @@ export default function EarningsScreen() {
           <Text style={styles.note}>
             Pending earnings are settled orders awaiting the next payout run. Paid-out funds are credited to your wallet.
           </Text>
+
+          <Pressable onPress={() => router.push('/food/restaurant/bank-accounts')} style={styles.linkBtn}>
+            <Landmark size={18} color={Colors.primary} />
+            <Text style={styles.linkText}>Manage payout accounts</Text>
+            <ChevronRight size={18} color={Colors.onSurfaceVariant} />
+          </Pressable>
 
           <Text style={styles.section}>Payout history</Text>
           {(earnings.data?.runs.length ?? 0) === 0 ? (
@@ -86,6 +94,12 @@ const styles = StyleSheet.create({
   statLabel: { color: Colors.onSurfaceVariant, fontSize: 13, fontWeight: '600' },
   statValue: { fontSize: 22, fontWeight: '800' },
   note: { color: Colors.onSurfaceVariant, fontSize: 13 },
+  linkBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.md,
+    borderWidth: 1, borderColor: Colors.outlineVariant, paddingHorizontal: Spacing.md, paddingVertical: 14,
+  },
+  linkText: { color: Colors.primary, fontSize: 15, fontWeight: '700', flex: 1 },
   section: { color: Colors.onSurface, fontSize: 16, fontWeight: '700', marginTop: Spacing.sm },
   card: {
     backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg,

@@ -24,6 +24,8 @@ import type {
   CreateStoreInput,
   UpdateStoreInput,
   MerchantEarnings,
+  BankAccount,
+  AddBankAccountInput,
 } from './types';
 
 export const USE_MOCK =
@@ -181,6 +183,54 @@ export async function deleteItem(id: string, itemId: string): Promise<void> {
     return;
   }
   await api.delete(`${BASE}/${enc(id)}/menu/items/${enc(itemId)}`);
+}
+
+// ── Settlement bank accounts (capture only — no money movement) ───────────────
+function mapBank(b: any): BankAccount {
+  return {
+    id: b.id,
+    bankName: b.bank_name,
+    bankCode: b.bank_code,
+    accountNumberMasked: b.account_number_masked,
+    accountName: b.account_name,
+    isVerified: !!b.is_verified,
+    isDefault: !!b.is_default,
+    createdAt: b.created_at,
+  };
+}
+let mockBanks: BankAccount[] = [];
+
+export async function getBankAccounts(): Promise<BankAccount[]> {
+  if (USE_MOCK) { await delay(); return mockBanks; }
+  return unwrap<any[]>(await api.get(`${BASE}/bank-accounts`)).map(mapBank);
+}
+
+export async function addBankAccount(input: AddBankAccountInput): Promise<BankAccount> {
+  if (USE_MOCK) {
+    await delay();
+    const b: BankAccount = {
+      id: nextId('b'), bankName: input.bankName, bankCode: input.bankCode,
+      accountNumberMasked: '****' + input.accountNumber.slice(-4), accountName: input.accountName,
+      isVerified: false, isDefault: mockBanks.length === 0,
+    };
+    mockBanks = [...mockBanks, b];
+    return b;
+  }
+  const body = {
+    bank_name: input.bankName, bank_code: input.bankCode,
+    account_number: input.accountNumber, account_name: input.accountName,
+  };
+  return mapBank(unwrap<any>(await api.post(`${BASE}/bank-accounts`, body)));
+}
+
+export async function setDefaultBankAccount(accountId: string): Promise<void> {
+  if (USE_MOCK) { await delay(); mockBanks = mockBanks.map((b) => ({ ...b, isDefault: b.id === accountId })); return; }
+  await api.patch(`${BASE}/bank-accounts/${enc(accountId)}/default`, {});
+}
+
+export async function deleteBankAccount(accountId: string): Promise<void> {
+  if (USE_MOCK) { await delay(); mockBanks = mockBanks.filter((b) => b.id !== accountId); return; }
+  await api.delete(`${BASE}/bank-accounts/${enc(accountId)}`);
 }
 
 // ── Earnings (read-only) ──────────────────────────────────────────────────────

@@ -1333,6 +1333,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.POST("", restaurantHandler.Create)
 		restGroup.GET("/mine", restaurantHandler.MyRestaurants)      // caller's own stores (static sibling of :id)
 		restGroup.GET("/earnings", restaurantHandler.Earnings)       // caller's food-delivery earnings
+
+		// Settlement bank accounts (capture only — NOT money movement).
+		restGroup.POST("/bank-accounts", restaurantHandler.AddBankAccount)
+		restGroup.GET("/bank-accounts", restaurantHandler.ListBankAccounts)
+		restGroup.PATCH("/bank-accounts/:accountId/default", restaurantHandler.SetDefaultBankAccount)
+		restGroup.DELETE("/bank-accounts/:accountId", restaurantHandler.DeleteBankAccount)
 		restGroup.GET("/:id", restaurantHandler.GetRestaurant)
 
 		// Store management (owner only): edit profile + operational open/close.

@@ -116,6 +116,53 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 
 // ── Store management (owner only) ─────────────────────────────────────────────
 
+// AddBankAccount → POST /restaurant/bank-accounts (save a settlement account).
+func (h *Handler) AddBankAccount(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req AddBankAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	b, err := h.svc.AddBankAccount(c.Request.Context(), userID, req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, b)
+}
+
+// ListBankAccounts → GET /restaurant/bank-accounts (the caller's saved accounts).
+func (h *Handler) ListBankAccounts(c *gin.Context) {
+	userID := c.GetString("user_id")
+	list, err := h.svc.ListBankAccounts(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": list})
+}
+
+// SetDefaultBankAccount → PATCH /restaurant/bank-accounts/:accountId/default.
+func (h *Handler) SetDefaultBankAccount(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if err := h.svc.SetDefaultBankAccount(c.Request.Context(), userID, c.Param("accountId")); err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"updated": true})
+}
+
+// DeleteBankAccount → DELETE /restaurant/bank-accounts/:accountId.
+func (h *Handler) DeleteBankAccount(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if err := h.svc.DeleteBankAccount(c.Request.Context(), userID, c.Param("accountId")); err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
+}
+
 // Earnings → GET /restaurant/earnings (the caller's food-delivery earnings).
 func (h *Handler) Earnings(c *gin.Context) {
 	userID := c.GetString("user_id")
