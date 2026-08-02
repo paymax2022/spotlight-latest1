@@ -4,7 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Api from './api';
 import type { ProfileUpdate, CreateOrderInput, CreatePotInput } from './api';
-import type { AcademyRole, PracticeSubmission, Bundle, UsageControls, SavingsPot } from './types';
+import type { AcademyRole, PracticeSubmission, Bundle, UsageControls, SavingsPot, Bookmark } from './types';
 
 const KEY = 'academy';
 
@@ -412,6 +412,14 @@ export function useBookmarks() {
 export function useRemoveBookmark() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (id: string) => Api.removeBookmark(id), onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'bookmarks'] }) });
+}
+
+export function useAddBookmark() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Omit<Bookmark, 'id' | 'ts'>) => Api.addBookmark(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'bookmarks'] }),
+  });
 }
 
 export function useNotes() {

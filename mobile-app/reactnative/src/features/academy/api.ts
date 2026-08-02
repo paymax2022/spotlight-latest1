@@ -16,6 +16,7 @@ import { track } from './analytics';
 import { enqueue } from './offlineQueue';
 import { creditPoints, type PointsLedgerState } from './pointsLedger';
 import { assertCanSpend, type SpendConsentState } from './consent';
+import { upsertBookmark } from './bookmarks';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -1177,6 +1178,17 @@ export async function getBookmarks(): Promise<Bookmark[]> {
 export async function removeBookmark(id: string): Promise<void> {
   if (USE_MOCK) { await delay(200); bookmarks = bookmarks.filter((b) => b.id !== id); return; }
   await api.delete(`${B}/learner/bookmarks/${id}`);
+}
+
+/**
+ * Create a bookmark (was missing — learners could only view/remove seeded ones).
+ * Deduped by canonical href so re-bookmarking the same lesson can't duplicate.
+ */
+export async function addBookmark(input: Omit<Bookmark, 'id' | 'ts'>): Promise<Bookmark> {
+  const bm: Bookmark = { ...input, id: `bm_${Date.now()}`, ts: new Date().toISOString() };
+  if (USE_MOCK) { await delay(200); bookmarks = upsertBookmark(bookmarks, bm); return bm; }
+  const { data } = await api.post<Bookmark>(`${B}/learner/bookmarks`, input);
+  return data;
 }
 
 export async function getNotes(): Promise<LessonNote[]> {
