@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Landmark, ChevronRight } from 'lucide-react-native';
+import { Landmark, ChevronRight, Banknote } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
@@ -39,6 +39,12 @@ export default function EarningsScreen() {
           <Text style={styles.note}>
             Pending earnings are settled orders awaiting the next payout run. Paid-out funds are credited to your wallet.
           </Text>
+
+          <Pressable onPress={() => router.push('/food/restaurant/withdraw')} style={styles.linkBtn}>
+            <Banknote size={18} color={Colors.primary} />
+            <Text style={styles.linkText}>Withdraw to bank</Text>
+            <ChevronRight size={18} color={Colors.onSurfaceVariant} />
+          </Pressable>
 
           <Pressable onPress={() => router.push('/food/restaurant/bank-accounts')} style={styles.linkBtn}>
             <Landmark size={18} color={Colors.primary} />

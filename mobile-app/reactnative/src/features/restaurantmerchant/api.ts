@@ -16,6 +16,7 @@
 //   DELETE /restaurant/:id/menu/items/:itemId
 
 import { api } from '@/api/client';
+import { generateIdempotencyKey } from '@/utils/idempotency';
 import type {
   MerchantStore,
   MerchantStoreDetail,
@@ -26,6 +27,8 @@ import type {
   MerchantEarnings,
   BankAccount,
   AddBankAccountInput,
+  Withdrawal,
+  RequestWithdrawalInput,
 } from './types';
 
 export const USE_MOCK =
@@ -231,6 +234,48 @@ export async function setDefaultBankAccount(accountId: string): Promise<void> {
 export async function deleteBankAccount(accountId: string): Promise<void> {
   if (USE_MOCK) { await delay(); mockBanks = mockBanks.filter((b) => b.id !== accountId); return; }
   await api.delete(`${BASE}/bank-accounts/${enc(accountId)}`);
+}
+
+// ── Withdrawals (MONEY PATH: wallet → saved bank account) ─────────────────────
+function mapWithdrawal(w: any): Withdrawal {
+  return {
+    id: w.id,
+    bankAccountId: w.bank_account_id,
+    amountKobo: w.amount_kobo ?? 0,
+    currency: w.currency ?? 'NGN',
+    status: w.status,
+    providerReference: w.provider_reference ?? null,
+    failureReason: w.failure_reason ?? null,
+    alreadyProcessed: !!w.already_processed,
+    createdAt: w.created_at,
+    updatedAt: w.updated_at,
+  };
+}
+let mockWithdrawals: Withdrawal[] = [];
+
+// requestWithdrawal reserves a withdrawal. The Idempotency-Key header is REQUIRED
+// by the backend (money mutation) — generated per call and sent as the 3rd axios arg.
+export async function requestWithdrawal(input: RequestWithdrawalInput): Promise<Withdrawal> {
+  if (USE_MOCK) {
+    await delay();
+    const w: Withdrawal = {
+      id: nextId('w'), bankAccountId: input.bankAccountId, amountKobo: input.amountKobo,
+      currency: 'NGN', status: 'processing',
+    };
+    mockWithdrawals = [w, ...mockWithdrawals];
+    return w;
+  }
+  const body = { amount_kobo: input.amountKobo, bank_account_id: input.bankAccountId };
+  return mapWithdrawal(
+    unwrap<any>(await api.post(`${BASE}/withdrawals`, body, {
+      headers: { 'Idempotency-Key': generateIdempotencyKey() },
+    })),
+  );
+}
+
+export async function getWithdrawals(): Promise<Withdrawal[]> {
+  if (USE_MOCK) { await delay(); return mockWithdrawals; }
+  return unwrap<any[]>(await api.get(`${BASE}/withdrawals`)).map(mapWithdrawal);
 }
 
 // ── Earnings (read-only) ──────────────────────────────────────────────────────
