@@ -59,14 +59,15 @@ Adopt a **modular monolith**: one Go module, one ledger database of record, trad
 an internal domain package, with the option (not the requirement) of a separate deploy
 binary.
 
-1. **One Go module — `spotlight/backend`.** Bring trading in as
-   `backend/internal/trading/` (sub-packages `crypto`, `stocks`, `invest`), reusing the
-   existing ledger, wallet, KYC, tiers, RBAC, idempotency, and audit infrastructure.
-   The consolidation's whole point: **every trade becomes a balanced double-entry
-   posting** (DR/CR, kobo integers, `Idempotency-Key`, audit event, tier-limit
-   fail-closed) — closing the money-integrity gap. `backend/internal/crypto` (the
-   ledger-integrated, AML-gated engine) is the **canonical** crypto engine; the
-   standalone module is treated as a *feature source* to fold in, not a parallel truth.
+1. **One Go module — `spotlight/backend`.** The domain homes already live here and are
+   ledger-integrated (see the Addendum): **`internal/crypto`** (canonical, AML-gated
+   crypto), **`internal/invest`** (canonical "Paymax Invest" stocks, `InvestLedger`
+   balanced pairs + provider ports), and **`internal/trading`** (custodial NAV fund).
+   Consolidation reuses these — it does **not** create a new `internal/trading`
+   umbrella. The standalone `paymax/crypto-backend` is treated as a *feature source*
+   (unique assets to harvest) and then retired, not a parallel truth. Every trade
+   already is — and stays — a balanced double-entry posting (DR/CR, kobo integers,
+   `Idempotency-Key`, audit event, tier-limit fail-closed).
 
 2. **One primary Postgres — the ledger DB.** Trading positions/orders and wallet
    balances become transactionally consistent under one store. Fold the 5 trading
@@ -89,26 +90,61 @@ binary.
 5. **Feature-flag the whole surface.** Trading mounts behind `FEATURE_TRADING_ENABLED`
    (default OFF) until the consolidated path is proven, per "no flag, no merge."
 
+## Addendum (2026-08-04) — the target homes already exist; this is reconcile-and-retire, not scaffold
+
+A code check while scoping P0/P1 corrected a premise of the first draft: the main
+module **already contains ledger-integrated homes** for every domain the standalone
+service covers. There is **no boundary to scaffold** — building a fresh
+`internal/trading` skeleton would be duplicate/dead code. The consolidation is
+therefore *reconcile the standalone's genuinely-unique assets into the existing homes,
+then retire the standalone* — not "integrate the ledger" (already done).
+
+**Reconciliation map — standalone `paymax/crypto-backend` → existing main-module home:**
+
+| Standalone component | Main-module home (exists today) | Ledger-integrated? | Real gap to close |
+|---|---|---|---|
+| crypto buy/sell (`internal/domain`, mock-first, `demo-user`) | **`internal/crypto`** — AML-gated, custody reconciliation, `crypto.Register(...)`, gated `FEATURE_CRYPTO_ENABLED` | **Yes** (canonical) | none — canonical; retire the standalone crypto |
+| stocks (`internal/stocks`: `MockBroker`, engine, mockdata) | **`internal/invest`** ("Paymax Invest") — `InvestLedger` posts balanced immutable pairs, `MarketDataAdapter`/`BrokerAdapter` ports, dividends + corporate actions, reconciliation, `FEATURE_INVEST_ENABLED` | **Yes** | standalone is *less* complete; fold any unique asset/broker data, then retire |
+| unitized-NAV fund | **`internal/trading`** (custodial AI-fund, paper mode, cash strictly via ledger; `AccountTradingFundClearing`/`AccountTradingFeeIncome` already exist) | **Yes** (paper) | none |
+| fail-closed pre-trade eligibility (`engine.EvaluateEligibility`) | verify against `internal/invest` + `finance/tiers` + KYC gates | partial/verify | **port the gate if absent** |
+| institutional admin plane (RBAC + four-eyes maker-checker + append-only audit) | `ADR-005-maker-checker` + per-module audit | verify parity | adopt for trading admin if richer |
+| observability (Prometheus/tracing/health/rate-limit/circuit-breaker) | **none in the main backend** | — | **port as cross-cutting `platform/observability`** |
+| distroless/nonroot image | main uses a multi-binary image | — | adopt the image |
+
+Net: the money-integrity fix the first draft framed as P1 ("route trades through the
+ledger") is **already implemented** in `internal/crypto` and `internal/invest`. The
+standalone is the prototype, not the truth. So P0/P1 below are re-scoped to *verify
+parity and close the specific gaps*, and P3's "fold stocks/invest" collapses into
+"retire the standalone once parity is confirmed."
+
 ## Migration plan (strangler-fig, phased — not big-bang)
 
 Each phase is independently shippable, flag-gated, and keeps the trading + ledger test
 suites green. No phase removes the standalone service until its replacement is proven.
 
-- **P0 — Boundary + skeleton.** Create `backend/internal/trading/` with the domain
-  types and a `TradingService` seam; wire `FEATURE_TRADING_ENABLED` (routes registered
-  only when on). No behavior yet. ADR accepted.
-- **P1 — Ledger integration (the core fix).** Route the canonical crypto engine's
-  buys/sells/deposits/withdrawals through `finance/ledger` as balanced postings
-  (idempotent, audited, tier-checked) — mirroring the pattern in the restaurant
-  withdrawal slice (reserve → provider → settle/reverse). Delete the single-row
-  `demo-user` ledger. **Request ledger-auditor sign-off here.**
+- **P0 — Parity audit + canonical decision (no new code).** Ratify the reconciliation
+  map above: `internal/crypto` and `internal/invest` are canonical; the fund is
+  `internal/trading`. Enumerate the standalone's genuinely-unique assets (observability,
+  admin plane, eligibility engine, distroless image). Deliverable is this map, not a
+  package skeleton. The existing `FEATURE_TRADING_ENABLED` / `FEATURE_CRYPTO_ENABLED` /
+  `FEATURE_INVEST_ENABLED` flags stay as the seams.
+- **P1 — Close ledger/feature parity gaps (NOT re-integrate the ledger).** Confirm every
+  standalone money path has a ledger-integrated equivalent in the canonical homes (it
+  does for crypto/stocks); port the **fail-closed pre-trade eligibility gate** into
+  `internal/invest`/`internal/crypto` only if a parity check shows it is missing.
+  Any new money movement follows the balanced reserve→settle/reverse pattern of the
+  restaurant withdrawal slice. **Request ledger-auditor sign-off on the parity check.**
+  There is no `demo-user` ledger to delete in the main module — it lives only in the
+  standalone, which P6 removes wholesale.
 - **P2 — Schema move.** Port the 5 trading tables into additive Supabase migrations
   (`trading` schema), with RLS + the migration guard. Backfill any real rows (the
   service is mock-first, so data volume is minimal); dual-write briefly if needed.
-- **P3 — Fold stocks + invest.** Bring `internal/stocks` and invest-eligibility in as
-  `internal/trading/{stocks,invest}`, behind a **provider-agnostic** port
-  (`MarketData`/`Liquidity`/`Custody`/execution) so Quidax×Alpaca can be wired without
-  another rewrite (the audit's "provider abstraction").
+- **P3 — Confirm stocks/invest parity (homes already exist).** `internal/invest` already
+  provides the ledger-integrated stocks surface with `MarketDataAdapter`/`BrokerAdapter`
+  ports (the audit's "provider abstraction"), so this is a *diff* of the standalone
+  `internal/stocks` against `internal/invest` — fold any missing asset data / broker
+  features, then mark the standalone stocks island for removal. Wire real venues
+  (Quidax×Alpaca) behind the existing ports.
 - **P4 — Ops uplift.** Migrate the observability stack (metrics/tracing/health), the
   admin plane, and the compliance gate into the main backend; adopt the distroless
   image for the main `server` too.
