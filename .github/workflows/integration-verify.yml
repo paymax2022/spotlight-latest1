@@ -5,8 +5,20 @@
 # build-once image. Byte-mirrored locally by `make ci` + `make docker-build`.
 name: integration-verify
 on:
+  # Heaviest workflow in the repo (Postgres service + `go test -race` + full tsc +
+  # docker build). Same minute-thrift as ci.yml: gate on PRs + pushes to main only,
+  # and skip docs-only changes. It previously ran on every push to every branch.
+  # NOTE: if this is ever made a REQUIRED check, drop the pull_request paths-ignore
+  # (a path-skipped required check reports as perpetually pending).
   push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
