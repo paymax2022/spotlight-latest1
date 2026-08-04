@@ -1,67 +1,108 @@
-# Deploy — build-once → promote (ENVIRONMENT-AND-GOLIVE.md §5). One immutable image
-# tagged by commit SHA flows dev→staging→prod; only config/secrets differ
-# (RAILS_MODE + provider creds). Prod is human-gated; rollback = redeploy a prior SHA.
-# Secrets come from GitHub Environments (vault), via OIDC — never the repo/image/logs.
+# Deploy — free-tier Render pipeline (see docs/adr/ADR-026-free-tier-hosting.md).
+# Flow on push to main: apply additive Supabase migrations → trigger Render deploy
+# hooks (Render builds the image from backend/Dockerfile + the Next apps) → smoke-test
+# the deployed health endpoint. Every step NO-OPS gracefully until its secret is set,
+# so this workflow is safe to merge before Render/Supabase are wired.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_DB_URL              postgres URL of the target DB (session pooler, sslmode=require)
+#   RENDER_DEPLOY_HOOK_BACKEND   Render deploy-hook URL for paymax-backend
+#   RENDER_DEPLOY_HOOK_WEB       Render deploy-hook URL for paymax-web
+#   RENDER_DEPLOY_HOOK_ADMIN     Render deploy-hook URL for paymax-admin
+#   BACKEND_URL                  public URL of paymax-backend (e.g. https://paymax-backend.onrender.com)
+#
+# Rollback: redeploy a prior commit from the Render dashboard. Immutable
+# build-once→promote (with staging/prod gates) returns off the free tier — see the
+# ADR-026 graduation path.
 name: deploy
 on:
   push:
     branches: [main]
   workflow_dispatch:
     inputs:
-      sha:
-        description: "Commit SHA to (re)deploy — used for rollback"
-        required: false
+      migrate:
+        description: "Apply pending Supabase migrations before deploying"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
-  id-token: write # OIDC — short-lived cloud creds, least privilege
-  packages: write
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE: ${{ github.repository }}/paymax-backend
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build:
+  # ── 1. Migrations (additive, backward-compatible) ────────────────────────────
+  migrate:
     runs-on: ubuntu-latest
-    outputs:
-      sha: ${{ steps.meta.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
-      - id: meta
-        run: echo "sha=${{ github.event.inputs.sha || github.sha }}" >> "$GITHUB_OUTPUT"
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build-once + push (immutable, SHA-tagged)
+      - name: Guard — is the DB configured?
+        id: guard
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
-          docker build -t "$REGISTRY/$IMAGE:${{ steps.meta.outputs.sha }}" backend
-          docker push "$REGISTRY/$IMAGE:${{ steps.meta.outputs.sha }}"
+          if [ -z "$DB_URL" ]; then
+            echo "SUPABASE_DB_URL not set — skipping migrations (configure it to enable)."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install Supabase CLI
+        if: steps.guard.outputs.run == 'true' && (github.event_name != 'workflow_dispatch' || inputs.migrate)
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Apply additive migrations (supabase db push)
+        if: steps.guard.outputs.run == 'true' && (github.event_name != 'workflow_dispatch' || inputs.migrate)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          # Additive-only + idempotent. Applies anything not yet recorded in
+          # supabase_migrations.schema_migrations on the target DB.
+          supabase db push --db-url "$SUPABASE_DB_URL"
 
-  staging:
-    needs: build
+  # ── 2. Deploy via Render deploy hooks (Render builds from the repo) ───────────
+  deploy:
+    needs: migrate
     runs-on: ubuntu-latest
-    environment: staging # secrets: RAILS_MODE=sandbox + *_SANDBOX creds
     steps:
-      - uses: actions/checkout@v4
-      - name: Run migrations (expand/contract, backward-compatible)
-        run: echo "TODO: apply supabase migrations to staging DB (make migrate-up with staging DATABASE_URL)"
-      - name: Deploy image to staging (rails=sandbox)
-        run: echo "TODO: deploy $REGISTRY/$IMAGE:${{ needs.build.outputs.sha }} via flyctl/gcloud/aws with RAILS_MODE=sandbox"
-      - name: Smoke tests (against provider sandboxes)
-        run: echo "TODO: hit /healthz + a BNPL/payout sandbox round-trip; fail the job on red"
+      - name: Trigger Render deploy — backend (cmd/server)
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_BACKEND }}
+        run: |
+          if [ -z "$HOOK" ]; then echo "RENDER_DEPLOY_HOOK_BACKEND not set — skipping."; exit 0; fi
+          curl -fsS -X POST "$HOOK" && echo "backend deploy triggered"
+      - name: Trigger Render deploy — web (frontend-web)
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_WEB }}
+        run: |
+          if [ -z "$HOOK" ]; then echo "RENDER_DEPLOY_HOOK_WEB not set — skipping."; exit 0; fi
+          curl -fsS -X POST "$HOOK" && echo "web deploy triggered"
+      - name: Trigger Render deploy — admin (frontend-admin)
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_ADMIN }}
+        run: |
+          if [ -z "$HOOK" ]; then echo "RENDER_DEPLOY_HOOK_ADMIN not set — skipping."; exit 0; fi
+          curl -fsS -X POST "$HOOK" && echo "admin deploy triggered"
 
-  production:
-    needs: staging
+  # ── 3. Smoke test — poll the API health endpoint through build + cold start ────
+  smoke:
+    needs: deploy
     runs-on: ubuntu-latest
-    environment: production # protected: requires manual approval (human gate)
     steps:
-      - uses: actions/checkout@v4
-      - name: Run migrations (already expand-applied in staging)
-        run: echo "TODO: apply pending additive migrations to prod DB"
-      - name: Deploy image to prod (rails=live, blue/green or canary)
-        run: echo "TODO: blue/green deploy $REGISTRY/$IMAGE:${{ needs.build.outputs.sha }} with RAILS_MODE=live; health-check; keep prior SHA for rollback"
-      - name: Post-deploy health check
-        run: echo "TODO: verify golden signals; auto-rollback on canary error-rate breach"
+      - name: Wait for backend health (build + free-tier cold start can take a few min)
+        env:
+          BASE: ${{ secrets.BACKEND_URL }}
+        run: |
+          if [ -z "$BASE" ]; then echo "BACKEND_URL not set — skipping smoke test."; exit 0; fi
+          url="${BASE%/}/api/v1/public/health"
+          echo "probing $url"
+          for i in $(seq 1 40); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$url" || true)
+            if [ "$code" = "200" ]; then echo "healthy after ~$((i*15))s"; exit 0; fi
+            echo "attempt $i: HTTP ${code:-none} — retrying in 15s"
+            sleep 15
+          done
+          echo "backend did not become healthy in time"; exit 1
