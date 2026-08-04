@@ -136,6 +136,7 @@ func Register(r *gin.Engine, d Deps) *Service {
 		stocks.GET("/market-status", h.MarketStatus)
 
 		// Orders (declared before /:symbol so they aren't captured as a symbol).
+		stocks.POST("/orders/estimate", h.Estimate) // read-only pre-trade preview (no money move)
 		stocks.POST("/orders/buy", h.Buy)
 		stocks.POST("/orders/sell", h.Sell)
 		stocks.GET("/orders", h.ListOrders)
