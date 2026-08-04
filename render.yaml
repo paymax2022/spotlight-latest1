@@ -75,6 +75,11 @@ services:
       # ── Heavy externals OFF on free tier (code falls back safely) ────────────
       - key: ELASTICSEARCH_URL
         value: ""              # empty → marketplace search uses the Postgres fallback
+      # Run background workers inside this web service (no free worker dynos). The
+      # marketplace indexer only actually starts when ELASTICSEARCH_URL is ALSO set —
+      # flip this to "true" together with a search URL (e.g. a Bonsai free sandbox).
+      - key: RUN_WORKERS_INPROCESS
+        value: "false"
       - key: FEATURE_MAPS_ENABLED
         value: "false"
       - key: FEATURE_TRANSPORT_ENABLED

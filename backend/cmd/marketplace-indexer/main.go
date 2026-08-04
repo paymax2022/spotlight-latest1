@@ -21,7 +21,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"spotlight/backend/internal/marketplace/search"
 	platformDB "spotlight/backend/internal/platform/db"
@@ -47,49 +46,8 @@ func main() {
 	}
 	defer pool.Close()
 
-	interval := 2 * time.Second
-	if v := os.Getenv("MARKETPLACE_INDEXER_INTERVAL_MS"); v != "" {
-		if ms, err := time.ParseDuration(v + "ms"); err == nil && ms > 0 {
-			interval = ms
-		}
-	}
-
-	indexer := search.NewIndexer(pool, esURL)
-
-	// Best-effort template bootstrap. Never fatal — a fresh/empty ES cluster
-	// without the mapping template still accepts default-dynamic-mapped
-	// documents; a missing es-mapping.json (Agent C not landed yet) or an
-	// unreachable ES is logged and the loop proceeds regardless.
-	client := search.NewClient(esURL)
-	if err := client.EnsureTemplate(ctx); err != nil {
-		log.Printf("marketplace-indexer: EnsureTemplate: %v (continuing — will retry has no effect until next deploy)", err)
-	}
-
-	log.Printf("marketplace-indexer: starting, interval=%s es=%s", interval, esURL)
-
-	runOnce := func() {
-		tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		n, err := indexer.RunOnce(tctx)
-		if err != nil {
-			log.Printf("marketplace-indexer: RunOnce error: %v", err)
-			return
-		}
-		if n > 0 {
-			log.Printf("marketplace-indexer: processed %d outbox row(s)", n)
-		}
-	}
-
-	runOnce()
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			log.Println("marketplace-indexer: shutting down")
-			return
-		case <-ticker.C:
-			runOnce()
-		}
-	}
+	// The loop body is shared with the in-process worker path (RUN_WORKERS_INPROCESS)
+	// so behaviour is identical whether run here as its own process or inside the API.
+	interval := search.ResolveInterval(os.Getenv("MARKETPLACE_INDEXER_INTERVAL_MS"), search.DefaultIndexerInterval)
+	search.RunIndexerLoop(ctx, pool, esURL, interval)
 }

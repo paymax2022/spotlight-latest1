@@ -74,11 +74,14 @@ purpose.
   so events aren't lost, but delivery can be delayed. Mitigation: a free keep-alive
   ping (UptimeRobot / cron-job.org) hitting `/api/v1/public/health` every ~10 min; the
   same ping keeps Supabase from pausing.
-- **Background workers don't run on Render free.** For dev, either (a) run the
-  cron/indexer/scheduler as goroutines inside `server` (behind a
-  `RUN_WORKERS_INPROCESS` flag), or (b) trigger their entrypoints via a free external
-  cron hitting an admin endpoint. **Neither is production-grade** — promote them to
-  paid Render Background Workers when off free tier.
+- **Background workers don't run on Render free.** Mitigation implemented:
+  `RUN_WORKERS_INPROCESS=true` runs the **marketplace search indexer** as a goroutine
+  inside `server` (shared loop `search.RunIndexerLoop`; only starts when
+  `ELASTICSEARCH_URL` is also set). The cron/scheduler binaries are not yet wired
+  in-process — for those, trigger their entrypoints via a free external cron hitting an
+  admin endpoint. **In-process workers are not production-grade** (a second API replica
+  double-runs the loop — safe for the idempotent outbox drain, wasteful otherwise);
+  promote to paid Render Background Workers when off free tier.
 - **Redis free (25MB, noeviction)** is fine for dev idempotency/queue volumes but will
   fill under real load — size up or move to Upstash/managed Redis before launch.
 - Search + routing features are dark in dev (acceptable; both are non-core to money).

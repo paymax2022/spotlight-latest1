@@ -290,6 +290,13 @@ type Config struct {
 	// search.NewClient(...) and inject it via svc.SetSearcher(...).
 	ElasticsearchURL string
 
+	// RunWorkersInProcess starts background worker loops (currently the marketplace
+	// search indexer) INSIDE the API process when true — for single-instance / free-
+	// tier deploys with no separate always-on worker (see ADR-026). Default OFF; the
+	// indexer only actually starts when a search cluster is configured
+	// (ElasticsearchURL set). Promote to dedicated worker processes at scale.
+	RunWorkersInProcess bool
+
 	// Top-5 expansion modules (no-new-licence; ride existing wallet/ledger rails).
 	// DEFAULT OFF. Each gates /api/finance/<mod> + /api/<mod>/admin (internal/<mod>).
 	// (FeatureEventsEnabled is declared once above with the other module flags.)
@@ -628,6 +635,7 @@ func Load() Config {
 		FeaturePlacementEnabled:               getEnvBool("FEATURE_PLACEMENT_ENABLED", false),
 		FeatureMarketplaceEnabled:             getEnvBool("FEATURE_MARKETPLACE_ENABLED", false),
 		ElasticsearchURL:                      getEnv("ELASTICSEARCH_URL", ""),
+		RunWorkersInProcess:                   getEnvBool("RUN_WORKERS_INPROCESS", false),
 		FeatureSocialPayEnabled:               getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
 		FeatureP2PMarketEnabled:               getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
 		FeatureSavingsEnabled:                 getEnvBool("FEATURE_SAVINGS_ENABLED", false),

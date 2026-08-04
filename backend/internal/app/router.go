@@ -329,6 +329,12 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		}
 	}
 
+	// Optionally run background worker loops in-process (RUN_WORKERS_INPROCESS) so a
+	// single free-tier instance can drain the marketplace search outbox without a
+	// separate always-on worker process. No-op unless the flag is on AND a search
+	// cluster is configured. See ADR-026 / workers_inprocess.go.
+	startInProcessWorkers(cfg, sharedPool)
+
 	// Shared Redis client for idempotency fast-paths (arena ledger, etc.). nil when
 	// REDIS_URL is unset or the connection fails — callers fall back to DB-unique
 	// constraints, so Redis is a latency optimization, never a correctness dependency.
