@@ -7,6 +7,7 @@ import type { AdminMenuCounts } from '@/types/admin';
 import { getAdminMenuCounts } from '@/services/adminApiClient';
 import { canManageStem, canReadStem, getCurrentStemRole } from '@/config/stemAccess';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
+import { colors, tint } from '@/components/ui/vuexy';
 
 type NavItem = {
   label: string;
@@ -491,8 +492,8 @@ export function AdminSidebar() {
   const isActive = (href: string) => (href === '/admin' ? pathname === '/admin' : pathname === href || pathname.startsWith(`${href}/`));
 
   return (
-    <aside style={{ width: 280, borderRight: '1px solid #2a2a2a', minHeight: '100vh', padding: 16 }}>
-      <h2 style={{ marginTop: 0 }}>Spotlight Admin</h2>
+    <aside style={{ width: 280, borderRight: `1px solid ${colors.border}`, minHeight: '100vh', padding: 16, background: colors.bg }}>
+      <h2 style={{ marginTop: 0, color: colors.text, fontSize: 16, fontWeight: 700 }}>Spotlight Admin</h2>
       {sections.map((section) => {
         const items = navItemsBase.filter((item) => {
           if (item.section !== section) return false;
@@ -504,7 +505,7 @@ export function AdminSidebar() {
         if (!items.length) return null;
         return (
           <div key={section} style={{ marginTop: 16 }}>
-            <p style={{ fontSize: 11, opacity: 0.6, marginBottom: 8 }}>{section}</p>
+            <p style={{ fontSize: 11, color: colors.muted, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>{section}</p>
             <div style={{ display: 'grid', gap: 6 }}>
               {items.map((item) => {
                 const count = item.countKey && counts ? counts[item.countKey] : null;
@@ -516,12 +517,19 @@ export function AdminSidebar() {
                       display: 'flex',
                       justifyContent: 'space-between',
                       padding: '8px 10px',
-                      border: '1px solid #2a2a2a',
-                      background: isActive(item.href) ? '#1f1f1f' : 'transparent',
+                      border: `1px solid ${colors.border}`,
+                      background: isActive(item.href) ? tint(colors.primary, 0.08) : 'transparent',
+                      color: isActive(item.href) ? colors.primary : colors.text,
+                      borderRadius: '0.375rem',
+                      fontSize: '0.875rem',
+                      textDecoration: 'none',
+                      transition: 'all .15s',
+                      cursor: 'pointer',
+                      fontWeight: isActive(item.href) ? 600 : 500,
                     }}
                   >
                     <span>{item.label}</span>
-                    {typeof count === 'number' && count > 0 ? <strong>{count}</strong> : null}
+                    {typeof count === 'number' && count > 0 ? <strong style={{ color: colors.primary }}>{count}</strong> : null}
                   </Link>
                 );
               })}
