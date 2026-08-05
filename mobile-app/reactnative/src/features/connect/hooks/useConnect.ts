@@ -226,6 +226,22 @@ export function usePremiumPlans() {
   return useQuery({ queryKey: connectKeys.premiumPlans(), queryFn: connectApi.getPremiumPlans });
 }
 
+export function useSubscribePremium() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (planId: string) => connectApi.subscribePremium(planId),
+    onSuccess: (status) => qc.setQueryData(connectKeys.premiumStatus(), status),
+  });
+}
+
+export function useCancelPremium() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => connectApi.cancelPremium(),
+    onSuccess: (status) => qc.setQueryData(connectKeys.premiumStatus(), status),
+  });
+}
+
 export function useHelpArticles() {
   return useQuery({ queryKey: connectKeys.help(), queryFn: connectApi.getHelpArticles });
 }

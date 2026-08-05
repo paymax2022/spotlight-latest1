@@ -8,6 +8,7 @@
 // arbitration: the arbitrator must differ from the underlying release approver.
 
 import { env } from '@/config/env';
+import { operationKey } from './idempotency';
 import type {
   EscrowDashboard,
   DisputeListItem,
@@ -40,7 +41,13 @@ async function getJson<T>(path: string): Promise<T> {
   return (j?.data ?? j) as T;
 }
 async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${adminBase()}${path}`, { method, headers: authHeaders(), body: JSON.stringify(body) });
+  // Idempotency-Key per the house iron rule — keyed on method+path (the operation
+  // identity) so a retried escrow mutation dedupes at the backend. See services/idempotency.ts.
+  const res = await fetch(`${adminBase()}${path}`, {
+    method,
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey(method, path) },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   const j = await res.json();
   return (j?.data ?? j) as T;

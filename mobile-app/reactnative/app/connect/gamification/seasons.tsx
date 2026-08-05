@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, Image, ScrollView, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Icons from 'lucide-react-native';
 import { Lock, CircleCheck, Clock } from 'lucide-react-native';
@@ -11,9 +11,11 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import GameNonCashNotice from '@/features/connect/components/game-NonCashNotice';
-import { ConnectColors } from '@/features/connect/constants/connect.constants';
-import { useSeason } from '@/features/connect/gamification/hooks';
+import { ConnectColors, SEASON_PASS_PRICE_KOBO } from '@/features/connect/constants/connect.constants';
+import { useSeason, useUnlockSeasonPass } from '@/features/connect/gamification/hooks';
 import type { SeasonReward } from '@/features/connect/gamification/types';
+import { formatKobo } from '@/features/connect/constants/format';
+import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 
 function pascal(kebab: string): string {
   return kebab.split('-').map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join('');
@@ -22,10 +24,20 @@ function pascal(kebab: string): string {
 /** Seasons / season pass (PRD §10.10 GM-06). Rewards are NON-CASH. */
 export default function SeasonsScreen() {
   const q = useSeason();
+  const unlock = useUnlockSeasonPass();
+  const checkout = usePurchasePayment();
 
   if (q.isLoading) return <SafeAreaView style={styles.safe}><ScreenHeader title="Season" /><StateView kind="loading" message="Loading season…" /></SafeAreaView>;
   if (q.isError || !q.data) return <SafeAreaView style={styles.safe}><ScreenHeader title="Season" /><StateView kind="error" title="Couldn't load season" actionLabel="Retry" onAction={() => q.refetch()} /></SafeAreaView>;
   const s = q.data;
+
+  const unlockPass = () => checkout.start({
+    amountKobo: SEASON_PASS_PRICE_KOBO,
+    title: `${s.name} — Premium track`,
+    domain: 'connect_season_pass',
+    charge: () => unlock.mutateAsync(s.id),
+    onPaid: () => Alert.alert('Premium track unlocked', 'Your premium rewards are now available to claim. These are cosmetics and coins — no cash value.'),
+  });
   const daysLeft = Math.max(0, Math.ceil((new Date(s.endsAtIso).getTime() - Date.now()) / 86_400_000));
   const passPct = Math.min(100, Math.round((s.passXp / s.passXpToNext) * 100));
 
@@ -64,10 +76,12 @@ export default function SeasonsScreen() {
 
       {!s.isPassUnlocked ? (
         <View style={styles.footer}>
-          <PrimaryButton label="Unlock premium track" variant="secondary" onPress={() => {}} />
+          <PrimaryButton label={`Unlock premium track · ${formatKobo(SEASON_PASS_PRICE_KOBO)}`} variant="secondary" loading={unlock.isPending} onPress={unlockPass} />
           <Text style={styles.footerNote}>Unlocking the premium track is a one-time in-app purchase. It grants cosmetic rewards and coins only — no cash value.</Text>
         </View>
       ) : null}
+
+      <PaymentSheet controller={checkout} />
     </SafeAreaView>
   );
 }

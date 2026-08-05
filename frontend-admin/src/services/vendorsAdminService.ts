@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import { operationKey } from './idempotency';
 import type {
   VendorRow,
   VendorFilters,
@@ -247,7 +248,11 @@ export async function setVendorStatus(
   }
   const res = await fetch(
     `${financeApiBase()}/estate/${encodeURIComponent(estateId)}/vendors/${encodeURIComponent(vendorId)}/verify`,
-    { method: 'POST', headers: authHeaders(), body: JSON.stringify({ status }) },
+    {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Idempotency-Key': operationKey('vendor:verify', estateId, vendorId) },
+      body: JSON.stringify({ status }),
+    },
   );
   if (!res.ok) throw new Error(`Vendor verify failed: ${res.status}`);
   const data = await res.json().catch(() => ({}));

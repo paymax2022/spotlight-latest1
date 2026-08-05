@@ -1,5 +1,5 @@
 import React from 'react';
-import { ScrollView, View, Text, StyleSheet } from 'react-native';
+import { ScrollView, View, Text, StyleSheet, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Crown, Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -10,15 +10,39 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TierLimitBar from '@/features/connect/components/TierLimitBar';
-import { usePremiumPlans, usePremiumStatus, useTierStatus } from '@/features/connect/hooks/useConnect';
+import { usePremiumPlans, usePremiumStatus, useTierStatus, useSubscribePremium, useCancelPremium } from '@/features/connect/hooks/useConnect';
 import { formatKobo } from '@/features/connect/constants/format';
+import { usePurchasePayment, PaymentSheet } from '@/features/payments';
+import type { PremiumPlan } from '@/features/connect/types/connect.types';
 
 // ST-13 — Premium/subscription. Plans, manage, restore.
 // Premium is a wallet purchase → a money surface, so tier/limit/remaining is shown.
+// The charge runs through the shared checkout (wallet or card, Idempotency-Key);
+// subscribePremium activates the plan only after payment succeeds.
 export default function Premium() {
   const { data: plans, isLoading, error, refetch } = usePremiumPlans();
-  const { data: status } = usePremiumStatus();
+  const { data: status, refetch: refetchStatus } = usePremiumStatus();
   const { data: tier } = useTierStatus();
+  const subscribe = useSubscribePremium();
+  const cancel = useCancelPremium();
+  const checkout = usePurchasePayment();
+
+  const buy = (plan: PremiumPlan) => checkout.start({
+    amountKobo: plan.priceKobo,
+    title: plan.name,
+    domain: 'connect_premium',
+    charge: () => subscribe.mutateAsync(plan.id),
+    onPaid: () => Alert.alert('You’re on Connect Plus', 'Your premium perks are now active. Enjoy!'),
+  });
+
+  const manage = () => Alert.alert('Manage subscription', 'Your Connect Plus subscription is active.', [
+    { text: 'Keep subscription', style: 'cancel' },
+    { text: 'Cancel subscription', style: 'destructive', onPress: () => cancel.mutate() },
+  ]);
+
+  const restore = () => refetchStatus().then((r) => {
+    Alert.alert(r.data?.active ? 'Subscription restored' : 'Nothing to restore', r.data?.active ? 'Your Connect Plus subscription is active.' : 'We could not find an active subscription for this account.');
+  });
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -54,14 +78,21 @@ export default function Premium() {
                 </View>
               ))}
               <View style={{ marginTop: Spacing.sm }}>
-                <PrimaryButton label={status?.active ? 'Manage' : `Subscribe · ${formatKobo(p.priceKobo)}`} onPress={() => {}} />
+                <PrimaryButton
+                  label={status?.active ? 'Manage' : `Subscribe · ${formatKobo(p.priceKobo)}`}
+                  loading={subscribe.isPending && subscribe.variables === p.id}
+                  onPress={() => (status?.active ? manage() : buy(p))}
+                />
               </View>
             </View>
           ))}
 
-          <Text style={styles.restore}>Restore purchases</Text>
+          <Pressable onPress={restore} accessibilityRole="button">
+            <Text style={styles.restore}>Restore purchases</Text>
+          </Pressable>
         </ScrollView>
       )}
+      <PaymentSheet controller={checkout} />
     </SafeAreaView>
   );
 }

@@ -4,6 +4,7 @@
 // NEXT_PUBLIC_INVEST_ADMIN_USE_MOCK=false to hit the live endpoints.
 
 import { env } from '@/config/env';
+import { operationKey } from './idempotency';
 import type {
   InvestOverview, AdminStockAsset, AdminOrder, FeeConfig, AuditEntry, AssetUpdate,
   ReconResult, Dividend, CorporateAction, ProviderHealth,
@@ -27,7 +28,11 @@ function authHeaders(): Record<string, string> {
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(base() + path, { ...init, headers: authHeaders(), cache: 'no-store' });
+  const res = await fetch(base() + path, {
+    ...init,
+    headers: { ...authHeaders(), ...(init?.headers as Record<string, string> | undefined) },
+    cache: 'no-store',
+  });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body?.error || `Request failed (${res.status})`);
   return (body?.data ?? body) as T;
@@ -77,12 +82,12 @@ export async function updateAsset(id: string, patch: AssetUpdate): Promise<Admin
     const a = MOCK_ASSETS.find((x) => x.id === id)!;
     return { ...a, ...patch };
   }
-  return req<AdminStockAsset>(`/assets/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  return req<AdminStockAsset>(`/assets/${id}`, { method: 'PATCH', headers: { 'Idempotency-Key': operationKey('invest:asset-update', id) }, body: JSON.stringify(patch) });
 }
 
 export async function createAsset(payload: Partial<AdminStockAsset>): Promise<AdminStockAsset> {
   if (USE_MOCK) { await delay(); return { ...(MOCK_ASSETS[0]), ...payload, id: 'new' } as AdminStockAsset; }
-  return req<AdminStockAsset>('/assets', { method: 'POST', body: JSON.stringify(payload) });
+  return req<AdminStockAsset>('/assets', { method: 'POST', headers: { 'Idempotency-Key': operationKey('invest:asset-create', payload.symbol ?? '') }, body: JSON.stringify(payload) });
 }
 
 export async function listOrders(status?: string): Promise<AdminOrder[]> {
@@ -110,7 +115,7 @@ export async function getPendingSettlements(): Promise<{ due: AdminOrder[]; pend
 
 export async function runSettlement(): Promise<number> {
   if (USE_MOCK) { await delay(); return 3; }
-  const res = await req<{ processed: number }>('/settlement/run', { method: 'POST' });
+  const res = await req<{ processed: number }>('/settlement/run', { method: 'POST', headers: { 'Idempotency-Key': operationKey('invest:settlement-run') } });
   return res.processed;
 }
 
@@ -121,7 +126,7 @@ export async function getFees(): Promise<FeeConfig> {
 
 export async function updateFees(fc: FeeConfig & { reason?: string }): Promise<FeeConfig> {
   if (USE_MOCK) { await delay(); return { commission_bps: fc.commission_bps, min_fee_kobo: fc.min_fee_kobo }; }
-  return req<FeeConfig>('/fees', { method: 'PUT', body: JSON.stringify(fc) });
+  return req<FeeConfig>('/fees', { method: 'PUT', headers: { 'Idempotency-Key': operationKey('invest:fees-update', fc.commission_bps) }, body: JSON.stringify(fc) });
 }
 
 export async function listAudit(): Promise<AuditEntry[]> {
@@ -136,7 +141,7 @@ export async function listDividends(): Promise<Dividend[]> {
 
 export async function createDividend(payload: { symbol: string; amount_per_share_kobo: number; ex_date?: string; record_date?: string; payment_date?: string; source?: string }): Promise<{ id: string }> {
   if (USE_MOCK) { await delay(); return { id: 'new' }; }
-  return req<{ id: string }>('/dividends', { method: 'POST', body: JSON.stringify(payload) });
+  return req<{ id: string }>('/dividends', { method: 'POST', headers: { 'Idempotency-Key': operationKey('invest:dividend-create', payload.symbol) }, body: JSON.stringify(payload) });
 }
 
 export async function listCorporateActions(): Promise<CorporateAction[]> {
@@ -146,7 +151,7 @@ export async function listCorporateActions(): Promise<CorporateAction[]> {
 
 export async function createCorporateAction(payload: { symbol: string; type: string; title: string; description?: string; effective_date?: string; record_date?: string; payment_date?: string; source?: string }): Promise<{ id: string }> {
   if (USE_MOCK) { await delay(); return { id: 'new' }; }
-  return req<{ id: string }>('/corporate-actions', { method: 'POST', body: JSON.stringify(payload) });
+  return req<{ id: string }>('/corporate-actions', { method: 'POST', headers: { 'Idempotency-Key': operationKey('invest:corporate-action-create', payload.symbol) }, body: JSON.stringify(payload) });
 }
 
 export async function getProviderHealth(): Promise<ProviderHealth[]> {

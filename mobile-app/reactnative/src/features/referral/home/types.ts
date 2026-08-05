@@ -22,10 +22,10 @@ export interface EarningsSnapshot {
 // ── Invite / rank summary (M-HOME-01) ────────────────────────────────────────
 export interface DashboardSummary {
   snapshot: EarningsSnapshot;
-  /** Total people invited (sent links/codes/contacts). */
-  invitesSent: number;
-  /** Invitees that signed up (account created). */
-  signups: number;
+  /** Total people invited (sent links/codes/contacts). null = no live source yet. */
+  invitesSent: number | null;
+  /** Invitees that signed up (account created). null = no live source yet. */
+  signups: number | null;
   /** Invitees that activated (KYC + qualifying action). */
   activated: number;
   /** Leaderboard rank among referrers, null when unranked. */

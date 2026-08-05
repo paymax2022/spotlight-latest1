@@ -6,6 +6,7 @@ export default function WalletLayout() {
       <Stack.Screen name="add" />
       <Stack.Screen name="send" />
       <Stack.Screen name="withdraw" />
+      <Stack.Screen name="transaction/[id]" />
     </Stack>
   );
 }

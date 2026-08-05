@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { listClawbacks, executeClawbackOps, formatNaira } from '@/services/referralAdminOpsService';
 import type { ClawbackRecord } from '@/types/referralAdminOps';
 import { PageHeader, Card, Badge, btn, btnDanger, input, label, th, td, timeAgo, StateBlock } from '../../_ui';
+import { ConfirmDialog } from '@/components/rbac/ConfirmDialog';
 
 const STATUSES = ['all', 'pending', 'executing', 'recovered', 'failed'];
 
@@ -17,6 +18,7 @@ export default function ClawbacksPage() {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   async function load() {
     setLoading(true); setError(null);
@@ -26,13 +28,19 @@ export default function ClawbacksPage() {
   }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [status]);
 
-  async function execute() {
+  function askExecute() {
     if (!rewardId.trim() || !reason.trim()) { setMsg('Reward ID and reason are required.'); return; }
+    setMsg(null);
+    setConfirmOpen(true);
+  }
+
+  async function confirmExecute(confirmReason: string) {
     setBusy(true); setMsg(null);
     try {
-      await executeClawbackOps(rewardId.trim(), reason.trim());
+      await executeClawbackOps(rewardId.trim(), confirmReason);
       setMsg('Clawback queued — reversing entries + audit event will post on the money-path.');
       setRewardId(''); setReason('');
+      setConfirmOpen(false);
       await load();
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); }
@@ -56,7 +64,7 @@ export default function ClawbacksPage() {
             <label style={label()}>Reason</label>
             <input style={input()} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Duplicate KYC identity" />
           </div>
-          <button disabled={busy} onClick={execute} style={btnDanger()}>{busy ? '…' : 'Execute clawback'}</button>
+          <button disabled={busy} onClick={askExecute} style={btnDanger()}>{busy ? '…' : 'Execute clawback'}</button>
         </div>
         {msg && <p style={{ color: msg.startsWith('Clawback') ? '#15803d' : '#b91c1c', fontSize: '0.8rem', marginTop: '0.5rem' }}>{msg}</p>}
       </Card>
@@ -88,6 +96,26 @@ export default function ClawbacksPage() {
           </table>
         </StateBlock>
       </Card>
+
+      {confirmOpen ? (
+        <ConfirmDialog
+          open
+          title="Execute clawback"
+          level="critical"
+          description={`Recover reward ${rewardId.trim()} — this posts reversing ledger entries on the money-path and cannot be edited, only reversed.`}
+          reasons={[
+            'Recovers funds from the beneficiary — money-path mutation.',
+            'Posts reversing ledger entries (never edits) with an audit event.',
+            'Recorded in the audit log with your name, reason and timestamp.',
+          ]}
+          requireReason
+          reasonPlaceholder="Basis for this clawback (e.g. duplicate KYC identity, fraud ring)…"
+          busy={busy}
+          confirmLabel="Execute clawback"
+          onConfirm={confirmExecute}
+          onCancel={() => { if (!busy) setConfirmOpen(false); }}
+        />
+      ) : null}
     </div>
   );
 }

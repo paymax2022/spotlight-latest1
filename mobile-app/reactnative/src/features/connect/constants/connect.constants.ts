@@ -70,3 +70,8 @@ export const TIER_BENEFITS: TierBenefit[] = [
 
 // 18+ minimum age (SAFETY INVARIANT §1).
 export const MIN_AGE = 18;
+
+// Season pass — one-time wallet purchase price (kobo). Lives here in the money-aware
+// constants, NOT in the gamification module, which only deals in non-cash coins/XP.
+// The charge runs through the shared checkout; unlocking only grants cosmetics/coins.
+export const SEASON_PASS_PRICE_KOBO = 200_000; // ₦2,000

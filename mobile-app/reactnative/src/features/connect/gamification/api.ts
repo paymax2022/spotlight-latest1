@@ -151,6 +151,21 @@ export async function getSeason(): Promise<Season> {
   return unwrap<Season>(res);
 }
 
+// Unlock the premium reward track. This is the POST-PAYMENT fulfilment only — the
+// wallet charge (a money surface, with its Idempotency-Key) is handled by the
+// shared checkout layer. Here we merely flip the non-cash unlock flag; the pass
+// still grants cosmetics/coins, never cash.
+export async function unlockSeasonPass(seasonId: string): Promise<Season> {
+  if (USE_MOCK) {
+    await delay(320);
+    MOCK_SEASON.isPassUnlocked = true;
+    MOCK_SEASON.rewards = MOCK_SEASON.rewards.map((r) => (r.track === 'premium' && r.tier <= MOCK_SEASON.passTier ? { ...r, unlocked: true } : r));
+    return JSON.parse(JSON.stringify(MOCK_SEASON));
+  }
+  const res = await api.post(`${CONNECT_API_BASE}/gamification/season/${seasonId}/unlock`, {});
+  return unwrap<Season>(res);
+}
+
 const MOCK_REWARDS: CatalogReward[] = [
   { id: 'rw_1', name: 'Neon name tag', description: 'A glowing chat name in live streams', icon: 'sparkles', category: 'cosmetic', costCoins: 300, owned: false },
   { id: 'rw_2', name: 'Discovery boost', description: '30 min of higher visibility', icon: 'zap', category: 'boost', costCoins: 500, owned: false },

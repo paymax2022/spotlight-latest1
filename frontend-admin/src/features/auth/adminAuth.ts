@@ -48,7 +48,41 @@ export async function signInAdmin(username: string, password: string) {
         permissions,
       }),
     );
+
+    // Mirror the session into an HttpOnly cookie so the server-side middleware can
+    // gate /admin/* (see middleware.ts + app/api/admin/session). Additive — the
+    // localStorage copy still powers the service-layer Bearer calls. Best-effort:
+    // a failure here must never block a successful sign-in.
+    if (accessToken) {
+      const expSec = data.session?.expires_at
+        ? Math.max(60, Math.floor(data.session.expires_at - Date.now() / 1000))
+        : 3600;
+      try {
+        await fetch('/api/admin/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: accessToken, maxAge: expSec }),
+        });
+      } catch {
+        /* non-fatal — middleware is off by default and localStorage still works */
+      }
+    }
   }
 
   return data.user;
+}
+
+/**
+ * Clears the admin session — both the localStorage copy and the server-side
+ * HttpOnly cookie the middleware reads. Wire this into the sign-out control.
+ */
+export async function clearAdminSession(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem('spotlight_admin_access_token');
+  localStorage.removeItem('spotlight_admin_user');
+  try {
+    await fetch('/api/admin/session', { method: 'DELETE' });
+  } catch {
+    /* non-fatal */
+  }
 }

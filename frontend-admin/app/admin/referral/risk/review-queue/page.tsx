@@ -5,12 +5,14 @@ import { useEffect, useState } from 'react';
 import { listReviewQueue, decideReview, formatNaira } from '@/services/referralAdminOpsService';
 import type { ReviewItem } from '@/types/referralAdminOps';
 import { PageHeader, Card, Badge, btn, btnPrimary, btnDanger, th, td, timeAgo, StateBlock } from '../../_ui';
+import { ConfirmDialog } from '@/components/rbac/ConfirmDialog';
 
 export default function ReviewQueuePage() {
   const [rows, setRows] = useState<ReviewItem[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [pending, setPending] = useState<{ item: ReviewItem; decision: 'approved' | 'rejected' } | null>(null);
 
   async function load() {
     setLoading(true); setError(null);
@@ -20,11 +22,19 @@ export default function ReviewQueuePage() {
   }
   useEffect(() => { load(); }, []);
 
-  async function decide(item: ReviewItem, decision: 'approved' | 'rejected') {
+  function askDecide(item: ReviewItem, decision: 'approved' | 'rejected') {
+    setError(null);
+    setPending({ item, decision });
+  }
+
+  async function confirmDecide(reason: string) {
+    if (!pending) return;
+    const { item, decision } = pending;
     setBusy(item.id);
     try {
-      await decideReview(item.id, decision, `Manual review ${decision}`);
+      await decideReview(item.id, decision, reason);
       setRows((cur) => (cur ?? []).map((r) => r.id === item.id ? { ...r, status: decision } : r));
+      setPending(null);
     } catch (e) { setError(String(e)); }
     finally { setBusy(null); }
   }
@@ -57,8 +67,8 @@ export default function ReviewQueuePage() {
                   <td style={td()}>
                     {r.status === 'held' ? (
                       <div style={{ display: 'flex', gap: '0.4rem' }}>
-                        <button disabled={busy === r.id} onClick={() => decide(r, 'approved')} style={btnPrimary()}>Release</button>
-                        <button disabled={busy === r.id} onClick={() => decide(r, 'rejected')} style={btnDanger()}>Reject</button>
+                        <button disabled={busy === r.id} onClick={() => askDecide(r, 'approved')} style={btnPrimary()}>Release</button>
+                        <button disabled={busy === r.id} onClick={() => askDecide(r, 'rejected')} style={btnDanger()}>Reject</button>
                       </div>
                     ) : <Badge status={r.status === 'approved' ? 'approved' : 'rejected'} />}
                   </td>
@@ -68,6 +78,32 @@ export default function ReviewQueuePage() {
           </table>
         </StateBlock>
       </Card>
+
+      {pending ? (
+        <ConfirmDialog
+          open
+          title={pending.decision === 'approved' ? 'Release held payout' : 'Reject held reward'}
+          level="critical"
+          description={
+            pending.decision === 'approved'
+              ? `Reward ${pending.item.reward_id} — releasing pays out ${formatNaira(pending.item.amount_kobo)} to ${pending.item.beneficiary_id}.`
+              : `Reward ${pending.item.reward_id} — rejecting routes this held reward to clawback recovery.`
+          }
+          reasons={[
+            pending.decision === 'approved'
+              ? 'Releases the held reward for payout — money leaves the platform.'
+              : 'Rejects the reward and routes it to clawback recovery.',
+            'Separation of duties applies — enforced by the backend',
+            'Recorded in the audit log with your name, reason and timestamp.',
+          ]}
+          requireReason
+          reasonPlaceholder="Basis for this decision (recorded in the audit log)…"
+          busy={busy === pending.item.id}
+          confirmLabel={pending.decision === 'approved' ? 'Release payout' : 'Reject reward'}
+          onConfirm={confirmDecide}
+          onCancel={() => { if (!busy) setPending(null); }}
+        />
+      ) : null}
     </div>
   );
 }

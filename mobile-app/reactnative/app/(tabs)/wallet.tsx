@@ -13,38 +13,37 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
-import { getWallet, getWalletTransactions } from '@/api/wallet.api';
-import { Transaction } from '@/types/transaction';
+import { getWallet } from '@/api/wallet.api';
+import { getWalletLedger, getWalletFlowSummary, type WalletLedgerEntry } from '@/api/walletLedger.api';
 
 const TABS = ['All', 'Credit', 'Debit'];
 
-const SERVICE_ICON_MAP: Record<string, string> = {
-  AIRTIME:     'Smartphone',
-  DATA:        'Wifi',
-  ELECTRICITY: 'Zap',
-  CABLE_TV:    'Tv',
-};
-const SERVICE_COLOR_MAP: Record<string, { iconColor: string; bgColor: string }> = {
-  AIRTIME:     { iconColor: Colors.primary, bgColor: Colors.iconBgPurple },
-  DATA:        { iconColor: Colors.secondary, bgColor: Colors.iconBgBlue },
-  ELECTRICITY: { iconColor: '#EAB308', bgColor: 'rgba(234,179,8,0.10)' },
-  CABLE_TV:    { iconColor: Colors.teal, bgColor: Colors.iconBgTeal },
-};
+// Naira formatting from integer kobo — one place so every wallet number matches.
+function nairaFromKobo(kobo: number): string {
+  return (kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
 
-function txToActivity(tx: Transaction): Activity {
-  const svc     = tx.serviceType ?? 'AIRTIME';
-  const clr     = SERVICE_COLOR_MAP[svc] ?? { iconColor: Colors.primary, bgColor: Colors.iconBgPurple };
-  const isCredit = tx.status === 'REFUNDED' || tx.status === 'REVERSED';
+// A ledger entry → a display row. Icon/colour reflect the money direction; the
+// title prefers the ledger description, falling back to the reference/type.
+function entryToActivity(e: WalletLedgerEntry): Activity {
+  const isCredit = e.direction === 'credit';
+  const meta = e.metadata ?? {};
+  const label =
+    e.description?.trim() ||
+    (typeof meta.title === 'string' ? meta.title : '') ||
+    (typeof meta.category === 'string' ? meta.category : '') ||
+    (isCredit ? 'Money in' : 'Money out');
+  const when = e.createdAt ? new Date(e.createdAt) : null;
   return {
-    id:        tx.id,
-    title:     tx.productName ?? tx.providerName ?? svc,
-    subtitle:  tx.customerIdentifier,
-    amount:    isCredit ? tx.totalAmount : -tx.totalAmount,
+    id:        e.id,
+    title:     label,
+    subtitle:  e.reference || (e.type.startsWith('REVERSAL') ? 'Reversal' : isCredit ? 'Credit' : 'Debit'),
+    amount:    e.amountKobo / 100,
     type:      isCredit ? 'credit' : 'debit',
-    icon:      SERVICE_ICON_MAP[svc] ?? 'Circle',
-    iconColor: clr.iconColor,
-    bgColor:   clr.bgColor,
-    date:      new Date(tx.createdAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' }),
+    icon:      isCredit ? 'ArrowDownLeft' : 'ArrowUpRight',
+    iconColor: isCredit ? Colors.teal : Colors.primary,
+    bgColor:   isCredit ? Colors.iconBgTeal : Colors.iconBgPurple,
+    date:      when && !isNaN(when.getTime()) ? when.toLocaleDateString('en-NG', { day: 'numeric', month: 'short' }) : '',
   };
 }
 
@@ -56,24 +55,31 @@ export default function WalletScreen() {
     queryFn:  getWallet,
   });
 
-  const { data: txPage, isLoading: txLoading, isRefetching: txRefetch, refetch: refetchTx } = useQuery({
-    queryKey: ['wallet-transactions'],
-    queryFn:  () => getWalletTransactions({ limit: 50 }),
+  const { data: entries, isLoading: txLoading, isRefetching: txRefetch, refetch: refetchTx } = useQuery({
+    queryKey: ['wallet-ledger'],
+    queryFn:  () => getWalletLedger({ limit: 50 }),
   });
 
-  const activities = (txPage?.items ?? []).map(txToActivity);
-  const filtered   = tab === 'All' ? activities : activities.filter((a) => (tab === 'Credit' ? a.type === 'credit' : a.type === 'debit'));
-  const totalIn    = activities.filter((a) => a.type === 'credit').reduce((s, a) => s + a.amount, 0);
-  const totalOut   = activities.filter((a) => a.type === 'debit').reduce((s, a) => s + Math.abs(a.amount), 0);
+  // Income / Expenses are computed over the ENTIRE ledger, not just the page
+  // shown below — so the totals are complete and reconcile with the balance.
+  const { data: summary, isRefetching: sumRefetch, refetch: refetchSummary } = useQuery({
+    queryKey: ['wallet-flow-summary'],
+    queryFn:  getWalletFlowSummary,
+  });
 
-  const handleRefresh = () => { refetchWallet(); refetchTx(); };
+  const activities = (entries ?? []).map(entryToActivity);
+  const filtered   = tab === 'All' ? activities : activities.filter((a) => (tab === 'Credit' ? a.type === 'credit' : a.type === 'debit'));
+  const totalInKobo  = summary?.incomeKobo ?? 0;
+  const totalOutKobo = summary?.expensesKobo ?? 0;
+
+  const handleRefresh = () => { refetchWallet(); refetchTx(); refetchSummary(); };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: Platform.OS === 'ios' ? 100 : 80 }}
-        refreshControl={<RefreshControl refreshing={wRefetch || txRefetch} onRefresh={handleRefresh} tintColor={Colors.primary} />}
+        refreshControl={<RefreshControl refreshing={wRefetch || txRefetch || sumRefetch} onRefresh={handleRefresh} tintColor={Colors.primary} />}
       >
         <View style={styles.header}>
           <Text style={styles.title}>My Wallet</Text>
@@ -96,14 +102,14 @@ export default function WalletScreen() {
               <ArrowDownLeft size={18} color={Colors.teal} strokeWidth={2} />
             </View>
             <Text style={styles.statLabel}>Income</Text>
-            <Text style={[styles.statAmount, { color: Colors.teal }]}>₦{totalIn.toLocaleString('en-NG')}</Text>
+            <Text style={[styles.statAmount, { color: Colors.teal }]}>₦{nairaFromKobo(totalInKobo)}</Text>
           </LinearGradient>
           <LinearGradient colors={['rgba(220,38,38,0.06)', 'rgba(220,38,38,0.02)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.statCard, shadow1]}>
             <View style={[styles.statIcon, { backgroundColor: 'rgba(220,38,38,0.08)' }]}>
               <ArrowUpRight size={18} color={Colors.error} strokeWidth={2} />
             </View>
             <Text style={styles.statLabel}>Expenses</Text>
-            <Text style={[styles.statAmount, { color: Colors.error }]}>₦{totalOut.toLocaleString('en-NG')}</Text>
+            <Text style={[styles.statAmount, { color: Colors.error }]}>₦{nairaFromKobo(totalOutKobo)}</Text>
           </LinearGradient>
         </View>
 
@@ -121,12 +127,12 @@ export default function WalletScreen() {
           <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: Spacing.lg }} />
         ) : filtered.length === 0 ? (
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>No transactions yet.</Text>
+            <Text style={styles.emptyText}>{activities.length === 0 ? 'No transactions yet.' : `No ${tab.toLowerCase()} transactions.`}</Text>
           </View>
         ) : (
           <View style={[styles.list, shadow1]}>
             {filtered.map((a, i) => (
-              <Pressable key={a.id} onPress={() => router.push(`/services/transactions/${a.id}` as never)}>
+              <Pressable key={a.id} onPress={() => router.push(`/wallet/transaction/${a.id}` as never)}>
                 <RecentActivityCard activity={a} />
                 {i < filtered.length - 1 && <View style={styles.divider} />}
               </Pressable>

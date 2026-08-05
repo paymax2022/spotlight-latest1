@@ -4,6 +4,7 @@
 // All money is integer minor units (kobo).
 
 import { env } from '@/config/env';
+import { operationKey } from './idempotency';
 import type {
   RealtorOverview, AdminListing, ModerationStatus,
   VerificationRequest, VerificationStatus, AdminPayment, EscrowAccount,
@@ -27,7 +28,11 @@ async function getJson<T>(path: string): Promise<T> {
   return (j?.data ?? j) as T;
 }
 async function postJson<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${adminBase()}${path}`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
+  const res = await fetch(`${adminBase()}${path}`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('POST', path) },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   const j = await res.json();
   return (j?.data ?? j) as T;

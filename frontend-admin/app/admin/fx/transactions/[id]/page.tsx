@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { getTransaction, retryTransaction, forceReverseTransaction } from '@/services/fxAdminService';
 import type { FxTxDetail } from '@/types/fxAdmin';
 import { PageHeader, Card, Badge, btn, btnPrimary, th, td, moneyFull } from '../../_ui';
+import { ConfirmDialog } from '@/components/rbac/ConfirmDialog';
+import { useCriticalAction } from '@/components/rbac/useCriticalAction';
 
 const FEE_LABEL: Record<string, string> = { provider_fee: 'Provider fee', rail_fee: 'Network fee', paymax_spread: 'Paymax spread' };
 
@@ -28,6 +30,14 @@ export default function FxTransactionDetailPage({ params }: { params: Promise<{ 
     try { await fn(id); await load(); } finally { setBusy(false); }
   }
 
+  // Force-reverse is a money movement → gate it behind a critical confirm step.
+  // forceReverseTransaction takes no reason arg, so the typed reason is captured
+  // in the dialog as an audited operator acknowledgement (not sent to the service).
+  const reverse = useCriticalAction({
+    action: async () => { await forceReverseTransaction(id); },
+    onDone: load,
+  });
+
   if (loading) return <div style={{ padding: '0.5rem' }}><p style={{ color: '#6b7280' }}>Loading…</p></div>;
   if (error || !tx) return <div style={{ padding: '0.5rem' }}><p style={{ color: '#dc2626' }}>{error ?? 'Not found'}</p><Link href="/admin/fx/transactions" style={{ color: '#1d4ed8' }}>← Back</Link></div>;
 
@@ -43,9 +53,9 @@ export default function FxTransactionDetailPage({ params }: { params: Promise<{ 
         subtitle={`${tx.type} · ${tx.corridor} · ${tx.customer}`}
         action={
           <div style={{ display: 'flex', gap: '0.5rem' }}>
-            {canRetry ? <button disabled={busy} onClick={() => act(retryTransaction)} style={btnPrimary('#d97706')}>Manual retry / failover</button> : null}
-            {canReverse ? <button disabled={busy} onClick={() => act(forceReverseTransaction)} style={btnPrimary('#dc2626')}>Force reverse</button> : null}
-            <button onClick={load} style={btn()}>Refresh</button>
+            {canRetry ? <button disabled={busy || reverse.busy} onClick={() => act(retryTransaction)} style={btnPrimary('#d97706')}>Manual retry / failover</button> : null}
+            {canReverse ? <button disabled={busy || reverse.busy} onClick={reverse.ask} style={btnPrimary('#dc2626')}>Force reverse</button> : null}
+            <button disabled={busy || reverse.busy} onClick={load} style={btn()}>Refresh</button>
           </div>
         }
       />
@@ -54,6 +64,8 @@ export default function FxTransactionDetailPage({ params }: { params: Promise<{ 
         <Badge status={tx.status} />
         {tx.failureReason ? <span style={{ color: '#b91c1c', fontSize: '0.85rem' }}>{tx.failureReason}</span> : null}
       </div>
+
+      {reverse.error ? <p role="alert" style={{ color: '#dc2626', fontSize: '0.85rem', margin: '0 0 1rem' }}>{reverse.error}</p> : null}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
         <Card title="Money & rates">
@@ -106,6 +118,24 @@ export default function FxTransactionDetailPage({ params }: { params: Promise<{ 
           </div>
         ))}
       </Card>
+
+      <ConfirmDialog
+        open={reverse.open}
+        level="critical"
+        title={`Force-reverse ${tx.reference}`}
+        description={`${moneyFull(tx.source.amountMinor, tx.source.currency)} → ${moneyFull(tx.destination.amountMinor, tx.destination.currency)} · ${tx.corridor} · ${tx.customer}`}
+        reasons={[
+          'Reverses a successful FX transaction — this moves money and posts compensating ledger entries.',
+          'Only reverse when the underlying settlement is confirmed reversible; the customer may already have been paid.',
+          'Recorded in the audit log with your name, reason and timestamp.',
+        ]}
+        requireReason
+        reasonPlaceholder="Basis for the reversal (e.g. duplicate settlement, provider recall, ref FX-2026-...)…"
+        busy={reverse.busy}
+        confirmLabel="Force reverse"
+        onConfirm={reverse.confirm}
+        onCancel={reverse.cancel}
+      />
     </div>
   );
 }

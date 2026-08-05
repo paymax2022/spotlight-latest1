@@ -81,6 +81,7 @@ export default function FxLayout() {
       <Stack.Screen name="settings/limits" />
       <Stack.Screen name="settings/stablecoin" />
       <Stack.Screen name="settings/notifications" />
+      <Stack.Screen name="settings/security" />
 
       {/* Global edge / error states (L) */}
       <Stack.Screen name="states/[kind]" options={{ animation: 'fade' }} />

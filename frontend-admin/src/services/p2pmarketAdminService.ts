@@ -8,6 +8,7 @@
 // Money is BIGINT kobo (minor units) throughout.
 
 import { env } from '@/config/env';
+import { operationKey } from './idempotency';
 
 const USE_MOCK = (process.env.NEXT_PUBLIC_P2PMARKET_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
 
@@ -35,7 +36,11 @@ async function getMember<T>(path: string): Promise<T> {
   return (j?.data ?? j) as T;
 }
 async function sendAdmin<T>(method: 'POST', path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${adminBase()}${path}`, { method, headers: authHeaders(), body: JSON.stringify(body) });
+  const res = await fetch(`${adminBase()}${path}`, {
+    method,
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey(method, path) },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   const j = await res.json();
   return (j?.data ?? j) as T;

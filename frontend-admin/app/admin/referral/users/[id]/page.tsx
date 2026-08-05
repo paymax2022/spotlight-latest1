@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import { getReferralUser360, interveneUser, formatNaira } from '@/services/referralAdminOpsService';
 import type { ReferralUser360, InterventionAction } from '@/types/referralAdminOps';
 import { PageHeader, Card, Kpi, Badge, btn, btnPrimary, btnDanger, input, label, th, td, timeAgo, StateBlock } from '../../_ui';
+import { ConfirmDialog } from '@/components/rbac/ConfirmDialog';
 
 const ACTIONS: { value: InterventionAction; label: string }[] = [
   { value: 'adjust', label: 'Adjust balance' },
@@ -25,6 +26,7 @@ export default function ReferralUser360Page() {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   async function load() {
     setLoading(true); setError(null);
@@ -34,17 +36,26 @@ export default function ReferralUser360Page() {
   }
   useEffect(() => { if (id) load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [id]);
 
-  async function intervene() {
+  function askIntervene() {
     if (!data) return;
     if (!reason.trim()) { setMsg('A reason is required for any intervention (audited).'); return; }
-    const needsAmount = action === 'adjust' || action === 'reverse';
-    const amountKobo = needsAmount ? Math.round(parseFloat(amount || '0') * 100) : undefined;
-    if (needsAmount && (!amountKobo || amountKobo <= 0)) { setMsg('Enter a valid amount (₦).'); return; }
+    const requiresAmount = action === 'adjust' || action === 'reverse';
+    const amountKobo = requiresAmount ? Math.round(parseFloat(amount || '0') * 100) : undefined;
+    if (requiresAmount && (!amountKobo || amountKobo <= 0)) { setMsg('Enter a valid amount (₦).'); return; }
+    setMsg(null);
+    setConfirmOpen(true);
+  }
+
+  async function confirmIntervene(confirmReason: string) {
+    if (!data) return;
+    const requiresAmount = action === 'adjust' || action === 'reverse';
+    const amountKobo = requiresAmount ? Math.round(parseFloat(amount || '0') * 100) : undefined;
     setBusy(true); setMsg(null);
     try {
-      await interveneUser({ user_id: data.id, action, amount_kobo: amountKobo, reason: reason.trim() });
+      await interveneUser({ user_id: data.id, action, amount_kobo: amountKobo, reason: confirmReason });
       setMsg(`Intervention "${action}" recorded — audit event emitted.`);
       setReason(''); setAmount('');
+      setConfirmOpen(false);
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); }
   }
@@ -94,7 +105,7 @@ export default function ReferralUser360Page() {
                   <label style={label()}>Reason</label>
                   <input style={input()} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Goodwill / fraud correction / dispute" />
                 </div>
-                <button disabled={busy} onClick={intervene} style={action === 'suspend' || action === 'reverse' ? btnDanger() : btnPrimary()}>{busy ? '…' : 'Apply'}</button>
+                <button disabled={busy} onClick={askIntervene} style={action === 'suspend' || action === 'reverse' ? btnDanger() : btnPrimary()}>{busy ? '…' : 'Apply'}</button>
               </div>
               {msg && <p style={{ color: msg.startsWith('Intervention') ? '#15803d' : '#b91c1c', fontSize: '0.8rem', marginTop: '0.5rem' }}>{msg}</p>}
             </Card>
@@ -141,6 +152,27 @@ export default function ReferralUser360Page() {
                 </tbody>
               </table>
             </Card>
+
+            {confirmOpen ? (
+              <ConfirmDialog
+                open
+                title={`${ACTIONS.find((a) => a.value === action)?.label ?? 'Intervene'} — ${data.name}`}
+                level={action === 're_verify' ? 'warning' : 'critical'}
+                description={`${data.name} (${data.id}) — this intervention is audited and cannot be silently undone.`}
+                reasons={[
+                  'Recorded in the audit log with your name, reason and timestamp.',
+                  ...(needsAmount ? [`Posts ${action === 'reverse' ? 'reversing' : 'adjusting'} ledger entries${amount ? ` (₦${amount})` : ''} with an Idempotency-Key.`] : []),
+                  ...(action === 'suspend' ? ['Suspends the account and blocks the user’s referral activity.'] : []),
+                  ...(action === 're_verify' ? ['Forces the user to re-verify KYC before continuing.'] : []),
+                ]}
+                requireReason
+                reasonPlaceholder="Basis for this intervention (recorded in the audit log)…"
+                busy={busy}
+                confirmLabel="Apply intervention"
+                onConfirm={confirmIntervene}
+                onCancel={() => { if (!busy) setConfirmOpen(false); }}
+              />
+            ) : null}
           </>
         )}
       </StateBlock>

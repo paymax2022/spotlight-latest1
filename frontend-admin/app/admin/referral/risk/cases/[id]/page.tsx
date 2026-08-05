@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import { getCase, executeClawbackOps, formatNaira } from '@/services/referralAdminOpsService';
 import type { CaseDetail } from '@/types/referralAdminOps';
 import { PageHeader, Card, Kpi, Badge, btn, btnDanger, th, td, timeAgo, StateBlock } from '../../../_ui';
+import { ConfirmDialog } from '@/components/rbac/ConfirmDialog';
 
 export default function CaseWorkbenchPage() {
   const params = useParams();
@@ -15,6 +16,7 @@ export default function CaseWorkbenchPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   async function load() {
     setLoading(true); setError(null);
@@ -24,12 +26,19 @@ export default function CaseWorkbenchPage() {
   }
   useEffect(() => { if (id) load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [id]);
 
-  async function clawback() {
+  function askClawback() {
+    if (!data) return;
+    setMsg(null);
+    setConfirmOpen(true);
+  }
+
+  async function confirmClawback(reason: string) {
     if (!data) return;
     setBusy(true); setMsg(null);
     try {
-      await executeClawbackOps(data.subject_id, `Case ${data.id}: ${data.reason}`);
+      await executeClawbackOps(data.subject_id, `Case ${data.id}: ${reason}`);
       setMsg('Clawback executed — reversing ledger entries posted, audit event emitted.');
+      setConfirmOpen(false);
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); }
   }
@@ -55,10 +64,30 @@ export default function CaseWorkbenchPage() {
               <p style={{ fontSize: '0.85rem', color: '#374151', margin: 0 }}><strong>Reason:</strong> {data.reason}</p>
               <p style={{ fontSize: '0.78rem', color: '#9ca3af', marginTop: '0.25rem' }}>Assigned to: {data.assigned_to ?? 'unassigned'} · opened {timeAgo(data.created_at)}</p>
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
-                <button disabled={busy} onClick={clawback} style={btnDanger()}>{busy ? '…' : 'Execute clawback'}</button>
+                <button disabled={busy} onClick={askClawback} style={btnDanger()}>{busy ? '…' : 'Execute clawback'}</button>
               </div>
               {msg && <p style={{ color: '#15803d', fontSize: '0.8rem', marginTop: '0.5rem' }}>{msg}</p>}
             </Card>
+
+            {confirmOpen ? (
+              <ConfirmDialog
+                open
+                title={`Execute clawback — ${data.subject_name}`}
+                level="critical"
+                description={`Case ${data.id} · ${formatNaira(data.amount_at_risk_kobo)} at risk — this recovers funds from ${data.subject_id} and posts reversing ledger entries that can only be reversed, never edited.`}
+                reasons={[
+                  'Recovers funds from the subject — money-path mutation.',
+                  'Posts reversing ledger entries (never edits) with an audit event.',
+                  'Recorded in the audit log with your name, reason and timestamp.',
+                ]}
+                requireReason
+                reasonPlaceholder="Basis for this clawback (recorded against the case)…"
+                busy={busy}
+                confirmLabel="Execute clawback"
+                onConfirm={confirmClawback}
+                onCancel={() => { if (!busy) setConfirmOpen(false); }}
+              />
+            ) : null}
 
             <Card title="Linked accounts & devices">
               <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>

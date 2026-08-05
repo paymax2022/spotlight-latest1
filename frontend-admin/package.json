@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start -p 3001",
     "lint": "next lint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "check:mock-flags": "node scripts/check-mock-flags.mjs",
+    "check:mock-flags:ci": "node scripts/check-mock-flags.mjs --strict"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

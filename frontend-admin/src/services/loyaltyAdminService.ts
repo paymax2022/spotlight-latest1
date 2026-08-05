@@ -7,6 +7,7 @@
 // Surfaces NL-4 (points ≠ cash), NL-8 (append-only ledger), NL-12 (immutable audit).
 
 import { env } from '@/config/env';
+import { operationKey } from './idempotency';
 import type {
   LoyaltyDashboard,
   EarnRule,
@@ -43,7 +44,11 @@ async function getJson<T>(path: string): Promise<T> {
   return (j?.data ?? j) as T;
 }
 async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${adminBase()}${path}`, { method, headers: authHeaders(), body: JSON.stringify(body) });
+  const res = await fetch(`${adminBase()}${path}`, {
+    method,
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey(method, path) },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   const j = await res.json();
   return (j?.data ?? j) as T;

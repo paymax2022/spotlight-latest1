@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { getAmlCase, fileStr, formatNaira } from '@/services/connectAdminService';
 import type { AmlCaseDetail } from '@/types/connectAdmin';
 import { PageHeader, Card, Badge, btn, th, td } from '../../_ui';
+import { ConfirmDialog } from '@/components/rbac/ConfirmDialog';
 
 export default function ConnectAmlCaseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -15,9 +16,17 @@ export default function ConnectAmlCaseDetailPage({ params }: { params: Promise<{
   const [filed, setFiled] = useState<string | null>(null);
   const [reasonCode, setReasonCode] = useState('');
   const [narrativeRef, setNarrativeRef] = useState('');
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   async function load() { setLoading(true); setError(null); try { setC(await getAmlCase(id)); } catch (e) { setError(String(e)); } finally { setLoading(false); } }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [id]);
+
+  // Confirm gate: validate the filing inputs, then require an explicit reaffirm in
+  // the ConfirmDialog before the (irreversible, regulatory) STR is filed.
+  function askFileStr() {
+    if (!reasonCode.trim() || !narrativeRef.trim()) { setError('Reason code and narrative reference are required to file an STR.'); return; }
+    setError(null); setConfirmOpen(true);
+  }
 
   async function submitStr() {
     if (!reasonCode.trim() || !narrativeRef.trim()) { setError('Reason code and narrative reference are required to file an STR.'); return; }
@@ -25,6 +34,7 @@ export default function ConnectAmlCaseDetailPage({ params }: { params: Promise<{
     try {
       const res = await fileStr(id, { reason_code: reasonCode.trim(), narrative_ref: narrativeRef.trim() });
       setFiled(res.str_reference);
+      setConfirmOpen(false);
       await load();
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); }
@@ -79,7 +89,7 @@ export default function ConnectAmlCaseDetailPage({ params }: { params: Promise<{
                 Narrative reference (vault pointer)
                 <input value={narrativeRef} onChange={(e) => setNarrativeRef(e.target.value)} placeholder="vault://str/narrative-id" style={inputStyle} />
               </label>
-              <button disabled={busy} onClick={submitStr} style={{ ...btn(), background: '#340075', color: '#fff', borderColor: '#340075', marginTop: '0.35rem' }}>{busy ? 'Filing…' : 'File STR with NFIU'}</button>
+              <button disabled={busy} onClick={askFileStr} style={{ ...btn(), background: '#340075', color: '#fff', borderColor: '#340075', marginTop: '0.35rem' }}>{busy ? 'Filing…' : 'File STR with NFIU'}</button>
               <p style={{ fontSize: '0.75rem', color: '#9ca3af', margin: 0 }}>Action is audited. Reason codes only — no raw PII in the filing record.</p>
             </div>
           )}
@@ -96,6 +106,25 @@ export default function ConnectAmlCaseDetailPage({ params }: { params: Promise<{
           </tbody>
         </table>
       </Card>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        level="critical"
+        title={`File STR with NFIU — case ${c.id}`}
+        description={`Reason code ${reasonCode.trim() || '—'} · narrative ${narrativeRef.trim() || '—'}. Reason codes only — no raw PII is written to the filing record.`}
+        reasons={[
+          'Files a regulatory report (STR/SAR) with the NFIU — this cannot be undone.',
+          'Should require a second compliance approver — pending backend support.',
+          'Recorded in the audit log with your name, reason and timestamp.',
+        ]}
+        requireReason
+        reasonLabel="Filing justification (recorded in the audit log)"
+        reasonPlaceholder="Basis for filing this STR (e.g. structuring below threshold confirmed, escalation ref)…"
+        busy={busy}
+        confirmLabel="File STR"
+        onConfirm={() => { void submitStr(); }}
+        onCancel={() => { if (!busy) setConfirmOpen(false); }}
+      />
     </div>
   );
 }

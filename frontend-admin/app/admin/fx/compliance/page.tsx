@@ -4,20 +4,82 @@ import { useEffect, useState } from 'react';
 import { getScreeningAlerts, setAlertStatus } from '@/services/fxAdminService';
 import type { ScreeningAlert, CaseStatus } from '@/types/fxAdmin';
 import { PageHeader, FxTabs, Card, Badge, btn, btnPrimary, th, td } from '../_ui';
+import { ConfirmDialog } from '@/components/rbac/ConfirmDialog';
 
 const SEV_COLOR: Record<string, string> = { high: '#dc2626', medium: '#d97706', low: '#6b7280' };
+
+type Decision = Extract<CaseStatus, 'cleared' | 'blocked' | 'sar_filed'>;
+
+// Confirm config per decision. A SAR is a regulatory filing → critical; every
+// decision requires a typed reason for the audit trail. (Maker-checker / dual-
+// control is supported by ConfirmDialog + useCriticalAction and should be enabled
+// for SAR once the backend approval endpoint exists — see the compliance TODO.)
+const DECISION: Record<Decision, { title: string; level: 'critical' | 'warning'; cta: string; reasons: string[] }> = {
+  cleared: {
+    title: 'Clear screening alert',
+    level: 'warning',
+    cta: 'Clear alert',
+    reasons: ['Marks the alert as cleared and reopens the customer’s FX activity.', 'Recorded in the audit log with your name, reason and timestamp.'],
+  },
+  blocked: {
+    title: 'Block customer',
+    level: 'critical',
+    cta: 'Block',
+    reasons: ['Blocks the customer’s FX activity (a first-class compliance_block outcome).', 'Recorded in the audit log with your name, reason and timestamp.'],
+  },
+  sar_filed: {
+    title: 'File Suspicious Activity Report',
+    level: 'critical',
+    cta: 'File SAR',
+    reasons: [
+      'Files a regulatory SAR — this cannot be undone.',
+      'Should require a second compliance approver (dual-control) — pending backend support.',
+      'Recorded in the audit log with your name, reason and timestamp.',
+    ],
+  },
+};
 
 export default function FxCompliancePage() {
   const [rows, setRows] = useState<ScreeningAlert[]>([]);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<{ id: string; customer: string; status: Decision } | null>(null);
 
-  async function load() { setLoading(true); try { setRows(await getScreeningAlerts()); } finally { setLoading(false); } }
-  useEffect(() => { load(); }, []);
+  async function load() {
+    setLoading(true);
+    try {
+      setRows(await getScreeningAlerts());
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => {
+    load();
+  }, []);
 
-  async function act(id: string, status: CaseStatus) { setBusy(id); try { await setAlertStatus(id, status); await load(); } finally { setBusy(null); } }
+  function askDecision(id: string, customer: string, status: Decision) {
+    setError(null);
+    setPending({ id, customer, status });
+  }
+
+  async function confirmDecision(reason: string) {
+    if (!pending) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await setAlertStatus(pending.id, pending.status, reason);
+      setPending(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The decision could not be recorded. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const open = rows.filter((r) => r.status === 'open' || r.status === 'in_review').length;
+  const cfg = pending ? DECISION[pending.status] : null;
 
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
@@ -25,6 +87,9 @@ export default function FxCompliancePage() {
       <FxTabs active="compliance" />
 
       <Card title="Screening & monitoring queue">
+        {error ? (
+          <p role="alert" style={{ color: '#dc2626', fontSize: '0.82rem', margin: '0 0 0.6rem' }}>{error}</p>
+        ) : null}
         {loading ? <p style={{ color: '#6b7280' }}>Loading…</p> : rows.length === 0 ? <p style={{ color: '#6b7280' }}>Queue is clear.</p> : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
@@ -43,9 +108,9 @@ export default function FxCompliancePage() {
                   <td style={{ ...td(), textAlign: 'right', whiteSpace: 'nowrap' }}>
                     {a.status !== 'cleared' && a.status !== 'blocked' && a.status !== 'sar_filed' ? (
                       <>
-                        <button disabled={busy === a.id} onClick={() => act(a.id, 'cleared')} style={{ ...btnPrimary('#16a34a'), marginRight: 6 }}>Clear</button>
-                        <button disabled={busy === a.id} onClick={() => act(a.id, 'blocked')} style={{ ...btnPrimary('#dc2626'), marginRight: 6 }}>Block</button>
-                        <button disabled={busy === a.id} onClick={() => act(a.id, 'sar_filed')} style={btn()}>File SAR</button>
+                        <button disabled={busy} onClick={() => askDecision(a.id, a.customer, 'cleared')} style={{ ...btnPrimary('#16a34a'), marginRight: 6 }}>Clear</button>
+                        <button disabled={busy} onClick={() => askDecision(a.id, a.customer, 'blocked')} style={{ ...btnPrimary('#dc2626'), marginRight: 6 }}>Block</button>
+                        <button disabled={busy} onClick={() => askDecision(a.id, a.customer, 'sar_filed')} style={btn()}>File SAR</button>
                       </>
                     ) : <span style={{ color: '#9ca3af' }}>—</span>}
                   </td>
@@ -56,6 +121,24 @@ export default function FxCompliancePage() {
         )}
         <p style={{ fontSize: '0.78rem', color: '#6b7280', marginTop: '0.75rem' }}>A <code>compliance_block</code> is a first-class quote/transfer outcome. All decisions are audit-logged with actor and timestamp.</p>
       </Card>
+
+      {pending && cfg ? (
+        <ConfirmDialog
+          open
+          title={cfg.title}
+          level={cfg.level}
+          description={`${pending.customer} — this decision is recorded with your name, reason and timestamp.`}
+          reasons={cfg.reasons}
+          requireReason
+          reasonPlaceholder="Basis for this decision (e.g. sanctions match reviewed, false positive, STR reference)…"
+          busy={busy}
+          confirmLabel={cfg.cta}
+          onConfirm={confirmDecision}
+          onCancel={() => {
+            if (!busy) setPending(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

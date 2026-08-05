@@ -58,6 +58,17 @@ export function useSeason() {
   return useQuery({ queryKey: gameKeys.season(), queryFn: gameApi.getSeason });
 }
 
+export function useUnlockSeasonPass() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (seasonId: string) => gameApi.unlockSeasonPass(seasonId),
+    onSuccess: (season) => {
+      qc.setQueryData(gameKeys.season(), season);
+      qc.invalidateQueries({ queryKey: gameKeys.profile() });
+    },
+  });
+}
+
 export function useRewards() {
   return useQuery({ queryKey: gameKeys.rewards(), queryFn: gameApi.listRewards });
 }

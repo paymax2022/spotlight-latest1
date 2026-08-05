@@ -4,6 +4,7 @@
 // /api/connect/admin/*. Read-only in Phase 0 (cases + audit + config views).
 
 import { env } from '@/config/env';
+import { operationKey } from './idempotency';
 import type {
   ConnectCase,
   ConnectAuditEntry,
@@ -77,7 +78,11 @@ export function formatNaira(kobo: number): string {
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${adminBase()}${path}`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
+  const res = await fetch(`${adminBase()}${path}`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('POST', path) },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   const j = await res.json();
   return (j?.data ?? j) as T;

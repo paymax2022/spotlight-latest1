@@ -14,6 +14,7 @@ import {
   DisbursementBadge, timeAgo, AuditNote, PermissionBanner, ARENA_PERMS, useArenaPermission, useArenaUser,
 } from '../_ui';
 import { hasAnyPermission } from '@/features/auth/rbac';
+import { ConfirmDialog } from '@/components/rbac/ConfirmDialog';
 
 export default function ArenaPotPage() {
   const { allowed } = useArenaPermission(ARENA_PERMS.admin);
@@ -31,6 +32,8 @@ export default function ArenaPotPage() {
   const [busy, setBusy] = useState(false);
   // Two-approver UI: track which approvals the operator has registered this session.
   const [approved, setApproved] = useState(false);
+  // Gate the execute action behind the ConfirmDialog.
+  const [confirmingExecute, setConfirmingExecute] = useState(false);
 
   useEffect(() => {
     void listCompetitions().then((c) => { setCompetitions(c); if (c[0]) setCompetitionId(c[0].id); }).catch((e) => setError(String(e)));
@@ -69,17 +72,25 @@ export default function ArenaPotPage() {
     finally { setBusy(false); }
   }, [competitionId, load]);
 
-  const execute = useCallback(async () => {
+  const askExecute = useCallback(() => {
     if (!readyToExecute) return;
-    if (!window.confirm(`Execute disbursement of ${formatKobo(splitTotal)} across ${splits.length} splits? This moves money via the payout rails.`)) return;
+    setError(null);
+    setConfirmingExecute(true);
+  }, [readyToExecute]);
+
+  // reason is captured as an operator acknowledgement for the audit trail;
+  // disbursePot does not accept a reason argument (signature unchanged).
+  const execute = useCallback(async (_reason: string) => {
+    if (!readyToExecute) return;
     setBusy(true); setError(null); setNotice(null);
     try {
       await disbursePot(competitionId, splits);
+      setConfirmingExecute(false);
       setNotice('Disbursement submitted to payout rails (idempotent, ledgered, audited).');
       await load();
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); }
-  }, [readyToExecute, competitionId, splits, splitTotal, load]);
+  }, [readyToExecute, competitionId, splits, load]);
 
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
@@ -221,7 +232,7 @@ export default function ArenaPotPage() {
                 {approved ? 'Approved by you ✓' : 'Add my approval'}
               </button>
               <button
-                onClick={() => void execute()}
+                onClick={askExecute}
                 style={readyToExecute && !busy ? btnPrimary('#15803d') : btnDisabled()}
                 disabled={!readyToExecute || busy}
               >
@@ -232,6 +243,28 @@ export default function ArenaPotPage() {
             <AuditNote>Disbursement requires {required} distinct approvers server-side (this UI mirrors that). Payouts run via existing rails, idempotently; every movement is ledgered + audited (NDC-4).</AuditNote>
           </Card>
         </>
+      )}
+
+      {confirmingExecute && (
+        <ConfirmDialog
+          open
+          level="critical"
+          title="Execute disbursement"
+          description={`Disburse ${formatKobo(splitTotal)} across ${splits.length} split${splits.length === 1 ? '' : 's'} — this moves money via the payout rails.`}
+          reasons={[
+            'Sends real payouts via the payout rails — idempotent, ledgered and audited (NDC-4).',
+            'Requires the split total to reconcile against the derived pot and all approvals to be recorded.',
+            'Recorded in the audit log with your name, reason and timestamp.',
+          ]}
+          requireReason
+          reasonPlaceholder="Basis for executing this disbursement (e.g. approvals verified, split matches published formula)…"
+          busy={busy}
+          confirmLabel="Execute disbursement"
+          onConfirm={execute}
+          onCancel={() => {
+            if (!busy) setConfirmingExecute(false);
+          }}
+        />
       )}
     </div>
   );

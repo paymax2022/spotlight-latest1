@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import { operationKey } from './idempotency';
 import type {
   Transfer,
   ProviderHealth,
@@ -20,6 +21,13 @@ function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('spotlight_admin_access_token') || '';
   if (!token) return { 'Content-Type': 'application/json' };
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+}
+
+// Idempotency-Key per the house iron rule (see services/idempotency.ts). Keyed on
+// the operation identity so a double-click/retry dedupes at the backend instead of
+// double-posting a reversal/retry.
+function idempotencyKeyFor(action: string, id: string): string {
+  return operationKey('transfer', action, id);
 }
 
 export function formatKobo(kobo: number): string {
@@ -245,7 +253,11 @@ async function postAction(id: string, action: 'retry' | 'reverse', body?: Record
   }
   const res = await fetch(
     `${adminApiBase()}/finance/admin/transfers/${encodeURIComponent(id)}/${action}`,
-    { method: 'POST', headers: authHeaders(), body: JSON.stringify(body ?? {}) },
+    {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Idempotency-Key': idempotencyKeyFor(action, id) },
+      body: JSON.stringify(body ?? {}),
+    },
   );
   if (!res.ok) throw new Error(`Transfer ${action} failed: ${res.status}`);
 }
