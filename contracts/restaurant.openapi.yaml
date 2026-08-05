@@ -94,6 +94,12 @@ components:
       required: true
       schema: { type: string, format: uuid }
       description: Settlement bank-account id.
+    WithdrawalIdParam:
+      name: withdrawalId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Withdrawal id.
   schemas:
     Money: { type: integer, format: int64, description: Amount in kobo (minor units) }
     BankAccount:
@@ -108,6 +114,29 @@ components:
         is_verified: { type: boolean }
         is_default: { type: boolean }
         created_at: { type: string, format: date-time }
+    Withdrawal:
+      type: object
+      description: >
+        A merchant-initiated wallet→bank withdrawal (money path). Reserving a
+        withdrawal posts ONE balanced ledger entry (DR merchant wallet, CR the
+        clearing/suspense account); the disbursement itself is executed by a
+        provider adapter (Noop until wired). Guarded state machine.
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        bank_account_id: { type: string, format: uuid, description: A saved settlement account owned by the caller. }
+        amount_kobo: { $ref: '#/components/schemas/Money' }
+        currency: { type: string, example: NGN }
+        status:
+          type: string
+          description: pending→processing→paid|failed|reversed. Noop disbursement rests at `processing`.
+          enum: [pending, processing, paid, failed, reversed]
+        ledger_ref: { type: string, nullable: true, description: Balanced reserve-post reference ('rwithdraw:'+id). }
+        provider_reference: { type: string, nullable: true, description: Disbursement provider transfer ref (once a real provider executes). }
+        failure_reason: { type: string, nullable: true }
+        already_processed: { type: boolean, description: True when returned by an idempotent replay (no new money moved). }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     Error:
       type: object
       properties:
@@ -385,6 +414,60 @@ paths:
         '200': { description: Deleted, content: { application/json: { schema: { type: object, properties: { deleted: { type: boolean } } } } } }
         '401': { description: Not authenticated }
         '404': { description: Account not found }
+  /withdrawals:
+    post:
+      tags: [restaurant]
+      summary: Request a withdrawal — wallet → saved bank account (operator, MONEY PATH)
+      description: >
+        Money mutation. Reserves the merchant's wallet funds by posting ONE balanced
+        ledger entry (DR merchant wallet, CR clearing/suspense) and records a
+        `processing` withdrawal, then hands to the disbursement adapter (Noop until a
+        real provider is wired — executes nothing, funds stay reserved). Fail-closed:
+        Tier-0 wallets are blocked, over-daily-limit is blocked, and insufficient
+        balance is rejected with no move. Idempotent on the Idempotency-Key header
+        (a replay returns the existing withdrawal and moves no money). Behind the
+        FEATURE_RESTAURANT_WITHDRAWALS_ENABLED flag (404 when off).
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount_kobo, bank_account_id]
+              properties:
+                amount_kobo: { $ref: '#/components/schemas/Money' }
+                bank_account_id: { type: string, format: uuid, description: A saved settlement account owned by the caller. }
+      responses:
+        '201': { description: Withdrawal reserved, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Withdrawal' } } } } } }
+        '200': { description: Idempotent replay — existing withdrawal returned (no new move), content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Withdrawal' } } } } } }
+        '400': { description: Missing Idempotency-Key / invalid amount }
+        '401': { description: Not authenticated }
+        '402': { description: Insufficient wallet balance }
+        '403': { description: Withdrawals disabled, or tier limit (Tier-0 wallet disabled / daily cap exceeded) }
+        '404': { description: Bank account not found for this merchant }
+    get:
+      tags: [restaurant]
+      summary: List the caller's withdrawal history (operator)
+      responses:
+        '200':
+          description: Withdrawals (newest first)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Withdrawal' } }
+        '401': { description: Not authenticated }
+  /withdrawals/{withdrawalId}:
+    get:
+      tags: [restaurant]
+      summary: Withdrawal detail (operator, owner-scoped)
+      parameters: [{ $ref: '#/components/parameters/WithdrawalIdParam' }]
+      responses:
+        '200': { description: Withdrawal, content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Withdrawal' } } } } } }
+        '401': { description: Not authenticated }
+        '404': { description: Withdrawal not found }
   /{id}/menu/categories:
     post:
       tags: [restaurant]

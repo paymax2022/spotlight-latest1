@@ -4,7 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as merchant from './api';
-import type { CreateStoreInput, UpdateStoreInput, AddBankAccountInput } from './types';
+import type { CreateStoreInput, UpdateStoreInput, AddBankAccountInput, RequestWithdrawalInput } from './types';
 
 const KEY = 'restaurant-merchant';
 
@@ -41,6 +41,23 @@ export function useDeleteBankAccount() {
   return useMutation({
     mutationFn: (id: string) => merchant.deleteBankAccount(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'banks'] }),
+  });
+}
+
+// ── Withdrawals (money path) ──────────────────────────────────────────────────
+export function useWithdrawals() {
+  return useQuery({ queryKey: [KEY, 'withdrawals'], queryFn: merchant.getWithdrawals, staleTime: 15_000 });
+}
+
+export function useRequestWithdrawal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: RequestWithdrawalInput) => merchant.requestWithdrawal(input),
+    onSuccess: () => {
+      // A withdrawal debits the wallet — refresh history AND the earnings/wallet view.
+      qc.invalidateQueries({ queryKey: [KEY, 'withdrawals'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'earnings'] });
+    },
   });
 }
 

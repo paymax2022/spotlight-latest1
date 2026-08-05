@@ -1,10 +1,14 @@
 package restaurant
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 )
 
 // ownerErrStatus maps a store-management service error to an HTTP status: a
@@ -172,6 +176,118 @@ func (h *Handler) Earnings(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": e})
+}
+
+// ── Merchant WITHDRAWALS (money path: wallet → saved bank account) ─────────────
+
+// withdrawalErrStatus maps a withdrawal service error to an HTTP status. Fail
+// codes are explicit so the app can distinguish validation, authorization, and
+// insufficient-funds outcomes.
+func withdrawalErrStatus(err error) int {
+	switch {
+	case errors.Is(err, ErrWithdrawMissingIdem), errors.Is(err, ErrWithdrawBadAmount):
+		return http.StatusBadRequest
+	case errors.Is(err, ErrWithdrawNoBankAccount), errors.Is(err, ErrWithdrawNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, ErrWithdrawalsDisabled),
+		errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+		return http.StatusForbidden
+	case errors.Is(err, ledger.ErrInsufficientFunds):
+		return http.StatusPaymentRequired // 402 — not enough wallet balance
+	case errors.Is(err, ErrWithdrawNotReady):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// RequestWithdrawal → POST /restaurant/withdrawals. Money path: reserves funds and
+// records a withdrawal. Idempotency-Key header REQUIRED (fail-closed).
+func (h *Handler) RequestWithdrawal(c *gin.Context) {
+	userID := c.GetString("user_id")
+	idem := c.GetHeader("Idempotency-Key")
+	if idem == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key is required"})
+		return
+	}
+	var body struct {
+		AmountKobo    int64  `json:"amount_kobo"`
+		BankAccountID string `json:"bank_account_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	w, err := h.svc.RequestWithdrawal(c.Request.Context(), userID, RequestWithdrawalInput{
+		AmountKobo:     body.AmountKobo,
+		BankAccountID:  body.BankAccountID,
+		IdempotencyKey: idem,
+	})
+	if err != nil {
+		c.JSON(withdrawalErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	// An idempotent replay returns 200 (already processed); a fresh reserve is 201.
+	status := http.StatusCreated
+	if w.AlreadyProcessed {
+		status = http.StatusOK
+	}
+	c.JSON(status, gin.H{"data": w})
+}
+
+// ListWithdrawals → GET /restaurant/withdrawals (the caller's withdrawal history).
+func (h *Handler) ListWithdrawals(c *gin.Context) {
+	userID := c.GetString("user_id")
+	list, err := h.svc.ListWithdrawals(c.Request.Context(), userID, 50)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": list})
+}
+
+// GetWithdrawal → GET /restaurant/withdrawals/:withdrawalId (owner-scoped detail).
+func (h *Handler) GetWithdrawal(c *gin.Context) {
+	userID := c.GetString("user_id")
+	w, err := h.svc.GetWithdrawal(c.Request.Context(), userID, c.Param("withdrawalId"))
+	if err != nil {
+		c.JSON(withdrawalErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": w})
+}
+
+// AdminSettleWithdrawal → POST /api/restaurant/admin/withdrawals/:withdrawalId/settle.
+// Provider-webhook / ops confirmation that the payout landed: drains the reserved
+// funds from suspense to provider_clearing and flips the row to paid. RBAC-guarded
+// (restaurant.admin.payouts) — NOT owner-exposed.
+func (h *Handler) AdminSettleWithdrawal(c *gin.Context) {
+	var body struct {
+		ProviderReference string `json:"provider_reference"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	w, err := h.svc.MarkWithdrawalPaid(c.Request.Context(), c.Param("withdrawalId"), body.ProviderReference, c.GetHeader("Idempotency-Key"))
+	if err != nil {
+		c.JSON(withdrawalErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": w})
+}
+
+// AdminReverseWithdrawal → POST /api/restaurant/admin/withdrawals/:withdrawalId/reverse.
+// Provider-webhook / ops report that the payout failed: reverses the reserved funds
+// back to the merchant wallet and flips the row to reversed. RBAC-guarded.
+func (h *Handler) AdminReverseWithdrawal(c *gin.Context) {
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	w, err := h.svc.MarkWithdrawalFailed(c.Request.Context(), c.Param("withdrawalId"), body.Reason, c.GetHeader("Idempotency-Key"))
+	if err != nil {
+		c.JSON(withdrawalErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": w})
 }
 
 // MyRestaurants → GET /restaurant/mine (the caller's own stores).

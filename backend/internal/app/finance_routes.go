@@ -1275,6 +1275,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		settlementSvcR := settlement.NewService(pool, ledgerSvc)
 		restaurantSvc := restaurant.NewService(pool, settlementSvcR).WithLedger(ledgerSvc)
 
+		// Merchant WITHDRAWAL money path (wallet → saved bank account). Gated by
+		// FEATURE_RESTAURANT_WITHDRAWALS_ENABLED (default OFF — no flag, no money
+		// path). WithTiers supplies the fail-closed tier-limit gate on the wallet
+		// debit; the disburser defaults to the NoopDisburser (executes NOTHING) until
+		// a real provider adapter is wired. See restaurant/withdrawal.go.
+		restaurantWithdrawalsEnabled := strings.EqualFold(os.Getenv("FEATURE_RESTAURANT_WITHDRAWALS_ENABLED"), "true")
+		restaurantSvc = restaurantSvc.WithTiers(tiersSvc).WithWithdrawals(restaurantWithdrawalsEnabled)
+
 		// ── Central Commission & Profit recording (§ profit registry) ──
 		// When the commission feature is on, inject a nil-safe recorder so realized
 		// food-delivery profit (recorded at the delivered order's settlement point in
@@ -1339,6 +1347,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.GET("/bank-accounts", restaurantHandler.ListBankAccounts)
 		restGroup.PATCH("/bank-accounts/:accountId/default", restaurantHandler.SetDefaultBankAccount)
 		restGroup.DELETE("/bank-accounts/:accountId", restaurantHandler.DeleteBankAccount)
+
+		// Merchant withdrawals (money path). Registered only when the feature flag is
+		// on. POST reserves funds (Idempotency-Key header REQUIRED); GET lists the
+		// caller's history; GET/:id is owner-scoped detail. Static "withdrawals" is a
+		// sibling of the ":id" param below (allowed in Gin v1.10).
+		if restaurantWithdrawalsEnabled {
+			restGroup.POST("/withdrawals", restaurantHandler.RequestWithdrawal)
+			restGroup.GET("/withdrawals", restaurantHandler.ListWithdrawals)
+			restGroup.GET("/withdrawals/:withdrawalId", restaurantHandler.GetWithdrawal)
+		}
 		restGroup.GET("/:id", restaurantHandler.GetRestaurant)
 
 		// Store management (owner only): edit profile + operational open/close.
@@ -1427,6 +1445,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.POST("/payouts/build", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminBuildPayoutRun)
 		restAdmin.GET("/payouts/:id", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminGetPayoutRun)
 		restAdmin.POST("/payouts/:id/process", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminProcessPayoutRun)
+
+		// Merchant WITHDRAWAL settlement webhook surface (money path). The provider
+		// webhook / ops console flips a reserved withdrawal to paid (drain suspense →
+		// provider_clearing) or reversed (return funds to the merchant wallet). Both
+		// are idempotent + balanced (see restaurant/withdrawal.go), fail-closed behind
+		// restaurant.admin.payouts, and registered only when the feature flag is on.
+		if restaurantWithdrawalsEnabled {
+			restAdmin.POST("/withdrawals/:withdrawalId/settle", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminSettleWithdrawal)
+			restAdmin.POST("/withdrawals/:withdrawalId/reverse", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminReverseWithdrawal)
+		}
 
 		// Crash-recovery settlement reconciliation (money-path durability): an order
 		// marked delivered whose escrow never released (process died / Settle errored

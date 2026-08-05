@@ -85,3 +85,26 @@ export interface AddBankAccountInput {
   accountNumber: string;
   accountName: string;
 }
+
+// A merchant wallet→bank withdrawal (money path). status: pending→processing→
+// paid|failed|reversed. With the backend NoopDisburser a fresh request rests at
+// `processing` until a provider webhook flips it.
+export type WithdrawalStatus = 'pending' | 'processing' | 'paid' | 'failed' | 'reversed';
+
+export interface Withdrawal {
+  id: string;
+  bankAccountId: string;
+  amountKobo: Kobo;
+  currency: string;
+  status: WithdrawalStatus;
+  providerReference?: string | null;
+  failureReason?: string | null;
+  alreadyProcessed?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface RequestWithdrawalInput {
+  amountKobo: Kobo;
+  bankAccountId: string;
+}

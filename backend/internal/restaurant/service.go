@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/finance/tiers"
 )
 
 // lagosTZ is the delivery locale used to decide the night-fee window. Loaded once;
@@ -50,6 +51,12 @@ type Service struct {
 	notifier   Notifier            // nil-safe via s.notify; defaults to LogNotifier
 	rt         *Realtime           // optional; nil → no WS fan-out
 	commission CommissionRecorder  // optional; nil ⇒ realized-profit recording is a no-op
+
+	// Merchant WITHDRAWAL money path (wallet → bank). All three are wired only when
+	// FEATURE_RESTAURANT_WITHDRAWALS_ENABLED is on; see withdrawal.go.
+	tiers          *tiers.Service      // fail-closed tier-limit gate on the wallet debit (required when withdrawals on)
+	disburser      WithdrawalDisburser // outbound bank disbursement; nil ⇒ NoopDisburser (executes nothing)
+	withdrawalsOn  bool                // feature flag: no flag, no money path
 }
 
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
