@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 type Competition = {
@@ -37,6 +38,7 @@ const typeLabel: Record<string, string> = {
 };
 
 export default function CompetitionsListPage() {
+  const router = useRouter();
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('');
@@ -55,7 +57,7 @@ export default function CompetitionsListPage() {
       <PageHeader
         title="Competitions Management"
         subtitle="Create, edit, and manage all contests across the platform."
-        actions={<Button variant="primary">+ New Competition</Button>}
+        actions={<Button variant="primary" onClick={() => router.push('/admin/competitions/create')}>+ New Competition</Button>}
       />
 
       {/* Filters */}
