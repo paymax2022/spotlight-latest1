@@ -89,6 +89,15 @@ export default function CreateCompetitionPage() {
     return awards.reduce((sum, award) => sum + (award.amount || 0), 0);
   };
 
+  const formatCurrency = (value: number) => {
+    return new Intl.NumberFormat('en-NG', {
+      style: 'currency',
+      currency: 'NGN',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(value);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.title.trim()) {
@@ -238,10 +247,10 @@ export default function CreateCompetitionPage() {
 
             <div>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                Total Prize Pool (₦) - Calculated from awards
+                Total Prize Pool - Calculated from awards
               </label>
               <div style={{ padding: '0.75rem', background: colors.inputBorder + '20', borderRadius: '0.375rem', fontSize: '1rem', fontWeight: 600, color: colors.success }}>
-                ₦{calculateTotalPrizePool().toLocaleString()}
+                {formatCurrency(calculateTotalPrizePool())}
               </div>
             </div>
 
