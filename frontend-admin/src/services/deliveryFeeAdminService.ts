@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import { operationKey } from './idempotency';
 import type {
   DeliveryFeeConfig,
   GetDeliveryConfigResponse,
@@ -129,7 +130,13 @@ export async function saveDeliveryConfig(
   }
   const res = await fetch(`${adminApiBase()}/restaurant/admin/delivery-config`, {
     method: 'PUT',
-    headers: authHeaders(),
+    headers: {
+      ...authHeaders(),
+      'Idempotency-Key': operationKey(
+        'delivery-fee:config-update',
+        String((body as { restaurant_id?: string | null }).restaurant_id ?? 'global'),
+      ),
+    },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Delivery config save failed: ${res.status}`);

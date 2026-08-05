@@ -5,6 +5,7 @@
 // the live backend. All money is integer kobo.
 
 import { env } from '@/config/env';
+import { operationKey } from './idempotency';
 import type {
   CfReviewCampaign,
   CfReviewDecision,
@@ -232,7 +233,7 @@ export async function decideCampaign(id: string, decision: CfReviewDecision, not
     return;
   }
   const res = await fetch(`${adminBase()}/campaigns/${encodeURIComponent(id)}/decision`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify({ decision, note }),
+    method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:campaign-decision', id) }, body: JSON.stringify({ decision, note }),
   });
   if (!res.ok) throw new Error(`Decision failed: ${res.status}`);
 }
@@ -255,7 +256,7 @@ export async function decideWithdrawal(id: string, approve: boolean, note: strin
     return;
   }
   const res = await fetch(`${adminBase()}/withdrawals/${encodeURIComponent(id)}/${approve ? 'approve' : 'reject'}`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify({ note }),
+    method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:withdrawal-decision', id) }, body: JSON.stringify({ note }),
   });
   if (!res.ok) throw new Error(`Withdrawal decision failed: ${res.status}`);
 }
@@ -275,7 +276,7 @@ export async function setCampaignFreeze(campaignId: string, freeze: boolean, not
     return;
   }
   const res = await fetch(`${adminBase()}/campaigns/${encodeURIComponent(campaignId)}/${freeze ? 'freeze' : 'unfreeze'}`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify({ note }),
+    method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:campaign-freeze', campaignId) }, body: JSON.stringify({ note }),
   });
   if (!res.ok) throw new Error(`Freeze failed: ${res.status}`);
 }
@@ -329,7 +330,7 @@ export async function decideRefund(id: string, approve: boolean, note: string): 
     return;
   }
   const res = await fetch(`${adminBase()}/refunds/${encodeURIComponent(id)}/${approve ? 'approve' : 'reject'}`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify({ note }),
+    method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:refund-decision', id) }, body: JSON.stringify({ note }),
   });
   if (!res.ok) throw new Error(`Refund decision failed: ${res.status}`);
 }
@@ -364,7 +365,7 @@ export async function resolveDispute(id: string, resolution: CfDisputeResolution
     return;
   }
   const res = await fetch(`${adminBase()}/disputes/${encodeURIComponent(id)}/resolve`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify({ resolution, note }),
+    method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:dispute-resolve', id) }, body: JSON.stringify({ resolution, note }),
   });
   if (!res.ok) throw new Error(`Resolve failed: ${res.status}`);
 }
@@ -404,7 +405,7 @@ export async function getCategories(): Promise<CfCategoryConfig[]> {
 export async function toggleCategory(id: string, field: 'enabled' | 'requiresEnhancedReview', value: boolean): Promise<void> {
   if (USE_MOCK) { await delay(250); const c = MOCK_CATEGORIES.find((x) => x.id === id); if (c) c[field] = value; return; }
   const res = await fetch(`${adminBase()}/config/categories/${encodeURIComponent(id)}`, {
-    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ [field]: value }),
+    method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:category-toggle', id) }, body: JSON.stringify({ [field]: value }),
   });
   if (!res.ok) throw new Error(`Category update failed: ${res.status}`);
 }
@@ -418,7 +419,7 @@ export async function getFees(): Promise<CfFeeConfig> {
 
 export async function updateFees(fees: CfFeeConfig): Promise<void> {
   if (USE_MOCK) { await delay(400); Object.assign(MOCK_FEES, fees); return; }
-  const res = await fetch(`${adminBase()}/config/fees`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(fees) });
+  const res = await fetch(`${adminBase()}/config/fees`, { method: 'PUT', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:fees-update', fees.platformFeeBps) }, body: JSON.stringify(fees) });
   if (!res.ok) throw new Error(`Fee update failed: ${res.status}`);
 }
 
@@ -432,7 +433,7 @@ export async function getFeatureFlags(): Promise<CfFeatureFlag[]> {
 export async function toggleFeatureFlag(key: string, enabled: boolean): Promise<void> {
   if (USE_MOCK) { await delay(250); const f = MOCK_FLAGS.find((x) => x.key === key); if (f && !f.locked) f.enabled = enabled; return; }
   const res = await fetch(`${adminBase()}/config/flags/${encodeURIComponent(key)}`, {
-    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ enabled }),
+    method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:flag-toggle', key) }, body: JSON.stringify({ enabled }),
   });
   if (!res.ok) throw new Error(`Flag update failed: ${res.status}`);
 }
@@ -491,7 +492,7 @@ export async function decideKyc(id: string, approve: boolean, note: string): Pro
     return;
   }
   const res = await fetch(`${adminBase()}/kyc/${encodeURIComponent(id)}/${approve ? 'approve' : 'reject'}`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify({ note }),
+    method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:kyc-decision', id) }, body: JSON.stringify({ note }),
   });
   if (!res.ok) throw new Error(`KYC decision failed: ${res.status}`);
 }
@@ -546,7 +547,7 @@ export async function listDataRequests(): Promise<CfDataRequest[]> {
 
 export async function fulfilDataRequest(id: string): Promise<void> {
   if (USE_MOCK) { await delay(400); const d = MOCK_DATA_REQUESTS.find((x) => x.id === id); if (d) d.status = 'COMPLETED'; return; }
-  const res = await fetch(`${adminBase()}/compliance/data-requests/${encodeURIComponent(id)}/fulfil`, { method: 'POST', headers: authHeaders() });
+  const res = await fetch(`${adminBase()}/compliance/data-requests/${encodeURIComponent(id)}/fulfil`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:data-request-fulfil', id) } });
   if (!res.ok) throw new Error(`Fulfil failed: ${res.status}`);
 }
 
@@ -618,6 +619,6 @@ export async function setUserStatus(id: string, status: 'ACTIVE' | 'SUSPENDED' |
     }
     return;
   }
-  const res = await fetch(`${adminBase()}/users/${encodeURIComponent(id)}/status`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ status, note }) });
+  const res = await fetch(`${adminBase()}/users/${encodeURIComponent(id)}/status`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:user-status', id) }, body: JSON.stringify({ status, note }) });
   if (!res.ok) throw new Error(`Status update failed: ${res.status}`);
 }

@@ -4,6 +4,7 @@
 // /api/fx/admin/... All money is integer minor units.
 
 import { env } from '@/config/env';
+import { operationKey } from './idempotency';
 import type {
   FxOverview, FxTxSummary, FxTxDetail, FxTxFilter,
   RoutingWeights, RouteSimResult, ProviderConfig, FloatBucket, RebalanceEvent,
@@ -218,13 +219,13 @@ export async function getTransaction(id: string): Promise<FxTxDetail> {
 
 export async function retryTransaction(id: string): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(500); const t = TXNS.find((x) => x.id === id); if (t) t.status = 'processing'; return { ok: true }; }
-  await fetch(`${adminBase()}/transactions/${id}/retry`, { method: 'POST', headers: authHeaders() });
+  await fetch(`${adminBase()}/transactions/${id}/retry`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:transaction-retry', id) } });
   return { ok: true };
 }
 
 export async function forceReverseTransaction(id: string): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(500); const t = TXNS.find((x) => x.id === id); if (t) t.status = 'reversed'; return { ok: true }; }
-  await fetch(`${adminBase()}/transactions/${id}/reverse`, { method: 'POST', headers: authHeaders() });
+  await fetch(`${adminBase()}/transactions/${id}/reverse`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:transaction-reverse', id) } });
   return { ok: true };
 }
 
@@ -238,7 +239,7 @@ export async function getRoutingWeights(): Promise<RoutingWeights[]> {
 
 export async function saveRoutingWeights(rows: RoutingWeights[]): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(400); WEIGHTS = rows; return { ok: true }; }
-  await fetch(`${adminBase()}/routing`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(rows) });
+  await fetch(`${adminBase()}/routing`, { method: 'PUT', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:routing-save') }, body: JSON.stringify(rows) });
   return { ok: true };
 }
 
@@ -253,7 +254,7 @@ export async function simulateRoute(corridor: string, amountUsdCents: number): P
     ranked.sort((a, b) => b.score - a.score);
     return { corridor, amountUsdCents, ranked };
   }
-  const res = await fetch(`${adminBase()}/routing/simulate`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ corridor, amountUsdCents }) });
+  const res = await fetch(`${adminBase()}/routing/simulate`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:route-simulate', corridor) }, body: JSON.stringify({ corridor, amountUsdCents }) });
   return res.json();
 }
 
@@ -267,13 +268,13 @@ export async function getProviders(): Promise<ProviderConfig[]> {
 
 export async function toggleProvider(provider: Provider, enabled: boolean): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(300); PROVIDERS = PROVIDERS.map((p) => (p.provider === provider ? { ...p, enabled } : p)); return { ok: true }; }
-  await fetch(`${adminBase()}/providers/${provider}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ enabled }) });
+  await fetch(`${adminBase()}/providers/${provider}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:provider-toggle', provider) }, body: JSON.stringify({ enabled }) });
   return { ok: true };
 }
 
 export async function setBreaker(provider: Provider, state: ProviderConfig['breaker']): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(300); PROVIDERS = PROVIDERS.map((p) => (p.provider === provider ? { ...p, breaker: state } : p)); return { ok: true }; }
-  await fetch(`${adminBase()}/providers/${provider}/breaker`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ state }) });
+  await fetch(`${adminBase()}/providers/${provider}/breaker`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:provider-breaker', provider) }, body: JSON.stringify({ state }) });
   return { ok: true };
 }
 
@@ -297,7 +298,7 @@ export async function rebalanceNow(bucket: FloatBucket, path: 'fiat' | 'stableco
     FLOATS = FLOATS.map((f) => (f.provider === bucket.provider && f.currency === bucket.currency ? { ...f, balanceMinor: f.lowWaterMinor + (f.highWaterMinor - f.lowWaterMinor) / 2, status: 'healthy' } : f));
     return { ok: true };
   }
-  await fetch(`${adminBase()}/treasury/rebalance`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ provider: bucket.provider, currency: bucket.currency, path }) });
+  await fetch(`${adminBase()}/treasury/rebalance`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:treasury-rebalance', bucket.provider, bucket.currency) }, body: JSON.stringify({ provider: bucket.provider, currency: bucket.currency, path }) });
   return { ok: true };
 }
 
@@ -315,7 +316,7 @@ export async function updateSpreadRule(id: string, patch: Partial<SpreadRule>): 
     SPREADS = SPREADS.map((s) => (s.id === id ? { ...s, ...patch, version: s.version + 1, updatedAt: new Date().toISOString() } : s));
     return { ok: true };
   }
-  await fetch(`${adminBase()}/spread/${id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
+  await fetch(`${adminBase()}/spread/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:spread-update', id) }, body: JSON.stringify(patch) });
   return { ok: true };
 }
 
@@ -335,7 +336,7 @@ export async function getReconBreaks(): Promise<ReconBreak[]> {
 
 export async function resolveReconBreak(id: string, status: ReconBreak['status']): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(300); RECON_BREAKS = RECON_BREAKS.map((b) => (b.id === id ? { ...b, status } : b)); return { ok: true }; }
-  await fetch(`${adminBase()}/recon/breaks/${id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ status }) });
+  await fetch(`${adminBase()}/recon/breaks/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:recon-break-resolve', id) }, body: JSON.stringify({ status }) });
   return { ok: true };
 }
 
@@ -393,7 +394,7 @@ export async function setCustomerVerification(id: string, verification: Customer
     CUSTOMERS = CUSTOMERS.map((c) => (c.id === id ? { ...c, verification, tier: verification === 'approved' ? Math.max(c.tier, 1) : c.tier } : c));
     return { ok: true };
   }
-  await fetch(`${adminBase()}/customers/${id}/verification`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ verification }) });
+  await fetch(`${adminBase()}/customers/${id}/verification`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:customer-verification', id) }, body: JSON.stringify({ verification }) });
   return { ok: true };
 }
 
@@ -412,9 +413,9 @@ export async function getScreeningAlerts(): Promise<ScreeningAlert[]> {
   return res.json();
 }
 
-export async function setAlertStatus(id: string, status: CaseStatus): Promise<{ ok: boolean }> {
+export async function setAlertStatus(id: string, status: CaseStatus, reason?: string): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(300); ALERTS = ALERTS.map((a) => (a.id === id ? { ...a, status } : a)); return { ok: true }; }
-  await fetch(`${adminBase()}/compliance/alerts/${id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ status }) });
+  await fetch(`${adminBase()}/compliance/alerts/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:alert-status', id) }, body: JSON.stringify({ status, reason }) });
   return { ok: true };
 }
 
@@ -452,13 +453,13 @@ export async function getWebhookDeliveries(): Promise<WebhookDelivery[]> {
 
 export async function replayDelivery(id: string): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(400); const d = DELIVERIES.find((x) => x.id === id); if (d) { d.status = 'delivered'; d.responseCode = 200; d.attempts += 1; } return { ok: true }; }
-  await fetch(`${adminBase()}/webhooks/deliveries/${id}/replay`, { method: 'POST', headers: authHeaders() });
+  await fetch(`${adminBase()}/webhooks/deliveries/${id}/replay`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:webhook-replay', id) } });
   return { ok: true };
 }
 
 export async function toggleEndpoint(id: string, enabled: boolean): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(250); ENDPOINTS = ENDPOINTS.map((e) => (e.id === id ? { ...e, enabled } : e)); return { ok: true }; }
-  await fetch(`${adminBase()}/webhooks/endpoints/${id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ enabled }) });
+  await fetch(`${adminBase()}/webhooks/endpoints/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:webhook-endpoint-toggle', id) }, body: JSON.stringify({ enabled }) });
   return { ok: true };
 }
 
@@ -556,7 +557,7 @@ export async function getIssuedCards(): Promise<IssuedCard[]> {
 }
 export async function setIssuedCardStatus(id: string, status: IssuedCardStatus): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(300); ISSUED_CARDS = ISSUED_CARDS.map((c) => (c.id === id ? { ...c, status } : c)); return { ok: true }; }
-  await fetch(`${adminBase()}/cards/${id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ status }) });
+  await fetch(`${adminBase()}/cards/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:card-status', id) }, body: JSON.stringify({ status }) });
   return { ok: true };
 }
 export async function getSuspiciousCardActivity(): Promise<SuspiciousCardActivity[]> {
@@ -612,18 +613,18 @@ export async function getCatalogue(): Promise<FxSettingsCatalogue> {
 
 export async function toggleFlag(key: string, enabled: boolean): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(250); CATALOGUE = { ...CATALOGUE, flags: CATALOGUE.flags.map((f) => (f.key === key ? { ...f, enabled } : f)) }; return { ok: true }; }
-  await fetch(`${adminBase()}/settings/flags/${key}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ enabled }) });
+  await fetch(`${adminBase()}/settings/flags/${key}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:flag-toggle', key) }, body: JSON.stringify({ enabled }) });
   return { ok: true };
 }
 
 export async function toggleCorridor(corridor: string, enabled: boolean): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(250); CATALOGUE = { ...CATALOGUE, corridors: CATALOGUE.corridors.map((c) => (c.corridor === corridor ? { ...c, enabled } : c)) }; return { ok: true }; }
-  await fetch(`${adminBase()}/settings/corridors/${corridor}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ enabled }) });
+  await fetch(`${adminBase()}/settings/corridors/${corridor}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:corridor-toggle', corridor) }, body: JSON.stringify({ enabled }) });
   return { ok: true };
 }
 
 export async function toggleCurrency(code: string, enabled: boolean): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(250); CATALOGUE = { ...CATALOGUE, currencies: CATALOGUE.currencies.map((c) => (c.code === code ? { ...c, enabled } : c)) }; return { ok: true }; }
-  await fetch(`${adminBase()}/settings/currencies/${code}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ enabled }) });
+  await fetch(`${adminBase()}/settings/currencies/${code}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:currency-toggle', code) }, body: JSON.stringify({ enabled }) });
   return { ok: true };
 }

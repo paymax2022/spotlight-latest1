@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import { operationKey } from './idempotency';
 import type {
   KycReviewItem,
   KycCaseDetail,
@@ -30,6 +31,14 @@ function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('spotlight_admin_access_token') || '';
   if (!token) return { 'Content-Type': 'application/json' };
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+}
+
+// Idempotency-Key per the house iron rule (see services/idempotency.ts). A KYC
+// decision moves the user's tier and therefore their money limits, so it must
+// fail-closed without a key. Keyed on the decision identity (action + case id) so
+// a double-submit dedupes at the backend rather than re-deciding a case.
+function idempotencyKeyFor(action: string, id: string): string {
+  return operationKey('kyc', action, id);
 }
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -157,7 +166,11 @@ async function postDecision(id: string, action: 'approve' | 'reject', reason: st
   }
   const res = await fetch(
     `${kycAdminBase()}/kyc/cases/${encodeURIComponent(id)}/${action}`,
-    { method: 'POST', headers: authHeaders(), body: JSON.stringify({ reason }) },
+    {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Idempotency-Key': idempotencyKeyFor(action, id) },
+      body: JSON.stringify({ reason }),
+    },
   );
   if (!res.ok) throw new Error(`KYC ${action} failed: ${res.status}`);
 }
@@ -180,7 +193,11 @@ export async function requestResubmit(id: string, reason: string): Promise<void>
   }
   const res = await fetch(
     `${kycAdminBase()}/kyc/cases/${encodeURIComponent(id)}/reject`,
-    { method: 'POST', headers: authHeaders(), body: JSON.stringify({ reason: `[RE-SUBMIT] ${reason}` }) },
+    {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Idempotency-Key': idempotencyKeyFor('resubmit', id) },
+      body: JSON.stringify({ reason: `[RE-SUBMIT] ${reason}` }),
+    },
   );
   if (!res.ok) throw new Error(`KYC re-submit request failed: ${res.status}`);
 }

@@ -9,6 +9,7 @@
 // fields — never rendered as money, only formatKobo() output is money-facing.
 
 import { env } from '@/config/env';
+import { operationKey } from './idempotency';
 import type {
   CryptoAsset, CryptoOrder, CryptoAssetConfigRequest,
   CryptoWithdrawal, CryptoWithdrawalDecisionRequest,
@@ -195,7 +196,9 @@ export async function adminDecideWithdrawal(id: string, input: CryptoWithdrawalD
     return { ...w };
   }
   const res = await fetch(`${base()}/withdrawals/${encodeURIComponent(id)}/decision`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify(input),
+    method: 'POST',
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crypto:withdrawal-decision', id) },
+    body: JSON.stringify(input),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Withdrawal decision failed'));
   const body = await res.json();
@@ -258,7 +261,9 @@ export async function adminDecideAddress(id: string, input: CryptoAddressDecisio
     return { ...a };
   }
   const res = await fetch(`${base()}/addresses/${encodeURIComponent(id)}/decision`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify(input),
+    method: 'POST',
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crypto:address-decision', id) },
+    body: JSON.stringify(input),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Address decision failed'));
   const body = await res.json();

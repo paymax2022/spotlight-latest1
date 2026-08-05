@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import { operationKey } from './idempotency';
 import type {
   MktListing,
   MktOrder,
@@ -203,7 +204,7 @@ export async function approveListing(id: string, reasonCode?: string): Promise<M
     return delay({ ...found, status: 'active' });
   }
   const res = await fetch(`${marketplaceAdminBase()}/listings/${encodeURIComponent(id)}/approve`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify(reasonCode ? { reason_code: reasonCode } : {}),
+    method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('marketplace:listing-approve', id) }, body: JSON.stringify(reasonCode ? { reason_code: reasonCode } : {}),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Approve failed'));
   return res.json();
@@ -219,7 +220,7 @@ export async function rejectListing(id: string, reasonCode: string): Promise<Mkt
     return delay({ ...found, status: 'removed_policy', moderation_reason_code: reasonCode });
   }
   const res = await fetch(`${marketplaceAdminBase()}/listings/${encodeURIComponent(id)}/reject`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify({ reason_code: reasonCode }),
+    method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('marketplace:listing-reject', id) }, body: JSON.stringify({ reason_code: reasonCode }),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Reject failed'));
   return res.json();
@@ -270,7 +271,7 @@ export async function decideDispute(id: string, input: MktDisputeDecideRequest):
     });
   }
   const res = await fetch(`${marketplaceAdminBase()}/disputes/${encodeURIComponent(id)}/decide`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify(input),
+    method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('marketplace:dispute-decide', id) }, body: JSON.stringify(input),
   });
   if (!res.ok && res.status !== 202) throw new Error(await parseErrorMessage(res, 'Dispute decision failed'));
   return res.json();
@@ -286,7 +287,7 @@ export async function approveDisputeSecondSign(id: string, reasonCode?: string):
     return delay({ ...found, status: 'executed', second_approver_id: 'adm_second', executed_at: new Date().toISOString() });
   }
   const res = await fetch(`${marketplaceAdminBase()}/disputes/${encodeURIComponent(id)}/approve`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify(reasonCode ? { reason_code: reasonCode } : {}),
+    method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('marketplace:dispute-approve', id) }, body: JSON.stringify(reasonCode ? { reason_code: reasonCode } : {}),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Second approval failed'));
   return res.json();
@@ -311,7 +312,7 @@ export async function actionFlag(id: string, input: MktFlagActionRequest): Promi
     return delay({ ...found, status: input.action, reviewed_by: 'adm_current', reviewed_at: new Date().toISOString() });
   }
   const res = await fetch(`${marketplaceAdminBase()}/flags/${encodeURIComponent(id)}/action`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify(input),
+    method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('marketplace:flag-action', id) }, body: JSON.stringify(input),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Flag action failed'));
   return res.json();
@@ -363,7 +364,7 @@ export async function rejectBoost(id: string, reasonCode: string): Promise<MktBo
     return delay({ ...found, status: 'rejected_with_reason', rejection_reason_code: reasonCode });
   }
   const res = await fetch(`${marketplaceAdminBase()}/boosts/${encodeURIComponent(id)}/reject`, {
-    method: 'POST', headers: authHeaders(), body: JSON.stringify({ reason_code: reasonCode }),
+    method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('marketplace:boost-reject', id) }, body: JSON.stringify({ reason_code: reasonCode }),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Boost reject failed'));
   return res.json();

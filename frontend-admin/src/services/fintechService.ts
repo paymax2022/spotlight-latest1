@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import { operationKey } from './idempotency';
 import type { KycProfile, WalletBalance, TransactionsResponse, Dispute, DisputeResolution } from '@/types/fintech';
 
 function financeAdminBase(): string {
@@ -26,7 +27,7 @@ export async function listPendingKyc(): Promise<KycProfile[]> {
 export async function approveKyc(userId: string, newTier: number): Promise<KycProfile> {
   const res = await fetch(`${financeAdminBase()}/kyc/users/${encodeURIComponent(userId)}/approve`, {
     method: 'POST',
-    headers: authHeaders(),
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('kyc:approve', userId) },
     body: JSON.stringify({ new_tier: newTier }),
   });
   if (!res.ok) throw new Error(`KYC approve failed: ${res.status}`);
@@ -36,7 +37,7 @@ export async function approveKyc(userId: string, newTier: number): Promise<KycPr
 export async function rejectKyc(userId: string): Promise<void> {
   const res = await fetch(`${financeAdminBase()}/kyc/users/${encodeURIComponent(userId)}/reject`, {
     method: 'POST',
-    headers: authHeaders(),
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('kyc:reject', userId) },
     body: JSON.stringify({}),
   });
   if (!res.ok) throw new Error(`KYC reject failed: ${res.status}`);
@@ -92,7 +93,7 @@ export async function resolveDispute(
 ): Promise<void> {
   const res = await fetch(`${financeAdminBase()}/disputes/${encodeURIComponent(disputeId)}/resolve`, {
     method: 'POST',
-    headers: authHeaders(),
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('dispute:resolve', disputeId) },
     body: JSON.stringify({ resolution, admin_note: adminNote }),
   });
   if (!res.ok) throw new Error(`Dispute resolve failed: ${res.status}`);
