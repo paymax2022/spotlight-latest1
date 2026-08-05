@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type { AdminUser, AdminUserFilters } from '@/types/users';
 import {
   getAdminUser,
@@ -23,6 +23,7 @@ import {
   type FilterChip,
   type SortState,
 } from '@/components/rbac';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const PAGE_SIZE = 15;
 
@@ -45,7 +46,17 @@ const FILTER_LABELS: Record<string, string> = {
   program: 'Program',
 };
 
+const fieldLabel: CSSProperties = { display: 'grid', gap: 4, fontSize: 12, fontWeight: 600, color: colors.muted };
+
 type SortKey = 'name' | 'email' | 'userType' | 'status' | 'state';
+
+/** Status → badge tint. */
+function statusColor(status?: string): string {
+  const s = (status || '').toLowerCase();
+  if (s === 'suspended' || s === 'locked') return colors.danger;
+  if (s === 'active') return colors.success;
+  return colors.secondary;
+}
 
 export default function AdminUsersPage() {
   const [draft, setDraft] = useState<AdminUserFilters>(defaultFilters);
@@ -187,88 +198,79 @@ export default function AdminUsersPage() {
   const setInput = (key: keyof AdminUserFilters, value: string) => setDraft((f) => ({ ...f, [key]: value }));
 
   return (
-    <div>
+    <Page>
       <ToastStack toasts={toasts} onDismiss={dismiss} />
-      <h1>Users Management</h1>
-      <p>Search, filter, inspect, and update users with RBAC and scope restrictions enforced by backend.</p>
 
-      <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(4, minmax(0,1fr))', marginTop: 12 }}>
-        <input placeholder="search" value={draft.search ?? ''} onChange={(e) => setInput('search', e.target.value)} />
-        <input placeholder="status" value={draft.status ?? ''} onChange={(e) => setInput('status', e.target.value)} />
-        <input placeholder="user type" value={draft.userType ?? ''} onChange={(e) => setInput('userType', e.target.value)} />
-        <input placeholder="state" value={draft.state ?? ''} onChange={(e) => setInput('state', e.target.value)} />
-        <button onClick={apply}>Apply Filters</button>
-      </div>
+      <PageHeader
+        title="Users Management"
+        subtitle="Search, filter, inspect, and update users with RBAC and scope restrictions enforced by backend."
+      />
+
+      <Card title="Filters" style={{ marginBottom: 12 }}>
+        <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(4, minmax(0,1fr))', marginTop: 14 }}>
+          <Input placeholder="Search" value={draft.search ?? ''} onChange={(e) => setInput('search', e.target.value)} />
+          <Input placeholder="Status" value={draft.status ?? ''} onChange={(e) => setInput('status', e.target.value)} />
+          <Input placeholder="User type" value={draft.userType ?? ''} onChange={(e) => setInput('userType', e.target.value)} />
+          <Input placeholder="State" value={draft.state ?? ''} onChange={(e) => setInput('state', e.target.value)} />
+        </div>
+        <Button variant="primary" style={{ marginTop: 14 }} onClick={apply}>Apply Filters</Button>
+      </Card>
 
       <FilterChips chips={chips} onClear={clearChip} onClearAll={clearAll} />
 
-      <div style={{ marginTop: 10, fontSize: 12 }}>
+      <div style={{ marginTop: 12, marginBottom: 4, fontSize: 13, color: colors.muted }}>
         Total: {stats.total} · Suspended: {stats.suspended} · Locked: {stats.locked}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 16, marginTop: 16 }}>
-        <section>
-          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 16, marginTop: 12, alignItems: 'start' }}>
+        <Card style={{ padding: 0, overflow: 'hidden' }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%' }}>
             <thead>
               <tr>
-                <th style={th()}><SortHeaderButton label="Name" active={sort?.key === 'name'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('name')} /></th>
-                <th style={th()}><SortHeaderButton label="Email" active={sort?.key === 'email'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('email')} /></th>
-                <th style={th()}><SortHeaderButton label="Type" active={sort?.key === 'userType'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('userType')} /></th>
-                <th style={th()}><SortHeaderButton label="Status" active={sort?.key === 'status'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('status')} /></th>
+                <th style={thCell}><SortHeaderButton label="Name" active={sort?.key === 'name'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('name')} /></th>
+                <th style={thCell}><SortHeaderButton label="Email" active={sort?.key === 'email'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('email')} /></th>
+                <th style={thCell}><SortHeaderButton label="Type" active={sort?.key === 'userType'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('userType')} /></th>
+                <th style={thCell}><SortHeaderButton label="Status" active={sort?.key === 'status'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('status')} /></th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td style={td()} colSpan={4}>Loading…</td></tr>
+                <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={4}>Loading…</td></tr>
               ) : errored ? (
-                <tr><td style={td()} colSpan={4}><button onClick={() => void load(applied)}>Retry</button> — failed to load.</td></tr>
+                <tr><td style={tdCell} colSpan={4}><Button variant="outline" sm onClick={() => void load(applied)}>Retry</Button> <span style={{ color: colors.danger }}>— failed to load.</span></td></tr>
               ) : slice.length === 0 ? (
-                <tr><td style={td()} colSpan={4}>No users match the current filters.</td></tr>
+                <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={4}>No users match the current filters.</td></tr>
               ) : (
                 slice.map((u) => (
                   <tr
                     key={u.id}
                     onClick={() => setSelectedId(u.id)}
-                    style={{ cursor: 'pointer', background: selectedId === u.id ? '#1f1f1f' : 'transparent' }}
+                    style={{ cursor: 'pointer', background: selectedId === u.id ? tint(colors.primary, 0.08) : 'transparent' }}
                   >
-                    <td style={td()}><strong>{u.firstName} {u.lastName}</strong></td>
-                    <td style={td()}>{u.email}</td>
-                    <td style={td()}>{u.userType || '-'}</td>
-                    <td style={td()}>{u.status || '-'}</td>
+                    <td style={tdCell}><strong>{u.firstName} {u.lastName}</strong></td>
+                    <td style={{ ...tdCell, color: colors.muted }}>{u.email}</td>
+                    <td style={tdCell}>{u.userType || '—'}</td>
+                    <td style={tdCell}>{u.status ? <Badge text={u.status} color={statusColor(u.status)} /> : '—'}</td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
-          <Pagination page={safePage} pageCount={pageCount} total={total} pageSize={PAGE_SIZE} onPage={setPage} />
-        </section>
+          <div style={{ padding: '10px 14px' }}>
+            <Pagination page={safePage} pageCount={pageCount} total={total} pageSize={PAGE_SIZE} onPage={setPage} />
+          </div>
+        </Card>
 
-        <section style={{ border: '1px solid #2a2a2a', padding: 12 }}>
-          <h2 style={{ marginTop: 0 }}>Selected User</h2>
-          {!selected ? <p>Select a user to inspect/update.</p> : null}
+        <Card title="Selected User">
+          {!selected ? <p style={{ color: colors.muted, fontSize: 13, marginTop: 12 }}>Select a user to inspect/update.</p> : null}
           {selected ? (
-            <div style={{ display: 'grid', gap: 8 }}>
-              <label>
-                First Name
-                <input value={selected.firstName || ''} onChange={(e) => setSelected((s) => (s ? { ...s, firstName: e.target.value } : s))} />
-              </label>
-              <label>
-                Last Name
-                <input value={selected.lastName || ''} onChange={(e) => setSelected((s) => (s ? { ...s, lastName: e.target.value } : s))} />
-              </label>
-              <label>
-                Phone
-                <input value={selected.phone || ''} onChange={(e) => setSelected((s) => (s ? { ...s, phone: e.target.value } : s))} />
-              </label>
-              <label>
-                User Type
-                <input value={selected.userType || ''} onChange={(e) => setSelected((s) => (s ? { ...s, userType: e.target.value } : s))} />
-              </label>
-              <label>
-                Status
-                <input value={selected.status || ''} onChange={(e) => setSelected((s) => (s ? { ...s, status: e.target.value } : s))} />
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ display: 'grid', gap: 12, marginTop: 14 }}>
+              <label style={fieldLabel}>First Name<Input value={selected.firstName || ''} onChange={(e) => setSelected((s) => (s ? { ...s, firstName: e.target.value } : s))} /></label>
+              <label style={fieldLabel}>Last Name<Input value={selected.lastName || ''} onChange={(e) => setSelected((s) => (s ? { ...s, lastName: e.target.value } : s))} /></label>
+              <label style={fieldLabel}>Phone<Input value={selected.phone || ''} onChange={(e) => setSelected((s) => (s ? { ...s, phone: e.target.value } : s))} /></label>
+              <label style={fieldLabel}>User Type<Input value={selected.userType || ''} onChange={(e) => setSelected((s) => (s ? { ...s, userType: e.target.value } : s))} /></label>
+              <label style={fieldLabel}>Status<Input value={selected.status || ''} onChange={(e) => setSelected((s) => (s ? { ...s, status: e.target.value } : s))} /></label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: colors.text }}>
                 <input
                   type="checkbox"
                   checked={Boolean(selected.profileCompleted)}
@@ -277,29 +279,22 @@ export default function AdminUsersPage() {
                 Profile Completed
               </label>
 
-              <div style={{ marginTop: 8, fontSize: 12 }}>
-                Scope data: program={selected.programId || '-'} · contest={selected.contestId || '-'} · school={selected.schoolId || '-'}
+              <div style={{ fontSize: 12, color: colors.muted }}>
+                Scope: program={selected.programId || '—'} · contest={selected.contestId || '—'} · school={selected.schoolId || '—'}
               </div>
 
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button onClick={() => void runStatus('Suspend', suspendAdminUser)} disabled={saving}>Suspend</button>
-                <button onClick={() => void runStatus('Unsuspend', unsuspendAdminUser)} disabled={saving}>Unsuspend</button>
-                <button onClick={() => void runStatus('Lock', lockAdminUser)} disabled={saving}>Lock</button>
-                <button onClick={() => void runStatus('Unlock', unlockAdminUser)} disabled={saving}>Unlock</button>
+                <Button variant="danger" sm onClick={() => void runStatus('Suspend', suspendAdminUser)} disabled={saving}>Suspend</Button>
+                <Button variant="secondary" sm onClick={() => void runStatus('Unsuspend', unsuspendAdminUser)} disabled={saving}>Unsuspend</Button>
+                <Button variant="danger" sm onClick={() => void runStatus('Lock', lockAdminUser)} disabled={saving}>Lock</Button>
+                <Button variant="secondary" sm onClick={() => void runStatus('Unlock', unlockAdminUser)} disabled={saving}>Unlock</Button>
               </div>
 
-              <button onClick={() => void onSave()} disabled={saving}>{saving ? 'Saving...' : 'Save Changes'}</button>
+              <Button variant="primary" onClick={() => void onSave()} disabled={saving}>{saving ? 'Saving…' : 'Save Changes'}</Button>
             </div>
           ) : null}
-        </section>
+        </Card>
       </div>
-    </div>
+    </Page>
   );
-}
-
-function th(): React.CSSProperties {
-  return { textAlign: 'left', borderBottom: '1px solid #2a2a2a', padding: 8 };
-}
-function td(): React.CSSProperties {
-  return { borderBottom: '1px solid #1f1f1f', padding: 8 };
 }
