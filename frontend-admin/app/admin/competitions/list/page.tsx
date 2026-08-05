@@ -28,6 +28,7 @@ type Competition = {
   participantCount: number;
   totalPrizePool: number;
   banner?: string;
+  currency?: string;
   awards?: Award[];
 };
 
@@ -61,10 +62,16 @@ export default function CompetitionsListPage() {
   const [competitions, setCompetitions] = useState<Competition[]>(MOCK_COMPETITIONS);
   const [selectedComp, setSelectedComp] = useState<Competition | null>(null);
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-NG', {
+  const formatCurrency = (value: number, currency: string = 'NGN') => {
+    const currencyMap: Record<string, string> = {
+      'NGN': 'en-NG',
+      'USD': 'en-US',
+      'EUR': 'de-DE',
+      'GBP': 'en-GB',
+    };
+    return new Intl.NumberFormat(currencyMap[currency] || 'en-NG', {
       style: 'currency',
-      currency: 'NGN',
+      currency: currency,
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(value);
@@ -159,7 +166,7 @@ export default function CompetitionsListPage() {
                   <td style={tdCell}>{typeLabel[comp.type]}</td>
                   <td style={tdCell}><Badge text={comp.status} color={statusColor[comp.status]} /></td>
                   <td style={tdCell}>{comp.participantCount.toLocaleString()}</td>
-                  <td style={tdCell}>{formatCurrency(comp.totalPrizePool)}</td>
+                  <td style={tdCell}>{formatCurrency(comp.totalPrizePool, comp.currency || 'NGN')}</td>
                   <td style={tdCell}>
                     {comp.awards && comp.awards.some(a => a.benefits && a.benefits.length > 0) ? (
                       <span style={{ fontSize: '0.8rem', color: colors.success }}>
@@ -236,7 +243,7 @@ export default function CompetitionsListPage() {
                 <span style={{ color: colors.muted }}>Status:</span> <Badge text={selectedComp.status} color={statusColor[selectedComp.status]} />
               </div>
               <div>
-                <span style={{ color: colors.muted }}>Prize Pool:</span> {formatCurrency(selectedComp.totalPrizePool)}
+                <span style={{ color: colors.muted }}>Prize Pool:</span> {formatCurrency(selectedComp.totalPrizePool, selectedComp.currency || 'NGN')}
               </div>
               <div>
                 <span style={{ color: colors.muted }}>Participants:</span> {selectedComp.participantCount}
@@ -252,7 +259,7 @@ export default function CompetitionsListPage() {
                   <div key={award.position} style={{ marginBottom: '1rem', padding: '0.75rem', background: colors.inputBorder + '15', borderRadius: '0.375rem', borderLeft: `3px solid ${colors.primary}` }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', paddingBottom: '0.5rem', borderBottom: `1px solid ${colors.border}` }}>
                       <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Position {award.position}: {award.title}</span>
-                      {award.amount ? <span style={{ color: colors.success, fontWeight: 600 }}>{formatCurrency(award.amount)}</span> : null}
+                      {award.amount ? <span style={{ color: colors.success, fontWeight: 600 }}>{formatCurrency(award.amount, selectedComp.currency || 'NGN')}</span> : null}
                     </div>
                     {award.benefits && award.benefits.length > 0 ? (
                       <div>

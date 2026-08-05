@@ -29,6 +29,7 @@ export default function CreateCompetitionPage() {
     endDate: '',
     prizePool: '',
     banner: '',
+    currency: 'NGN',
   });
   const [awards, setAwards] = useState<Award[]>([
     { position: 1, title: 'Gold Medal', amount: 0, benefits: [] },
@@ -89,10 +90,16 @@ export default function CreateCompetitionPage() {
     return awards.reduce((sum, award) => sum + (award.amount || 0), 0);
   };
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-NG', {
+  const formatCurrency = (value: number, currency: string = formData.currency) => {
+    const currencyMap: Record<string, string> = {
+      'NGN': 'en-NG',
+      'USD': 'en-US',
+      'EUR': 'de-DE',
+      'GBP': 'en-GB',
+    };
+    return new Intl.NumberFormat(currencyMap[currency] || 'en-NG', {
       style: 'currency',
-      currency: 'NGN',
+      currency: currency,
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(value);
@@ -119,6 +126,7 @@ export default function CreateCompetitionPage() {
         participantCount: 0,
         totalPrizePool: calculateTotalPrizePool(),
         banner: formData.banner,
+        currency: formData.currency,
         awards,
       };
 
@@ -254,16 +262,42 @@ export default function CreateCompetitionPage() {
               </div>
             </div>
 
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                Banner URL
-              </label>
-              <Input
-                type="url"
-                placeholder="https://example.com/banner.jpg"
-                value={formData.banner}
-                onChange={(e) => handleChange('banner', e.target.value)}
-              />
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
+                  Banner URL
+                </label>
+                <Input
+                  type="url"
+                  placeholder="https://example.com/banner.jpg"
+                  value={formData.banner}
+                  onChange={(e) => handleChange('banner', e.target.value)}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
+                  Currency
+                </label>
+                <select
+                  value={formData.currency}
+                  onChange={(e) => handleChange('currency', e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '0.4rem 0.55rem',
+                    border: `1px solid ${colors.inputBorder}`,
+                    borderRadius: '0.375rem',
+                    fontSize: '0.85rem',
+                    background: colors.card,
+                    cursor: 'pointer',
+                    color: colors.text
+                  }}
+                >
+                  <option value="NGN">₦ NGN</option>
+                  <option value="USD">$ USD</option>
+                  <option value="EUR">€ EUR</option>
+                  <option value="GBP">£ GBP</option>
+                </select>
+              </div>
             </div>
           </div>
         </Card>

@@ -30,6 +30,8 @@ const statusColor: Record<string, string> = {
 export default function ParticipantsPage() {
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('');
+  const [selectedParticipant, setSelectedParticipant] = useState<Participant | null>(null);
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     return MOCK_PARTICIPANTS.filter((p) => {
@@ -96,8 +98,8 @@ export default function ParticipantsPage() {
                   <td style={{ ...tdCell, color: colors.muted, fontSize: '0.85rem' }}>{new Date(p.submissionDate).toLocaleDateString('en-NG')}</td>
                   <td style={tdCell}>
                     <div style={{ display: 'flex', gap: 6 }}>
-                      <Button variant="outline" sm>View Entry</Button>
-                      {p.status === 'pending' && <Button variant="primary" sm>Review</Button>}
+                      <Button variant="outline" sm onClick={() => setSelectedParticipant(p)}>View Entry</Button>
+                      {p.status === 'pending' && <Button variant="primary" sm onClick={() => setReviewingId(p.id)}>Review</Button>}
                     </div>
                   </td>
                 </tr>
@@ -109,6 +111,101 @@ export default function ParticipantsPage() {
           Showing {filtered.length} of {MOCK_PARTICIPANTS.length} participants
         </div>
       </Card>
+
+      {/* Entry Details Modal */}
+      {selectedParticipant && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '1rem'
+        }}>
+          <Card style={{ maxWidth: '500px', width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h2 style={{ margin: 0, fontSize: '1.25rem', color: colors.text }}>Entry Details</h2>
+              <button
+                onClick={() => setSelectedParticipant(null)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '1.5rem',
+                  cursor: 'pointer',
+                  color: colors.muted,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ display: 'grid', gap: '0.75rem', fontSize: '0.85rem' }}>
+              <div><span style={{ color: colors.muted }}>Name:</span> <strong>{selectedParticipant.name}</strong></div>
+              <div><span style={{ color: colors.muted }}>Email:</span> {selectedParticipant.email}</div>
+              <div><span style={{ color: colors.muted }}>Competition:</span> {selectedParticipant.competition}</div>
+              <div><span style={{ color: colors.muted }}>Status:</span> <Badge text={selectedParticipant.status} color={statusColor[selectedParticipant.status]} /></div>
+              {selectedParticipant.score && <div><span style={{ color: colors.muted }}>Score:</span> <strong>{selectedParticipant.score}%</strong></div>}
+              <div><span style={{ color: colors.muted }}>Submitted:</span> {new Date(selectedParticipant.submissionDate).toLocaleDateString('en-NG')}</div>
+              <div style={{ marginTop: '1rem', padding: '1rem', background: colors.inputBorder + '20', borderRadius: '0.375rem', color: colors.muted }}>
+                Entry submission content would display here...
+              </div>
+            </div>
+            <div style={{ marginTop: '1rem', display: 'flex', gap: '0.75rem' }}>
+              <Button variant="outline" onClick={() => setSelectedParticipant(null)}>Close</Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Review Modal */}
+      {reviewingId && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '1rem'
+        }}>
+          <Card style={{ maxWidth: '500px', width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h2 style={{ margin: 0, fontSize: '1.25rem', color: colors.text }}>Review Entry</h2>
+              <button
+                onClick={() => setReviewingId(null)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '1.5rem',
+                  cursor: 'pointer',
+                  color: colors.muted,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ display: 'grid', gap: '0.75rem', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
+              <div style={{ padding: '0.75rem', background: colors.inputBorder + '20', borderRadius: '0.375rem' }}>
+                <strong>Entry Content</strong><br />
+                <span style={{ color: colors.muted, fontSize: '0.8rem' }}>Review the submission and make your decision</span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <Button variant="primary" onClick={() => { setReviewingId(null); alert('Entry qualified!'); }}>Qualify</Button>
+              <Button variant="danger" onClick={() => { setReviewingId(null); alert('Entry disqualified!'); }}>Disqualify</Button>
+              <Button variant="outline" onClick={() => setReviewingId(null)}>Cancel</Button>
+            </div>
+          </Card>
+        </div>
+      )}
     </Page>
   );
 }
