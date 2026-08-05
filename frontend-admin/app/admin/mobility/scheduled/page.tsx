@@ -6,9 +6,10 @@ import { getScheduledBookings, SCHEDULED_STATUSES, SCHEDULED_MODES } from '@/ser
 import type { ScheduledBookingRow, ScheduledStatus, ScheduledMode } from '@/types/scheduledMobility';
 import {
   PageHeader, MobilityTabs, Card, Badge, StateNote, AuditedNotice, Kpi,
-  btn, th, td, input, naira,
+  btn, input, naira,
   useMobilityPermissions,
 } from '../_ui';
+import { colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 import { SCHEDULED_PERMS } from './_perms';
 
 function countdownLabel(pickupAtIso: string): { text: string; overdue: boolean } {
@@ -76,8 +77,8 @@ export default function ScheduledOpsBoardPage() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
         <Kpi label="Total (filtered)" value={String(rows.length)} />
-        <Kpi label="Failed — no driver" value={String(failedAging.length)} accent={failedAging.length ? '#dc2626' : '#16a34a'} />
-        <Kpi label="Dispatch pending" value={String(rows.filter((r) => r.status === 'dispatch_pending').length)} accent="#1d4ed8" />
+        <Kpi label="Failed — no driver" value={String(failedAging.length)} accent={failedAging.length ? colors.danger : colors.success} />
+        <Kpi label="Dispatch pending" value={String(rows.filter((r) => r.status === 'dispatch_pending').length)} accent={colors.info} />
         <Kpi label="Scheduled (upcoming)" value={String(rows.filter((r) => r.status === 'scheduled').length)} />
       </div>
 
@@ -103,10 +104,10 @@ export default function ScheduledOpsBoardPage() {
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <thead>
-                <tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                  <th style={th()}>User</th><th style={th()}>Mode</th><th style={th()}>Pickup</th>
-                  <th style={th()}>Status</th><th style={th()}>Fare</th><th style={th()}>Attempts</th>
-                  <th style={th()}>Last error</th><th style={th()}></th>
+                <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                  <th style={thCell}>User</th><th style={thCell}>Mode</th><th style={thCell}>Pickup</th>
+                  <th style={thCell}>Status</th><th style={thCell}>Fare</th><th style={thCell}>Attempts</th>
+                  <th style={thCell}>Last error</th><th style={thCell}></th>
                 </tr>
               </thead>
               <tbody>
@@ -114,18 +115,18 @@ export default function ScheduledOpsBoardPage() {
                   const cd = countdownLabel(r.scheduledPickupAt);
                   const isFailed = r.status === 'failed_no_driver';
                   return (
-                    <tr key={r.id} style={{ borderBottom: '1px solid #f3f4f6', background: isFailed ? '#fef2f2' : undefined }}>
-                      <td style={td()}><strong>{r.userName}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.userId}</div></td>
-                      <td style={td()}>{r.mode.replace(/_/g, ' ')}</td>
-                      <td style={td()}>
+                    <tr key={r.id} style={{ borderBottom: `1px solid ${colors.border}`, background: isFailed ? tint(colors.danger, 0.08) : undefined }}>
+                      <td style={tdCell}><strong>{r.userName}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.userId}</div></td>
+                      <td style={tdCell}>{r.mode.replace(/_/g, ' ')}</td>
+                      <td style={tdCell}>
                         {new Date(r.scheduledPickupAt).toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' })}
-                        <div style={{ fontSize: '0.72rem', color: cd.overdue ? '#dc2626' : '#6b7280', fontWeight: cd.overdue ? 700 : 400 }}>{cd.text}</div>
+                        <div style={{ fontSize: '0.72rem', color: cd.overdue ? colors.danger : colors.muted, fontWeight: cd.overdue ? 700 : 400 }}>{cd.text}</div>
                       </td>
-                      <td style={td()}><Badge status={r.status} /></td>
-                      <td style={td()}>{r.estimatedFareKobo != null ? naira(r.estimatedFareKobo) : '—'}</td>
-                      <td style={td()}>{r.dispatchAttempts}</td>
-                      <td style={td()}>{r.lastDispatchError ? <span style={{ color: '#dc2626', fontSize: '0.78rem' }}>{r.lastDispatchError}</span> : '—'}</td>
-                      <td style={td()}><Link href={`/admin/mobility/scheduled/${r.id}`} style={btn()}>View</Link></td>
+                      <td style={tdCell}><Badge status={r.status} /></td>
+                      <td style={tdCell}>{r.estimatedFareKobo != null ? naira(r.estimatedFareKobo) : '—'}</td>
+                      <td style={tdCell}>{r.dispatchAttempts}</td>
+                      <td style={tdCell}>{r.lastDispatchError ? <span style={{ color: colors.danger, fontSize: '0.78rem' }}>{r.lastDispatchError}</span> : '—'}</td>
+                      <td style={tdCell}><Link href={`/admin/mobility/scheduled/${r.id}`} style={btn()}>View</Link></td>
                     </tr>
                   );
                 })}

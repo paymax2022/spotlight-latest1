@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { listGiftCatalogAdmin, nairaFromKobo, type ConnectGift } from '@/services/connectAdminOpsService';
-import { PageHeader, Card, Badge, btn, th, td } from '../../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function ConnectGiftCatalogPage() {
   const [rows, setRows] = useState<ConnectGift[]>([]);
@@ -22,38 +22,38 @@ export default function ConnectGiftCatalogPage() {
   const visible = onlyActive ? rows.filter((g) => g.active) : rows;
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <Link href="/admin/connect/catalog" style={{ color: '#1d4ed8', textDecoration: 'none', fontSize: '0.85rem' }}>← Catalog</Link>
+    <Page>
+      <Link href="/admin/connect/catalog" style={{ color: colors.primary, textDecoration: 'none', fontSize: '0.85rem' }}>← Catalog</Link>
       <div style={{ height: 8 }} />
-      <PageHeader title="Gift catalog" subtitle="Prices are stored as integer minor units (kobo). Display shows the Naira equivalent." action={<button onClick={load} style={btn()}>Refresh</button>} />
+      <PageHeader title="Gift catalog" subtitle="Prices are stored as integer minor units (kobo). Display shows the Naira equivalent." actions={<Button variant="outline" sm onClick={load}>Refresh</Button>} />
 
       <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '1rem' }}>
-        <button onClick={() => setOnlyActive(false)} style={{ ...btn(), background: !onlyActive ? '#340075' : '#fff', color: !onlyActive ? '#fff' : '#374151' }}>All</button>
-        <button onClick={() => setOnlyActive(true)} style={{ ...btn(), background: onlyActive ? '#340075' : '#fff', color: onlyActive ? '#fff' : '#374151' }}>Active only</button>
+        <Button variant={!onlyActive ? 'primary' : 'outline'} sm onClick={() => setOnlyActive(false)}>All</Button>
+        <Button variant={onlyActive ? 'primary' : 'outline'} sm onClick={() => setOnlyActive(true)}>Active only</Button>
       </div>
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
-      <Card>
-        {loading ? <p style={{ color: '#6b7280' }}>Loading catalog…</p> : visible.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No gifts in the catalog.</p>
+      <Card style={{ padding: 0, overflow: 'auto' }}>
+        {loading ? <p style={{ color: colors.muted, padding: 14 }}>Loading catalog…</p> : visible.length === 0 ? (
+          <p style={{ color: colors.muted, padding: 14 }}>No gifts in the catalog.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Gift</th><th style={th()}>Category</th><th style={th()}>Price (kobo)</th><th style={th()}>Price (₦)</th><th style={th()}>Animation</th><th style={th()}>State</th></tr></thead>
+            <thead><tr><th style={thCell}>Gift</th><th style={thCell}>Category</th><th style={thCell}>Price (kobo)</th><th style={thCell}>Price (₦)</th><th style={thCell}>Animation</th><th style={thCell}>State</th></tr></thead>
             <tbody>
               {visible.map((g) => (
                 <tr key={g.id}>
-                  <td style={td()}><span style={{ fontSize: '1.1rem', marginRight: 6 }}>{g.emoji}</span><strong>{g.name}</strong></td>
-                  <td style={td()}>{g.category}</td>
-                  <td style={td()}><code style={{ fontSize: '0.8rem' }}>{g.price_kobo.toLocaleString()}</code></td>
-                  <td style={td()}>{nairaFromKobo(g.price_kobo)}</td>
-                  <td style={td()}>{g.animation}</td>
-                  <td style={td()}><Badge status={g.active ? 'resolved' : 'closed'} label={g.active ? 'active' : 'inactive'} /></td>
+                  <td style={tdCell}><span style={{ fontSize: '1.1rem', marginRight: 6 }}>{g.emoji}</span><strong>{g.name}</strong></td>
+                  <td style={tdCell}>{g.category}</td>
+                  <td style={tdCell}><code style={{ fontSize: '0.8rem' }}>{g.price_kobo.toLocaleString()}</code></td>
+                  <td style={tdCell}>{nairaFromKobo(g.price_kobo)}</td>
+                  <td style={tdCell}>{g.animation}</td>
+                  <td style={tdCell}><Badge text={g.active ? 'active' : 'inactive'} color={g.active ? colors.success : colors.secondary} /></td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

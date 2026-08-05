@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { listClaims, formatNaira } from '@/services/insuranceAdminService';
 import type { ClaimSummary, ClaimState } from '@/types/insuranceAdmin';
 import { PageHeader, InsuranceTabs, Card, Badge, btn, th, td, input, label, select, fmtDate, StateBlock } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 const CLAIM_STATES: ClaimState[] = [
   'draft', 'fnol_submitted', 'under_assessment', 'needs_more_info',
@@ -88,7 +89,7 @@ export default function InsuranceClaimsPage() {
                 {rows.map((c) => (
                   <tr key={c.id}>
                     <td style={td()}>
-                      <Link href={`/admin/insurance/claims/${c.id}`} style={{ color: '#340075', fontWeight: 600, textDecoration: 'none' }}>
+                      <Link href={`/admin/insurance/claims/${c.id}`} style={{ color: colors.primary, fontWeight: 600, textDecoration: 'none' }}>
                         {c.provider_claim_ref}
                       </Link>
                     </td>

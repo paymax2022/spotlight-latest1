@@ -5,9 +5,15 @@ import {
   listDividends, createDividend, listCorporateActions, createCorporateAction,
 } from '@/services/investAdminService';
 import type { Dividend, CorporateAction } from '@/types/investAdmin';
-import { PageHeader, InvestTabs, Card, Badge, btn, btnPrimary, th, td, naira } from '../_ui';
+import { InvestTabs, naira } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
-const inp: React.CSSProperties = { padding: '0.4rem 0.55rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem' };
+function dividendStatusColor(status: string): string {
+  if (status === 'active' || status === 'Settled') return colors.success;
+  if (status === 'suspended') return colors.warning;
+  if (status === 'delisted') return colors.danger;
+  return colors.secondary;
+}
 
 export default function CorporateActionsPage() {
   const [divs, setDivs] = useState<Dividend[]>([]);
@@ -53,25 +59,25 @@ export default function CorporateActionsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Corporate actions & dividends" subtitle="Ingest dividends and corporate actions. Every record is traceable to a source." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Corporate actions & dividends" subtitle="Ingest dividends and corporate actions. Every record is traceable to a source." actions={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <InvestTabs />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem', alignItems: 'start' }}>
         <Card title="Dividends">
-          <div style={{ display: 'flex', gap: 6, marginBottom: '0.75rem', flexWrap: 'wrap' }}>
-            <input placeholder="Symbol" value={dSymbol} onChange={(e) => setDSymbol(e.target.value)} style={{ ...inp, width: 90 }} />
-            <input placeholder="₦/share" value={dAmount} onChange={(e) => setDAmount(e.target.value)} style={{ ...inp, width: 90 }} />
-            <input placeholder="Pay date" type="date" value={dPay} onChange={(e) => setDPay(e.target.value)} style={inp} />
-            <button onClick={addDividend} disabled={saving} style={btnPrimary()}>Add</button>
+          <div style={{ display: 'flex', gap: 6, margin: '0.75rem 0', flexWrap: 'wrap' }}>
+            <Input placeholder="Symbol" value={dSymbol} onChange={(e) => setDSymbol(e.target.value)} style={{ width: 90 }} />
+            <Input placeholder="₦/share" value={dAmount} onChange={(e) => setDAmount(e.target.value)} style={{ width: 90 }} />
+            <Input placeholder="Pay date" type="date" value={dPay} onChange={(e) => setDPay(e.target.value)} />
+            <Button variant="primary" onClick={addDividend} disabled={saving}>Add</Button>
           </div>
-          {loading ? <p style={{ color: '#6b7280' }}>Loading…</p> : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
-              <thead><tr><th style={th()}>Symbol</th><th style={th()}>Per share</th><th style={th()}>Pay date</th><th style={th()}>Status</th></tr></thead>
+          {loading ? <p style={{ color: colors.muted }}>Loading…</p> : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead><tr><th style={thCell}>Symbol</th><th style={thCell}>Per share</th><th style={thCell}>Pay date</th><th style={thCell}>Status</th></tr></thead>
               <tbody>
                 {divs.map((d) => (
-                  <tr key={d.id}><td style={td()}><strong>{d.symbol}</strong></td><td style={td()}>{naira(d.amount_per_share_kobo)}</td><td style={td()}>{d.payment_date || '—'}</td><td style={td()}><Badge status={d.status} /></td></tr>
+                  <tr key={d.id}><td style={tdCell}><strong>{d.symbol}</strong></td><td style={tdCell}>{naira(d.amount_per_share_kobo)}</td><td style={tdCell}>{d.payment_date || '—'}</td><td style={tdCell}><Badge text={d.status} color={dividendStatusColor(d.status)} /></td></tr>
                 ))}
               </tbody>
             </table>
@@ -79,27 +85,27 @@ export default function CorporateActionsPage() {
         </Card>
 
         <Card title="Corporate actions">
-          <div style={{ display: 'flex', gap: 6, marginBottom: '0.75rem', flexWrap: 'wrap' }}>
-            <input placeholder="Symbol" value={cSymbol} onChange={(e) => setCSymbol(e.target.value)} style={{ ...inp, width: 90 }} />
-            <select value={cType} onChange={(e) => setCType(e.target.value)} style={inp}>
+          <div style={{ display: 'flex', gap: 6, margin: '0.75rem 0', flexWrap: 'wrap' }}>
+            <Input placeholder="Symbol" value={cSymbol} onChange={(e) => setCSymbol(e.target.value)} style={{ width: 90 }} />
+            <select value={cType} onChange={(e) => setCType(e.target.value)}>
               {['bonus', 'split', 'reverse_split', 'merger', 'delisting', 'suspension', 'name_change', 'tender'].map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
-            <input placeholder="Title" value={cTitle} onChange={(e) => setCTitle(e.target.value)} style={{ ...inp, width: 140 }} />
-            <input type="date" value={cDate} onChange={(e) => setCDate(e.target.value)} style={inp} />
-            <button onClick={addCA} disabled={saving} style={btnPrimary()}>Add</button>
+            <Input placeholder="Title" value={cTitle} onChange={(e) => setCTitle(e.target.value)} style={{ width: 140 }} />
+            <Input type="date" value={cDate} onChange={(e) => setCDate(e.target.value)} />
+            <Button variant="primary" onClick={addCA} disabled={saving}>Add</Button>
           </div>
-          {loading ? <p style={{ color: '#6b7280' }}>Loading…</p> : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
-              <thead><tr><th style={th()}>Symbol</th><th style={th()}>Type</th><th style={th()}>Title</th><th style={th()}>Effective</th></tr></thead>
+          {loading ? <p style={{ color: colors.muted }}>Loading…</p> : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead><tr><th style={thCell}>Symbol</th><th style={thCell}>Type</th><th style={thCell}>Title</th><th style={thCell}>Effective</th></tr></thead>
               <tbody>
                 {cas.map((c) => (
-                  <tr key={c.id}><td style={td()}><strong>{c.symbol}</strong></td><td style={td()}>{c.type}</td><td style={td()}>{c.title}</td><td style={td()}>{c.effective_date || '—'}</td></tr>
+                  <tr key={c.id}><td style={tdCell}><strong>{c.symbol}</strong></td><td style={tdCell}>{c.type}</td><td style={tdCell}>{c.title}</td><td style={tdCell}>{c.effective_date || '—'}</td></tr>
                 ))}
               </tbody>
             </table>
           )}
         </Card>
       </div>
-    </div>
+    </Page>
   );
 }

@@ -9,7 +9,14 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { getInvestor, overrideLimit, classifyInvestor } from '@/services/fractionalreAdminService';
 import type { AdminInvestorDetail, InvestorClassification } from '@/types/fractionalreAdmin';
-import { PageHeader, FractionalReTabs, Card, Kpi, Badge, SodNote, btn, btnPrimary, th, td, input, label, money, naira } from '../../_ui';
+import { FractionalReTabs, Kpi, SodNote, money, naira } from '../../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const KYC_COLOR: Record<string, string> = { unverified: colors.secondary, pending: colors.warning, verified: colors.success, rejected: colors.danger, expired: colors.danger };
+const CLASS_COLOR: Record<string, string> = { retail: colors.info, qualified: colors.secondary, hni: colors.success, institutional: colors.secondary };
+const SOURCE_COLOR: Record<string, string> = { primary: colors.info, secondary: colors.secondary, matched: colors.secondary, correction: colors.warning };
+
+const labelStyle = { fontSize: '0.78rem', fontWeight: 600, color: colors.text, display: 'block', marginBottom: 4 } as const;
 
 export default function InvestorDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -43,40 +50,40 @@ export default function InvestorDetailPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title={inv?.name ?? 'Investor'} subtitle="Profile, allowance, limit monitoring and classification." action={<Link href="/admin/fractionalre/investors" style={{ ...btn(), textDecoration: 'none' }}>← All investors</Link>} />
+    <Page>
+      <PageHeader title={inv?.name ?? 'Investor'} subtitle="Profile, allowance, limit monitoring and classification." actions={<Link href="/admin/fractionalre/investors"><Button>← All investors</Button></Link>} />
       <FractionalReTabs active="investors" />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-      {msg && <p style={{ color: '#15803d' }}>{msg}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      {msg && <p style={{ color: colors.success }}>{msg}</p>}
 
-      {loading || !inv ? <p style={{ color: '#6b7280' }}>Loading investor…</p> : (
+      {loading || !inv ? <p style={{ color: colors.muted }}>Loading investor…</p> : (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <Kpi label="AUM" value={money(inv.aumKobo)} accent="#1d4ed8" />
-            <Kpi label="Annual cap" value={money(inv.limit.annualCapKobo)} accent="#6b21a8" sub={`${inv.limit.capPct}% platform cap`} />
-            <Kpi label="Invested this year" value={money(inv.limit.investedThisYearKobo)} accent="#d97706" />
-            <Kpi label="Remaining allowance" value={money(inv.limit.remainingAllowanceKobo)} accent={inv.limit.breached ? '#dc2626' : '#16a34a'} sub={inv.limit.breached ? 'BREACHED' : 'within cap'} />
+            <Kpi label="AUM" value={money(inv.aumKobo)} accent={colors.info} />
+            <Kpi label="Annual cap" value={money(inv.limit.annualCapKobo)} accent={colors.secondary} sub={`${inv.limit.capPct}% platform cap`} />
+            <Kpi label="Invested this year" value={money(inv.limit.investedThisYearKobo)} accent={colors.warning} />
+            <Kpi label="Remaining allowance" value={money(inv.limit.remainingAllowanceKobo)} accent={inv.limit.breached ? colors.danger : colors.success} sub={inv.limit.breached ? 'BREACHED' : 'within cap'} />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
             <Card title="Profile">
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem 1rem', fontSize: '0.85rem' }}>
-                <div><span style={{ color: '#6b7280' }}>Email:</span> {inv.email}</div>
-                <div><span style={{ color: '#6b7280' }}>Phone:</span> {inv.phone}</div>
-                <div><span style={{ color: '#6b7280' }}>KYC:</span> <Badge status={inv.kycStatus} /></div>
-                <div><span style={{ color: '#6b7280' }}>Classification:</span> <Badge status={inv.classification} /></div>
-                <div><span style={{ color: '#6b7280' }}>Income on file:</span> {money(inv.incomeOnFileKobo)}</div>
-                <div><span style={{ color: '#6b7280' }}>Risk profile:</span> {inv.riskProfile}</div>
+                <div><span style={{ color: colors.muted }}>Email:</span> {inv.email}</div>
+                <div><span style={{ color: colors.muted }}>Phone:</span> {inv.phone}</div>
+                <div><span style={{ color: colors.muted }}>KYC:</span> <Badge text={inv.kycStatus} color={KYC_COLOR[inv.kycStatus.toLowerCase()] ?? colors.secondary} /></div>
+                <div><span style={{ color: colors.muted }}>Classification:</span> <Badge text={inv.classification} color={CLASS_COLOR[inv.classification.toLowerCase()] ?? colors.secondary} /></div>
+                <div><span style={{ color: colors.muted }}>Income on file:</span> {money(inv.incomeOnFileKobo)}</div>
+                <div><span style={{ color: colors.muted }}>Risk profile:</span> {inv.riskProfile}</div>
               </div>
             </Card>
 
             <Card title="Limit monitoring (compliance)">
-              <p style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: 0 }}>Remaining annual allowance: <strong style={{ color: inv.limit.breached ? '#dc2626' : '#111827' }}>{naira(inv.limit.remainingAllowanceKobo)}</strong></p>
-              {inv.limit.overrideActive && <Badge status="active" label="override active" />}
+              <p style={{ fontSize: '0.85rem', color: colors.muted, marginTop: 0 }}>Remaining annual allowance: <strong style={{ color: inv.limit.breached ? colors.danger : colors.text }}>{naira(inv.limit.remainingAllowanceKobo)}</strong></p>
+              {inv.limit.overrideActive && <Badge text="override active" color={colors.success} />}
               <div style={{ display: 'grid', gap: '0.5rem', marginTop: '0.6rem', maxWidth: 320 }}>
-                <div><label style={label()}>New annual cap (₦)</label><input value={overrideNaira} onChange={(e) => setOverrideNaira(e.target.value)} style={input()} placeholder="10000000" /></div>
-                <div><label style={label()}>Reason (logged)</label><input value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} style={input()} /></div>
-                <button onClick={applyOverride} disabled={working || !overrideNaira || !overrideReason} style={{ ...btnPrimary('#d97706'), opacity: working || !overrideNaira || !overrideReason ? 0.6 : 1 }}>Override limit (logged)</button>
+                <div><label style={labelStyle}>New annual cap (₦)</label><Input value={overrideNaira} onChange={(e) => setOverrideNaira(e.target.value)} placeholder="10000000" /></div>
+                <div><label style={labelStyle}>Reason (logged)</label><Input value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} /></div>
+                <Button onClick={applyOverride} disabled={working || !overrideNaira || !overrideReason} style={{ background: colors.warning, borderColor: colors.warning, color: '#fff' }}>Override limit (logged)</Button>
               </div>
             </Card>
           </div>
@@ -84,28 +91,28 @@ export default function InvestorDetailPage() {
           <SodNote>Classification upgrades (HNI / qualified) require evidence review and are logged. Limit overrides bypass the platform-wide 10% cap and are surfaced on the compliance dashboard.</SodNote>
           <Card title="Classification review">
             <div style={{ display: 'grid', gap: '0.6rem', maxWidth: 360 }}>
-              <div><label style={label()}>New classification</label>
-                <select value={newClass} onChange={(e) => setNewClass(e.target.value as InvestorClassification)} style={input()}>
+              <div><label style={labelStyle}>New classification</label>
+                <select value={newClass} onChange={(e) => setNewClass(e.target.value as InvestorClassification)} className="vx-input">
                   <option value="">Select…</option>{['retail', 'qualified', 'hni', 'institutional'].map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
-              <div><label style={label()}>Reason / evidence ref</label><input value={classReason} onChange={(e) => setClassReason(e.target.value)} style={input()} /></div>
-              <button onClick={applyClass} disabled={working || !newClass || !classReason} style={{ ...btnPrimary(), opacity: working || !newClass || !classReason ? 0.6 : 1 }}>Apply classification</button>
+              <div><label style={labelStyle}>Reason / evidence ref</label><Input value={classReason} onChange={(e) => setClassReason(e.target.value)} /></div>
+              <Button variant="primary" onClick={applyClass} disabled={working || !newClass || !classReason}>Apply classification</Button>
             </div>
           </Card>
 
           <Card title="Holdings">
-            {inv.holdings.length === 0 ? <p style={{ color: '#6b7280' }}>No holdings.</p> : (
+            {inv.holdings.length === 0 ? <p style={{ color: colors.muted }}>No holdings.</p> : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th style={th()}>Asset (cap entry)</th><th style={th()}>Units</th><th style={th()}>Ownership</th><th style={th()}>Source</th></tr></thead>
+                <thead><tr><th style={thCell}>Asset (cap entry)</th><th style={thCell}>Units</th><th style={thCell}>Ownership</th><th style={thCell}>Source</th></tr></thead>
                 <tbody>{inv.holdings.map((h) => (
-                  <tr key={h.id}><td style={td()}>{h.investorName} · {h.certificateRef}</td><td style={td()}>{h.units}</td><td style={td()}>{h.ownershipPct}%</td><td style={td()}><Badge status={h.source} /></td></tr>
+                  <tr key={h.id}><td style={tdCell}>{h.investorName} · {h.certificateRef}</td><td style={tdCell}>{h.units}</td><td style={tdCell}>{h.ownershipPct}%</td><td style={tdCell}><Badge text={h.source} color={SOURCE_COLOR[h.source] ?? colors.secondary} /></td></tr>
                 ))}</tbody>
               </table>
             )}
           </Card>
         </>
       )}
-    </div>
+    </Page>
   );
 }

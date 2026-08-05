@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import {
   adminListAssets, adminListOrders, adminListWithdrawals, adminGetReconciliation, formatKobo,
 } from '@/services/cryptoAdminService';
-import { PageHeader, CryptoTabs, Card, Kpi, DisclosureNote } from './_ui';
+import { CryptoTabs, Kpi, DisclosureNote } from './_ui';
+import { Page, PageHeader, Card, colors } from '@/components/ui/vuexy';
 
 export default function CryptoOverviewPage() {
   const [assetsTotal, setAssetsTotal] = useState<number | null>(null);
@@ -34,7 +35,7 @@ export default function CryptoOverviewPage() {
   }, []);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Paymax Crypto — Ops Console"
         subtitle="Order oversight and admin-curated asset catalogue for the crypto buy/sell module. Money path reuses the shared finance ledger (idempotent, double-entry, audited)."
@@ -50,15 +51,15 @@ export default function CryptoOverviewPage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
         <Kpi label="Assets in catalogue" value={assetsTotal != null ? String(assetsTotal) : '—'} sub={assetsActive != null ? `${assetsActive} active/tradable` : undefined} />
         <Kpi label="Orders (recent page)" value={ordersTotal != null ? String(ordersTotal) : '—'} />
-        <Kpi label="Pending orders" value={pendingOrders != null ? String(pendingOrders) : '—'} accent={pendingOrders && pendingOrders > 0 ? '#9a3412' : undefined} />
-        <Kpi label="Failed orders" value={failedOrders != null ? String(failedOrders) : '—'} accent={failedOrders && failedOrders > 0 ? '#b91c1c' : undefined} />
-        <Kpi label="Withdrawals awaiting AML" value={pendingWithdrawals != null ? String(pendingWithdrawals) : '—'} accent={pendingWithdrawals && pendingWithdrawals > 0 ? '#9a3412' : undefined} />
-        <Kpi label="Reconciliation breaks" value={reconBreaks != null ? String(reconBreaks) : '—'} accent={reconBreaks && reconBreaks > 0 ? '#b91c1c' : '#15803d'} />
-        <Kpi label="Filled volume (cash)" value={formatKobo(volumeKobo)} accent="#340075" />
+        <Kpi label="Pending orders" value={pendingOrders != null ? String(pendingOrders) : '—'} accent={pendingOrders && pendingOrders > 0 ? colors.warning : undefined} />
+        <Kpi label="Failed orders" value={failedOrders != null ? String(failedOrders) : '—'} accent={failedOrders && failedOrders > 0 ? colors.danger : undefined} />
+        <Kpi label="Withdrawals awaiting AML" value={pendingWithdrawals != null ? String(pendingWithdrawals) : '—'} accent={pendingWithdrawals && pendingWithdrawals > 0 ? colors.warning : undefined} />
+        <Kpi label="Reconciliation breaks" value={reconBreaks != null ? String(reconBreaks) : '—'} accent={reconBreaks && reconBreaks > 0 ? colors.danger : colors.success} />
+        <Kpi label="Filled volume (cash)" value={formatKobo(volumeKobo)} accent={colors.primary} />
       </div>
 
       <Card title="Modules">
-        <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.88rem', color: '#374151', lineHeight: 1.9 }}>
+        <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.88rem', color: colors.text, lineHeight: 1.9 }}>
           <li><strong>Orders</strong> — all-user buy/sell fill history, read-only oversight, filterable by status.</li>
           <li><strong>Withdrawals / AML</strong> — approval queue for outbound crypto withdrawals with AML risk scoring and flags; approve/reject with a mandatory audited note.</li>
           <li><strong>Swaps</strong> — asset→asset swap monitoring: realised rates, spread revenue, volume and anomaly detection.</li>
@@ -67,6 +68,6 @@ export default function CryptoOverviewPage() {
           <li><strong>Assets</strong> — admin-curated tradable catalogue: create, activate/deactivate, and configure minor-unit scale.</li>
         </ul>
       </Card>
-    </div>
+    </Page>
   );
 }

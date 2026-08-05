@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { getBiDashboard, getBiCohorts, exportBi } from '@/services/academyAdminService';
 import type { BiDashboard, BiCohortRow, BiExportInput, BiSeriesPoint } from '@/types/academyAdmin';
 import { PageHeader, AcademyTabs, Card, Kpi, StateBlock, DisclosureNote, Bar, btn, btnPrimary, th, td, input, label, formatNaira, pct } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 const COHORT_BUCKETS = ['D1', 'D7', 'D30', 'D60', 'D90'];
 const RETENTION_COLOR = (v: number) => (v >= 0.6 ? '#15803d' : v >= 0.35 ? '#9a3412' : '#b91c1c');
@@ -75,7 +76,7 @@ export default function AnalyticsBiPage() {
           <div><label style={label()}>From</label><input type="date" style={input()} value={from} onChange={(e) => setFrom(e.target.value)} /></div>
           <div><label style={label()}>To</label><input type="date" style={input()} value={to} onChange={(e) => setTo(e.target.value)} /></div>
           <div><button onClick={load} style={btnPrimary()}>Apply</button></div>
-          {notice && <span style={{ fontSize: '0.8rem', color: '#374151' }}>{notice}</span>}
+          {notice && <span style={{ fontSize: '0.8rem', color: colors.muted }}>{notice}</span>}
         </div>
       </Card>
 
@@ -112,7 +113,7 @@ export default function AnalyticsBiPage() {
                         <td key={i} style={td()}>
                           {v > 0
                             ? <span style={{ display: 'inline-block', minWidth: 46, textAlign: 'center', padding: '0.1rem 0.4rem', borderRadius: 4, color: '#fff', fontSize: '0.72rem', fontWeight: 600, background: RETENTION_COLOR(v) }}>{pct(v)}</span>
-                            : <span style={{ color: '#d1d5db' }}>—</span>}
+                            : <span style={{ color: colors.border }}>—</span>}
                         </td>
                       ))}
                     </tr>

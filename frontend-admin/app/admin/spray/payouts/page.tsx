@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { listSprayPayouts, formatNaira, type SprayPayout } from '@/services/sprayAdminService';
 import { PageHeader, SprayTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, btn, th, td, label, select, fmtDate } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function SprayPayoutsPage() {
   const [rows, setRows] = useState<SprayPayout[]>([]);
@@ -47,7 +48,7 @@ export default function SprayPayoutsPage() {
               {rows.map((p) => (
                 <tr key={p.id}>
                   <td style={td()}><code style={{ fontSize: '0.78rem' }}>{p.id}</code></td>
-                  <td style={td()}>{p.event_name}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{p.context_ref}</div></td>
+                  <td style={td()}>{p.event_name}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{p.context_ref}</div></td>
                   <td style={td()}>{p.beneficiary_masked}</td>
                   <td style={td()}>{formatNaira(p.amount_kobo)}</td>
                   <td style={td()}><Badge status={p.status} /></td>

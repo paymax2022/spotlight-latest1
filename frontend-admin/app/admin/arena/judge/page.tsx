@@ -10,9 +10,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { listCompetitions, listContestants, getCompetitionConfig, judgeScore } from '@/services/arenaAdminService';
 import type { Competition, Contestant, JudgeScoreInput } from '@/types/arenaAdmin';
+import { Page, PageHeader, Card, Button, Input, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 import {
-  PageHeader, Card, btn, btnPrimary, btnDisabled, th, td, inputStyle, selectStyle, mono,
-  StateBadge, ScaffoldNotice, AuditNote, PermissionBanner, ARENA_PERMS, useArenaPermission,
+  mono, StateBadge, ScaffoldNotice, AuditNote, PermissionBanner, ARENA_PERMS, useArenaPermission,
 } from '../_ui';
 
 export default function ArenaJudgePage() {
@@ -60,65 +60,69 @@ export default function ArenaJudgePage() {
   }, [stage, score, competitionId, rubricVersion]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Arena — Judge Console (A4)"
         subtitle="Score assigned finalists on the pinned practical + first-aid rubric. RBAC: arena.judge.score."
-        action={
+        actions={
           <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <select value={competitionId} onChange={(e) => setCompetitionId(e.target.value)} style={selectStyle()}>
+            <select value={competitionId} onChange={(e) => setCompetitionId(e.target.value)}>
               {competitions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <button onClick={() => void load()} style={btn()}>Refresh</button>
+            <Button variant="outline" onClick={() => void load()}>Refresh</Button>
           </div>
         }
       />
 
       <ScaffoldNotice>Per-judge assignment routing and the cross-judge aggregation (trimmed mean) view are not built yet. The score write is wired to <code>POST /competitions/&#123;id&#125;/judge/score</code>; each raw score is retained for audit and the adapter signs the aggregate Merit entry.</ScaffoldNotice>
       {!allowed && <PermissionBanner permission={ARENA_PERMS.judge} />}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-      {notice && <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#166534', marginBottom: '1.25rem' }}>{notice}</div>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      {notice && <div style={{ background: tint(colors.success, 0.12), border: `1px solid ${tint(colors.success, 0.35)}`, borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.success, marginBottom: '1.25rem' }}>{notice}</div>}
 
-      <Card title="Finalists (rubric pinned)" right={<span style={{ ...mono(), color: '#6b7280', fontSize: '0.8rem' }}>rubric: {rubricVersion || '—'}</span>}>
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Finalists (rubric pinned)</h2>
+          <span style={{ ...mono(), color: colors.muted, fontSize: '0.8rem' }}>rubric: {rubricVersion || '—'}</span>
+        </div>
         {loading ? (
-          <p style={{ color: '#6b7280' }}>Loading finalists…</p>
+          <p style={{ color: colors.muted }}>Loading finalists…</p>
         ) : rows.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No finalists to score.</p>
+          <p style={{ color: colors.muted }}>No finalists to score.</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>Contestant</th>
-                  <th style={th()}>State</th>
-                  <th style={th()}>Stage</th>
-                  <th style={th()}>Raw score</th>
-                  <th style={th()}>Submit</th>
+                  <th style={thCell}>Contestant</th>
+                  <th style={thCell}>State</th>
+                  <th style={thCell}>Stage</th>
+                  <th style={thCell}>Raw score</th>
+                  <th style={thCell}>Submit</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((c) => (
                   <tr key={c.id}>
-                    <td style={td()}>{c.full_name ?? '—'}<div style={{ ...mono(), color: '#9ca3af' }}>{c.user_id}</div></td>
-                    <td style={td()}><StateBadge state={c.state} /></td>
-                    <td style={td()}>
-                      <select value={stage[c.id] ?? ''} onChange={(e) => setStage((s) => ({ ...s, [c.id]: e.target.value as JudgeScoreInput['stage'] }))} style={selectStyle()} disabled={!allowed}>
+                    <td style={tdCell}>{c.full_name ?? '—'}<div style={{ ...mono(), color: colors.muted }}>{c.user_id}</div></td>
+                    <td style={tdCell}><StateBadge state={c.state} /></td>
+                    <td style={tdCell}>
+                      <select value={stage[c.id] ?? ''} onChange={(e) => setStage((s) => ({ ...s, [c.id]: e.target.value as JudgeScoreInput['stage'] }))} disabled={!allowed}>
                         <option value="">Select…</option>
                         <option value="FINALE_PRACTICAL">Practical</option>
                         <option value="FINALE_FIRSTAID">First-aid</option>
                       </select>
                     </td>
-                    <td style={td()}>
-                      <input value={score[c.id] ?? ''} onChange={(e) => setScore((s) => ({ ...s, [c.id]: e.target.value }))} placeholder="0–100" style={{ ...inputStyle(), width: 90 }} disabled={!allowed} />
+                    <td style={tdCell}>
+                      <Input value={score[c.id] ?? ''} onChange={(e) => setScore((s) => ({ ...s, [c.id]: e.target.value }))} placeholder="0–100" style={{ width: 90 }} disabled={!allowed} />
                     </td>
-                    <td style={td()}>
-                      <button
+                    <td style={tdCell}>
+                      <Button
+                        variant="primary"
                         onClick={() => void submit(c)}
-                        style={allowed && stage[c.id] && Number.isFinite(Number(score[c.id])) && busyId !== c.id ? btnPrimary() : btnDisabled()}
                         disabled={!allowed || !stage[c.id] || !Number.isFinite(Number(score[c.id])) || busyId === c.id}
                       >
                         {busyId === c.id ? '…' : 'Submit'}
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 ))}
@@ -128,6 +132,6 @@ export default function ArenaJudgePage() {
         )}
         <AuditNote>A judge can only score assigned contestants (enforced server-side). Each raw score is retained for audit; aggregation is deterministic.</AuditNote>
       </Card>
-    </div>
+    </Page>
   );
 }

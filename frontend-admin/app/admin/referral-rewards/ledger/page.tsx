@@ -5,11 +5,54 @@
 // RBAC: referral.admin.ledger (Finance).
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { getLedger, formatNaira, formatPct } from '@/services/referralRewardsAdminService';
 import type { Reward } from '@/types/referralRewardsAdmin';
-import { PageHeader, RewardsTabs, Card, Badge, StateBlock, btn, th, td, input, label } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUSES = ['all', 'PENDING', 'CREDITED', 'REVERSED'];
+
+const REWARDS_TABS = [
+  { href: '/admin/referral-rewards/config', label: 'A1 · Config', key: 'config' },
+  { href: '/admin/referral-rewards/analytics', label: 'A2 · Analytics', key: 'analytics' },
+  { href: '/admin/referral-rewards/fraud', label: 'A3 · Fraud queue', key: 'fraud' },
+  { href: '/admin/referral-rewards/ledger', label: 'A4 · Ledger', key: 'ledger' },
+  { href: '/admin/referral-rewards/case', label: 'A5 · Case view', key: 'case' },
+  { href: '/admin/referral-rewards/milestones', label: 'A6 · Milestones', key: 'milestones' },
+  { href: '/admin/referral-rewards/module-status', label: 'A7 · Module status', key: 'module-status' },
+];
+
+function RewardsTabs({ active }: { active: string }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 20, borderBottom: `1px solid ${colors.border}`, paddingBottom: 8 }}>
+      {REWARDS_TABS.map((t) => (
+        <Link
+          key={t.key}
+          href={t.href}
+          style={{
+            textDecoration: 'none', padding: '6px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600,
+            color: active === t.key ? '#fff' : colors.text,
+            background: active === t.key ? colors.primary : tint(colors.primary, 0.06),
+          }}
+        >
+          {t.label}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+const STATUS_BADGE: Record<string, string> = {
+  pending: colors.warning,
+  credited: colors.success,
+  reversed: colors.danger,
+};
+function statusColor(status: string): string {
+  return STATUS_BADGE[status.toLowerCase()] ?? colors.secondary;
+}
+function statusLabel(status: string): string {
+  return status.replace(/_/g, ' ').toLowerCase();
+}
 
 export default function ReferralRewardsLedgerPage() {
   const [rows, setRows] = useState<Reward[]>([]);
@@ -45,62 +88,72 @@ export default function ReferralRewardsLedgerPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Referral Ledger & Reconciliation"
         subtitle="Full audit trail of every reward row (PENDING → CREDITED, or REVERSED on refund). Filter and export to CSV for finance reconciliation. (A4)"
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <RewardsTabs active="ledger" />
 
-      <Card title="Filters" right={<button onClick={exportCsv} style={btn()}>Export CSV</button>}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px,1fr))', gap: '0.75rem' }}>
+      <Card style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Filters</h2>
+          <Button variant="outline" sm onClick={exportCsv}>Export CSV</Button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px,1fr))', gap: 12 }}>
           <div>
-            <label style={label()}>Status</label>
-            <select style={input()} value={status} onChange={(e) => setStatus(e.target.value)}>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: colors.text, marginBottom: 4 }}>Status</label>
+            <select value={status} onChange={(e) => setStatus(e.target.value)}>
               {STATUSES.map((s) => <option key={s} value={s}>{s === 'all' ? 'All' : s}</option>)}
             </select>
           </div>
           <div>
-            <label style={label()}>Module</label>
-            <select style={input()} value={moduleFilter} onChange={(e) => setModuleFilter(e.target.value)}>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: colors.text, marginBottom: 4 }}>Module</label>
+            <select value={moduleFilter} onChange={(e) => setModuleFilter(e.target.value)}>
               {modules.map((m) => <option key={m} value={m}>{m === 'all' ? 'All' : m}</option>)}
             </select>
           </div>
           <div>
-            <label style={label()}>Referrer ID (contains)</label>
-            <input style={input()} value={referrer} onChange={(e) => setReferrer(e.target.value)} placeholder="usr_…" />
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: colors.text, marginBottom: 4 }}>Referrer ID (contains)</label>
+            <Input value={referrer} onChange={(e) => setReferrer(e.target.value)} placeholder="usr_…" />
           </div>
         </div>
       </Card>
 
       <Card title={`Rewards (${filtered.length})`}>
-        <StateBlock loading={loading} error={error} empty={filtered.length === 0} emptyText="No reward rows match these filters.">
+        {loading ? (
+          <p style={{ color: colors.muted, marginTop: 12 }}>Loading…</p>
+        ) : error ? (
+          <p style={{ color: colors.danger, marginTop: 12 }}>{error}</p>
+        ) : filtered.length === 0 ? (
+          <p style={{ color: colors.muted, marginTop: 12 }}>No reward rows match these filters.</p>
+        ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900, marginTop: 12 }}>
               <thead><tr>
-                <th style={th()}>Reward</th><th style={th()}>Referrer</th><th style={th()}>Referred</th><th style={th()}>Source txn</th>
-                <th style={th()}>Module</th><th style={th()}>Margin</th><th style={th()}>Rate</th><th style={th()}>Reward</th><th style={th()}>Status</th>
+                <th style={thCell}>Reward</th><th style={thCell}>Referrer</th><th style={thCell}>Referred</th><th style={thCell}>Source txn</th>
+                <th style={thCell}>Module</th><th style={thCell}>Margin</th><th style={thCell}>Rate</th><th style={thCell}>Reward</th><th style={thCell}>Status</th>
               </tr></thead>
               <tbody>
                 {filtered.map((r) => (
                   <tr key={r.id}>
-                    <td style={td()}><code style={{ fontSize: '0.76rem' }}>{r.id}</code></td>
-                    <td style={td()}><code style={{ fontSize: '0.76rem' }}>{r.referrer_id}</code></td>
-                    <td style={td()}><code style={{ fontSize: '0.76rem' }}>{r.referred_user_id}</code></td>
-                    <td style={td()}><code style={{ fontSize: '0.76rem' }}>{r.source_transaction_id}</code></td>
-                    <td style={{ ...td(), textTransform: 'capitalize' }}>{r.module}</td>
-                    <td style={td()}>{formatNaira(r.margin_amount_kobo)}</td>
-                    <td style={td()}>{formatPct(r.applied_rate)}</td>
-                    <td style={td()}><strong>{formatNaira(r.reward_amount_kobo)}</strong></td>
-                    <td style={td()}><Badge status={r.status} /></td>
+                    <td style={tdCell}><code style={{ fontSize: 12 }}>{r.id}</code></td>
+                    <td style={tdCell}><code style={{ fontSize: 12 }}>{r.referrer_id}</code></td>
+                    <td style={tdCell}><code style={{ fontSize: 12 }}>{r.referred_user_id}</code></td>
+                    <td style={tdCell}><code style={{ fontSize: 12 }}>{r.source_transaction_id}</code></td>
+                    <td style={{ ...tdCell, textTransform: 'capitalize' }}>{r.module}</td>
+                    <td style={tdCell}>{formatNaira(r.margin_amount_kobo)}</td>
+                    <td style={tdCell}>{formatPct(r.applied_rate)}</td>
+                    <td style={tdCell}><strong>{formatNaira(r.reward_amount_kobo)}</strong></td>
+                    <td style={tdCell}><Badge text={statusLabel(r.status)} color={statusColor(r.status)} /></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </StateBlock>
+        )}
       </Card>
-    </div>
+    </Page>
   );
 }

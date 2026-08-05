@@ -3,10 +3,8 @@
 import { useEffect, useState } from 'react';
 import { getSchema, updateSchema } from '@/services/insuranceAdminService';
 import type { SchemaField } from '@/types/insuranceAdmin';
-import {
-  PageHeader, InsuranceTabs, Card, StateBlock, DisclosureNote,
-  btnPrimary, th, td, input, select,
-} from '../_ui';
+import { InsuranceTabs, DisclosureNote, StateBlock } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const FIELD_TYPES: SchemaField['type'][] = ['string', 'number', 'date', 'boolean', 'enum', 'file'];
 
@@ -43,14 +41,14 @@ export default function InsuranceSchemaPage() {
   const visible = piiOnly ? fields.filter((f) => f.pii) : fields;
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Field schema"
         subtitle="Defines the data fields products may collect. Only fields a product actually needs are shared with its provider."
-        action={
-          <button style={{ ...btnPrimary(), opacity: saving ? 0.6 : 1, cursor: saving ? 'not-allowed' : 'pointer' }} onClick={save} disabled={saving || loading}>
+        actions={
+          <Button variant="primary" onClick={save} disabled={saving || loading}>
             {saving ? 'Saving…' : 'Save schema'}
-          </button>
+          </Button>
         }
       />
       <InsuranceTabs active="catalog" />
@@ -59,47 +57,44 @@ export default function InsuranceSchemaPage() {
         Data minimisation: only share the fields a product strictly needs with its underwriter. PII fields (highlighted) require an explicit consent scope before being transmitted.
       </DisclosureNote>
 
-      <Card
-        title="Schema fields"
-        right={
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', color: '#374151' }}>
-            <input type="checkbox" checked={piiOnly} onChange={(e) => setPiiOnly(e.target.checked)} />
-            PII only
-          </label>
-        }
-      >
+      <Card title="Schema fields">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: colors.text, marginBottom: 14 }}>
+          <input type="checkbox" checked={piiOnly} onChange={(e) => setPiiOnly(e.target.checked)} />
+          PII only
+        </label>
+
         <StateBlock loading={loading} error={error} empty={visible.length === 0} emptyText="No schema fields.">
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>Key</th>
-                  <th style={th()}>Label</th>
-                  <th style={th()}>Type</th>
-                  <th style={th()}>Required</th>
-                  <th style={th()}>PII</th>
-                  <th style={th()}>Product lines</th>
+                  <th style={thCell}>Key</th>
+                  <th style={thCell}>Label</th>
+                  <th style={thCell}>Type</th>
+                  <th style={thCell}>Required</th>
+                  <th style={thCell}>PII</th>
+                  <th style={thCell}>Product lines</th>
                 </tr>
               </thead>
               <tbody>
                 {visible.map((f) => (
-                  <tr key={f.key} style={f.pii ? { background: '#fef2f2' } : undefined}>
-                    <td style={td()}><code style={{ fontSize: '0.8rem' }}>{f.key}</code></td>
-                    <td style={td()}>
-                      <input style={input()} value={f.label} onChange={(e) => patchField(f.key, { label: e.target.value })} />
+                  <tr key={f.key} style={f.pii ? { background: tint(colors.danger, 0.06) } : undefined}>
+                    <td style={tdCell}><code style={{ fontSize: 13 }}>{f.key}</code></td>
+                    <td style={tdCell}>
+                      <Input value={f.label} onChange={(e) => patchField(f.key, { label: e.target.value })} />
                     </td>
-                    <td style={{ ...td(), width: 130 }}>
-                      <select style={select()} value={f.type} onChange={(e) => patchField(f.key, { type: e.target.value as SchemaField['type'] })}>
+                    <td style={{ ...tdCell, width: 130 }}>
+                      <select value={f.type} onChange={(e) => patchField(f.key, { type: e.target.value as SchemaField['type'] })}>
                         {FIELD_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                       </select>
                     </td>
-                    <td style={td()}>
+                    <td style={tdCell}>
                       <input type="checkbox" checked={f.required} onChange={(e) => patchField(f.key, { required: e.target.checked })} />
                     </td>
-                    <td style={td()}>
+                    <td style={tdCell}>
                       <input type="checkbox" checked={f.pii} onChange={(e) => patchField(f.key, { pii: e.target.checked })} />
                     </td>
-                    <td style={{ ...td(), color: '#6b7280', fontSize: '0.78rem' }}>
+                    <td style={{ ...tdCell, color: colors.muted, fontSize: 12 }}>
                       {f.product_lines.map((l) => l.replace(/_/g, ' ')).join(', ') || '—'}
                     </td>
                   </tr>
@@ -108,9 +103,9 @@ export default function InsuranceSchemaPage() {
             </table>
           </div>
 
-          {saved && <p style={{ color: '#15803d', fontSize: '0.82rem', fontWeight: 600, marginTop: '0.8rem' }}>Schema saved.</p>}
+          {saved && <p style={{ color: colors.success, fontSize: 13, fontWeight: 600, marginTop: 13 }}>Schema saved.</p>}
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

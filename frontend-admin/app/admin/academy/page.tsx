@@ -3,7 +3,22 @@
 import { useEffect, useState } from 'react';
 import { getAcademyDashboard } from '@/services/academyAdminService';
 import type { AcademyDashboard } from '@/types/academyAdmin';
-import { PageHeader, AcademyTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, Bar, btn, th, td, timeAgo, pct, formatNaira } from './_ui';
+import { AcademyTabs, Kpi, DisclosureNote, StateBlock, Bar, timeAgo, pct, formatNaira } from './_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  const s = status.toLowerCase();
+  if (['active', 'approved', 'published', 'funded', 'paid', 'completed', 'allocated', 'live', 'reconciled', 'disbursed', 'collected', 'released', 'core', 'issued', 'routed', 'ready', 'eligible', 'actioned', 'verified', 'resolved', 'plan_published', 'badge_earned', 'pool_funded', 'item_approved'].includes(s)) return colors.success;
+  if (['pending', 'in_review', 'under_review', 'needs_info', 'scheduled', 'low_balance', 'review', 'in_translation', 'funding', 'fee_due', 'onboarding', 'frequent', 'packaged', 'matured', 'paused', 'processing', 'triaged', 'investigating', 'hide', 'warn', 'high', 'medium'].includes(s)) return colors.warning;
+  if (['draft', 'authoring', 'open', 'upcoming', 'generated', 'partial', 'submitted', 'trial', 'requested', 'applied', 'cards_generated', 'exam_opened', 'campaign_launched'].includes(s)) return colors.info;
+  if (['rejected', 'failed', 'suspended', 'blocked', 'unfunded', 'expired', 'duplicate', 'revoked', 'escalated', 'ban', 'critical', 'overdue', 'item_rejected'].includes(s)) return colors.danger;
+  if (['refunded', 'reversed', 'redeemed', 'reward_redeemed'].includes(s)) return colors.primary;
+  return colors.secondary;
+}
+
+function StatusBadge({ status, label: lbl }: { status: string; label?: string }) {
+  return <Badge text={lbl ?? status.replace(/_/g, ' ')} color={statusColor(status)} />;
+}
 
 export default function AcademyDashboardPage() {
   const [data, setData] = useState<AcademyDashboard | null>(null);
@@ -21,11 +36,11 @@ export default function AcademyDashboardPage() {
   const maxAttempts = data ? Math.max(...data.attempts_trend.map((p) => p.value), 1) : 1;
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Spotlight Academy"
         subtitle="Executive overview across learning, assessment, exam readiness, rewards and commerce. RBAC-scoped (academy.*); all state-changes are audit-logged. Money is in ₦ (kobo internally)."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button onClick={load} variant="outline" sm>Refresh</Button>}
       />
       <AcademyTabs active="overview" />
 
@@ -40,13 +55,13 @@ export default function AcademyDashboardPage() {
         {data && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <Kpi label="Active learners" value={data.active_learners.toLocaleString('en-NG')} sub={`${data.active_learners_30d.toLocaleString('en-NG')} (30d)`} accent="#340075" />
+              <Kpi label="Active learners" value={data.active_learners.toLocaleString('en-NG')} sub={`${data.active_learners_30d.toLocaleString('en-NG')} (30d)`} accent={colors.primary} />
               <Kpi label="Mock attempts (30d)" value={data.mock_attempts_30d.toLocaleString('en-NG')} sub={`${data.mock_attempts_today.toLocaleString('en-NG')} today`} />
-              <Kpi label="Exam readiness avg" value={pct(data.exam_readiness_avg)} accent={data.exam_readiness_avg < 0.5 ? '#b91c1c' : '#15803d'} />
-              <Kpi label="Reward spend (30d)" value={formatNaira(data.reward_spend_30d_kobo)} sub={`${formatNaira(data.reward_pool_balance_kobo)} pool balance`} accent="#7c3aed" />
-              <Kpi label="Revenue (30d)" value={formatNaira(data.revenue_30d_kobo)} sub={`${formatNaira(data.revenue_today_kobo)} today`} accent="#15803d" />
+              <Kpi label="Exam readiness avg" value={pct(data.exam_readiness_avg)} accent={data.exam_readiness_avg < 0.5 ? colors.danger : colors.success} />
+              <Kpi label="Reward spend (30d)" value={formatNaira(data.reward_spend_30d_kobo)} sub={`${formatNaira(data.reward_pool_balance_kobo)} pool balance`} accent={colors.primary} />
+              <Kpi label="Revenue (30d)" value={formatNaira(data.revenue_30d_kobo)} sub={`${formatNaira(data.revenue_today_kobo)} today`} accent={colors.success} />
               <Kpi label="Paying learners" value={data.paying_learners.toLocaleString('en-NG')} />
-              <Kpi label="Question items" value={data.question_items_total.toLocaleString('en-NG')} sub={`${data.items_pending_review.toLocaleString('en-NG')} pending review`} accent={data.items_pending_review > 0 ? '#9a3412' : undefined} />
+              <Kpi label="Question items" value={data.question_items_total.toLocaleString('en-NG')} sub={`${data.items_pending_review.toLocaleString('en-NG')} pending review`} accent={data.items_pending_review > 0 ? colors.warning : undefined} />
             </div>
 
             <Card title="Mock attempts (14d)">
@@ -59,14 +74,14 @@ export default function AcademyDashboardPage() {
 
             <Card title="Recent activity">
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th style={th()}>Event</th><th style={th()}>Type</th><th style={th()}>Ref</th><th style={th()}>When</th></tr></thead>
+                <thead><tr><th style={thCell}>Event</th><th style={thCell}>Type</th><th style={thCell}>Ref</th><th style={thCell}>When</th></tr></thead>
                 <tbody>
                   {data.activity.map((a) => (
                     <tr key={a.id}>
-                      <td style={td()}>{a.label}</td>
-                      <td style={td()}><Badge status={a.kind} /></td>
-                      <td style={td()}><code style={{ fontSize: '0.78rem' }}>{a.ref ?? '—'}</code></td>
-                      <td style={td()}>{timeAgo(a.created_at)}</td>
+                      <td style={tdCell}>{a.label}</td>
+                      <td style={tdCell}><StatusBadge status={a.kind} /></td>
+                      <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{a.ref ?? '—'}</code></td>
+                      <td style={tdCell}>{timeAgo(a.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -75,6 +90,6 @@ export default function AcademyDashboardPage() {
           </>
         )}
       </StateBlock>
-    </div>
+    </Page>
   );
 }

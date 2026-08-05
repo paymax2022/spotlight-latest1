@@ -4,21 +4,22 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
+import { colors, tint } from '@/components/ui/vuexy';
 
 // Shared presentational + RBAC helpers for the Paymax Crypto admin console.
 // Matches the marketplace/savings/_ui.tsx light-card inline-style convention.
 // Backend RBAC (guard("crypto.admin")) is authoritative — everything here is a
 // UX-only gate.
 
-export const card = (): CSSProperties => ({ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem', background: '#fff' });
-export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: '0.85rem' });
-export const btnPrimary = (): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: 'none', background: '#340075', color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 });
-export const btnDisabled = (): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: '1px solid #e5e7eb', background: '#f3f4f6', color: '#9ca3af', cursor: 'not-allowed', fontSize: '0.85rem', fontWeight: 600 });
-export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: '#6b7280', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3 });
-export const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: '#374151', fontSize: '0.85rem', borderTop: '1px solid #f3f4f6', verticalAlign: 'top' });
-export const input = (): CSSProperties => ({ padding: '0.4rem 0.55rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem', width: '100%', boxSizing: 'border-box' });
-export const label = (): CSSProperties => ({ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#374151', marginBottom: '0.25rem' });
-export const select = (): CSSProperties => ({ ...input(), background: '#fff', cursor: 'pointer' });
+export const card = (): CSSProperties => ({ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card });
+export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: `1px solid ${colors.inputBorder}`, background: colors.card, cursor: 'pointer', fontSize: '0.85rem' });
+export const btnPrimary = (): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: 'none', background: colors.primary, color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 });
+export const btnDisabled = (): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: `1px solid ${colors.border}`, background: colors.bg, color: colors.muted, cursor: 'not-allowed', fontSize: '0.85rem', fontWeight: 600 });
+export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: colors.muted, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3 });
+export const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: colors.text, fontSize: '0.85rem', borderTop: `1px solid ${colors.border}`, verticalAlign: 'top' });
+export const input = (): CSSProperties => ({ padding: '0.4rem 0.55rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem', fontSize: '0.85rem', width: '100%', boxSizing: 'border-box' });
+export const label = (): CSSProperties => ({ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' });
+export const select = (): CSSProperties => ({ ...input(), background: colors.card, cursor: 'pointer' });
 export const textarea = (): CSSProperties => ({ ...input(), minHeight: '4rem', fontFamily: 'inherit', resize: 'vertical' });
 export const mono = (): CSSProperties => ({ fontFamily: 'monospace', fontSize: '0.8rem' });
 
@@ -35,9 +36,9 @@ export function CryptoTabs({ active }: { active: string }) {
     { href: '/admin/crypto/assets', label: 'Assets', key: 'assets' },
   ];
   return (
-    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>
+    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: `1px solid ${colors.border}`, paddingBottom: '0.5rem' }}>
       {tabs.map((t) => (
-        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : '#374151', background: active === t.key ? '#340075' : '#f3f4f6' }}>{t.label}</Link>
+        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : colors.text, background: active === t.key ? colors.primary : colors.bg }}>{t.label}</Link>
       ))}
     </div>
   );
@@ -48,7 +49,7 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', gap: '1rem', flexWrap: 'wrap' }}>
       <div>
         <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>{title}</h1>
-        {subtitle ? <p style={{ color: '#6b7280', margin: '0.25rem 0 0', fontSize: '0.85rem', maxWidth: 820 }}>{subtitle}</p> : null}
+        {subtitle ? <p style={{ color: colors.muted, margin: '0.25rem 0 0', fontSize: '0.85rem', maxWidth: 820 }}>{subtitle}</p> : null}
       </div>
       {action}
     </div>
@@ -71,26 +72,26 @@ export function Card({ title, children, right }: PropsWithChildren<{ title?: str
 
 export function Kpi({ label: lbl, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
   return (
-    <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.85rem 1rem', background: '#fff' }}>
-      <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: '#6b7280', fontWeight: 600 }}>{lbl}</div>
-      <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: accent ?? '#111827' }}>{value}</div>
-      {sub ? <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.15rem' }}>{sub}</div> : null}
+    <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.85rem 1rem', background: colors.card }}>
+      <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 600 }}>{lbl}</div>
+      <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: accent ?? colors.text }}>{value}</div>
+      {sub ? <div style={{ fontSize: '0.75rem', color: colors.muted, marginTop: '0.15rem' }}>{sub}</div> : null}
     </div>
   );
 }
 
 // Standard loading / empty / error placeholders for every list page.
 export function StateBlock({ loading, error, empty, emptyText = 'No records found.', children }: PropsWithChildren<{ loading: boolean; error: string | null; empty: boolean; emptyText?: string }>) {
-  if (loading) return <p style={{ color: '#6b7280' }}>Loading…</p>;
-  if (error) return <p style={{ color: '#dc2626' }}>{error}</p>;
-  if (empty) return <p style={{ color: '#6b7280' }}>{emptyText}</p>;
+  if (loading) return <p style={{ color: colors.muted }}>Loading…</p>;
+  if (error) return <p style={{ color: colors.danger }}>{error}</p>;
+  if (empty) return <p style={{ color: colors.muted }}>{emptyText}</p>;
   return <>{children}</>;
 }
 
 // Disclosure banner — surfaces the platform invariants operators must respect.
 export function DisclosureNote({ children }: PropsWithChildren) {
   return (
-    <div style={{ border: '1px solid #ddd6fe', background: '#f5f3ff', color: '#5b21b6', borderRadius: '0.5rem', padding: '0.6rem 0.8rem', fontSize: '0.78rem', marginBottom: '1rem' }}>
+    <div style={{ border: `1px solid ${tint(colors.primary, 0.35)}`, background: tint(colors.primary, 0.08), color: colors.primary, borderRadius: '0.5rem', padding: '0.6rem 0.8rem', fontSize: '0.78rem', marginBottom: '1rem' }}>
       {children}
     </div>
   );
@@ -99,7 +100,7 @@ export function DisclosureNote({ children }: PropsWithChildren) {
 // Inline note that a state-change action is recorded to the immutable audit log.
 export function AuditNote({ children }: PropsWithChildren) {
   return (
-    <div style={{ border: '1px solid #fde68a', background: '#fffbeb', color: '#92400e', borderRadius: '0.375rem', padding: '0.4rem 0.6rem', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.5rem' }}>
+    <div style={{ border: `1px solid ${tint(colors.warning, 0.4)}`, background: tint(colors.warning, 0.1), color: colors.warning, borderRadius: '0.375rem', padding: '0.4rem 0.6rem', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.5rem' }}>
       <span aria-hidden style={{ fontWeight: 700 }}>●</span>
       <span>{children ?? 'Every mutating action here is subject to the ledger money-mutation invariants (idempotency key, balanced entries, audit event, fail-closed tier limits).'}</span>
     </div>
@@ -109,7 +110,7 @@ export function AuditNote({ children }: PropsWithChildren) {
 // Red banner: caller lacks the console's permission — reads allowed, writes gated.
 export function PermissionBanner({ permission }: { permission: string }) {
   return (
-    <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#b91c1c', marginBottom: '1.25rem' }}>
+    <div style={{ background: tint(colors.danger, 0.08), border: `1px solid ${tint(colors.danger, 0.4)}`, borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.danger, marginBottom: '1.25rem' }}>
       You lack <code>{permission}</code>. You can view this console but actions are disabled. Backend RBAC is authoritative.
     </div>
   );
@@ -143,40 +144,40 @@ export function fmtUnits(units: number, minorUnitScale: number, symbol?: string)
 
 // AML/risk score chip: green (<40), amber (40-69), red (>=70).
 export function RiskBadge({ score }: { score: number | null | undefined }) {
-  if (score == null) return <span style={{ color: '#9ca3af' }}>—</span>;
-  const c = score >= 70 ? { fg: '#b91c1c', bg: '#fee2e2' } : score >= 40 ? { fg: '#9a3412', bg: '#ffedd5' } : { fg: '#15803d', bg: '#dcfce7' };
+  if (score == null) return <span style={{ color: colors.muted }}>—</span>;
+  const c = score >= 70 ? { fg: colors.danger, bg: tint(colors.danger, 0.12) } : score >= 40 ? { fg: colors.warning, bg: tint(colors.warning, 0.12) } : { fg: colors.success, bg: tint(colors.success, 0.12) };
   return <span style={{ display: 'inline-block', padding: '0.1rem 0.5rem', borderRadius: 9999, fontSize: '0.72rem', fontWeight: 700, color: c.fg, background: c.bg }}>{score}</span>;
 }
 
 // Small flag pill for AML flags / screening tags.
 export function FlagPill({ children }: PropsWithChildren) {
-  return <span style={{ display: 'inline-block', padding: '0.05rem 0.4rem', borderRadius: '0.25rem', fontSize: '0.68rem', fontWeight: 600, color: '#7c2d12', background: '#fff7ed', border: '1px solid #fed7aa', marginRight: '0.25rem', marginBottom: '0.15rem', whiteSpace: 'nowrap' }}>{children}</span>;
+  return <span style={{ display: 'inline-block', padding: '0.05rem 0.4rem', borderRadius: '0.25rem', fontSize: '0.68rem', fontWeight: 600, color: colors.warning, background: tint(colors.warning, 0.1), border: `1px solid ${tint(colors.warning, 0.4)}`, marginRight: '0.25rem', marginBottom: '0.15rem', whiteSpace: 'nowrap' }}>{children}</span>;
 }
 
 // ── Badges ──────────────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, { fg: string; bg: string }> = {
-  filled: { fg: '#15803d', bg: '#dcfce7' },
-  active: { fg: '#15803d', bg: '#dcfce7' },
-  pending: { fg: '#9a3412', bg: '#ffedd5' },
-  failed: { fg: '#b91c1c', bg: '#fee2e2' },
-  reversed: { fg: '#7c3aed', bg: '#ede9fe' },
-  inactive: { fg: '#6b7280', bg: '#f3f4f6' },
-  buy: { fg: '#15803d', bg: '#dcfce7' },
-  sell: { fg: '#9a3412', bg: '#ffedd5' },
+  filled: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  active: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  pending: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  failed: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
+  reversed: { fg: colors.primary, bg: tint(colors.primary, 0.12) },
+  inactive: { fg: colors.muted, bg: tint(colors.secondary, 0.12) },
+  buy: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  sell: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
   // withdrawal state machine
-  requested: { fg: '#9a3412', bg: '#ffedd5' },
-  broadcast: { fg: '#1d4ed8', bg: '#dbeafe' },
-  confirmed: { fg: '#15803d', bg: '#dcfce7' },
+  requested: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  broadcast: { fg: colors.info, bg: tint(colors.info, 0.12) },
+  confirmed: { fg: colors.success, bg: tint(colors.success, 0.12) },
   // address / recon review
-  approved: { fg: '#15803d', bg: '#dcfce7' },
-  rejected: { fg: '#b91c1c', bg: '#fee2e2' },
-  ok: { fg: '#15803d', bg: '#dcfce7' },
-  break: { fg: '#b91c1c', bg: '#fee2e2' },
+  approved: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  rejected: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
+  ok: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  break: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
 };
 
 export function StatusBadge({ status }: { status: string }) {
-  const c = STATUS_COLORS[status] ?? { fg: '#374151', bg: '#f3f4f6' };
+  const c = STATUS_COLORS[status] ?? { fg: colors.text, bg: tint(colors.secondary, 0.12) };
   return <span style={{ display: 'inline-block', padding: '0.1rem 0.5rem', borderRadius: 9999, fontSize: '0.72rem', fontWeight: 600, color: c.fg, background: c.bg, textTransform: 'capitalize', whiteSpace: 'nowrap' }}>{String(status).replace(/_/g, ' ')}</span>;
 }
 

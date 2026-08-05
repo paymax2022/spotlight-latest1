@@ -12,6 +12,7 @@ import type { Transfer } from '@/types/transfersAdmin';
 import { RETRYABLE_STATUSES, REVERSIBLE_STATUSES } from '@/types/transfersAdmin';
 import { PageHeader, Card, BackLink, btn, btnPrimary, btnDisabled, useTransfersPermissions } from '../_ui';
 import { StatusBadge, ProviderBadge } from '../statusBadge';
+import { Page, colors } from '@/components/ui/vuexy';
 
 type ActionKind = 'retry' | 'reverse';
 
@@ -19,7 +20,7 @@ function Field({ label, children, mono }: { label: string; children: React.React
   return (
     <div>
       <div style={{ fontSize: '0.72rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: '0.9rem', color: '#111827', fontFamily: mono ? 'monospace' : 'inherit', wordBreak: 'break-all' }}>{children}</div>
+      <div style={{ fontSize: '0.9rem', color: colors.text, fontFamily: mono ? 'monospace' : 'inherit', wordBreak: 'break-all' }}>{children}</div>
     </div>
   );
 }
@@ -31,7 +32,7 @@ function LedgerList({ title, ids }: { title: string; ids?: string[] }) {
       <div style={{ fontSize: '0.72rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>{title}</div>
       <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
         {ids.map((id) => (
-          <span key={id} style={{ fontFamily: 'monospace', fontSize: '0.78rem', background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '0.375rem', padding: '0.15rem 0.5rem' }}>{id}</span>
+          <span key={id} style={{ fontFamily: 'monospace', fontSize: '0.78rem', background: '#f3f4f6', border: `1px solid ${colors.border}`, borderRadius: '0.375rem', padding: '0.15rem 0.5rem' }}>{id}</span>
         ))}
       </div>
     </div>
@@ -78,13 +79,13 @@ export default function TransferDetailPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <div style={{ marginBottom: '0.75rem' }}><BackLink /></div>
 
       {loading ? (
-        <p style={{ color: '#6b7280' }}>Loading transfer…</p>
+        <p style={{ color: colors.muted }}>Loading transfer…</p>
       ) : !transfer ? (
-        <p style={{ color: '#dc2626' }}>{error ?? 'Transfer not found.'}</p>
+        <p style={{ color: colors.danger }}>{error ?? 'Transfer not found.'}</p>
       ) : (
         <>
           <PageHeader
@@ -93,7 +94,7 @@ export default function TransferDetailPage() {
             action={<StatusBadge status={transfer.status} />}
           />
 
-          {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+          {error && <p style={{ color: colors.danger }}>{error}</p>}
 
           <Card title="Transfer">
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
@@ -118,7 +119,7 @@ export default function TransferDetailPage() {
 
           {transfer.type === 'bank_to_bank' && (
             <Card title="Settlement legs (bank → bank)">
-              <p style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 0 }}>
+              <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: 0 }}>
                 A bank-to-bank transfer settles in two ledger legs: the inbound funding leg, then the outbound payout leg.
               </p>
               <LedgerList title="Funding leg" ids={transfer.funding_ledger_entry_ids} />
@@ -136,7 +137,7 @@ export default function TransferDetailPage() {
           <Card title="Provider response">
             <Field label="Provider transfer ref" mono>{transfer.provider_transfer_ref || '—'}</Field>
             <div style={{ marginTop: '0.75rem' }}>
-              <div style={{ fontSize: '0.72rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>Raw response</div>
+              <div style={{ fontSize: '0.72rem', color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>Raw response</div>
               <pre style={{ background: '#0f172a', color: '#e2e8f0', borderRadius: '0.5rem', padding: '0.75rem', fontSize: '0.78rem', overflowX: 'auto', margin: 0 }}>
                 {transfer.provider_response ? JSON.stringify(JSON.parse(transfer.provider_response), null, 2) : '— no provider response yet —'}
               </pre>
@@ -151,7 +152,7 @@ export default function TransferDetailPage() {
             </div>
 
             {!canManage && (
-              <p style={{ fontSize: '0.8rem', color: '#b91c1c', marginTop: 0 }}>
+              <p style={{ fontSize: '0.8rem', color: colors.danger, marginTop: 0 }}>
                 You lack <code>finance.admin.transfers</code> — actions are disabled.
               </p>
             )}
@@ -185,7 +186,7 @@ export default function TransferDetailPage() {
             <h2 style={{ fontWeight: 700, marginTop: 0, marginBottom: '0.75rem' }}>
               {action === 'retry' ? 'Retry transfer' : 'Reverse transfer'}
             </h2>
-            <p style={{ fontSize: '0.85rem', color: '#374151', marginTop: 0 }}>
+            <p style={{ fontSize: '0.85rem', color: colors.text, marginTop: 0 }}>
               {action === 'retry' ? (
                 <>You are about to <strong>re-attempt</strong> transfer <code>{transfer.reference}</code> for{' '}
                   <strong>{formatKobo(transfer.amount_kobo)}</strong>. This moves money — the provider may fail over to
@@ -205,12 +206,12 @@ export default function TransferDetailPage() {
                   onChange={(e) => setReason(e.target.value)}
                   rows={3}
                   placeholder="e.g. provider returned account-name mismatch; reversing to wallet"
-                  style={{ display: 'block', width: '100%', marginTop: '0.25rem', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', resize: 'vertical', boxSizing: 'border-box' }}
+                  style={{ display: 'block', width: '100%', marginTop: '0.25rem', padding: '0.5rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem', resize: 'vertical', boxSizing: 'border-box' }}
                 />
               </label>
             )}
 
-            {error && <p style={{ color: '#dc2626', fontSize: '0.85rem', marginBottom: '0.75rem' }}>{error}</p>}
+            {error && <p style={{ color: colors.danger, fontSize: '0.85rem', marginBottom: '0.75rem' }}>{error}</p>}
 
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
               <button onClick={() => { setAction(null); setReason(''); setError(null); }} style={btn()}>Cancel</button>
@@ -221,6 +222,6 @@ export default function TransferDetailPage() {
           </div>
         </div>
       )}
-    </div>
+    </Page>
   );
 }

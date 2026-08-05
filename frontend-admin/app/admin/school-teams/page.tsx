@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { createStemSchoolTeam, listStemSchoolTeams } from '@/services/stemService';
 import type { StemSchoolTeam } from '@/types/stem';
+import { Page, PageHeader, Card, Button, Input, colors } from '@/components/ui/vuexy';
 
 export default function AdminSchoolTeamsPage() {
   const [rows, setRows] = useState<StemSchoolTeam[]>([]);
@@ -28,23 +29,24 @@ export default function AdminSchoolTeamsPage() {
   }
 
   return (
-    <section>
-      <h1>School Teams</h1>
-      <p>Teams created under school channel.</p>
-      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-        <input placeholder="School ID" value={schoolId} onChange={(e) => setSchoolId(e.target.value)} />
-        <input placeholder="Team name" value={teamName} onChange={(e) => setTeamName(e.target.value)} />
-        <button type="button" onClick={() => void onCreate()}>Create Team</button>
-      </div>
-      <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+    <Page>
+      <PageHeader title="School Teams" subtitle="Teams created under school channel." />
+      <Card style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Input placeholder="School ID" value={schoolId} onChange={(e) => setSchoolId(e.target.value)} />
+          <Input placeholder="Team name" value={teamName} onChange={(e) => setTeamName(e.target.value)} />
+          <Button variant="primary" onClick={() => void onCreate()}>Create Team</Button>
+        </div>
+      </Card>
+      <div style={{ display: 'grid', gap: 8 }}>
         {rows.map((row) => (
-          <article key={row.id || `${row.schoolId}-${row.teamName}`} style={{ border: '1px solid #2a2a2a', padding: 10 }}>
+          <Card key={row.id || `${row.schoolId}-${row.teamName}`} style={{ padding: 10 }}>
             <p style={{ margin: 0, fontWeight: 700 }}>{row.teamName}</p>
-            <p style={{ margin: '4px 0 0 0', fontSize: 12 }}>School ID: {row.schoolId}</p>
-          </article>
+            <p style={{ margin: '4px 0 0 0', fontSize: 12, color: colors.muted }}>School ID: {row.schoolId}</p>
+          </Card>
         ))}
-        {rows.length === 0 ? <p>No school teams found yet.</p> : null}
+        {rows.length === 0 ? <p style={{ color: colors.muted }}>No school teams found yet.</p> : null}
       </div>
-    </section>
+    </Page>
   );
 }

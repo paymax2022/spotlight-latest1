@@ -12,7 +12,14 @@ import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { listMarketListings, haltListing, getMarketControls, setMarketControls } from '@/services/fractionalreAdminService';
 import type { SecondaryListing, MarketControls } from '@/types/fractionalreAdmin';
-import { PageHeader, FractionalReTabs, Card, Badge, btn, btnPrimary, th, td, input, label, money, timeAgo } from '../_ui';
+import { FractionalReTabs, money, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const STATUS_COLOR: Record<string, string> = {
+  active: colors.success, halted: colors.danger, closed: colors.secondary, pending: colors.warning, matched: colors.secondary,
+};
+
+const labelStyle = { fontSize: '0.78rem', fontWeight: 600, color: colors.text, display: 'block', marginBottom: 4 } as const;
 
 export default function MarketPage() {
   const [listings, setListings] = useState<SecondaryListing[]>([]);
@@ -56,61 +63,65 @@ export default function MarketPage() {
     catch (e) { setError(String(e)); } finally { setBusy(null); }
   }
 
-  const stateLabel = (): CSSProperties => ({ fontSize: '0.72rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.4, display: 'block', marginBottom: 2 });
-  const stateValue = (): CSSProperties => ({ fontSize: '0.95rem', fontWeight: 600, color: '#111827' });
+  const stateLabel = (): CSSProperties => ({ fontSize: '0.72rem', color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.4, display: 'block', marginBottom: 2 });
+  const stateValue = (): CSSProperties => ({ fontSize: '0.95rem', fontWeight: 600, color: colors.text });
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Secondary market" subtitle="Listings oversight, NAV sanity and market controls." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Secondary market" subtitle="Listings oversight, NAV sanity and market controls." actions={<Button onClick={load}>Refresh</Button>} />
       <FractionalReTabs active="market" />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-      {msg && <p style={{ color: '#15803d' }}>{msg}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      {msg && <p style={{ color: colors.success }}>{msg}</p>}
 
-      {loading ? <p style={{ color: '#6b7280' }}>Loading market…</p> : (
+      {loading ? <p style={{ color: colors.muted }}>Loading market…</p> : (
         <>
-          <Card title="Market controls" right={controls ? <Badge status={controls.tradingPaused ? 'halted' : 'active'} label={controls.tradingPaused ? 'paused' : 'live'} /> : <Badge status="draft" label="unknown" />}>
+          <Card>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Market controls</h2>
+              {controls ? <Badge text={controls.tradingPaused ? 'paused' : 'live'} color={controls.tradingPaused ? colors.danger : colors.success} /> : <Badge text="unknown" color={colors.secondary} />}
+            </div>
             {/* Current state (read-only) — shown before the mutation controls. */}
-            <div style={{ display: 'flex', gap: '2.5rem', flexWrap: 'wrap', marginBottom: '1rem', paddingBottom: '0.85rem', borderBottom: '1px solid #f3f4f6' }}>
-              <div><span style={stateLabel()}>Trading</span><span style={stateValue()}>{controls ? <Badge status={controls.tradingPaused ? 'halted' : 'active'} label={controls.tradingPaused ? 'paused' : 'enabled'} /> : '—'}</span></div>
+            <div style={{ display: 'flex', gap: '2.5rem', flexWrap: 'wrap', marginBottom: '1rem', paddingBottom: '0.85rem', borderBottom: `1px solid ${colors.border}` }}>
+              <div><span style={stateLabel()}>Trading</span><span style={stateValue()}>{controls ? <Badge text={controls.tradingPaused ? 'paused' : 'enabled'} color={controls.tradingPaused ? colors.danger : colors.success} /> : '—'}</span></div>
               <div><span style={stateLabel()}>Secondary fee</span><span style={stateValue()}>{controls ? `${controls.secondaryFeeBps} bps` : '—'}</span></div>
               <div><span style={stateLabel()}>Price band vs NAV</span><span style={stateValue()}>{controls ? `±${controls.priceBandPct}%` : '—'}</span></div>
               <div><span style={stateLabel()}>Paused assets</span><span style={stateValue()}>{controls ? controls.pausedAssetIds.length : '—'}</span></div>
             </div>
             {controls ? (
               <div style={{ display: 'flex', gap: '1rem', alignItems: 'end', flexWrap: 'wrap' }}>
-                <div style={{ width: 160 }}><label style={label()}>Secondary fee (bps)</label><input value={feeBps} onChange={(e) => setFeeBps(e.target.value)} style={input()} /></div>
-                <div style={{ width: 160 }}><label style={label()}>Price band (% vs NAV)</label><input value={bandPct} onChange={(e) => setBandPct(e.target.value)} style={input()} /></div>
-                <button onClick={saveControls} disabled={busy === 'controls'} style={btnPrimary()}>Save controls</button>
-                <button onClick={togglePause} disabled={busy === 'pause'} style={btnPrimary(controls.tradingPaused ? '#16a34a' : '#dc2626')}>{controls.tradingPaused ? 'Resume trading' : 'Pause trading'}</button>
+                <div style={{ width: 160 }}><label style={labelStyle}>Secondary fee (bps)</label><Input value={feeBps} onChange={(e) => setFeeBps(e.target.value)} /></div>
+                <div style={{ width: 160 }}><label style={labelStyle}>Price band (% vs NAV)</label><Input value={bandPct} onChange={(e) => setBandPct(e.target.value)} /></div>
+                <Button variant="primary" onClick={saveControls} disabled={busy === 'controls'}>Save controls</Button>
+                <Button variant={controls.tradingPaused ? 'primary' : 'danger'} onClick={togglePause} disabled={busy === 'pause'}>{controls.tradingPaused ? 'Resume trading' : 'Pause trading'}</Button>
               </div>
             ) : (
-              <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: 0 }}>Current control state could not be read (the backend may not expose GET /market/controls yet). Mutations are disabled until the state loads — refresh once the backend is updated.</p>
+              <p style={{ fontSize: '0.8rem', color: colors.muted, margin: 0 }}>Current control state could not be read (the backend may not expose GET /market/controls yet). Mutations are disabled until the state loads — refresh once the backend is updated.</p>
             )}
           </Card>
 
           <Card title="Active listings">
-            {listings.length === 0 ? <p style={{ color: '#6b7280' }}>No listings.</p> : (
+            {listings.length === 0 ? <p style={{ color: colors.muted }}>No listings.</p> : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th style={th()}>Asset</th><th style={th()}>Seller</th><th style={th()}>Units</th><th style={th()}>Ask / unit</th><th style={th()}>NAV / unit</th><th style={th()}>Premium</th><th style={th()}>Status</th><th style={th()} /></tr></thead>
+                <thead><tr><th style={thCell}>Asset</th><th style={thCell}>Seller</th><th style={thCell}>Units</th><th style={thCell}>Ask / unit</th><th style={thCell}>NAV / unit</th><th style={thCell}>Premium</th><th style={thCell}>Status</th><th style={thCell} /></tr></thead>
                 <tbody>{listings.map((l) => {
                   const flagged = controls ? Math.abs(l.pricePremiumPct) > controls.priceBandPct : false;
                   return (
                     <tr key={l.id}>
-                      <td style={td()}>{l.assetName}</td><td style={td()}>{l.sellerName}</td><td style={td()}>{l.units}</td>
-                      <td style={td()}>{money(l.askPriceKobo)}</td><td style={td()}>{money(l.navPriceKobo)}</td>
-                      <td style={{ ...td(), color: flagged ? '#dc2626' : '#15803d', fontWeight: flagged ? 700 : 400 }}>{l.pricePremiumPct > 0 ? '+' : ''}{l.pricePremiumPct}%{flagged ? ' ⚠' : ''}</td>
-                      <td style={td()}><Badge status={l.status} /></td>
-                      <td style={td()}>{l.status === 'active' ? <button disabled={busy === l.id} onClick={() => halt(l.id)} style={btnPrimary('#dc2626')}>Halt</button> : '—'}</td>
+                      <td style={tdCell}>{l.assetName}</td><td style={tdCell}>{l.sellerName}</td><td style={tdCell}>{l.units}</td>
+                      <td style={tdCell}>{money(l.askPriceKobo)}</td><td style={tdCell}>{money(l.navPriceKobo)}</td>
+                      <td style={{ ...tdCell, color: flagged ? colors.danger : colors.success, fontWeight: flagged ? 700 : 400 }}>{l.pricePremiumPct > 0 ? '+' : ''}{l.pricePremiumPct}%{flagged ? ' ⚠' : ''}</td>
+                      <td style={tdCell}><Badge text={l.status} color={STATUS_COLOR[l.status.toLowerCase()] ?? colors.secondary} /></td>
+                      <td style={tdCell}>{l.status === 'active' ? <Button variant="danger" sm disabled={busy === l.id} onClick={() => halt(l.id)}>Halt</Button> : '—'}</td>
                     </tr>
                   );
                 })}</tbody>
               </table>
             )}
-            <p style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.6rem', marginBottom: 0 }}>{controls ? `Listings outside the ±${controls.priceBandPct}% NAV band are flagged ⚠ for review.` : 'NAV-band flagging unavailable until market controls load.'}</p>
+            <p style={{ fontSize: '0.75rem', color: colors.muted, marginTop: '0.6rem', marginBottom: 0 }}>{controls ? `Listings outside the ±${controls.priceBandPct}% NAV band are flagged ⚠ for review.` : 'NAV-band flagging unavailable until market controls load.'}</p>
           </Card>
-          {listings.length > 0 && <p style={{ fontSize: '0.72rem', color: '#9ca3af' }}>Last listed activity: {timeAgo(listings[0].listedAt)}.</p>}
+          {listings.length > 0 && <p style={{ fontSize: '0.72rem', color: colors.muted }}>Last listed activity: {timeAgo(listings[0].listedAt)}.</p>}
         </>
       )}
-    </div>
+    </Page>
   );
 }

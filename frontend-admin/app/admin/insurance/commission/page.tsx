@@ -8,6 +8,7 @@ import {
   PageHeader, InsuranceTabs, Card, Kpi, Badge, DisclosureNote, StateBlock,
   btn, th, td, label, select, fmtDate,
 } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 const PROVIDERS = ['all', 'mycover', 'octamile'];
 const RECONCILED = ['all', 'reconciled', 'unreconciled'];
@@ -51,9 +52,9 @@ export default function InsuranceCommissionPage() {
       </DisclosureNote>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-        <Kpi label="Total commission" value={formatNaira(totalCommission)} accent="#340075" />
-        <Kpi label="Reconciled" value={String(reconciledCount)} sub={`of ${list.length} entries`} accent="#15803d" />
-        <Kpi label="Reversed" value={String(reversedCount)} accent={reversedCount > 0 ? '#7c3aed' : undefined} />
+        <Kpi label="Total commission" value={formatNaira(totalCommission)} accent={colors.primary} />
+        <Kpi label="Reconciled" value={String(reconciledCount)} sub={`of ${list.length} entries`} accent={colors.success} />
+        <Kpi label="Reversed" value={String(reversedCount)} accent={reversedCount > 0 ? colors.primary : undefined} />
       </div>
 
       <Card title="Commission entries" right={
@@ -86,9 +87,9 @@ export default function InsuranceCommissionPage() {
                   <tr key={c.id}>
                     <td style={td()}><code style={{ fontSize: '0.78rem' }}>{c.id}</code></td>
                     <td style={td()}>
-                      <Link href={`/admin/insurance/policies/${c.policy_id}`} style={{ color: '#340075', textDecoration: 'none' }}>{c.policy_id}</Link>
+                      <Link href={`/admin/insurance/policies/${c.policy_id}`} style={{ color: colors.primary, textDecoration: 'none' }}>{c.policy_id}</Link>
                     </td>
-                    <td style={td()}><code style={{ fontSize: '0.72rem', color: '#6b7280' }}>{c.premium_transaction_id}</code></td>
+                    <td style={td()}><code style={{ fontSize: '0.72rem', color: colors.muted }}>{c.premium_transaction_id}</code></td>
                     <td style={td()}><Badge status={c.provider} /></td>
                     <td style={td()}>{formatNaira(c.commission_amount_kobo)}</td>
                     <td style={td()}>{c.commission_basis}</td>

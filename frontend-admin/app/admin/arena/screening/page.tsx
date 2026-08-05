@@ -8,15 +8,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { listCompetitions, listScreening, decideScreening } from '@/services/arenaAdminService';
 import type { Competition, ScreeningItem, ScreeningDecision } from '@/types/arenaAdmin';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 import {
-  PageHeader, Card, btn, btnPrimary, btnDisabled, th, td, inputStyle, selectStyle, mono,
-  timeAgo, AuditNote, PermissionBanner, Pill, ARENA_PERMS, useArenaPermission,
+  mono, timeAgo, AuditNote, PermissionBanner, ARENA_PERMS, useArenaPermission,
 } from '../_ui';
 
-const DECISIONS: { value: ScreeningDecision; label: string; color: string }[] = [
-  { value: 'APPROVE', label: 'Approve', color: '#15803d' },
-  { value: 'REQUEST_INFO', label: 'Request info', color: '#9a3412' },
-  { value: 'REJECT', label: 'Reject', color: '#b91c1c' },
+const DECISIONS: { value: ScreeningDecision; label: string; variant: 'primary' | 'danger' | 'outline'; color: string }[] = [
+  { value: 'APPROVE', label: 'Approve', variant: 'primary', color: colors.success },
+  { value: 'REQUEST_INFO', label: 'Request info', variant: 'outline', color: colors.warning },
+  { value: 'REJECT', label: 'Reject', variant: 'danger', color: colors.danger },
 ];
 
 export default function ArenaScreeningPage() {
@@ -59,57 +59,57 @@ export default function ArenaScreeningPage() {
   }, [open, reason, decision, competitionId, load]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Arena — Screening Review Queue (A2)"
         subtitle="Applications in your reviewer scope. Approve / Request info / Reject (reason required) → guarded transition. RBAC: arena.reviewer.screen."
-        action={
+        actions={
           <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <select value={competitionId} onChange={(e) => setCompetitionId(e.target.value)} style={selectStyle()}>
+            <select value={competitionId} onChange={(e) => setCompetitionId(e.target.value)}>
               {competitions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <button onClick={() => void load()} style={btn()}>Refresh</button>
+            <Button variant="outline" onClick={() => void load()}>Refresh</Button>
           </div>
         }
       />
 
       {!allowed && <PermissionBanner permission={ARENA_PERMS.reviewer} />}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-      {notice && <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#166534', marginBottom: '1.25rem' }}>{notice}</div>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      {notice && <div style={{ background: tint(colors.success, 0.12), border: `1px solid ${tint(colors.success, 0.35)}`, borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.success, marginBottom: '1.25rem' }}>{notice}</div>}
 
-      <Card title="Queue">
+      <Card title="Queue" style={{ marginBottom: 20 }}>
         {loading ? (
-          <p style={{ color: '#6b7280' }}>Loading queue…</p>
+          <p style={{ color: colors.muted }}>Loading queue…</p>
         ) : rows.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No applications awaiting screening in your scope.</p>
+          <p style={{ color: colors.muted }}>No applications awaiting screening in your scope.</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>Applicant</th>
-                  <th style={th()}>Home state</th>
-                  <th style={th()}>Flags</th>
-                  <th style={th()}>Rubric</th>
-                  <th style={th()}>Submitted</th>
-                  <th style={th()}>Review</th>
+                  <th style={thCell}>Applicant</th>
+                  <th style={thCell}>Home state</th>
+                  <th style={thCell}>Flags</th>
+                  <th style={thCell}>Rubric</th>
+                  <th style={thCell}>Submitted</th>
+                  <th style={thCell}>Review</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.contestant_id}>
-                    <td style={td()}>
+                    <td style={tdCell}>
                       {r.full_name ?? '—'}
-                      <div style={{ ...mono(), color: '#9ca3af' }}>{r.user_id}</div>
+                      <div style={{ ...mono(), color: colors.muted }}>{r.user_id}</div>
                     </td>
-                    <td style={td()}>{r.home_state}</td>
-                    <td style={td()}>
-                      {(r.flags ?? []).length === 0 ? <span style={{ color: '#9ca3af' }}>—</span> : (r.flags ?? []).map((f) => <Pill key={f} fg="#9a3412" bg="#ffedd5">{f}</Pill>)}
+                    <td style={tdCell}>{r.home_state}</td>
+                    <td style={tdCell}>
+                      {(r.flags ?? []).length === 0 ? <span style={{ color: colors.muted }}>—</span> : (r.flags ?? []).map((f) => <Badge key={f} text={f} color={colors.warning} />)}
                     </td>
-                    <td style={{ ...td(), ...mono() }}>{r.rubric_version ?? '—'}</td>
-                    <td style={td()}>{timeAgo(r.submitted_at)}</td>
-                    <td style={td()}>
-                      <button onClick={() => { setOpen(r); setNotice(null); }} style={btn()} disabled={!allowed}>Open</button>
+                    <td style={{ ...tdCell, ...mono() }}>{r.rubric_version ?? '—'}</td>
+                    <td style={tdCell}>{timeAgo(r.submitted_at)}</td>
+                    <td style={tdCell}>
+                      <Button variant="outline" onClick={() => { setOpen(r); setNotice(null); }} disabled={!allowed}>Open</Button>
                     </td>
                   </tr>
                 ))}
@@ -120,7 +120,11 @@ export default function ArenaScreeningPage() {
       </Card>
 
       {open && (
-        <Card title={`Application — ${open.full_name ?? open.contestant_id}`} right={<button onClick={() => setOpen(null)} style={btn()}>Close</button>}>
+        <Card>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Application — {open.full_name ?? open.contestant_id}</h2>
+            <Button variant="outline" onClick={() => setOpen(null)}>Close</Button>
+          </div>
           <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginBottom: '0.75rem' }}>
             <Field label="Contestant" value={open.contestant_id} mono />
             <Field label="User" value={open.user_id} mono />
@@ -128,48 +132,48 @@ export default function ArenaScreeningPage() {
             <Field label="Rubric version" value={open.rubric_version ?? '—'} mono />
           </div>
 
-          <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0.5rem 0 0.25rem', fontWeight: 600 }}>Documents (signed-URL refs — access logged)</p>
+          <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0.5rem 0 0.25rem', fontWeight: 600 }}>Documents (signed-URL refs — access logged)</p>
           <div style={{ display: 'grid', gap: 6, marginBottom: '0.75rem' }}>
-            {(open.document_refs ?? []).length === 0 ? <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>No documents.</span> : (open.document_refs ?? []).map((d) => (
+            {(open.document_refs ?? []).length === 0 ? <span style={{ color: colors.muted, fontSize: '0.85rem' }}>No documents.</span> : (open.document_refs ?? []).map((d) => (
               <div key={d.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: '0.85rem' }}>
-                <Pill fg="#374151" bg="#f3f4f6">{d.kind}</Pill>
+                <Badge text={d.kind} color={colors.secondary} />
                 <span>{d.label ?? d.kind}</span>
-                <span style={{ ...mono(), color: '#9ca3af' }}>{d.id}</span>
+                <span style={{ ...mono(), color: colors.muted }}>{d.id}</span>
               </div>
             ))}
           </div>
 
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: '#6b7280' }}>
+            <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: colors.muted }}>
               Decision
-              <select value={decision} onChange={(e) => setDecision(e.target.value as ScreeningDecision)} style={selectStyle()} disabled={!allowed}>
+              <select value={decision} onChange={(e) => setDecision(e.target.value as ScreeningDecision)} disabled={!allowed}>
                 {DECISIONS.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
               </select>
             </label>
-            <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: '#6b7280', flex: 1, minWidth: 260 }}>
+            <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: colors.muted, flex: 1, minWidth: 260 }}>
               Reason (required)
-              <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Basis for the decision…" style={inputStyle()} disabled={!allowed} />
+              <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Basis for the decision…" disabled={!allowed} />
             </label>
-            <button
+            <Button
+              variant={DECISIONS.find((d) => d.value === decision)?.variant ?? 'primary'}
               onClick={() => void submit()}
-              style={allowed && reason.trim() && !busy ? btnPrimary(DECISIONS.find((d) => d.value === decision)?.color) : btnDisabled()}
               disabled={!allowed || !reason.trim() || busy}
             >
               {busy ? 'Submitting…' : 'Submit decision'}
-            </button>
+            </Button>
           </div>
           <AuditNote>Decisions are guarded transitions with atomic side effects (Approve → SCREENED / TRAINED-eligible, notify) and are audited.</AuditNote>
         </Card>
       )}
-    </div>
+    </Page>
   );
 }
 
 function Field({ label, value, mono: isMono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
-      <div style={{ fontSize: '0.72rem', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.3 }}>{label}</div>
-      <div style={{ fontSize: '0.9rem', color: '#374151', fontFamily: isMono ? 'monospace' : undefined }}>{value}</div>
+      <div style={{ fontSize: '0.72rem', color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.3 }}>{label}</div>
+      <div style={{ fontSize: '0.9rem', color: colors.text, fontFamily: isMono ? 'monospace' : undefined }}>{value}</div>
     </div>
   );
 }

@@ -4,15 +4,16 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { getCompetitionOverview } from '@/services/competitionsService';
 import type { CompetitionOverview } from '@/types/competitions';
+import { Page, PageHeader, colors } from '@/components/ui/vuexy';
 
 export default function AdminCompetitionsPage() {
   const [data, setData] = useState<CompetitionOverview | null>(null);
   useEffect(() => { void getCompetitionOverview().then(setData); }, []);
 
   return (
-    <div>
-      <h1>Competitions Overview</h1>
-      {!data ? <p>Loading...</p> : (
+    <Page>
+      <PageHeader title="Competitions Overview" />
+      {!data ? <p style={{ color: colors.muted }}>Loading...</p> : (
         <div style={{ display: 'grid', gap: 8 }}>
           <p>Total: {data.totalContests}</p>
           <p>Reality TV: {data.realityTvContests}</p>
@@ -23,6 +24,6 @@ export default function AdminCompetitionsPage() {
           </p>
         </div>
       )}
-    </div>
+    </Page>
   );
 }

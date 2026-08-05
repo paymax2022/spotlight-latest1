@@ -4,20 +4,16 @@ import { useEffect, useState } from 'react';
 import { listPromotions, formatNaira } from '@/services/staysAdminService';
 import type { Promotion } from '@/types/staysAdmin';
 import {
-  PageHeader,
   StaysTabs,
-  Card,
   Kpi,
   Badge,
   FilterBar,
   StateBlock,
-  btn,
-  th,
-  td,
   select,
   label,
   fmtDate,
 } from '../_ui';
+import { Page, PageHeader, Card, Button, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 function formatValue(p: Promotion): string {
   switch (p.type) {
@@ -48,16 +44,16 @@ export default function StaysPromotionsPage() {
   const totalBudget = rows.reduce((s, p) => s + p.budget_kobo, 0);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Promotions & campaigns"
         subtitle="Discount codes, cashback and free-night campaigns with budget utilization tracking."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="growth" />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-        <Kpi label="Active campaigns" value={activeCount.toLocaleString('en-NG')} accent="#15803d" />
+        <Kpi label="Active campaigns" value={activeCount.toLocaleString('en-NG')} accent={colors.success} />
         <Kpi label="Total spent" value={formatNaira(totalSpent)} />
         <Kpi label="Total budget" value={formatNaira(totalBudget)} />
       </div>
@@ -81,15 +77,15 @@ export default function StaysPromotionsPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th style={th()}>Code</th>
-                <th style={th()}>Name</th>
-                <th style={th()}>Type</th>
-                <th style={th()}>Value</th>
-                <th style={th()}>Scope</th>
-                <th style={th()}>Status</th>
-                <th style={th()}>Redemptions</th>
-                <th style={th()}>Spent / Budget</th>
-                <th style={th()}>Window</th>
+                <th style={thCell}>Code</th>
+                <th style={thCell}>Name</th>
+                <th style={thCell}>Type</th>
+                <th style={thCell}>Value</th>
+                <th style={thCell}>Scope</th>
+                <th style={thCell}>Status</th>
+                <th style={thCell}>Redemptions</th>
+                <th style={thCell}>Spent / Budget</th>
+                <th style={thCell}>Window</th>
               </tr>
             </thead>
             <tbody>
@@ -98,21 +94,21 @@ export default function StaysPromotionsPage() {
                 const utilPct = Math.min(util * 100, 100);
                 return (
                   <tr key={p.id}>
-                    <td style={td()}><code style={{ fontSize: '0.78rem' }}>{p.code}</code></td>
-                    <td style={td()}>{p.name}</td>
-                    <td style={td()}><Badge status={p.type} label={p.type.replace(/_/g, ' ')} /></td>
-                    <td style={td()}>{formatValue(p)}</td>
-                    <td style={td()}>{p.scope}</td>
-                    <td style={td()}><Badge status={p.status} /></td>
-                    <td style={td()}>{p.redemptions.toLocaleString('en-NG')}</td>
-                    <td style={td()}>
+                    <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{p.code}</code></td>
+                    <td style={tdCell}>{p.name}</td>
+                    <td style={tdCell}><Badge status={p.type} label={p.type.replace(/_/g, ' ')} /></td>
+                    <td style={tdCell}>{formatValue(p)}</td>
+                    <td style={tdCell}>{p.scope}</td>
+                    <td style={tdCell}><Badge status={p.status} /></td>
+                    <td style={tdCell}>{p.redemptions.toLocaleString('en-NG')}</td>
+                    <td style={tdCell}>
                       <div style={{ fontSize: '0.8rem' }}>{formatNaira(p.spent_kobo)} / {formatNaira(p.budget_kobo)}</div>
-                      <div style={{ marginTop: 4, height: 6, width: 140, background: '#f3f4f6', borderRadius: 3, overflow: 'hidden' }}>
-                        <div style={{ height: '100%', width: `${utilPct}%`, background: util >= 0.9 ? '#b91c1c' : '#340075', borderRadius: 3 }} title={`${(util * 100).toFixed(1)}% used`} />
+                      <div style={{ marginTop: 4, height: 6, width: 140, background: tint(colors.muted, 0.12), borderRadius: 3, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${utilPct}%`, background: util >= 0.9 ? colors.danger : colors.primary, borderRadius: 3 }} title={`${(util * 100).toFixed(1)}% used`} />
                       </div>
-                      <div style={{ fontSize: '0.7rem', color: '#9ca3af', marginTop: 2 }}>{(util * 100).toFixed(1)}% used</div>
+                      <div style={{ fontSize: '0.7rem', color: colors.muted, marginTop: 2 }}>{(util * 100).toFixed(1)}% used</div>
                     </td>
-                    <td style={td()}>{fmtDate(p.starts_at)} → {fmtDate(p.ends_at)}</td>
+                    <td style={tdCell}>{fmtDate(p.starts_at)} → {fmtDate(p.ends_at)}</td>
                   </tr>
                 );
               })}
@@ -120,6 +116,6 @@ export default function StaysPromotionsPage() {
           </table>
         </Card>
       </StateBlock>
-    </div>
+    </Page>
   );
 }

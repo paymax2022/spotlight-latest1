@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { listEvents, formatNaira } from '@/services/eventsAdminService';
 import type { EventSummary } from '@/types/eventsAdmin';
 import { PageHeader, EventsTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, btn, th, td, input, label, select, fmtDate, pct } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function EventsCatalogPage() {
   const [rows, setRows] = useState<EventSummary[]>([]);
@@ -58,17 +59,17 @@ export default function EventsCatalogPage() {
               {rows.map((r) => (
                 <tr key={r.id}>
                   <td style={td()}>
-                    <Link href={`/admin/events/events/${r.id}`} style={{ color: '#340075', fontWeight: 600, textDecoration: 'none' }}>{r.title}</Link>
-                    <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.id}</div>
+                    <Link href={`/admin/events/events/${r.id}`} style={{ color: colors.primary, fontWeight: 600, textDecoration: 'none' }}>{r.title}</Link>
+                    <div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.id}</div>
                   </td>
                   <td style={td()}>{r.organiser_masked}</td>
                   <td style={td()}>{r.category}</td>
                   <td style={td()}>{r.city}</td>
                   <td style={td()}><Badge status={r.status} /></td>
                   <td style={td()}>{fmtDate(r.starts_at)}</td>
-                  <td style={td()}>{r.tickets_sold.toLocaleString('en-NG')} / {r.capacity.toLocaleString('en-NG')}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{pct(r.capacity ? r.tickets_sold / r.capacity : 0)}</div></td>
+                  <td style={td()}>{r.tickets_sold.toLocaleString('en-NG')} / {r.capacity.toLocaleString('en-NG')}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{pct(r.capacity ? r.tickets_sold / r.capacity : 0)}</div></td>
                   <td style={td()}>{formatNaira(r.gmv_kobo)}</td>
-                  <td style={td()}>{r.cashless_enabled ? <Badge status="active" label="enabled" /> : <span style={{ color: '#9ca3af' }}>off</span>}</td>
+                  <td style={td()}>{r.cashless_enabled ? <Badge status="active" label="enabled" /> : <span style={{ color: colors.muted }}>off</span>}</td>
                 </tr>
               ))}
             </tbody>

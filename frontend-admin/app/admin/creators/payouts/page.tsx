@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listCreatorPayouts, decidePayout, formatNaira } from '@/services/creatorsAdminService';
 import type { CreatorPayoutItem, PayoutDecision } from '@/types/creatorsAdmin';
 import { PageHeader, CreatorsTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnPrimary, btnDanger, th, td, input, label, select, timeAgo } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function CreatorPayoutsPage() {
   const [rows, setRows] = useState<CreatorPayoutItem[]>([]);
@@ -71,7 +72,7 @@ export default function CreatorPayoutsPage() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}>{r.creator_handle_masked}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.id}</div></td>
+                  <td style={td()}>{r.creator_handle_masked}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.id}</div></td>
                   <td style={td()}>
                     <Badge status={r.kyc_tier} />
                     {!r.kyc_verified && <div style={{ marginTop: 4 }}><Badge status="kyc_hold" label="unverified" /></div>}
@@ -88,7 +89,7 @@ export default function CreatorPayoutsPage() {
                         <button style={btnPrimary()} disabled={busy === r.id} onClick={() => decide(r, 'approve')}>{busy === r.id ? '…' : 'Approve'}</button>
                         <button style={btnDanger()} disabled={busy === r.id} onClick={() => decide(r, 'reject')}>Reject</button>
                       </div>
-                    ) : <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>—</span>}
+                    ) : <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span>}
                   </td>
                 </tr>
               ))}

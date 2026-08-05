@@ -12,9 +12,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { listCompetitions, listSponsorSlots } from '@/services/arenaAdminService';
 import type { Competition, SponsorSlot } from '@/types/arenaAdmin';
+import { Page, PageHeader, Card, Button, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 import {
-  PageHeader, Card, btn, th, td, selectStyle, mono,
-  timeAgo, Pill, LockedChip, ScaffoldNotice, PermissionBanner, ARENA_PERMS, useArenaPermission,
+  mono, timeAgo, LockedChip, ScaffoldNotice, PermissionBanner, ARENA_PERMS, useArenaPermission,
 } from '../_ui';
 
 export default function ArenaSponsorsPage() {
@@ -40,56 +40,56 @@ export default function ArenaSponsorsPage() {
   useEffect(() => { void load(); }, [load]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Arena — Sponsor / Featured Placement (A8)"
         subtitle="Sponsor slots, branded placements, delivery/impressions. Reuses paid-promotion. RBAC: arena.admin.manage."
-        action={
+        actions={
           <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <select value={competitionId} onChange={(e) => setCompetitionId(e.target.value)} style={selectStyle()}>
+            <select value={competitionId} onChange={(e) => setCompetitionId(e.target.value)}>
               {competitions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <button onClick={() => void load()} style={btn()}>Refresh</button>
+            <Button variant="outline" onClick={() => void load()}>Refresh</Button>
           </div>
         }
       />
 
       <ScaffoldNotice>Sponsor onboarding, challenge/badge config, and slot scheduling forms are not built yet. Slot listing + delivery monitoring are wired to the backend contract.</ScaffoldNotice>
 
-      <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#1e40af', marginBottom: '1.25rem', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div style={{ background: tint(colors.info, 0.12), border: `1px solid ${tint(colors.info, 0.35)}`, borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.info, marginBottom: '1.25rem', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <LockedChip label="NDC-1" /> The Sponsor rail weights engagement rewards only. It can never bind to a Merit award — sponsors cannot influence the crown.
       </div>
 
       {!allowed && <PermissionBanner permission={ARENA_PERMS.admin} />}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       <Card title="Placement slots">
         {loading ? (
-          <p style={{ color: '#6b7280' }}>Loading sponsor slots…</p>
+          <p style={{ color: colors.muted }}>Loading sponsor slots…</p>
         ) : rows.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No sponsor slots configured.</p>
+          <p style={{ color: colors.muted }}>No sponsor slots configured.</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>Sponsor</th>
-                  <th style={th()}>Placement</th>
-                  <th style={th()}>Status</th>
-                  <th style={th()}>Window</th>
-                  <th style={th()}>Impressions</th>
+                  <th style={thCell}>Sponsor</th>
+                  <th style={thCell}>Placement</th>
+                  <th style={thCell}>Status</th>
+                  <th style={thCell}>Window</th>
+                  <th style={thCell}>Impressions</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((s) => (
                   <tr key={s.id}>
-                    <td style={td()}>{s.sponsor}</td>
-                    <td style={td()}><Pill fg="#374151" bg="#f3f4f6">{s.placement.replace(/_/g, ' ')}</Pill></td>
-                    <td style={td()}>
-                      <Pill fg={s.status === 'live' ? '#15803d' : s.status === 'scheduled' ? '#9a3412' : '#6b7280'} bg={s.status === 'live' ? '#dcfce7' : s.status === 'scheduled' ? '#ffedd5' : '#f3f4f6'}>{s.status}</Pill>
+                    <td style={tdCell}>{s.sponsor}</td>
+                    <td style={tdCell}><Badge text={s.placement.replace(/_/g, ' ')} color={colors.secondary} /></td>
+                    <td style={tdCell}>
+                      <Badge text={s.status} color={s.status === 'live' ? colors.success : s.status === 'scheduled' ? colors.warning : colors.secondary} />
                     </td>
-                    <td style={{ ...td(), fontSize: '0.8rem' }}>{timeAgo(s.starts_at)} → {timeAgo(s.ends_at)}</td>
-                    <td style={{ ...td(), ...mono() }}>{s.impressions != null ? s.impressions.toLocaleString('en-NG') : '—'}</td>
+                    <td style={{ ...tdCell, fontSize: '0.8rem' }}>{timeAgo(s.starts_at)} → {timeAgo(s.ends_at)}</td>
+                    <td style={{ ...tdCell, ...mono() }}>{s.impressions != null ? s.impressions.toLocaleString('en-NG') : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -97,6 +97,6 @@ export default function ArenaSponsorsPage() {
           </div>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

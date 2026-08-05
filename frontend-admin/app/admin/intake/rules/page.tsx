@@ -1,17 +1,40 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { RedFlagRule, RedFlagSeverity, RedFlagRouting } from '@/types/intakeAdmin';
 import { listRules, upsertRule, toggleRule } from '@/services/intakeAdminService';
-import { BackLink, PageHeader, Notice, card, th, td, btn, btnPrimary, input, SeverityBadge, RoutingBadge, ActiveBadge, useIntakePermissions, INTAKE_PERMS } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
+import { useIntakePermissions, INTAKE_PERMS } from '../_ui';
 
 const SEVERITIES: RedFlagSeverity[] = ['emergency', 'urgent'];
 const ROUTINGS: RedFlagRouting[] = ['EMERGENCY', 'URGENT_CARE', 'CRISIS'];
+
+const SEVERITY_COLORS: Record<string, string> = {
+  emergency: colors.danger,
+  urgent: colors.warning,
+};
+
+const ROUTING_COLORS: Record<string, string> = {
+  EMERGENCY: colors.danger,
+  URGENT_CARE: colors.warning,
+  CRISIS: colors.info,
+};
 
 const emptyRule: RedFlagRule = {
   code: '', label: '', match_json: '{"field":"reason_for_visit","contains":[]}',
   level: 4, severity: 'urgent', routing: 'URGENT_CARE', guidance_key: '', active: true, version: 1,
 };
+
+function Notice({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ background: tint(colors.success, 0.12), border: `1px solid ${tint(colors.success, 0.3)}`, color: colors.text, padding: '10px 12px', borderRadius: 8, fontSize: 13, marginTop: 14, display: 'flex', gap: 8 }}>
+      <span aria-hidden>🤝</span>
+      <span>{children}</span>
+    </div>
+  );
+}
 
 export default function RulesPage() {
   const { can } = useIntakePermissions();
@@ -67,80 +90,84 @@ export default function RulesPage() {
   };
 
   return (
-    <div>
-      <BackLink />
+    <Page>
+      <div style={{ marginBottom: 14 }}>
+        <Link href="/admin/intake" style={{ fontSize: 13, color: colors.primary }}>← Intake console</Link>
+      </div>
       <PageHeader
         title="A2 · Red-flag Rules"
         subtitle="Define which patient answers trigger the safety triage gate, and the guidance and routing each produces. These are a product-safety gate (§5), not form fields."
-        action={
-          <button
-            style={canManage ? btnPrimary : { ...btn, opacity: 0.5, cursor: 'not-allowed' }}
+        actions={
+          <Button
+            variant="primary"
             disabled={!canManage}
             title={!canManage ? 'Requires health.admin.intake' : 'Add a new rule'}
             onClick={() => { setForm(emptyRule); setShowForm((s) => !s); }}
           >
             {showForm ? 'Close' : '+ Add rule'}
-          </button>
+          </Button>
         }
       />
-      <Notice kind="support">
+      <Notice>
         Crisis-routed rules (e.g. self-harm) connect a patient to supportive help. Keep labels and guidance compassionate and non-judgemental.
       </Notice>
 
-      {message ? <p style={{ color: 'lightgreen' }}>{message}</p> : null}
-      {error ? <p style={{ color: 'salmon' }}>{error}</p> : null}
+      {message ? <p style={{ color: colors.success }}>{message}</p> : null}
+      {error ? <p style={{ color: colors.danger }}>{error}</p> : null}
 
       {showForm ? (
-        <div style={{ ...card, marginTop: 14, display: 'grid', gap: 10, gridTemplateColumns: 'repeat(3, minmax(0,1fr))' }}>
-          <label style={{ fontSize: 12 }}>code<input style={{ ...input, width: '100%' }} value={form.code} onChange={(e) => setForm((f) => ({ ...f, code: e.target.value }))} /></label>
-          <label style={{ fontSize: 12, gridColumn: 'span 2' }}>label<input style={{ ...input, width: '100%' }} value={form.label} onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} /></label>
-          <label style={{ fontSize: 12 }}>level (1–5)<input type="number" min={1} max={5} style={{ ...input, width: '100%' }} value={form.level} onChange={(e) => setForm((f) => ({ ...f, level: Number(e.target.value) }))} /></label>
+        <Card style={{ marginTop: 14, display: 'grid', gap: 10, gridTemplateColumns: 'repeat(3, minmax(0,1fr))' }}>
+          <label style={{ fontSize: 12 }}>code<Input style={{ width: '100%' }} value={form.code} onChange={(e) => setForm((f) => ({ ...f, code: e.target.value }))} /></label>
+          <label style={{ fontSize: 12, gridColumn: 'span 2' }}>label<Input style={{ width: '100%' }} value={form.label} onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} /></label>
+          <label style={{ fontSize: 12 }}>level (1–5)<Input type="number" min={1} max={5} style={{ width: '100%' }} value={form.level} onChange={(e) => setForm((f) => ({ ...f, level: Number(e.target.value) }))} /></label>
           <label style={{ fontSize: 12 }}>severity
-            <select style={{ ...input, width: '100%' }} value={form.severity} onChange={(e) => setForm((f) => ({ ...f, severity: e.target.value as RedFlagSeverity }))}>
+            <select className="vx-input" style={{ width: '100%' }} value={form.severity} onChange={(e) => setForm((f) => ({ ...f, severity: e.target.value as RedFlagSeverity }))}>
               {SEVERITIES.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </label>
           <label style={{ fontSize: 12 }}>routing
-            <select style={{ ...input, width: '100%' }} value={form.routing} onChange={(e) => setForm((f) => ({ ...f, routing: e.target.value as RedFlagRouting }))}>
+            <select className="vx-input" style={{ width: '100%' }} value={form.routing} onChange={(e) => setForm((f) => ({ ...f, routing: e.target.value as RedFlagRouting }))}>
               {ROUTINGS.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
           </label>
-          <label style={{ fontSize: 12 }}>guidance_key<input style={{ ...input, width: '100%' }} value={form.guidance_key} onChange={(e) => setForm((f) => ({ ...f, guidance_key: e.target.value }))} /></label>
-          <label style={{ fontSize: 12 }}>version<input type="number" min={1} style={{ ...input, width: '100%' }} value={form.version} onChange={(e) => setForm((f) => ({ ...f, version: Number(e.target.value) }))} /></label>
-          <label style={{ fontSize: 12, gridColumn: 'span 3' }}>match_json<textarea style={{ ...input, width: '100%', height: 60, fontFamily: 'monospace', fontSize: 11 }} value={form.match_json} onChange={(e) => setForm((f) => ({ ...f, match_json: e.target.value }))} /></label>
+          <label style={{ fontSize: 12 }}>guidance_key<Input style={{ width: '100%' }} value={form.guidance_key} onChange={(e) => setForm((f) => ({ ...f, guidance_key: e.target.value }))} /></label>
+          <label style={{ fontSize: 12 }}>version<Input type="number" min={1} style={{ width: '100%' }} value={form.version} onChange={(e) => setForm((f) => ({ ...f, version: Number(e.target.value) }))} /></label>
+          <label style={{ fontSize: 12, gridColumn: 'span 3' }}>match_json<textarea className="vx-input" style={{ width: '100%', height: 60, fontFamily: 'monospace', fontSize: 11 }} value={form.match_json} onChange={(e) => setForm((f) => ({ ...f, match_json: e.target.value }))} /></label>
           <div style={{ gridColumn: 'span 3' }}>
-            <button style={btnPrimary} disabled={busy || !canManage} onClick={() => void onSave()}>{busy ? 'Saving…' : 'Save rule'}</button>
+            <Button variant="primary" disabled={busy || !canManage} onClick={() => void onSave()}>{busy ? 'Saving…' : 'Save rule'}</Button>
           </div>
-        </div>
+        </Card>
       ) : null}
 
-      {loading ? <p style={{ opacity: 0.6, marginTop: 16 }}>Loading…</p> : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 16 }}>
-          <thead>
-            <tr style={{ borderBottom: '1px solid #2a2a2a', textAlign: 'left' }}>
-              {['Code', 'Label', 'Match', 'Level', 'Severity', 'Routing', 'Guidance', 'Active', ''].map((h) => <th key={h} style={th}>{h}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {rules.map((r) => (
-              <tr key={r.code} style={{ borderBottom: '1px solid #1c1c1c' }}>
-                <td style={{ ...td, fontFamily: 'monospace', fontSize: 11 }}>{r.code}<div style={{ opacity: 0.4 }}>v{r.version}</div></td>
-                <td style={td}>{r.label}</td>
-                <td style={{ ...td, maxWidth: 220, fontFamily: 'monospace', fontSize: 10, opacity: 0.6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.match_json}</td>
-                <td style={td}>{r.level}</td>
-                <td style={td}><SeverityBadge severity={r.severity} /></td>
-                <td style={td}><RoutingBadge routing={r.routing} /></td>
-                <td style={{ ...td, fontFamily: 'monospace', fontSize: 11, opacity: 0.7 }}>{r.guidance_key}</td>
-                <td style={td}><ActiveBadge active={r.active} /></td>
-                <td style={td}>
-                  <button style={{ ...btn, padding: '2px 8px' }} disabled={!canManage} onClick={() => edit(r)}>Edit</button>{' '}
-                  <button style={{ ...btn, padding: '2px 8px' }} disabled={busy || !canManage} onClick={() => void onToggle(r.code)}>{r.active ? 'Disable' : 'Enable'}</button>
-                </td>
+      {loading ? <p style={{ color: colors.muted, marginTop: 16 }}>Loading…</p> : (
+        <Card style={{ padding: 0, overflow: 'hidden', marginTop: 16 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                {['Code', 'Label', 'Match', 'Level', 'Severity', 'Routing', 'Guidance', 'Active', ''].map((h) => <th key={h} style={thCell}>{h}</th>)}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rules.map((r) => (
+                <tr key={r.code}>
+                  <td style={{ ...tdCell, fontFamily: 'monospace', fontSize: 11 }}>{r.code}<div style={{ color: colors.muted }}>v{r.version}</div></td>
+                  <td style={tdCell}>{r.label}</td>
+                  <td style={{ ...tdCell, maxWidth: 220, fontFamily: 'monospace', fontSize: 10, color: colors.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.match_json}</td>
+                  <td style={tdCell}>{r.level}</td>
+                  <td style={tdCell}><Badge text={r.severity} color={SEVERITY_COLORS[r.severity] ?? colors.secondary} /></td>
+                  <td style={tdCell}><Badge text={r.routing === 'CRISIS' ? 'Crisis support' : r.routing.replace(/_/g, ' ').toLowerCase()} color={ROUTING_COLORS[r.routing] ?? colors.secondary} /></td>
+                  <td style={{ ...tdCell, fontFamily: 'monospace', fontSize: 11, color: colors.muted }}>{r.guidance_key}</td>
+                  <td style={tdCell}><Badge text={r.active ? 'active' : 'inactive'} color={r.active ? colors.success : colors.secondary} /></td>
+                  <td style={tdCell}>
+                    <Button variant="outline" sm disabled={!canManage} onClick={() => edit(r)}>Edit</Button>{' '}
+                    <Button variant="outline" sm disabled={busy || !canManage} onClick={() => void onToggle(r.code)}>{r.active ? 'Disable' : 'Enable'}</Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
       )}
-    </div>
+    </Page>
   );
 }

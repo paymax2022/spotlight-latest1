@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listEscrowFraud, decideEscrowFraud, formatNaira } from '@/services/escrowAdminService';
 import type { EscrowFraudSignal, EscrowFraudAction } from '@/types/escrowAdmin';
 import { PageHeader, EscrowTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnPrimary, btnDanger, th, td, input, label, select, timeAgo } from '../../creators/_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function EscrowFraudPage() {
   const [rows, setRows] = useState<EscrowFraudSignal[]>([]);
@@ -82,10 +83,10 @@ export default function EscrowFraudPage() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{r.id}</code><div style={{ fontSize: '0.78rem', color: '#374151', marginTop: 2, maxWidth: 320 }}>{r.detail}</div></td>
+                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{r.id}</code><div style={{ fontSize: '0.78rem', color: colors.text, marginTop: 2, maxWidth: 320 }}>{r.detail}</div></td>
                   <td style={td()}><Badge status={r.kind} /></td>
                   <td style={td()}>{r.subject_masked}</td>
-                  <td style={td()}>{r.escrow_id ? <code style={{ fontSize: '0.76rem' }}>{r.escrow_id}</code> : <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                  <td style={td()}>{r.escrow_id ? <code style={{ fontSize: '0.76rem' }}>{r.escrow_id}</code> : <span style={{ color: colors.muted }}>—</span>}</td>
                   <td style={td()}>{formatNaira(r.amount_kobo)}</td>
                   <td style={td()}><Badge status={r.severity} /></td>
                   <td style={td()}>{timeAgo(r.created_at)}</td>
@@ -97,7 +98,7 @@ export default function EscrowFraudPage() {
                         <button style={btnPrimary()} disabled={busy === r.id} onClick={() => act(r, 'clear')}>Clear</button>
                         <button style={btnDanger()} disabled={busy === r.id} onClick={() => act(r, 'block')}>Block</button>
                       </div>
-                    ) : <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>—</span>}
+                    ) : <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span>}
                   </td>
                 </tr>
               ))}

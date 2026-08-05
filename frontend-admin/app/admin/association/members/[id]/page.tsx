@@ -7,10 +7,16 @@ import {
   type MemberDetail,
 } from '@/services/associationAdminService';
 import {
-  Card, Badge, DisclosureNote, AuditNote,
-  btn, btnPrimary, btnDanger, td, input, label as lbl, card,
+  DisclosureNote, AuditNote,
   useAssociationPermissions, ASSOCIATION_PERMS, PermissionBanner,
 } from '../../_ui';
+import { Page, Card, Button, Input, Badge, colors, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string) {
+  if (status === 'active' || status === 'current') return colors.success;
+  if (status === 'suspended' || status === 'in_default') return colors.danger;
+  return colors.warning;
+}
 
 type ActionKind = 'suspend' | 'restore' | 'transfer' | 'role';
 
@@ -69,19 +75,19 @@ export default function AssociationMemberDetailPage({ params }: { params: Promis
     finally { setBusy(false); }
   }
 
-  if (loading) return <div style={{ padding: '0.5rem 0.5rem 2rem' }}><p><Link href="/admin/association/members">← Back to members</Link></p><p style={{ color: '#6b7280' }}>Loading member…</p></div>;
-  if (error && !member) return <div style={{ padding: '0.5rem 0.5rem 2rem' }}><p><Link href="/admin/association/members">← Back to members</Link></p><p style={{ color: '#dc2626' }}>{error}</p></div>;
-  if (!member) return <div style={{ padding: '0.5rem 0.5rem 2rem' }}><p><Link href="/admin/association/members">← Back to members</Link></p><p style={{ color: '#6b7280' }}>Member not found.</p></div>;
+  if (loading) return <Page><p><Link href="/admin/association/members" style={{ color: colors.primary }}>← Back to members</Link></p><p style={{ color: colors.muted }}>Loading member…</p></Page>;
+  if (error && !member) return <Page><p><Link href="/admin/association/members" style={{ color: colors.primary }}>← Back to members</Link></p><p style={{ color: colors.danger }}>{error}</p></Page>;
+  if (!member) return <Page><p><Link href="/admin/association/members" style={{ color: colors.primary }}>← Back to members</Link></p><p style={{ color: colors.muted }}>Member not found.</p></Page>;
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <p><Link href="/admin/association/members">← Back to members</Link></p>
+    <Page>
+      <p><Link href="/admin/association/members" style={{ color: colors.primary }}>← Back to members</Link></p>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: '0.25rem' }}>
         <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700 }}>{member.fullName}</h1>
-        <Badge status={member.status} />
-        <Badge status={member.paymentStanding} />
+        <Badge text={member.status.replace(/_/g, ' ')} color={statusColor(member.status)} />
+        <Badge text={member.paymentStanding.replace(/_/g, ' ')} color={statusColor(member.paymentStanding)} />
       </div>
-      <p style={{ fontSize: '0.85rem', color: '#6b7280', margin: '0 0 1rem' }}>
+      <p style={{ fontSize: '0.85rem', color: colors.muted, margin: '0 0 1rem' }}>
         {member.memberId} · {member.chapterName ?? 'No chapter'} · {member.categoryLabel} · joined {new Date(member.joinedAt).toLocaleDateString()}
       </p>
 
@@ -90,11 +96,11 @@ export default function AssociationMemberDetailPage({ params }: { params: Promis
         are recorded to the immutable audit log (NL-12).
       </DisclosureNote>
       {msg && <AuditNote>{msg}</AuditNote>}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: '1.25rem' }}>
         <Card title="Profile">
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', marginTop: 12 }}>
             <tbody>
               {[
                 ['Email', member.email ?? '—'],
@@ -104,53 +110,52 @@ export default function AssociationMemberDetailPage({ params }: { params: Promis
                 ['Payment standing', member.paymentStanding],
                 ['Contact restricted', member.contactRestricted ? 'Yes' : 'No'],
               ].map(([k, v]) => (
-                <tr key={k}><td style={{ ...td(), color: '#6b7280', width: '35%' }}>{k}</td><td style={td()}>{v}</td></tr>
+                <tr key={k}><td style={{ ...tdCell, color: colors.muted, width: '35%' }}>{k}</td><td style={tdCell}>{v}</td></tr>
               ))}
-              {member.bio && <tr><td style={{ ...td(), color: '#6b7280' }}>Bio</td><td style={td()}>{member.bio}</td></tr>}
+              {member.bio && <tr><td style={{ ...tdCell, color: colors.muted }}>Bio</td><td style={tdCell}>{member.bio}</td></tr>}
             </tbody>
           </table>
         </Card>
 
-        <div style={{ ...card() }}>
-          <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: '0 0 0.75rem' }}>Member actions</h2>
+        <Card title="Member actions">
           {!canManage ? (
             <PermissionBanner text="You have read-only access — your role cannot suspend, restore, transfer or assign roles for members." />
           ) : !action ? (
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              {member.status !== 'suspended' && <button style={btnDanger()} onClick={() => openAction('suspend')}>Suspend</button>}
-              {member.status === 'suspended' && <button style={btnPrimary()} onClick={() => openAction('restore')}>Restore</button>}
-              <button style={btn()} onClick={() => openAction('transfer')}>Transfer chapter</button>
-              <button style={btn()} onClick={() => openAction('role')}>Assign role</button>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: 12 }}>
+              {member.status !== 'suspended' && <Button variant="danger" onClick={() => openAction('suspend')}>Suspend</Button>}
+              {member.status === 'suspended' && <Button variant="primary" onClick={() => openAction('restore')}>Restore</Button>}
+              <Button variant="outline" onClick={() => openAction('transfer')}>Transfer chapter</Button>
+              <Button variant="outline" onClick={() => openAction('role')}>Assign role</Button>
             </div>
           ) : (
-            <div style={{ display: 'grid', gap: '0.5rem' }}>
-              <label style={lbl()} >{action === 'suspend' ? 'Reason (required — written to audit log)' : action === 'restore' ? 'Confirm restore' : action === 'transfer' ? 'Destination chapter (required)' : 'Role (required)'}</label>
+            <div style={{ display: 'grid', gap: '0.5rem', marginTop: 12 }}>
+              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' }}>{action === 'suspend' ? 'Reason (required — written to audit log)' : action === 'restore' ? 'Confirm restore' : action === 'transfer' ? 'Destination chapter (required)' : 'Role (required)'}</label>
               {action === 'suspend' && (
-                <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} style={{ ...input(), fontFamily: 'inherit' }} placeholder="e.g. Dues default beyond grace period" />
+                <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} style={{ fontFamily: 'inherit' }} placeholder="e.g. Dues default beyond grace period" />
               )}
               {action === 'transfer' && (
-                <input style={input()} value={chapter} onChange={(e) => setChapter(e.target.value)} placeholder="e.g. Abuja Chapter" />
+                <Input value={chapter} onChange={(e) => setChapter(e.target.value)} placeholder="e.g. Abuja Chapter" />
               )}
               {action === 'role' && (
-                <input style={input()} value={role} onChange={(e) => setRole(e.target.value)} placeholder="e.g. secretary, treasurer, member" />
+                <Input value={role} onChange={(e) => setRole(e.target.value)} placeholder="e.g. secretary, treasurer, member" />
               )}
               {action === 'restore' && (
-                <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: 0 }}>Restoring reinstates this member's active status. This action is recorded to the audit log.</p>
+                <p style={{ fontSize: '0.8rem', color: colors.muted, margin: 0 }}>Restoring reinstates this member's active status. This action is recorded to the audit log.</p>
               )}
               <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                <button style={btn()} disabled={busy} onClick={() => setAction(null)}>Cancel</button>
-                <button
-                  style={busy || !canSubmit() ? { ...btn(), opacity: 0.5, cursor: 'not-allowed' } : (action === 'suspend' ? btnDanger() : btnPrimary())}
+                <Button variant="outline" disabled={busy} onClick={() => setAction(null)}>Cancel</Button>
+                <Button
+                  variant={action === 'suspend' ? 'danger' : 'primary'}
                   disabled={busy || !canSubmit()}
                   onClick={submit}
                 >
                   {busy ? 'Submitting…' : `Confirm ${action}`}
-                </button>
+                </Button>
               </div>
             </div>
           )}
-        </div>
+        </Card>
       </div>
-    </div>
+    </Page>
   );
 }

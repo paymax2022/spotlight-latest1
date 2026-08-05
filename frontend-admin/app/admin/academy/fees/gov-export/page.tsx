@@ -15,6 +15,7 @@ import {
   btn, btnPrimary, th, td, input, label, select, fmtDate, timeAgo,
 } from '../../_ui';
 import { FeesTabs, FeesGuard } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function FeesGovExportPage() {
   const [schools, setSchools] = useState<FeesSchool[]>([]);
@@ -89,7 +90,7 @@ export default function FeesGovExportPage() {
                 const row = optIns.find((o) => o.category === c.key);
                 return (
                   <tr key={c.key}>
-                    <td style={td()}><strong>{c.label}</strong> <code style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{c.key}</code></td>
+                    <td style={td()}><strong>{c.label}</strong> <code style={{ fontSize: '0.72rem', color: colors.muted }}>{c.key}</code></td>
                     <td style={td()}><Badge status={on ? 'approved' : 'inactive'} label={on ? 'opted in' : 'opted out'} /></td>
                     <td style={td()}>{row ? fmtDate(row.updated_at) : '—'}</td>
                     <td style={td()}><button onClick={() => toggle(c.key, !on)} disabled={busy === c.key} style={on ? btn() : btnPrimary()}>{on ? 'Opt out' : 'Opt in'}</button></td>
@@ -112,7 +113,7 @@ export default function FeesGovExportPage() {
               {DATA_CATEGORIES.map((c) => {
                 const disabled = !optInMap[c.key];
                 return (
-                  <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.82rem', color: disabled ? '#9ca3af' : '#374151' }}>
+                  <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.82rem', color: disabled ? colors.muted : colors.muted }}>
                     <input type="checkbox" disabled={disabled} checked={exportForm.cats.includes(c.key)} onChange={() => toggleCat(c.key)} /> {c.label}{disabled ? ' (not opted in)' : ''}
                   </label>
                 );
@@ -120,7 +121,7 @@ export default function FeesGovExportPage() {
             </div>
           </div>
           <div style={{ marginTop: '0.7rem' }}><button onClick={generate} disabled={busy === 'gen'} style={btnPrimary()}>Generate & log export</button></div>
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: '0.6rem' }}>{notice}</p>}
         </Card>
 
         <Card title="Compliance export log (append-only)">

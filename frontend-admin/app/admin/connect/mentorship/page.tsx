@@ -3,9 +3,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { listMentorshipReports, reviewMentorshipReport } from '@/services/connectNetworkAdminService';
 import type { MentorshipReport, ReviewAction } from '@/types/connectNetworkAdmin';
-import { PageHeader, Card, Badge, btn, th, td, timeAgo } from '../_ui';
+import { timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUSES = ['all', 'open', 'escalated', 'resolved', 'dismissed'];
+
+function severityColor(severity: string): string {
+  if (severity === 'critical' || severity === 'high') return colors.danger;
+  if (severity === 'normal') return colors.info;
+  return colors.secondary;
+}
 
 export default function ConnectMentorshipReportsPage() {
   const [rows, setRows] = useState<MentorshipReport[]>([]);
@@ -31,49 +38,49 @@ export default function ConnectMentorshipReportsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Mentorship safety reports" subtitle="ADM-MN-01 · Safety escalations raised inside mentorship threads. Thread content stays in-app; only reason codes surface here." action={<button onClick={() => void load()} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Mentorship safety reports" subtitle="ADM-MN-01 · Safety escalations raised inside mentorship threads. Thread content stays in-app; only reason codes surface here." actions={<Button variant="outline" sm onClick={() => void load()}>Refresh</Button>} />
 
       <Card>
-        <label style={{ fontSize: '0.8rem', color: '#374151', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+        <label style={{ fontSize: '0.8rem', color: colors.text, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
           Status
-          <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ padding: '0.35rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem', textTransform: 'capitalize' }}>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ textTransform: 'capitalize' }}>
             {STATUSES.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
         </label>
       </Card>
 
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
       <Card>
-        {loading ? <p style={{ color: '#6b7280' }}>Loading reports…</p> : rows.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No mentorship reports match this filter.</p>
+        {loading ? <p style={{ color: colors.muted }}>Loading reports…</p> : rows.length === 0 ? (
+          <p style={{ color: colors.muted }}>No mentorship reports match this filter.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Thread</th><th style={th()}>Mentor → Mentee</th><th style={th()}>Reason</th><th style={th()}>AI codes</th><th style={th()}>By</th><th style={th()}>Severity</th><th style={th()}>Status</th><th style={th()}>When</th><th style={th()}>Review</th></tr></thead>
+            <thead><tr><th style={thCell}>Thread</th><th style={thCell}>Mentor → Mentee</th><th style={thCell}>Reason</th><th style={thCell}>AI codes</th><th style={thCell}>By</th><th style={thCell}>Severity</th><th style={thCell}>Status</th><th style={thCell}>When</th><th style={thCell}>Review</th></tr></thead>
             <tbody>
               {rows.map((m) => (
                 <tr key={m.id}>
-                  <td style={td()}><code style={{ fontSize: '0.75rem' }}>{m.threadId}</code></td>
-                  <td style={td()}>{m.mentorId} → {m.menteeId}</td>
-                  <td style={td()}>{m.reason}</td>
-                  <td style={td()}>{m.aiReasonCodes.length ? <span style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>{m.aiReasonCodes.map((c) => <Badge key={c} status="high" label={c} />)}</span> : <span style={{ color: '#9ca3af' }}>none</span>}</td>
-                  <td style={td()}>{m.reporterRole}</td>
-                  <td style={td()}><Badge status={m.severity} /></td>
-                  <td style={td()}><Badge status={m.status === 'resolved' ? 'resolved' : m.status === 'dismissed' ? 'closed' : m.status === 'escalated' ? 'critical' : 'open'} label={m.status} /></td>
-                  <td style={td()}>{timeAgo(m.createdAt)}</td>
-                  <td style={td()}>{m.status === 'open' || m.status === 'escalated' ? (
+                  <td style={tdCell}><code style={{ fontSize: '0.75rem' }}>{m.threadId}</code></td>
+                  <td style={tdCell}>{m.mentorId} → {m.menteeId}</td>
+                  <td style={tdCell}>{m.reason}</td>
+                  <td style={tdCell}>{m.aiReasonCodes.length ? <span style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>{m.aiReasonCodes.map((c) => <Badge key={c} text={c} color={colors.warning} />)}</span> : <span style={{ color: colors.muted }}>none</span>}</td>
+                  <td style={tdCell}>{m.reporterRole}</td>
+                  <td style={tdCell}><Badge text={m.severity} color={severityColor(m.severity)} /></td>
+                  <td style={tdCell}><Badge text={m.status} color={m.status === 'resolved' ? colors.success : m.status === 'dismissed' ? colors.secondary : m.status === 'escalated' ? colors.danger : colors.warning} /></td>
+                  <td style={tdCell}>{timeAgo(m.createdAt)}</td>
+                  <td style={tdCell}>{m.status === 'open' || m.status === 'escalated' ? (
                     <span style={{ display: 'flex', gap: '0.35rem' }}>
-                      <button disabled={busy === m.id} onClick={() => act(m.id, 'approve')} style={{ ...btn(), color: '#15803d', borderColor: '#bbf7d0' }}>Resolve</button>
-                      <button disabled={busy === m.id} onClick={() => act(m.id, 'flag')} style={{ ...btn(), color: '#9a3412', borderColor: '#fed7aa' }}>Escalate</button>
-                      <button disabled={busy === m.id} onClick={() => act(m.id, 'reject')} style={{ ...btn(), color: '#b91c1c', borderColor: '#fecaca' }}>Dismiss</button>
+                      <Button variant="outline" sm disabled={busy === m.id} onClick={() => act(m.id, 'approve')} style={{ color: colors.success, borderColor: tint(colors.success, 0.4) }}>Resolve</Button>
+                      <Button variant="outline" sm disabled={busy === m.id} onClick={() => act(m.id, 'flag')} style={{ color: colors.warning, borderColor: tint(colors.warning, 0.4) }}>Escalate</Button>
+                      <Button variant="outline" sm disabled={busy === m.id} onClick={() => act(m.id, 'reject')} style={{ color: colors.danger, borderColor: tint(colors.danger, 0.4) }}>Dismiss</Button>
                     </span>
-                  ) : <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>—</span>}</td>
+                  ) : <span style={{ color: colors.muted, fontSize: '0.8rem' }}>—</span>}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { getEscrowDashboard, formatNaira } from '@/services/escrowAdminService';
 import type { EscrowDashboard } from '@/types/escrowAdmin';
 import { PageHeader, EscrowTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, btn, th, td, timeAgo, pct } from '../../creators/_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function EscrowDashboardPage() {
   const [data, setData] = useState<EscrowDashboard | null>(null);
@@ -70,7 +71,7 @@ export default function EscrowDashboardPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                   {data.resolution_trend.map((p) => (
                     <div key={p.date} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                      <span style={{ width: 64, flexShrink: 0, fontSize: '0.72rem', color: '#9ca3af' }}>{p.date.slice(5)}</span>
+                      <span style={{ width: 64, flexShrink: 0, fontSize: '0.72rem', color: colors.muted }}>{p.date.slice(5)}</span>
                       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                           <div style={{ height: 10, width: `${(p.opened / maxRes) * 100}%`, minWidth: 2, background: '#9a3412', borderRadius: 2 }} title={`Opened ${p.opened}`} />

@@ -12,9 +12,9 @@ import { useParams } from 'next/navigation';
 import { getCompetition, getCompetitionConfig, publishConfig } from '@/services/arenaAdminService';
 import type { Competition, CompetitionConfig, RailConfig, AwardBinding, RailKind, AwardCode } from '@/types/arenaAdmin';
 import { RAIL_LABELS, AWARD_LABELS } from '@/types/arenaAdmin';
+import { Page, PageHeader, Card, Button, Input, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 import {
-  PageHeader, Card, btn, btnPrimary, btnDisabled, th, td, inputStyle, selectStyle, mono,
-  CompetitionStatusBadge, LockedChip, AuditNote, PermissionBanner, BackToArena,
+  mono, CompetitionStatusBadge, LockedChip, AuditNote, PermissionBanner, BackToArena,
   ARENA_PERMS, useArenaPermission,
 } from '../../_ui';
 
@@ -106,47 +106,47 @@ export default function ArenaConfigDetailPage() {
 
   const paramEntries = useMemo(() => (config?.rails ?? []).map((r) => [r.kind, Object.entries(r.params)] as const), [config]);
 
-  if (loading) return <div style={{ padding: '1rem' }}><BackToArena /><p style={{ color: '#6b7280', marginTop: '1rem' }}>Loading config…</p></div>;
-  if (error && !config) return <div style={{ padding: '1rem' }}><BackToArena /><p style={{ color: '#dc2626', marginTop: '1rem' }}>{error}</p></div>;
+  if (loading) return <Page><BackToArena /><p style={{ color: colors.muted, marginTop: '1rem' }}>Loading config…</p></Page>;
+  if (error && !config) return <Page><BackToArena /><p style={{ color: colors.danger, marginTop: '1rem' }}>{error}</p></Page>;
   if (!config) return null;
 
   const railParamsFor = (kind: RailKind) => paramEntries.find(([k]) => k === kind)?.[1] ?? [];
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <div style={{ marginBottom: '0.75rem' }}><BackToArena /></div>
       <PageHeader
         title={competition ? competition.name : 'Competition config'}
         subtitle={`Slug: ${competition?.slug ?? id}. Configure rails + bindings, validate, publish. RBAC: arena.admin.manage.`}
-        action={competition ? <CompetitionStatusBadge status={competition.status} /> : undefined}
+        actions={competition ? <CompetitionStatusBadge status={competition.status} /> : undefined}
       />
 
       {!allowed && <PermissionBanner permission={ARENA_PERMS.admin} />}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
       {config.published && (
-        <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#166534', marginBottom: '1.25rem' }}>
+        <div style={{ background: tint(colors.success, 0.12), border: `1px solid ${tint(colors.success, 0.35)}`, borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.success, marginBottom: '1.25rem' }}>
           Published config version <strong>{config.config_version}</strong> is immutable. Publishing again creates a new version.
         </div>
       )}
 
-      <Card title="Rails">
-        <p style={{ color: '#6b7280', fontSize: '0.8rem', marginTop: 0 }}>
+      <Card title="Rails" style={{ marginBottom: 20 }}>
+        <p style={{ color: colors.muted, fontSize: '0.8rem', marginTop: 8 }}>
           Four first-class channels. Merit is the only rail that may feed the crown — money (Support) and engagement (Play-Along/Sponsor) are firewalled from it.
         </p>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th style={th()}>Rail</th>
-                <th style={th()}>Enabled</th>
-                <th style={th()}>Parameters</th>
+                <th style={thCell}>Rail</th>
+                <th style={thCell}>Enabled</th>
+                <th style={thCell}>Parameters</th>
               </tr>
             </thead>
             <tbody>
               {config.rails.map((r) => (
                 <tr key={r.kind}>
-                  <td style={td()}><strong>{RAIL_LABELS[r.kind]}</strong></td>
-                  <td style={td()}>
+                  <td style={tdCell}><strong>{RAIL_LABELS[r.kind]}</strong></td>
+                  <td style={tdCell}>
                     <input
                       type="checkbox"
                       checked={r.enabled}
@@ -154,19 +154,19 @@ export default function ArenaConfigDetailPage() {
                       onChange={(e) => setRail(r.kind, { enabled: e.target.checked })}
                     />
                   </td>
-                  <td style={td()}>
+                  <td style={tdCell}>
                     {railParamsFor(r.kind).length === 0 ? (
-                      <span style={{ color: '#9ca3af' }}>No params</span>
+                      <span style={{ color: colors.muted }}>No params</span>
                     ) : (
                       <div style={{ display: 'grid', gap: 6 }}>
                         {railParamsFor(r.kind).map(([k, v]) => (
                           <div key={k} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                            <span style={{ ...mono(), color: '#6b7280', minWidth: 160 }}>{k}</span>
-                            <input
+                            <span style={{ ...mono(), color: colors.muted, minWidth: 160 }}>{k}</span>
+                            <Input
                               value={String(v)}
                               disabled={!allowed}
                               onChange={(e) => setRail(r.kind, { params: { ...r.params, [k]: parseParam(v, e.target.value) } })}
-                              style={{ ...inputStyle(), minWidth: 200 }}
+                              style={{ minWidth: 200 }}
                             />
                           </div>
                         ))}
@@ -180,17 +180,17 @@ export default function ArenaConfigDetailPage() {
         </div>
       </Card>
 
-      <Card title="Award → rail bindings">
-        <p style={{ color: '#6b7280', fontSize: '0.8rem', marginTop: 0 }}>
+      <Card title="Award → rail bindings" style={{ marginBottom: 20 }}>
+        <p style={{ color: colors.muted, fontSize: '0.8rem', marginTop: 8 }}>
           Each award draws from exactly one rail. The <strong>crown is bound to Merit and LOCKED</strong> (NDC-1) — it can never be made to accept money or engagement.
         </p>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th style={th()}>Award</th>
-                <th style={th()}>Bound rail</th>
-                <th style={th()}></th>
+                <th style={thCell}>Award</th>
+                <th style={thCell}>Bound rail</th>
+                <th style={thCell}></th>
               </tr>
             </thead>
             <tbody>
@@ -200,8 +200,8 @@ export default function ArenaConfigDetailPage() {
                 const locked = isCrown || b.locked;
                 return (
                   <tr key={b.award}>
-                    <td style={td()}><strong>{AWARD_LABELS[b.award]}</strong></td>
-                    <td style={td()}>
+                    <td style={tdCell}><strong>{AWARD_LABELS[b.award]}</strong></td>
+                    <td style={tdCell}>
                       {locked ? (
                         <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
                           {RAIL_LABELS[b.rail]}
@@ -211,7 +211,6 @@ export default function ArenaConfigDetailPage() {
                           value={b.rail}
                           disabled={!allowed}
                           onChange={(e) => setBinding(b.award, e.target.value as RailKind)}
-                          style={selectStyle()}
                         >
                           {railOptions.map((rk) => (
                             <option key={rk} value={rk}>{RAIL_LABELS[rk]}</option>
@@ -219,7 +218,7 @@ export default function ArenaConfigDetailPage() {
                         </select>
                       )}
                     </td>
-                    <td style={td()}>{locked ? <LockedChip label={isCrown ? 'NDC-1 · Merit-only' : 'LOCKED'} /> : null}</td>
+                    <td style={tdCell}>{locked ? <LockedChip label={isCrown ? 'NDC-1 · Merit-only' : 'LOCKED'} /> : null}</td>
                   </tr>
                 );
               })}
@@ -228,38 +227,38 @@ export default function ArenaConfigDetailPage() {
         </div>
       </Card>
 
-      <Card title="Schema & rubric versions">
-        <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: '#6b7280' }}>
+      <Card title="Schema & rubric versions" style={{ marginBottom: 20 }}>
+        <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', marginTop: 8 }}>
+          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: colors.muted }}>
             Screening schema version
-            <input value={config.screening_schema_version} disabled={!allowed} onChange={(e) => setConfig({ ...config, screening_schema_version: e.target.value })} style={inputStyle()} />
+            <Input value={config.screening_schema_version} disabled={!allowed} onChange={(e) => setConfig({ ...config, screening_schema_version: e.target.value })} />
           </label>
-          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: '#6b7280' }}>
+          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: colors.muted }}>
             Rubric version (Merit)
-            <input value={config.rubric_version} disabled={!allowed} onChange={(e) => setConfig({ ...config, rubric_version: e.target.value })} style={inputStyle()} />
+            <Input value={config.rubric_version} disabled={!allowed} onChange={(e) => setConfig({ ...config, rubric_version: e.target.value })} />
           </label>
-          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: '#6b7280' }}>
+          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: colors.muted }}>
             Exam schema version (theory)
-            <input value={config.exam_schema_version} disabled={!allowed} onChange={(e) => setConfig({ ...config, exam_schema_version: e.target.value })} style={inputStyle()} />
+            <Input value={config.exam_schema_version} disabled={!allowed} onChange={(e) => setConfig({ ...config, exam_schema_version: e.target.value })} />
           </label>
         </div>
       </Card>
 
       <Card title="Validate & publish">
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <button onClick={runValidate} style={btn()}>Validate</button>
-          <button onClick={() => void publish()} style={allowed && !busy ? btnPrimary('#15803d') : btnDisabled()} disabled={!allowed || busy}>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: 8 }}>
+          <Button variant="outline" onClick={runValidate}>Validate</Button>
+          <Button variant="primary" onClick={() => void publish()} disabled={!allowed || busy}>
             {busy ? 'Publishing…' : 'Publish (immutable version)'}
-          </button>
+          </Button>
         </div>
         {validationMsg && (
-          <pre style={{ whiteSpace: 'pre-wrap', marginTop: '0.75rem', fontSize: '0.8rem', color: validationMsg.startsWith('Validation passed') || validationMsg.startsWith('Published') ? '#166534' : '#b91c1c', fontFamily: 'inherit' }}>
+          <pre style={{ whiteSpace: 'pre-wrap', marginTop: '0.75rem', fontSize: '0.8rem', color: validationMsg.startsWith('Validation passed') || validationMsg.startsWith('Published') ? colors.success : colors.danger, fontFamily: 'inherit' }}>
             {validationMsg}
           </pre>
         )}
         <AuditNote>Publish is versioned and audited. Once published, the config version is immutable; corrections require a new version.</AuditNote>
       </Card>
-    </div>
+    </Page>
   );
 }
 

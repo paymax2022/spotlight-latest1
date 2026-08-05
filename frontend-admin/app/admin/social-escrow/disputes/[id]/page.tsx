@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import { getDispute, arbitrateDispute, formatNaira } from '@/services/escrowAdminService';
 import type { DisputeDetail, ArbitrationDecision } from '@/types/escrowAdmin';
 import { PageHeader, Card, Kpi, Badge, DisclosureNote, StateBlock, AuditNote, btn, btnPrimary, btnDanger, th, td, timeAgo, fmtDate } from '../../../creators/_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function DisputeDetailPage() {
   const params = useParams<{ id: string }>();
@@ -83,7 +84,7 @@ export default function DisputeDetailPage() {
                   <div style={{ marginTop: 4 }}><Badge status={data.seller_kyc_tier} /></div>
                 </div>
               </div>
-              <p style={{ marginTop: '1rem', color: '#374151', fontSize: '0.88rem' }}><strong>{data.listing_title}</strong> — {data.description}</p>
+              <p style={{ marginTop: '1rem', color: colors.text, fontSize: '0.88rem' }}><strong>{data.listing_title}</strong> — {data.description}</p>
             </Card>
 
             {/* Separation-of-duties banner */}
@@ -104,7 +105,7 @@ export default function DisputeDetailPage() {
                 <button style={btn()} disabled={busy || !resolvable} onClick={() => arbitrate('request_evidence')}>Request evidence</button>
                 <button style={btn()} disabled={busy || !resolvable} onClick={() => arbitrate('assign')}>Assign to me</button>
               </div>
-              {!resolvable && <p style={{ color: '#9ca3af', fontSize: '0.78rem', marginTop: '0.5rem' }}>This dispute is already resolved — no further action available.</p>}
+              {!resolvable && <p style={{ color: colors.muted, fontSize: '0.78rem', marginTop: '0.5rem' }}>This dispute is already resolved — no further action available.</p>}
             </Card>
 
             <Card title={`Evidence (${data.evidence.length})`}>
@@ -117,7 +118,7 @@ export default function DisputeDetailPage() {
                       <td style={td()}>{e.submitter_masked}</td>
                       <td style={td()}>{e.kind.replace(/_/g, ' ')}</td>
                       <td style={td()}><span style={{ maxWidth: 360, display: 'inline-block' }}>{e.note}</span></td>
-                      <td style={td()}>{e.attachment_masked ? <code style={{ fontSize: '0.76rem' }}>{e.attachment_masked}</code> : <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                      <td style={td()}>{e.attachment_masked ? <code style={{ fontSize: '0.76rem' }}>{e.attachment_masked}</code> : <span style={{ color: colors.muted }}>—</span>}</td>
                       <td style={td()}>{timeAgo(e.at)}</td>
                     </tr>
                   ))}

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listModeration, moderate } from '@/services/healthVetAdminService';
 import type { ModerationItem, ModerationAction } from '@/types/healthVetAdmin';
 import { PageHeader, VetTabs, Card, Badge, DisclosureNote, AuditNote, StateBlock, FilterBar, btn, btnPrimary, btnDanger, th, td, input, select, label, fmtDate } from '../../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 const STATUSES = ['', 'open', 'investigating', 'resolved', 'ignored'];
 const SEVERITIES = ['', 'low', 'medium', 'high'];
@@ -76,9 +77,9 @@ export default function VetModerationPage() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><strong>{r.subject_masked}</strong>{r.vcn_licence_no ? <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}><code>{r.vcn_licence_no}</code></div> : null}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.id}</div></td>
+                  <td style={td()}><strong>{r.subject_masked}</strong>{r.vcn_licence_no ? <div style={{ fontSize: '0.72rem', color: colors.muted }}><code>{r.vcn_licence_no}</code></div> : null}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.id}</div></td>
                   <td style={td()}><Badge status={r.kind} label={r.kind.replace(/_/g, ' ')} /></td>
-                  <td style={td()}>{r.summary}{r.reporter_masked ? <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: 3 }}>reported by {r.reporter_masked}</div> : null}</td>
+                  <td style={td()}>{r.summary}{r.reporter_masked ? <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 3 }}>reported by {r.reporter_masked}</div> : null}</td>
                   <td style={td()}><Badge status={r.severity} /></td>
                   <td style={td()}>{fmtDate(r.created_at)}</td>
                   <td style={td()}><Badge status={r.status} /></td>
@@ -90,7 +91,7 @@ export default function VetModerationPage() {
                         <button disabled={busy} style={btn()} onClick={() => act(r.id, 'ignore')}>Ignore</button>
                         <button disabled={busy} style={btnDanger()} onClick={() => act(r.id, 'suspend_provider')}>Suspend provider</button>
                       </div>
-                    ) : <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>—</span>}
+                    ) : <span style={{ color: colors.muted, fontSize: '0.8rem' }}>—</span>}
                   </td>
                 </tr>
               ))}

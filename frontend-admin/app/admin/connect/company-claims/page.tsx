@@ -3,9 +3,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { listCompanyClaims, reviewCompanyClaim } from '@/services/connectNetworkAdminService';
 import type { CompanyPageClaim, ReviewAction } from '@/types/connectNetworkAdmin';
-import { PageHeader, Card, Badge, btn, th, td, timeAgo } from '../_ui';
+import { timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUSES = ['all', 'claim_submitted', 'under_review', 'approved', 'rejected'];
+
+function statusColor(status: string): string {
+  if (status === 'approved') return colors.success;
+  if (status === 'rejected') return colors.danger;
+  if (status === 'under_review') return colors.info;
+  return colors.warning;
+}
 
 export default function ConnectCompanyClaimsPage() {
   const [rows, setRows] = useState<CompanyPageClaim[]>([]);
@@ -31,46 +39,46 @@ export default function ConnectCompanyClaimsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Company page claim review" subtitle="ADM-CP-01 · Approve or reject page-ownership claims. Evidence is a vault pointer — raw documents are not rendered." action={<button onClick={() => void load()} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Company page claim review" subtitle="ADM-CP-01 · Approve or reject page-ownership claims. Evidence is a vault pointer — raw documents are not rendered." actions={<Button variant="outline" sm onClick={() => void load()}>Refresh</Button>} />
 
-      <Card>
-        <label style={{ fontSize: '0.8rem', color: '#374151', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+      <Card style={{ marginBottom: 16 }}>
+        <label style={{ fontSize: '0.8rem', color: colors.text, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
           Status
-          <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ padding: '0.35rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem', textTransform: 'capitalize' }}>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ padding: '0.35rem 0.5rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem', fontSize: '0.85rem', textTransform: 'capitalize' }}>
             {STATUSES.map((o) => <option key={o} value={o}>{o.replace(/_/g, ' ')}</option>)}
           </select>
         </label>
       </Card>
 
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-      <Card>
-        {loading ? <p style={{ color: '#6b7280' }}>Loading claims…</p> : rows.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No claims match this filter.</p>
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      <Card style={{ padding: 0, overflow: 'auto' }}>
+        {loading ? <p style={{ color: colors.muted, padding: 14 }}>Loading claims…</p> : rows.length === 0 ? (
+          <p style={{ color: colors.muted, padding: 14 }}>No claims match this filter.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Company</th><th style={th()}>Claimant</th><th style={th()}>Domain</th><th style={th()}>Evidence</th><th style={th()}>Status</th><th style={th()}>Submitted</th><th style={th()}>Review</th></tr></thead>
+            <thead><tr><th style={thCell}>Company</th><th style={thCell}>Claimant</th><th style={thCell}>Domain</th><th style={thCell}>Evidence</th><th style={thCell}>Status</th><th style={thCell}>Submitted</th><th style={thCell}>Review</th></tr></thead>
             <tbody>
               {rows.map((c) => (
                 <tr key={c.id}>
-                  <td style={td()}><strong>{c.companyName}</strong><div style={{ color: '#9ca3af', fontSize: '0.72rem' }}>{c.companyPageId}</div></td>
-                  <td style={td()}>{c.claimantHandle}<div style={{ color: '#9ca3af', fontSize: '0.72rem' }}>{c.claimantId}</div></td>
-                  <td style={td()}><Badge status={c.domainVerified ? 'resolved' : 'high'} label={c.domainVerified ? 'verified' : 'unverified'} /></td>
-                  <td style={td()}><code style={{ fontSize: '0.75rem' }}>{c.evidenceRef}</code></td>
-                  <td style={td()}><Badge status={c.status === 'approved' ? 'resolved' : c.status === 'rejected' ? 'critical' : c.status === 'under_review' ? 'investigating' : 'open'} label={c.status.replace(/_/g, ' ')} /></td>
-                  <td style={td()}>{timeAgo(c.submittedAt)}</td>
-                  <td style={td()}>{c.status === 'claim_submitted' || c.status === 'under_review' ? (
+                  <td style={tdCell}><strong>{c.companyName}</strong><div style={{ color: colors.muted, fontSize: '0.72rem' }}>{c.companyPageId}</div></td>
+                  <td style={tdCell}>{c.claimantHandle}<div style={{ color: colors.muted, fontSize: '0.72rem' }}>{c.claimantId}</div></td>
+                  <td style={tdCell}><Badge text={c.domainVerified ? 'verified' : 'unverified'} color={c.domainVerified ? colors.success : colors.warning} /></td>
+                  <td style={tdCell}><code style={{ fontSize: '0.75rem' }}>{c.evidenceRef}</code></td>
+                  <td style={tdCell}><Badge text={c.status.replace(/_/g, ' ')} color={statusColor(c.status)} /></td>
+                  <td style={tdCell}>{timeAgo(c.submittedAt)}</td>
+                  <td style={tdCell}>{c.status === 'claim_submitted' || c.status === 'under_review' ? (
                     <span style={{ display: 'flex', gap: '0.35rem' }}>
-                      <button disabled={busy === c.id} onClick={() => act(c.id, 'approve')} style={{ ...btn(), color: '#15803d', borderColor: '#bbf7d0' }}>Approve</button>
-                      <button disabled={busy === c.id} onClick={() => act(c.id, 'reject')} style={{ ...btn(), color: '#b91c1c', borderColor: '#fecaca' }}>Reject</button>
+                      <Button variant="outline" sm disabled={busy === c.id} onClick={() => act(c.id, 'approve')} style={{ color: colors.success, borderColor: colors.success }}>Approve</Button>
+                      <Button variant="danger" sm disabled={busy === c.id} onClick={() => act(c.id, 'reject')}>Reject</Button>
                     </span>
-                  ) : <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>—</span>}</td>
+                  ) : <span style={{ color: colors.muted, fontSize: '0.8rem' }}>—</span>}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

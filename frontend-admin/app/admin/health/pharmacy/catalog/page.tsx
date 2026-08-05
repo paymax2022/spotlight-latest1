@@ -3,7 +3,16 @@
 import { useEffect, useState } from 'react';
 import { listCatalog, governCatalogItem, formatNaira } from '@/services/healthPharmacyAdminService';
 import type { CatalogItem, CatalogGovernanceAction } from '@/types/healthAdmin';
-import { PageHeader, PharmacyTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnPrimary, btnDanger, th, td, input, label, select } from '../../_ui';
+import { PharmacyTabs, DisclosureNote, StateBlock, FilterBar, AuditNote } from '../../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  const v = status.toLowerCase();
+  if (/(reject|fail|block|suspend|invalid|controlled)/.test(v)) return colors.danger;
+  if (/(pending|warn|flag|pom)/.test(v)) return colors.warning;
+  if (/(approve|verified|active|complete|ok|otc)/.test(v)) return colors.success;
+  return colors.secondary;
+}
 
 export default function CatalogGovernancePage() {
   const [rows, setRows] = useState<CatalogItem[]>([]);
@@ -36,8 +45,8 @@ export default function CatalogGovernancePage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Catalog & NAFDAC governance" subtitle="Product listing review — only NAFDAC-registered products may be listed; unregistered/banned items are rejected at write, not merely hidden. POM and controlled-substance flags surfaced." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Catalog & NAFDAC governance" subtitle="Product listing review — only NAFDAC-registered products may be listed; unregistered/banned items are rejected at write, not merely hidden. POM and controlled-substance flags surfaced." actions={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <PharmacyTabs active="catalog" />
       <DisclosureNote>NAFDAC-only catalog (HL-5): approving an item with no valid NAFDAC registration is blocked. Controlled substances are excluded at MVP (HL-4). POM items carry an Rx-required flag enforced at order time (HL-3). Every governance decision posts an immutable audit event (HL-12).</DisclosureNote>
 
@@ -45,12 +54,12 @@ export default function CatalogGovernancePage() {
 
       <FilterBar>
         <div style={{ minWidth: 240 }}>
-          <label style={label()}>Search</label>
-          <input style={input()} placeholder="Product, brand, NAFDAC no. or id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
+          <label>Search</label>
+          <Input placeholder="Product, brand, NAFDAC no. or id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
         </div>
         <div>
-          <label style={label()}>Status</label>
-          <select style={select()} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <label>Status</label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All</option>
             <option value="pending">Pending</option>
             <option value="approved">Approved</option>
@@ -59,56 +68,58 @@ export default function CatalogGovernancePage() {
           </select>
         </div>
         <div>
-          <label style={label()}>Class</label>
-          <select style={select()} value={pom} onChange={(e) => setPom(e.target.value)}>
+          <label>Class</label>
+          <select value={pom} onChange={(e) => setPom(e.target.value)}>
             <option value="">All</option>
             <option value="pom">POM (Rx)</option>
             <option value="otc">OTC</option>
           </select>
         </div>
-        <button style={btn()} onClick={load}>Apply</button>
+        <Button variant="outline" onClick={load}>Apply</Button>
       </FilterBar>
 
-      <Card>
-        <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No catalog items in this queue.">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>
-              <th style={th()}>Product</th><th style={th()}>Pharmacy</th><th style={th()}>NAFDAC reg.</th><th style={th()}>Class</th>
-              <th style={th()}>Price</th><th style={th()}>Stock</th><th style={th()}>Status</th><th style={th()}>Actions</th>
-            </tr></thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td style={td()}>
-                    <div style={{ fontWeight: 600 }}>{r.product_name}</div>
-                    <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.brand} · {r.form} {r.strength} · {r.id}</div>
-                    {r.flagged_reason && <div style={{ marginTop: 4 }}><Badge status="flagged" label={r.flagged_reason} /></div>}
-                  </td>
-                  <td style={td()}>{r.pharmacy_masked}</td>
-                  <td style={td()}>
-                    {r.nafdac_reg_no ? <code style={{ fontSize: '0.76rem' }}>{r.nafdac_reg_no}</code> : <Badge status="invalid" label="none" />}
-                    <div style={{ marginTop: 4 }}><Badge status={r.nafdac_valid ? 'verified' : 'invalid'} label={r.nafdac_valid ? 'valid' : 'invalid'} /></div>
-                  </td>
-                  <td style={td()}>
-                    {r.controlled ? <Badge status="controlled" label="controlled" /> : r.pom ? <Badge status="pom" label="POM" /> : <Badge status="otc" label="OTC" />}
-                  </td>
-                  <td style={td()}>{formatNaira(r.price_kobo)}</td>
-                  <td style={td()}>{r.stock.toLocaleString('en-NG')}</td>
-                  <td style={td()}><Badge status={r.status} /></td>
-                  <td style={td()}>
-                    <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                      {(r.status === 'pending' || r.status === 'suspended') && <button style={btnPrimary()} disabled={busy === r.id} onClick={() => govern(r, 'approve')}>{busy === r.id ? '…' : 'Approve'}</button>}
-                      {(r.status === 'pending' || r.status === 'approved') && <button style={btnDanger()} disabled={busy === r.id} onClick={() => govern(r, 'reject')}>Reject</button>}
-                      {r.status === 'approved' && <button style={btn()} disabled={busy === r.id} onClick={() => govern(r, 'suspend')}>Suspend</button>}
-                      {(r.status === 'rejected') && <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>—</span>}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </StateBlock>
+      <Card style={{ padding: 0, overflow: 'auto' }}>
+        <div style={{ padding: rows.length === 0 || loading || error ? 14 : 0 }}>
+          <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No catalog items in this queue.">
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr>
+                <th style={thCell}>Product</th><th style={thCell}>Pharmacy</th><th style={thCell}>NAFDAC reg.</th><th style={thCell}>Class</th>
+                <th style={thCell}>Price</th><th style={thCell}>Stock</th><th style={thCell}>Status</th><th style={thCell}>Actions</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id}>
+                    <td style={tdCell}>
+                      <div style={{ fontWeight: 600 }}>{r.product_name}</div>
+                      <div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.brand} · {r.form} {r.strength} · {r.id}</div>
+                      {r.flagged_reason && <div style={{ marginTop: 4 }}><Badge text={r.flagged_reason} color={colors.warning} /></div>}
+                    </td>
+                    <td style={tdCell}>{r.pharmacy_masked}</td>
+                    <td style={tdCell}>
+                      {r.nafdac_reg_no ? <code style={{ fontSize: '0.76rem' }}>{r.nafdac_reg_no}</code> : <Badge text="none" color={colors.danger} />}
+                      <div style={{ marginTop: 4 }}><Badge text={r.nafdac_valid ? 'valid' : 'invalid'} color={r.nafdac_valid ? colors.success : colors.danger} /></div>
+                    </td>
+                    <td style={tdCell}>
+                      {r.controlled ? <Badge text="controlled" color={colors.danger} /> : r.pom ? <Badge text="POM" color={colors.warning} /> : <Badge text="OTC" color={colors.success} />}
+                    </td>
+                    <td style={tdCell}>{formatNaira(r.price_kobo)}</td>
+                    <td style={tdCell}>{r.stock.toLocaleString('en-NG')}</td>
+                    <td style={tdCell}><Badge text={r.status} color={statusColor(r.status)} /></td>
+                    <td style={tdCell}>
+                      <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                        {(r.status === 'pending' || r.status === 'suspended') && <Button variant="primary" sm disabled={busy === r.id} onClick={() => govern(r, 'approve')}>{busy === r.id ? '…' : 'Approve'}</Button>}
+                        {(r.status === 'pending' || r.status === 'approved') && <Button variant="danger" sm disabled={busy === r.id} onClick={() => govern(r, 'reject')}>Reject</Button>}
+                        {r.status === 'approved' && <Button variant="outline" sm disabled={busy === r.id} onClick={() => govern(r, 'suspend')}>Suspend</Button>}
+                        {(r.status === 'rejected') && <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span>}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </StateBlock>
+        </div>
       </Card>
-    </div>
+    </Page>
   );
 }

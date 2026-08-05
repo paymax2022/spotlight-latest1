@@ -5,7 +5,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { listResidents, banResident, restoreResident } from '@/services/estateAdminService';
 import type { AdminResident } from '@/types/estateAdmin';
-import { PageHeader, EstateTabs, Card, Badge, btn, btnPrimary, th, td, money } from '../_ui';
+import { EstateTabs, money } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const cap = (s: string) => s.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+function statusColor(status: string): string {
+  if (status === 'active' || status === 'owner') return status === 'owner' ? colors.info : colors.success;
+  if (status === 'banned') return colors.danger;
+  if (status === 'tenant') return colors.secondary;
+  return colors.secondary;
+}
 
 export default function ResidentsPage() {
   const [rows, setRows] = useState<AdminResident[]>([]);
@@ -46,30 +55,33 @@ export default function ResidentsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Residents & units" subtitle="Owner / tenant registry per unit. Ban restricts estate access; restore re-enables it." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Residents & units" subtitle="Owner / tenant registry per unit. Ban restricts estate access; restore re-enables it." actions={<Button variant="outline" sm onClick={load}>Refresh</Button>} />
       <EstateTabs active="residents" />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
-      <Card right={<input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, unit, phone…" style={{ ...btn(), cursor: 'text', minWidth: 220 }} />}>
-        {loading ? <p style={{ color: '#6b7280' }}>Loading residents…</p> : filtered.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No residents match.</p>
+      <Card title="Residents">
+        <div style={{ marginBottom: '0.75rem' }}>
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, unit, phone…" style={{ minWidth: 220 }} />
+        </div>
+        {loading ? <p style={{ color: colors.muted }}>Loading residents…</p> : filtered.length === 0 ? (
+          <p style={{ color: colors.muted }}>No residents match.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Resident</th><th style={th()}>Unit</th><th style={th()}>Role</th><th style={th()}>Phone</th><th style={th()}>Arrears</th><th style={th()}>Status</th><th style={th()}>Actions</th></tr></thead>
+            <thead><tr><th style={thCell}>Resident</th><th style={thCell}>Unit</th><th style={thCell}>Role</th><th style={thCell}>Phone</th><th style={thCell}>Arrears</th><th style={thCell}>Status</th><th style={thCell}>Actions</th></tr></thead>
             <tbody>
               {filtered.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><strong>{r.name}</strong></td>
-                  <td style={td()}>{r.unit}</td>
-                  <td style={td()}><Badge status={r.role} /></td>
-                  <td style={td()}>{r.phone}</td>
-                  <td style={td()}>{r.arrearsKobo > 0 ? <span style={{ color: '#d97706' }}>{money(r.arrearsKobo)}</span> : <span style={{ color: '#16a34a' }}>Clear</span>}</td>
-                  <td style={td()}><Badge status={r.status} /></td>
-                  <td style={td()}>
+                  <td style={tdCell}><strong>{r.name}</strong></td>
+                  <td style={tdCell}>{r.unit}</td>
+                  <td style={tdCell}><Badge text={cap(r.role)} color={statusColor(r.role)} /></td>
+                  <td style={tdCell}>{r.phone}</td>
+                  <td style={tdCell}>{r.arrearsKobo > 0 ? <span style={{ color: colors.warning }}>{money(r.arrearsKobo)}</span> : <span style={{ color: colors.success }}>Clear</span>}</td>
+                  <td style={tdCell}><Badge text={cap(r.status)} color={statusColor(r.status)} /></td>
+                  <td style={tdCell}>
                     {r.status === 'banned'
-                      ? <button disabled={busy === r.id} onClick={() => restore(r.id)} style={btnPrimary('#16a34a')}>Restore</button>
-                      : <button disabled={busy === r.id} onClick={() => ban(r.id)} style={btnPrimary('#dc2626')}>Ban</button>}
+                      ? <Button variant="primary" sm disabled={busy === r.id} onClick={() => restore(r.id)}>Restore</Button>
+                      : <Button variant="danger" sm disabled={busy === r.id} onClick={() => ban(r.id)}>Ban</Button>}
                   </td>
                 </tr>
               ))}
@@ -77,6 +89,6 @@ export default function ResidentsPage() {
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

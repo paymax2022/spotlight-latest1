@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listProductionCards, advanceProductionCard, blockProductionCard, PRODUCTION_STAGES } from '@/services/academyAdminService';
 import type { ProductionCard, ProductionStage } from '@/types/academyAdmin';
 import { PageHeader, AcademyTabs, Card, Badge, StateBlock, AuditNote, DisclosureNote, btn, btnPrimary, btnDanger, fmtDate } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 const STAGE_LABELS: Record<ProductionStage, string> = {
   script: 'Script', storyboard: 'Storyboard', shoot: 'Shoot', edit: 'Edit', qa: 'QA', publish: 'Publish',
@@ -60,14 +61,14 @@ export default function ContentProductionPage() {
           {PRODUCTION_STAGES.map((stage) => {
             const stageCards = cards.filter((c) => c.stage === stage);
             return (
-              <div key={stage} style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.6rem' }}>
+              <div key={stage} style={{ background: colors.bg, border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.6rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
                   <strong style={{ fontSize: '0.85rem' }}>{STAGE_LABELS[stage]}</strong>
-                  <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{stageCards.length}</span>
+                  <span style={{ fontSize: '0.72rem', color: colors.muted }}>{stageCards.length}</span>
                 </div>
                 <div style={{ display: 'grid', gap: '0.5rem' }}>
-                  {stageCards.length === 0 ? <p style={{ color: '#9ca3af', fontSize: '0.75rem', margin: 0 }}>—</p> : stageCards.map((c) => (
-                    <div key={c.id} style={{ background: '#fff', border: `1px solid ${c.blocked ? '#fecaca' : '#e5e7eb'}`, borderRadius: '0.4rem', padding: '0.55rem' }}>
+                  {stageCards.length === 0 ? <p style={{ color: colors.muted, fontSize: '0.75rem', margin: 0 }}>—</p> : stageCards.map((c) => (
+                    <div key={c.id} style={{ background: '#fff', border: `1px solid ${c.blocked ? '#fecaca' : colors.border}`, borderRadius: '0.4rem', padding: '0.55rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.4rem', marginBottom: '0.3rem' }}>
                         <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>{c.title}</span>
                         <Badge status={c.priority === 'high' ? 'rejected' : c.priority === 'normal' ? 'open' : 'archived'} label={c.priority} />
@@ -87,7 +88,7 @@ export default function ContentProductionPage() {
           })}
         </div>
         <Card title="">
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', margin: 0 }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.muted, margin: 0 }}>{notice}</p>}
           <AuditNote>Stage advances and block/unblock actions are recorded to the immutable audit log.</AuditNote>
         </Card>
       </StateBlock>

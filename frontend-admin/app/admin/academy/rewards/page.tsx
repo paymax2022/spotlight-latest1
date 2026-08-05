@@ -3,7 +3,22 @@
 import { useEffect, useState } from 'react';
 import { listRewardPools, createRewardPool, fundRewardPool, listRewardCatalog, getRewardLedger } from '@/services/academyAdminService';
 import type { RewardPool, RewardCatalogItem, RewardLedgerEntry, RewardPoolInput } from '@/types/academyAdmin';
-import { PageHeader, AcademyTabs, Card, Badge, StateBlock, AuditNote, DisclosureNote, btn, btnPrimary, th, td, input, label, formatNaira, timeAgo } from '../_ui';
+import { AcademyTabs, StateBlock, AuditNote, DisclosureNote, label, formatNaira, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  const s = status.toLowerCase();
+  if (['active', 'approved', 'published', 'funded', 'paid', 'completed', 'allocated', 'live', 'reconciled', 'disbursed', 'collected', 'released', 'core', 'issued', 'routed', 'ready', 'eligible', 'actioned', 'verified', 'resolved', 'plan_published', 'badge_earned', 'pool_funded', 'item_approved'].includes(s)) return colors.success;
+  if (['pending', 'in_review', 'under_review', 'needs_info', 'scheduled', 'low_balance', 'review', 'in_translation', 'funding', 'fee_due', 'onboarding', 'frequent', 'packaged', 'matured', 'paused', 'processing', 'triaged', 'investigating', 'hide', 'warn', 'high', 'medium'].includes(s)) return colors.warning;
+  if (['draft', 'authoring', 'open', 'upcoming', 'generated', 'partial', 'submitted', 'trial', 'requested', 'applied', 'cards_generated', 'exam_opened', 'campaign_launched'].includes(s)) return colors.info;
+  if (['rejected', 'failed', 'suspended', 'blocked', 'unfunded', 'expired', 'duplicate', 'revoked', 'escalated', 'ban', 'critical', 'overdue', 'item_rejected'].includes(s)) return colors.danger;
+  if (['refunded', 'reversed', 'redeemed', 'reward_redeemed'].includes(s)) return colors.primary;
+  return colors.secondary;
+}
+
+function StatusBadge({ status, label: lbl }: { status: string; label?: string }) {
+  return <Badge text={lbl ?? status.replace(/_/g, ' ')} color={statusColor(status)} />;
+}
 
 export default function RewardsPage() {
   const [pools, setPools] = useState<RewardPool[]>([]);
@@ -56,8 +71,8 @@ export default function RewardsPage() {
   function poolFunded(id: string) { const p = pools.find((x) => x.id === id); return p ? p.status === 'funded' || p.status === 'low_balance' : false; }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Rewards & wallet ops" subtitle="Funded reward pools; point→value conversion; redemption catalog; per-user caps; ledger reconciliation & reporting." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Rewards & wallet ops" subtitle="Funded reward pools; point→value conversion; redemption catalog; per-user caps; ledger reconciliation & reporting." actions={<Button onClick={load} variant="outline" sm>Refresh</Button>} />
       <AcademyTabs active="rewards" />
       <DisclosureNote>
         Requires <code>academy.rewards</code>. <strong>No reward may be issued without a funded pool.</strong> A
@@ -68,21 +83,21 @@ export default function RewardsPage() {
       <StateBlock loading={loading} error={error} empty={pools.length === 0}>
         <Card title="Reward pools">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Pool</th><th style={th()}>Sponsor</th><th style={th()}>Status</th><th style={th()}>Funded</th><th style={th()}>Balance</th><th style={th()}>Spent</th><th style={th()}>Per-user cap</th><th style={th()}>Fund</th></tr></thead>
+            <thead><tr><th style={thCell}>Pool</th><th style={thCell}>Sponsor</th><th style={thCell}>Status</th><th style={thCell}>Funded</th><th style={thCell}>Balance</th><th style={thCell}>Spent</th><th style={thCell}>Per-user cap</th><th style={thCell}>Fund</th></tr></thead>
             <tbody>
               {pools.map((p) => (
                 <tr key={p.id}>
-                  <td style={td()}>{p.name}</td>
-                  <td style={td()}>{p.sponsor ?? '—'}</td>
-                  <td style={td()}><Badge status={p.status} /></td>
-                  <td style={td()}>{formatNaira(p.funded_kobo)}</td>
-                  <td style={{ ...td(), fontWeight: 600, color: p.balance_kobo <= 0 ? '#b91c1c' : '#15803d' }}>{formatNaira(p.balance_kobo)}</td>
-                  <td style={td()}>{formatNaira(p.spent_kobo)}</td>
-                  <td style={td()}>{formatNaira(p.per_user_cap_kobo)}</td>
-                  <td style={td()}>
+                  <td style={tdCell}>{p.name}</td>
+                  <td style={tdCell}>{p.sponsor ?? '—'}</td>
+                  <td style={tdCell}><StatusBadge status={p.status} /></td>
+                  <td style={tdCell}>{formatNaira(p.funded_kobo)}</td>
+                  <td style={{ ...tdCell, fontWeight: 600, color: p.balance_kobo <= 0 ? colors.danger : colors.success }}>{formatNaira(p.balance_kobo)}</td>
+                  <td style={tdCell}>{formatNaira(p.spent_kobo)}</td>
+                  <td style={tdCell}>{formatNaira(p.per_user_cap_kobo)}</td>
+                  <td style={tdCell}>
                     <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
-                      <input style={{ ...input(), width: 90 }} placeholder="₦" value={fundAmount[p.id] ?? ''} onChange={(e) => setFundAmount({ ...fundAmount, [p.id]: e.target.value })} />
-                      <button onClick={() => fund(p.id)} disabled={busy} style={btnPrimary()}>Fund</button>
+                      <Input style={{ width: 90 }} placeholder="₦" value={fundAmount[p.id] ?? ''} onChange={(e) => setFundAmount({ ...fundAmount, [p.id]: e.target.value })} />
+                      <Button onClick={() => fund(p.id)} disabled={busy} variant="primary" sm>Fund</Button>
                     </div>
                   </td>
                 </tr>
@@ -93,29 +108,29 @@ export default function RewardsPage() {
 
         <Card title="Create reward pool">
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.6rem', alignItems: 'end' }}>
-            <div><label style={label()}>Name</label><input style={input()} value={poolForm.name} onChange={(e) => setPoolForm({ ...poolForm, name: e.target.value })} placeholder="e.g. Q4 Engagement Drive" /></div>
-            <div><label style={label()}>Per-user cap (₦)</label><input type="number" style={input()} value={poolForm.cap_naira} onChange={(e) => setPoolForm({ ...poolForm, cap_naira: e.target.value })} /></div>
-            <div><label style={label()}>Sponsor (optional)</label><input style={input()} value={poolForm.sponsor} onChange={(e) => setPoolForm({ ...poolForm, sponsor: e.target.value })} /></div>
-            <div><button onClick={createPool} disabled={busy} style={btnPrimary()}>Create pool</button></div>
+            <div><label style={label()}>Name</label><Input value={poolForm.name} onChange={(e) => setPoolForm({ ...poolForm, name: e.target.value })} placeholder="e.g. Q4 Engagement Drive" /></div>
+            <div><label style={label()}>Per-user cap (₦)</label><Input type="number" value={poolForm.cap_naira} onChange={(e) => setPoolForm({ ...poolForm, cap_naira: e.target.value })} /></div>
+            <div><label style={label()}>Sponsor (optional)</label><Input value={poolForm.sponsor} onChange={(e) => setPoolForm({ ...poolForm, sponsor: e.target.value })} /></div>
+            <div><Button onClick={createPool} disabled={busy} variant="primary" sm>Create pool</Button></div>
           </div>
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.text, marginTop: '0.6rem' }}>{notice}</p>}
           <AuditNote>Pool creation, funding and redemptions are recorded to the immutable audit log and the reward ledger.</AuditNote>
         </Card>
 
         <Card title="Redemption catalog">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Item</th><th style={th()}>Category</th><th style={th()}>Point cost</th><th style={th()}>Value</th><th style={th()}>Pool</th><th style={th()}>Funded?</th><th style={th()}>Stock</th><th style={th()}>Status</th></tr></thead>
+            <thead><tr><th style={thCell}>Item</th><th style={thCell}>Category</th><th style={thCell}>Point cost</th><th style={thCell}>Value</th><th style={thCell}>Pool</th><th style={thCell}>Funded?</th><th style={thCell}>Stock</th><th style={thCell}>Status</th></tr></thead>
             <tbody>
               {catalog.map((c) => (
                 <tr key={c.id}>
-                  <td style={td()}>{c.name}</td>
-                  <td style={td()}>{c.category}</td>
-                  <td style={td()}>{c.point_cost.toLocaleString('en-NG')}</td>
-                  <td style={td()}>{formatNaira(c.value_kobo)}</td>
-                  <td style={td()}>{poolName(c.pool_id)}</td>
-                  <td style={td()}>{poolFunded(c.pool_id) ? <Badge status="funded" /> : <Badge status="unfunded" label="unfunded — blocked" />}</td>
-                  <td style={td()}>{c.stock === null ? '∞' : c.stock.toLocaleString('en-NG')}</td>
-                  <td style={td()}><Badge status={c.status} /></td>
+                  <td style={tdCell}>{c.name}</td>
+                  <td style={tdCell}>{c.category}</td>
+                  <td style={tdCell}>{c.point_cost.toLocaleString('en-NG')}</td>
+                  <td style={tdCell}>{formatNaira(c.value_kobo)}</td>
+                  <td style={tdCell}>{poolName(c.pool_id)}</td>
+                  <td style={tdCell}>{poolFunded(c.pool_id) ? <StatusBadge status="funded" /> : <StatusBadge status="unfunded" label="unfunded — blocked" />}</td>
+                  <td style={tdCell}>{c.stock === null ? '∞' : c.stock.toLocaleString('en-NG')}</td>
+                  <td style={tdCell}><StatusBadge status={c.status} /></td>
                 </tr>
               ))}
             </tbody>
@@ -124,22 +139,22 @@ export default function RewardsPage() {
 
         <Card title="Reward ledger (reconciliation report)">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Type</th><th style={th()}>Pool</th><th style={th()}>Amount</th><th style={th()}>User</th><th style={th()}>Ref</th><th style={th()}>When</th></tr></thead>
+            <thead><tr><th style={thCell}>Type</th><th style={thCell}>Pool</th><th style={thCell}>Amount</th><th style={thCell}>User</th><th style={thCell}>Ref</th><th style={thCell}>When</th></tr></thead>
             <tbody>
               {ledger.map((l) => (
                 <tr key={l.id}>
-                  <td style={td()}><Badge status={l.type === 'fund' ? 'funded' : l.type === 'redeem' ? 'redeemed' : 'reversed'} label={l.type} /></td>
-                  <td style={td()}>{poolName(l.pool_id)}</td>
-                  <td style={{ ...td(), fontWeight: 600, color: l.type === 'fund' ? '#15803d' : l.type === 'reversal' ? '#7c3aed' : '#b91c1c' }}>{l.type === 'fund' ? '+' : '−'}{formatNaira(l.amount_kobo)}</td>
-                  <td style={td()}>{l.user_id ?? '—'}</td>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{l.ref}</code></td>
-                  <td style={td()}>{timeAgo(l.created_at)}</td>
+                  <td style={tdCell}><StatusBadge status={l.type === 'fund' ? 'funded' : l.type === 'redeem' ? 'redeemed' : 'reversed'} label={l.type} /></td>
+                  <td style={tdCell}>{poolName(l.pool_id)}</td>
+                  <td style={{ ...tdCell, fontWeight: 600, color: l.type === 'fund' ? colors.success : l.type === 'reversal' ? colors.primary : colors.danger }}>{l.type === 'fund' ? '+' : '−'}{formatNaira(l.amount_kobo)}</td>
+                  <td style={tdCell}>{l.user_id ?? '—'}</td>
+                  <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{l.ref}</code></td>
+                  <td style={tdCell}>{timeAgo(l.created_at)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </Card>
       </StateBlock>
-    </div>
+    </Page>
   );
 }

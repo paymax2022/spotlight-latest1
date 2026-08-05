@@ -13,6 +13,7 @@ import {
   type Config, type ConfigInput, type FeeModel, type FeePayer,
 } from '@/services/commissionService';
 import { PageHeader, Card, Badge, CommissionTabs, StateBlock, th, td, label, input, select, btn } from './_ui';
+import { colors } from '@/components/ui/vuexy';
 
 type FormState = {
   serviceCategory: string; service: string; serviceSubtype: string;
@@ -151,12 +152,12 @@ export default function CommissionRatesPage() {
                   {grouped[cat].map((c) => (
                     <tr key={c.id} style={c.active ? undefined : { opacity: 0.6 }}>
                       <td style={{ ...td(), fontWeight: 600 }}>{c.service}</td>
-                      <td style={td()}>{c.serviceSubtype || <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                      <td style={td()}>{c.serviceSubtype || <span style={{ color: colors.muted }}>—</span>}</td>
                       <td style={td()}><Badge label={c.feeModel.replace(/_/g, ' ')} tone="info" /></td>
-                      <td style={td()}>{c.commissionBps ? formatPct(c.commissionBps) : <span style={{ color: '#9ca3af' }}>—</span>}</td>
-                      <td style={td()}>{c.platformChargeBps ? formatPct(c.platformChargeBps) : <span style={{ color: '#9ca3af' }}>—</span>}</td>
-                      <td style={td()}>{c.convenienceFeeKobo ? formatNaira(c.convenienceFeeKobo) : <span style={{ color: '#9ca3af' }}>—</span>}</td>
-                      <td style={td()}>{c.fixedFeeKobo ? formatNaira(c.fixedFeeKobo) : <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                      <td style={td()}>{c.commissionBps ? formatPct(c.commissionBps) : <span style={{ color: colors.muted }}>—</span>}</td>
+                      <td style={td()}>{c.platformChargeBps ? formatPct(c.platformChargeBps) : <span style={{ color: colors.muted }}>—</span>}</td>
+                      <td style={td()}>{c.convenienceFeeKobo ? formatNaira(c.convenienceFeeKobo) : <span style={{ color: colors.muted }}>—</span>}</td>
+                      <td style={td()}>{c.fixedFeeKobo ? formatNaira(c.fixedFeeKobo) : <span style={{ color: colors.muted }}>—</span>}</td>
                       <td style={td()}>{c.feePayer}</td>
                       <td style={td()}><Badge label={c.active ? 'Active' : 'Inactive'} tone={c.active ? 'ok' : 'off'} /></td>
                       <td style={td()}>
@@ -267,7 +268,7 @@ function ConfigModal({ title, form, setForm, onCancel, onSave, saving, error, is
           <input type="checkbox" checked={form.active} onChange={(e) => set('active', e.target.checked)} /> Active
         </label>
 
-        <p style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: '0.6rem' }}>
+        <p style={{ fontSize: '0.72rem', color: colors.muted, marginTop: '0.6rem' }}>
           Rates entered as % are stored as basis points (× 100); ₦ amounts are stored as kobo (× 100). Only integer minor units are sent to the backend.
         </p>
 

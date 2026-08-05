@@ -9,6 +9,7 @@ import type {
   CurriculumTree, CurriculumVersionInput, CurriculumTopic, CurriculumObjective,
 } from '@/types/academyAdmin';
 import { PageHeader, AcademyTabs, Card, Badge, StateBlock, AuditNote, btn, btnPrimary, th, td, input, label, select, DisclosureNote } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 const BLOOM_LEVELS = ['remember', 'understand', 'apply', 'analyze', 'evaluate', 'create'] as const;
 
@@ -113,12 +114,12 @@ export default function CurriculumPage() {
               <Card title="Versions">
                 <div style={{ display: 'grid', gap: '0.4rem' }}>
                   {tree.versions.map((v) => (
-                    <button key={v.id} onClick={() => { setSelectedVersion(v.id); setSelectedClass(''); setSelectedSubject(''); setSelectedTopic(''); }} style={{ ...btn(), textAlign: 'left', borderColor: selectedVersion === v.id ? '#340075' : '#d1d5db', background: selectedVersion === v.id ? '#f5f3ff' : '#fff' }}>
+                    <button key={v.id} onClick={() => { setSelectedVersion(v.id); setSelectedClass(''); setSelectedSubject(''); setSelectedTopic(''); }} style={{ ...btn(), textAlign: 'left', borderColor: selectedVersion === v.id ? '#340075' : colors.border, background: selectedVersion === v.id ? '#f5f3ff' : '#fff' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
                         <strong style={{ fontSize: '0.85rem' }}>{v.name}</strong>
                         <Badge status={v.status} />
                       </div>
-                      <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: '0.2rem' }}>Effective {v.effective_date} · {v.classes_count} classes · {v.subjects_count} subjects</div>
+                      <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: '0.2rem' }}>Effective {v.effective_date} · {v.classes_count} classes · {v.subjects_count} subjects</div>
                     </button>
                   ))}
                 </div>
@@ -136,7 +137,7 @@ export default function CurriculumPage() {
                 {classes.length === 0 ? <p style={{ color: '#6b7280', fontSize: '0.85rem' }}>No classes in this version yet.</p> : (
                   <div style={{ display: 'grid', gap: '0.4rem' }}>
                     {classes.map((c) => (
-                      <button key={c.id} onClick={() => { setSelectedClass(c.id); setSelectedSubject(''); setSelectedTopic(''); }} style={{ ...btn(), textAlign: 'left', borderColor: selectedClass === c.id ? '#340075' : '#d1d5db', background: selectedClass === c.id ? '#f5f3ff' : '#fff' }}>{c.name}</button>
+                      <button key={c.id} onClick={() => { setSelectedClass(c.id); setSelectedSubject(''); setSelectedTopic(''); }} style={{ ...btn(), textAlign: 'left', borderColor: selectedClass === c.id ? '#340075' : colors.border, background: selectedClass === c.id ? '#f5f3ff' : '#fff' }}>{c.name}</button>
                     ))}
                   </div>
                 )}
@@ -155,8 +156,8 @@ export default function CurriculumPage() {
                   <>
                     <div style={{ display: 'grid', gap: '0.3rem', marginBottom: '0.6rem' }}>
                       {subjects.length === 0 ? <p style={{ color: '#6b7280', fontSize: '0.85rem' }}>No subjects.</p> : subjects.map((s) => (
-                        <button key={s.id} onClick={() => { setSelectedSubject(s.id); setSelectedTopic(''); }} style={{ ...btn(), textAlign: 'left', borderColor: selectedSubject === s.id ? '#340075' : '#d1d5db', background: selectedSubject === s.id ? '#f5f3ff' : '#fff' }}>
-                          <span style={{ fontSize: '0.85rem' }}>{s.name}</span> <code style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{s.code}</code> <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>· {s.topics_count} topics</span>
+                        <button key={s.id} onClick={() => { setSelectedSubject(s.id); setSelectedTopic(''); }} style={{ ...btn(), textAlign: 'left', borderColor: selectedSubject === s.id ? '#340075' : colors.border, background: selectedSubject === s.id ? '#f5f3ff' : '#fff' }}>
+                          <span style={{ fontSize: '0.85rem' }}>{s.name}</span> <code style={{ fontSize: '0.72rem', color: colors.muted }}>{s.code}</code> <span style={{ fontSize: '0.72rem', color: colors.muted }}>· {s.topics_count} topics</span>
                         </button>
                       ))}
                     </div>
@@ -166,7 +167,7 @@ export default function CurriculumPage() {
                         {loadingDrill && topics.length === 0 ? <p style={{ color: '#6b7280', fontSize: '0.8rem' }}>Loading…</p> : (
                           <div style={{ display: 'grid', gap: '0.3rem' }}>
                             {topics.map((t) => (
-                              <button key={t.id} onClick={() => setSelectedTopic(t.id)} style={{ ...btn(), textAlign: 'left', fontSize: '0.82rem', borderColor: selectedTopic === t.id ? '#340075' : '#d1d5db', background: selectedTopic === t.id ? '#f5f3ff' : '#fff' }}>{t.name} <span style={{ color: '#9ca3af' }}>· {t.objectives_count} obj</span></button>
+                              <button key={t.id} onClick={() => setSelectedTopic(t.id)} style={{ ...btn(), textAlign: 'left', fontSize: '0.82rem', borderColor: selectedTopic === t.id ? '#340075' : colors.border, background: selectedTopic === t.id ? '#f5f3ff' : '#fff' }}>{t.name} <span style={{ color: colors.muted }}>· {t.objectives_count} obj</span></button>
                             ))}
                           </div>
                         )}
@@ -194,7 +195,7 @@ export default function CurriculumPage() {
                               <td style={td()}><Badge status={o.bloom_level === 'remember' || o.bloom_level === 'understand' ? 'open' : 'pending'} label={o.bloom_level} /></td>
                               <td style={td()}>
                                 <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
-                                  {o.exam_relevance.length === 0 ? <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>—</span> : o.exam_relevance.map((r) => (
+                                  {o.exam_relevance.length === 0 ? <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span> : o.exam_relevance.map((r) => (
                                     <span key={r.exam_code} title={r.relevance} style={{ display: 'inline-flex', gap: 4, alignItems: 'center', fontSize: '0.72rem' }}>
                                       <Badge status={r.exam_code} /><Badge status={r.relevance} />
                                     </span>
@@ -238,7 +239,7 @@ export default function CurriculumPage() {
           </div>
           <div><button onClick={submit} disabled={saving} style={btnPrimary()}>{saving ? 'Saving…' : 'Create version'}</button></div>
         </div>
-        {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+        {notice && <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: '0.6rem' }}>{notice}</p>}
         <AuditNote>Creating or editing any curriculum entry (version/class/subject/topic/objective) is recorded to the immutable audit log.</AuditNote>
       </Card>
     </div>

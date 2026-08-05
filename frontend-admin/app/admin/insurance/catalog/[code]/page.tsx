@@ -9,6 +9,7 @@ import {
   PageHeader, InsuranceTabs, Card, Badge, StateBlock, DisclosureNote,
   btnPrimary, th, td, label, input, select, fmtDate,
 } from '../../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function InsuranceProductEditorPage() {
   const params = useParams();
@@ -53,7 +54,7 @@ export default function InsuranceProductEditorPage() {
       <PageHeader
         title={detail ? detail.name : 'Product'}
         subtitle={`Catalog code ${code} — versioned product editor. Changes publish a new version.`}
-        action={<Link href="/admin/insurance/catalog" style={{ ...btnPrimary(), background: '#fff', color: '#340075', textDecoration: 'none' }}>Back to catalog</Link>}
+        action={<Link href="/admin/insurance/catalog" style={{ ...btnPrimary(), background: colors.card, color: colors.primary, textDecoration: 'none' }}>Back to catalog</Link>}
       />
       <InsuranceTabs active="catalog" />
 
@@ -110,7 +111,7 @@ export default function InsuranceProductEditorPage() {
                 <div>
                   <label style={label()}>Base premium (kobo)</label>
                   <input type="number" min={0} style={input()} value={detail.base_premium_kobo} onChange={(e) => patch('base_premium_kobo', Number(e.target.value))} />
-                  <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: 2 }}>= {formatNaira(detail.base_premium_kobo)}</div>
+                  <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 2 }}>= {formatNaira(detail.base_premium_kobo)}</div>
                 </div>
                 <div>
                   <label style={label()}>Commission basis (%)</label>
@@ -119,17 +120,17 @@ export default function InsuranceProductEditorPage() {
                 <div>
                   <label style={label()}>Sum insured — min (kobo)</label>
                   <input type="number" min={0} style={input()} value={detail.sum_insured.min_kobo} onChange={(e) => patchSum('min_kobo', Number(e.target.value))} />
-                  <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: 2 }}>= {formatNaira(detail.sum_insured.min_kobo)}</div>
+                  <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 2 }}>= {formatNaira(detail.sum_insured.min_kobo)}</div>
                 </div>
                 <div>
                   <label style={label()}>Sum insured — max (kobo)</label>
                   <input type="number" min={0} style={input()} value={detail.sum_insured.max_kobo} onChange={(e) => patchSum('max_kobo', Number(e.target.value))} />
-                  <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: 2 }}>= {formatNaira(detail.sum_insured.max_kobo)}</div>
+                  <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 2 }}>= {formatNaira(detail.sum_insured.max_kobo)}</div>
                 </div>
                 <div>
                   <label style={label()}>Sum insured — default (kobo)</label>
                   <input type="number" min={0} style={input()} value={detail.sum_insured.default_kobo} onChange={(e) => patchSum('default_kobo', Number(e.target.value))} />
-                  <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: 2 }}>= {formatNaira(detail.sum_insured.default_kobo)}</div>
+                  <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 2 }}>= {formatNaira(detail.sum_insured.default_kobo)}</div>
                 </div>
               </div>
 
@@ -138,7 +139,7 @@ export default function InsuranceProductEditorPage() {
                 <textarea style={{ ...input(), minHeight: 80, resize: 'vertical', fontFamily: 'inherit' }} value={detail.description} onChange={(e) => patch('description', e.target.value)} />
               </div>
 
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.9rem', fontSize: '0.85rem', color: '#374151' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.9rem', fontSize: '0.85rem', color: colors.text }}>
                 <input type="checkbox" checked={detail.active} onChange={(e) => patch('active', e.target.checked)} />
                 Active (feature-flag enabled for binding)
               </label>
@@ -147,18 +148,18 @@ export default function InsuranceProductEditorPage() {
                 <button style={{ ...btnPrimary(), opacity: saving ? 0.6 : 1, cursor: saving ? 'not-allowed' : 'pointer' }} onClick={save} disabled={saving}>
                   {saving ? 'Saving…' : 'Save'}
                 </button>
-                {saved && <span style={{ color: '#15803d', fontSize: '0.82rem', fontWeight: 600 }}>Saved — now v{detail.version}</span>}
-                {error && detail && <span style={{ color: '#dc2626', fontSize: '0.82rem' }}>{error}</span>}
+                {saved && <span style={{ color: colors.success, fontSize: '0.82rem', fontWeight: 600 }}>Saved — now v{detail.version}</span>}
+                {error && detail && <span style={{ color: colors.danger, fontSize: '0.82rem' }}>{error}</span>}
               </div>
             </Card>
 
             <Card title="Required fields">
               {detail.required_fields.length === 0 ? (
-                <p style={{ color: '#6b7280', fontSize: '0.85rem' }}>No fields configured.</p>
+                <p style={{ color: colors.muted, fontSize: '0.85rem' }}>No fields configured.</p>
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
                   {detail.required_fields.map((f) => (
-                    <span key={f} style={{ display: 'inline-block', padding: '0.2rem 0.6rem', borderRadius: 9999, background: '#f3f4f6', color: '#374151', fontSize: '0.78rem', fontWeight: 600 }}>{f}</span>
+                    <span key={f} style={{ display: 'inline-block', padding: '0.2rem 0.6rem', borderRadius: 9999, background: colors.border, color: colors.text, fontSize: '0.78rem', fontWeight: 600 }}>{f}</span>
                   ))}
                 </div>
               )}
@@ -166,7 +167,7 @@ export default function InsuranceProductEditorPage() {
 
             <Card title="Version history">
               {detail.history.length === 0 ? (
-                <p style={{ color: '#6b7280', fontSize: '0.85rem' }}>No version history.</p>
+                <p style={{ color: colors.muted, fontSize: '0.85rem' }}>No version history.</p>
               ) : (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>

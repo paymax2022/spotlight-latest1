@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { listRefunds, decideRefund, formatNaira } from '@/services/staysAdminService';
 import type { RefundRequest, RefundStatus } from '@/types/staysAdmin';
-import { PageHeader, StaysTabs, Card, Badge, FilterBar, btn, btnPrimary, btnDanger, th, td, label, select, timeAgo, StateBlock, DisclosureNote } from '../_ui';
+import { StaysTabs, Badge, FilterBar, label, select, timeAgo, StateBlock, DisclosureNote } from '../_ui';
+import { Page, PageHeader, Card, Button, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUSES: RefundStatus[] = ['pending', 'approved', 'paid', 'rejected'];
 
@@ -40,11 +41,11 @@ export default function StaysRefundsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Refunds & disputes"
         subtitle="Refund and dispute queue. Money is in ₦ (kobo minor units); supplier rail is disclosed per request."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="reservations" />
 
@@ -78,35 +79,35 @@ export default function StaysRefundsPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>Reference</th>
-                  <th style={th()}>Reservation</th>
-                  <th style={th()}>Rail</th>
-                  <th style={th()}>Reason</th>
-                  <th style={th()}>Path</th>
-                  <th style={th()}>Amount</th>
-                  <th style={th()}>Guest</th>
-                  <th style={th()}>Status</th>
-                  <th style={th()}>Requested</th>
-                  <th style={th()}>Decision</th>
+                  <th style={thCell}>Reference</th>
+                  <th style={thCell}>Reservation</th>
+                  <th style={thCell}>Rail</th>
+                  <th style={thCell}>Reason</th>
+                  <th style={thCell}>Path</th>
+                  <th style={thCell}>Amount</th>
+                  <th style={thCell}>Guest</th>
+                  <th style={thCell}>Status</th>
+                  <th style={thCell}>Requested</th>
+                  <th style={thCell}>Decision</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.id} style={r.fast_path ? { background: '#fef2f2', borderLeft: '3px solid #b91c1c' } : undefined}>
-                    <td style={td()}>{r.reference}</td>
-                    <td style={td()}><code style={{ fontSize: '0.78rem', background: '#f3f4f6', padding: '0.1rem 0.35rem', borderRadius: '0.25rem' }}>{r.reservation_id}</code></td>
-                    <td style={td()}><Badge status={r.rail} /></td>
-                    <td style={td()}>{r.reason.replace(/_/g, ' ')}</td>
-                    <td style={td()}>{r.fast_path ? <Badge status="high" label="Fast-path" /> : <Badge status="low" label="Standard" />}</td>
-                    <td style={td()}>{formatNaira(r.amount_kobo)} <span style={{ color: '#9ca3af', fontSize: '0.72rem' }}>{r.currency}</span></td>
-                    <td style={td()}>{r.guest_masked}</td>
-                    <td style={td()}><Badge status={r.status} /></td>
-                    <td style={td()}>{timeAgo(r.requested_at)}</td>
-                    <td style={td()}>
+                  <tr key={r.id} style={r.fast_path ? { background: tint(colors.danger, 0.06), borderLeft: `3px solid ${colors.danger}` } : undefined}>
+                    <td style={tdCell}>{r.reference}</td>
+                    <td style={tdCell}><code style={{ fontSize: '0.78rem', background: tint(colors.muted, 0.12), padding: '0.1rem 0.35rem', borderRadius: '0.25rem' }}>{r.reservation_id}</code></td>
+                    <td style={tdCell}><Badge status={r.rail} /></td>
+                    <td style={tdCell}>{r.reason.replace(/_/g, ' ')}</td>
+                    <td style={tdCell}>{r.fast_path ? <Badge status="high" label="Fast-path" /> : <Badge status="low" label="Standard" />}</td>
+                    <td style={tdCell}>{formatNaira(r.amount_kobo)} <span style={{ color: colors.muted, fontSize: '0.72rem' }}>{r.currency}</span></td>
+                    <td style={tdCell}>{r.guest_masked}</td>
+                    <td style={tdCell}><Badge status={r.status} /></td>
+                    <td style={tdCell}>{timeAgo(r.requested_at)}</td>
+                    <td style={tdCell}>
                       <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                        <button disabled={busyId === r.id} onClick={() => decide(r.id, 'approved')} style={btn()}>Approve</button>
-                        <button disabled={busyId === r.id} onClick={() => decide(r.id, 'paid')} style={btnPrimary()}>Pay</button>
-                        <button disabled={busyId === r.id} onClick={() => decide(r.id, 'rejected')} style={btnDanger()}>Reject</button>
+                        <Button variant="outline" sm disabled={busyId === r.id} onClick={() => decide(r.id, 'approved')}>Approve</Button>
+                        <Button variant="primary" sm disabled={busyId === r.id} onClick={() => decide(r.id, 'paid')}>Pay</Button>
+                        <Button variant="danger" sm disabled={busyId === r.id} onClick={() => decide(r.id, 'rejected')}>Reject</Button>
                       </div>
                     </td>
                   </tr>
@@ -116,6 +117,6 @@ export default function StaysRefundsPage() {
           </div>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

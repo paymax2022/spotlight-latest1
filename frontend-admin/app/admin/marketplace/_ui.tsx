@@ -5,22 +5,23 @@ import { useEffect, useState } from 'react';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 import type { MktListingStatus, MktOrderStatus, MktDisputeStatus, MktBoostStatus, MktFlagStatus } from '@/types/marketplaceAdmin';
+import { colors, tint } from '@/components/ui/vuexy';
 
 // Shared presentational + RBAC helpers for the Paymax Marketplace admin console.
 // Matches the existing admin light-card inline-style convention (arena/_ui.tsx,
 // kyc-verify/_ui.tsx). Backend RBAC (guard("marketplace.admin.<perm>")) is
 // authoritative — everything here is a UX-only gate.
 
-export const card = (): CSSProperties => ({ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem', background: '#fff' });
-export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: '0.85rem' });
-export const btnPrimary = (bg = '#340075'): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: 'none', background: bg, color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 });
-export const btnDanger = (): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: '1px solid #b91c1c', background: '#fff', color: '#b91c1c', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 });
-export const btnDisabled = (): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: '1px solid #e5e7eb', background: '#f3f4f6', color: '#9ca3af', cursor: 'not-allowed', fontSize: '0.85rem', fontWeight: 600 });
-export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: '#6b7280', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3 });
-export const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: '#374151', fontSize: '0.85rem', borderTop: '1px solid #f3f4f6', verticalAlign: 'top' });
-export const input = (): CSSProperties => ({ padding: '0.4rem 0.55rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem', width: '100%', boxSizing: 'border-box' });
-export const label = (): CSSProperties => ({ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#374151', marginBottom: '0.25rem' });
-export const select = (): CSSProperties => ({ ...input(), background: '#fff', cursor: 'pointer' });
+export const card = (): CSSProperties => ({ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card });
+export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: `1px solid ${colors.inputBorder}`, background: colors.card, cursor: 'pointer', fontSize: '0.85rem' });
+export const btnPrimary = (bg = colors.primary): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: 'none', background: bg, color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 });
+export const btnDanger = (): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: `1px solid ${colors.danger}`, background: colors.card, color: colors.danger, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 });
+export const btnDisabled = (): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: `1px solid ${colors.border}`, background: colors.bg, color: colors.muted, cursor: 'not-allowed', fontSize: '0.85rem', fontWeight: 600 });
+export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: colors.muted, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3 });
+export const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: colors.text, fontSize: '0.85rem', borderTop: `1px solid ${colors.border}`, verticalAlign: 'top' });
+export const input = (): CSSProperties => ({ padding: '0.4rem 0.55rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem', fontSize: '0.85rem', width: '100%', boxSizing: 'border-box' });
+export const label = (): CSSProperties => ({ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' });
+export const select = (): CSSProperties => ({ ...input(), background: colors.card, cursor: 'pointer' });
 export const textarea = (): CSSProperties => ({ ...input(), minHeight: '4.5rem', fontFamily: 'inherit', resize: 'vertical' });
 export const mono = (): CSSProperties => ({ fontFamily: 'monospace', fontSize: '0.8rem' });
 
@@ -34,9 +35,9 @@ export function MarketplaceTabs({ active }: { active: string }) {
     { href: '/admin/marketplace/audit-log', label: 'Audit Log', key: 'audit-log' },
   ];
   return (
-    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>
+    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: `1px solid ${colors.border}`, paddingBottom: '0.5rem' }}>
       {tabs.map((t) => (
-        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : '#374151', background: active === t.key ? '#340075' : '#f3f4f6' }}>{t.label}</Link>
+        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : colors.text, background: active === t.key ? colors.primary : colors.bg }}>{t.label}</Link>
       ))}
     </div>
   );
@@ -47,7 +48,7 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', gap: '1rem', flexWrap: 'wrap' }}>
       <div>
         <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>{title}</h1>
-        {subtitle ? <p style={{ color: '#6b7280', margin: '0.25rem 0 0', fontSize: '0.85rem', maxWidth: 820 }}>{subtitle}</p> : null}
+        {subtitle ? <p style={{ color: colors.muted, margin: '0.25rem 0 0', fontSize: '0.85rem', maxWidth: 820 }}>{subtitle}</p> : null}
       </div>
       {action}
     </div>
@@ -70,26 +71,26 @@ export function Card({ title, children, right }: PropsWithChildren<{ title?: str
 
 export function Kpi({ label: lbl, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
   return (
-    <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.85rem 1rem', background: '#fff' }}>
-      <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: '#6b7280', fontWeight: 600 }}>{lbl}</div>
-      <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: accent ?? '#111827' }}>{value}</div>
-      {sub ? <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.15rem' }}>{sub}</div> : null}
+    <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.85rem 1rem', background: colors.card }}>
+      <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 600 }}>{lbl}</div>
+      <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: accent ?? colors.text }}>{value}</div>
+      {sub ? <div style={{ fontSize: '0.75rem', color: colors.muted, marginTop: '0.15rem' }}>{sub}</div> : null}
     </div>
   );
 }
 
 // Standard loading / empty / error placeholders for every list page.
 export function StateBlock({ loading, error, empty, emptyText = 'No records found.', children }: PropsWithChildren<{ loading: boolean; error: string | null; empty: boolean; emptyText?: string }>) {
-  if (loading) return <p style={{ color: '#6b7280' }}>Loading…</p>;
-  if (error) return <p style={{ color: '#dc2626' }}>{error}</p>;
-  if (empty) return <p style={{ color: '#6b7280' }}>{emptyText}</p>;
+  if (loading) return <p style={{ color: colors.muted }}>Loading…</p>;
+  if (error) return <p style={{ color: colors.danger }}>{error}</p>;
+  if (empty) return <p style={{ color: colors.muted }}>{emptyText}</p>;
   return <>{children}</>;
 }
 
 // Disclosure banner — surfaces the platform invariants operators must respect.
 export function DisclosureNote({ children }: PropsWithChildren) {
   return (
-    <div style={{ border: '1px solid #ddd6fe', background: '#f5f3ff', color: '#5b21b6', borderRadius: '0.5rem', padding: '0.6rem 0.8rem', fontSize: '0.78rem', marginBottom: '1rem' }}>
+    <div style={{ border: `1px solid ${tint(colors.primary, 0.35)}`, background: tint(colors.primary, 0.08), color: colors.primary, borderRadius: '0.5rem', padding: '0.6rem 0.8rem', fontSize: '0.78rem', marginBottom: '1rem' }}>
       {children}
     </div>
   );
@@ -98,7 +99,7 @@ export function DisclosureNote({ children }: PropsWithChildren) {
 // Amber banner used to flag scaffolded (not-yet-fully-wired) screens.
 export function ScaffoldNotice({ children }: PropsWithChildren) {
   return (
-    <div style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#9a3412', marginBottom: '1.25rem' }}>
+    <div style={{ background: tint(colors.warning, 0.1), border: `1px solid ${tint(colors.warning, 0.4)}`, borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.warning, marginBottom: '1.25rem' }}>
       <strong>Scaffold.</strong> {children}
     </div>
   );
@@ -107,7 +108,7 @@ export function ScaffoldNotice({ children }: PropsWithChildren) {
 // Inline note that a state-change action is recorded to the immutable audit log.
 export function AuditNote({ children }: PropsWithChildren) {
   return (
-    <div style={{ border: '1px solid #fde68a', background: '#fffbeb', color: '#92400e', borderRadius: '0.375rem', padding: '0.4rem 0.6rem', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.5rem' }}>
+    <div style={{ border: `1px solid ${tint(colors.warning, 0.4)}`, background: tint(colors.warning, 0.1), color: colors.warning, borderRadius: '0.375rem', padding: '0.4rem 0.6rem', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.5rem' }}>
       <span aria-hidden style={{ fontWeight: 700 }}>●</span>
       <span>{children ?? 'Every action here writes an immutable mkt_admin_audit_log row (actor, entity, before/after, reason_code, timestamp).'}</span>
     </div>
@@ -117,7 +118,7 @@ export function AuditNote({ children }: PropsWithChildren) {
 // Red banner: caller lacks the console's permission — reads allowed, writes gated.
 export function PermissionBanner({ permission }: { permission: string }) {
   return (
-    <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#b91c1c', marginBottom: '1.25rem' }}>
+    <div style={{ background: tint(colors.danger, 0.08), border: `1px solid ${tint(colors.danger, 0.4)}`, borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.danger, marginBottom: '1.25rem' }}>
       You lack <code>{permission}</code>. You can view this console but actions are disabled. Backend RBAC is authoritative.
     </div>
   );
@@ -126,7 +127,7 @@ export function PermissionBanner({ permission }: { permission: string }) {
 // Blue banner for the dual-approval "awaiting second approver" state (§6.3).
 export function DualApprovalBanner({ children }: PropsWithChildren) {
   return (
-    <div style={{ background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: '0.5rem', padding: '0.75rem 1rem', fontSize: '0.85rem', color: '#1e40af', marginBottom: '1rem' }}>
+    <div style={{ background: tint(colors.info, 0.08), border: `1px solid ${tint(colors.info, 0.4)}`, borderRadius: '0.5rem', padding: '0.75rem 1rem', fontSize: '0.85rem', color: colors.info, marginBottom: '1rem' }}>
       <strong>Awaiting second approval.</strong> {children}
     </div>
   );
@@ -159,33 +160,33 @@ export function fmtDate(isoStr: string | null | undefined): string {
 
 const STATUS_COLORS: Record<string, { fg: string; bg: string }> = {
   // success / active
-  active: { fg: '#15803d', bg: '#dcfce7' }, released: { fg: '#15803d', bg: '#dcfce7' },
-  executed: { fg: '#15803d', bg: '#dcfce7' }, approved: { fg: '#15803d', bg: '#dcfce7' },
-  actioned: { fg: '#15803d', bg: '#dcfce7' }, completed: { fg: '#15803d', bg: '#dcfce7' },
-  purchased: { fg: '#15803d', bg: '#dcfce7' },
+  active: { fg: colors.success, bg: tint(colors.success, 0.12) }, released: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  executed: { fg: colors.success, bg: tint(colors.success, 0.12) }, approved: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  actioned: { fg: colors.success, bg: tint(colors.success, 0.12) }, completed: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  purchased: { fg: colors.success, bg: tint(colors.success, 0.12) },
   // pending / warn
-  pending_review: { fg: '#9a3412', bg: '#ffedd5' }, opened: { fg: '#9a3412', bg: '#ffedd5' },
-  evidence_window: { fg: '#9a3412', bg: '#ffedd5' }, under_review: { fg: '#9a3412', bg: '#ffedd5' },
-  decided: { fg: '#9a3412', bg: '#ffedd5' }, open: { fg: '#9a3412', bg: '#ffedd5' },
-  in_delivery: { fg: '#9a3412', bg: '#ffedd5' }, funded: { fg: '#9a3412', bg: '#ffedd5' },
-  seller_accepted: { fg: '#9a3412', bg: '#ffedd5' }, delivered: { fg: '#9a3412', bg: '#ffedd5' },
-  inspection_window: { fg: '#9a3412', bg: '#ffedd5' }, initiated: { fg: '#9a3412', bg: '#ffedd5' },
+  pending_review: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, opened: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  evidence_window: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, under_review: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  decided: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, open: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  in_delivery: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, funded: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  seller_accepted: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, delivered: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  inspection_window: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, initiated: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
   // in-progress / info (blue)
-  disputed: { fg: '#1d4ed8', bg: '#dbeafe' }, appealed: { fg: '#1d4ed8', bg: '#dbeafe' },
-  draft: { fg: '#6b7280', bg: '#f3f4f6' }, paused: { fg: '#6b7280', bg: '#f3f4f6' },
-  closed: { fg: '#6b7280', bg: '#f3f4f6' }, expired: { fg: '#6b7280', bg: '#f3f4f6' },
-  dismissed: { fg: '#6b7280', bg: '#f3f4f6' }, cancelled: { fg: '#6b7280', bg: '#f3f4f6' },
-  sold: { fg: '#6b21a8', bg: '#f3e8ff' },
+  disputed: { fg: colors.info, bg: tint(colors.info, 0.12) }, appealed: { fg: colors.info, bg: tint(colors.info, 0.12) },
+  draft: { fg: colors.muted, bg: tint(colors.secondary, 0.12) }, paused: { fg: colors.muted, bg: tint(colors.secondary, 0.12) },
+  closed: { fg: colors.muted, bg: tint(colors.secondary, 0.12) }, expired: { fg: colors.muted, bg: tint(colors.secondary, 0.12) },
+  dismissed: { fg: colors.muted, bg: tint(colors.secondary, 0.12) }, cancelled: { fg: colors.muted, bg: tint(colors.secondary, 0.12) },
+  sold: { fg: colors.primary, bg: tint(colors.primary, 0.12) },
   // danger / terminal-bad
-  removed_policy: { fg: '#b91c1c', bg: '#fee2e2' }, removed_user: { fg: '#b91c1c', bg: '#fee2e2' },
-  rejected_with_reason: { fg: '#b91c1c', bg: '#fee2e2' },
+  removed_policy: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, removed_user: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
+  rejected_with_reason: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
   // refund / reversal (purple)
-  refunded: { fg: '#7c3aed', bg: '#ede9fe' }, split_settled: { fg: '#7c3aed', bg: '#ede9fe' },
-  auto_refunded: { fg: '#7c3aed', bg: '#ede9fe' },
+  refunded: { fg: colors.primary, bg: tint(colors.primary, 0.12) }, split_settled: { fg: colors.primary, bg: tint(colors.primary, 0.12) },
+  auto_refunded: { fg: colors.primary, bg: tint(colors.primary, 0.12) },
 };
 
 export function StatusBadge({ status }: { status: MktListingStatus | MktOrderStatus | MktDisputeStatus | MktBoostStatus | MktFlagStatus | string }) {
-  const c = STATUS_COLORS[status] ?? { fg: '#374151', bg: '#f3f4f6' };
+  const c = STATUS_COLORS[status] ?? { fg: colors.text, bg: tint(colors.secondary, 0.12) };
   return <span style={{ display: 'inline-block', padding: '0.1rem 0.5rem', borderRadius: 9999, fontSize: '0.72rem', fontWeight: 600, color: c.fg, background: c.bg, textTransform: 'capitalize', whiteSpace: 'nowrap' }}>{String(status).replace(/_/g, ' ')}</span>;
 }
 

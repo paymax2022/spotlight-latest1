@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listRxAudit, listControlledLog } from '@/services/healthPharmacyAdminService';
 import type { RxAuditItem, ControlledLogEntry } from '@/types/healthAdmin';
 import { PageHeader, PharmacyTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, btn, th, td, input, label, select, timeAgo } from '../../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function RxAuditPage() {
   const [rxRows, setRxRows] = useState<RxAuditItem[]>([]);
@@ -61,9 +62,9 @@ export default function RxAuditPage() {
             <tbody>
               {rxRows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{r.id}</code><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.prescriber_masked}</div></td>
-                  <td style={td()}>{r.patient_masked}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.pharmacy_masked}</div></td>
-                  <td style={td()}>{r.pharmacist_masked ?? <span style={{ color: '#9ca3af' }}>— unassigned</span>}</td>
+                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{r.id}</code><div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.prescriber_masked}</div></td>
+                  <td style={td()}>{r.patient_masked}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.pharmacy_masked}</div></td>
+                  <td style={td()}>{r.pharmacist_masked ?? <span style={{ color: colors.muted }}>— unassigned</span>}</td>
                   <td style={td()}>{r.pom_items} POM{r.controlled_items > 0 && <div style={{ marginTop: 4 }}><Badge status="controlled" label={`${r.controlled_items} controlled`} /></div>}</td>
                   <td style={td()}><Badge status={r.dispense_once_ok ? 'ok' : 'breached'} label={r.dispense_once_ok ? 'held' : 'breach'} /></td>
                   <td style={td()}>{r.verify_minutes != null ? `${r.verify_minutes}m` : '—'}</td>
@@ -76,14 +77,14 @@ export default function RxAuditPage() {
         </StateBlock>
       </Card>
 
-      <Card title="Controlled-substance attempt log (HL-4)" right={<span style={{ fontSize: '0.75rem', color: '#6b7280' }}>Excluded at MVP — all attempts blocked</span>}>
+      <Card title="Controlled-substance attempt log (HL-4)" right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>Excluded at MVP — all attempts blocked</span>}>
         <StateBlock loading={loading} error={error} empty={ctlRows.length === 0} emptyText="No controlled-substance attempts logged.">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr><th style={th()}>Substance</th><th style={th()}>Schedule</th><th style={th()}>Pharmacy</th><th style={th()}>Attempted by</th><th style={th()}>Outcome</th><th style={th()}>Reason</th><th style={th()}>When</th></tr></thead>
             <tbody>
               {ctlRows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><div style={{ fontWeight: 600 }}>{r.substance}</div><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.id}</div></td>
+                  <td style={td()}><div style={{ fontWeight: 600 }}>{r.substance}</div><div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.id}</div></td>
                   <td style={td()}>{r.schedule}</td>
                   <td style={td()}>{r.pharmacy_masked}</td>
                   <td style={td()}>{r.attempted_by_masked}</td>

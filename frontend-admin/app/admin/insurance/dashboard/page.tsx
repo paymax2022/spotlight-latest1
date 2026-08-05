@@ -16,6 +16,7 @@ import {
   td,
   timeAgo,
 } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function InsuranceDashboardPage() {
   const [data, setData] = useState<InsuranceDashboard | null>(null);
@@ -51,20 +52,20 @@ export default function InsuranceDashboardPage() {
         {data && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <Kpi label="GWP today" value={formatNaira(data.gwp_today_kobo)} sub={`${data.policies_bound_today.toLocaleString('en-NG')} bound today`} accent="#340075" />
+              <Kpi label="GWP today" value={formatNaira(data.gwp_today_kobo)} sub={`${data.policies_bound_today.toLocaleString('en-NG')} bound today`} accent={colors.primary} />
               <Kpi label="GWP (30d)" value={formatNaira(data.gwp_30d_kobo)} sub={`Collected ${formatNaira(data.premium_collected_30d_kobo)}`} />
               <Kpi label="Active policies" value={data.policies_active.toLocaleString('en-NG')} />
               <Kpi label="Attach rate" value={pct(data.attach_rate)} sub="Embedded on eligible events" />
-              <Kpi label="Claims ratio" value={pct(data.claims_ratio)} sub="Incurred ÷ earned premium" accent={data.claims_ratio > 0.7 ? '#b91c1c' : undefined} />
+              <Kpi label="Claims ratio" value={pct(data.claims_ratio)} sub="Incurred ÷ earned premium" accent={data.claims_ratio > 0.7 ? colors.danger : undefined} />
               <Kpi label="Open claims" value={data.claims_open.toLocaleString('en-NG')} sub={`${data.claims_settled_30d.toLocaleString('en-NG')} settled (30d)`} />
-              <Kpi label="Commission (30d)" value={formatNaira(data.commission_earned_30d_kobo)} accent="#15803d" />
-              <Kpi label="Recon breaks open" value={data.reconciliation_breaks_open.toLocaleString('en-NG')} sub={formatNaira(data.reconciliation_break_value_kobo)} accent={data.reconciliation_breaks_open > 0 ? '#b91c1c' : undefined} />
+              <Kpi label="Commission (30d)" value={formatNaira(data.commission_earned_30d_kobo)} accent={colors.success} />
+              <Kpi label="Recon breaks open" value={data.reconciliation_breaks_open.toLocaleString('en-NG')} sub={formatNaira(data.reconciliation_break_value_kobo)} accent={data.reconciliation_breaks_open > 0 ? colors.danger : undefined} />
               <Kpi label="Refunds pending" value={data.refunds_pending.toLocaleString('en-NG')} />
               <Kpi label="Renewals due (7d)" value={data.renewals_due_7d.toLocaleString('en-NG')} />
             </div>
 
             <Card title="Provider health">
-              {data.provider_health.length === 0 ? <p style={{ color: '#6b7280' }}>No provider health data.</p> : (
+              {data.provider_health.length === 0 ? <p style={{ color: colors.muted }}>No provider health data.</p> : (
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr>
@@ -94,23 +95,23 @@ export default function InsuranceDashboardPage() {
               )}
             </Card>
 
-            <Card title="Premium vs commission (14d)" right={<span style={{ fontSize: '0.75rem', color: '#6b7280' }}>Premium (purple) vs commission (green)</span>}>
-              {data.premium_vs_commission.length === 0 ? <p style={{ color: '#6b7280' }}>No data.</p> : (
+            <Card title="Premium vs commission (14d)" right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>Premium (purple) vs commission (green)</span>}>
+              {data.premium_vs_commission.length === 0 ? <p style={{ color: colors.muted }}>No data.</p> : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                   {data.premium_vs_commission.map((p) => {
                     const premW = (p.premium_kobo / maxPremium) * 100;
                     const commW = (p.commission_kobo / maxPremium) * 100;
                     return (
                       <div key={p.date} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                        <span style={{ width: 78, flexShrink: 0, fontSize: '0.72rem', color: '#9ca3af' }}>{p.date.slice(5)}</span>
+                        <span style={{ width: 78, flexShrink: 0, fontSize: '0.72rem', color: colors.muted }}>{p.date.slice(5)}</span>
                         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                            <div style={{ height: 10, width: `${premW}%`, minWidth: 2, background: '#340075', borderRadius: 2 }} title={`Premium ${formatNaira(p.premium_kobo)}`} />
-                            <span style={{ fontSize: '0.7rem', color: '#6b7280', whiteSpace: 'nowrap' }}>{formatNaira(p.premium_kobo)}</span>
+                            <div style={{ height: 10, width: `${premW}%`, minWidth: 2, background: colors.primary, borderRadius: 2 }} title={`Premium ${formatNaira(p.premium_kobo)}`} />
+                            <span style={{ fontSize: '0.7rem', color: colors.muted, whiteSpace: 'nowrap' }}>{formatNaira(p.premium_kobo)}</span>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                            <div style={{ height: 10, width: `${commW}%`, minWidth: 2, background: '#15803d', borderRadius: 2 }} title={`Commission ${formatNaira(p.commission_kobo)}`} />
-                            <span style={{ fontSize: '0.7rem', color: '#6b7280', whiteSpace: 'nowrap' }}>{formatNaira(p.commission_kobo)}</span>
+                            <div style={{ height: 10, width: `${commW}%`, minWidth: 2, background: colors.success, borderRadius: 2 }} title={`Commission ${formatNaira(p.commission_kobo)}`} />
+                            <span style={{ fontSize: '0.7rem', color: colors.muted, whiteSpace: 'nowrap' }}>{formatNaira(p.commission_kobo)}</span>
                           </div>
                         </div>
                       </div>
@@ -121,7 +122,7 @@ export default function InsuranceDashboardPage() {
             </Card>
 
             <Card title="Recent activity">
-              {data.activity.length === 0 ? <p style={{ color: '#6b7280' }}>No recent activity.</p> : (
+              {data.activity.length === 0 ? <p style={{ color: colors.muted }}>No recent activity.</p> : (
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead><tr><th style={th()}>Event</th><th style={th()}>Type</th><th style={th()}>Ref</th><th style={th()}>When</th></tr></thead>
                   <tbody>

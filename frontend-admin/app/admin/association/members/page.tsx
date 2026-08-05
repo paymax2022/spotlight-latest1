@@ -4,10 +4,16 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { listMembers, type MemberSummary } from '@/services/associationAdminService';
 import {
-  PageHeader, AssociationTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar,
-  btn, th, td, label as lbl, input, select,
+  AssociationTabs, DisclosureNote, StateBlock, FilterBar,
   useAssociationPermissions, ASSOCIATION_PERMS, PermissionBanner,
 } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string) {
+  if (status === 'active') return colors.success;
+  if (status === 'suspended') return colors.danger;
+  return colors.warning;
+}
 
 export default function AssociationMembersPage() {
   const { can } = useAssociationPermissions();
@@ -29,11 +35,11 @@ export default function AssociationMembersPage() {
   useEffect(() => { void load(); }, [load]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Members"
         subtitle="Association member directory — search, filter and drill into a member to suspend, restore, transfer or assign a role."
-        action={<button onClick={() => void load()} style={btn()} disabled={loading}>{loading ? 'Loading…' : 'Refresh'}</button>}
+        actions={<Button variant="outline" onClick={() => void load()} disabled={loading}>{loading ? 'Loading…' : 'Refresh'}</Button>}
       />
       <AssociationTabs active="members" />
       <DisclosureNote>
@@ -45,44 +51,44 @@ export default function AssociationMembersPage() {
 
       <FilterBar>
         <div style={{ minWidth: 220 }}>
-          <label style={lbl()}>Search (name or member ID)</label>
-          <input style={input()} placeholder="e.g. Bola or LTU-2201" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void load()} />
+          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' }}>Search (name or member ID)</label>
+          <Input placeholder="e.g. Bola or LTU-2201" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void load()} />
         </div>
         <div>
-          <label style={lbl()}>Status</label>
-          <select style={select()} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' }}>Status</label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All</option>
             <option value="active">Active</option>
             <option value="suspended">Suspended</option>
             <option value="pending">Pending</option>
           </select>
         </div>
-        <button style={btn()} onClick={() => void load()}>Apply</button>
+        <Button variant="outline" onClick={() => void load()}>Apply</Button>
       </FilterBar>
 
       <Card>
         <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No members match this filter.">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12 }}>
             <thead><tr>
-              <th style={th()}>Member</th><th style={th()}>Member ID</th><th style={th()}>Chapter</th>
-              <th style={th()}>Category</th><th style={th()}>Profession</th><th style={th()}>Status</th><th style={th()}></th>
+              <th style={thCell}>Member</th><th style={thCell}>Member ID</th><th style={thCell}>Chapter</th>
+              <th style={thCell}>Category</th><th style={thCell}>Profession</th><th style={thCell}>Status</th><th style={thCell}></th>
             </tr></thead>
             <tbody>
               {rows.map((m) => (
                 <tr key={m.id}>
-                  <td style={td()}><Link href={`/admin/association/members/${m.id}`} style={{ fontWeight: 600 }}>{m.fullName}</Link></td>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{m.memberId}</code></td>
-                  <td style={td()}>{m.chapterName ?? '—'}</td>
-                  <td style={td()}>{m.categoryLabel}</td>
-                  <td style={td()}>{m.profession ?? '—'}</td>
-                  <td style={td()}><Badge status={m.status} /></td>
-                  <td style={td()}><Link href={`/admin/association/members/${m.id}`} style={{ fontSize: '0.8rem' }}>Detail →</Link></td>
+                  <td style={tdCell}><Link href={`/admin/association/members/${m.id}`} style={{ fontWeight: 600, color: colors.primary }}>{m.fullName}</Link></td>
+                  <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{m.memberId}</code></td>
+                  <td style={tdCell}>{m.chapterName ?? '—'}</td>
+                  <td style={tdCell}>{m.categoryLabel}</td>
+                  <td style={tdCell}>{m.profession ?? '—'}</td>
+                  <td style={tdCell}><Badge text={m.status} color={statusColor(m.status)} /></td>
+                  <td style={tdCell}><Link href={`/admin/association/members/${m.id}`} style={{ fontSize: '0.8rem', color: colors.primary }}>Detail →</Link></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

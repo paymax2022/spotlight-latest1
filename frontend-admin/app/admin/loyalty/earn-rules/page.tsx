@@ -3,7 +3,10 @@
 import { useEffect, useState } from 'react';
 import { listEarnRules, updateEarnRule, formatPoints } from '@/services/loyaltyAdminService';
 import type { EarnRule, EarnRuleStatus } from '@/types/loyaltyAdmin';
-import { PageHeader, LoyaltyTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnPrimary, th, td, input, label, select, fmtDate } from '../../events/_ui';
+import { PageHeader, LoyaltyTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, fmtDate } from '../../events/_ui';
+import { Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const labelStyle = { display: 'block', fontSize: 12, fontWeight: 600, color: colors.muted, marginBottom: 4 } as const;
 
 export default function EarnRulesPage() {
   const [rows, setRows] = useState<EarnRule[]>([]);
@@ -51,7 +54,7 @@ export default function EarnRulesPage() {
 
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Earn-rule configuration" subtitle="Points earned per action / module, versioned. Wire-up to payments, savings, tickets, cashless, referral and social." action={<button onClick={load} style={btn()}>Refresh</button>} />
+      <PageHeader title="Earn-rule configuration" subtitle="Points earned per action / module, versioned. Wire-up to payments, savings, tickets, cashless, referral and social." action={<Button variant="outline" sm onClick={load}>Refresh</Button>} />
       <LoyaltyTabs active="earn-rules" />
       <DisclosureNote>Each edit creates a new <strong>versioned config</strong> — prior versions stay in the audit trail (NL-12). Points are non-cash (NL-4). Per-day caps are anti-abuse limits enforced server-side. Point values labelled <code>pts</code>.</DisclosureNote>
 
@@ -59,12 +62,12 @@ export default function EarnRulesPage() {
 
       <FilterBar>
         <div style={{ minWidth: 200 }}>
-          <label style={label()}>Search</label>
-          <input style={input()} placeholder="Action, module or id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
+          <label style={labelStyle}>Search</label>
+          <Input placeholder="Action, module or id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
         </div>
         <div>
-          <label style={label()}>Module</label>
-          <select style={select()} value={moduleF} onChange={(e) => setModuleF(e.target.value)}>
+          <label style={labelStyle}>Module</label>
+          <select value={moduleF} onChange={(e) => setModuleF(e.target.value)}>
             <option value="">All</option>
             <option value="payments">Payments</option>
             <option value="savings">Savings</option>
@@ -75,39 +78,39 @@ export default function EarnRulesPage() {
           </select>
         </div>
         <div>
-          <label style={label()}>Status</label>
-          <select style={select()} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <label style={labelStyle}>Status</label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All</option>
             <option value="active">Active</option>
             <option value="draft">Draft</option>
             <option value="disabled">Disabled</option>
           </select>
         </div>
-        <button style={btn()} onClick={load}>Apply</button>
+        <Button variant="outline" onClick={load}>Apply</Button>
       </FilterBar>
 
       <Card>
         <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No earn rules match.">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>
-              <th style={th()}>Action</th><th style={th()}>Module</th><th style={th()}>Pts / ₦</th><th style={th()}>Flat pts</th>
-              <th style={th()}>Daily cap</th><th style={th()}>Status</th><th style={th()}>Config v</th><th style={th()}>Updated</th><th style={th()}>Actions</th>
+              <th style={thCell}>Action</th><th style={thCell}>Module</th><th style={thCell}>Pts / ₦</th><th style={thCell}>Flat pts</th>
+              <th style={thCell}>Daily cap</th><th style={thCell}>Status</th><th style={thCell}>Config v</th><th style={thCell}>Updated</th><th style={thCell}>Actions</th>
             </tr></thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}>{r.action}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.id}</div></td>
-                  <td style={td()}><Badge status={r.module} /></td>
-                  <td style={td()}>{r.points_per_naira || '—'}</td>
-                  <td style={td()}>{r.flat_points ? formatPoints(r.flat_points) : '—'}</td>
-                  <td style={td()}>{r.cap_points_per_day ? formatPoints(r.cap_points_per_day) : 'uncapped'}</td>
-                  <td style={td()}><Badge status={r.status} /></td>
-                  <td style={td()}>v{r.config_version}</td>
-                  <td style={td()}>{fmtDate(r.updated_at)}</td>
-                  <td style={td()}>
+                  <td style={tdCell}>{r.action}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.id}</div></td>
+                  <td style={tdCell}><Badge status={r.module} /></td>
+                  <td style={tdCell}>{r.points_per_naira || '—'}</td>
+                  <td style={tdCell}>{r.flat_points ? formatPoints(r.flat_points) : '—'}</td>
+                  <td style={tdCell}>{r.cap_points_per_day ? formatPoints(r.cap_points_per_day) : 'uncapped'}</td>
+                  <td style={tdCell}><Badge status={r.status} /></td>
+                  <td style={tdCell}>v{r.config_version}</td>
+                  <td style={tdCell}>{fmtDate(r.updated_at)}</td>
+                  <td style={tdCell}>
                     <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                      <button style={btnPrimary()} disabled={busy === r.id} onClick={() => editRate(r)}>{busy === r.id ? '…' : 'Edit rate'}</button>
-                      <button style={btn()} disabled={busy === r.id} onClick={() => toggleStatus(r)}>{r.status === 'active' ? 'Disable' : 'Activate'}</button>
+                      <Button variant="primary" sm disabled={busy === r.id} onClick={() => editRate(r)}>{busy === r.id ? '…' : 'Edit rate'}</Button>
+                      <Button variant="outline" sm disabled={busy === r.id} onClick={() => toggleStatus(r)}>{r.status === 'active' ? 'Disable' : 'Activate'}</Button>
                     </div>
                   </td>
                 </tr>

@@ -1,19 +1,30 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { AccessLogRow, AccessLogEventType } from '@/types/intakeAdmin';
 import { listAccessLog, toLocal } from '@/services/intakeAdminService';
-import { BackLink, PageHeader, Notice, th, td, input } from '../_ui';
+import { Page, PageHeader, Card, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
-const EVENT_LABELS: Record<AccessLogEventType, { label: string; bg: string; fg: string }> = {
-  RECORD_VIEW: { label: 'Record view', bg: '#1e3a8a', fg: '#bfdbfe' },
-  CONSENT_ACCEPTED: { label: 'Consent accepted', bg: '#064e3b', fg: '#a7f3d0' },
-  RED_FLAG_TRIGGERED: { label: 'Red-flag triggered', bg: '#13343b', fg: '#a5f3fc' },
-  SCHEMA_PUBLISHED: { label: 'Schema published', bg: '#374151', fg: '#d1d5db' },
-  RULE_TOGGLED: { label: 'Rule toggled', bg: '#374151', fg: '#d1d5db' },
+const EVENT_LABELS: Record<AccessLogEventType, { label: string; color: string }> = {
+  RECORD_VIEW: { label: 'Record view', color: colors.info },
+  CONSENT_ACCEPTED: { label: 'Consent accepted', color: colors.success },
+  RED_FLAG_TRIGGERED: { label: 'Red-flag triggered', color: colors.danger },
+  SCHEMA_PUBLISHED: { label: 'Schema published', color: colors.secondary },
+  RULE_TOGGLED: { label: 'Rule toggled', color: colors.secondary },
 };
 
 const FILTERS: ('' | AccessLogEventType)[] = ['', 'RECORD_VIEW', 'CONSENT_ACCEPTED', 'RED_FLAG_TRIGGERED', 'SCHEMA_PUBLISHED', 'RULE_TOGGLED'];
+
+function Notice({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ background: tint(colors.warning, 0.12), border: `1px solid ${tint(colors.warning, 0.3)}`, color: colors.text, padding: '10px 12px', borderRadius: 8, fontSize: 13, marginTop: 14, display: 'flex', gap: 8 }}>
+      <span aria-hidden>🔒</span>
+      <span>{children}</span>
+    </div>
+  );
+}
 
 export default function AccessLogPage() {
   const [rows, setRows] = useState<AccessLogRow[]>([]);
@@ -38,44 +49,48 @@ export default function AccessLogPage() {
   const filtered = rows.filter((r) => !filter || r.event_type === filter);
 
   return (
-    <div>
-      <BackLink />
+    <Page>
+      <div style={{ marginBottom: 14 }}>
+        <Link href="/admin/intake" style={{ fontSize: 13, color: colors.primary }}>← Intake console</Link>
+      </div>
       <PageHeader title="A10 · Access & Audit Log" subtitle="Who accessed which intake and when, plus consent and red-flag events. This is the audit trail for sensitive health-data access." />
-      <Notice kind="audit">This log is append-only. Record-view entries are written automatically whenever an intake record is opened in the viewer (A9).</Notice>
+      <Notice>This log is append-only. Record-view entries are written automatically whenever an intake record is opened in the viewer (A9).</Notice>
 
-      {error ? <p style={{ color: 'salmon' }}>{error}</p> : null}
+      {error ? <p style={{ color: colors.danger }}>{error}</p> : null}
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 14, flexWrap: 'wrap' }}>
-        <select style={input} value={filter} onChange={(e) => setFilter(e.target.value as '' | AccessLogEventType)}>
+        <select className="vx-input" value={filter} onChange={(e) => setFilter(e.target.value as '' | AccessLogEventType)}>
           {FILTERS.map((f) => <option key={f} value={f}>{f ? EVENT_LABELS[f].label : 'All events'}</option>)}
         </select>
-        <span style={{ fontSize: 12, opacity: 0.6 }}>{filtered.length} event(s)</span>
+        <span style={{ fontSize: 12, color: colors.muted }}>{filtered.length} event(s)</span>
       </div>
 
-      {loading ? <p style={{ opacity: 0.6, marginTop: 16 }}>Loading…</p> : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 16 }}>
-          <thead>
-            <tr style={{ borderBottom: '1px solid #2a2a2a', textAlign: 'left' }}>
-              {['When', 'Event', 'Actor', 'Appointment', 'Intake', 'Detail'].map((h) => <th key={h} style={th}>{h}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((r) => {
-              const ev = EVENT_LABELS[r.event_type];
-              return (
-                <tr key={r.id} style={{ borderBottom: '1px solid #1c1c1c' }}>
-                  <td style={{ ...td, opacity: 0.8, whiteSpace: 'nowrap' }}>{toLocal(r.created_at)}</td>
-                  <td style={td}><span style={{ background: ev.bg, color: ev.fg, padding: '2px 8px', borderRadius: 9999, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>{ev.label}</span></td>
-                  <td style={td}>{r.actor}</td>
-                  <td style={{ ...td, fontFamily: 'monospace', fontSize: 11 }}>{r.appointment_id ?? '—'}</td>
-                  <td style={{ ...td, fontFamily: 'monospace', fontSize: 11 }}>{r.intake_id ?? '—'}</td>
-                  <td style={{ ...td, opacity: 0.8, fontSize: 12 }}>{r.detail}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      {loading ? <p style={{ color: colors.muted, marginTop: 16 }}>Loading…</p> : (
+        <Card style={{ padding: 0, overflow: 'hidden', marginTop: 16 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                {['When', 'Event', 'Actor', 'Appointment', 'Intake', 'Detail'].map((h) => <th key={h} style={thCell}>{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => {
+                const ev = EVENT_LABELS[r.event_type];
+                return (
+                  <tr key={r.id}>
+                    <td style={{ ...tdCell, whiteSpace: 'nowrap' }}>{toLocal(r.created_at)}</td>
+                    <td style={tdCell}><Badge text={ev.label} color={ev.color} /></td>
+                    <td style={tdCell}>{r.actor}</td>
+                    <td style={{ ...tdCell, fontFamily: 'monospace', fontSize: 11 }}>{r.appointment_id ?? '—'}</td>
+                    <td style={{ ...tdCell, fontFamily: 'monospace', fontSize: 11 }}>{r.intake_id ?? '—'}</td>
+                    <td style={{ ...tdCell, color: colors.muted, fontSize: 12 }}>{r.detail}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </Card>
       )}
-    </div>
+    </Page>
   );
 }

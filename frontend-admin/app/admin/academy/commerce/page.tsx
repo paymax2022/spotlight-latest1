@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listPlans, listExamBundles, listAccessCardBatches, getPaymentsOverview, generateAccessCards, allocateAccessCards } from '@/services/academyAdminService';
 import type { Plan, ExamBundle, AccessCardBatch, PaymentsOverview } from '@/types/academyAdmin';
 import { PageHeader, AcademyTabs, Card, Badge, Kpi, StateBlock, AuditNote, DisclosureNote, btn, btnPrimary, th, td, input, label, select, formatNaira } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function CommercePage() {
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -109,7 +110,7 @@ export default function CommercePage() {
                   <td style={td()}><Badge status={b.status} /></td>
                   <td style={td()}>{b.agent ?? '—'}</td>
                   <td style={td()}>
-                    {b.status === 'allocated' ? <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>full</span> : (
+                    {b.status === 'allocated' ? <span style={{ color: colors.muted, fontSize: '0.8rem' }}>full</span> : (
                       <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
                         <input style={{ ...input(), width: 90 }} placeholder="Agent" value={allocForm[b.id]?.agent ?? ''} onChange={(e) => setAllocForm({ ...allocForm, [b.id]: { ...(allocForm[b.id] ?? { agent: '', quantity: '' }), agent: e.target.value } })} />
                         <input style={{ ...input(), width: 70 }} placeholder="Qty" value={allocForm[b.id]?.quantity ?? ''} onChange={(e) => setAllocForm({ ...allocForm, [b.id]: { ...(allocForm[b.id] ?? { agent: '', quantity: '' }), quantity: e.target.value } })} />
@@ -134,7 +135,7 @@ export default function CommercePage() {
             <div><label style={label()}>Batch label</label><input style={input()} value={genForm.label} onChange={(e) => setGenForm({ ...genForm, label: e.target.value })} placeholder="e.g. Lagos Agents Batch 08" /></div>
             <div><button onClick={generate} disabled={busy} style={btnPrimary()}>Generate</button></div>
           </div>
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: '0.6rem' }}>{notice}</p>}
           <AuditNote>Card generation, allocation and refunds are recorded to the immutable audit log and finance ledger.</AuditNote>
         </Card>
       </StateBlock>

@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { listPayouts, formatNaira } from '@/services/staysAdminService';
 import type { HotelPayout, PayoutStatus } from '@/types/staysAdmin';
-import { PageHeader, StaysTabs, Card, Kpi, Badge, FilterBar, btn, th, td, label, select, fmtDate, StateBlock, DisclosureNote } from '../_ui';
+import { StaysTabs, Kpi, Badge, FilterBar, label, select, fmtDate, StateBlock, DisclosureNote } from '../_ui';
+import { Page, PageHeader, Card, Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUSES: PayoutStatus[] = ['scheduled', 'pending', 'paid', 'failed', 'held'];
 
@@ -28,11 +29,11 @@ export default function StaysPayoutsPage() {
   const countByStatus = rows.reduce<Record<string, number>>((m, r) => { m[r.status] = (m[r.status] ?? 0) + 1; return m; }, {});
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Hotel payouts"
         subtitle="Direct-hotel settlement runs. All payouts are remitted in Naira (₦ kobo). Bank details masked."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="money" />
 
@@ -41,9 +42,9 @@ export default function StaysPayoutsPage() {
       </DisclosureNote>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-        <Kpi label="Total net payable" value={formatNaira(totalNet)} sub={`${rows.length} payout${rows.length === 1 ? '' : 's'}`} accent="#340075" />
+        <Kpi label="Total net payable" value={formatNaira(totalNet)} sub={`${rows.length} payout${rows.length === 1 ? '' : 's'}`} accent={colors.primary} />
         {STATUSES.map((s) => (
-          <Kpi key={s} label={s} value={(countByStatus[s] ?? 0).toLocaleString('en-NG')} accent={s === 'failed' ? '#b91c1c' : s === 'paid' ? '#15803d' : undefined} />
+          <Kpi key={s} label={s} value={(countByStatus[s] ?? 0).toLocaleString('en-NG')} accent={s === 'failed' ? colors.danger : s === 'paid' ? colors.success : undefined} />
         ))}
       </div>
 
@@ -65,33 +66,33 @@ export default function StaysPayoutsPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>Reference</th>
-                  <th style={th()}>Hotelier</th>
-                  <th style={th()}>Property</th>
-                  <th style={th()}>Bookings</th>
-                  <th style={th()}>Gross</th>
-                  <th style={th()}>Commission</th>
-                  <th style={th()}>Net payable</th>
-                  <th style={th()}>Status</th>
-                  <th style={th()}>Bank</th>
-                  <th style={th()}>Scheduled</th>
-                  <th style={th()}>Paid</th>
+                  <th style={thCell}>Reference</th>
+                  <th style={thCell}>Hotelier</th>
+                  <th style={thCell}>Property</th>
+                  <th style={thCell}>Bookings</th>
+                  <th style={thCell}>Gross</th>
+                  <th style={thCell}>Commission</th>
+                  <th style={thCell}>Net payable</th>
+                  <th style={thCell}>Status</th>
+                  <th style={thCell}>Bank</th>
+                  <th style={thCell}>Scheduled</th>
+                  <th style={thCell}>Paid</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id}>
-                    <td style={td()}>{r.reference}</td>
-                    <td style={td()}>{r.hotelier_masked}</td>
-                    <td style={td()}>{r.property_name}</td>
-                    <td style={td()}>{r.bookings_count.toLocaleString('en-NG')}</td>
-                    <td style={td()}>{formatNaira(r.gross_kobo)} <span style={{ color: '#9ca3af', fontSize: '0.72rem' }}>NGN</span></td>
-                    <td style={td()}>{formatNaira(r.commission_kobo)} <span style={{ color: '#9ca3af', fontSize: '0.72rem' }}>NGN</span></td>
-                    <td style={{ ...td(), fontWeight: 600 }}>{formatNaira(r.net_payable_kobo)} <span style={{ color: '#9ca3af', fontSize: '0.72rem' }}>NGN</span></td>
-                    <td style={td()}><Badge status={r.status} /></td>
-                    <td style={td()}>{r.bank_masked}</td>
-                    <td style={td()}>{fmtDate(r.scheduled_for)}</td>
-                    <td style={td()}>{fmtDate(r.paid_at)}</td>
+                    <td style={tdCell}>{r.reference}</td>
+                    <td style={tdCell}>{r.hotelier_masked}</td>
+                    <td style={tdCell}>{r.property_name}</td>
+                    <td style={tdCell}>{r.bookings_count.toLocaleString('en-NG')}</td>
+                    <td style={tdCell}>{formatNaira(r.gross_kobo)} <span style={{ color: colors.muted, fontSize: '0.72rem' }}>NGN</span></td>
+                    <td style={tdCell}>{formatNaira(r.commission_kobo)} <span style={{ color: colors.muted, fontSize: '0.72rem' }}>NGN</span></td>
+                    <td style={{ ...tdCell, fontWeight: 600 }}>{formatNaira(r.net_payable_kobo)} <span style={{ color: colors.muted, fontSize: '0.72rem' }}>NGN</span></td>
+                    <td style={tdCell}><Badge status={r.status} /></td>
+                    <td style={tdCell}>{r.bank_masked}</td>
+                    <td style={tdCell}>{fmtDate(r.scheduled_for)}</td>
+                    <td style={tdCell}>{fmtDate(r.paid_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -99,6 +100,6 @@ export default function StaysPayoutsPage() {
           </div>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

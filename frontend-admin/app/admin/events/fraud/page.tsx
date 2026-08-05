@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listEventFraud, decideEventFraud, formatNaira } from '@/services/eventsAdminService';
 import type { EventFraudSignal, EventFraudAction } from '@/types/eventsAdmin';
 import { PageHeader, EventsTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnPrimary, btnDanger, th, td, input, label, select, timeAgo } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function EventFraudPage() {
   const [rows, setRows] = useState<EventFraudSignal[]>([]);
@@ -81,7 +82,7 @@ export default function EventFraudPage() {
             <tbody>
               {rows.map((s) => (
                 <tr key={s.id}>
-                  <td style={td()}><Badge status={s.kind} label={s.kind.replace(/_/g, ' ')} /><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{s.id}</div></td>
+                  <td style={td()}><Badge status={s.kind} label={s.kind.replace(/_/g, ' ')} /><div style={{ fontSize: '0.72rem', color: colors.muted }}>{s.id}</div></td>
                   <td style={td()}>{s.event_title}</td>
                   <td style={td()}>{s.subject_masked}</td>
                   <td style={td()}>{s.detail}</td>
@@ -96,7 +97,7 @@ export default function EventFraudPage() {
                         <button style={btnPrimary()} disabled={busy === s.id} onClick={() => decide(s, 'clear')}>Clear</button>
                         <button style={btnDanger()} disabled={busy === s.id} onClick={() => decide(s, 'block')}>{busy === s.id ? '…' : 'Block'}</button>
                       </div>
-                    ) : <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>—</span>}
+                    ) : <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span>}
                   </td>
                 </tr>
               ))}

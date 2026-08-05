@@ -8,46 +8,35 @@
 // ₦ (feeKobo/100). All state-changes are audit-logged server-side.
 
 import { useEffect, useMemo, useState } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import {
   list, get, approve, reject, formatNaira, displayName,
   STATUSES, MODES, TERMINAL_STATUSES,
   type Business, type BusinessStatus, type BusinessMode,
 } from '@/services/businessAdminService';
-
-// ── Inline style primitives (match app/admin/commission/_ui.tsx) ──────────────
-const th = (): CSSProperties => ({ textAlign: 'left', padding: '0.5rem 0.6rem', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6b7280', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' });
-const td = (): CSSProperties => ({ padding: '0.5rem 0.6rem', fontSize: '0.85rem', borderBottom: '1px solid #f1f1f1', verticalAlign: 'middle' });
-const label = (): CSSProperties => ({ display: 'block', fontSize: '0.72rem', color: '#6b7280', marginBottom: 4 });
-const select = (): CSSProperties => ({ width: '100%', padding: '0.4rem 0.55rem', border: '1px solid #d1d5db', borderRadius: 6, fontSize: '0.85rem', boxSizing: 'border-box' });
-function btn(variant: 'primary' | 'ghost' | 'danger' = 'ghost'): CSSProperties {
-  const base: CSSProperties = { padding: '0.45rem 0.85rem', borderRadius: 6, fontSize: '0.82rem', cursor: 'pointer', border: '1px solid #d1d5db', background: '#fff', color: '#111' };
-  if (variant === 'primary') return { ...base, background: '#111827', color: '#fff', border: '1px solid #111827' };
-  if (variant === 'danger') return { ...base, background: '#fff', color: '#b91c1c', border: '1px solid #fca5a5' };
-  return base;
-}
+import { Page, PageHeader, Card, Button, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 // Status → badge tone. Success = green, in-flight = blue, review = amber, fail = red.
-const STATUS_TONE: Record<BusinessStatus, CSSProperties> = {
-  draft: { background: '#f3f4f6', color: '#6b7280' },
-  name_check: { background: '#dbeafe', color: '#1d4ed8' },
-  name_reserved: { background: '#dbeafe', color: '#1d4ed8' },
-  registration_submitted: { background: '#dbeafe', color: '#1d4ed8' },
-  submitted: { background: '#dbeafe', color: '#1d4ed8' },
-  under_review: { background: '#fef3c7', color: '#92400e' },
-  registered: { background: '#dcfce7', color: '#15803d' },
-  verified: { background: '#dcfce7', color: '#15803d' },
-  rejected: { background: '#fee2e2', color: '#b91c1c' },
-  failed: { background: '#fee2e2', color: '#b91c1c' },
+const STATUS_TONE: Record<BusinessStatus, string> = {
+  draft: colors.secondary,
+  name_check: colors.info,
+  name_reserved: colors.info,
+  registration_submitted: colors.info,
+  submitted: colors.info,
+  under_review: colors.warning,
+  registered: colors.success,
+  verified: colors.success,
+  rejected: colors.danger,
+  failed: colors.danger,
 };
 
 function StatusBadge({ status }: { status: BusinessStatus }) {
   const tone = STATUS_TONE[status] ?? STATUS_TONE.draft;
-  return <span style={{ ...tone, padding: '0.15rem 0.5rem', borderRadius: 999, fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap' }}>{status.replace(/_/g, ' ')}</span>;
+  return <Badge text={status.replace(/_/g, ' ')} color={tone} />;
 }
 function ModeBadge({ mode }: { mode: BusinessMode }) {
-  const tone: CSSProperties = mode === 'verify_existing' ? { background: '#ede9fe', color: '#6d28d9' } : { background: '#e0f2fe', color: '#0369a1' };
-  return <span style={{ ...tone, padding: '0.15rem 0.5rem', borderRadius: 999, fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap' }}>{mode === 'verify_existing' ? 'verify existing' : 'register new'}</span>;
+  const tone = mode === 'verify_existing' ? colors.primary : colors.info;
+  return <Badge text={mode === 'verify_existing' ? 'verify existing' : 'register new'} color={tone} />;
 }
 
 function fmtDate(iso?: string | null): string {
@@ -122,80 +111,75 @@ export default function BusinessRegistryPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', marginBottom: '1rem' }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: '1.4rem' }}>Business Registry</h1>
-          <p style={{ margin: '0.35rem 0 0', color: '#6b7280', fontSize: '0.85rem', maxWidth: 760 }}>
-            CAC business-name verification & registration review. Approve is a manual override to a success terminal state (registered / verified); Reject requires a reason. Fees are shown in ₦ (kobo/100). Requires <code>business.registry.review</code>.
-          </p>
-        </div>
-        <button onClick={load} style={btn()}>Refresh</button>
-      </div>
+    <Page>
+      <PageHeader
+        title="Business Registry"
+        subtitle={`CAC business-name verification & registration review. Approve is a manual override to a success terminal state (registered / verified); Reject requires a reason. Fees are shown in ₦ (kobo/100). Requires business.registry.review.`}
+        actions={<Button onClick={load}>Refresh</Button>}
+      />
 
       {/* KPIs */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
         {[
           { l: 'Total profiles', v: counts.total, a: undefined as string | undefined },
-          { l: 'Pending (non-terminal)', v: counts.pending, a: counts.pending > 0 ? '#92400e' : undefined },
-          { l: 'Under review', v: counts.review, a: counts.review > 0 ? '#92400e' : undefined },
+          { l: 'Pending (non-terminal)', v: counts.pending, a: counts.pending > 0 ? colors.warning : undefined },
+          { l: 'Under review', v: counts.review, a: counts.review > 0 ? colors.warning : undefined },
         ].map((k) => (
-          <div key={k.l} style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: '0.8rem 0.9rem', background: '#fff' }}>
-            <div style={{ fontSize: '0.72rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{k.l}</div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 700, marginTop: 4, color: k.a ?? '#111' }}>{k.v}</div>
-          </div>
+          <Card key={k.l} style={{ padding: '0.8rem 0.9rem' }}>
+            <div style={{ fontSize: '0.72rem', color: colors.muted, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{k.l}</div>
+            <div style={{ fontSize: '1.25rem', fontWeight: 700, marginTop: 4, color: k.a ?? colors.text }}>{k.v}</div>
+          </Card>
         ))}
       </div>
 
       {/* Filters */}
-      <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff', marginBottom: '1.25rem', padding: '0.9rem' }}>
+      <Card style={{ marginBottom: '1.25rem' }}>
         <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
           <div style={{ minWidth: 220 }}>
-            <label style={label()}>Status</label>
-            <select style={{ ...select(), maxWidth: 260 }} value={fStatus} onChange={(e) => setFStatus(e.target.value as BusinessStatus | '')}>
+            <label style={{ display: 'block', fontSize: '0.72rem', color: colors.muted, marginBottom: 4 }}>Status</label>
+            <select style={{ maxWidth: 260, width: '100%' }} value={fStatus} onChange={(e) => setFStatus(e.target.value as BusinessStatus | '')}>
               <option value="">All statuses</option>
               {STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
             </select>
           </div>
           <div style={{ minWidth: 220 }}>
-            <label style={label()}>Mode</label>
-            <select style={{ ...select(), maxWidth: 260 }} value={fMode} onChange={(e) => setFMode(e.target.value as BusinessMode | '')}>
+            <label style={{ display: 'block', fontSize: '0.72rem', color: colors.muted, marginBottom: 4 }}>Mode</label>
+            <select style={{ maxWidth: 260, width: '100%' }} value={fMode} onChange={(e) => setFMode(e.target.value as BusinessMode | '')}>
               <option value="">All modes</option>
               {MODES.map((m) => <option key={m} value={m}>{m === 'verify_existing' ? 'verify existing' : 'register new'}</option>)}
             </select>
           </div>
         </div>
-      </section>
+      </Card>
 
-      {notice && <p style={{ fontSize: '0.82rem', color: '#374151', margin: '0 0 0.75rem' }}>{notice}</p>}
+      {notice && <p style={{ fontSize: '0.82rem', color: colors.text, margin: '0 0 0.75rem' }}>{notice}</p>}
 
       {/* Table */}
-      <section style={{ border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.7rem 0.9rem', borderBottom: '1px solid #f1f1f1' }}>
+      <Card style={{ padding: 0, overflow: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.7rem 0.9rem', borderBottom: `1px solid ${colors.border}` }}>
           <strong style={{ fontSize: '0.9rem' }}>Registry queue</strong>
-          <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{rows.length} profile{rows.length === 1 ? '' : 's'}</span>
+          <span style={{ fontSize: '0.72rem', color: colors.muted }}>{rows.length} profile{rows.length === 1 ? '' : 's'}</span>
         </div>
         <div style={{ padding: '0.9rem' }}>
           {loading ? (
-            <p style={{ color: '#6b7280', fontSize: '0.85rem', padding: '1rem 0' }}>Loading…</p>
+            <p style={{ color: colors.muted, fontSize: '0.85rem', padding: '1rem 0' }}>Loading…</p>
           ) : error ? (
-            <p style={{ color: '#b91c1c', fontSize: '0.85rem', padding: '1rem 0' }}>{error}</p>
+            <p style={{ color: colors.danger, fontSize: '0.85rem', padding: '1rem 0' }}>{error}</p>
           ) : rows.length === 0 ? (
-            <p style={{ color: '#9ca3af', fontSize: '0.85rem', padding: '1rem 0' }}>No business profiles match the current filters.</p>
+            <p style={{ color: colors.muted, fontSize: '0.85rem', padding: '1rem 0' }}>No business profiles match the current filters.</p>
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
-                    <th style={th()}>Name</th>
-                    <th style={th()}>Entity type</th>
-                    <th style={th()}>Mode</th>
-                    <th style={th()}>Status</th>
-                    <th style={th()}>RC / BN</th>
-                    <th style={th()}>Fee</th>
-                    <th style={th()}>Submitted</th>
-                    <th style={th()}>Actions</th>
+                    <th style={thCell}>Name</th>
+                    <th style={thCell}>Entity type</th>
+                    <th style={thCell}>Mode</th>
+                    <th style={thCell}>Status</th>
+                    <th style={thCell}>RC / BN</th>
+                    <th style={thCell}>Fee</th>
+                    <th style={thCell}>Submitted</th>
+                    <th style={thCell}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -203,27 +187,27 @@ export default function BusinessRegistryPage() {
                     const terminal = isTerminal(b.status);
                     return (
                       <tr key={b.id}>
-                        <td style={{ ...td(), fontWeight: 600 }}>
-                          <button onClick={() => openDetail(b.id)} style={{ background: 'none', border: 'none', padding: 0, color: '#1d4ed8', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', textAlign: 'left' }}>
+                        <td style={{ ...tdCell, fontWeight: 600 }}>
+                          <button onClick={() => openDetail(b.id)} style={{ background: 'none', border: 'none', padding: 0, color: colors.primary, cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', textAlign: 'left' }}>
                             {displayName(b)}
                           </button>
-                          <div style={{ color: '#9ca3af', fontSize: '0.72rem', fontWeight: 400 }}>{b.lineOfBusiness || '—'}</div>
+                          <div style={{ color: colors.muted, fontSize: '0.72rem', fontWeight: 400 }}>{b.lineOfBusiness || '—'}</div>
                         </td>
-                        <td style={td()}>{(b.entityType || '—').replace(/_/g, ' ')}</td>
-                        <td style={td()}><ModeBadge mode={b.mode} /></td>
-                        <td style={td()}><StatusBadge status={b.status} /></td>
-                        <td style={td()}>{b.rcOrBnNumber ? <code>{b.rcOrBnNumber}</code> : <span style={{ color: '#9ca3af' }}>—</span>}</td>
-                        <td style={td()}>{formatNaira(b.feeKobo)}</td>
-                        <td style={td()}>{fmtDate(b.createdAt)}</td>
-                        <td style={td()}>
+                        <td style={tdCell}>{(b.entityType || '—').replace(/_/g, ' ')}</td>
+                        <td style={tdCell}><ModeBadge mode={b.mode} /></td>
+                        <td style={tdCell}><StatusBadge status={b.status} /></td>
+                        <td style={tdCell}>{b.rcOrBnNumber ? <code>{b.rcOrBnNumber}</code> : <span style={{ color: colors.muted }}>—</span>}</td>
+                        <td style={tdCell}>{formatNaira(b.feeKobo)}</td>
+                        <td style={tdCell}>{fmtDate(b.createdAt)}</td>
+                        <td style={tdCell}>
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            <button onClick={() => openDetail(b.id)} style={btn()}>View</button>
+                            <Button sm onClick={() => openDetail(b.id)}>View</Button>
                             {terminal ? (
-                              <span style={{ color: '#9ca3af', fontSize: '0.8rem', alignSelf: 'center' }}>resolved</span>
+                              <span style={{ color: colors.muted, fontSize: '0.8rem', alignSelf: 'center' }}>resolved</span>
                             ) : (
                               <>
-                                <button onClick={() => onApprove(b)} disabled={busyId === b.id} style={btn('primary')}>{busyId === b.id ? '…' : 'Approve'}</button>
-                                <button onClick={() => onReject(b)} disabled={busyId === b.id} style={btn('danger')}>Reject</button>
+                                <Button sm variant="primary" onClick={() => onApprove(b)} disabled={busyId === b.id}>{busyId === b.id ? '…' : 'Approve'}</Button>
+                                <Button sm variant="danger" onClick={() => onReject(b)} disabled={busyId === b.id}>Reject</Button>
                               </>
                             )}
                           </div>
@@ -236,7 +220,7 @@ export default function BusinessRegistryPage() {
             </div>
           )}
         </div>
-      </section>
+      </Card>
 
       {/* Detail drawer */}
       {(detail || detailLoading) && (
@@ -249,15 +233,15 @@ export default function BusinessRegistryPage() {
           onReject={detail ? () => onReject(detail) : undefined}
         />
       )}
-    </div>
+    </Page>
   );
 }
 
 // ── Detail drawer ─────────────────────────────────────────────────────────────
 function Row({ k, v }: { k: string; v: ReactNode }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr', gap: '0.5rem', padding: '0.4rem 0', borderBottom: '1px solid #f1f1f1', fontSize: '0.85rem' }}>
-      <div style={{ color: '#6b7280' }}>{k}</div>
+    <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr', gap: '0.5rem', padding: '0.4rem 0', borderBottom: `1px solid ${colors.border}`, fontSize: '0.85rem' }}>
+      <div style={{ color: colors.muted }}>{k}</div>
       <div>{v ?? '—'}</div>
     </div>
   );
@@ -270,9 +254,9 @@ function DetailDrawer({ business, loading, busy, onClose, onApprove, onReject }:
   const terminal = business ? isTerminal(business.status) : true;
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', justifyContent: 'flex-end', zIndex: 50 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', width: '100%', maxWidth: 520, height: '100%', overflowY: 'auto', padding: '1.25rem', boxSizing: 'border-box' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: colors.card, width: '100%', maxWidth: 520, height: '100%', overflowY: 'auto', padding: '1.25rem', boxSizing: 'border-box' }}>
         {loading || !business ? (
-          <p style={{ color: '#6b7280', fontSize: '0.85rem' }}>Loading…</p>
+          <p style={{ color: colors.muted, fontSize: '0.85rem' }}>Loading…</p>
         ) : (
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', marginBottom: '0.75rem' }}>
@@ -283,10 +267,10 @@ function DetailDrawer({ business, loading, busy, onClose, onApprove, onReject }:
                   <ModeBadge mode={business.mode} />
                 </div>
               </div>
-              <button onClick={onClose} style={btn()}>Close</button>
+              <Button onClick={onClose}>Close</Button>
             </div>
 
-            <h3 style={{ fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6b7280', margin: '1rem 0 0.25rem' }}>Profile</h3>
+            <h3 style={{ fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: colors.muted, margin: '1rem 0 0.25rem' }}>Profile</h3>
             <Row k="Business ID" v={<code>{business.id}</code>} />
             <Row k="User ID" v={<code>{business.userId}</code>} />
             <Row k="Entity type" v={(business.entityType || '—').replace(/_/g, ' ')} />
@@ -297,7 +281,7 @@ function DetailDrawer({ business, loading, busy, onClose, onApprove, onReject }:
             <Row k="Last updated" v={fmtDate(business.updatedAt)} />
             <Row k="Registered at" v={fmtDate(business.registeredAt)} />
 
-            <h3 style={{ fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6b7280', margin: '1rem 0 0.25rem' }}>CAC references</h3>
+            <h3 style={{ fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: colors.muted, margin: '1rem 0 0.25rem' }}>CAC references</h3>
             <Row k="RC / BN number" v={business.rcOrBnNumber ? <code>{business.rcOrBnNumber}</code> : '—'} />
             <Row k="Reservation ref" v={business.cacReservationRef ? <code>{business.cacReservationRef}</code> : '—'} />
             <Row k="Registration ref" v={business.cacRegistrationRef ? <code>{business.cacRegistrationRef}</code> : '—'} />
@@ -305,61 +289,61 @@ function DetailDrawer({ business, loading, busy, onClose, onApprove, onReject }:
             <Row
               k="Certificate"
               v={business.certificateUrl
-                ? <a href={business.certificateUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#1d4ed8', textDecoration: 'underline' }}>View certificate</a>
+                ? <a href={business.certificateUrl} target="_blank" rel="noopener noreferrer" style={{ color: colors.primary, textDecoration: 'underline' }}>View certificate</a>
                 : '—'}
             />
 
-            <h3 style={{ fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6b7280', margin: '1rem 0 0.25rem' }}>Fee</h3>
+            <h3 style={{ fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: colors.muted, margin: '1rem 0 0.25rem' }}>Fee</h3>
             <Row k="Fee" v={<strong>{formatNaira(business.feeKobo)}</strong>} />
             <Row k="Ledger ref" v={business.feeLedgerRef ? <code>{business.feeLedgerRef}</code> : '—'} />
 
-            <h3 style={{ fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6b7280', margin: '1rem 0 0.25rem' }}>
+            <h3 style={{ fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: colors.muted, margin: '1rem 0 0.25rem' }}>
               Proprietors {business.proprietors?.length ? `(${business.proprietors.length})` : ''}
             </h3>
             {business.proprietors?.length ? (
               <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '0.5rem' }}>
                 <thead>
                   <tr>
-                    <th style={th()}>Name</th>
-                    <th style={th()}>Role</th>
-                    <th style={th()}>Contact</th>
-                    <th style={th()}>Share</th>
+                    <th style={thCell}>Name</th>
+                    <th style={thCell}>Role</th>
+                    <th style={thCell}>Contact</th>
+                    <th style={thCell}>Share</th>
                   </tr>
                 </thead>
                 <tbody>
                   {business.proprietors.map((p, i) => (
                     <tr key={p.id ?? i}>
-                      <td style={td()}><strong>{p.name || '—'}</strong>{p.bvn ? <div style={{ color: '#9ca3af', fontSize: '0.72rem' }}>BVN <code>{p.bvn}</code></div> : null}</td>
-                      <td style={td()}>{p.role || '—'}</td>
-                      <td style={td()}>
+                      <td style={tdCell}><strong>{p.name || '—'}</strong>{p.bvn ? <div style={{ color: colors.muted, fontSize: '0.72rem' }}>BVN <code>{p.bvn}</code></div> : null}</td>
+                      <td style={tdCell}>{p.role || '—'}</td>
+                      <td style={tdCell}>
                         <div>{p.email || '—'}</div>
-                        {p.phone ? <div style={{ color: '#9ca3af', fontSize: '0.72rem' }}>{p.phone}</div> : null}
+                        {p.phone ? <div style={{ color: colors.muted, fontSize: '0.72rem' }}>{p.phone}</div> : null}
                       </td>
-                      <td style={td()}>{typeof p.sharePct === 'number' ? `${p.sharePct}%` : '—'}</td>
+                      <td style={tdCell}>{typeof p.sharePct === 'number' ? `${p.sharePct}%` : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             ) : (
-              <p style={{ color: '#9ca3af', fontSize: '0.85rem' }}>No proprietors on record.</p>
+              <p style={{ color: colors.muted, fontSize: '0.85rem' }}>No proprietors on record.</p>
             )}
 
             {business.metadata && Object.keys(business.metadata).length > 0 ? (
               <>
-                <h3 style={{ fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#6b7280', margin: '1rem 0 0.25rem' }}>Metadata</h3>
-                <pre style={{ background: '#f9fafb', border: '1px solid #f1f1f1', borderRadius: 6, padding: '0.6rem', fontSize: '0.72rem', overflowX: 'auto', margin: 0 }}>
+                <h3 style={{ fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: colors.muted, margin: '1rem 0 0.25rem' }}>Metadata</h3>
+                <pre style={{ background: tint(colors.muted, 0.06), border: `1px solid ${colors.border}`, borderRadius: 6, padding: '0.6rem', fontSize: '0.72rem', overflowX: 'auto', margin: 0 }}>
                   {JSON.stringify(business.metadata, null, 2)}
                 </pre>
               </>
             ) : null}
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: '1.25rem', paddingTop: '0.75rem', borderTop: '1px solid #e5e7eb' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: '1.25rem', paddingTop: '0.75rem', borderTop: `1px solid ${colors.border}` }}>
               {terminal ? (
-                <span style={{ color: '#9ca3af', fontSize: '0.82rem', alignSelf: 'center' }}>This profile is in a terminal state ({business.status.replace(/_/g, ' ')}).</span>
+                <span style={{ color: colors.muted, fontSize: '0.82rem', alignSelf: 'center' }}>This profile is in a terminal state ({business.status.replace(/_/g, ' ')}).</span>
               ) : (
                 <>
-                  <button onClick={onReject} disabled={busy} style={btn('danger')}>Reject</button>
-                  <button onClick={onApprove} disabled={busy} style={btn('primary')}>{busy ? 'Working…' : 'Approve (override)'}</button>
+                  <Button variant="danger" onClick={onReject} disabled={busy}>Reject</Button>
+                  <Button variant="primary" onClick={onApprove} disabled={busy}>{busy ? 'Working…' : 'Approve (override)'}</Button>
                 </>
               )}
             </div>

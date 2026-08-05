@@ -5,7 +5,10 @@
 import { useEffect, useState } from 'react';
 import { listDocuments, presignDocument } from '@/services/fractionalreAdminService';
 import type { DocumentRecord } from '@/types/fractionalreAdmin';
-import { PageHeader, FractionalReTabs, Card, Badge, btn, btnPrimary, th, td, input, label, timeAgo } from '../_ui';
+import { FractionalReTabs, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const labelStyle = { fontSize: '0.78rem', fontWeight: 600, color: colors.text, display: 'block', marginBottom: 4 } as const;
 
 export default function DocumentsPage() {
   const [docs, setDocs] = useState<DocumentRecord[]>([]);
@@ -33,39 +36,39 @@ export default function DocumentsPage() {
   const templates = docs.filter((d) => d.kind === 'template');
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Documents" subtitle="Versioned repository, templates and signed acknowledgements." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Documents" subtitle="Versioned repository, templates and signed acknowledgements." actions={<Button onClick={load}>Refresh</Button>} />
       <FractionalReTabs active="documents" />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-      {msg && <p style={{ color: '#15803d', wordBreak: 'break-all' }}>{msg}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      {msg && <p style={{ color: colors.success, wordBreak: 'break-all' }}>{msg}</p>}
 
       <Card title="Upload document (presigned)">
         <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'end', flexWrap: 'wrap' }}>
-          <div style={{ width: 280 }}><label style={label()}>File name</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Valuation Report Q3.pdf" style={input()} /></div>
-          <div style={{ width: 180 }}><label style={label()}>Kind</label><select value={kind} onChange={(e) => setKind(e.target.value)} style={input()}>{['title', 'valuation', 'insurance', 'deed', 'consent', 'survey', 'agreement', 'other'].map((k) => <option key={k} value={k}>{k}</option>)}</select></div>
-          <button onClick={presign} disabled={working || !name} style={{ ...btnPrimary(), opacity: working || !name ? 0.6 : 1 }}>{working ? 'Requesting…' : 'Get upload URL'}</button>
+          <div style={{ width: 280 }}><label style={labelStyle}>File name</label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Valuation Report Q3.pdf" /></div>
+          <div style={{ width: 180 }}><label style={labelStyle}>Kind</label><select value={kind} onChange={(e) => setKind(e.target.value)} className="vx-input">{['title', 'valuation', 'insurance', 'deed', 'consent', 'survey', 'agreement', 'other'].map((k) => <option key={k} value={k}>{k}</option>)}</select></div>
+          <Button variant="primary" onClick={presign} disabled={working || !name}>{working ? 'Requesting…' : 'Get upload URL'}</Button>
         </div>
       </Card>
 
       <Card title="Repository">
-        {loading ? <p style={{ color: '#6b7280' }}>Loading documents…</p> : repo.length === 0 ? <p style={{ color: '#6b7280' }}>No documents.</p> : (
+        {loading ? <p style={{ color: colors.muted }}>Loading documents…</p> : repo.length === 0 ? <p style={{ color: colors.muted }}>No documents.</p> : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Name</th><th style={th()}>Kind</th><th style={th()}>Asset</th><th style={th()}>Version</th><th style={th()}>Signed</th><th style={th()}>Uploaded</th></tr></thead>
+            <thead><tr><th style={thCell}>Name</th><th style={thCell}>Kind</th><th style={thCell}>Asset</th><th style={thCell}>Version</th><th style={thCell}>Signed</th><th style={thCell}>Uploaded</th></tr></thead>
             <tbody>{repo.map((d) => (
-              <tr key={d.id}><td style={td()}>{d.name}</td><td style={{ ...td(), textTransform: 'capitalize' }}>{d.kind}</td><td style={td()}>{d.assetId ?? '—'}</td><td style={td()}>v{d.version}</td><td style={td()}>{d.signed ? <Badge status="verified" label="signed" /> : <Badge status="pending" label="unsigned" />}</td><td style={td()}>{timeAgo(d.uploadedAt)}</td></tr>
+              <tr key={d.id}><td style={tdCell}>{d.name}</td><td style={{ ...tdCell, textTransform: 'capitalize' }}>{d.kind}</td><td style={tdCell}>{d.assetId ?? '—'}</td><td style={tdCell}>v{d.version}</td><td style={tdCell}>{d.signed ? <Badge text="signed" color={colors.success} /> : <Badge text="unsigned" color={colors.warning} />}</td><td style={tdCell}>{timeAgo(d.uploadedAt)}</td></tr>
             ))}</tbody>
           </table>
         )}
       </Card>
 
       <Card title="Templates">
-        {templates.length === 0 ? <p style={{ color: '#6b7280' }}>No templates.</p> : (
+        {templates.length === 0 ? <p style={{ color: colors.muted }}>No templates.</p> : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Name</th><th style={th()}>Version</th><th style={th()}>Updated</th></tr></thead>
-            <tbody>{templates.map((d) => (<tr key={d.id}><td style={td()}>{d.name}</td><td style={td()}>v{d.version}</td><td style={td()}>{timeAgo(d.uploadedAt)}</td></tr>))}</tbody>
+            <thead><tr><th style={thCell}>Name</th><th style={thCell}>Version</th><th style={thCell}>Updated</th></tr></thead>
+            <tbody>{templates.map((d) => (<tr key={d.id}><td style={tdCell}>{d.name}</td><td style={tdCell}>v{d.version}</td><td style={tdCell}>{timeAgo(d.uploadedAt)}</td></tr>))}</tbody>
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

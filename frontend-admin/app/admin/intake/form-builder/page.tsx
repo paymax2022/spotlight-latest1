@@ -1,9 +1,21 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { IntakeSchema, IntakeSchemaField } from '@/types/intakeAdmin';
 import { getSchema, publishSchema, toLocal } from '@/services/intakeAdminService';
-import { BackLink, PageHeader, Notice, card, th, td, btn, btnPrimary, input, useIntakePermissions, INTAKE_PERMS } from '../_ui';
+import { Page, PageHeader, Card, Button, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
+import { useIntakePermissions, INTAKE_PERMS } from '../_ui';
+
+function Notice({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ background: tint(colors.info, 0.12), border: `1px solid ${tint(colors.info, 0.3)}`, color: colors.text, padding: '10px 12px', borderRadius: 8, fontSize: 13, marginTop: 14, display: 'flex', gap: 8 }}>
+      <span aria-hidden>ℹ︎</span>
+      <span>{children}</span>
+    </div>
+  );
+}
 
 export default function FormBuilderPage() {
   const { can } = useIntakePermissions();
@@ -60,72 +72,77 @@ export default function FormBuilderPage() {
   };
 
   return (
-    <div>
-      <BackLink />
+    <Page>
+      <div style={{ marginBottom: 14 }}>
+        <Link href="/admin/intake" style={{ fontSize: 13, color: colors.primary }}>← Intake console</Link>
+      </div>
       <PageHeader title="A1 · Intake Form Builder" subtitle="Manage which questions the intake asks, whether each is required, and the order patients answer them. Publishing creates a new schema version that becomes the live form." />
-      <Notice kind="info">
+      <Notice>
         Conditional fields render only when their <code>conditional_on</code> field has an answer. This is a structured editor with guardrails — the live schema is versioned, never overwritten.
       </Notice>
 
-      {message ? <p style={{ color: 'lightgreen' }}>{message}</p> : null}
-      {error ? <p style={{ color: 'salmon' }}>{error}</p> : null}
-      {loading ? <p style={{ opacity: 0.6, marginTop: 16 }}>Loading…</p> : null}
+      {message ? <p style={{ color: colors.success }}>{message}</p> : null}
+      {error ? <p style={{ color: colors.danger }}>{error}</p> : null}
+      {loading ? <p style={{ color: colors.muted, marginTop: 16 }}>Loading…</p> : null}
 
       {schema && !loading ? (
         <>
-          <div style={{ ...card, marginTop: 16, display: 'flex', gap: 18, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Card style={{ marginTop: 16, display: 'flex', gap: 18, alignItems: 'center', flexWrap: 'wrap' }}>
             <span>Live version <strong>v{schema.version}</strong></span>
-            <span style={{ opacity: 0.7 }}>Status: {schema.status}</span>
-            <span style={{ opacity: 0.7 }}>Updated {toLocal(schema.updated_at)}{schema.updated_by ? ` by ${schema.updated_by}` : ''}</span>
-            <button
-              style={canManage ? btnPrimary : { ...btn, opacity: 0.5, cursor: 'not-allowed' }}
+            <span style={{ color: colors.muted }}>Status: {schema.status}</span>
+            <span style={{ color: colors.muted }}>Updated {toLocal(schema.updated_at)}{schema.updated_by ? ` by ${schema.updated_by}` : ''}</span>
+            <Button
+              variant="primary"
               onClick={() => void onPublish()}
               disabled={busy || !canManage}
               title={!canManage ? 'Requires health.admin.intake' : 'Publish a new schema version'}
             >
               {busy ? 'Publishing…' : 'Publish new version'}
-            </button>
-          </div>
+            </Button>
+          </Card>
 
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 16 }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid #2a2a2a', textAlign: 'left' }}>
-                {['Order', 'Field key', 'Label', 'Type', 'Required', 'Conditional on', ''].map((h) => <th key={h} style={th}>{h}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {fields.map((f, idx) => (
-                <tr key={f.key} style={{ borderBottom: '1px solid #1c1c1c' }}>
-                  <td style={td}>{f.order}</td>
-                  <td style={{ ...td, fontFamily: 'monospace', fontSize: 11 }}>{f.key}</td>
-                  <td style={td}>{f.label}{f.help_text ? <div style={{ fontSize: 11, opacity: 0.5 }}>{f.help_text}</div> : null}</td>
-                  <td style={{ ...td, opacity: 0.8 }}>{f.type}</td>
-                  <td style={td}>
-                    <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', cursor: canManage ? 'pointer' : 'default' }}>
-                      <input type="checkbox" checked={f.required} disabled={!canManage} onChange={() => toggleRequired(f.key)} />
-                      {f.required ? 'Required' : 'Optional'}
-                    </label>
-                  </td>
-                  <td style={{ ...td, fontFamily: 'monospace', fontSize: 11, opacity: 0.7 }}>{f.conditional_on ?? '—'}</td>
-                  <td style={td}>
-                    <button style={{ ...btn, padding: '2px 8px' }} disabled={!canManage || idx === 0} onClick={() => move(idx, -1)}>↑</button>{' '}
-                    <button style={{ ...btn, padding: '2px 8px' }} disabled={!canManage || idx === fields.length - 1} onClick={() => move(idx, 1)}>↓</button>
-                  </td>
+          <Card style={{ padding: 0, overflow: 'hidden', marginTop: 16 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Order', 'Field key', 'Label', 'Type', 'Required', 'Conditional on', ''].map((h) => <th key={h} style={thCell}>{h}</th>)}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {fields.map((f, idx) => (
+                  <tr key={f.key}>
+                    <td style={tdCell}>{f.order}</td>
+                    <td style={{ ...tdCell, fontFamily: 'monospace', fontSize: 11 }}>{f.key}</td>
+                    <td style={tdCell}>{f.label}{f.help_text ? <div style={{ fontSize: 11, color: colors.muted }}>{f.help_text}</div> : null}</td>
+                    <td style={{ ...tdCell, color: colors.muted }}>{f.type}</td>
+                    <td style={tdCell}>
+                      <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', cursor: canManage ? 'pointer' : 'default' }}>
+                        <input type="checkbox" checked={f.required} disabled={!canManage} onChange={() => toggleRequired(f.key)} />
+                        {f.required ? 'Required' : 'Optional'}
+                      </label>
+                    </td>
+                    <td style={{ ...tdCell, fontFamily: 'monospace', fontSize: 11, color: colors.muted }}>{f.conditional_on ?? '—'}</td>
+                    <td style={tdCell}>
+                      <Button variant="outline" sm disabled={!canManage || idx === 0} onClick={() => move(idx, -1)}>↑</Button>{' '}
+                      <Button variant="outline" sm disabled={!canManage || idx === fields.length - 1} onClick={() => move(idx, 1)}>↓</Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
 
           <details style={{ marginTop: 20 }}>
-            <summary style={{ cursor: 'pointer', fontSize: 13, opacity: 0.8 }}>Raw schema (JSON)</summary>
+            <summary style={{ cursor: 'pointer', fontSize: 13, color: colors.muted }}>Raw schema (JSON)</summary>
             <textarea
               readOnly
-              style={{ ...input, width: '100%', height: 220, marginTop: 8, fontFamily: 'monospace', fontSize: 11 }}
+              className="vx-input"
+              style={{ width: '100%', height: 220, marginTop: 8, fontFamily: 'monospace', fontSize: 11 }}
               value={JSON.stringify(fields, null, 2)}
             />
           </details>
         </>
       ) : null}
-    </div>
+    </Page>
   );
 }

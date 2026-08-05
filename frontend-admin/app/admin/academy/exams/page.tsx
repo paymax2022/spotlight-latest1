@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listExamArenas, listExamBlueprints, listSubjectCombinations, createExamBlueprint } from '@/services/academyAdminService';
 import type { ExamArena, ExamBlueprint, SubjectCombinationRule, ExamBlueprintInput } from '@/types/academyAdmin';
 import { PageHeader, AcademyTabs, Card, Badge, StateBlock, AuditNote, DisclosureNote, btn, btnPrimary, th, td, input, label, select, pct } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 function countdown(iso: string | null): string {
   if (!iso) return '—';
@@ -130,7 +131,7 @@ export default function ExamsPage() {
           </div>
           <div><button onClick={submit} disabled={saving} style={btnPrimary()}>{saving ? 'Saving…' : 'Create blueprint'}</button></div>
         </div>
-        {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+        {notice && <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: '0.6rem' }}>{notice}</p>}
         <AuditNote>Blueprint and scoring-rule changes are recorded to the immutable audit log.</AuditNote>
       </Card>
     </div>

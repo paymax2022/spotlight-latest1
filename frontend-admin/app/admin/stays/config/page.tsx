@@ -4,17 +4,14 @@ import { useEffect, useState } from 'react';
 import { getConfig } from '@/services/staysAdminService';
 import type { PlatformConfig, FeatureFlag } from '@/types/staysAdmin';
 import {
-  PageHeader,
   StaysTabs,
   Card,
   Badge,
   DisclosureNote,
   StateBlock,
-  btn,
-  th,
-  td,
   fmtDate,
 } from '../_ui';
+import { Page, PageHeader, Button, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function StaysConfigPage() {
   const [data, setData] = useState<PlatformConfig | null>(null);
@@ -38,11 +35,11 @@ export default function StaysConfigPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Feature flags & config"
         subtitle="Runtime feature flags and platform settings for Paymax Stays. Toggles below are a local preview — saving routes through the audited config service."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" sm onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="platform" />
 
@@ -56,33 +53,35 @@ export default function StaysConfigPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th style={th()}>Key</th>
-                <th style={th()}>Label</th>
-                <th style={th()}>Description</th>
-                <th style={th()}>Scope</th>
-                <th style={th()}>Updated</th>
-                <th style={th()}>Enabled</th>
+                <th style={thCell}>Key</th>
+                <th style={thCell}>Label</th>
+                <th style={thCell}>Description</th>
+                <th style={thCell}>Scope</th>
+                <th style={thCell}>Updated</th>
+                <th style={thCell}>Enabled</th>
               </tr>
             </thead>
             <tbody>
               {flags.map((f) => (
                 <tr key={f.key}>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{f.key}</code></td>
-                  <td style={td()}>{f.label}</td>
-                  <td style={{ ...td(), color: '#6b7280', maxWidth: 360 }}>{f.description}</td>
-                  <td style={td()}><Badge status={f.scope} label={f.scope} /></td>
-                  <td style={td()}>{fmtDate(f.updated_at)}</td>
-                  <td style={td()}>
+                  <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{f.key}</code></td>
+                  <td style={tdCell}>{f.label}</td>
+                  <td style={{ ...tdCell, color: colors.muted, maxWidth: 360 }}>{f.description}</td>
+                  <td style={tdCell}><Badge status={f.scope} label={f.scope} /></td>
+                  <td style={tdCell}>{fmtDate(f.updated_at)}</td>
+                  <td style={tdCell}>
                     <button
                       onClick={() => toggleFlag(f.key)}
                       style={{
-                        ...btn(),
                         width: 56,
                         textAlign: 'center',
                         fontWeight: 600,
-                        color: f.enabled ? '#15803d' : '#6b7280',
-                        background: f.enabled ? '#dcfce7' : '#f3f4f6',
-                        border: f.enabled ? '1px solid #bbf7d0' : '1px solid #e5e7eb',
+                        color: f.enabled ? colors.success : colors.muted,
+                        background: f.enabled ? tint(colors.success, 0.12) : colors.bg,
+                        border: f.enabled ? `1px solid ${tint(colors.success, 0.3)}` : `1px solid ${colors.border}`,
+                        borderRadius: 6,
+                        padding: '8px 14px',
+                        cursor: 'pointer',
                       }}
                     >
                       {f.enabled ? 'On' : 'Off'}
@@ -97,30 +96,30 @@ export default function StaysConfigPage() {
 
       <Card title="Settings">
         {(!data || data.settings.length === 0) ? (
-          <p style={{ color: '#6b7280' }}>No settings defined.</p>
+          <p style={{ color: colors.muted }}>No settings defined.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th style={th()}>Key</th>
-                <th style={th()}>Label</th>
-                <th style={th()}>Value</th>
-                <th style={th()}>Type</th>
+                <th style={thCell}>Key</th>
+                <th style={thCell}>Label</th>
+                <th style={thCell}>Value</th>
+                <th style={thCell}>Type</th>
               </tr>
             </thead>
             <tbody>
               {data.settings.map((s) => (
                 <tr key={s.key}>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{s.key}</code></td>
-                  <td style={td()}>{s.label}</td>
-                  <td style={td()}>{s.value}</td>
-                  <td style={td()}><Badge status={s.type} label={s.type} /></td>
+                  <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{s.key}</code></td>
+                  <td style={tdCell}>{s.label}</td>
+                  <td style={tdCell}>{s.value}</td>
+                  <td style={tdCell}><Badge status={s.type} label={s.type} /></td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

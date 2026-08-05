@@ -6,10 +6,11 @@
 // Shell: table + empty state. Backend endpoint TBD (e.g. GET /kyc/audit-log).
 
 import { PageHeader, Card, th, td, ScaffoldNotice } from '../_ui';
+import { Page, colors } from '@/components/ui/vuexy';
 
 export default function KycAuditLogPage() {
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader
         title="Audit & Consent Log (AK13)"
         subtitle="Immutable trail of checks, admin decisions, evidence access and consent grants. RBAC: finance.admin.kyc (Compliance)."
@@ -32,11 +33,11 @@ export default function KycAuditLogPage() {
               </tr>
             </thead>
             <tbody>
-              <tr><td colSpan={5} style={{ ...td(), color: '#6b7280' }}>No audit entries loaded.</td></tr>
+              <tr><td colSpan={5} style={{ ...td(), color: colors.muted }}>No audit entries loaded.</td></tr>
             </tbody>
           </table>
         </div>
       </Card>
-    </div>
+    </Page>
   );
 }

@@ -4,20 +4,16 @@ import { useEffect, useState } from 'react';
 import { listMerchandising } from '@/services/staysAdminService';
 import type { MerchandisingSlot } from '@/types/staysAdmin';
 import {
-  PageHeader,
   StaysTabs,
-  Card,
   Kpi,
   Badge,
   FilterBar,
   StateBlock,
-  btn,
-  th,
-  td,
   select,
   label,
   fmtDate,
 } from '../_ui';
+import { Page, PageHeader, Card, Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function StaysMerchandisingPage() {
   const [rows, setRows] = useState<MerchandisingSlot[]>([]);
@@ -43,16 +39,16 @@ export default function StaysMerchandisingPage() {
   const totalClicks = rows.reduce((s, x) => s + x.clicks, 0);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Merchandising & featured slots"
         subtitle="Featured placements across home, city and app surfaces — impressions, clicks and CTR by slot."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="growth" />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-        <Kpi label="Active slots" value={activeSlots.toLocaleString('en-NG')} accent="#15803d" />
+        <Kpi label="Active slots" value={activeSlots.toLocaleString('en-NG')} accent={colors.success} />
         <Kpi label="Total impressions" value={totalImpressions.toLocaleString('en-NG')} />
         <Kpi label="Total clicks" value={totalClicks.toLocaleString('en-NG')} />
       </div>
@@ -84,15 +80,15 @@ export default function StaysMerchandisingPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th style={th()}>Placement</th>
-                <th style={th()}>Property</th>
-                <th style={th()}>Rail</th>
-                <th style={th()}>Position</th>
-                <th style={th()}>Status</th>
-                <th style={th()}>Window</th>
-                <th style={th()}>Impressions</th>
-                <th style={th()}>Clicks</th>
-                <th style={th()}>CTR</th>
+                <th style={thCell}>Placement</th>
+                <th style={thCell}>Property</th>
+                <th style={thCell}>Rail</th>
+                <th style={thCell}>Position</th>
+                <th style={thCell}>Status</th>
+                <th style={thCell}>Window</th>
+                <th style={thCell}>Impressions</th>
+                <th style={thCell}>Clicks</th>
+                <th style={thCell}>CTR</th>
               </tr>
             </thead>
             <tbody>
@@ -100,15 +96,15 @@ export default function StaysMerchandisingPage() {
                 const ctr = s.impressions > 0 ? (s.clicks / s.impressions) * 100 : 0;
                 return (
                   <tr key={s.id}>
-                    <td style={td()}>{s.placement.replace(/_/g, ' ')}</td>
-                    <td style={td()}>{s.property_name}</td>
-                    <td style={td()}><Badge status={s.rail} /></td>
-                    <td style={td()}>{s.position}</td>
-                    <td style={td()}><Badge status={s.status} /></td>
-                    <td style={td()}>{fmtDate(s.starts_at)} → {fmtDate(s.ends_at)}</td>
-                    <td style={td()}>{s.impressions.toLocaleString('en-NG')}</td>
-                    <td style={td()}>{s.clicks.toLocaleString('en-NG')}</td>
-                    <td style={td()}>{ctr.toFixed(2)}%</td>
+                    <td style={tdCell}>{s.placement.replace(/_/g, ' ')}</td>
+                    <td style={tdCell}>{s.property_name}</td>
+                    <td style={tdCell}><Badge status={s.rail} /></td>
+                    <td style={tdCell}>{s.position}</td>
+                    <td style={tdCell}><Badge status={s.status} /></td>
+                    <td style={tdCell}>{fmtDate(s.starts_at)} → {fmtDate(s.ends_at)}</td>
+                    <td style={tdCell}>{s.impressions.toLocaleString('en-NG')}</td>
+                    <td style={tdCell}>{s.clicks.toLocaleString('en-NG')}</td>
+                    <td style={tdCell}>{ctr.toFixed(2)}%</td>
                   </tr>
                 );
               })}
@@ -116,6 +112,6 @@ export default function StaysMerchandisingPage() {
           </table>
         </Card>
       </StateBlock>
-    </div>
+    </Page>
   );
 }

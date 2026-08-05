@@ -5,6 +5,7 @@ import { StemModuleLinks } from '../../stem/_components/StemModuleLinks';
 import { useEffect, useState } from 'react';
 import { getStemOverview } from '@/services/stemService';
 import type { StemOverview } from '@/types/stem';
+import { Page, PageHeader, Card, colors } from '@/components/ui/vuexy';
 
 export default function AdminStemOverviewPage() {
   const [data, setData] = useState<StemOverview | null>(null);
@@ -23,10 +24,9 @@ export default function AdminStemOverviewPage() {
   ];
 
   return (
-    <section>
-      <h1>STEM Program Overview</h1>
+    <Page>
+      <PageHeader title="STEM Program Overview" subtitle="National STEM challenge overview across school and emerging channels." />
       <StemModuleLinks />
-      <p>National STEM challenge overview across school and emerging channels.</p>
       <p style={{ marginTop: 8 }}>
         <Link href="/admin/stem/contests">Open STEM Contests</Link> ·{' '}
         <Link href="/admin/stem/submissions">Open STEM Submissions</Link> ·{' '}
@@ -36,32 +36,30 @@ export default function AdminStemOverviewPage() {
         <Link href="/admin/emerging-innovators">Open Emerging Innovators Module</Link>
       </p>
       <div style={{ display: 'grid', gap: 10, marginTop: 10, gridTemplateColumns: 'repeat(2, minmax(0,1fr))' }}>
-        <article style={{ border: '1px solid #2a2a2a', padding: 12 }}>
-          <h3 style={{ marginTop: 0 }}>Workflow Actions</h3>
-          <ul style={{ margin: 0, paddingLeft: 18 }}>
+        <Card title="Workflow Actions">
+          <ul style={{ margin: '10px 0 0', paddingLeft: 18 }}>
             <li>Move applications through submission statuses.</li>
             <li>Create and review judge scoring records.</li>
             <li>Inspect channel and regional leaderboard slices.</li>
           </ul>
-        </article>
-        <article style={{ border: '1px solid #2a2a2a', padding: 12 }}>
-          <h3 style={{ marginTop: 0 }}>Channel Coverage</h3>
-          <ul style={{ margin: 0, paddingLeft: 18 }}>
+        </Card>
+        <Card title="Channel Coverage">
+          <ul style={{ margin: '10px 0 0', paddingLeft: 18 }}>
             <li>School channel onboarding and team ops.</li>
             <li>Emerging innovator onboarding and project ops.</li>
             <li>Contest setup with mixed-channel eligibility checks.</li>
           </ul>
-        </article>
+        </Card>
       </div>
-      {!data ? <p style={{ marginTop: 12 }}>Loading overview...</p> : null}
+      {!data ? <p style={{ marginTop: 12, color: colors.muted }}>Loading overview...</p> : null}
       <div style={{ display: 'grid', gap: 10, marginTop: 12, gridTemplateColumns: 'repeat(3, minmax(0,1fr))' }}>
         {cards.map((card) => (
-          <article key={card.label} style={{ border: '1px solid #2a2a2a', padding: 12 }}>
-            <p style={{ margin: 0, fontSize: 12, opacity: 0.8 }}>{card.label}</p>
+          <Card key={card.label}>
+            <p style={{ margin: 0, fontSize: 12, color: colors.muted }}>{card.label}</p>
             <p style={{ margin: '6px 0 0 0', fontWeight: 700, fontSize: 22 }}>{card.value}</p>
-          </article>
+          </Card>
         ))}
       </div>
-    </section>
+    </Page>
   );
 }

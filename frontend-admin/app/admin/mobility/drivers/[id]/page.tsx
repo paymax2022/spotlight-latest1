@@ -6,9 +6,10 @@ import { getDriver, setDriverVerification } from '@/services/mobilityAdminServic
 import type { DriverDetail } from '@/types/mobility';
 import {
   Card, Badge, StateNote, AuditedNotice,
-  btn, btnPrimary, btnDisabled, th, td, input, card, naira,
+  btn, btnPrimary, btnDisabled, input, card, naira,
   useMobilityPermissions, MOBILITY_PERMS,
 } from '../../_ui';
+import { colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function MobilityDriverDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -58,7 +59,7 @@ export default function MobilityDriverDetailPage({ params }: { params: Promise<{
         <Badge status={driver.verificationStatus} />
         {driver.online ? <Badge status="online" label="online" /> : null}
       </div>
-      <p style={{ fontSize: '0.85rem', color: '#6b7280', margin: '0 0 1rem' }}>
+      <p style={{ fontSize: '0.85rem', color: colors.muted, margin: '0 0 1rem' }}>
         {driver.phone} · {driver.email} · {driver.zone} · tier {driver.commissionTier} · joined {new Date(driver.createdAt).toLocaleDateString()}
       </p>
 
@@ -72,16 +73,16 @@ export default function MobilityDriverDetailPage({ params }: { params: Promise<{
             {driver.documents.length === 0 ? <StateNote kind="empty">No documents uploaded.</StateNote> : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                 <thead>
-                  <tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                    <th style={th()}>Document</th><th style={th()}>Status</th><th style={th()}>Expiry</th>
+                  <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                    <th style={thCell}>Document</th><th style={thCell}>Status</th><th style={thCell}>Expiry</th>
                   </tr>
                 </thead>
                 <tbody>
                   {driver.documents.map((d) => (
-                    <tr key={d.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                      <td style={td()}>{d.label}</td>
-                      <td style={td()}><Badge status={d.status} /></td>
-                      <td style={td()}>{d.expiryDate ? new Date(d.expiryDate).toLocaleDateString() : '—'}</td>
+                    <tr key={d.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                      <td style={tdCell}>{d.label}</td>
+                      <td style={tdCell}><Badge status={d.status} /></td>
+                      <td style={tdCell}>{d.expiryDate ? new Date(d.expiryDate).toLocaleDateString() : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -98,13 +99,13 @@ export default function MobilityDriverDetailPage({ params }: { params: Promise<{
                     ['Vehicle', `${driver.vehicle.make} ${driver.vehicle.model} (${driver.vehicle.year}) · ${driver.vehicle.color}`],
                     ['Category', `${driver.vehicle.category} · ${driver.vehicle.capacity} seats`],
                   ].map(([k, v]) => (
-                    <tr key={k} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                      <td style={{ ...td(), color: '#6b7280', width: '35%' }}>{k}</td><td style={td()}>{v}</td>
+                    <tr key={k} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                      <td style={{ ...tdCell, color: colors.muted, width: '35%' }}>{k}</td><td style={tdCell}>{v}</td>
                     </tr>
                   ))}
-                  <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280' }}>Status</td><td style={td()}><Badge status={driver.vehicle.status} /></td></tr>
-                  <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280' }}>Inspection</td><td style={td()}><Badge status={driver.vehicle.inspectionStatus} /></td></tr>
-                  <tr><td style={{ ...td(), color: '#6b7280' }}>Insurance</td><td style={td()}><Badge status={driver.vehicle.insuranceStatus} /></td></tr>
+                  <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted }}>Status</td><td style={tdCell}><Badge status={driver.vehicle.status} /></td></tr>
+                  <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted }}>Inspection</td><td style={tdCell}><Badge status={driver.vehicle.inspectionStatus} /></td></tr>
+                  <tr><td style={{ ...tdCell, color: colors.muted }}>Insurance</td><td style={tdCell}><Badge status={driver.vehicle.insuranceStatus} /></td></tr>
                 </tbody>
               </table>
             )}
@@ -115,15 +116,15 @@ export default function MobilityDriverDetailPage({ params }: { params: Promise<{
           <Card title="Performance & earnings">
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <tbody>
-                <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280' }}>Completed trips</td><td style={td()}>{driver.completedTrips.toLocaleString('en-NG')}</td></tr>
-                <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280' }}>Rating</td><td style={td()}>{driver.rating ? driver.rating.toFixed(1) : '—'}</td></tr>
-                <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280' }}>Cancel rate</td><td style={td()}>{driver.cancelRate}%</td></tr>
-                <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280' }}>Gross earnings</td><td style={td()}>{naira(driver.grossEarningsKobo)}</td></tr>
-                <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280' }}>Platform fee</td><td style={td()}>{naira(driver.platformFeeKobo)}</td></tr>
-                <tr><td style={{ ...td(), color: '#6b7280' }}>Net earnings</td><td style={td()}><strong>{naira(driver.netEarningsKobo)}</strong></td></tr>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted }}>Completed trips</td><td style={tdCell}>{driver.completedTrips.toLocaleString('en-NG')}</td></tr>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted }}>Rating</td><td style={tdCell}>{driver.rating ? driver.rating.toFixed(1) : '—'}</td></tr>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted }}>Cancel rate</td><td style={tdCell}>{driver.cancelRate}%</td></tr>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted }}>Gross earnings</td><td style={tdCell}>{naira(driver.grossEarningsKobo)}</td></tr>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted }}>Platform fee</td><td style={tdCell}>{naira(driver.platformFeeKobo)}</td></tr>
+                <tr><td style={{ ...tdCell, color: colors.muted }}>Net earnings</td><td style={tdCell}><strong>{naira(driver.netEarningsKobo)}</strong></td></tr>
               </tbody>
             </table>
-            {driver.notes && <p style={{ marginTop: '0.75rem', fontSize: '0.8rem', color: '#9a3412', background: '#ffedd5', padding: '0.5rem', borderRadius: '0.375rem' }}>{driver.notes}</p>}
+            {driver.notes && <p style={{ marginTop: '0.75rem', fontSize: '0.8rem', color: colors.warning, background: tint(colors.warning, 0.12), padding: '0.5rem', borderRadius: '0.375rem' }}>{driver.notes}</p>}
           </Card>
 
           <div style={{ ...card() }}>
@@ -132,8 +133,8 @@ export default function MobilityDriverDetailPage({ params }: { params: Promise<{
               <StateNote kind="restricted">Read-only — your role cannot change verification.</StateNote>
             ) : !action ? (
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                {driver.verificationStatus !== 'approved' && <button style={btnPrimary('#16a34a')} onClick={() => { setAction('approved'); setReason(''); }}>Approve</button>}
-                {driver.verificationStatus !== 'rejected' && <button style={btnPrimary('#dc2626')} onClick={() => { setAction('rejected'); setReason(''); }}>Reject</button>}
+                {driver.verificationStatus !== 'approved' && <button style={btnPrimary(colors.success)} onClick={() => { setAction('approved'); setReason(''); }}>Approve</button>}
+                {driver.verificationStatus !== 'rejected' && <button style={btnPrimary(colors.danger)} onClick={() => { setAction('rejected'); setReason(''); }}>Reject</button>}
                 {driver.verificationStatus !== 'suspended' && <button style={btn()} onClick={() => { setAction('suspended'); setReason(''); }}>Suspend</button>}
               </div>
             ) : (

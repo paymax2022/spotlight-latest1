@@ -9,6 +9,7 @@ import {
   PageHeader, TriageTabs, Card, Badge, DisclosureNote, StateBlock, AuditNote, FilterBar,
   btn, btnPrimary, th, td, select, input, label, timeAgo, fmtDate,
 } from '../../_ui';
+import { colors, tint } from '@/components/ui/vuexy';
 
 const NEXT_ACTIONS: Record<string, GovernanceAction[]> = {
   draft: ['submit'],
@@ -86,7 +87,7 @@ export default function TriageRedFlagRulesPage() {
         change is written to the immutable audit (SC-12).
       </DisclosureNote>
 
-      {result ? <div style={{ border: '1px solid #ddd6fe', background: '#f5f3ff', color: '#5b21b6', borderRadius: '0.5rem', padding: '0.6rem 0.8rem', fontSize: '0.82rem', marginBottom: '1rem' }}>{result}</div> : null}
+      {result ? <div style={{ border: `1px solid ${tint(colors.primary, 0.24)}`, background: tint(colors.primary, 0.08), color: colors.primary, borderRadius: '0.5rem', padding: '0.6rem 0.8rem', fontSize: '0.82rem', marginBottom: '1rem' }}>{result}</div> : null}
 
       <Card title="New red-flag rule (draft)">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.6rem', alignItems: 'flex-start' }}>
@@ -99,7 +100,7 @@ export default function TriageRedFlagRulesPage() {
             <select style={select()} value={escalateTo} onChange={(e) => setEscalateTo(e.target.value as DispositionLevel)}>
               {URGENCY.slice().reverse().map((l) => <option key={l} value={l}>{DISPOSITION_LABELS[l]}</option>)}
             </select>
-            <div style={{ fontSize: '0.7rem', color: '#9ca3af', marginTop: 4 }}>Rules only RAISE urgency to this level (SC-2).</div>
+            <div style={{ fontSize: '0.7rem', color: colors.muted, marginTop: 4 }}>Rules only RAISE urgency to this level (SC-2).</div>
           </div>
           <div style={{ gridColumn: '1 / -1' }}>
             <label style={label()}>Rationale (clinical)</label>
@@ -108,7 +109,7 @@ export default function TriageRedFlagRulesPage() {
           <div style={{ gridColumn: '1 / -1' }}>
             <label style={label()}>Condition (JSON / jsonb)</label>
             <textarea style={{ ...input(), minHeight: 120, fontFamily: 'ui-monospace, monospace', fontSize: '0.78rem' }} value={conditionText} onChange={(e) => setConditionText(e.target.value)} spellCheck={false} />
-            {jsonError ? <div style={{ color: '#b91c1c', fontSize: '0.74rem', marginTop: 4 }}>{jsonError}</div> : null}
+            {jsonError ? <div style={{ color: colors.danger, fontSize: '0.74rem', marginTop: 4 }}>{jsonError}</div> : null}
           </div>
           <div>
             <button disabled={creating || !name.trim()} onClick={submitNew} style={{ ...btnPrimary(), opacity: creating || !name.trim() ? 0.5 : 1 }}>Create draft</button>
@@ -132,30 +133,30 @@ export default function TriageRedFlagRulesPage() {
         <StateBlock loading={loading} error={error} empty={!rows.length} emptyText="No red-flag rules.">
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             {rows.map((r) => (
-              <div key={r.id} style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.85rem 1rem', background: r.state === 'deprecated' ? '#fafafa' : '#fff' }}>
+              <div key={r.id} style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.85rem 1rem', background: r.state === 'deprecated' ? colors.headBg : colors.card }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
                   <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                     <strong style={{ fontSize: '0.9rem' }}>{r.name}</strong>
-                    <code style={{ fontSize: '0.75rem', color: '#9ca3af' }}>{r.id}</code>
-                    <Badge status={r.state} /><span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>v{r.version}</span>
+                    <code style={{ fontSize: '0.75rem', color: colors.muted }}>{r.id}</code>
+                    <Badge status={r.state} /><span style={{ fontSize: '0.72rem', color: colors.muted }}>v{r.version}</span>
                   </div>
                   <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.72rem', color: '#6b7280' }}>raises to</span>
+                    <span style={{ fontSize: '0.72rem', color: colors.muted }}>raises to</span>
                     <Badge status={r.escalate_to} label={DISPOSITION_LABELS[r.escalate_to]} />
                   </div>
                 </div>
-                <p style={{ margin: '0.5rem 0', fontSize: '0.82rem', color: '#374151' }}>{r.rationale}</p>
-                <pre style={{ margin: 0, background: '#f9fafb', border: '1px solid #f3f4f6', borderRadius: '0.375rem', padding: '0.5rem 0.6rem', fontSize: '0.74rem', overflowX: 'auto', color: '#374151' }}>{JSON.stringify(r.condition, null, 2)}</pre>
+                <p style={{ margin: '0.5rem 0', fontSize: '0.82rem', color: colors.text }}>{r.rationale}</p>
+                <pre style={{ margin: 0, background: colors.headBg, border: `1px solid ${colors.border}`, borderRadius: '0.375rem', padding: '0.5rem 0.6rem', fontSize: '0.74rem', overflowX: 'auto', color: colors.text }}>{JSON.stringify(r.condition, null, 2)}</pre>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.6rem' }}>
                   <div style={{ fontSize: '0.74rem' }}>
-                    {r.reviewer_id ? <span style={{ color: '#15803d' }}>✓ Clinician sign-off: {r.reviewer_id} · {fmtDate(r.signed_off_at)}</span> : <span style={{ color: '#b91c1c' }}>Not signed off — cannot publish (SC-6)</span>}
-                    <span style={{ color: '#9ca3af', marginLeft: 8 }}>updated {timeAgo(r.updated_at)}</span>
+                    {r.reviewer_id ? <span style={{ color: colors.success }}>✓ Clinician sign-off: {r.reviewer_id} · {fmtDate(r.signed_off_at)}</span> : <span style={{ color: colors.danger }}>Not signed off — cannot publish (SC-6)</span>}
+                    <span style={{ color: colors.muted, marginLeft: 8 }}>updated {timeAgo(r.updated_at)}</span>
                   </div>
                   <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                     {(NEXT_ACTIONS[r.state] ?? []).map((a) => (
                       <button key={a} disabled={busy === r.id} onClick={() => act(r.id, a)} style={a === 'publish' ? { ...btnPrimary(), fontSize: '0.75rem', padding: '0.25rem 0.55rem' } : { ...btn(), fontSize: '0.75rem', padding: '0.25rem 0.55rem' }} title={a === 'publish' && !r.reviewer_id ? 'Requires clinician sign-off (SC-6)' : undefined}>{ACTION_LABEL[a]}</button>
                     ))}
-                    {!(NEXT_ACTIONS[r.state] ?? []).length ? <span style={{ color: '#9ca3af', fontSize: '0.75rem' }}>terminal</span> : null}
+                    {!(NEXT_ACTIONS[r.state] ?? []).length ? <span style={{ color: colors.muted, fontSize: '0.75rem' }}>terminal</span> : null}
                   </div>
                 </div>
               </div>

@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { getChatSessionDetail } from '@/services/chatbotService';
 import type { ChatEvent, ChatMessage } from '@/types/chat';
+import { Page, PageHeader, Card, colors } from '@/components/ui/vuexy';
 
 function formatTimestamp(value?: string) {
   if (!value) return '-';
@@ -58,40 +59,38 @@ export default function AdminChatTranscriptPage() {
   }, [messages]);
 
   return (
-    <div>
-      <h1>Transcript Viewer</h1>
-      <p style={{ fontFamily: 'monospace', fontSize: 12 }}>Session: {id || '-'}</p>
-      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+    <Page>
+      <PageHeader title="Transcript Viewer" subtitle={`Session: ${id || '-'}`} />
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
         <Link href="/admin/chatbot">Back to Sessions</Link>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 8, marginTop: 12 }}>
-        <div style={{ border: '1px solid #2a2a2a', padding: 8 }}>
-          <p style={{ margin: 0, fontSize: 12 }}>Messages</p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 8, marginBottom: 12 }}>
+        <Card style={{ padding: 8 }}>
+          <p style={{ margin: 0, fontSize: 12, color: colors.muted }}>Messages</p>
           <p style={{ margin: 0 }}>{messages.length}</p>
-        </div>
-        <div style={{ border: '1px solid #2a2a2a', padding: 8 }}>
-          <p style={{ margin: 0, fontSize: 12 }}>Fallback Triggers</p>
+        </Card>
+        <Card style={{ padding: 8 }}>
+          <p style={{ margin: 0, fontSize: 12, color: colors.muted }}>Fallback Triggers</p>
           <p style={{ margin: 0 }}>{fallbackEvents}</p>
-        </div>
-        <div style={{ border: '1px solid #2a2a2a', padding: 8 }}>
-          <p style={{ margin: 0, fontSize: 12 }}>Handoff Requests</p>
+        </Card>
+        <Card style={{ padding: 8 }}>
+          <p style={{ margin: 0, fontSize: 12, color: colors.muted }}>Handoff Requests</p>
           <p style={{ margin: 0 }}>{handoffEvents}</p>
-        </div>
-        <div style={{ border: '1px solid #2a2a2a', padding: 8 }}>
-          <p style={{ margin: 0, fontSize: 12 }}>Avg Confidence</p>
+        </Card>
+        <Card style={{ padding: 8 }}>
+          <p style={{ margin: 0, fontSize: 12, color: colors.muted }}>Avg Confidence</p>
           <p style={{ margin: 0 }}>{averageConfidence === null ? '-' : `${averageConfidence}%`}</p>
-        </div>
+        </Card>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, marginTop: 16 }}>
-        <section style={{ border: '1px solid #2a2a2a', padding: 12 }}>
-          <h2 style={{ marginTop: 0 }}>Messages</h2>
-          {loading ? <p>Loading messages...</p> : null}
-          {!loading && messages.length === 0 ? <p>No messages found.</p> : null}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
+        <Card title="Messages">
+          {loading ? <p style={{ color: colors.muted }}>Loading messages...</p> : null}
+          {!loading && messages.length === 0 ? <p style={{ color: colors.muted }}>No messages found.</p> : null}
           {!loading
             ? messages.map((msg) => (
-                <article key={msg.id} style={{ border: '1px solid #303030', padding: 8, marginBottom: 8 }}>
+                <div key={msg.id} style={{ border: `1px solid ${colors.border}`, borderRadius: 6, padding: 8, marginTop: 8 }}>
                   <p style={{ margin: 0, fontSize: 12 }}>
                     <strong>{msg.role}</strong>
                     {msg.intent ? ` · intent: ${msg.intent}` : ''}
@@ -100,23 +99,22 @@ export default function AdminChatTranscriptPage() {
                       : ' · confidence: n/a'}
                   </p>
                   <p style={{ margin: '6px 0' }}>{msg.message_text || msg.text || ''}</p>
-                  <p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>
+                  <p style={{ margin: 0, fontSize: 11, color: colors.muted }}>
                     {formatTimestamp(msg.created_at || msg.createdAt)}
                   </p>
-                </article>
+                </div>
               ))
             : null}
-        </section>
+        </Card>
 
-        <section style={{ border: '1px solid #2a2a2a', padding: 12 }}>
-          <h2 style={{ marginTop: 0 }}>Events</h2>
-          {loading ? <p>Loading events...</p> : null}
-          {!loading && events.length === 0 ? <p>No events found.</p> : null}
+        <Card title="Events">
+          {loading ? <p style={{ color: colors.muted }}>Loading events...</p> : null}
+          {!loading && events.length === 0 ? <p style={{ color: colors.muted }}>No events found.</p> : null}
           {!loading
             ? events.map((event, index) => (
-                <article
+                <div
                   key={`${event.id || index}-${event.created_at || event.createdAt || ''}`}
-                  style={{ border: '1px solid #303030', padding: 8, marginBottom: 8 }}
+                  style={{ border: `1px solid ${colors.border}`, borderRadius: 6, padding: 8, marginTop: 8 }}
                 >
                   <p style={{ margin: 0, fontSize: 12 }}>
                     <strong>{event.event_name || event.event || 'event'}</strong>
@@ -124,14 +122,14 @@ export default function AdminChatTranscriptPage() {
                   <pre style={{ margin: '6px 0', fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                     {JSON.stringify(event.event_payload || event.payload || {}, null, 2)}
                   </pre>
-                  <p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>
+                  <p style={{ margin: 0, fontSize: 11, color: colors.muted }}>
                     {formatTimestamp(event.created_at || event.createdAt)}
                   </p>
-                </article>
+                </div>
               ))
             : null}
-        </section>
+        </Card>
       </div>
-    </div>
+    </Page>
   );
 }

@@ -5,7 +5,8 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { getReferralUser360, interveneUser, formatNaira } from '@/services/referralAdminOpsService';
 import type { ReferralUser360, InterventionAction } from '@/types/referralAdminOps';
-import { PageHeader, Card, Kpi, Badge, btn, btnPrimary, btnDanger, input, label, th, td, timeAgo, StateBlock } from '../../_ui';
+import { timeAgo } from '../../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const ACTIONS: { value: InterventionAction; label: string }[] = [
   { value: 'adjust', label: 'Adjust balance' },
@@ -13,6 +14,20 @@ const ACTIONS: { value: InterventionAction; label: string }[] = [
   { value: 'reverse', label: 'Reverse reward' },
   { value: 're_verify', label: 'Re-verify KYC' },
 ];
+
+function statusBadgeColor(status: string): string {
+  if (status === 'active') return colors.success;
+  if (status === 'suspended') return colors.danger;
+  return colors.warning;
+}
+
+function rewardStateBadgeColor(state: string): string {
+  if (state === 'eligible' || state === 'paid') return colors.success;
+  if (state === 'clawed_back') return colors.danger;
+  if (state === 'earned') return colors.info;
+  if (state === 'vesting') return colors.primary;
+  return colors.warning;
+}
 
 export default function ReferralUser360Page() {
   const params = useParams();
@@ -52,98 +67,119 @@ export default function ReferralUser360Page() {
   const needsAmount = action === 'adjust' || action === 'reverse';
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title={data ? data.name : 'User 360'}
         subtitle="Referral User 360: roles, earnings, referrals & risk score (A-USR-01) with manual intervention & support tools (A-USR-03/04)."
-        action={<Link href="/admin/referral/users" style={{ ...btn(), textDecoration: 'none', color: '#374151' }}>← Users</Link>}
+        actions={<Link href="/admin/referral/users" className="vx-btn vx-btn--outline" style={{ textDecoration: 'none' }}>← Users</Link>}
       />
 
-      <StateBlock loading={loading} error={error} empty={!data} emptyText="User not found.">
-        {data && (
+      {loading ? <p style={{ color: colors.muted }}>Loading…</p>
+        : error ? <p style={{ color: colors.danger }}>{error}</p>
+        : !data ? <p style={{ color: colors.muted }}>User not found.</p>
+        : (
           <>
-            <Card title="Profile" right={<Badge status={data.status === 'active' ? 'active' : data.status === 'suspended' ? 'critical' : 'high'} label={data.status} />}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px,1fr))', gap: '0.5rem' }}>
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Profile</h2>
+                <Badge text={data.status} color={statusBadgeColor(data.status)} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px,1fr))', gap: 10 }}>
                 <Kpi label="User ID" value={data.id} sub={data.email} />
                 <Kpi label="Roles" value={data.roles.join(', ')} />
                 <Kpi label="KYC tier" value={data.kyc_tier} />
-                <Kpi label="Risk score" value={`${data.risk_score}/100`} accent={data.risk_score >= 70 ? '#b91c1c' : data.risk_score >= 40 ? '#9a3412' : '#15803d'} />
+                <Kpi label="Risk score" value={`${data.risk_score}/100`} accent={data.risk_score >= 70 ? colors.danger : data.risk_score >= 40 ? colors.warning : colors.success} />
                 <Kpi label="Total earned" value={formatNaira(data.total_earned_kobo)} />
-                <Kpi label="Pending" value={formatNaira(data.pending_kobo)} accent="#9a3412" />
-                <Kpi label="Clawed back" value={formatNaira(data.clawed_back_kobo)} accent={data.clawed_back_kobo > 0 ? '#b91c1c' : undefined} />
+                <Kpi label="Pending" value={formatNaira(data.pending_kobo)} accent={colors.warning} />
+                <Kpi label="Clawed back" value={formatNaira(data.clawed_back_kobo)} accent={data.clawed_back_kobo > 0 ? colors.danger : undefined} />
                 <Kpi label="Referrals" value={`${data.active_referrals}/${data.referrals_count}`} sub="active / total" />
               </div>
             </Card>
 
-            <Card title="Manual intervention (A-USR-03)">
-              <p style={{ fontSize: '0.78rem', color: '#6b7280', marginTop: 0 }}>Adjust, suspend, reverse or re-verify. All actions are audited; money-affecting actions post reversing/adjusting ledger entries with an Idempotency-Key.</p>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px,1fr))', gap: '0.75rem', alignItems: 'end' }}>
+            <Card title="Manual intervention (A-USR-03)" style={{ marginBottom: 16 }}>
+              <p style={{ fontSize: 12, color: colors.muted, marginTop: 14 }}>Adjust, suspend, reverse or re-verify. All actions are audited; money-affecting actions post reversing/adjusting ledger entries with an Idempotency-Key.</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px,1fr))', gap: 12, alignItems: 'end' }}>
                 <div>
-                  <label style={label()}>Action</label>
-                  <select value={action} onChange={(e) => setAction(e.target.value as InterventionAction)} style={{ ...input(), cursor: 'pointer' }}>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: colors.text, marginBottom: 4 }}>Action</label>
+                  <select value={action} onChange={(e) => setAction(e.target.value as InterventionAction)} style={{ width: '100%' }}>
                     {ACTIONS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
                   </select>
                 </div>
                 {needsAmount && (
                   <div>
-                    <label style={label()}>Amount (₦)</label>
-                    <input style={input()} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="2000.00" inputMode="decimal" />
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: colors.text, marginBottom: 4 }}>Amount (₦)</label>
+                    <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="2000.00" inputMode="decimal" />
                   </div>
                 )}
                 <div>
-                  <label style={label()}>Reason</label>
-                  <input style={input()} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Goodwill / fraud correction / dispute" />
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: colors.text, marginBottom: 4 }}>Reason</label>
+                  <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Goodwill / fraud correction / dispute" />
                 </div>
-                <button disabled={busy} onClick={intervene} style={action === 'suspend' || action === 'reverse' ? btnDanger() : btnPrimary()}>{busy ? '…' : 'Apply'}</button>
+                <Button variant={action === 'suspend' || action === 'reverse' ? 'danger' : 'primary'} disabled={busy} onClick={intervene}>{busy ? '…' : 'Apply'}</Button>
               </div>
-              {msg && <p style={{ color: msg.startsWith('Intervention') ? '#15803d' : '#b91c1c', fontSize: '0.8rem', marginTop: '0.5rem' }}>{msg}</p>}
+              {msg && <p style={{ color: msg.startsWith('Intervention') ? colors.success : colors.danger, fontSize: 13, marginTop: 8 }}>{msg}</p>}
             </Card>
 
-            <Card title="Referrals">
-              {data.referrals.length === 0 ? <p style={{ color: '#6b7280' }}>No referrals.</p> : (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr><th style={th()}>Referred user</th><th style={th()}>State</th><th style={th()}>Reward</th><th style={th()}>When</th></tr></thead>
-                  <tbody>
-                    {data.referrals.map((r) => (
-                      <tr key={r.id}><td style={td()}>{r.user_id}</td><td style={td()}>{r.state}</td><td style={td()}>{formatNaira(r.reward_kobo)}</td><td style={td()}>{timeAgo(r.created_at)}</td></tr>
-                    ))}
-                  </tbody>
-                </table>
+            <Card title="Referrals" style={{ marginBottom: 16 }}>
+              {data.referrals.length === 0 ? <p style={{ color: colors.muted }}>No referrals.</p> : (
+                <div style={{ overflowX: 'auto', marginTop: 14 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead><tr><th style={thCell}>Referred user</th><th style={thCell}>State</th><th style={thCell}>Reward</th><th style={thCell}>When</th></tr></thead>
+                    <tbody>
+                      {data.referrals.map((r) => (
+                        <tr key={r.id}><td style={tdCell}>{r.user_id}</td><td style={tdCell}>{r.state}</td><td style={tdCell}>{formatNaira(r.reward_kobo)}</td><td style={tdCell}>{timeAgo(r.created_at)}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </Card>
 
-            <Card title="Earnings">
-              {data.earnings.length === 0 ? <p style={{ color: '#6b7280' }}>No earnings.</p> : (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr><th style={th()}>Reward</th><th style={th()}>Kind</th><th style={th()}>State</th><th style={th()}>Amount</th><th style={th()}>When</th></tr></thead>
-                  <tbody>
-                    {data.earnings.map((e) => (
-                      <tr key={e.id}>
-                        <td style={td()}><code style={{ fontSize: '0.78rem' }}>{e.id}</code></td>
-                        <td style={td()}>{e.kind}</td>
-                        <td style={td()}><Badge status={e.state} /></td>
-                        <td style={td()}>{formatNaira(e.amount_kobo)}</td>
-                        <td style={td()}>{timeAgo(e.created_at)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <Card title="Earnings" style={{ marginBottom: 16 }}>
+              {data.earnings.length === 0 ? <p style={{ color: colors.muted }}>No earnings.</p> : (
+                <div style={{ overflowX: 'auto', marginTop: 14 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead><tr><th style={thCell}>Reward</th><th style={thCell}>Kind</th><th style={thCell}>State</th><th style={thCell}>Amount</th><th style={thCell}>When</th></tr></thead>
+                    <tbody>
+                      {data.earnings.map((e) => (
+                        <tr key={e.id}>
+                          <td style={tdCell}><code style={{ fontSize: 13 }}>{e.id}</code></td>
+                          <td style={tdCell}>{e.kind}</td>
+                          <td style={tdCell}><Badge text={e.state} color={rewardStateBadgeColor(e.state)} /></td>
+                          <td style={tdCell}>{formatNaira(e.amount_kobo)}</td>
+                          <td style={tdCell}>{timeAgo(e.created_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </Card>
 
             <Card title="Audit trail">
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th style={th()}>When</th><th style={th()}>Actor</th><th style={th()}>Action</th></tr></thead>
-                <tbody>
-                  {data.audit.map((a, i) => (
-                    <tr key={i}><td style={td()}>{timeAgo(a.ts)}</td><td style={td()}>{a.actor}</td><td style={td()}>{a.action}</td></tr>
-                  ))}
-                </tbody>
-              </table>
+              <div style={{ overflowX: 'auto', marginTop: 14 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={thCell}>When</th><th style={thCell}>Actor</th><th style={thCell}>Action</th></tr></thead>
+                  <tbody>
+                    {data.audit.map((a, i) => (
+                      <tr key={i}><td style={tdCell}>{timeAgo(a.ts)}</td><td style={tdCell}>{a.actor}</td><td style={tdCell}>{a.action}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </Card>
           </>
         )}
-      </StateBlock>
+    </Page>
+  );
+}
+
+function Kpi({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
+  return (
+    <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: '13px 15px', background: colors.card }}>
+      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 21, fontWeight: 700, marginTop: 4, color: accent ?? colors.text }}>{value}</div>
+      {sub ? <div style={{ fontSize: 12, color: colors.muted, marginTop: 2 }}>{sub}</div> : null}
     </div>
   );
 }

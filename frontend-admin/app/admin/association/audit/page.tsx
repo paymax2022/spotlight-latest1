@@ -3,10 +3,10 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { listAuditLog, type AuditLogEntry } from '@/services/associationAdminService';
 import {
-  PageHeader, AssociationTabs, Card, DisclosureNote, StateBlock, FilterBar,
-  btn, th, td, input, label as lbl, fmtDate,
+  AssociationTabs, DisclosureNote, StateBlock, FilterBar, fmtDate,
   useAssociationPermissions, ASSOCIATION_PERMS, PermissionBanner,
 } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function AssociationAuditLogPage() {
   const { can } = useAssociationPermissions();
@@ -28,11 +28,11 @@ export default function AssociationAuditLogPage() {
   useEffect(() => { void load(); }, [load]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Associations — admin audit log"
         subtitle="Read-only, append-only record of every admin mutation on this module (approvals, offline-payment decisions, member actions, imports)."
-        action={<button onClick={() => void load()} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={() => void load()}>Refresh</Button>}
       />
       <AssociationTabs active="audit" />
       <DisclosureNote>
@@ -41,42 +41,42 @@ export default function AssociationAuditLogPage() {
       </DisclosureNote>
 
       {!canRead && <PermissionBanner text="You have no access to the audit log for this module." />}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       <FilterBar>
         <div style={{ minWidth: 220 }}>
-          <label style={lbl()}>Action</label>
-          <input style={input()} placeholder="e.g. member.suspend" value={action} onChange={(e) => setAction(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void load()} />
+          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' }}>Action</label>
+          <Input placeholder="e.g. member.suspend" value={action} onChange={(e) => setAction(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void load()} />
         </div>
-        <button style={btn()} onClick={() => void load()}>Apply</button>
+        <Button variant="outline" onClick={() => void load()}>Apply</Button>
       </FilterBar>
 
       <Card>
         <StateBlock loading={loading} error={null} empty={rows.length === 0} emptyText="No audit entries match this filter.">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12 }}>
             <thead><tr>
-              <th style={th()}>When</th><th style={th()}>Actor</th><th style={th()}>Action</th>
-              <th style={th()}>Subject</th><th style={th()}></th>
+              <th style={thCell}>When</th><th style={thCell}>Actor</th><th style={thCell}>Action</th>
+              <th style={thCell}>Subject</th><th style={thCell}></th>
             </tr></thead>
             <tbody>
               {rows.map((r) => (
                 <Fragment key={r.id}>
                   <tr>
-                    <td style={td()}>{fmtDate(r.createdAt)}</td>
-                    <td style={td()}><code style={{ fontSize: '0.78rem' }}>{r.actorId}</code></td>
-                    <td style={td()}>{r.action}</td>
-                    <td style={td()}>{r.subjectType}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}><code>{r.subjectId}</code></div></td>
-                    <td style={td()}>
-                      <button style={btn()} onClick={() => setExpanded(expanded === r.id ? null : r.id)}>
+                    <td style={tdCell}>{fmtDate(r.createdAt)}</td>
+                    <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{r.actorId}</code></td>
+                    <td style={tdCell}>{r.action}</td>
+                    <td style={tdCell}>{r.subjectType}<div style={{ fontSize: '0.72rem', color: colors.muted }}><code>{r.subjectId}</code></div></td>
+                    <td style={tdCell}>
+                      <Button variant="outline" sm onClick={() => setExpanded(expanded === r.id ? null : r.id)}>
                         {expanded === r.id ? 'Hide' : 'Metadata'}
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                   {expanded === r.id && (
                     <tr>
-                      <td style={td()} colSpan={5}>
-                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#6b7280', marginBottom: '0.25rem' }}>METADATA</div>
-                        <pre style={{ fontSize: '0.75rem', background: '#f9fafb', padding: '0.5rem', borderRadius: 4, overflowX: 'auto' }}>{JSON.stringify(r.metadata ?? {}, null, 2)}</pre>
+                      <td style={tdCell} colSpan={5}>
+                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: colors.muted, marginBottom: '0.25rem' }}>METADATA</div>
+                        <pre style={{ fontSize: '0.75rem', background: colors.headBg, padding: '0.5rem', borderRadius: 4, overflowX: 'auto' }}>{JSON.stringify(r.metadata ?? {}, null, 2)}</pre>
                       </td>
                     </tr>
                   )}
@@ -86,6 +86,6 @@ export default function AssociationAuditLogPage() {
           </table>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

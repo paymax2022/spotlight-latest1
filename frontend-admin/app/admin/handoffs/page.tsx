@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { listHandoffs, updateHandoffStatus } from '@/services/handoffService';
 import type { HandoffRow } from '@/types/handoff';
+import { Page, PageHeader, Card, colors } from '@/components/ui/vuexy';
 
 export default function AdminHandoffsPage() {
   const searchParams = useSearchParams();
@@ -29,56 +30,54 @@ export default function AdminHandoffsPage() {
   };
 
   return (
-    <div>
-      <h1>Handoff Queue</h1>
-      <p>Manage callback, email, and WhatsApp escalation requests.</p>
-      <div style={{ marginTop: 8 }}>
+    <Page>
+      <PageHeader title="Handoff Queue" subtitle="Manage callback, email, and WhatsApp escalation requests." />
+      <div style={{ marginBottom: 12 }}>
         {sessionIdFilter ? (
           <>
-            <p style={{ margin: 0, fontSize: 12, fontFamily: 'monospace' }}>Filtered by session: {sessionIdFilter}</p>
-            <Link href="/admin/handoffs">Clear Filter</Link>
+            <p style={{ margin: 0, fontSize: 12, fontFamily: 'monospace', color: colors.muted }}>Filtered by session: {sessionIdFilter}</p>
+            <Link href="/admin/handoffs" style={{ color: colors.primary }}>Clear Filter</Link>
           </>
         ) : (
-          <p style={{ margin: 0, fontSize: 12 }}>Showing all sessions</p>
+          <p style={{ margin: 0, fontSize: 12, color: colors.muted }}>Showing all sessions</p>
         )}
       </div>
 
-      <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
-        {loading ? <p>Loading handoffs...</p> : null}
-        {!loading && rows.length === 0 ? <p>No handoff requests yet.</p> : null}
+      <div style={{ display: 'grid', gap: 8 }}>
+        {loading ? <p style={{ color: colors.muted }}>Loading handoffs...</p> : null}
+        {!loading && rows.length === 0 ? <p style={{ color: colors.muted }}>No handoff requests yet.</p> : null}
 
         {rows.map((row) => {
           const sessionId = row.session_id || row.sessionId || '';
           return (
-            <article key={row.id} style={{ border: '1px solid #2a2a2a', padding: 12 }}>
+            <Card key={row.id} style={{ padding: 12 }}>
               <p style={{ margin: 0, fontSize: 12 }}>
                 <strong>{row.handoff_type || '-'}</strong> · {row.destination || '-'}
               </p>
-              <p style={{ margin: '6px 0 0 0', fontSize: 12, fontFamily: 'monospace' }}>
+              <p style={{ margin: '6px 0 0 0', fontSize: 12, fontFamily: 'monospace', color: colors.muted }}>
                 Session: {sessionId || '-'}
               </p>
-              <p style={{ margin: '6px 0 0 0', fontSize: 12 }}>
+              <p style={{ margin: '6px 0 0 0', fontSize: 12, color: colors.muted }}>
                 Requested: {row.requested_at ? new Date(row.requested_at).toLocaleString() : '-'}
               </p>
-              <p style={{ margin: '6px 0 0 0', fontSize: 12 }}>
+              <p style={{ margin: '6px 0 0 0', fontSize: 12, color: colors.muted }}>
                 Resolved: {row.resolved_at ? new Date(row.resolved_at).toLocaleString() : '-'}
               </p>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
                 <select
                   value={row.status || 'pending'}
                   onChange={(e) => void onUpdate(row.id, e.target.value)}
-                  style={{ border: '1px solid #2a2a2a', padding: '4px 8px', background: 'transparent' }}
                 >
                   <option value="pending">pending</option>
                   <option value="in_progress">in_progress</option>
                   <option value="resolved">resolved</option>
                 </select>
-                {sessionId ? <Link href={`/admin/chatbot/${encodeURIComponent(sessionId)}`}>Open Transcript</Link> : null}
+                {sessionId ? <Link href={`/admin/chatbot/${encodeURIComponent(sessionId)}`} style={{ color: colors.primary }}>Open Transcript</Link> : null}
               </div>
-            </article>
+            </Card>
           );
         })}
       </div>
-    </div>
+    </Page>
   );
 }

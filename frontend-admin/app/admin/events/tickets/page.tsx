@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listTickets, formatNaira } from '@/services/eventsAdminService';
 import type { TicketTier } from '@/types/eventsAdmin';
 import { PageHeader, EventsTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, btn, th, td, input, label, select, pct } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function TicketsPage() {
   const [rows, setRows] = useState<TicketTier[]>([]);
@@ -55,7 +56,7 @@ export default function TicketsPage() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}>{r.name}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.id}</div></td>
+                  <td style={td()}>{r.name}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.id}</div></td>
                   <td style={td()}>{r.event_title}</td>
                   <td style={td()}>{formatNaira(r.price_kobo)}</td>
                   <td style={td()}>{r.sold.toLocaleString('en-NG')} / {r.quantity.toLocaleString('en-NG')}</td>
@@ -64,7 +65,7 @@ export default function TicketsPage() {
                   <td style={td()}><Badge status={r.status} /></td>
                   <td style={td()}>v{r.config_version}</td>
                   <td style={td()}>
-                    {r.promo_codes.length === 0 ? <span style={{ color: '#9ca3af' }}>—</span> : (
+                    {r.promo_codes.length === 0 ? <span style={{ color: colors.muted }}>—</span> : (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                         {r.promo_codes.map((p) => (
                           <span key={p.code} style={{ fontSize: '0.78rem' }}>

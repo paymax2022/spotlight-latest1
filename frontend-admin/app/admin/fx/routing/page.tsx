@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { getRoutingWeights, saveRoutingWeights, simulateRoute } from '@/services/fxAdminService';
 import type { RoutingWeights, RouteSimResult, Provider } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Badge, btn, btnPrimary, th, td } from '../_ui';
+import { PageHeader, FxTabs, Card, Badge } from '../_ui';
+import { Button, colors, thCell, tdCell, tint } from '@/components/ui/vuexy';
 
 export default function FxRoutingPage() {
   const [rows, setRows] = useState<RoutingWeights[]>([]);
@@ -36,30 +37,30 @@ export default function FxRoutingPage() {
 
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Routing Configuration" subtitle="Weights, provider enablement and bias per corridor." action={<button onClick={save} disabled={saving} style={btnPrimary()}>{saving ? 'Saving…' : 'Save changes'}</button>} />
+      <PageHeader title="Routing Configuration" subtitle="Weights, provider enablement and bias per corridor." action={<Button variant="primary" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save changes'}</Button>} />
       <FxTabs active="routing" />
-      {savedAt ? <p style={{ color: '#16a34a', fontSize: '0.82rem' }}>Saved at {savedAt}. All changes are audit-logged.</p> : null}
+      {savedAt ? <p style={{ color: colors.success, fontSize: '0.82rem' }}>Saved at {savedAt}. All changes are audit-logged.</p> : null}
 
       <Card title="Score weights (w_cost / w_cover / w_liq / w_rel)">
-        {loading ? <p style={{ color: '#6b7280' }}>Loading…</p> : (
+        {loading ? <p style={{ color: colors.muted }}>Loading…</p> : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
-              <tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>Corridor</th><th style={th()}>Cost</th><th style={th()}>Coverage</th><th style={th()}>Liquidity</th><th style={th()}>Reliability</th><th style={th()}>Eversend</th><th style={th()}>Maplerad</th><th style={th()}>Bias</th>
+              <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                <th style={thCell}>Corridor</th><th style={thCell}>Cost</th><th style={thCell}>Coverage</th><th style={thCell}>Liquidity</th><th style={thCell}>Reliability</th><th style={thCell}>Eversend</th><th style={thCell}>Maplerad</th><th style={thCell}>Bias</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => (
-                <tr key={r.corridor} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                  <td style={td()}><strong>{r.corridor}</strong></td>
+                <tr key={r.corridor} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  <td style={tdCell}><strong>{r.corridor}</strong></td>
                   {(['wCost', 'wCover', 'wLiq', 'wRel'] as const).map((k) => (
-                    <td key={k} style={td()}>
+                    <td key={k} style={tdCell}>
                       <input type="number" min={0} max={1} step={0.05} value={r[k]} onChange={(e) => patch(i, { [k]: parseFloat(e.target.value) } as Partial<RoutingWeights>)} style={numInput()} />
                     </td>
                   ))}
-                  <td style={td()}><input type="checkbox" checked={r.enabled.eversend} onChange={() => toggleProv(i, 'eversend')} /></td>
-                  <td style={td()}><input type="checkbox" checked={r.enabled.maplerad} onChange={() => toggleProv(i, 'maplerad')} /></td>
-                  <td style={td()}>
+                  <td style={tdCell}><input type="checkbox" checked={r.enabled.eversend} onChange={() => toggleProv(i, 'eversend')} /></td>
+                  <td style={tdCell}><input type="checkbox" checked={r.enabled.maplerad} onChange={() => toggleProv(i, 'maplerad')} /></td>
+                  <td style={tdCell}>
                     <select value={r.bias} onChange={(e) => patch(i, { bias: e.target.value as RoutingWeights['bias'] })} style={{ ...numInput(), width: 110, textTransform: 'capitalize' }}>
                       <option value="auto">auto</option><option value="eversend">eversend</option><option value="maplerad">maplerad</option>
                     </select>
@@ -69,41 +70,41 @@ export default function FxRoutingPage() {
             </tbody>
           </table>
         )}
-        <p style={{ fontSize: '0.78rem', color: '#6b7280', marginTop: '0.75rem' }}>Weights are applied per corridor and customer tier. A disabled provider is skipped during scoring.</p>
+        <p style={{ fontSize: '0.78rem', color: colors.muted, marginTop: '0.75rem' }}>Weights are applied per corridor and customer tier. A disabled provider is skipped during scoring.</p>
       </Card>
 
       <Card title="Simulate route (what-if quote)">
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '1rem' }}>
           <label style={lbl()}>Corridor<input value={simCorridor} onChange={(e) => setSimCorridor(e.target.value)} style={textInput()} /></label>
           <label style={lbl()}>Amount (USD)<input type="number" value={simAmount} onChange={(e) => setSimAmount(e.target.value)} style={textInput()} /></label>
-          <button onClick={runSim} disabled={simBusy} style={btn()}>{simBusy ? 'Simulating…' : 'Simulate'}</button>
+          <Button variant="outline" disabled={simBusy} onClick={runSim}>{simBusy ? 'Simulating…' : 'Simulate'}</Button>
         </div>
         {sim ? (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
-              <tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>Rank</th><th style={th()}>Provider</th><th style={th()}>All-in rate</th><th style={th()}>Score</th><th style={th()}>Viable</th><th style={th()}>Note</th>
+              <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                <th style={thCell}>Rank</th><th style={thCell}>Provider</th><th style={thCell}>All-in rate</th><th style={thCell}>Score</th><th style={thCell}>Viable</th><th style={thCell}>Note</th>
               </tr>
             </thead>
             <tbody>
               {sim.ranked.map((r, i) => (
-                <tr key={r.provider} style={{ borderBottom: '1px solid #f3f4f6', background: i === 0 ? '#f0f7ff' : undefined }}>
-                  <td style={td()}>{i === 0 ? <Badge status="successful" label="Best" /> : i + 1}</td>
-                  <td style={{ ...td(), textTransform: 'capitalize' }}><strong>{r.provider}</strong></td>
-                  <td style={td()}>{r.allInRate}</td>
-                  <td style={td()}>{r.score.toFixed(2)}</td>
-                  <td style={td()}>{r.viable ? 'Yes' : 'No'}</td>
-                  <td style={{ ...td(), color: '#6b7280' }}>{r.note ?? '—'}</td>
+                <tr key={r.provider} style={{ borderBottom: `1px solid ${colors.border}`, background: i === 0 ? tint(colors.info, 0.08) : undefined }}>
+                  <td style={tdCell}>{i === 0 ? <Badge status="successful" label="Best" /> : i + 1}</td>
+                  <td style={{ ...tdCell, textTransform: 'capitalize' }}><strong>{r.provider}</strong></td>
+                  <td style={tdCell}>{r.allInRate}</td>
+                  <td style={tdCell}>{r.score.toFixed(2)}</td>
+                  <td style={tdCell}>{r.viable ? 'Yes' : 'No'}</td>
+                  <td style={{ ...tdCell, color: colors.muted }}>{r.note ?? '—'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-        ) : <p style={{ color: '#6b7280', fontSize: '0.85rem' }}>Enter a corridor and amount to preview how the router would score providers.</p>}
+        ) : <p style={{ color: colors.muted, fontSize: '0.85rem' }}>Enter a corridor and amount to preview how the router would score providers.</p>}
       </Card>
     </div>
   );
 }
 
-const numInput = (): React.CSSProperties => ({ width: 64, padding: '0.25rem 0.4rem', border: '1px solid #d1d5db', borderRadius: '0.3rem', fontSize: '0.82rem' });
-const textInput = (): React.CSSProperties => ({ padding: '0.35rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem', marginTop: 4, display: 'block' });
-const lbl = (): React.CSSProperties => ({ fontSize: '0.8rem', color: '#374151' });
+const numInput = (): React.CSSProperties => ({ width: 64, padding: '0.25rem 0.4rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.3rem', fontSize: '0.82rem' });
+const textInput = (): React.CSSProperties => ({ padding: '0.35rem 0.5rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem', fontSize: '0.85rem', marginTop: 4, display: 'block' });
+const lbl = (): React.CSSProperties => ({ fontSize: '0.8rem', color: colors.text });

@@ -1,9 +1,12 @@
 'use client';
 
+import Link from 'next/link';
 import { use, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { IntakeConfig, ReminderConfigValue, SummaryTemplateValue, ContentLocalizationValue } from '@/types/intakeAdmin';
 import { getConfig, saveConfig } from '@/services/intakeAdminService';
-import { BackLink, PageHeader, Notice, card, btn, btnPrimary, input, useIntakePermissions, INTAKE_PERMS } from '../../_ui';
+import { Page, PageHeader, Card, Button, Input, colors, tint } from '@/components/ui/vuexy';
+import { useIntakePermissions, INTAKE_PERMS } from '../../_ui';
 
 // A5/A6/A7 share one config endpoint keyed by config_key. The console maps the
 // friendly route slug to the backend key and renders the matching editor.
@@ -12,6 +15,15 @@ const SLUG_MAP: Record<string, { key: string; code: string; title: string; subti
   summary: { key: 'summary_template', code: 'A6', title: 'Doctor Summary Template', subtitle: 'Order the sections of the clinician-facing intake summary (§6) and choose which are highlighted.' },
   content: { key: 'content_localization', code: 'A7', title: 'Content & Localization', subtitle: 'Question text, urgent-care and crisis guidance copy. Keep urgent and crisis copy calm and supportive.' },
 };
+
+function Notice({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ background: tint(colors.success, 0.12), border: `1px solid ${tint(colors.success, 0.3)}`, color: colors.text, padding: '10px 12px', borderRadius: 8, fontSize: 13, marginTop: 14, display: 'flex', gap: 8 }}>
+      <span aria-hidden>🤝</span>
+      <span>{children}</span>
+    </div>
+  );
+}
 
 export default function ConfigPage({ params }: { params: Promise<{ key: string }> }) {
   const { key: slug } = use(params);
@@ -44,10 +56,12 @@ export default function ConfigPage({ params }: { params: Promise<{ key: string }
 
   if (!meta) {
     return (
-      <div>
-        <BackLink />
-        <p style={{ color: 'salmon' }}>Unknown config section: {slug}</p>
-      </div>
+      <Page>
+        <div style={{ marginBottom: 14 }}>
+          <Link href="/admin/intake" style={{ fontSize: 13, color: colors.primary }}>← Intake console</Link>
+        </div>
+        <p style={{ color: colors.danger }}>Unknown config section: {slug}</p>
+      </Page>
     );
   }
 
@@ -62,35 +76,37 @@ export default function ConfigPage({ params }: { params: Promise<{ key: string }
   };
 
   return (
-    <div>
-      <BackLink />
+    <Page>
+      <div style={{ marginBottom: 14 }}>
+        <Link href="/admin/intake" style={{ fontSize: 13, color: colors.primary }}>← Intake console</Link>
+      </div>
       <PageHeader title={`${meta.code} · ${meta.title}`} subtitle={meta.subtitle} />
       {slug === 'content' ? (
-        <Notice kind="support">Urgent and crisis copy is shown to patients at a vulnerable moment. Keep it calm, supportive, and free of alarmist or stigmatizing language.</Notice>
+        <Notice>Urgent and crisis copy is shown to patients at a vulnerable moment. Keep it calm, supportive, and free of alarmist or stigmatizing language.</Notice>
       ) : null}
 
-      {message ? <p style={{ color: 'lightgreen' }}>{message}</p> : null}
-      {error ? <p style={{ color: 'salmon' }}>{error}</p> : null}
-      {loading ? <p style={{ opacity: 0.6, marginTop: 16 }}>Loading…</p> : null}
+      {message ? <p style={{ color: colors.success }}>{message}</p> : null}
+      {error ? <p style={{ color: colors.danger }}>{error}</p> : null}
+      {loading ? <p style={{ color: colors.muted, marginTop: 16 }}>Loading…</p> : null}
 
       {config && !loading ? (
-        <div style={{ ...card, marginTop: 16, display: 'grid', gap: 14 }}>
+        <Card style={{ marginTop: 16, display: 'grid', gap: 14 }}>
           {slug === 'reminder' ? <ReminderEditor value={draft as unknown as ReminderConfigValue} onChange={setDraft} disabled={!canManage} /> : null}
           {slug === 'summary' ? <SummaryEditor value={draft as unknown as SummaryTemplateValue} onChange={setDraft} disabled={!canManage} /> : null}
           {slug === 'content' ? <ContentEditor value={draft as unknown as ContentLocalizationValue} onChange={setDraft} disabled={!canManage} /> : null}
 
           <div>
-            <button style={canManage ? btnPrimary : { ...btn, opacity: 0.5, cursor: 'not-allowed' }} disabled={busy || !canManage} title={!canManage ? 'Requires health.admin.intake' : 'Save configuration'} onClick={() => void onSave()}>
+            <Button variant="primary" disabled={busy || !canManage} title={!canManage ? 'Requires health.admin.intake' : 'Save configuration'} onClick={() => void onSave()}>
               {busy ? 'Saving…' : 'Save configuration'}
-            </button>
+            </Button>
           </div>
-        </div>
+        </Card>
       ) : null}
-    </div>
+    </Page>
   );
 }
 
-const label: React.CSSProperties = { fontSize: 12, opacity: 0.8, display: 'block', marginBottom: 4 };
+const label: React.CSSProperties = { fontSize: 12, color: colors.muted, display: 'block', marginBottom: 4 };
 
 function ReminderEditor({ value, onChange, disabled }: { value: ReminderConfigValue; onChange: (v: Record<string, unknown>) => void; disabled: boolean }) {
   const offsets = (value.offsets_hours ?? []).join(', ');
@@ -103,11 +119,11 @@ function ReminderEditor({ value, onChange, disabled }: { value: ReminderConfigVa
       </div>
       <div>
         <label style={label}>Offsets (hours before appointment, comma-separated)</label>
-        <input style={{ ...input, width: '100%' }} disabled={disabled} value={offsets} onChange={(e) => onChange({ ...value, offsets_hours: e.target.value.split(',').map((s) => Number(s.trim())).filter((n) => !Number.isNaN(n)) })} />
+        <Input style={{ width: '100%' }} disabled={disabled} value={offsets} onChange={(e) => onChange({ ...value, offsets_hours: e.target.value.split(',').map((s) => Number(s.trim())).filter((n) => !Number.isNaN(n)) })} />
       </div>
       <div>
         <label style={label}>Channels (comma-separated)</label>
-        <input style={{ ...input, width: '100%' }} disabled={disabled} value={channels} onChange={(e) => onChange({ ...value, channels: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })} />
+        <Input style={{ width: '100%' }} disabled={disabled} value={channels} onChange={(e) => onChange({ ...value, channels: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })} />
       </div>
     </>
   );
@@ -129,10 +145,10 @@ function SummaryEditor({ value, onChange, disabled }: { value: SummaryTemplateVa
         {order.map((s, idx) => {
           const highlighted = (value.highlight_sections ?? []).includes(s);
           return (
-            <div key={s} style={{ display: 'flex', gap: 8, alignItems: 'center', border: '1px solid #2a2a2a', borderRadius: 6, padding: '6px 10px' }}>
-              <span style={{ flex: 1, fontFamily: 'monospace', fontSize: 12 }}>{idx + 1}. {s}{highlighted ? <span style={{ marginLeft: 8, color: '#fde68a', fontSize: 11 }}>★ highlighted</span> : null}</span>
-              <button style={{ ...btn, padding: '2px 8px' }} disabled={disabled || idx === 0} onClick={() => move(idx, -1)}>↑</button>
-              <button style={{ ...btn, padding: '2px 8px' }} disabled={disabled || idx === order.length - 1} onClick={() => move(idx, 1)}>↓</button>
+            <div key={s} style={{ display: 'flex', gap: 8, alignItems: 'center', border: `1px solid ${colors.border}`, borderRadius: 6, padding: '6px 10px' }}>
+              <span style={{ flex: 1, fontFamily: 'monospace', fontSize: 12 }}>{idx + 1}. {s}{highlighted ? <span style={{ marginLeft: 8, color: colors.warning, fontSize: 11 }}>★ highlighted</span> : null}</span>
+              <Button variant="outline" sm disabled={disabled || idx === 0} onClick={() => move(idx, -1)}>↑</Button>
+              <Button variant="outline" sm disabled={disabled || idx === order.length - 1} onClick={() => move(idx, 1)}>↓</Button>
             </div>
           );
         })}
@@ -148,23 +164,23 @@ function ContentEditor({ value, onChange, disabled }: { value: ContentLocalizati
     <>
       <div>
         <label style={label}>Locale</label>
-        <input style={{ ...input, width: 120 }} disabled={disabled} value={value.locale ?? ''} onChange={(e) => onChange({ ...value, locale: e.target.value })} />
+        <Input style={{ width: 120 }} disabled={disabled} value={value.locale ?? ''} onChange={(e) => onChange({ ...value, locale: e.target.value })} />
       </div>
       <div>
         <label style={label}>Urgent-care copy</label>
-        <textarea style={{ ...input, width: '100%', height: 70 }} disabled={disabled} value={value.urgent_care_copy ?? ''} onChange={(e) => onChange({ ...value, urgent_care_copy: e.target.value })} />
+        <textarea className="vx-input" style={{ width: '100%', height: 70 }} disabled={disabled} value={value.urgent_care_copy ?? ''} onChange={(e) => onChange({ ...value, urgent_care_copy: e.target.value })} />
       </div>
       <div>
         <label style={label}>Crisis copy (calm, supportive)</label>
-        <textarea style={{ ...input, width: '100%', height: 90 }} disabled={disabled} value={value.crisis_copy ?? ''} onChange={(e) => onChange({ ...value, crisis_copy: e.target.value })} />
+        <textarea className="vx-input" style={{ width: '100%', height: 90 }} disabled={disabled} value={value.crisis_copy ?? ''} onChange={(e) => onChange({ ...value, crisis_copy: e.target.value })} />
       </div>
       <div>
         <label style={label}>Question text</label>
         <div style={{ display: 'grid', gap: 8 }}>
           {Object.entries(questions).map(([k, v]) => (
             <div key={k} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ fontFamily: 'monospace', fontSize: 11, width: 180, opacity: 0.7 }}>{k}</span>
-              <input style={{ ...input, flex: 1 }} disabled={disabled} value={v} onChange={(e) => setQuestion(k, e.target.value)} />
+              <span style={{ fontFamily: 'monospace', fontSize: 11, width: 180, color: colors.muted }}>{k}</span>
+              <Input style={{ flex: 1 }} disabled={disabled} value={v} onChange={(e) => setQuestion(k, e.target.value)} />
             </div>
           ))}
         </div>

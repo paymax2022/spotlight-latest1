@@ -3,9 +3,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { listBountyPayouts, reviewBounty, formatNaira } from '@/services/connectNetworkAdminService';
 import type { BountyPayout, ReviewAction } from '@/types/connectNetworkAdmin';
-import { PageHeader, Card, Badge, btn, th, td, timeAgo } from '../_ui';
+import { timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATES = ['all', 'bounty_payable', 'approved', 'released', 'held', 'rejected'];
+
+function stateColor(state: string): string {
+  if (state === 'released') return colors.success;
+  if (state === 'rejected') return colors.danger;
+  if (state === 'held') return colors.warning;
+  if (state === 'approved') return colors.info;
+  return colors.secondary;
+}
 
 export default function ConnectBountyPayoutsPage() {
   const [rows, setRows] = useState<BountyPayout[]>([]);
@@ -31,54 +40,54 @@ export default function ConnectBountyPayoutsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Referral bounty payout queue" subtitle="ADM-JB-02 · Review single-level referral bounties before ledger release. Amounts in kobo → Naira." action={<button onClick={() => void load()} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Referral bounty payout queue" subtitle="ADM-JB-02 · Review single-level referral bounties before ledger release. Amounts in kobo → Naira." actions={<Button variant="outline" sm onClick={() => void load()}>Refresh</Button>} />
 
-      <Card>
-        <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', color: '#1e40af', fontSize: '0.82rem' }}>
+      <Card style={{ marginBottom: 16 }}>
+        <div style={{ background: tint(colors.info, 0.12), border: `1px solid ${tint(colors.info, 0.35)}`, borderRadius: '0.5rem', padding: '0.6rem 0.9rem', color: colors.info, fontSize: '0.82rem' }}>
           <strong>Ledger-safe.</strong> Approving here authorizes release only. The actual double-entry ledger posting happens downstream with an Idempotency-Key — this console never mutates balances directly.
         </div>
       </Card>
 
-      <Card>
-        <label style={{ fontSize: '0.8rem', color: '#374151', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+      <Card style={{ marginBottom: 16 }}>
+        <label style={{ fontSize: '0.8rem', color: colors.text, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
           State
-          <select value={state} onChange={(e) => setState(e.target.value)} style={{ padding: '0.35rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem', textTransform: 'capitalize' }}>
+          <select value={state} onChange={(e) => setState(e.target.value)} style={{ padding: '0.35rem 0.5rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem', fontSize: '0.85rem', textTransform: 'capitalize' }}>
             {STATES.map((o) => <option key={o} value={o}>{o.replace(/_/g, ' ')}</option>)}
           </select>
         </label>
       </Card>
 
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-      <Card>
-        {loading ? <p style={{ color: '#6b7280' }}>Loading bounties…</p> : rows.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No bounties in this state.</p>
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      <Card style={{ padding: 0, overflow: 'auto' }}>
+        {loading ? <p style={{ color: colors.muted, padding: 14 }}>Loading bounties…</p> : rows.length === 0 ? (
+          <p style={{ color: colors.muted, padding: 14 }}>No bounties in this state.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Reference</th><th style={th()}>Referrer → Referred</th><th style={th()}>Job</th><th style={th()}>Amount</th><th style={th()}>Risk</th><th style={th()}>State</th><th style={th()}>Created</th><th style={th()}>Review</th></tr></thead>
+            <thead><tr><th style={thCell}>Reference</th><th style={thCell}>Referrer → Referred</th><th style={thCell}>Job</th><th style={thCell}>Amount</th><th style={thCell}>Risk</th><th style={thCell}>State</th><th style={thCell}>Created</th><th style={thCell}>Review</th></tr></thead>
             <tbody>
               {rows.map((b) => (
                 <tr key={b.id}>
-                  <td style={td()}><strong>{b.reference}</strong></td>
-                  <td style={td()}>{b.referrerId} → {b.referredId}</td>
-                  <td style={td()}>{b.jobTitle}</td>
-                  <td style={td()}>{formatNaira(b.amountKobo)}</td>
-                  <td style={td()}>{b.riskFlags.length ? <span style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>{b.riskFlags.map((f) => <Badge key={f} status="high" label={f} />)}</span> : <span style={{ color: '#9ca3af' }}>clean</span>}</td>
-                  <td style={td()}><Badge status={b.state === 'released' ? 'resolved' : b.state === 'rejected' ? 'critical' : b.state === 'held' ? 'high' : b.state === 'approved' ? 'investigating' : 'open'} label={b.state.replace(/_/g, ' ')} /></td>
-                  <td style={td()}>{timeAgo(b.createdAt)}</td>
-                  <td style={td()}>{b.state === 'bounty_payable' || b.state === 'held' ? (
+                  <td style={tdCell}><strong>{b.reference}</strong></td>
+                  <td style={tdCell}>{b.referrerId} → {b.referredId}</td>
+                  <td style={tdCell}>{b.jobTitle}</td>
+                  <td style={tdCell}>{formatNaira(b.amountKobo)}</td>
+                  <td style={tdCell}>{b.riskFlags.length ? <span style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>{b.riskFlags.map((f) => <Badge key={f} text={f} color={colors.warning} />)}</span> : <span style={{ color: colors.muted }}>clean</span>}</td>
+                  <td style={tdCell}><Badge text={b.state.replace(/_/g, ' ')} color={stateColor(b.state)} /></td>
+                  <td style={tdCell}>{timeAgo(b.createdAt)}</td>
+                  <td style={tdCell}>{b.state === 'bounty_payable' || b.state === 'held' ? (
                     <span style={{ display: 'flex', gap: '0.35rem' }}>
-                      <button disabled={busy === b.id} onClick={() => act(b.id, 'approve')} style={{ ...btn(), color: '#15803d', borderColor: '#bbf7d0' }}>Release</button>
-                      <button disabled={busy === b.id} onClick={() => act(b.id, 'flag')} style={{ ...btn(), color: '#9a3412', borderColor: '#fed7aa' }}>Hold</button>
-                      <button disabled={busy === b.id} onClick={() => act(b.id, 'reject')} style={{ ...btn(), color: '#b91c1c', borderColor: '#fecaca' }}>Reject</button>
+                      <Button variant="outline" sm disabled={busy === b.id} onClick={() => act(b.id, 'approve')} style={{ color: colors.success, borderColor: colors.success }}>Release</Button>
+                      <Button variant="outline" sm disabled={busy === b.id} onClick={() => act(b.id, 'flag')} style={{ color: colors.warning, borderColor: colors.warning }}>Hold</Button>
+                      <Button variant="danger" sm disabled={busy === b.id} onClick={() => act(b.id, 'reject')}>Reject</Button>
                     </span>
-                  ) : <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>—</span>}</td>
+                  ) : <span style={{ color: colors.muted, fontSize: '0.8rem' }}>—</span>}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

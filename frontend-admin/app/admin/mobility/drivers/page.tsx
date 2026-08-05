@@ -6,9 +6,10 @@ import { getDrivers, setDriverVerification } from '@/services/mobilityAdminServi
 import type { DriverSummary, DriverVerificationStatus } from '@/types/mobility';
 import {
   PageHeader, MobilityTabs, Card, Badge, StateNote, AuditedNotice,
-  btn, btnPrimary, btnDisabled, th, td, input,
+  btn, btnPrimary, btnDisabled, input,
   useMobilityPermissions, MOBILITY_PERMS,
 } from '../_ui';
+import { colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUS_OPTIONS: Array<DriverVerificationStatus | ''> = ['', 'submitted', 'under_review', 'approved', 'rejected', 'suspended'];
 
@@ -72,24 +73,24 @@ export default function MobilityDriversPage() {
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <thead>
-                <tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                  <th style={th()}>Driver</th><th style={th()}>Zone</th><th style={th()}>Categories</th><th style={th()}>Status</th><th style={th()}>Actions</th>
+                <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                  <th style={thCell}>Driver</th><th style={thCell}>Zone</th><th style={thCell}>Categories</th><th style={thCell}>Status</th><th style={thCell}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {queue.map((d) => (
-                  <tr key={d.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={td()}>
+                  <tr key={d.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <td style={tdCell}>
                       <Link href={`/admin/mobility/drivers/${d.id}`} style={{ fontWeight: 600 }}>{d.name}</Link>
-                      <div style={{ fontSize: '0.72rem', color: '#9ca3af', fontFamily: 'monospace' }}>{d.id}</div>
+                      <div style={{ fontSize: '0.72rem', color: colors.muted, fontFamily: 'monospace' }}>{d.id}</div>
                     </td>
-                    <td style={td()}>{d.zone}</td>
-                    <td style={td()}>{d.serviceCategories.join(', ')}</td>
-                    <td style={td()}><Badge status={d.verificationStatus} /></td>
-                    <td style={td()}>
+                    <td style={tdCell}>{d.zone}</td>
+                    <td style={tdCell}>{d.serviceCategories.join(', ')}</td>
+                    <td style={tdCell}><Badge status={d.verificationStatus} /></td>
+                    <td style={tdCell}>
                       <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                        <button disabled={!canManage} style={canManage ? btnPrimary('#16a34a') : btnDisabled()} onClick={() => { setTarget({ driver: d, action: 'approved' }); setReason(''); }}>Approve</button>
-                        <button disabled={!canManage} style={canManage ? btnPrimary('#dc2626') : btnDisabled()} onClick={() => { setTarget({ driver: d, action: 'rejected' }); setReason(''); }}>Reject</button>
+                        <button disabled={!canManage} style={canManage ? btnPrimary(colors.success) : btnDisabled()} onClick={() => { setTarget({ driver: d, action: 'approved' }); setReason(''); }}>Approve</button>
+                        <button disabled={!canManage} style={canManage ? btnPrimary(colors.danger) : btnDisabled()} onClick={() => { setTarget({ driver: d, action: 'rejected' }); setReason(''); }}>Reject</button>
                       </div>
                     </td>
                   </tr>
@@ -113,24 +114,24 @@ export default function MobilityDriversPage() {
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <thead>
-                <tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                  <th style={th()}>Driver</th><th style={th()}>Status</th><th style={th()}>Online</th><th style={th()}>Trips</th><th style={th()}>Rating</th><th style={th()}>Cancel %</th><th style={th()}>Tier</th><th style={th()}></th>
+                <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                  <th style={thCell}>Driver</th><th style={thCell}>Status</th><th style={thCell}>Online</th><th style={thCell}>Trips</th><th style={thCell}>Rating</th><th style={thCell}>Cancel %</th><th style={thCell}>Tier</th><th style={thCell}></th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((d) => (
-                  <tr key={d.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={td()}>
+                  <tr key={d.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <td style={tdCell}>
                       <Link href={`/admin/mobility/drivers/${d.id}`} style={{ fontWeight: 600 }}>{d.name}</Link>
-                      <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{d.phone}</div>
+                      <div style={{ fontSize: '0.72rem', color: colors.muted }}>{d.phone}</div>
                     </td>
-                    <td style={td()}><Badge status={d.verificationStatus} /></td>
-                    <td style={td()}>{d.online ? <Badge status="online" label="online" /> : <span style={{ color: '#9ca3af' }}>offline</span>}</td>
-                    <td style={td()}>{d.completedTrips.toLocaleString('en-NG')}</td>
-                    <td style={td()}>{d.rating ? d.rating.toFixed(1) : '—'}</td>
-                    <td style={td()}>{d.cancelRate}%</td>
-                    <td style={td()}><Badge status="active" label={d.commissionTier} /></td>
-                    <td style={td()}>
+                    <td style={tdCell}><Badge status={d.verificationStatus} /></td>
+                    <td style={tdCell}>{d.online ? <Badge status="online" label="online" /> : <span style={{ color: colors.muted }}>offline</span>}</td>
+                    <td style={tdCell}>{d.completedTrips.toLocaleString('en-NG')}</td>
+                    <td style={tdCell}>{d.rating ? d.rating.toFixed(1) : '—'}</td>
+                    <td style={tdCell}>{d.cancelRate}%</td>
+                    <td style={tdCell}><Badge status="active" label={d.commissionTier} /></td>
+                    <td style={tdCell}>
                       {d.verificationStatus === 'approved' && (
                         <button disabled={!canManage} style={canManage ? btn() : btnDisabled()} onClick={() => { setTarget({ driver: d, action: 'suspended' }); setReason(''); }}>Suspend</button>
                       )}
@@ -146,14 +147,14 @@ export default function MobilityDriversPage() {
       {/* Decision modal */}
       {target && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }} onClick={() => !busy && setTarget(null)}>
-          <div style={{ background: '#fff', borderRadius: '0.5rem', padding: '1.25rem', width: 'min(440px, 92vw)' }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: colors.card, borderRadius: '0.5rem', padding: '1.25rem', width: 'min(440px, 92vw)' }} onClick={(e) => e.stopPropagation()}>
             <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem', fontWeight: 700, textTransform: 'capitalize' }}>{target.action} driver</h2>
-            <p style={{ fontSize: '0.85rem', color: '#6b7280', margin: '0 0 0.75rem' }}>{target.driver.name} ({target.driver.id})</p>
+            <p style={{ fontSize: '0.85rem', color: colors.muted, margin: '0 0 0.75rem' }}>{target.driver.name} ({target.driver.id})</p>
             <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Reason (required — written to audit log)</label>
             <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder="e.g. Documents verified; inspection passed." style={{ ...input(), marginTop: 4, fontFamily: 'inherit' }} />
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
               <button style={btn()} disabled={busy} onClick={() => setTarget(null)}>Cancel</button>
-              <button style={busy || !reason.trim() ? btnDisabled() : btnPrimary(target.action === 'approved' ? '#16a34a' : '#dc2626')} disabled={busy || !reason.trim()} onClick={submitDecision}>
+              <button style={busy || !reason.trim() ? btnDisabled() : btnPrimary(target.action === 'approved' ? colors.success : colors.danger)} disabled={busy || !reason.trim()} onClick={submitDecision}>
                 {busy ? 'Submitting…' : `Confirm ${target.action}`}
               </button>
             </div>

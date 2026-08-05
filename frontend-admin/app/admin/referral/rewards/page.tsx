@@ -4,10 +4,26 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { listRewardLedger, manualGrant, formatNaira } from '@/services/referralAdminService';
 import type { RewardLedgerEntry, RewardKind } from '@/types/referralAdmin';
-import { PageHeader, ReferralTabs, Card, Badge, btn, btnPrimary, input, label, th, td, timeAgo, StateBlock } from '../_ui';
+import { ReferralTabs, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATES = ['all', 'earned', 'pending', 'vesting', 'eligible', 'paid', 'clawed_back'];
 const KINDS = ['all', 'referrer', 'referee', 'override', 'mission', 'manual'];
+
+function badgeColor(status: string): string {
+  switch (status) {
+    case 'eligible': case 'paid':
+      return colors.success;
+    case 'clawed_back':
+      return colors.danger;
+    case 'earned': case 'normal':
+      return colors.info;
+    case 'vesting': case 'house':
+      return colors.primary;
+    default:
+      return colors.warning;
+  }
+}
 
 export default function RewardLedgerPage() {
   const [rows, setRows] = useState<RewardLedgerEntry[]>([]);
@@ -27,59 +43,66 @@ export default function RewardLedgerPage() {
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filters]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Reward ledger"
         subtitle="Every reward across all states: earned → pending → vesting → eligible → paid → clawed-back (A-RWD-01). Manual grants & clawbacks are audited."
-        action={<button onClick={() => setShowGrant((s) => !s)} style={btnPrimary()}>{showGrant ? 'Close' : '+ Manual grant'}</button>}
+        actions={<Button variant="primary" onClick={() => setShowGrant((s) => !s)}>{showGrant ? 'Close' : '+ Manual grant'}</Button>}
       />
       <ReferralTabs active="rewards" />
 
       {showGrant && <ManualGrantForm onDone={() => { setShowGrant(false); load(); }} />}
 
-      <Card>
-        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <label style={{ fontSize: '0.8rem', color: '#374151', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+      <Card style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+          <label style={{ fontSize: 13, color: colors.text, display: 'flex', alignItems: 'center', gap: 6 }}>
             State
-            <select value={state} onChange={(e) => setState(e.target.value)} style={{ padding: '0.35rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem' }}>
+            <select value={state} onChange={(e) => setState(e.target.value)}>
               {STATES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
             </select>
           </label>
-          <label style={{ fontSize: '0.8rem', color: '#374151', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <label style={{ fontSize: 13, color: colors.text, display: 'flex', alignItems: 'center', gap: 6 }}>
             Kind
-            <select value={kind} onChange={(e) => setKind(e.target.value)} style={{ padding: '0.35rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem' }}>
+            <select value={kind} onChange={(e) => setKind(e.target.value)}>
               {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
             </select>
           </label>
-          <span style={{ marginLeft: 'auto' }}><button onClick={load} style={btn()}>Refresh</button></span>
+          <span style={{ marginLeft: 'auto' }}><Button variant="outline" onClick={load}>Refresh</Button></span>
         </div>
       </Card>
 
-      <Card>
-        <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No rewards match these filters.">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>ID</th><th style={th()}>Beneficiary</th><th style={th()}>Kind</th><th style={th()}>Amount</th><th style={th()}>State</th><th style={th()}>Flags</th><th style={th()}>Updated</th><th style={th()}></th></tr></thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td style={td()}><code style={{ fontSize: '0.76rem' }}>{r.id}</code></td>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{r.beneficiary_id}</code>{r.is_house && <> <Badge status="house" label="house" /></>}</td>
-                  <td style={td()}><Badge status="normal" label={r.kind} /></td>
-                  <td style={td()}>{formatNaira(r.amount_kobo)}</td>
-                  <td style={td()}><Badge status={r.state} /></td>
-                  <td style={td()}>
-                    {r.excluded_from_kfactor && <Badge status="vesting" label="excl. K-factor" />}{' '}
-                    {r.excluded_from_override && <Badge status="vesting" label="excl. override" />}
-                  </td>
-                  <td style={td()}>{timeAgo(r.updated_at)}</td>
-                  <td style={{ ...td(), textAlign: 'right' }}><Link href={`/admin/referral/rewards/${r.id}`} style={{ color: '#1d4ed8', textDecoration: 'none', fontWeight: 600 }}>Open →</Link></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </StateBlock>
+      <Card style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: 14 }}>
+          {loading ? <p style={{ color: colors.muted }}>Loading…</p>
+            : error ? <p style={{ color: colors.danger }}>{error}</p>
+            : rows.length === 0 ? <p style={{ color: colors.muted }}>No rewards match these filters.</p>
+            : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={thCell}>ID</th><th style={thCell}>Beneficiary</th><th style={thCell}>Kind</th><th style={thCell}>Amount</th><th style={thCell}>State</th><th style={thCell}>Flags</th><th style={thCell}>Updated</th><th style={thCell}></th></tr></thead>
+                  <tbody>
+                    {rows.map((r) => (
+                      <tr key={r.id}>
+                        <td style={tdCell}><code style={{ fontSize: 12 }}>{r.id}</code></td>
+                        <td style={tdCell}><code style={{ fontSize: 13 }}>{r.beneficiary_id}</code>{r.is_house && <> <Badge text="house" color={badgeColor('house')} /></>}</td>
+                        <td style={tdCell}><Badge text={r.kind} color={badgeColor('normal')} /></td>
+                        <td style={tdCell}>{formatNaira(r.amount_kobo)}</td>
+                        <td style={tdCell}><Badge text={r.state.replace(/_/g, ' ')} color={badgeColor(r.state)} /></td>
+                        <td style={tdCell}>
+                          {r.excluded_from_kfactor && <Badge text="excl. K-factor" color={badgeColor('vesting')} />}{' '}
+                          {r.excluded_from_override && <Badge text="excl. override" color={badgeColor('vesting')} />}
+                        </td>
+                        <td style={tdCell}>{timeAgo(r.updated_at)}</td>
+                        <td style={{ ...tdCell, textAlign: 'right' }}><Link href={`/admin/referral/rewards/${r.id}`} style={{ fontWeight: 600 }}>Open →</Link></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+        </div>
       </Card>
-    </div>
+    </Page>
   );
 }
 
@@ -102,21 +125,21 @@ function ManualGrantForm({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <Card title="Manual grant / adjustment (A-RWD-04, audited)">
-      <form onSubmit={submit}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px,1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
-          <div><label style={label()}>Beneficiary user ID</label><input value={beneficiary} onChange={(e) => setBeneficiary(e.target.value)} style={input()} placeholder="usr_..." /></div>
-          <div><label style={label()}>Amount (₦)</label><input type="number" min={0} value={naira} onChange={(e) => setNaira(e.target.value)} style={input()} /></div>
-          <div><label style={label()}>Kind</label>
-            <select value={kind} onChange={(e) => setKind(e.target.value as RewardKind)} style={input()}>
+    <Card title="Manual grant / adjustment (A-RWD-04, audited)" style={{ marginBottom: 16 }}>
+      <form onSubmit={submit} style={{ marginTop: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px,1fr))', gap: 12, marginBottom: 12 }}>
+          <div><label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: colors.text, marginBottom: 4 }}>Beneficiary user ID</label><Input value={beneficiary} onChange={(e) => setBeneficiary(e.target.value)} placeholder="usr_..." /></div>
+          <div><label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: colors.text, marginBottom: 4 }}>Amount (₦)</label><Input type="number" min={0} value={naira} onChange={(e) => setNaira(e.target.value)} /></div>
+          <div><label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: colors.text, marginBottom: 4 }}>Kind</label>
+            <select value={kind} onChange={(e) => setKind(e.target.value as RewardKind)} style={{ width: '100%' }}>
               {['manual', 'referrer', 'referee', 'override', 'mission'].map((k) => <option key={k} value={k}>{k}</option>)}
             </select>
           </div>
-          <div style={{ gridColumn: '1 / -1' }}><label style={label()}>Reason (required, audited)</label><input value={reason} onChange={(e) => setReason(e.target.value)} style={input()} placeholder="e.g. Goodwill — disputed claim resolved in user's favour" /></div>
+          <div style={{ gridColumn: '1 / -1' }}><label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: colors.text, marginBottom: 4 }}>Reason (required, audited)</label><Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Goodwill — disputed claim resolved in user's favour" /></div>
         </div>
-        {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-        <p style={{ fontSize: '0.72rem', color: '#6b7280' }}>A manual grant posts a balanced double-entry ledger record with an Idempotency-Key and emits an audit event (money iron rules).</p>
-        <button type="submit" disabled={busy} style={{ ...btnPrimary(), opacity: busy ? 0.6 : 1 }}>{busy ? 'Granting…' : 'Post grant'}</button>
+        {error && <p style={{ color: colors.danger }}>{error}</p>}
+        <p style={{ fontSize: 12, color: colors.muted }}>A manual grant posts a balanced double-entry ledger record with an Idempotency-Key and emits an audit event (money iron rules).</p>
+        <Button variant="primary" type="submit" disabled={busy}>{busy ? 'Granting…' : 'Post grant'}</Button>
       </form>
     </Card>
   );

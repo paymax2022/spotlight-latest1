@@ -6,11 +6,7 @@ import type { PayoutFilters, PayoutRun } from '@/types/nutritionAdmin';
 import { listPayoutRuns, reconcilePayoutRun, formatKobo, ageFromNow } from '@/services/nutritionAdminService';
 import { PayoutStatusBadge } from '../statusBadge';
 import { useNutritionPermissions, NUTRITION_PERMS } from '../_ui';
-
-const card = { border: '1px solid #2a2a2a', padding: 12, borderRadius: 6 } as const;
-const th = { padding: '8px 6px', fontWeight: 600, opacity: 0.8 } as const;
-const td = { padding: '8px 6px' } as const;
-const input = { background: '#111', color: '#eee', border: '1px solid #2a2a2a', padding: '4px 6px', borderRadius: 4 } as const;
+import { Page, PageHeader, Card, Button, Input, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUS_OPTIONS = ['', 'DRAFT', 'PENDING', 'PAID', 'FAILED', 'RECONCILED'];
 
@@ -61,110 +57,110 @@ export default function NutritionPayoutsPage() {
   };
 
   return (
-    <div>
+    <Page>
       <p><Link href="/admin/nutrition">← Back to Nutrition console</Link></p>
-      <h1>Nutritionist Payouts</h1>
-      <p style={{ fontSize: 13, opacity: 0.7 }}>
-        Payout runs settle nutritionist earnings per period. Amounts are in kobo (minor units);
-        reconciliation posts a balanced double-entry against the ledger settlement account server-side.
-        Reconcile is role-gated (nutrition.admin.resolve).
-      </p>
-      <p style={{ fontSize: 12, color: '#fde68a', ...card, background: '#1a1400', borderColor: '#78350f' }}>
+      <PageHeader
+        title="Nutritionist Payouts"
+        subtitle="Payout runs settle nutritionist earnings per period. Amounts are in kobo (minor units); reconciliation posts a balanced double-entry against the ledger settlement account server-side. Reconcile is role-gated (nutrition.admin.resolve)."
+      />
+      <Card style={{ fontSize: 12, color: colors.warning, background: tint(colors.warning, 0.08), borderColor: colors.warning, marginBottom: 12 }}>
         ⚠ Mock surface — no nutritionist-settlement backend exists yet. Runs are fixtures until
         /api/nutrition/admin/payouts is delivered. Money mutations remain backend-only.
-      </p>
+      </Card>
 
-      {message ? <p style={{ color: 'lightgreen' }}>{message}</p> : null}
-      {error ? <p style={{ color: 'salmon' }}>{error}</p> : null}
+      {message ? <p style={{ color: colors.success }}>{message}</p> : null}
+      {error ? <p style={{ color: colors.danger }}>{error}</p> : null}
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
-        <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))} style={input}>
+        <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
           {STATUS_OPTIONS.map((v) => <option key={v} value={v}>{v || 'All statuses'}</option>)}
         </select>
-        <input placeholder="Period (e.g. 2026-07)" value={filters.period} onChange={(e) => setFilters((f) => ({ ...f, period: e.target.value }))} style={input} />
-        <button onClick={() => void load()} disabled={loading}>{loading ? 'Loading…' : 'Apply'}</button>
-        <button onClick={() => setFilters(defaultFilters)} disabled={loading}>Reset</button>
-        <span style={{ fontSize: 12, opacity: 0.7 }}>{runs.length} run(s)</span>
+        <Input placeholder="Period (e.g. 2026-07)" value={filters.period} onChange={(e) => setFilters((f) => ({ ...f, period: e.target.value }))} />
+        <Button variant="outline" onClick={() => void load()} disabled={loading}>{loading ? 'Loading…' : 'Apply'}</Button>
+        <Button variant="outline" onClick={() => setFilters(defaultFilters)} disabled={loading}>Reset</Button>
+        <span style={{ fontSize: 12, color: colors.muted }}>{runs.length} run(s)</span>
       </div>
 
       {!loading && runs.length === 0 ? (
-        <p style={{ opacity: 0.6, marginTop: 24 }}>No payout runs match the current filters.</p>
+        <p style={{ color: colors.muted, marginTop: 24 }}>No payout runs match the current filters.</p>
       ) : null}
 
       {runs.length > 0 ? (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 16 }}>
           <thead>
-            <tr style={{ borderBottom: '1px solid #2a2a2a', textAlign: 'left' }}>
+            <tr>
               {['Run / Period', 'Status', 'Lines', 'Net payout', 'Platform fee', 'Reconciled', 'Created', 'Actions'].map((h) => (
-                <th key={h} style={th}>{h}</th>
+                <th key={h} style={thCell}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {runs.map((r) => (
               <Fragment key={r.id}>
-                <tr style={{ borderBottom: '1px solid #1c1c1c' }}>
-                  <td style={td}>
+                <tr>
+                  <td style={tdCell}>
                     <button
                       onClick={() => setExpanded((e) => (e === r.id ? '' : r.id))}
-                      style={{ background: 'transparent', border: 'none', color: '#93c5fd', cursor: 'pointer', padding: 0, fontWeight: 600 }}
+                      style={{ background: 'transparent', border: 'none', color: colors.info, cursor: 'pointer', padding: 0, fontWeight: 600 }}
                     >
                       {expanded === r.id ? '▾' : '▸'} {r.period}
                     </button>
-                    <div style={{ fontSize: 11, opacity: 0.5, fontFamily: 'monospace' }}>{r.id}</div>
+                    <div style={{ fontSize: 11, color: colors.muted, fontFamily: 'monospace' }}>{r.id}</div>
                   </td>
-                  <td style={td}><PayoutStatusBadge status={r.status} /></td>
-                  <td style={td}>{r.lineCount}</td>
-                  <td style={td}>{formatKobo(r.totalNetKobo)}</td>
-                  <td style={{ ...td, opacity: 0.7 }}>{formatKobo(r.totalFeeKobo)}</td>
-                  <td style={td}>
+                  <td style={tdCell}><PayoutStatusBadge status={r.status} /></td>
+                  <td style={tdCell}>{r.lineCount}</td>
+                  <td style={tdCell}>{formatKobo(r.totalNetKobo)}</td>
+                  <td style={{ ...tdCell, color: colors.muted }}>{formatKobo(r.totalFeeKobo)}</td>
+                  <td style={tdCell}>
                     {formatKobo(r.reconciledKobo)}
                     {r.reconciledKobo < r.totalNetKobo ? (
-                      <span style={{ color: '#fca5a5', fontSize: 11, marginLeft: 6 }}>● unreconciled</span>
+                      <span style={{ color: colors.danger, fontSize: 11, marginLeft: 6 }}>● unreconciled</span>
                     ) : null}
                   </td>
-                  <td style={{ ...td, opacity: 0.6 }}>{ageFromNow(r.createdAt)}</td>
-                  <td style={td}>
+                  <td style={{ ...tdCell, color: colors.muted }}>{ageFromNow(r.createdAt)}</td>
+                  <td style={tdCell}>
                     {r.status !== 'RECONCILED' ? (
-                      <button
+                      <Button
+                        sm
+                        variant="outline"
                         onClick={() => onReconcile(r.id)}
                         disabled={busyId === r.id || !canPayout}
                         title={!canPayout ? 'Requires nutrition.admin.resolve' : 'Reconcile against the ledger settlement account'}
                       >
                         {busyId === r.id ? '…' : 'Reconcile'}
-                      </button>
+                      </Button>
                     ) : (
-                      <span style={{ fontSize: 11, color: '#a7f3d0' }}>Paid {ageFromNow(r.paidAt)} ago</span>
+                      <span style={{ fontSize: 11, color: colors.success }}>Paid {ageFromNow(r.paidAt)} ago</span>
                     )}
                   </td>
                 </tr>
                 {expanded === r.id && r.lines ? (
                   <tr>
                     <td colSpan={8} style={{ padding: '4px 6px 12px' }}>
-                      <div style={{ ...card, background: '#0f0f0f' }}>
+                      <Card style={{ background: colors.headBg }}>
                         <strong style={{ fontSize: 12 }}>Payout lines</strong>
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginTop: 8 }}>
                           <thead>
-                            <tr style={{ borderBottom: '1px solid #2a2a2a', textAlign: 'left', opacity: 0.7 }}>
+                            <tr>
                               {['Nutritionist', 'Consults', 'Gross', 'Fee', 'Net', 'Status'].map((h) => (
-                                <th key={h} style={{ padding: '4px 6px' }}>{h}</th>
+                                <th key={h} style={{ ...thCell, padding: '4px 6px' }}>{h}</th>
                               ))}
                             </tr>
                           </thead>
                           <tbody>
                             {r.lines.map((l) => (
-                              <tr key={l.nutritionistId} style={{ borderBottom: '1px solid #1c1c1c' }}>
-                                <td style={{ padding: '4px 6px' }}>{l.nutritionistName}</td>
-                                <td style={{ padding: '4px 6px' }}>{l.consults}</td>
-                                <td style={{ padding: '4px 6px' }}>{formatKobo(l.grossKobo)}</td>
-                                <td style={{ padding: '4px 6px', opacity: 0.7 }}>{formatKobo(l.feeKobo)}</td>
-                                <td style={{ padding: '4px 6px' }}>{formatKobo(l.netKobo)}</td>
-                                <td style={{ padding: '4px 6px' }}><PayoutStatusBadge status={l.status} /></td>
+                              <tr key={l.nutritionistId}>
+                                <td style={{ ...tdCell, padding: '4px 6px' }}>{l.nutritionistName}</td>
+                                <td style={{ ...tdCell, padding: '4px 6px' }}>{l.consults}</td>
+                                <td style={{ ...tdCell, padding: '4px 6px' }}>{formatKobo(l.grossKobo)}</td>
+                                <td style={{ ...tdCell, padding: '4px 6px', color: colors.muted }}>{formatKobo(l.feeKobo)}</td>
+                                <td style={{ ...tdCell, padding: '4px 6px' }}>{formatKobo(l.netKobo)}</td>
+                                <td style={{ ...tdCell, padding: '4px 6px' }}><PayoutStatusBadge status={l.status} /></td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
-                      </div>
+                      </Card>
                     </td>
                   </tr>
                 ) : null}
@@ -173,6 +169,6 @@ export default function NutritionPayoutsPage() {
           </tbody>
         </table>
       ) : null}
-    </div>
+    </Page>
   );
 }

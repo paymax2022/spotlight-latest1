@@ -4,7 +4,20 @@ import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { getAmlCase, fileStr, formatNaira } from '@/services/connectAdminService';
 import type { AmlCaseDetail } from '@/types/connectAdmin';
-import { PageHeader, Card, Badge, btn, th, td } from '../../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function severityColor(sev: string): string {
+  if (sev === 'critical') return colors.danger;
+  if (sev === 'high') return colors.warning;
+  return colors.info;
+}
+
+function statusColor(status: string): string {
+  if (status === 'cleared') return colors.success;
+  if (status === 'str_filed') return colors.secondary;
+  if (status === 'escalated') return colors.danger;
+  return colors.info;
+}
 
 export default function ConnectAmlCaseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -30,82 +43,82 @@ export default function ConnectAmlCaseDetailPage({ params }: { params: Promise<{
     finally { setBusy(false); }
   }
 
-  if (loading) return <div style={{ padding: '0.5rem' }}><p style={{ color: '#6b7280' }}>Loading…</p></div>;
-  if (error && !c) return <div style={{ padding: '0.5rem' }}><p style={{ color: '#dc2626' }}>{error}</p><Link href="/admin/connect/aml" style={{ color: '#1d4ed8' }}>← Back</Link></div>;
+  if (loading) return <Page><p style={{ color: colors.muted }}>Loading…</p></Page>;
+  if (error && !c) return <Page><p style={{ color: colors.danger }}>{error}</p><Link href="/admin/connect/aml" style={{ color: colors.primary }}>← Back</Link></Page>;
   if (!c) return null;
 
   const alreadyFiled = c.status === 'str_filed' || c.str_reference || filed;
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <Link href="/admin/connect/aml" style={{ color: '#1d4ed8', textDecoration: 'none', fontSize: '0.85rem' }}>← AML queue</Link>
+    <Page>
+      <Link href="/admin/connect/aml" style={{ color: colors.primary, textDecoration: 'none', fontSize: '0.85rem' }}>← AML queue</Link>
       <div style={{ height: 8 }} />
       <PageHeader title={`AML case — ${c.id}`} subtitle={`${c.rule.replace(/_/g, ' ')} · subject ${c.subject_id}`} />
 
       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' }}>
-        <Badge status={c.severity} />
-        <Badge status={c.status === 'cleared' ? 'resolved' : c.status === 'escalated' ? 'critical' : c.status === 'str_filed' ? 'closed' : c.status} label={c.status.replace(/_/g, ' ')} />
+        <Badge text={c.severity} color={severityColor(c.severity)} />
+        <Badge text={c.status.replace(/_/g, ' ')} color={statusColor(c.status)} />
       </div>
 
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
         <Card title="Alert (reason codes only — no raw PII)">
-          <KV k="Rule" v={c.rule.replace(/_/g, ' ')} />
-          <KV k="Subject" v={c.subject_id} />
-          <KV k="Window txns" v={String(c.window_txn_count)} />
-          <KV k="Window volume" v={formatNaira(c.window_volume_kobo)} />
-          <KV k="Trigger amount" v={c.amount_kobo ? formatNaira(c.amount_kobo) : '—'} />
-          <div style={{ marginTop: '0.65rem', display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-            {c.reason_codes.map((rc) => <Badge key={rc} status="high" label={rc} />)}
+          <div style={{ marginTop: 12 }}>
+            <KV k="Rule" v={c.rule.replace(/_/g, ' ')} />
+            <KV k="Subject" v={c.subject_id} />
+            <KV k="Window txns" v={String(c.window_txn_count)} />
+            <KV k="Window volume" v={formatNaira(c.window_volume_kobo)} />
+            <KV k="Trigger amount" v={c.amount_kobo ? formatNaira(c.amount_kobo) : '—'} />
           </div>
-          {c.notes ? <p style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.65rem' }}>{c.notes}</p> : null}
+          <div style={{ marginTop: '0.65rem', display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+            {c.reason_codes.map((rc) => <Badge key={rc} text={rc} color={colors.warning} />)}
+          </div>
+          {c.notes ? <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: '0.65rem' }}>{c.notes}</p> : null}
         </Card>
 
         <Card title="STR / SAR filing (NFIU — 24h)">
           {alreadyFiled ? (
-            <div>
-              <Badge status="resolved" label="STR filed" />
+            <div style={{ marginTop: 12 }}>
+              <Badge text="STR filed" color={colors.success} />
               <p style={{ fontSize: '0.9rem', marginTop: '0.6rem' }}>Reference: <code>{filed ?? c.str_reference}</code></p>
-              {c.str_filed_at ? <p style={{ fontSize: '0.8rem', color: '#6b7280' }}>Filed {new Date(c.str_filed_at).toLocaleString('en-NG')}</p> : null}
+              {c.str_filed_at ? <p style={{ fontSize: '0.8rem', color: colors.muted }}>Filed {new Date(c.str_filed_at).toLocaleString('en-NG')}</p> : null}
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <label style={{ fontSize: '0.8rem', color: '#374151' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: 12 }}>
+              <label style={{ fontSize: '0.8rem', color: colors.text }}>
                 AML reason code
-                <input value={reasonCode} onChange={(e) => setReasonCode(e.target.value)} placeholder="e.g. STRUCT_SUB_THRESHOLD" style={inputStyle} />
+                <Input value={reasonCode} onChange={(e) => setReasonCode(e.target.value)} placeholder="e.g. STRUCT_SUB_THRESHOLD" style={{ display: 'block', width: '100%', marginTop: '0.25rem' }} />
               </label>
-              <label style={{ fontSize: '0.8rem', color: '#374151' }}>
+              <label style={{ fontSize: '0.8rem', color: colors.text }}>
                 Narrative reference (vault pointer)
-                <input value={narrativeRef} onChange={(e) => setNarrativeRef(e.target.value)} placeholder="vault://str/narrative-id" style={inputStyle} />
+                <Input value={narrativeRef} onChange={(e) => setNarrativeRef(e.target.value)} placeholder="vault://str/narrative-id" style={{ display: 'block', width: '100%', marginTop: '0.25rem' }} />
               </label>
-              <button disabled={busy} onClick={submitStr} style={{ ...btn(), background: '#340075', color: '#fff', borderColor: '#340075', marginTop: '0.35rem' }}>{busy ? 'Filing…' : 'File STR with NFIU'}</button>
-              <p style={{ fontSize: '0.75rem', color: '#9ca3af', margin: 0 }}>Action is audited. Reason codes only — no raw PII in the filing record.</p>
+              <Button variant="primary" disabled={busy} onClick={submitStr} style={{ marginTop: '0.35rem' }}>{busy ? 'Filing…' : 'File STR with NFIU'}</Button>
+              <p style={{ fontSize: '0.75rem', color: colors.muted, margin: 0 }}>Action is audited. Reason codes only — no raw PII in the filing record.</p>
             </div>
           )}
         </Card>
       </div>
 
-      <Card title="History">
+      <Card title="History" style={{ marginTop: 16 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr><th style={th()}>When</th><th style={th()}>Actor</th><th style={th()}>Action</th><th style={th()}>Reason code</th></tr></thead>
+          <thead><tr><th style={thCell}>When</th><th style={thCell}>Actor</th><th style={thCell}>Action</th><th style={thCell}>Reason code</th></tr></thead>
           <tbody>
             {c.history.map((h, i) => (
-              <tr key={i}><td style={td()}>{new Date(h.at).toLocaleString('en-NG')}</td><td style={td()}>{h.actor}</td><td style={td()}><code style={{ fontSize: '0.78rem' }}>{h.action}</code></td><td style={td()}>{h.reason_code ?? '—'}</td></tr>
+              <tr key={i}><td style={tdCell}>{new Date(h.at).toLocaleString('en-NG')}</td><td style={tdCell}>{h.actor}</td><td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{h.action}</code></td><td style={tdCell}>{h.reason_code ?? '—'}</td></tr>
             ))}
           </tbody>
         </table>
       </Card>
-    </div>
+    </Page>
   );
 }
 
-const inputStyle = { display: 'block', width: '100%', marginTop: '0.25rem', padding: '0.4rem 0.6rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem' } as const;
-
 function KV({ k, v }: { k: string; v: string }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.35rem 0', borderBottom: '1px solid #f3f4f6', fontSize: '0.85rem', gap: '1rem' }}>
-      <span style={{ color: '#6b7280', textTransform: 'capitalize' }}>{k}</span>
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.35rem 0', borderBottom: `1px solid ${colors.border}`, fontSize: '0.85rem', gap: '1rem' }}>
+      <span style={{ color: colors.muted, textTransform: 'capitalize' }}>{k}</span>
       <span style={{ fontWeight: 600, textAlign: 'right' }}>{v}</span>
     </div>
   );

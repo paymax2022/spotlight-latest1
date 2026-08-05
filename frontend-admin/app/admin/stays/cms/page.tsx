@@ -4,20 +4,17 @@ import { useEffect, useState } from 'react';
 import { listCms } from '@/services/staysAdminService';
 import type { CmsEntry } from '@/types/staysAdmin';
 import {
-  PageHeader,
   StaysTabs,
   Card,
   Badge,
   FilterBar,
   DisclosureNote,
   StateBlock,
-  btn,
-  th,
-  td,
   select,
   label,
   timeAgo,
 } from '../_ui';
+import { Page, PageHeader, Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function StaysCmsPage() {
   const [rows, setRows] = useState<CmsEntry[]>([]);
@@ -39,11 +36,11 @@ export default function StaysCmsPage() {
   useEffect(() => { load(); }, [type, status]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="CMS — cities, landmarks & SEO"
         subtitle="Content entries powering organic discovery pages across cities, landmarks and SEO landing pages."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" sm onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="growth" />
 
@@ -78,33 +75,33 @@ export default function StaysCmsPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th style={th()}>Type</th>
-                <th style={th()}>Title</th>
-                <th style={th()}>Slug</th>
-                <th style={th()}>Status</th>
-                <th style={th()}>Meta description</th>
-                <th style={th()}>Properties</th>
-                <th style={th()}>Updated</th>
+                <th style={thCell}>Type</th>
+                <th style={thCell}>Title</th>
+                <th style={thCell}>Slug</th>
+                <th style={thCell}>Status</th>
+                <th style={thCell}>Meta description</th>
+                <th style={thCell}>Properties</th>
+                <th style={thCell}>Updated</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((c) => (
                 <tr key={c.id}>
-                  <td style={td()}><Badge status={c.type} label={c.type.replace(/_/g, ' ')} /></td>
-                  <td style={td()}>{c.title}</td>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{c.slug}</code></td>
-                  <td style={td()}><Badge status={c.status} /></td>
-                  <td style={{ ...td(), maxWidth: 320 }}>
-                    <span style={{ color: '#6b7280', fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{c.meta_description}</span>
+                  <td style={tdCell}><Badge status={c.type} label={c.type.replace(/_/g, ' ')} /></td>
+                  <td style={tdCell}>{c.title}</td>
+                  <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{c.slug}</code></td>
+                  <td style={tdCell}><Badge status={c.status} /></td>
+                  <td style={{ ...tdCell, maxWidth: 320 }}>
+                    <span style={{ color: colors.muted, fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{c.meta_description}</span>
                   </td>
-                  <td style={td()}>{c.properties_linked.toLocaleString('en-NG')}</td>
-                  <td style={td()}>{timeAgo(c.updated_at)}</td>
+                  <td style={tdCell}>{c.properties_linked.toLocaleString('en-NG')}</td>
+                  <td style={tdCell}>{timeAgo(c.updated_at)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </Card>
       </StateBlock>
-    </div>
+    </Page>
   );
 }

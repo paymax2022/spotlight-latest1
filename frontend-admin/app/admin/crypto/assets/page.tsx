@@ -4,10 +4,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { adminListAssets, adminConfigAsset } from '@/services/cryptoAdminService';
 import type { CryptoAsset } from '@/types/cryptoAdmin';
 import {
-  PageHeader, CryptoTabs, Card, StatusBadge, DisclosureNote, StateBlock, AuditNote,
-  PermissionBanner, btn, btnPrimary, btnDisabled, th, td, input, label as lbl, textarea, fmtDate,
+  CryptoTabs, StatusBadge, DisclosureNote, StateBlock, AuditNote,
+  PermissionBanner, label as lbl, textarea, fmtDate,
   CRYPTO_PERMS, useCryptoPermission,
 } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 type FormState = {
   symbol: string;
@@ -82,11 +83,11 @@ export default function CryptoAssetsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Crypto — Asset Catalogue"
         subtitle="Admin-curated list of tradable assets. Deactivating an asset blocks new buy orders immediately; existing holdings are unaffected."
-        action={<button style={canAdmin ? btnPrimary() : btnDisabled()} disabled={!canAdmin} onClick={startCreate}>+ New asset</button>}
+        actions={<Button variant="primary" disabled={!canAdmin} onClick={startCreate}>+ New asset</Button>}
       />
       <CryptoTabs active="assets" />
       <DisclosureNote>
@@ -97,23 +98,23 @@ export default function CryptoAssetsPage() {
       </DisclosureNote>
 
       {!canAdmin && <PermissionBanner permission={CRYPTO_PERMS.admin} />}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
       {msg && <AuditNote>{msg}</AuditNote>}
 
       {showForm && (
-        <Card title={editing ? `Edit ${editing.symbol}` : 'New asset'}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem' }}>
+        <Card title={editing ? `Edit ${editing.symbol}` : 'New asset'} style={{ marginBottom: '1.25rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.75rem', marginTop: 12 }}>
             <div>
               <label style={lbl()}>Symbol</label>
-              <input style={input()} value={form.symbol} disabled={!!editing} placeholder="BTC" onChange={(e) => setForm({ ...form, symbol: e.target.value })} />
+              <Input value={form.symbol} disabled={!!editing} placeholder="BTC" onChange={(e) => setForm({ ...form, symbol: e.target.value })} />
             </div>
             <div>
               <label style={lbl()}>Name</label>
-              <input style={input()} value={form.name} placeholder="Bitcoin" onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              <Input value={form.name} placeholder="Bitcoin" onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </div>
             <div>
               <label style={lbl()}>Minor unit scale</label>
-              <input style={input()} value={form.minorUnitScale} placeholder="100000000" onChange={(e) => setForm({ ...form, minorUnitScale: e.target.value })} />
+              <Input value={form.minorUnitScale} placeholder="100000000" onChange={(e) => setForm({ ...form, minorUnitScale: e.target.value })} />
             </div>
             <div>
               <label style={lbl()}>Status</label>
@@ -135,41 +136,43 @@ export default function CryptoAssetsPage() {
           </div>
 
           <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
-            <button
-              style={canAdmin && !noteMissing && !busy ? btnPrimary() : btnDisabled()}
+            <Button
+              variant="primary"
               disabled={!canAdmin || noteMissing || busy}
               onClick={() => void submit()}
-            >{busy ? '…' : editing ? 'Save changes' : 'Create asset'}</button>
-            <button style={btn()} onClick={() => setShowForm(false)}>Cancel</button>
+            >{busy ? '…' : editing ? 'Save changes' : 'Create asset'}</Button>
+            <Button variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>
           </div>
-          {noteMissing && <p style={{ color: '#9ca3af', fontSize: '0.75rem', marginTop: '0.4rem' }}>Submit is disabled until an operator note is entered.</p>}
+          {noteMissing && <p style={{ color: colors.muted, fontSize: '0.75rem', marginTop: '0.4rem' }}>Submit is disabled until an operator note is entered.</p>}
         </Card>
       )}
 
-      <Card>
-        <StateBlock loading={loading} error={null} empty={rows.length === 0} emptyText="No assets in the catalogue yet.">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>
-              <th style={th()}>Symbol</th><th style={th()}>Name</th><th style={th()}>Minor unit scale</th>
-              <th style={th()}>Status</th><th style={th()}>Updated</th><th style={th()}>Action</th>
-            </tr></thead>
-            <tbody>
-              {rows.map((a) => (
-                <tr key={a.id}>
-                  <td style={{ ...td(), fontWeight: 700 }}>{a.symbol}</td>
-                  <td style={td()}>{a.name}</td>
-                  <td style={td()}>{a.minor_unit_scale.toLocaleString('en-NG')}</td>
-                  <td style={td()}><StatusBadge status={a.is_active ? 'active' : 'inactive'} /></td>
-                  <td style={td()}>{fmtDate(a.updated_at)}</td>
-                  <td style={td()}>
-                    <button style={canAdmin ? btn() : btnDisabled()} disabled={!canAdmin} onClick={() => startEdit(a)}>Edit</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </StateBlock>
+      <Card style={{ padding: 0, overflow: 'auto' }}>
+        <div style={{ padding: rows.length === 0 || loading ? 14 : 0 }}>
+          <StateBlock loading={loading} error={null} empty={rows.length === 0} emptyText="No assets in the catalogue yet.">
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr>
+                <th style={thCell}>Symbol</th><th style={thCell}>Name</th><th style={thCell}>Minor unit scale</th>
+                <th style={thCell}>Status</th><th style={thCell}>Updated</th><th style={thCell}>Action</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((a) => (
+                  <tr key={a.id}>
+                    <td style={{ ...tdCell, fontWeight: 700 }}>{a.symbol}</td>
+                    <td style={tdCell}>{a.name}</td>
+                    <td style={tdCell}>{a.minor_unit_scale.toLocaleString('en-NG')}</td>
+                    <td style={tdCell}><StatusBadge status={a.is_active ? 'active' : 'inactive'} /></td>
+                    <td style={tdCell}>{fmtDate(a.updated_at)}</td>
+                    <td style={tdCell}>
+                      <Button variant="outline" sm disabled={!canAdmin} onClick={() => startEdit(a)}>Edit</Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </StateBlock>
+        </div>
       </Card>
-    </div>
+    </Page>
   );
 }

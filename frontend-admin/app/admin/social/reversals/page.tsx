@@ -3,7 +3,21 @@
 import { useEffect, useState } from 'react';
 import { listReversals, reverseTxn, formatNaira } from '@/services/socialAdminService';
 import type { ReversalRecord } from '@/types/socialAdmin';
-import { PageHeader, SocialTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnDanger, th, td, input, label, select, timeAgo } from '../../savings/_ui';
+import { SocialTabs, DisclosureNote, StateBlock, FilterBar, AuditNote, timeAgo } from '../../savings/_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  switch (status) {
+    case 'reversed':
+      return colors.success;
+    case 'pending':
+      return colors.warning;
+    case 'rejected':
+      return colors.danger;
+    default:
+      return colors.secondary;
+  }
+}
 
 export default function ReversalsPage() {
   const [rows, setRows] = useState<ReversalRecord[]>([]);
@@ -35,8 +49,8 @@ export default function ReversalsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Reversal tooling" subtitle="Review and action P2P reversal requests (wrong-recipient, fraud, duplicate)." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Reversal tooling" subtitle="Review and action P2P reversal requests (wrong-recipient, fraud, duplicate)." actions={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <SocialTabs active="reversals" />
       <DisclosureNote>NL-8 — a reversal posts a balanced <strong>reversing ledger entry</strong>; no balance column is ever edited and the original entry is never deleted. NL-12 — each reversal records actor, reason and before/after to the immutable audit log.</DisclosureNote>
 
@@ -44,39 +58,39 @@ export default function ReversalsPage() {
 
       <FilterBar>
         <div style={{ minWidth: 200 }}>
-          <label style={label()}>Search</label>
-          <input style={input()} placeholder="Txn ref, party or id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
+          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' }}>Search</label>
+          <Input placeholder="Txn ref, party or id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
         </div>
         <div>
-          <label style={label()}>Status</label>
-          <select style={select()} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' }}>Status</label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All</option><option value="pending">Pending</option><option value="reversed">Reversed</option><option value="rejected">Rejected</option>
           </select>
         </div>
-        <button style={btn()} onClick={load}>Apply</button>
+        <Button variant="outline" onClick={load}>Apply</Button>
       </FilterBar>
 
-      <Card>
+      <Card style={{ padding: 0, overflow: 'auto' }}>
         <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No reversal requests match.">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>
-              <th style={th()}>Txn</th><th style={th()}>From</th><th style={th()}>To</th><th style={th()}>Amount</th>
-              <th style={th()}>Reason</th><th style={th()}>Requested by</th><th style={th()}>Status</th><th style={th()}>Action</th>
+              <th style={thCell}>Txn</th><th style={thCell}>From</th><th style={thCell}>To</th><th style={thCell}>Amount</th>
+              <th style={thCell}>Reason</th><th style={thCell}>Requested by</th><th style={thCell}>Status</th><th style={thCell}>Action</th>
             </tr></thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{r.txn_ref}</code><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{timeAgo(r.requested_at)}</div></td>
-                  <td style={td()}>{r.from_masked}</td>
-                  <td style={td()}>{r.to_masked}</td>
-                  <td style={td()}>{formatNaira(r.amount_kobo)}</td>
-                  <td style={td()}><Badge status={r.reason === 'fraud' ? 'high' : 'normal'} label={r.reason.replace(/_/g, ' ')} /></td>
-                  <td style={td()}>{r.requested_by_masked}</td>
-                  <td style={td()}><Badge status={r.status} /></td>
-                  <td style={td()}>
+                  <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{r.txn_ref}</code><div style={{ fontSize: '0.72rem', color: colors.muted }}>{timeAgo(r.requested_at)}</div></td>
+                  <td style={tdCell}>{r.from_masked}</td>
+                  <td style={tdCell}>{r.to_masked}</td>
+                  <td style={tdCell}>{formatNaira(r.amount_kobo)}</td>
+                  <td style={tdCell}><Badge text={r.reason.replace(/_/g, ' ')} color={r.reason === 'fraud' ? colors.danger : colors.secondary} /></td>
+                  <td style={tdCell}>{r.requested_by_masked}</td>
+                  <td style={tdCell}><Badge text={r.status} color={statusColor(r.status)} /></td>
+                  <td style={tdCell}>
                     {r.status === 'pending'
-                      ? <button style={btnDanger()} disabled={busy === r.id} onClick={() => onReverse(r)}>{busy === r.id ? '…' : 'Reverse'}</button>
-                      : <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>{r.resolved_at ? timeAgo(r.resolved_at) : '—'}</span>}
+                      ? <Button sm variant="danger" disabled={busy === r.id} onClick={() => onReverse(r)}>{busy === r.id ? '…' : 'Reverse'}</Button>
+                      : <span style={{ color: colors.muted, fontSize: '0.78rem' }}>{r.resolved_at ? timeAgo(r.resolved_at) : '—'}</span>}
                   </td>
                 </tr>
               ))}
@@ -84,6 +98,6 @@ export default function ReversalsPage() {
           </table>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

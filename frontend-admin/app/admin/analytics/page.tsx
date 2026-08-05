@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { getAnalyticsSummary } from '@/services/analyticsService';
 import type { Analytics } from '@/types/analytics';
+import { Page, PageHeader, Card, colors } from '@/components/ui/vuexy';
 
 export default function AdminAnalyticsPage() {
   const [data, setData] = useState<Analytics | null>(null);
@@ -11,17 +12,19 @@ export default function AdminAnalyticsPage() {
   }, []);
 
   return (
-    <div>
-      <h1>Chatbot Analytics</h1>
+    <Page>
+      <PageHeader title="Chatbot Analytics" />
       {!data ? (
-        <p>Loading analytics...</p>
+        <p style={{ color: colors.muted }}>Loading analytics...</p>
       ) : (
-        <div style={{ display: 'grid', gap: 8 }}>
-          <p>Sessions: {data.sessionsTotal}</p>
-          <p>Messages: {data.messagesTotal}</p>
-          <p>Leads: {data.leadsTotal}</p>
-        </div>
+        <Card>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <p>Sessions: {data.sessionsTotal}</p>
+            <p>Messages: {data.messagesTotal}</p>
+            <p>Leads: {data.leadsTotal}</p>
+          </div>
+        </Card>
       )}
-    </div>
+    </Page>
   );
 }

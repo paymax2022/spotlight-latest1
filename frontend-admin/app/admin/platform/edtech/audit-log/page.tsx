@@ -11,6 +11,7 @@ import {
   PlatformGuard, PlatformTabs, timeAgo, fmtDate,
   PageHeader, Card, Badge, Kpi, StateBlock, DisclosureNote, btn, btnPrimary, th, td, input, select, label,
 } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function AuditLogViewerPage() {
   const [rows, setRows] = useState<AuditLogEntry[]>([]);
@@ -47,7 +48,7 @@ export default function AuditLogViewerPage() {
 
         <StateBlock loading={loading} error={error} empty={false}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <Kpi label="Entries" value={rows.length.toString()} accent="#340075" />
+            <Kpi label="Entries" value={rows.length.toString()} accent={colors.primary} />
           </div>
           <Card title="Audit entries (immutable)">
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -55,9 +56,9 @@ export default function AuditLogViewerPage() {
               <tbody>
                 {rows.map((e) => (
                   <tr key={e.id}>
-                    <td style={td()}>{timeAgo(e.at)}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{fmtDate(e.at)}</div></td>
+                    <td style={td()}>{timeAgo(e.at)}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{fmtDate(e.at)}</div></td>
                     <td style={td()}><code style={{ fontSize: '0.76rem' }}>{e.module}</code></td>
-                    <td style={td()}>{e.entity}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{e.entity_id}</div></td>
+                    <td style={td()}>{e.entity}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{e.entity_id}</div></td>
                     <td style={td()}><Badge status={e.action} label={e.action.replace(/_/g, ' ')} /></td>
                     <td style={td()}>{e.actor}</td>
                     <td style={td()}><Badge status="verified" label={e.actor_role} /></td>
@@ -67,7 +68,7 @@ export default function AuditLogViewerPage() {
                 ))}
               </tbody>
             </table>
-            {rows.length === 0 ? <p style={{ color: '#6b7280', marginTop: '0.75rem' }}>No audit entries match the search.</p> : null}
+            {rows.length === 0 ? <p style={{ color: colors.muted, marginTop: '0.75rem' }}>No audit entries match the search.</p> : null}
           </Card>
         </StateBlock>
       </div>

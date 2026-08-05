@@ -3,7 +3,23 @@
 import { useEffect, useState } from 'react';
 import { listPerks, upsertPerk, formatNaira } from '@/services/blackAdminService';
 import type { BlackPerk, PerkStatus } from '@/types/blackAdmin';
-import { PageHeader, BlackTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnPrimary, th, td, input, label, select, fmtDate } from '../../creators/_ui';
+import { BlackTabs, DisclosureNote, StateBlock, FilterBar, AuditNote, fmtDate } from '../../creators/_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  switch (status) {
+    case 'active':
+      return colors.success;
+    case 'paused':
+      return colors.warning;
+    case 'draft':
+      return colors.secondary;
+    case 'expired':
+      return colors.danger;
+    default:
+      return colors.secondary;
+  }
+}
 
 export default function BlackPerksPage() {
   const [rows, setRows] = useState<BlackPerk[]>([]);
@@ -36,8 +52,8 @@ export default function BlackPerksPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Black perk configuration" subtitle="Perk catalogue for Paymax Black — early tickets, lounge access, discounts and partner offers. Each perk is redeemed via single-use credential with a per-member monthly cap." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Black perk configuration" subtitle="Perk catalogue for Paymax Black — early tickets, lounge access, discounts and partner offers. Each perk is redeemed via single-use credential with a per-member monthly cap." actions={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <BlackTabs active="perks" />
       <DisclosureNote>Perks redeem closed-loop via single-use credential (NL-3) and are <strong>never cash</strong> (NL-4). The monthly cap enforces single-use entitlement per cycle. Pausing/activating a perk writes an immutable audit entry (NL-12).</DisclosureNote>
 
@@ -45,12 +61,12 @@ export default function BlackPerksPage() {
 
       <FilterBar>
         <div style={{ minWidth: 220 }}>
-          <label style={label()}>Search</label>
-          <input style={input()} placeholder="Perk name, partner or id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
+          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' }}>Search</label>
+          <Input placeholder="Perk name, partner or id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
         </div>
         <div>
-          <label style={label()}>Status</label>
-          <select style={select()} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' }}>Status</label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All</option>
             <option value="active">Active</option>
             <option value="paused">Paused</option>
@@ -59,8 +75,8 @@ export default function BlackPerksPage() {
           </select>
         </div>
         <div>
-          <label style={label()}>Kind</label>
-          <select style={select()} value={kind} onChange={(e) => setKind(e.target.value)}>
+          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' }}>Kind</label>
+          <select value={kind} onChange={(e) => setKind(e.target.value)}>
             <option value="">All</option>
             <option value="early_ticket">Early ticket</option>
             <option value="lounge_access">Lounge access</option>
@@ -70,34 +86,34 @@ export default function BlackPerksPage() {
             <option value="priority_support">Priority support</option>
           </select>
         </div>
-        <button style={btn()} onClick={load}>Apply</button>
+        <Button variant="outline" onClick={load}>Apply</Button>
       </FilterBar>
 
-      <Card>
+      <Card style={{ padding: 0, overflow: 'auto' }}>
         <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No perks configured.">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>
-              <th style={th()}>Perk</th><th style={th()}>Kind</th><th style={th()}>Partner</th><th style={th()}>Value</th>
-              <th style={th()}>Monthly cap</th><th style={th()}>Redeemed (30d)</th><th style={th()}>Cost (30d)</th><th style={th()}>Window</th><th style={th()}>Status</th><th style={th()}>Actions</th>
+              <th style={thCell}>Perk</th><th style={thCell}>Kind</th><th style={thCell}>Partner</th><th style={thCell}>Value</th>
+              <th style={thCell}>Monthly cap</th><th style={thCell}>Redeemed (30d)</th><th style={thCell}>Cost (30d)</th><th style={thCell}>Window</th><th style={thCell}>Status</th><th style={thCell}>Actions</th>
             </tr></thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><strong>{r.name}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.id}</div></td>
-                  <td style={td()}><Badge status={r.kind} /></td>
-                  <td style={td()}>{r.partner_name ?? <span style={{ color: '#9ca3af' }}>—</span>}</td>
-                  <td style={td()}>{r.value_kobo > 0 ? formatNaira(r.value_kobo) : <span style={{ color: '#9ca3af' }}>—</span>}</td>
-                  <td style={td()}>{r.monthly_cap_per_member}/mo</td>
-                  <td style={td()}>{r.total_redeemed_30d.toLocaleString('en-NG')}</td>
-                  <td style={td()}>{formatNaira(r.cost_30d_kobo)}</td>
-                  <td style={td()}><span style={{ fontSize: '0.78rem' }}>{fmtDate(r.starts_at)} → {fmtDate(r.ends_at)}</span></td>
-                  <td style={td()}><Badge status={r.status} /></td>
-                  <td style={td()}>
+                  <td style={tdCell}><strong>{r.name}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.id}</div></td>
+                  <td style={tdCell}><Badge text={r.kind.replace(/_/g, ' ')} color={colors.info} /></td>
+                  <td style={tdCell}>{r.partner_name ?? <span style={{ color: colors.muted }}>—</span>}</td>
+                  <td style={tdCell}>{r.value_kobo > 0 ? formatNaira(r.value_kobo) : <span style={{ color: colors.muted }}>—</span>}</td>
+                  <td style={tdCell}>{r.monthly_cap_per_member}/mo</td>
+                  <td style={tdCell}>{r.total_redeemed_30d.toLocaleString('en-NG')}</td>
+                  <td style={tdCell}>{formatNaira(r.cost_30d_kobo)}</td>
+                  <td style={tdCell}><span style={{ fontSize: '0.78rem' }}>{fmtDate(r.starts_at)} → {fmtDate(r.ends_at)}</span></td>
+                  <td style={tdCell}><Badge text={r.status} color={statusColor(r.status)} /></td>
+                  <td style={tdCell}>
                     <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                       {r.status !== 'active' ? (
-                        <button style={btnPrimary()} disabled={busy === r.id} onClick={() => setPerkStatus(r, 'active')}>{busy === r.id ? '…' : 'Activate'}</button>
+                        <Button sm variant="primary" disabled={busy === r.id} onClick={() => setPerkStatus(r, 'active')}>{busy === r.id ? '…' : 'Activate'}</Button>
                       ) : (
-                        <button style={btn()} disabled={busy === r.id} onClick={() => setPerkStatus(r, 'paused')}>Pause</button>
+                        <Button sm variant="outline" disabled={busy === r.id} onClick={() => setPerkStatus(r, 'paused')}>Pause</Button>
                       )}
                     </div>
                   </td>
@@ -107,6 +123,6 @@ export default function BlackPerksPage() {
           </table>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

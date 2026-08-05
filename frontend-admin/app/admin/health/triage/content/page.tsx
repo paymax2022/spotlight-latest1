@@ -9,6 +9,7 @@ import {
   PageHeader, TriageTabs, Card, Badge, DisclosureNote, StateBlock, AuditNote, FilterBar,
   btn, btnPrimary, th, td, select, input, label, timeAgo, fmtDate,
 } from '../../_ui';
+import { colors, tint } from '@/components/ui/vuexy';
 
 const KIND_LABELS: Record<ClinicalContentKind, string> = {
   condition_library: 'Condition library', disclaimer: 'Disclaimer',
@@ -79,7 +80,7 @@ export default function TriageContentPage() {
         change is versioned and written to the immutable audit (SC-6 / SC-12).
       </DisclosureNote>
 
-      {result ? <div style={{ border: '1px solid #ddd6fe', background: '#f5f3ff', color: '#5b21b6', borderRadius: '0.5rem', padding: '0.6rem 0.8rem', fontSize: '0.82rem', marginBottom: '1rem' }}>{result}</div> : null}
+      {result ? <div style={{ border: `1px solid ${tint(colors.primary, 0.24)}`, background: tint(colors.primary, 0.08), color: colors.primary, borderRadius: '0.5rem', padding: '0.6rem 0.8rem', fontSize: '0.82rem', marginBottom: '1rem' }}>{result}</div> : null}
 
       <Card title="New content draft">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.6rem', alignItems: 'flex-end' }}>
@@ -140,19 +141,19 @@ export default function TriageContentPage() {
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id}>
-                    <td style={td()}><div style={{ fontWeight: 600 }}>{r.title}</div><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.body_preview.slice(0, 80)}{r.body_preview.length > 80 ? '…' : ''}</div></td>
+                    <td style={td()}><div style={{ fontWeight: 600 }}>{r.title}</div><div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.body_preview.slice(0, 80)}{r.body_preview.length > 80 ? '…' : ''}</div></td>
                     <td style={td()}>{KIND_LABELS[r.kind]}</td>
                     <td style={td()}>{LANGUAGE_LABELS[r.language] ?? r.language}</td>
                     <td style={td()}><Badge status={r.state} /></td>
                     <td style={td()}>v{r.version}</td>
-                    <td style={td()}>{r.reviewer_id ? <span style={{ color: '#15803d' }}>✓ {r.reviewer_id}<div style={{ fontSize: '0.7rem', color: '#9ca3af' }}>{fmtDate(r.signed_off_at)}</div></span> : <span style={{ color: '#b91c1c', fontSize: '0.78rem' }}>Not signed off</span>}</td>
+                    <td style={td()}>{r.reviewer_id ? <span style={{ color: colors.success }}>✓ {r.reviewer_id}<div style={{ fontSize: '0.7rem', color: colors.muted }}>{fmtDate(r.signed_off_at)}</div></span> : <span style={{ color: colors.danger, fontSize: '0.78rem' }}>Not signed off</span>}</td>
                     <td style={td()}>{timeAgo(r.updated_at)}</td>
                     <td style={td()}>
                       <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                         {(NEXT_ACTIONS[r.state] ?? []).map((a) => (
                           <button key={a} disabled={busy === r.id} onClick={() => act(r.id, a)} style={a === 'publish' ? { ...btnPrimary(), fontSize: '0.75rem', padding: '0.25rem 0.55rem' } : { ...btn(), fontSize: '0.75rem', padding: '0.25rem 0.55rem' }} title={a === 'publish' && !r.reviewer_id ? 'Requires clinician sign-off (SC-6)' : undefined}>{ACTION_LABEL[a]}</button>
                         ))}
-                        {!(NEXT_ACTIONS[r.state] ?? []).length ? <span style={{ color: '#9ca3af', fontSize: '0.75rem' }}>—</span> : null}
+                        {!(NEXT_ACTIONS[r.state] ?? []).length ? <span style={{ color: colors.muted, fontSize: '0.75rem' }}>—</span> : null}
                       </div>
                     </td>
                   </tr>

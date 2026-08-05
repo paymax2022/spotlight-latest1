@@ -5,18 +5,19 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { getReservation, formatNaira, formatMoney } from '@/services/staysAdminService';
 import type { ReservationDetail } from '@/types/staysAdmin';
-import { PageHeader, StaysTabs, Card, Badge, btn, th, td, fmtDate, timeAgo, StateBlock, DisclosureNote } from '../../_ui';
+import { StaysTabs, Badge, fmtDate, timeAgo, StateBlock, DisclosureNote } from '../../_ui';
+import { Page, PageHeader, Card, Button, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 function Fact({ k, v }: { k: string; v: React.ReactNode }) {
   return (
     <div>
-      <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: '#6b7280', fontWeight: 600 }}>{k}</div>
-      <div style={{ fontSize: '0.9rem', color: '#111827', marginTop: '0.15rem' }}>{v}</div>
+      <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 600 }}>{k}</div>
+      <div style={{ fontSize: '0.9rem', color: colors.text, marginTop: '0.15rem' }}>{v}</div>
     </div>
   );
 }
 
-const code: React.CSSProperties = { fontSize: '0.78rem', background: '#f3f4f6', padding: '0.1rem 0.35rem', borderRadius: '0.25rem' };
+const code: React.CSSProperties = { fontSize: '0.78rem', background: tint(colors.muted, 0.12), padding: '0.1rem 0.35rem', borderRadius: '0.25rem' };
 
 export default function StaysReservationDetailPage() {
   const params = useParams();
@@ -36,11 +37,15 @@ export default function StaysReservationDetailPage() {
   useEffect(() => { load(); }, [id]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Reservation detail"
         subtitle="Lifecycle timeline, money breakdown and double-entry ledger for a single booking. Guest PII is masked."
-        action={<Link href="/admin/stays/reservations" style={btn()}>&larr; Back to reservations</Link>}
+        actions={
+          <Link href="/admin/stays/reservations" style={{ textDecoration: 'none' }}>
+            <Button variant="outline">&larr; Back to reservations</Button>
+          </Link>
+        }
       />
       <StaysTabs active="reservations" />
 
@@ -54,7 +59,11 @@ export default function StaysReservationDetailPage() {
                 : <> &middot; settled in NGN, no FX conversion.</>}
             </DisclosureNote>
 
-            <Card title="Booking facts" right={<Badge status={data.state} />}>
+            <Card>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
+                <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: colors.text }}>Booking facts</h2>
+                <Badge status={data.state} />
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
                 <Fact k="Reservation ID" v={<code style={code}>{data.id}</code>} />
                 <Fact k="Supplier ref" v={data.supplier_ref ? <code style={code}>{data.supplier_ref}</code> : '—'} />
@@ -91,29 +100,33 @@ export default function StaysReservationDetailPage() {
               </div>
             </Card>
 
-            <Card title="Ledger" right={<span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>double-entry — HOLD &rarr; CHARGE &rarr; RELEASE/REFUND</span>}>
+            <Card>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
+                <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: colors.text }}>Ledger</h2>
+                <span style={{ fontSize: '0.75rem', color: colors.muted }}>double-entry — HOLD &rarr; CHARGE &rarr; RELEASE/REFUND</span>
+              </div>
               {data.ledger.length === 0 ? (
-                <p style={{ color: '#6b7280' }}>No ledger entries recorded.</p>
+                <p style={{ color: colors.muted }}>No ledger entries recorded.</p>
               ) : (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr>
-                        <th style={th()}>Kind</th>
-                        <th style={th()}>Amount</th>
-                        <th style={th()}>Ledger ref</th>
-                        <th style={th()}>Status</th>
-                        <th style={th()}>When</th>
+                        <th style={thCell}>Kind</th>
+                        <th style={thCell}>Amount</th>
+                        <th style={thCell}>Ledger ref</th>
+                        <th style={thCell}>Status</th>
+                        <th style={thCell}>When</th>
                       </tr>
                     </thead>
                     <tbody>
                       {data.ledger.map((l) => (
                         <tr key={l.id}>
-                          <td style={td()}><Badge status={l.kind} /></td>
-                          <td style={td()}>{formatNaira(l.amount_kobo)}</td>
-                          <td style={td()}><code style={code}>{l.ledger_ref}</code></td>
-                          <td style={td()}><Badge status={l.status} /></td>
-                          <td style={td()}>{fmtDate(l.created_at)}</td>
+                          <td style={tdCell}><Badge status={l.kind} /></td>
+                          <td style={tdCell}>{formatNaira(l.amount_kobo)}</td>
+                          <td style={tdCell}><code style={code}>{l.ledger_ref}</code></td>
+                          <td style={tdCell}><Badge status={l.status} /></td>
+                          <td style={tdCell}>{fmtDate(l.created_at)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -124,17 +137,17 @@ export default function StaysReservationDetailPage() {
 
             <Card title="State timeline">
               {data.timeline.length === 0 ? (
-                <p style={{ color: '#6b7280' }}>No timeline entries.</p>
+                <p style={{ color: colors.muted }}>No timeline entries.</p>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
                   {data.timeline.map((t, i) => (
                     <div key={`${t.at}-${i}`} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
                       <div style={{ minWidth: 150 }}><Badge status={t.state} /></div>
                       <div>
-                        <div style={{ fontSize: '0.85rem', color: '#374151' }}>
+                        <div style={{ fontSize: '0.85rem', color: colors.text }}>
                           <strong>{t.actor}</strong>{t.note ? ` — ${t.note}` : ''}
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.1rem' }}>{fmtDate(t.at)} &middot; {timeAgo(t.at)}</div>
+                        <div style={{ fontSize: '0.75rem', color: colors.muted, marginTop: '0.1rem' }}>{fmtDate(t.at)} &middot; {timeAgo(t.at)}</div>
                       </div>
                     </div>
                   ))}
@@ -144,6 +157,6 @@ export default function StaysReservationDetailPage() {
           </>
         )}
       </StateBlock>
-    </div>
+    </Page>
   );
 }

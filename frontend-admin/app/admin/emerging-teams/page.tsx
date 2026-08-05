@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { listStemEmergingTeams } from '@/services/stemService';
 import type { StemEmergingTeam } from '@/types/stem';
+import { Page, PageHeader, Card, colors } from '@/components/ui/vuexy';
 
 export default function AdminEmergingTeamsPage() {
   const [rows, setRows] = useState<StemEmergingTeam[]>([]);
@@ -12,18 +13,17 @@ export default function AdminEmergingTeamsPage() {
   }, []);
 
   return (
-    <section>
-      <h1>Emerging Teams</h1>
-      <p>Team entities in the Emerging Future Innovators channel.</p>
-      <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+    <Page>
+      <PageHeader title="Emerging Teams" subtitle="Team entities in the Emerging Future Innovators channel." />
+      <div style={{ display: 'grid', gap: 8 }}>
         {rows.map((row) => (
-          <article key={row.id || `${row.innovatorId}-${row.teamName}`} style={{ border: '1px solid #2a2a2a', padding: 10 }}>
+          <Card key={row.id || `${row.innovatorId}-${row.teamName}`} style={{ padding: 10 }}>
             <p style={{ margin: 0, fontWeight: 700 }}>{row.teamName}</p>
-            <p style={{ margin: '4px 0 0 0', fontSize: 12 }}>Track: {row.innovationTrack || '-'} · Team size: {row.teamSize}</p>
-          </article>
+            <p style={{ margin: '4px 0 0 0', fontSize: 12, color: colors.muted }}>Track: {row.innovationTrack || '-'} · Team size: {row.teamSize}</p>
+          </Card>
         ))}
-        {rows.length === 0 ? <p>No emerging teams found yet.</p> : null}
+        {rows.length === 0 ? <p style={{ color: colors.muted }}>No emerging teams found yet.</p> : null}
       </div>
-    </section>
+    </Page>
   );
 }

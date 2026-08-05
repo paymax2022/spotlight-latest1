@@ -22,6 +22,7 @@ import {
   PageHeader, Card, BackToQueue, btn, btnPrimary, btnDisabled,
   CheckStatusBadge, SessionStatusBadge, ConfidencePill, timeAgo, useKycPermissions,
 } from '../../_ui';
+import { Page, colors } from '@/components/ui/vuexy';
 
 type ActionKind = 'approve' | 'reject' | 'resubmit';
 
@@ -35,7 +36,7 @@ function Field({ label, children, mono }: { label: string; children: React.React
   return (
     <div>
       <div style={{ fontSize: '0.72rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: '0.9rem', color: '#111827', fontFamily: mono ? 'monospace' : 'inherit', wordBreak: 'break-all' }}>{children}</div>
+      <div style={{ fontSize: '0.9rem', color: colors.text, fontFamily: mono ? 'monospace' : 'inherit', wordBreak: 'break-all' }}>{children}</div>
     </div>
   );
 }
@@ -94,13 +95,13 @@ export default function KycCaseDetailPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <div style={{ marginBottom: '0.75rem' }}><BackToQueue /></div>
 
       {loading ? (
-        <p style={{ color: '#6b7280' }}>Loading case…</p>
+        <p style={{ color: colors.muted }}>Loading case…</p>
       ) : !detail ? (
-        <p style={{ color: '#dc2626' }}>{error ?? 'Case not found.'}</p>
+        <p style={{ color: colors.danger }}>{error ?? 'Case not found.'}</p>
       ) : (
         <>
           <PageHeader
@@ -109,7 +110,7 @@ export default function KycCaseDetailPage() {
             action={<SessionStatusBadge status={detail.session.status} />}
           />
 
-          {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+          {error && <p style={{ color: colors.danger }}>{error}</p>}
 
           <Card title="Session">
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
@@ -124,15 +125,15 @@ export default function KycCaseDetailPage() {
 
           <Card title="Checks">
             {detail.checks.length === 0 ? (
-              <p style={{ color: '#6b7280', margin: 0 }}>No checks recorded on this session.</p>
+              <p style={{ color: colors.muted, margin: 0 }}>No checks recorded on this session.</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 {detail.checks.map((c) => (
-                  <div key={c.id} style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.75rem' }}>
+                  <div key={c.id} style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.75rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <strong style={{ fontSize: '0.9rem' }}>{CHECK_TYPE_LABELS[c.type]}</strong>
-                        <span style={{ fontSize: '0.75rem', color: '#6b7280', textTransform: 'capitalize' }}>· {c.provider}</span>
+                        <span style={{ fontSize: '0.75rem', color: colors.muted, textTransform: 'capitalize' }}>· {c.provider}</span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <ConfidencePill value={c.confidence} />
@@ -145,13 +146,13 @@ export default function KycCaseDetailPage() {
                     {c.extracted_fields && Object.keys(c.extracted_fields).length > 0 && (
                       <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                         {Object.entries(c.extracted_fields).map(([k, v]) => (
-                          <span key={k} style={{ fontSize: '0.75rem', background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '0.375rem', padding: '0.15rem 0.5rem' }}>
-                            <span style={{ color: '#6b7280' }}>{k}:</span> {v}
+                          <span key={k} style={{ fontSize: '0.75rem', background: '#f3f4f6', border: `1px solid ${colors.border}`, borderRadius: '0.375rem', padding: '0.15rem 0.5rem' }}>
+                            <span style={{ color: colors.muted }}>{k}:</span> {v}
                           </span>
                         ))}
                       </div>
                     )}
-                    <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: '0.5rem' }}>{timeAgo(c.created_at)}</div>
+                    <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: '0.5rem' }}>{timeAgo(c.created_at)}</div>
                   </div>
                 ))}
               </div>
@@ -164,14 +165,14 @@ export default function KycCaseDetailPage() {
               Every view is <strong>logged</strong> and appears in the Audit &amp; Consent log (AK13).
             </div>
             {detail.evidence_refs.length === 0 ? (
-              <p style={{ color: '#6b7280', margin: 0 }}>No evidence attached to this case.</p>
+              <p style={{ color: colors.muted, margin: 0 }}>No evidence attached to this case.</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 {detail.evidence_refs.map((ev) => (
-                  <div key={ev.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.5rem 0.75rem', flexWrap: 'wrap' }}>
+                  <div key={ev.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.5rem 0.75rem', flexWrap: 'wrap' }}>
                     <div>
                       <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{ev.label ?? ev.kind}</div>
-                      <div style={{ fontSize: '0.72rem', color: '#6b7280' }}>{ev.kind} · {ev.id}</div>
+                      <div style={{ fontSize: '0.72rem', color: colors.muted }}>{ev.kind} · {ev.id}</div>
                     </div>
                     {accessed[ev.id] ? (
                       <span style={{ fontSize: '0.78rem', color: '#15803d', fontWeight: 600 }}>Access logged — open in secure viewer</span>
@@ -235,7 +236,7 @@ export default function KycCaseDetailPage() {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
           <div style={{ background: '#fff', borderRadius: '0.75rem', padding: '1.5rem', width: '100%', maxWidth: '30rem', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
             <h2 style={{ fontWeight: 700, marginTop: 0, marginBottom: '0.75rem' }}>{ACTION_LABELS[action]}</h2>
-            <p style={{ fontSize: '0.85rem', color: '#374151', marginTop: 0 }}>
+            <p style={{ fontSize: '0.85rem', color: colors.text, marginTop: 0 }}>
               Case <code>{detail.session.id}</code> for user <code>{detail.session.user_id}</code> targeting{' '}
               <strong>{TIER_LABELS[detail.session.target_tier] ?? `Tier ${detail.session.target_tier}`}</strong>. This decision is recorded in the audit log.
             </p>
@@ -247,11 +248,11 @@ export default function KycCaseDetailPage() {
                 onChange={(e) => setReason(e.target.value)}
                 rows={3}
                 placeholder={action === 'approve' ? 'e.g. facial match manually confirmed against ID' : action === 'reject' ? 'e.g. identity mismatch confirmed' : 'e.g. document image unreadable — ask user to re-capture'}
-                style={{ display: 'block', width: '100%', marginTop: '0.25rem', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', resize: 'vertical', boxSizing: 'border-box' }}
+                style={{ display: 'block', width: '100%', marginTop: '0.25rem', padding: '0.5rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem', resize: 'vertical', boxSizing: 'border-box' }}
               />
             </label>
 
-            {error && <p style={{ color: '#dc2626', fontSize: '0.85rem', marginBottom: '0.75rem' }}>{error}</p>}
+            {error && <p style={{ color: colors.danger, fontSize: '0.85rem', marginBottom: '0.75rem' }}>{error}</p>}
 
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
               <button onClick={() => { setAction(null); setReason(''); setError(null); }} style={btn()}>Cancel</button>
@@ -266,6 +267,6 @@ export default function KycCaseDetailPage() {
           </div>
         </div>
       )}
-    </div>
+    </Page>
   );
 }

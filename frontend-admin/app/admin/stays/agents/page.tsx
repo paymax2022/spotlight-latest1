@@ -4,18 +4,15 @@ import { useEffect, useState } from 'react';
 import { listAgents, formatNaira } from '@/services/staysAdminService';
 import type { Agent } from '@/types/staysAdmin';
 import {
-  PageHeader,
   StaysTabs,
   Kpi,
   Badge,
   StateBlock,
   FilterBar,
-  btn,
-  th,
-  td,
   label,
   select,
 } from '../_ui';
+import { Page, PageHeader, Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUSES = ['active', 'suspended', 'pending'];
 
@@ -38,18 +35,18 @@ export default function StaysAgentsPage() {
   const totalUnpaid = rows.reduce((sum, r) => sum + r.commission_unpaid_kobo, 0);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Agent management & commissions"
         subtitle="Travel agents and resellers booking on Paymax Stays — performance, tier and commission accruals across a 30-day window."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" sm onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="trust" />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-        <Kpi label="Active agents" value={activeCount.toLocaleString('en-NG')} accent="#15803d" />
+        <Kpi label="Active agents" value={activeCount.toLocaleString('en-NG')} accent={colors.success} />
         <Kpi label="Total GMV (30d)" value={formatNaira(totalGmv)} />
-        <Kpi label="Unpaid commission" value={formatNaira(totalUnpaid)} sub="Across all agents" accent={totalUnpaid > 0 ? '#9a3412' : undefined} />
+        <Kpi label="Unpaid commission" value={formatNaira(totalUnpaid)} sub="Across all agents" accent={totalUnpaid > 0 ? colors.warning : undefined} />
       </div>
 
       <FilterBar>
@@ -66,34 +63,34 @@ export default function StaysAgentsPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
-              <th style={th()}>Agent code</th>
-              <th style={th()}>Name</th>
-              <th style={th()}>Status</th>
-              <th style={th()}>Tier</th>
-              <th style={th()}>Bookings 30d</th>
-              <th style={th()}>GMV 30d</th>
-              <th style={th()}>Rate</th>
-              <th style={th()}>Earned</th>
-              <th style={th()}>Unpaid</th>
+              <th style={thCell}>Agent code</th>
+              <th style={thCell}>Name</th>
+              <th style={thCell}>Status</th>
+              <th style={thCell}>Tier</th>
+              <th style={thCell}>Bookings 30d</th>
+              <th style={thCell}>GMV 30d</th>
+              <th style={thCell}>Rate</th>
+              <th style={thCell}>Earned</th>
+              <th style={thCell}>Unpaid</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.id}>
-                <td style={td()}><code style={{ fontSize: '0.78rem' }}>{r.agent_code}</code></td>
-                <td style={td()}>{r.name_masked}</td>
-                <td style={td()}><Badge status={r.status} /></td>
-                <td style={td()}>{r.tier}</td>
-                <td style={td()}>{r.bookings_30d.toLocaleString('en-NG')}</td>
-                <td style={td()}>{formatNaira(r.gmv_30d_kobo)}</td>
-                <td style={td()}>{r.commission_rate_pct}%</td>
-                <td style={td()}>{formatNaira(r.commission_earned_kobo)}</td>
-                <td style={{ ...td(), color: r.commission_unpaid_kobo > 0 ? '#9a3412' : '#374151', fontWeight: r.commission_unpaid_kobo > 0 ? 700 : 400 }}>{formatNaira(r.commission_unpaid_kobo)}</td>
+                <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{r.agent_code}</code></td>
+                <td style={tdCell}>{r.name_masked}</td>
+                <td style={tdCell}><Badge status={r.status} /></td>
+                <td style={tdCell}>{r.tier}</td>
+                <td style={tdCell}>{r.bookings_30d.toLocaleString('en-NG')}</td>
+                <td style={tdCell}>{formatNaira(r.gmv_30d_kobo)}</td>
+                <td style={tdCell}>{r.commission_rate_pct}%</td>
+                <td style={tdCell}>{formatNaira(r.commission_earned_kobo)}</td>
+                <td style={{ ...tdCell, color: r.commission_unpaid_kobo > 0 ? colors.warning : colors.text, fontWeight: r.commission_unpaid_kobo > 0 ? 700 : 400 }}>{formatNaira(r.commission_unpaid_kobo)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </StateBlock>
-    </div>
+    </Page>
   );
 }

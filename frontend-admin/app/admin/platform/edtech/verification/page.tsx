@@ -10,6 +10,7 @@ import {
   PlatformGuard, PlatformTabs, fmtDate,
   PageHeader, Card, Badge, Kpi, StateBlock, DisclosureNote, AuditNote, btn, btnPrimary, btnDanger, th, td, input, select, label,
 } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function VerificationQueuePage() {
   const [subs, setSubs] = useState<VerificationSubmission[]>([]);
@@ -47,13 +48,13 @@ export default function VerificationQueuePage() {
         <PageHeader title="School Verification Queue" subtitle="Review CAC registration documents and reference checks, then approve or reject the requested verification tier. Verified+ gates escrow custody, gov-reporting and competition eligibility." action={<button onClick={load} style={btn()}>Refresh</button>} />
         <PlatformTabs active="verification" />
         <DisclosureNote>Requires <code>platform_edtech_admin</code>. Approving a tier can activate a draft school. Every decision writes an immutable audit event (module <code>academy.fees</code>) with the reviewer and reason.</DisclosureNote>
-        {notice ? <div style={{ marginBottom: '1rem', color: '#5b21b6' }}>{notice}</div> : null}
+        {notice ? <div style={{ marginBottom: '1rem', color: colors.primary }}>{notice}</div> : null}
 
         <StateBlock loading={loading} error={error} empty={false}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <Kpi label="Pending review" value={pending.length.toString()} accent={pending.length ? '#9a3412' : undefined} />
-            <Kpi label="Approved (all time)" value={subs.filter((s) => s.status === 'approved').length.toString()} accent="#15803d" />
-            <Kpi label="Rejected (all time)" value={subs.filter((s) => s.status === 'rejected').length.toString()} accent="#b91c1c" />
+            <Kpi label="Pending review" value={pending.length.toString()} accent={pending.length ? colors.warning : undefined} />
+            <Kpi label="Approved (all time)" value={subs.filter((s) => s.status === 'approved').length.toString()} accent={colors.success} />
+            <Kpi label="Rejected (all time)" value={subs.filter((s) => s.status === 'rejected').length.toString()} accent={colors.danger} />
           </div>
 
           {subs.map((s) => (
@@ -61,12 +62,12 @@ export default function VerificationQueuePage() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem', fontSize: '0.85rem' }}>
                 <div><span style={label()}>Requested tier</span><Badge status={s.requested_tier} /></div>
                 <div><span style={label()}>CAC number</span><code>{s.cac_number}</code></div>
-                <div><span style={label()}>CAC document</span><a href={s.cac_doc_url} style={{ color: '#340075' }}>View document</a></div>
+                <div><span style={label()}>CAC document</span><a href={s.cac_doc_url} style={{ color: colors.primary }}>View document</a></div>
                 <div><span style={label()}>Submitted</span>{fmtDate(s.submitted_at)}</div>
               </div>
               <div style={{ marginTop: '0.75rem' }}>
                 <span style={label()}>References</span>
-                <ul style={{ margin: '0.25rem 0', paddingLeft: '1.1rem', fontSize: '0.85rem', color: '#374151' }}>
+                <ul style={{ margin: '0.25rem 0', paddingLeft: '1.1rem', fontSize: '0.85rem', color: colors.text }}>
                   {s.references.map((r, i) => <li key={i}>{r.name} — {r.role} ({r.phone})</li>)}
                 </ul>
               </div>
@@ -82,7 +83,7 @@ export default function VerificationQueuePage() {
                   <button onClick={() => decide(s, 'reject')} disabled={busy === s.id} style={btnDanger()}>Reject</button>
                 </div>
               ) : (
-                <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#6b7280' }}>Decided by {s.reviewer} on {fmtDate(s.decided_at)} — {s.reason}</div>
+                <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: colors.muted }}>Decided by {s.reviewer} on {fmtDate(s.decided_at)} — {s.reason}</div>
               )}
               <AuditNote>Approve/reject writes an immutable audit event with reviewer + reason.</AuditNote>
             </Card>

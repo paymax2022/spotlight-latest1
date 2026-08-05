@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listCreatorVerifications, decideCreator } from '@/services/creatorsAdminService';
 import type { CreatorVerificationItem, CreatorDecision } from '@/types/creatorsAdmin';
 import { PageHeader, CreatorsTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnPrimary, btnDanger, th, td, input, label, select } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function CreatorVerificationPage() {
   const [rows, setRows] = useState<CreatorVerificationItem[]>([]);
@@ -73,7 +74,7 @@ export default function CreatorVerificationPage() {
                 <tr key={r.id}>
                   <td style={td()}>
                     <strong>{r.handle_masked}</strong>
-                    <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.legal_name_masked} · {r.id}</div>
+                    <div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.legal_name_masked} · {r.id}</div>
                   </td>
                   <td style={td()}>{r.category}</td>
                   <td style={td()}>{r.city}</td>
@@ -97,7 +98,7 @@ export default function CreatorVerificationPage() {
                       </div>
                     ) : r.status === 'approved' ? (
                       <button style={btnDanger()} disabled={busy === r.id} onClick={() => decide(r, 'suspend')}>Suspend</button>
-                    ) : <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>—</span>}
+                    ) : <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span>}
                   </td>
                 </tr>
               ))}

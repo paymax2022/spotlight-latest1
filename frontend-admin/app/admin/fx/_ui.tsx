@@ -2,34 +2,35 @@
 
 import Link from 'next/link';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
+import { colors, tint } from '@/components/ui/vuexy';
 
 // Shared presentational helpers for the FX console. Matches the existing admin
 // pages' light-card inline-style convention (see crowdfunding/page.tsx).
 
-export const card = (): CSSProperties => ({ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem', background: '#fff' });
-export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: '0.85rem' });
-export const btnPrimary = (bg = '#1d4ed8'): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: 'none', background: bg, color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 });
+export const card = (): CSSProperties => ({ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card });
+export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: `1px solid ${colors.inputBorder}`, background: colors.card, cursor: 'pointer', fontSize: '0.85rem' });
+export const btnPrimary = (bg = colors.primary): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: 'none', background: bg, color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 });
 export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600 });
-export const td = (): CSSProperties => ({ padding: '0.5rem 0.5rem', color: '#374151' });
+export const td = (): CSSProperties => ({ padding: '0.5rem 0.5rem', color: colors.text });
 
 const STATUS_COLORS: Record<string, { fg: string; bg: string }> = {
-  successful: { fg: '#15803d', bg: '#dcfce7' }, paid: { fg: '#15803d', bg: '#dcfce7' }, settled: { fg: '#15803d', bg: '#dcfce7' }, clean: { fg: '#15803d', bg: '#dcfce7' }, healthy: { fg: '#15803d', bg: '#dcfce7' }, completed: { fg: '#15803d', bg: '#dcfce7' }, closed: { fg: '#15803d', bg: '#dcfce7' }, resolved: { fg: '#15803d', bg: '#dcfce7' },
-  processing: { fg: '#9a3412', bg: '#ffedd5' }, pending: { fg: '#9a3412', bg: '#ffedd5' }, queued: { fg: '#9a3412', bg: '#ffedd5' }, low: { fg: '#9a3412', bg: '#ffedd5' }, half_open: { fg: '#9a3412', bg: '#ffedd5' }, investigating: { fg: '#9a3412', bg: '#ffedd5' }, breaks: { fg: '#9a3412', bg: '#ffedd5' }, sandbox: { fg: '#9a3412', bg: '#ffedd5' },
-  failed: { fg: '#b91c1c', bg: '#fee2e2' }, reversed: { fg: '#b91c1c', bg: '#fee2e2' }, critical: { fg: '#b91c1c', bg: '#fee2e2' }, open: { fg: '#b91c1c', bg: '#fee2e2' }, escalated: { fg: '#b91c1c', bg: '#fee2e2' }, down: { fg: '#b91c1c', bg: '#fee2e2' },
-  excess: { fg: '#1d4ed8', bg: '#dbeafe' }, live: { fg: '#15803d', bg: '#dcfce7' },
+  successful: { fg: colors.success, bg: tint(colors.success, 0.12) }, paid: { fg: colors.success, bg: tint(colors.success, 0.12) }, settled: { fg: colors.success, bg: tint(colors.success, 0.12) }, clean: { fg: colors.success, bg: tint(colors.success, 0.12) }, healthy: { fg: colors.success, bg: tint(colors.success, 0.12) }, completed: { fg: colors.success, bg: tint(colors.success, 0.12) }, closed: { fg: colors.success, bg: tint(colors.success, 0.12) }, resolved: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  processing: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, pending: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, queued: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, low: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, half_open: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, investigating: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, breaks: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, sandbox: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  failed: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, reversed: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, critical: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, open: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, escalated: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, down: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
+  excess: { fg: colors.info, bg: tint(colors.info, 0.12) }, live: { fg: colors.success, bg: tint(colors.success, 0.12) },
 };
 
 export function Badge({ status, label }: { status: string; label?: string }) {
-  const c = STATUS_COLORS[status] ?? { fg: '#374151', bg: '#f3f4f6' };
+  const c = STATUS_COLORS[status] ?? { fg: colors.muted, bg: colors.headBg };
   return <span style={{ display: 'inline-block', padding: '0.1rem 0.5rem', borderRadius: 9999, fontSize: '0.72rem', fontWeight: 600, color: c.fg, background: c.bg, textTransform: 'capitalize' }}>{label ?? status.replace(/_/g, ' ')}</span>;
 }
 
 export function Kpi({ label, value, accent, sub }: { label: string; value: string; accent?: string; sub?: string }) {
   return (
-    <div style={{ ...card(), padding: '0.9rem 1rem', borderLeft: `3px solid ${accent ?? '#e5e7eb'}` }}>
-      <div style={{ fontSize: '0.75rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
-      <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: 4, color: '#111827' }}>{value}</div>
-      {sub ? <div style={{ fontSize: '0.72rem', color: '#6b7280', marginTop: 2 }}>{sub}</div> : null}
+    <div style={{ ...card(), padding: '0.9rem 1rem', borderLeft: `3px solid ${accent ?? colors.border}` }}>
+      <div style={{ fontSize: '0.75rem', color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: 4, color: colors.text }}>{value}</div>
+      {sub ? <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 2 }}>{sub}</div> : null}
     </div>
   );
 }
@@ -39,7 +40,7 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', gap: '1rem', flexWrap: 'wrap' }}>
       <div>
         <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>{title}</h1>
-        {subtitle ? <p style={{ color: '#6b7280', margin: '0.25rem 0 0', fontSize: '0.85rem' }}>{subtitle}</p> : null}
+        {subtitle ? <p style={{ color: colors.muted, margin: '0.25rem 0 0', fontSize: '0.85rem' }}>{subtitle}</p> : null}
       </div>
       {action}
     </div>
@@ -78,9 +79,9 @@ export function FxTabs({ active }: { active: string }) {
     { href: '/admin/fx/settings', label: 'Settings', key: 'settings' },
   ];
   return (
-    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>
+    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: `1px solid ${colors.border}`, paddingBottom: '0.5rem' }}>
       {tabs.map((t) => (
-        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : '#374151', background: active === t.key ? '#1d4ed8' : '#f3f4f6' }}>{t.label}</Link>
+        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : colors.text, background: active === t.key ? colors.primary : colors.headBg }}>{t.label}</Link>
       ))}
     </div>
   );

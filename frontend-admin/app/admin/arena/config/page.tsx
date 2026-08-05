@@ -8,9 +8,9 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { listCompetitions, createCompetition } from '@/services/arenaAdminService';
 import type { Competition } from '@/types/arenaAdmin';
+import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
 import {
-  PageHeader, Card, btn, btnPrimary, btnDisabled, th, td, inputStyle, mono,
-  CompetitionStatusBadge, timeAgo, AuditNote, PermissionBanner, ARENA_PERMS, useArenaPermission,
+  mono, CompetitionStatusBadge, timeAgo, AuditNote, PermissionBanner, ARENA_PERMS, useArenaPermission,
 } from '../_ui';
 
 export default function ArenaConfigListPage() {
@@ -43,65 +43,65 @@ export default function ArenaConfigListPage() {
   }, [slug, name, load]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Arena — Competition Config (A1)"
         subtitle="Configure rails, award→rail bindings, schema/rubric versions; validate; publish an immutable config version. RBAC: arena.admin.manage (Competition Admin)."
-        action={<button onClick={() => void load()} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={() => void load()}>Refresh</Button>}
       />
 
       {!allowed && <PermissionBanner permission={ARENA_PERMS.admin} />}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
-      <Card title="Create competition">
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: '#6b7280' }}>
+      <Card title="Create competition" style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 14 }}>
+          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: colors.muted }}>
             Slug
-            <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="naija-driver-2027" style={{ ...inputStyle(), minWidth: 220 }} disabled={!allowed} />
+            <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="naija-driver-2027" style={{ minWidth: 220 }} disabled={!allowed} />
           </label>
-          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: '#6b7280' }}>
+          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: colors.muted }}>
             Name
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Naija Driver Contest 2027" style={{ ...inputStyle(), minWidth: 280 }} disabled={!allowed} />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Naija Driver Contest 2027" style={{ minWidth: 280 }} disabled={!allowed} />
           </label>
-          <button
+          <Button
+            variant="primary"
             onClick={() => void create()}
-            style={allowed && !creating ? btnPrimary() : btnDisabled()}
             disabled={!allowed || creating}
           >
             {creating ? 'Creating…' : 'Create DRAFT'}
-          </button>
+          </Button>
         </div>
         <AuditNote>Creating a competition writes an audit_log row. New competitions start as DRAFT — nothing is live until published.</AuditNote>
       </Card>
 
       <Card title="Competitions">
         {loading ? (
-          <p style={{ color: '#6b7280' }}>Loading competitions…</p>
+          <p style={{ color: colors.muted }}>Loading competitions…</p>
         ) : rows.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No competitions yet.</p>
+          <p style={{ color: colors.muted }}>No competitions yet.</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>Name</th>
-                  <th style={th()}>Slug</th>
-                  <th style={th()}>Status</th>
-                  <th style={th()}>Config v.</th>
-                  <th style={th()}>Updated</th>
-                  <th style={th()}>Config</th>
+                  <th style={thCell}>Name</th>
+                  <th style={thCell}>Slug</th>
+                  <th style={thCell}>Status</th>
+                  <th style={thCell}>Config v.</th>
+                  <th style={thCell}>Updated</th>
+                  <th style={thCell}>Config</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((c) => (
                   <tr key={c.id}>
-                    <td style={td()}>{c.name}</td>
-                    <td style={{ ...td(), ...mono() }}>{c.slug}</td>
-                    <td style={td()}><CompetitionStatusBadge status={c.status} /></td>
-                    <td style={td()}>{c.config_version ?? '—'}</td>
-                    <td style={td()}>{timeAgo(c.updated_at)}</td>
-                    <td style={td()}>
-                      <Link href={`/admin/arena/config/${c.id}`} style={{ color: '#1d4ed8', textDecoration: 'none', ...mono() }}>
+                    <td style={tdCell}>{c.name}</td>
+                    <td style={{ ...tdCell, ...mono() }}>{c.slug}</td>
+                    <td style={tdCell}><CompetitionStatusBadge status={c.status} /></td>
+                    <td style={tdCell}>{c.config_version ?? '—'}</td>
+                    <td style={tdCell}>{timeAgo(c.updated_at)}</td>
+                    <td style={tdCell}>
+                      <Link href={`/admin/arena/config/${c.id}`} style={{ color: colors.primary, textDecoration: 'none', ...mono() }}>
                         Open config →
                       </Link>
                     </td>
@@ -112,6 +112,6 @@ export default function ArenaConfigListPage() {
           </div>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

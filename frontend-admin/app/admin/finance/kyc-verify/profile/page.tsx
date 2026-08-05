@@ -7,12 +7,13 @@
 
 import { useState } from 'react';
 import { PageHeader, Card, btn, inputStyle, th, ScaffoldNotice } from '../_ui';
+import { Page, colors } from '@/components/ui/vuexy';
 
 export default function KycUserProfilePage() {
   const [userId, setUserId] = useState('');
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader
         title="User KYC Profile (AK3)"
         subtitle="Tier, status, verification history, consent records and linked checks for a user. RBAC: finance.admin.kyc (KYC Ops / Compliance)."
@@ -30,7 +31,7 @@ export default function KycUserProfilePage() {
       </Card>
 
       <Card title="Verification history">
-        <p style={{ color: '#6b7280', margin: 0 }}>
+        <p style={{ color: colors.muted, margin: 0 }}>
           {userId.trim() ? 'No data — endpoint not yet wired.' : 'Enter a user ID to view their tier, KYC status and check history.'}
         </p>
       </Card>
@@ -41,10 +42,10 @@ export default function KycUserProfilePage() {
             <tr><th style={th()}>Template version</th><th style={th()}>Granted at</th><th style={th()}>Scope</th></tr>
           </thead>
           <tbody>
-            <tr><td colSpan={3} style={{ padding: '0.75rem 0.5rem', color: '#6b7280', fontSize: '0.85rem' }}>No consent records loaded.</td></tr>
+            <tr><td colSpan={3} style={{ padding: '0.75rem 0.5rem', color: colors.muted, fontSize: '0.85rem' }}>No consent records loaded.</td></tr>
           </tbody>
         </table>
       </Card>
-    </div>
+    </Page>
   );
 }

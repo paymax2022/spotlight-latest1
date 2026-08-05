@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { listApplications, decideApplication } from '@/services/referralAdminOpsService';
 import type { AmbassadorApplication } from '@/types/referralAdminOps';
-import { PageHeader, Card, Badge, btn, btnPrimary, btnDanger, th, td, timeAgo, StateBlock } from '../../_ui';
+import { timeAgo } from '../../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUSES = ['all', 'pending', 'approved', 'rejected'];
 
@@ -33,38 +34,47 @@ export default function ApplicationsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Ambassadors — Application / approval queue"
         subtitle="Vet ambassador & agent applicants; KYC and reach review before approval (A-AMB-02)."
-        action={<Link href="/admin/referral/ambassadors" style={{ ...btn(), textDecoration: 'none', color: '#374151' }}>← Directory</Link>}
+        actions={<Link href="/admin/referral/ambassadors"><Button variant="outline">← Directory</Button></Link>}
       />
 
-      <Card title="Applications" right={
-        <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ ...btn(), cursor: 'pointer' }}>
-          {STATUSES.map((s) => <option key={s} value={s}>{s === 'all' ? 'All statuses' : s}</option>)}
-        </select>
-      }>
-        <StateBlock loading={loading} error={error} empty={!rows || rows.length === 0} emptyText="No applications.">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <Card style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '14px 14px 0' }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Applications</h2>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            {STATUSES.map((s) => <option key={s} value={s}>{s === 'all' ? 'All statuses' : s}</option>)}
+          </select>
+        </div>
+
+        {loading ? (
+          <p style={{ color: colors.muted, fontSize: 13, padding: 14 }}>Loading…</p>
+        ) : error ? (
+          <p style={{ color: colors.danger, fontSize: 13, padding: 14 }}>{error}</p>
+        ) : !rows || rows.length === 0 ? (
+          <p style={{ color: colors.muted, fontSize: 13, padding: 14 }}>No applications.</p>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 14 }}>
             <thead><tr>
-              <th style={th()}>Applicant</th><th style={th()}>Tier</th><th style={th()}>Reach</th>
-              <th style={th()}>KYC</th><th style={th()}>Status</th><th style={th()}>Submitted</th><th style={th()} />
+              <th style={thCell}>Applicant</th><th style={thCell}>Tier</th><th style={thCell}>Reach</th>
+              <th style={thCell}>KYC</th><th style={thCell}>Status</th><th style={thCell}>Submitted</th><th style={thCell} />
             </tr></thead>
             <tbody>
-              {(rows ?? []).map((a) => (
+              {rows.map((a) => (
                 <tr key={a.id}>
-                  <td style={td()}>{a.applicant_name}<br /><code style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{a.applicant_id}</code></td>
-                  <td style={td()}>{a.requested_tier}</td>
-                  <td style={td()}>{a.reach}</td>
-                  <td style={td()}><Badge status={a.kyc_status === 'verified' ? 'active' : a.kyc_status === 'failed' ? 'critical' : 'pending'} label={a.kyc_status} /></td>
-                  <td style={td()}><Badge status={a.status === 'approved' ? 'approved' : a.status === 'rejected' ? 'rejected' : 'pending'} label={a.status} /></td>
-                  <td style={td()}>{timeAgo(a.submitted_at)}</td>
-                  <td style={td()}>
+                  <td style={tdCell}>{a.applicant_name}<br /><code style={{ fontSize: '0.72rem', color: colors.muted }}>{a.applicant_id}</code></td>
+                  <td style={tdCell}>{a.requested_tier}</td>
+                  <td style={tdCell}>{a.reach}</td>
+                  <td style={tdCell}><Badge text={a.kyc_status} color={a.kyc_status === 'verified' ? colors.success : a.kyc_status === 'failed' ? colors.danger : colors.warning} /></td>
+                  <td style={tdCell}><Badge text={a.status} color={a.status === 'approved' ? colors.success : a.status === 'rejected' ? colors.danger : colors.warning} /></td>
+                  <td style={tdCell}>{timeAgo(a.submitted_at)}</td>
+                  <td style={tdCell}>
                     {a.status === 'pending' ? (
                       <div style={{ display: 'flex', gap: '0.4rem' }}>
-                        <button disabled={busy === a.id || a.kyc_status !== 'verified'} onClick={() => decide(a, 'approved')} style={btnPrimary()} title={a.kyc_status !== 'verified' ? 'KYC must be verified first' : ''}>Approve</button>
-                        <button disabled={busy === a.id} onClick={() => decide(a, 'rejected')} style={btnDanger()}>Reject</button>
+                        <Button variant="primary" sm disabled={busy === a.id || a.kyc_status !== 'verified'} onClick={() => decide(a, 'approved')} title={a.kyc_status !== 'verified' ? 'KYC must be verified first' : ''}>Approve</Button>
+                        <Button variant="danger" sm disabled={busy === a.id} onClick={() => decide(a, 'rejected')}>Reject</Button>
                       </div>
                     ) : '—'}
                   </td>
@@ -72,8 +82,8 @@ export default function ApplicationsPage() {
               ))}
             </tbody>
           </table>
-        </StateBlock>
+        )}
       </Card>
-    </div>
+    </Page>
   );
 }

@@ -9,10 +9,11 @@ import {
   PageHeader, TriageTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, FilterBar,
   btn, th, td, select, input, label, timeAgo,
 } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 const LEVEL_BAR: Record<string, string> = {
-  emergency_ambulance: '#b91c1c', emergency_urgent: '#dc2626',
-  consult_24h: '#9a3412', consult_routine: '#1d4ed8', self_care: '#15803d',
+  emergency_ambulance: colors.danger, emergency_urgent: colors.danger,
+  consult_24h: colors.warning, consult_routine: colors.info, self_care: colors.success,
 };
 
 export default function TriageSessionsPage() {
@@ -63,27 +64,27 @@ export default function TriageSessionsPage() {
         {stats && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <Kpi label="Sessions today" value={stats.sessions_today.toLocaleString('en-NG')} sub={`${stats.total_sessions.toLocaleString('en-NG')} all-time`} accent="#340075" />
-              <Kpi label="Red-flag rate" value={pct(stats.red_flag_rate)} sub="deterministic rule fired (SC-2)" accent="#b91c1c" />
-              <Kpi label="Emergency share" value={pct(stats.emergency_share)} sub="routed to an emergency level" accent="#b91c1c" />
-              <Kpi label="Completion rate" value={pct(stats.completion_rate)} sub="reached a disposition" accent="#15803d" />
-              <Kpi label="Open escalations" value={stats.open_escalations.toLocaleString('en-NG')} sub="human-in-loop (SC-5)" accent={stats.open_escalations > 0 ? '#9a3412' : undefined} />
+              <Kpi label="Sessions today" value={stats.sessions_today.toLocaleString('en-NG')} sub={`${stats.total_sessions.toLocaleString('en-NG')} all-time`} accent={colors.primary} />
+              <Kpi label="Red-flag rate" value={pct(stats.red_flag_rate)} sub="deterministic rule fired (SC-2)" accent={colors.danger} />
+              <Kpi label="Emergency share" value={pct(stats.emergency_share)} sub="routed to an emergency level" accent={colors.danger} />
+              <Kpi label="Completion rate" value={pct(stats.completion_rate)} sub="reached a disposition" accent={colors.success} />
+              <Kpi label="Open escalations" value={stats.open_escalations.toLocaleString('en-NG')} sub="human-in-loop (SC-5)" accent={stats.open_escalations > 0 ? colors.warning : undefined} />
             </div>
 
             <Card title="Disposition mix (5-level)">
-              <p style={{ fontSize: '0.78rem', color: '#6b7280', marginTop: 0 }}>
+              <p style={{ fontSize: '0.78rem', color: colors.muted, marginTop: 0 }}>
                 Conservative, emergency-sensitivity-first triage (SC-3). Each level maps to a fulfilled care
                 action — never a dead-end in advice.
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
                 {stats.by_level.map((l) => (
                   <div key={l.level} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                    <span style={{ width: 180, flexShrink: 0, fontSize: '0.8rem', color: '#374151' }}>
+                    <span style={{ width: 180, flexShrink: 0, fontSize: '0.8rem', color: colors.text }}>
                       <Badge status={l.level} label={DISPOSITION_LABELS[l.level]} />
                     </span>
                     <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                       <div style={{ height: 14, width: `${l.share_pct * 100}%`, minWidth: 2, background: LEVEL_BAR[l.level], borderRadius: 3 }} title={`${l.count}`} />
-                      <span style={{ fontSize: '0.72rem', color: '#6b7280', whiteSpace: 'nowrap' }}>{l.count.toLocaleString('en-NG')} · {pct(l.share_pct)}</span>
+                      <span style={{ fontSize: '0.72rem', color: colors.muted, whiteSpace: 'nowrap' }}>{l.count.toLocaleString('en-NG')} · {pct(l.share_pct)}</span>
                     </div>
                   </div>
                 ))}
@@ -94,10 +95,10 @@ export default function TriageSessionsPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
                 {stats.by_channel.map((c) => (
                   <div key={c.channel} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                    <span style={{ width: 90, flexShrink: 0, fontSize: '0.78rem', color: '#374151', textTransform: 'capitalize' }}>{c.channel}</span>
+                    <span style={{ width: 90, flexShrink: 0, fontSize: '0.78rem', color: colors.text, textTransform: 'capitalize' }}>{c.channel}</span>
                     <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                      <div style={{ height: 12, width: `${(c.count / maxChannel) * 100}%`, minWidth: 2, background: '#340075', borderRadius: 3 }} />
-                      <span style={{ fontSize: '0.72rem', color: '#6b7280', whiteSpace: 'nowrap' }}>{c.count.toLocaleString('en-NG')} · {pct(c.share_pct)}</span>
+                      <div style={{ height: 12, width: `${(c.count / maxChannel) * 100}%`, minWidth: 2, background: colors.primary, borderRadius: 3 }} />
+                      <span style={{ fontSize: '0.72rem', color: colors.muted, whiteSpace: 'nowrap' }}>{c.count.toLocaleString('en-NG')} · {pct(c.share_pct)}</span>
                     </div>
                   </div>
                 ))}
@@ -155,16 +156,16 @@ export default function TriageSessionsPage() {
                   <tr key={r.id}>
                     <td style={td()}><code style={{ fontSize: '0.78rem' }}>{r.id}</code></td>
                     <td style={td()}><Badge status={r.state} /></td>
-                    <td style={td()}>{r.disposition_level ? <Badge status={r.disposition_level} label={DISPOSITION_LABELS[r.disposition_level]} /> : <span style={{ color: '#9ca3af' }}>—</span>}</td>
-                    <td style={td()}>{r.red_flag ? <Badge status="raised" label="Red-flag" /> : <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                    <td style={td()}>{r.disposition_level ? <Badge status={r.disposition_level} label={DISPOSITION_LABELS[r.disposition_level]} /> : <span style={{ color: colors.muted }}>—</span>}</td>
+                    <td style={td()}>{r.red_flag ? <Badge status="raised" label="Red-flag" /> : <span style={{ color: colors.muted }}>—</span>}</td>
                     <td style={td()}><span style={{ textTransform: 'capitalize' }}>{r.channel}</span></td>
                     <td style={td()}>{LANGUAGE_LABELS[r.language] ?? r.language}</td>
-                    <td style={td()}><span style={{ textTransform: 'capitalize' }}>{r.profile_kind}</span>{r.profile_kind === 'child' ? <span title="Paediatric caution (SC-9)" style={{ marginLeft: 4 }}>👶</span> : null}<div style={{ fontSize: '0.7rem', color: '#9ca3af' }}>{r.age_band}{r.consent_on_file ? '' : ' · no consent'}</div></td>
+                    <td style={td()}><span style={{ textTransform: 'capitalize' }}>{r.profile_kind}</span>{r.profile_kind === 'child' ? <span title="Paediatric caution (SC-9)" style={{ marginLeft: 4 }}>👶</span> : null}<div style={{ fontSize: '0.7rem', color: colors.muted }}>{r.age_band}{r.consent_on_file ? '' : ' · no consent'}</div></td>
                     <td style={td()}>{r.top_condition_count > 0 ? `${r.top_condition_count} surfaced` : '—'}</td>
                     <td style={td()}>{timeAgo(r.created_at)}</td>
                   </tr>
                 ))}
-                {!rows.length && !loading ? <tr><td style={td()} colSpan={9}><span style={{ color: '#6b7280' }}>No sessions match the filter.</span></td></tr> : null}
+                {!rows.length && !loading ? <tr><td style={td()} colSpan={9}><span style={{ color: colors.muted }}>No sessions match the filter.</span></td></tr> : null}
               </tbody>
             </table>
           </div>

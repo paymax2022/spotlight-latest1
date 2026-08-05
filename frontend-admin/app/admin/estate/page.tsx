@@ -6,7 +6,17 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { getEstateKpis, getEstateActivity } from '@/services/estateAdminService';
 import type { EstateKpis, EstateActivity } from '@/types/estateAdmin';
-import { PageHeader, EstateTabs, Card, Kpi, Badge, btn, th, td, money, timeAgo } from './_ui';
+import { EstateTabs, Kpi, money, timeAgo } from './_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const cap = (s: string) => s.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+function statusColor(status: string): string {
+  if (['active', 'paid', 'verified', 'online', 'on_duty', 'resolved', 'completed'].includes(status)) return colors.success;
+  if (['pending', 'scheduled', 'investigating', 'maintenance', 'medium'].includes(status)) return colors.warning;
+  if (['overdue', 'banned', 'restricted', 'rejected', 'suspended', 'offline', 'open', 'missed', 'high', 'critical'].includes(status)) return colors.danger;
+  if (status === 'low') return colors.info;
+  return colors.secondary;
+}
 
 export default function EstateDashboardPage() {
   const [kpis, setKpis] = useState<EstateKpis | null>(null);
@@ -28,40 +38,40 @@ export default function EstateDashboardPage() {
     ? Math.round((kpis.collectionsThisCycleKobo / kpis.expectedThisCycleKobo) * 100) : 0;
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Estate operations" subtitle="Residents, collections, security and vendors across the estate." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Estate operations" subtitle="Residents, collections, security and vendors across the estate." actions={<Button variant="outline" sm onClick={load}>Refresh</Button>} />
       <EstateTabs active="dashboard" />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       {loading || !kpis ? (
-        <p style={{ color: '#6b7280' }}>Loading dashboard…</p>
+        <p style={{ color: colors.muted }}>Loading dashboard…</p>
       ) : (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
-            <Kpi label="Residents" value={kpis.residents.toLocaleString('en-NG')} sub={`${kpis.units} units`} accent="#1d4ed8" />
-            <Kpi label="Collections this cycle" value={money(kpis.collectionsThisCycleKobo)} sub={`${collectedPct}% of ${money(kpis.expectedThisCycleKobo)}`} accent="#16a34a" />
-            <Kpi label="Arrears" value={money(kpis.arrearsKobo)} accent={kpis.arrearsKobo ? '#d97706' : '#16a34a'} />
-            <Kpi label="Open incidents" value={String(kpis.openIncidents)} accent={kpis.openIncidents ? '#dc2626' : '#16a34a'} />
-            <Kpi label="Active vendors" value={String(kpis.activeVendors)} accent="#1d4ed8" />
+            <Kpi label="Residents" value={kpis.residents.toLocaleString('en-NG')} sub={`${kpis.units} units`} accent={colors.info} />
+            <Kpi label="Collections this cycle" value={money(kpis.collectionsThisCycleKobo)} sub={`${collectedPct}% of ${money(kpis.expectedThisCycleKobo)}`} accent={colors.success} />
+            <Kpi label="Arrears" value={money(kpis.arrearsKobo)} accent={kpis.arrearsKobo ? colors.warning : colors.success} />
+            <Kpi label="Open incidents" value={String(kpis.openIncidents)} accent={kpis.openIncidents ? colors.danger : colors.success} />
+            <Kpi label="Active vendors" value={String(kpis.activeVendors)} accent={colors.info} />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
-            <Card title="Collections"><p style={{ color: '#6b7280', fontSize: '0.85rem' }}>{money(kpis.collectionsThisCycleKobo)} collected this cycle.</p><Link href="/admin/estate/dues" style={{ fontSize: '0.85rem', color: '#1d4ed8' }}>Open dues →</Link></Card>
-            <Card title="Security"><p style={{ color: '#6b7280', fontSize: '0.85rem' }}>{kpis.openIncidents} open incident(s).</p><Link href="/admin/estate/gates" style={{ fontSize: '0.85rem', color: '#1d4ed8' }}>Gates & incidents →</Link></Card>
-            <Card title="Vendors"><p style={{ color: '#6b7280', fontSize: '0.85rem' }}>{kpis.activeVendors} active vendor(s).</p><Link href="/admin/estate/vendors" style={{ fontSize: '0.85rem', color: '#1d4ed8' }}>Vendor directory →</Link></Card>
+            <Card title="Collections"><p style={{ color: colors.muted, fontSize: '0.85rem' }}>{money(kpis.collectionsThisCycleKobo)} collected this cycle.</p><Link href="/admin/estate/dues" style={{ fontSize: '0.85rem', color: colors.info }}>Open dues →</Link></Card>
+            <Card title="Security"><p style={{ color: colors.muted, fontSize: '0.85rem' }}>{kpis.openIncidents} open incident(s).</p><Link href="/admin/estate/gates" style={{ fontSize: '0.85rem', color: colors.info }}>Gates & incidents →</Link></Card>
+            <Card title="Vendors"><p style={{ color: colors.muted, fontSize: '0.85rem' }}>{kpis.activeVendors} active vendor(s).</p><Link href="/admin/estate/vendors" style={{ fontSize: '0.85rem', color: colors.info }}>Vendor directory →</Link></Card>
           </div>
 
           <Card title="Recent activity">
-            {activity.length === 0 ? <p style={{ color: '#6b7280' }}>No recent activity.</p> : (
+            {activity.length === 0 ? <p style={{ color: colors.muted }}>No recent activity.</p> : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th style={th()}>Type</th><th style={th()}>Summary</th><th style={th()}>Actor</th><th style={th()}>When</th></tr></thead>
+                <thead><tr><th style={thCell}>Type</th><th style={thCell}>Summary</th><th style={thCell}>Actor</th><th style={thCell}>When</th></tr></thead>
                 <tbody>
                   {activity.map((a) => (
                     <tr key={a.id}>
-                      <td style={td()}><Badge status={a.kind} /></td>
-                      <td style={td()}>{a.summary}</td>
-                      <td style={td()}>{a.actor}</td>
-                      <td style={td()}>{timeAgo(a.at)}</td>
+                      <td style={tdCell}><Badge text={cap(a.kind)} color={statusColor(a.kind)} /></td>
+                      <td style={tdCell}>{a.summary}</td>
+                      <td style={tdCell}>{a.actor}</td>
+                      <td style={tdCell}>{timeAgo(a.at)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -70,6 +80,6 @@ export default function EstateDashboardPage() {
           </Card>
         </>
       )}
-    </div>
+    </Page>
   );
 }

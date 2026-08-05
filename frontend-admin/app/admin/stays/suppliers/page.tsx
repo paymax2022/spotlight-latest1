@@ -4,18 +4,14 @@ import { useEffect, useState } from 'react';
 import { listSuppliers } from '@/services/staysAdminService';
 import type { Supplier } from '@/types/staysAdmin';
 import {
-  PageHeader,
   StaysTabs,
-  Card,
   Badge,
   DisclosureNote,
   StateBlock,
-  btn,
-  th,
-  td,
   timeAgo,
   pct,
 } from '../_ui';
+import { Page, PageHeader, Card, Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function StaysSuppliersPage() {
   const [data, setData] = useState<Supplier[]>([]);
@@ -31,11 +27,11 @@ export default function StaysSuppliersPage() {
   useEffect(() => { load(); }, []);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Suppliers & connectivity"
         subtitle="Rail A bedbank adapters (RateHawk, ZentrumHub) plus Paymax direct inventory — health, latency, prebook/book success and live property counts."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="supply" />
 
@@ -51,43 +47,43 @@ export default function StaysSuppliersPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100 }}>
               <thead>
                 <tr>
-                  <th style={th()}>Supplier</th>
-                  <th style={th()}>Rail</th>
-                  <th style={th()}>Status</th>
-                  <th style={th()}>Uptime</th>
-                  <th style={th()}>Search p95</th>
-                  <th style={th()}>Prebook</th>
-                  <th style={th()}>Book</th>
-                  <th style={th()}>Live props</th>
-                  <th style={th()}>Open breaks</th>
-                  <th style={th()}>Currencies</th>
-                  <th style={th()}>Credentials (masked)</th>
-                  <th style={th()}>Env</th>
-                  <th style={th()}>Updated</th>
+                  <th style={thCell}>Supplier</th>
+                  <th style={thCell}>Rail</th>
+                  <th style={thCell}>Status</th>
+                  <th style={thCell}>Uptime</th>
+                  <th style={thCell}>Search p95</th>
+                  <th style={thCell}>Prebook</th>
+                  <th style={thCell}>Book</th>
+                  <th style={thCell}>Live props</th>
+                  <th style={thCell}>Open breaks</th>
+                  <th style={thCell}>Currencies</th>
+                  <th style={thCell}>Credentials (masked)</th>
+                  <th style={thCell}>Env</th>
+                  <th style={thCell}>Updated</th>
                 </tr>
               </thead>
               <tbody>
                 {data.map((s) => (
                   <tr key={s.supplier_code}>
-                    <td style={td()}>
+                    <td style={tdCell}>
                       <div style={{ fontWeight: 600 }}>{s.display_name}</div>
-                      <code style={{ fontSize: '0.72rem', color: '#6b7280' }}>{s.base_url}</code>
+                      <code style={{ fontSize: '0.72rem', color: colors.muted }}>{s.base_url}</code>
                     </td>
-                    <td style={td()}><Badge status={s.rail} /></td>
-                    <td style={td()}><Badge status={s.status} /></td>
-                    <td style={td()}>{s.uptime_pct.toFixed(2)}%</td>
-                    <td style={td()}>{s.search_p95_ms.toLocaleString('en-NG')} ms</td>
-                    <td style={td()}>{pct(s.prebook_success_pct)}</td>
-                    <td style={td()}>{pct(s.book_success_pct)}</td>
-                    <td style={td()}>{s.properties_live.toLocaleString('en-NG')}</td>
-                    <td style={td()}><span style={{ color: s.open_breaks > 0 ? '#b91c1c' : '#374151', fontWeight: s.open_breaks > 0 ? 600 : 400 }}>{s.open_breaks.toLocaleString('en-NG')}</span></td>
-                    <td style={td()}>{s.currencies.join(', ')}</td>
-                    <td style={td()}>
+                    <td style={tdCell}><Badge status={s.rail} /></td>
+                    <td style={tdCell}><Badge status={s.status} /></td>
+                    <td style={tdCell}>{s.uptime_pct.toFixed(2)}%</td>
+                    <td style={tdCell}>{s.search_p95_ms.toLocaleString('en-NG')} ms</td>
+                    <td style={tdCell}>{pct(s.prebook_success_pct)}</td>
+                    <td style={tdCell}>{pct(s.book_success_pct)}</td>
+                    <td style={tdCell}>{s.properties_live.toLocaleString('en-NG')}</td>
+                    <td style={tdCell}><span style={{ color: s.open_breaks > 0 ? colors.danger : colors.text, fontWeight: s.open_breaks > 0 ? 600 : 400 }}>{s.open_breaks.toLocaleString('en-NG')}</span></td>
+                    <td style={tdCell}>{s.currencies.join(', ')}</td>
+                    <td style={tdCell}>
                       <div style={{ fontSize: '0.75rem' }}>API: <code>{s.api_key_masked}</code></div>
                       <div style={{ fontSize: '0.75rem' }}>Webhook: <code>{s.webhook_secret_masked}</code></div>
                     </td>
-                    <td style={td()}><Badge status={s.sandbox ? 'draft' : 'active'} label={s.sandbox ? 'sandbox' : 'live'} /></td>
-                    <td style={td()}>{timeAgo(s.updated_at)}</td>
+                    <td style={tdCell}><Badge status={s.sandbox ? 'draft' : 'active'} label={s.sandbox ? 'sandbox' : 'live'} /></td>
+                    <td style={tdCell}>{timeAgo(s.updated_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -95,6 +91,6 @@ export default function StaysSuppliersPage() {
           </div>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

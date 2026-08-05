@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { listDisputes, formatNaira } from '@/services/escrowAdminService';
 import type { DisputeListItem } from '@/types/escrowAdmin';
 import { PageHeader, EscrowTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, btn, th, td, input, label, select, timeAgo } from '../../creators/_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function DisputesPage() {
   const [rows, setRows] = useState<DisputeListItem[]>([]);
@@ -68,14 +69,14 @@ export default function DisputesPage() {
                 <tr key={r.id}>
                   <td style={td()}>
                     <Link href={`/admin/social-escrow/disputes/${r.id}`} style={{ color: '#340075', fontWeight: 600, textDecoration: 'none' }}>{r.listing_title}</Link>
-                    <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.id} · escrow {r.escrow_id} · <Badge status={r.escrow_state} /></div>
+                    <div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.id} · escrow {r.escrow_id} · <Badge status={r.escrow_state} /></div>
                   </td>
                   <td style={td()}>{r.buyer_masked}</td>
                   <td style={td()}>{r.seller_masked}</td>
                   <td style={td()}><strong>{formatNaira(r.amount_kobo)}</strong></td>
                   <td style={td()}>{r.reason.replace(/_/g, ' ')}</td>
                   <td style={td()}>{r.evidence_count}</td>
-                  <td style={td()}>{r.assigned_to_masked ?? <span style={{ color: '#9ca3af' }}>unassigned</span>}</td>
+                  <td style={td()}>{r.assigned_to_masked ?? <span style={{ color: colors.muted }}>unassigned</span>}</td>
                   <td style={td()}>{timeAgo(r.sla_due_at)}</td>
                   <td style={td()}><Badge status={r.status} /></td>
                   <td style={td()}><Link href={`/admin/social-escrow/disputes/${r.id}`} style={btn()}>Open</Link></td>

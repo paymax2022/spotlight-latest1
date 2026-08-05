@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listVcnApplications, decideVcn } from '@/services/healthVetAdminService';
 import type { VcnApplication, VcnDecision } from '@/types/healthVetAdmin';
 import { PageHeader, VetTabs, Card, Badge, DisclosureNote, AuditNote, StateBlock, FilterBar, btn, btnPrimary, btnDanger, th, td, input, select, label, fmtDate } from '../../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 const STATUSES = ['', 'submitted', 'under_review', 'needs_info', 'approved', 'suspended', 'rejected'];
 
@@ -70,12 +71,12 @@ export default function VcnAuditPage() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><strong>{r.vet_name_masked}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.clinic_name} · {r.id}</div></td>
-                  <td style={td()}><code style={{ fontSize: '0.76rem' }}>{r.vcn_licence_no}</code><div style={{ fontSize: '0.7rem', color: '#9ca3af' }}>reg {r.vcn_register_year}</div></td>
+                  <td style={td()}><strong>{r.vet_name_masked}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.clinic_name} · {r.id}</div></td>
+                  <td style={td()}><code style={{ fontSize: '0.76rem' }}>{r.vcn_licence_no}</code><div style={{ fontSize: '0.7rem', color: colors.muted }}>reg {r.vcn_register_year}</div></td>
                   <td style={td()}>{r.specialties.join(', ')}</td>
-                  <td style={td()}>{r.state}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.lga}</div></td>
+                  <td style={td()}>{r.state}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.lga}</div></td>
                   <td style={td()}><Badge status={r.vcn_verified ? 'verified' : 'pending'} label={r.vcn_verified ? 'VCN ✓' : 'VCN ✗'} /></td>
-                  <td style={td()}>{fmtDate(r.licence_expires_at)}{r.licence_expires_at && new Date(r.licence_expires_at) < new Date() ? <div style={{ fontSize: '0.7rem', color: '#b91c1c' }}>expired</div> : null}</td>
+                  <td style={td()}>{fmtDate(r.licence_expires_at)}{r.licence_expires_at && new Date(r.licence_expires_at) < new Date() ? <div style={{ fontSize: '0.7rem', color: colors.danger }}>expired</div> : null}</td>
                   <td style={td()}><Badge status={r.status} /></td>
                   <td style={td()}><button style={btn()} onClick={() => setOpen(r)}>Review</button></td>
                 </tr>
@@ -88,10 +89,10 @@ export default function VcnAuditPage() {
       {open && (
         <Card title={`Review — ${open.clinic_name}`} right={<button style={btn()} onClick={() => setOpen(null)}>Close</button>}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.6rem', marginBottom: '1rem', fontSize: '0.85rem' }}>
-            <div><span style={{ color: '#6b7280' }}>Vet:</span> {open.vet_name_masked}</div>
-            <div><span style={{ color: '#6b7280' }}>VCN licence:</span> <code>{open.vcn_licence_no}</code></div>
-            <div><span style={{ color: '#6b7280' }}>CAC:</span> {open.cac_rc_no}</div>
-            <div><span style={{ color: '#6b7280' }}>Submitted:</span> {fmtDate(open.submitted_at)}</div>
+            <div><span style={{ color: colors.muted }}>Vet:</span> {open.vet_name_masked}</div>
+            <div><span style={{ color: colors.muted }}>VCN licence:</span> <code>{open.vcn_licence_no}</code></div>
+            <div><span style={{ color: colors.muted }}>CAC:</span> {open.cac_rc_no}</div>
+            <div><span style={{ color: colors.muted }}>Submitted:</span> {fmtDate(open.submitted_at)}</div>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1rem' }}>
             <thead><tr><th style={th()}>Document</th><th style={th()}>Reference</th><th style={th()}>Expires</th><th style={th()}>Verified</th></tr></thead>

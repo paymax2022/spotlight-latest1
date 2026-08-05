@@ -5,7 +5,19 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { getCase, executeClawbackOps, formatNaira } from '@/services/referralAdminOpsService';
 import type { CaseDetail } from '@/types/referralAdminOps';
-import { PageHeader, Card, Kpi, Badge, btn, btnDanger, th, td, timeAgo, StateBlock } from '../../../_ui';
+import { timeAgo } from '../../../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function badgeColor(status: string): string {
+  switch (status) {
+    case 'critical':
+      return colors.danger;
+    case 'resolved': case 'closed':
+      return colors.success;
+    default:
+      return colors.warning;
+  }
+}
 
 export default function CaseWorkbenchPage() {
   const params = useParams();
@@ -35,68 +47,87 @@ export default function CaseWorkbenchPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title={data ? `Case ${data.id}` : 'Case'}
         subtitle="Investigation workbench — evidence, linked accounts/devices, decisions & audit trail (A-RSK-03)."
-        action={<Link href="/admin/referral/risk" style={{ ...btn(), textDecoration: 'none', color: '#374151' }}>← Dashboard</Link>}
+        actions={<Link href="/admin/referral/risk" className="vx-btn vx-btn--outline" style={{ textDecoration: 'none' }}>← Dashboard</Link>}
       />
 
-      <StateBlock loading={loading} error={error} empty={!data} emptyText="Case not found.">
-        {data && (
+      {loading ? <p style={{ color: colors.muted }}>Loading…</p>
+        : error ? <p style={{ color: colors.danger }}>{error}</p>
+        : !data ? <p style={{ color: colors.muted }}>Case not found.</p>
+        : (
           <>
-            <Card title="Case summary" right={<Badge status={data.status === 'investigating' ? 'open' : data.status} />}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px,1fr))', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Case summary</h2>
+                <Badge text={data.status === 'investigating' ? 'open' : data.status} color={badgeColor(data.status === 'investigating' ? 'open' : data.status)} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px,1fr))', gap: 10, marginBottom: 12 }}>
                 <Kpi label="Subject" value={data.subject_name} sub={data.subject_id} />
-                <Kpi label="Severity" value={data.severity} accent={data.severity === 'critical' ? '#b91c1c' : '#9a3412'} />
-                <Kpi label="Risk score" value={`${data.risk_score}/100`} accent={data.risk_score >= 70 ? '#b91c1c' : '#9a3412'} />
-                <Kpi label="Amount at risk" value={formatNaira(data.amount_at_risk_kobo)} accent="#b91c1c" />
+                <Kpi label="Severity" value={data.severity} accent={data.severity === 'critical' ? colors.danger : colors.warning} />
+                <Kpi label="Risk score" value={`${data.risk_score}/100`} accent={data.risk_score >= 70 ? colors.danger : colors.warning} />
+                <Kpi label="Amount at risk" value={formatNaira(data.amount_at_risk_kobo)} accent={colors.danger} />
               </div>
-              <p style={{ fontSize: '0.85rem', color: '#374151', margin: 0 }}><strong>Reason:</strong> {data.reason}</p>
-              <p style={{ fontSize: '0.78rem', color: '#9ca3af', marginTop: '0.25rem' }}>Assigned to: {data.assigned_to ?? 'unassigned'} · opened {timeAgo(data.created_at)}</p>
-              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
-                <button disabled={busy} onClick={clawback} style={btnDanger()}>{busy ? '…' : 'Execute clawback'}</button>
+              <p style={{ fontSize: 14, color: colors.text, margin: 0 }}><strong>Reason:</strong> {data.reason}</p>
+              <p style={{ fontSize: 12, color: colors.muted, marginTop: 4 }}>Assigned to: {data.assigned_to ?? 'unassigned'} · opened {timeAgo(data.created_at)}</p>
+              <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                <Button variant="danger" disabled={busy} onClick={clawback}>{busy ? '…' : 'Execute clawback'}</Button>
               </div>
-              {msg && <p style={{ color: '#15803d', fontSize: '0.8rem', marginTop: '0.5rem' }}>{msg}</p>}
+              {msg && <p style={{ color: colors.success, fontSize: 13, marginTop: 8 }}>{msg}</p>}
             </Card>
 
-            <Card title="Linked accounts & devices">
-              <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
+            <Card title="Linked accounts & devices" style={{ marginBottom: 16 }}>
+              <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap', marginTop: 14 }}>
                 <div>
-                  <div style={{ fontSize: '0.72rem', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase' }}>Accounts ({data.linked_accounts.length})</div>
-                  {data.linked_accounts.map((a) => <div key={a} style={{ fontSize: '0.85rem', marginTop: '0.2rem' }}><Link href={`/admin/referral/users/${a}`} style={{ color: '#340075' }}>{a}</Link></div>)}
+                  <div style={{ fontSize: 11, color: colors.muted, fontWeight: 700, textTransform: 'uppercase' }}>Accounts ({data.linked_accounts.length})</div>
+                  {data.linked_accounts.map((a) => <div key={a} style={{ fontSize: 14, marginTop: 3 }}><Link href={`/admin/referral/users/${a}`}>{a}</Link></div>)}
                 </div>
                 <div>
-                  <div style={{ fontSize: '0.72rem', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase' }}>Devices ({data.linked_devices.length})</div>
-                  {data.linked_devices.map((d) => <div key={d} style={{ fontSize: '0.85rem', marginTop: '0.2rem' }}><code>{d}</code></div>)}
+                  <div style={{ fontSize: 11, color: colors.muted, fontWeight: 700, textTransform: 'uppercase' }}>Devices ({data.linked_devices.length})</div>
+                  {data.linked_devices.map((d) => <div key={d} style={{ fontSize: 14, marginTop: 3 }}><code>{d}</code></div>)}
                 </div>
               </div>
             </Card>
 
-            <Card title="Evidence">
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th style={th()}>When</th><th style={th()}>Kind</th><th style={th()}>Detail</th></tr></thead>
-                <tbody>
-                  {data.evidence.map((e, i) => (
-                    <tr key={i}><td style={td()}>{timeAgo(e.ts)}</td><td style={td()}>{e.kind}</td><td style={td()}>{e.detail}</td></tr>
-                  ))}
-                </tbody>
-              </table>
+            <Card title="Evidence" style={{ marginBottom: 16 }}>
+              <div style={{ overflowX: 'auto', marginTop: 14 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={thCell}>When</th><th style={thCell}>Kind</th><th style={thCell}>Detail</th></tr></thead>
+                  <tbody>
+                    {data.evidence.map((e, i) => (
+                      <tr key={i}><td style={tdCell}>{timeAgo(e.ts)}</td><td style={tdCell}>{e.kind}</td><td style={tdCell}>{e.detail}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </Card>
 
             <Card title="Audit trail">
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th style={th()}>When</th><th style={th()}>Actor</th><th style={th()}>Action</th></tr></thead>
-                <tbody>
-                  {data.audit.map((a, i) => (
-                    <tr key={i}><td style={td()}>{timeAgo(a.ts)}</td><td style={td()}>{a.actor}</td><td style={td()}>{a.action}</td></tr>
-                  ))}
-                </tbody>
-              </table>
+              <div style={{ overflowX: 'auto', marginTop: 14 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={thCell}>When</th><th style={thCell}>Actor</th><th style={thCell}>Action</th></tr></thead>
+                  <tbody>
+                    {data.audit.map((a, i) => (
+                      <tr key={i}><td style={tdCell}>{timeAgo(a.ts)}</td><td style={tdCell}>{a.actor}</td><td style={tdCell}>{a.action}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </Card>
           </>
         )}
-      </StateBlock>
+    </Page>
+  );
+}
+
+function Kpi({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
+  return (
+    <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: '13px 15px', background: colors.card }}>
+      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 21, fontWeight: 700, marginTop: 4, color: accent ?? colors.text }}>{value}</div>
+      {sub ? <div style={{ fontSize: 12, color: colors.muted, marginTop: 2 }}>{sub}</div> : null}
     </div>
   );
 }

@@ -11,6 +11,7 @@ import {
   PlatformGuard, PlatformTabs, formatNaira, fmtDate,
   PageHeader, Card, Badge, Kpi, StateBlock, DisclosureNote, th, td, select,
 } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function ScholarshipOversightPage() {
   const [pledges, setPledges] = useState<ScholarshipPledge[]>([]);
@@ -38,9 +39,9 @@ export default function ScholarshipOversightPage() {
 
         <StateBlock loading={loading} error={error} empty={false}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <Kpi label="Pledges" value={pledges.length.toString()} accent="#340075" />
-            <Kpi label="Disbursed (lifetime)" value={formatNaira(disbursed)} accent="#15803d" />
-            <Kpi label="In flight" value={formatNaira(inFlight)} accent="#9a3412" sub="pledged + funded" />
+            <Kpi label="Pledges" value={pledges.length.toString()} accent={colors.primary} />
+            <Kpi label="Disbursed (lifetime)" value={formatNaira(disbursed)} accent={colors.success} />
+            <Kpi label="In flight" value={formatNaira(inFlight)} accent={colors.warning} sub="pledged + funded" />
           </div>
 
           <Card title="Pledge fund-flow" right={
@@ -52,7 +53,7 @@ export default function ScholarshipOversightPage() {
               <tbody>
                 {rows.map((p) => (
                   <tr key={p.id}>
-                    <td style={td()}><strong>{p.sponsor}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{p.sponsor_identity_id}</div></td>
+                    <td style={td()}><strong>{p.sponsor}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{p.sponsor_identity_id}</div></td>
                     <td style={td()}>{p.school_name}</td>
                     <td style={td()}><code style={{ fontSize: '0.78rem' }}>{p.target_student_ref}</code></td>
                     <td style={td()}>{formatNaira(p.amount_kobo)}</td>
@@ -63,7 +64,7 @@ export default function ScholarshipOversightPage() {
                 ))}
               </tbody>
             </table>
-            {rows.length === 0 ? <p style={{ color: '#6b7280', marginTop: '0.75rem' }}>No pledges match the filter.</p> : null}
+            {rows.length === 0 ? <p style={{ color: colors.muted, marginTop: '0.75rem' }}>No pledges match the filter.</p> : null}
           </Card>
         </StateBlock>
       </div>

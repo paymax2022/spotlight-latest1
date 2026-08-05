@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
+import { colors, tint } from '@/components/ui/vuexy';
 
 // Shared presentational helpers for the Paymax HEALTH ops consoles — pharmacy,
 // laboratory and veterinary admin all import from this single file via relative
@@ -9,116 +10,116 @@ import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 // light-card inline-style convention (copied from events/_ui.tsx).
 // Lab + Vet admin (added later) reuse the same primitives + their own *Tabs.
 
-export const card = (): CSSProperties => ({ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem', background: '#fff' });
-export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: '0.85rem' });
-export const btnPrimary = (): CSSProperties => ({ ...btn(), border: '1px solid #340075', background: '#340075', color: '#fff', fontWeight: 600 });
-export const btnDanger = (): CSSProperties => ({ ...btn(), border: '1px solid #b91c1c', background: '#fff', color: '#b91c1c', fontWeight: 600 });
-export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: '#6b7280', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3 });
-export const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: '#374151', fontSize: '0.85rem', borderTop: '1px solid #f3f4f6', verticalAlign: 'top' });
-export const input = (): CSSProperties => ({ padding: '0.4rem 0.55rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem', width: '100%', boxSizing: 'border-box' });
-export const label = (): CSSProperties => ({ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#374151', marginBottom: '0.25rem' });
-export const select = (): CSSProperties => ({ ...input(), background: '#fff', cursor: 'pointer' });
+export const card = (): CSSProperties => ({ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card, boxShadow: '0 1px 3px rgba(47,43,61,0.06)' });
+export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: `1px solid ${colors.inputBorder}`, background: colors.card, color: colors.text, cursor: 'pointer', fontSize: '0.85rem' });
+export const btnPrimary = (): CSSProperties => ({ ...btn(), border: `1px solid ${colors.primary}`, background: colors.primary, color: '#fff', fontWeight: 600 });
+export const btnDanger = (): CSSProperties => ({ ...btn(), border: `1px solid ${colors.danger}`, background: colors.card, color: colors.danger, fontWeight: 600 });
+export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: colors.muted, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3 });
+export const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: colors.text, fontSize: '0.85rem', borderTop: `1px solid ${colors.border}`, verticalAlign: 'top' });
+export const input = (): CSSProperties => ({ padding: '0.4rem 0.55rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem', fontSize: '0.85rem', width: '100%', boxSizing: 'border-box', background: colors.card, color: colors.text });
+export const label = (): CSSProperties => ({ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' });
+export const select = (): CSSProperties => ({ ...input(), background: colors.card, cursor: 'pointer' });
 
-const STATUS_COLORS: Record<string, { fg: string; bg: string }> = {
+const STATUS_COLORS: Record<string, string> = {
   // success / terminal-good
-  active: { fg: '#15803d', bg: '#dcfce7' }, approved: { fg: '#15803d', bg: '#dcfce7' },
-  verified: { fg: '#15803d', bg: '#dcfce7' }, completed: { fg: '#15803d', bg: '#dcfce7' },
-  released: { fg: '#15803d', bg: '#dcfce7' }, fulfilled: { fg: '#15803d', bg: '#dcfce7' },
-  resolved: { fg: '#15803d', bg: '#dcfce7' }, paid: { fg: '#15803d', bg: '#dcfce7' },
-  delivered: { fg: '#15803d', bg: '#dcfce7' }, collected: { fg: '#15803d', bg: '#dcfce7' },
-  dispensed: { fg: '#15803d', bg: '#dcfce7' }, on_track: { fg: '#15803d', bg: '#dcfce7' },
-  confirmed: { fg: '#15803d', bg: '#dcfce7' }, ok: { fg: '#15803d', bg: '#dcfce7' },
+  active: colors.success, approved: colors.success,
+  verified: colors.success, completed: colors.success,
+  released: colors.success, fulfilled: colors.success,
+  resolved: colors.success, paid: colors.success,
+  delivered: colors.success, collected: colors.success,
+  dispensed: colors.success, on_track: colors.success,
+  confirmed: colors.success, ok: colors.success,
   // pending / warn
-  pending: { fg: '#9a3412', bg: '#ffedd5' }, submitted: { fg: '#9a3412', bg: '#ffedd5' },
-  needs_info: { fg: '#9a3412', bg: '#ffedd5' }, under_review: { fg: '#9a3412', bg: '#ffedd5' },
-  verifying: { fg: '#9a3412', bg: '#ffedd5' }, rx_pending_verification: { fg: '#9a3412', bg: '#ffedd5' },
-  kyc_hold: { fg: '#9a3412', bg: '#ffedd5' }, ready_for_pickup: { fg: '#9a3412', bg: '#ffedd5' },
-  flagged: { fg: '#9a3412', bg: '#ffedd5' }, scheduled: { fg: '#9a3412', bg: '#ffedd5' },
+  pending: colors.warning, submitted: colors.warning,
+  needs_info: colors.warning, under_review: colors.warning,
+  verifying: colors.warning, rx_pending_verification: colors.warning,
+  kyc_hold: colors.warning, ready_for_pickup: colors.warning,
+  flagged: colors.warning, scheduled: colors.warning,
   // in-progress / info (blue)
-  investigating: { fg: '#1d4ed8', bg: '#dbeafe' }, processing: { fg: '#1d4ed8', bg: '#dbeafe' },
-  open: { fg: '#1d4ed8', bg: '#dbeafe' }, in_delivery: { fg: '#1d4ed8', bg: '#dbeafe' },
-  issued: { fg: '#1d4ed8', bg: '#dbeafe' }, sent_to_pharmacy: { fg: '#1d4ed8', bg: '#dbeafe' },
-  created: { fg: '#1d4ed8', bg: '#dbeafe' }, logged: { fg: '#1d4ed8', bg: '#dbeafe' },
-  delivery: { fg: '#1d4ed8', bg: '#dbeafe' }, normal: { fg: '#1d4ed8', bg: '#dbeafe' },
+  investigating: colors.info, processing: colors.info,
+  open: colors.info, in_delivery: colors.info,
+  issued: colors.info, sent_to_pharmacy: colors.info,
+  created: colors.info, logged: colors.info,
+  delivery: colors.info, normal: colors.info,
   // neutral / muted
-  draft: { fg: '#6b7280', bg: '#f3f4f6' }, expired: { fg: '#6b7280', bg: '#f3f4f6' },
-  closed: { fg: '#6b7280', bg: '#f3f4f6' }, ignored: { fg: '#6b7280', bg: '#f3f4f6' },
-  pickup: { fg: '#6b7280', bg: '#f3f4f6' }, low: { fg: '#6b7280', bg: '#f3f4f6' },
-  otc: { fg: '#6b7280', bg: '#f3f4f6' },
+  draft: colors.secondary, expired: colors.secondary,
+  closed: colors.secondary, ignored: colors.secondary,
+  pickup: colors.secondary, low: colors.secondary,
+  otc: colors.secondary,
   // danger / terminal-bad
-  rejected: { fg: '#b91c1c', bg: '#fee2e2' }, failed: { fg: '#b91c1c', bg: '#fee2e2' },
-  blocked: { fg: '#b91c1c', bg: '#fee2e2' }, suspended: { fg: '#b91c1c', bg: '#fee2e2' },
-  high: { fg: '#b91c1c', bg: '#fee2e2' }, critical: { fg: '#b91c1c', bg: '#fee2e2' },
-  breached: { fg: '#b91c1c', bg: '#fee2e2' }, controlled: { fg: '#b91c1c', bg: '#fee2e2' },
-  invalid: { fg: '#b91c1c', bg: '#fee2e2' }, pom: { fg: '#b91c1c', bg: '#fee2e2' },
+  rejected: colors.danger, failed: colors.danger,
+  blocked: colors.danger, suspended: colors.danger,
+  high: colors.danger, critical: colors.danger,
+  breached: colors.danger, controlled: colors.danger,
+  invalid: colors.danger, pom: colors.danger,
   // refund / reversal (purple)
-  refunded: { fg: '#7c3aed', bg: '#ede9fe' }, reversed: { fg: '#7c3aed', bg: '#ede9fe' },
-  cancelled: { fg: '#7c3aed', bg: '#ede9fe' }, held: { fg: '#7c3aed', bg: '#ede9fe' },
+  refunded: '#7c3aed', reversed: '#7c3aed',
+  cancelled: '#7c3aed', held: '#7c3aed',
   // severity / grade
-  medium: { fg: '#9a3412', bg: '#ffedd5' },
+  medium: colors.warning,
   // KYC tiers
-  tier0: { fg: '#b91c1c', bg: '#fee2e2' }, tier1: { fg: '#9a3412', bg: '#ffedd5' },
-  tier2: { fg: '#1d4ed8', bg: '#dbeafe' }, tier3: { fg: '#15803d', bg: '#dcfce7' },
+  tier0: colors.danger, tier1: colors.warning,
+  tier2: colors.info, tier3: colors.success,
   // activity kinds
-  pcn_approved: { fg: '#15803d', bg: '#dcfce7' }, rx_verified: { fg: '#15803d', bg: '#dcfce7' },
-  catalog_rejected: { fg: '#b91c1c', bg: '#fee2e2' }, order_dispensed: { fg: '#1d4ed8', bg: '#dbeafe' },
-  recall_issued: { fg: '#9a3412', bg: '#ffedd5' }, payout_held: { fg: '#9a3412', bg: '#ffedd5' },
-  controlled_blocked: { fg: '#b91c1c', bg: '#fee2e2' },
+  pcn_approved: colors.success, rx_verified: colors.success,
+  catalog_rejected: colors.danger, order_dispensed: colors.info,
+  recall_issued: colors.warning, payout_held: colors.warning,
+  controlled_blocked: colors.danger,
   // ── Lab vertical (HEALTH-BUILD Phase 2 ADM) — additive status colours ──
   // chain-of-custody (HL-6) — note: `breached` already defined above (danger group)
-  in_custody: { fg: '#1d4ed8', bg: '#dbeafe' }, handed_over: { fg: '#1d4ed8', bg: '#dbeafe' },
-  accessioned: { fg: '#15803d', bg: '#dcfce7' },
-  recollect_required: { fg: '#9a3412', bg: '#ffedd5' },
+  in_custody: colors.info, handed_over: colors.info,
+  accessioned: colors.success,
+  recollect_required: colors.warning,
   // results audit / release (HL-8) — note: `released` already defined above (success group)
-  result_ready: { fg: '#9a3412', bg: '#ffedd5' },
-  amended: { fg: '#7c3aed', bg: '#ede9fe' }, abnormal: { fg: '#9a3412', bg: '#ffedd5' },
+  result_ready: colors.warning,
+  amended: '#7c3aed', abnormal: colors.warning,
   // critical-result escalation (HL-7)
-  escalated: { fg: '#b91c1c', bg: '#fee2e2' }, acknowledged: { fg: '#1d4ed8', bg: '#dbeafe' },
+  escalated: colors.danger, acknowledged: colors.info,
   // lab activity kinds
-  mlscn_approved: { fg: '#15803d', bg: '#dcfce7' }, custody_breach: { fg: '#b91c1c', bg: '#fee2e2' },
-  result_released: { fg: '#15803d', bg: '#dcfce7' }, critical_escalated: { fg: '#b91c1c', bg: '#fee2e2' },
-  catalog_governed: { fg: '#9a3412', bg: '#ffedd5' },
+  mlscn_approved: colors.success, custody_breach: colors.danger,
+  result_released: colors.success, critical_escalated: colors.danger,
+  catalog_governed: colors.warning,
   // ── Vet vertical (HEALTH-BUILD Phase 3 ADM) — additive status colours ──
   // Appointment lifecycle (REQUESTED→ACCEPTED→CONFIRMED→IN_PROGRESS→COMPLETED; →CANCELLED|NO_SHOW).
   // note: confirmed/completed/in_progress/cancelled/held/released/refunded already defined above.
-  requested: { fg: '#1d4ed8', bg: '#dbeafe' }, accepted: { fg: '#1d4ed8', bg: '#dbeafe' },
-  rescheduled: { fg: '#9a3412', bg: '#ffedd5' }, no_show: { fg: '#b91c1c', bg: '#fee2e2' },
+  requested: colors.info, accepted: colors.info,
+  rescheduled: colors.warning, no_show: colors.danger,
   // appointment / service mode
-  tele: { fg: '#1d4ed8', bg: '#dbeafe' }, home: { fg: '#7c3aed', bg: '#ede9fe' }, clinic: { fg: '#15803d', bg: '#dcfce7' },
+  tele: colors.info, home: '#7c3aed', clinic: colors.success,
   // emergency (HL-11)
-  emergency: { fg: '#b91c1c', bg: '#fee2e2' }, sos: { fg: '#b91c1c', bg: '#fee2e2' },
+  emergency: colors.danger, sos: colors.danger,
   // vet activity kinds
-  vcn_approved: { fg: '#15803d', bg: '#dcfce7' }, appointment_completed: { fg: '#1d4ed8', bg: '#dbeafe' },
-  eprescription_issued: { fg: '#1d4ed8', bg: '#dbeafe' }, content_moderated: { fg: '#9a3412', bg: '#ffedd5' },
-  sos_routed: { fg: '#b91c1c', bg: '#fee2e2' },
+  vcn_approved: colors.success, appointment_completed: colors.info,
+  eprescription_issued: colors.info, content_moderated: colors.warning,
+  sos_routed: colors.danger,
   // ── Triage / AI Symptom Checker (clinical console) — additive status colours ──
   // TriageSession states
-  started: { fg: '#6b7280', bg: '#f3f4f6' }, consented: { fg: '#1d4ed8', bg: '#dbeafe' },
-  interviewing: { fg: '#1d4ed8', bg: '#dbeafe' }, red_flag_detected: { fg: '#b91c1c', bg: '#fee2e2' },
-  assessed: { fg: '#1d4ed8', bg: '#dbeafe' }, disposition_given: { fg: '#15803d', bg: '#dcfce7' },
-  referred: { fg: '#15803d', bg: '#dcfce7' }, abandoned: { fg: '#6b7280', bg: '#f3f4f6' },
+  started: colors.secondary, consented: colors.info,
+  interviewing: colors.info, red_flag_detected: colors.danger,
+  assessed: colors.info, disposition_given: colors.success,
+  referred: colors.success, abandoned: colors.secondary,
   // 5-level disposition (emergency-sensitivity-first; never a diagnosis, SC-1)
-  emergency_ambulance: { fg: '#b91c1c', bg: '#fee2e2' }, emergency_urgent: { fg: '#b91c1c', bg: '#fee2e2' },
-  consult_24h: { fg: '#9a3412', bg: '#ffedd5' }, consult_routine: { fg: '#1d4ed8', bg: '#dbeafe' },
-  self_care: { fg: '#15803d', bg: '#dcfce7' },
+  emergency_ambulance: colors.danger, emergency_urgent: colors.danger,
+  consult_24h: colors.warning, consult_routine: colors.info,
+  self_care: colors.success,
   // EscalationCase states (raised/notified already share groups; add explicit)
-  raised: { fg: '#b91c1c', bg: '#fee2e2' }, notified: { fg: '#9a3412', bg: '#ffedd5' },
+  raised: colors.danger, notified: colors.warning,
   // Governance lifecycle (DRAFT→CLINICAL_REVIEW→APPROVED→PUBLISHED→DEPRECATED; SC-6)
-  clinical_review: { fg: '#9a3412', bg: '#ffedd5' }, published: { fg: '#15803d', bg: '#dcfce7' },
-  deprecated: { fg: '#6b7280', bg: '#f3f4f6' },
+  clinical_review: colors.warning, published: colors.success,
+  deprecated: colors.secondary,
 };
 
 export function Badge({ status, label: lbl }: { status: string; label?: string }) {
-  const c = STATUS_COLORS[status] ?? { fg: '#374151', bg: '#f3f4f6' };
-  return <span style={{ display: 'inline-block', padding: '0.1rem 0.5rem', borderRadius: 9999, fontSize: '0.72rem', fontWeight: 600, color: c.fg, background: c.bg, textTransform: 'capitalize', whiteSpace: 'nowrap' }}>{lbl ?? status.replace(/_/g, ' ')}</span>;
+  const c = STATUS_COLORS[status] ?? colors.secondary;
+  return <span style={{ display: 'inline-block', padding: '0.1rem 0.5rem', borderRadius: 9999, fontSize: '0.72rem', fontWeight: 600, color: c, background: tint(c, 0.12), textTransform: 'capitalize', whiteSpace: 'nowrap' }}>{lbl ?? status.replace(/_/g, ' ')}</span>;
 }
 
 export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', gap: '1rem', flexWrap: 'wrap' }}>
       <div>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>{title}</h1>
-        {subtitle ? <p style={{ color: '#6b7280', margin: '0.25rem 0 0', fontSize: '0.85rem', maxWidth: 820 }}>{subtitle}</p> : null}
+        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: colors.text }}>{title}</h1>
+        {subtitle ? <p style={{ color: colors.muted, margin: '0.25rem 0 0', fontSize: '0.85rem', maxWidth: 820 }}>{subtitle}</p> : null}
       </div>
       {action}
     </div>
@@ -130,7 +131,7 @@ export function Card({ title, children, right }: PropsWithChildren<{ title?: str
     <div style={{ ...card(), marginBottom: '1.25rem' }}>
       {title ? (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>{title}</h2>
+          <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, color: colors.text }}>{title}</h2>
           {right}
         </div>
       ) : null}
@@ -141,10 +142,10 @@ export function Card({ title, children, right }: PropsWithChildren<{ title?: str
 
 export function Kpi({ label: lbl, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
   return (
-    <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.85rem 1rem', background: '#fff' }}>
-      <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: '#6b7280', fontWeight: 600 }}>{lbl}</div>
-      <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: accent ?? '#111827' }}>{value}</div>
-      {sub ? <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.15rem' }}>{sub}</div> : null}
+    <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.85rem 1rem', background: colors.card, boxShadow: '0 1px 3px rgba(47,43,61,0.06)' }}>
+      <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 600 }}>{lbl}</div>
+      <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: accent ?? colors.text }}>{value}</div>
+      {sub ? <div style={{ fontSize: '0.75rem', color: colors.muted, marginTop: '0.15rem' }}>{sub}</div> : null}
     </div>
   );
 }
@@ -153,9 +154,9 @@ type Tab = { href: string; label: string; key: string };
 
 function Tabs({ active, tabs }: { active: string; tabs: Tab[] }) {
   return (
-    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>
+    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: `1px solid ${colors.border}`, paddingBottom: '0.5rem' }}>
       {tabs.map((t) => (
-        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : '#374151', background: active === t.key ? '#340075' : '#f3f4f6' }}>{t.label}</Link>
+        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : colors.text, background: active === t.key ? colors.primary : colors.bg }}>{t.label}</Link>
       ))}
     </div>
   );

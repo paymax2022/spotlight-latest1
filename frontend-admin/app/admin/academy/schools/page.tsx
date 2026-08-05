@@ -12,7 +12,22 @@ import type {
   Institution, Licence, ClassGroup, BulkEnrolResult, WhiteLabelConfig,
   Invoice, SchoolsOverview, Plan,
 } from '@/types/academyAdmin';
-import { PageHeader, AcademyTabs, Card, Badge, Kpi, StateBlock, AuditNote, DisclosureNote, Bar, btn, btnPrimary, btnDanger, th, td, input, label, select, formatNaira, fmtDate } from '../_ui';
+import { AcademyTabs, Kpi, StateBlock, AuditNote, DisclosureNote, Bar, label, select, formatNaira, fmtDate } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  const s = status.toLowerCase();
+  if (['active', 'approved', 'published', 'funded', 'paid', 'completed', 'allocated', 'live', 'reconciled', 'disbursed', 'collected', 'released', 'core', 'issued', 'routed', 'ready', 'eligible', 'actioned', 'verified', 'resolved', 'plan_published', 'badge_earned', 'pool_funded', 'item_approved'].includes(s)) return colors.success;
+  if (['pending', 'in_review', 'under_review', 'needs_info', 'scheduled', 'low_balance', 'review', 'in_translation', 'funding', 'fee_due', 'onboarding', 'frequent', 'packaged', 'matured', 'paused', 'processing', 'triaged', 'investigating', 'hide', 'warn', 'high', 'medium'].includes(s)) return colors.warning;
+  if (['draft', 'authoring', 'open', 'upcoming', 'generated', 'partial', 'submitted', 'trial', 'requested', 'applied', 'cards_generated', 'exam_opened', 'campaign_launched'].includes(s)) return colors.info;
+  if (['rejected', 'failed', 'suspended', 'blocked', 'unfunded', 'expired', 'duplicate', 'revoked', 'escalated', 'ban', 'critical', 'overdue', 'item_rejected'].includes(s)) return colors.danger;
+  if (['refunded', 'reversed', 'redeemed', 'reward_redeemed'].includes(s)) return colors.primary;
+  return colors.secondary;
+}
+
+function StatusBadge({ status, label: lbl }: { status: string; label?: string }) {
+  return <Badge text={lbl ?? status.replace(/_/g, ' ')} color={statusColor(status)} />;
+}
 
 export default function SchoolsPage() {
   const [overview, setOverview] = useState<SchoolsOverview | null>(null);
@@ -121,69 +136,69 @@ export default function SchoolsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="School & institution management" subtitle="B2B2C institutions, seat-based licences, class groups, seat-capped bulk enrolment, white-label config, and usage billing." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="School & institution management" subtitle="B2B2C institutions, seat-based licences, class groups, seat-capped bulk enrolment, white-label config, and usage billing." actions={<Button onClick={load} variant="outline" sm>Refresh</Button>} />
       <AcademyTabs active="schools" />
       <DisclosureNote>Requires <code>academy.schools</code>. Licences are seat-metered: bulk enrolment <strong>fails closed at the seat cap</strong>. Invoices are generated then charged via the finance rail; every change is audit-logged. Money in ₦ (kobo internally).</DisclosureNote>
 
       <StateBlock loading={loading} error={error} empty={false}>
         {overview && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <Kpi label="Institutions active" value={overview.institutions_active.toString()} sub={`${overview.institutions_total} total`} accent="#340075" />
+            <Kpi label="Institutions active" value={overview.institutions_active.toString()} sub={`${overview.institutions_total} total`} accent={colors.primary} />
             <Kpi label="Seats used" value={overview.seats_used.toLocaleString('en-NG')} sub={`${overview.seats_sold.toLocaleString('en-NG')} sold`} />
             <Kpi label="Learners (B2B2C)" value={overview.learners_total.toLocaleString('en-NG')} />
-            <Kpi label="Licence MRR" value={formatNaira(overview.mrr_kobo)} accent="#15803d" />
-            <Kpi label="Outstanding" value={formatNaira(overview.outstanding_kobo)} accent={overview.outstanding_kobo > 0 ? '#9a3412' : undefined} />
+            <Kpi label="Licence MRR" value={formatNaira(overview.mrr_kobo)} accent={colors.success} />
+            <Kpi label="Outstanding" value={formatNaira(overview.outstanding_kobo)} accent={overview.outstanding_kobo > 0 ? colors.warning : undefined} />
           </div>
         )}
 
         <Card title="Institutions">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Institution</th><th style={th()}>Type</th><th style={th()}>State</th><th style={th()}>Contact</th><th style={th()}>Learners</th><th style={th()}>Groups</th><th style={th()}>Status</th></tr></thead>
+            <thead><tr><th style={thCell}>Institution</th><th style={thCell}>Type</th><th style={thCell}>State</th><th style={thCell}>Contact</th><th style={thCell}>Learners</th><th style={thCell}>Groups</th><th style={thCell}>Status</th></tr></thead>
             <tbody>
               {institutions.map((i) => (
                 <tr key={i.id}>
-                  <td style={td()}><strong>{i.name}</strong></td>
-                  <td style={td()}><Badge status={i.type} /></td>
-                  <td style={td()}>{i.state}</td>
-                  <td style={td()}>{i.contact_name}<br /><span style={{ color: '#9ca3af', fontSize: '0.75rem' }}>{i.contact_email}</span></td>
-                  <td style={td()}>{i.learners.toLocaleString('en-NG')}</td>
-                  <td style={td()}>{i.class_groups}</td>
-                  <td style={td()}><Badge status={i.status} /></td>
+                  <td style={tdCell}><strong>{i.name}</strong></td>
+                  <td style={tdCell}><StatusBadge status={i.type} /></td>
+                  <td style={tdCell}>{i.state}</td>
+                  <td style={tdCell}>{i.contact_name}<br /><span style={{ color: colors.muted, fontSize: '0.75rem' }}>{i.contact_email}</span></td>
+                  <td style={tdCell}>{i.learners.toLocaleString('en-NG')}</td>
+                  <td style={tdCell}>{i.class_groups}</td>
+                  <td style={tdCell}><StatusBadge status={i.status} /></td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem', alignItems: 'end', marginTop: '0.75rem', borderTop: '1px solid #f3f4f6', paddingTop: '0.75rem' }}>
-            <div><label style={label()}>Name</label><input style={input()} value={instForm.name} onChange={(e) => setInstForm({ ...instForm, name: e.target.value })} /></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem', alignItems: 'end', marginTop: '0.75rem', borderTop: `1px solid ${colors.border}`, paddingTop: '0.75rem' }}>
+            <div><label style={label()}>Name</label><Input value={instForm.name} onChange={(e) => setInstForm({ ...instForm, name: e.target.value })} /></div>
             <div><label style={label()}>Type</label><select style={select()} value={instForm.type} onChange={(e) => setInstForm({ ...instForm, type: e.target.value })}><option value="school">School</option><option value="college">College</option><option value="ngo">NGO</option><option value="corporate">Corporate</option></select></div>
-            <div><label style={label()}>State</label><input style={input()} value={instForm.state} onChange={(e) => setInstForm({ ...instForm, state: e.target.value })} /></div>
-            <div><label style={label()}>Contact name</label><input style={input()} value={instForm.contact_name} onChange={(e) => setInstForm({ ...instForm, contact_name: e.target.value })} /></div>
-            <div><label style={label()}>Contact email</label><input style={input()} value={instForm.contact_email} onChange={(e) => setInstForm({ ...instForm, contact_email: e.target.value })} /></div>
-            <div><button onClick={addInstitution} disabled={busy === 'inst'} style={btnPrimary()}>Onboard institution</button></div>
+            <div><label style={label()}>State</label><Input value={instForm.state} onChange={(e) => setInstForm({ ...instForm, state: e.target.value })} /></div>
+            <div><label style={label()}>Contact name</label><Input value={instForm.contact_name} onChange={(e) => setInstForm({ ...instForm, contact_name: e.target.value })} /></div>
+            <div><label style={label()}>Contact email</label><Input value={instForm.contact_email} onChange={(e) => setInstForm({ ...instForm, contact_email: e.target.value })} /></div>
+            <div><Button onClick={addInstitution} disabled={busy === 'inst'} variant="primary" sm>Onboard institution</Button></div>
           </div>
         </Card>
 
         <Card title="Licences (seats used / total)">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Institution</th><th style={th()}>Plan</th><th style={th()}>Seats</th><th style={th()}>₦/seat</th><th style={th()}>Expires</th><th style={th()}>Status</th><th style={th()}>Actions</th></tr></thead>
+            <thead><tr><th style={thCell}>Institution</th><th style={thCell}>Plan</th><th style={thCell}>Seats</th><th style={thCell}>₦/seat</th><th style={thCell}>Expires</th><th style={thCell}>Status</th><th style={thCell}>Actions</th></tr></thead>
             <tbody>
               {licences.map((l) => {
                 const full = l.seats_used >= l.seats_total;
                 return (
                   <tr key={l.id}>
-                    <td style={td()}>{instName(l.institution_id)}</td>
-                    <td style={td()}>{l.plan_name}</td>
-                    <td style={td()}><div style={{ minWidth: 180 }}><Bar value={l.seats_used} max={l.seats_total} color={full ? '#b91c1c' : '#340075'} labelRight={`${l.seats_used.toLocaleString('en-NG')} / ${l.seats_total.toLocaleString('en-NG')}`} /></div></td>
-                    <td style={td()}>{formatNaira(l.price_per_seat_kobo)}</td>
-                    <td style={td()}>{fmtDate(l.expires_on)}</td>
-                    <td style={td()}><Badge status={l.status} /></td>
-                    <td style={td()}>
+                    <td style={tdCell}>{instName(l.institution_id)}</td>
+                    <td style={tdCell}>{l.plan_name}</td>
+                    <td style={tdCell}><div style={{ minWidth: 180 }}><Bar value={l.seats_used} max={l.seats_total} color={full ? colors.danger : colors.primary} labelRight={`${l.seats_used.toLocaleString('en-NG')} / ${l.seats_total.toLocaleString('en-NG')}`} /></div></td>
+                    <td style={tdCell}>{formatNaira(l.price_per_seat_kobo)}</td>
+                    <td style={tdCell}>{fmtDate(l.expires_on)}</td>
+                    <td style={tdCell}><StatusBadge status={l.status} /></td>
+                    <td style={tdCell}>
                       <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
                         {l.status === 'suspended'
-                          ? <button onClick={() => changeLicence(l, 'reactivate')} disabled={busy === l.id} style={btnPrimary()}>Reactivate</button>
-                          : <button onClick={() => changeLicence(l, 'suspend')} disabled={busy === l.id} style={btnDanger()}>Suspend</button>}
-                        <button onClick={() => changeLicence(l, 'set_seats')} disabled={busy === l.id} style={btn()}>Set seats</button>
+                          ? <Button onClick={() => changeLicence(l, 'reactivate')} disabled={busy === l.id} variant="primary" sm>Reactivate</Button>
+                          : <Button onClick={() => changeLicence(l, 'suspend')} disabled={busy === l.id} variant="danger" sm>Suspend</Button>}
+                        <Button onClick={() => changeLicence(l, 'set_seats')} disabled={busy === l.id} variant="outline" sm>Set seats</Button>
                       </div>
                     </td>
                   </tr>
@@ -191,31 +206,31 @@ export default function SchoolsPage() {
               })}
             </tbody>
           </table>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.6rem', alignItems: 'end', marginTop: '0.75rem', borderTop: '1px solid #f3f4f6', paddingTop: '0.75rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.6rem', alignItems: 'end', marginTop: '0.75rem', borderTop: `1px solid ${colors.border}`, paddingTop: '0.75rem' }}>
             <div><label style={label()}>Institution</label><select style={select()} value={licForm.institution_id} onChange={(e) => setLicForm({ ...licForm, institution_id: e.target.value })}>{institutions.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}</select></div>
             <div><label style={label()}>Plan</label><select style={select()} value={licForm.plan_id} onChange={(e) => setLicForm({ ...licForm, plan_id: e.target.value })}>{plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
-            <div><label style={label()}>Seats</label><input type="number" style={input()} value={licForm.seats_total} onChange={(e) => setLicForm({ ...licForm, seats_total: e.target.value })} /></div>
-            <div><label style={label()}>₦/seat</label><input type="number" style={input()} value={licForm.price} onChange={(e) => setLicForm({ ...licForm, price: e.target.value })} /></div>
-            <div><label style={label()}>Expires</label><input type="date" style={input()} value={licForm.expires_on} onChange={(e) => setLicForm({ ...licForm, expires_on: e.target.value })} /></div>
-            <div><button onClick={addLicence} disabled={busy === 'lic'} style={btnPrimary()}>Issue licence</button></div>
+            <div><label style={label()}>Seats</label><Input type="number" value={licForm.seats_total} onChange={(e) => setLicForm({ ...licForm, seats_total: e.target.value })} /></div>
+            <div><label style={label()}>₦/seat</label><Input type="number" value={licForm.price} onChange={(e) => setLicForm({ ...licForm, price: e.target.value })} /></div>
+            <div><label style={label()}>Expires</label><Input type="date" value={licForm.expires_on} onChange={(e) => setLicForm({ ...licForm, expires_on: e.target.value })} /></div>
+            <div><Button onClick={addLicence} disabled={busy === 'lic'} variant="primary" sm>Issue licence</Button></div>
           </div>
         </Card>
 
         <Card title="Class groups">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Group</th><th style={th()}>Institution</th><th style={th()}>Teacher</th><th style={th()}>Exam focus</th><th style={th()}>Learners</th></tr></thead>
+            <thead><tr><th style={thCell}>Group</th><th style={thCell}>Institution</th><th style={thCell}>Teacher</th><th style={thCell}>Exam focus</th><th style={thCell}>Learners</th></tr></thead>
             <tbody>
               {groups.map((g) => (
-                <tr key={g.id}><td style={td()}><strong>{g.name}</strong></td><td style={td()}>{instName(g.institution_id)}</td><td style={td()}>{g.teacher}</td><td style={td()}><Badge status={g.exam_focus} /></td><td style={td()}>{g.learners}</td></tr>
+                <tr key={g.id}><td style={tdCell}><strong>{g.name}</strong></td><td style={tdCell}>{instName(g.institution_id)}</td><td style={tdCell}>{g.teacher}</td><td style={tdCell}><StatusBadge status={g.exam_focus} /></td><td style={tdCell}>{g.learners}</td></tr>
               ))}
             </tbody>
           </table>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem', alignItems: 'end', marginTop: '0.75rem', borderTop: '1px solid #f3f4f6', paddingTop: '0.75rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem', alignItems: 'end', marginTop: '0.75rem', borderTop: `1px solid ${colors.border}`, paddingTop: '0.75rem' }}>
             <div><label style={label()}>Institution</label><select style={select()} value={groupForm.institution_id} onChange={(e) => setGroupForm({ ...groupForm, institution_id: e.target.value })}>{institutions.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}</select></div>
-            <div><label style={label()}>Group name</label><input style={input()} value={groupForm.name} onChange={(e) => setGroupForm({ ...groupForm, name: e.target.value })} placeholder="SS 3 — Gold" /></div>
-            <div><label style={label()}>Teacher</label><input style={input()} value={groupForm.teacher} onChange={(e) => setGroupForm({ ...groupForm, teacher: e.target.value })} /></div>
-            <div><label style={label()}>Exam focus</label><input style={input()} value={groupForm.exam_focus} onChange={(e) => setGroupForm({ ...groupForm, exam_focus: e.target.value })} /></div>
-            <div><button onClick={addGroup} disabled={busy === 'group'} style={btnPrimary()}>Create group</button></div>
+            <div><label style={label()}>Group name</label><Input value={groupForm.name} onChange={(e) => setGroupForm({ ...groupForm, name: e.target.value })} placeholder="SS 3 — Gold" /></div>
+            <div><label style={label()}>Teacher</label><Input value={groupForm.teacher} onChange={(e) => setGroupForm({ ...groupForm, teacher: e.target.value })} /></div>
+            <div><label style={label()}>Exam focus</label><Input value={groupForm.exam_focus} onChange={(e) => setGroupForm({ ...groupForm, exam_focus: e.target.value })} /></div>
+            <div><Button onClick={addGroup} disabled={busy === 'group'} variant="primary" sm>Create group</Button></div>
           </div>
         </Card>
 
@@ -225,21 +240,21 @@ export default function SchoolsPage() {
             <div><label style={label()}>Licence</label><select style={select()} value={enrolLic} onChange={(e) => setEnrolLic(e.target.value)}><option value="">Select licence…</option>{licsFor(enrolInst).map((l) => <option key={l.id} value={l.id}>{l.plan_name} ({l.seats_total - l.seats_used} free)</option>)}</select></div>
           </div>
           <label style={label()}>Learner IDs (paste/upload — comma, space or newline separated)</label>
-          <textarea style={{ ...input(), minHeight: 90, fontFamily: 'monospace', fontSize: '0.78rem' }} value={enrolText} onChange={(e) => setEnrolText(e.target.value)} placeholder={'usr_aa01\nusr_bb02\nusr_cc03'} />
+          <textarea style={{ minHeight: 90, fontFamily: 'monospace', fontSize: '0.78rem' }} value={enrolText} onChange={(e) => setEnrolText(e.target.value)} placeholder={'usr_aa01\nusr_bb02\nusr_cc03'} />
           <div style={{ marginTop: '0.6rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-            <button onClick={runBulkEnrol} disabled={busy === 'enrol'} style={btnPrimary()}>Enrol learners</button>
+            <Button onClick={runBulkEnrol} disabled={busy === 'enrol'} variant="primary" sm>Enrol learners</Button>
             <input type="file" accept=".csv,.txt" onChange={(e) => { const f = e.target.files?.[0]; if (f) f.text().then(setEnrolText); }} style={{ fontSize: '0.8rem' }} />
           </div>
           {enrolResult && (
-            <div style={{ marginTop: '0.75rem', border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.75rem' }}>
+            <div style={{ marginTop: '0.75rem', border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.75rem' }}>
               <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.85rem' }}>
                 <span><strong>Requested:</strong> {enrolResult.requested}</span>
-                <span style={{ color: '#15803d' }}><strong>Enrolled:</strong> {enrolResult.enrolled}</span>
-                <span style={{ color: enrolResult.rejected ? '#b91c1c' : '#6b7280' }}><strong>Rejected:</strong> {enrolResult.rejected}</span>
+                <span style={{ color: colors.success }}><strong>Enrolled:</strong> {enrolResult.enrolled}</span>
+                <span style={{ color: enrolResult.rejected ? colors.danger : colors.muted }}><strong>Rejected:</strong> {enrolResult.rejected}</span>
                 <span><strong>Seats remaining:</strong> {enrolResult.seats_remaining}</span>
               </div>
-              {enrolResult.reason && <p style={{ color: '#b91c1c', fontSize: '0.8rem', margin: '0.5rem 0 0' }}>{enrolResult.reason}</p>}
-              {enrolResult.rejected_ids.length > 0 && <p style={{ fontSize: '0.78rem', color: '#6b7280', margin: '0.4rem 0 0' }}>Rejected IDs: <code>{enrolResult.rejected_ids.join(', ')}</code></p>}
+              {enrolResult.reason && <p style={{ color: colors.danger, fontSize: '0.8rem', margin: '0.5rem 0 0' }}>{enrolResult.reason}</p>}
+              {enrolResult.rejected_ids.length > 0 && <p style={{ fontSize: '0.78rem', color: colors.muted, margin: '0.4rem 0 0' }}>Rejected IDs: <code>{enrolResult.rejected_ids.join(', ')}</code></p>}
             </div>
           )}
         </Card>
@@ -252,50 +267,50 @@ export default function SchoolsPage() {
           {wl && (
             <>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.6rem', alignItems: 'end' }}>
-                <div><label style={label()}>Brand name</label><input style={input()} value={wl.brand_name} onChange={(e) => setWl({ ...wl, brand_name: e.target.value })} /></div>
-                <div><label style={label()}>Subdomain</label><input style={input()} value={wl.subdomain} onChange={(e) => setWl({ ...wl, subdomain: e.target.value })} placeholder="school.spotlight.academy" /></div>
-                <div><label style={label()}>Custom domain</label><input style={input()} value={wl.custom_domain ?? ''} onChange={(e) => setWl({ ...wl, custom_domain: e.target.value || null })} placeholder="learn.school.ng" /></div>
-                <div><label style={label()}>Primary color</label><input style={input()} value={wl.primary_color} onChange={(e) => setWl({ ...wl, primary_color: e.target.value })} placeholder="#340075" /></div>
-                <div><label style={label()}>Logo URL</label><input style={input()} value={wl.logo_url} onChange={(e) => setWl({ ...wl, logo_url: e.target.value })} /></div>
-                <div><label style={label()}>Support email</label><input style={input()} value={wl.support_email} onChange={(e) => setWl({ ...wl, support_email: e.target.value })} /></div>
+                <div><label style={label()}>Brand name</label><Input value={wl.brand_name} onChange={(e) => setWl({ ...wl, brand_name: e.target.value })} /></div>
+                <div><label style={label()}>Subdomain</label><Input value={wl.subdomain} onChange={(e) => setWl({ ...wl, subdomain: e.target.value })} placeholder="school.spotlight.academy" /></div>
+                <div><label style={label()}>Custom domain</label><Input value={wl.custom_domain ?? ''} onChange={(e) => setWl({ ...wl, custom_domain: e.target.value || null })} placeholder="learn.school.ng" /></div>
+                <div><label style={label()}>Primary color</label><Input value={wl.primary_color} onChange={(e) => setWl({ ...wl, primary_color: e.target.value })} placeholder="#340075" /></div>
+                <div><label style={label()}>Logo URL</label><Input value={wl.logo_url} onChange={(e) => setWl({ ...wl, logo_url: e.target.value })} /></div>
+                <div><label style={label()}>Support email</label><Input value={wl.support_email} onChange={(e) => setWl({ ...wl, support_email: e.target.value })} /></div>
               </div>
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', marginTop: '0.6rem' }}>
                 <input type="checkbox" checked={wl.hide_spotlight_branding} onChange={(e) => setWl({ ...wl, hide_spotlight_branding: e.target.checked })} />
                 Hide Spotlight branding
               </label>
-              <div style={{ marginTop: '0.6rem' }}><button onClick={saveWl} disabled={busy === 'wl'} style={btnPrimary()}>Save white-label config</button></div>
+              <div style={{ marginTop: '0.6rem' }}><Button onClick={saveWl} disabled={busy === 'wl'} variant="primary" sm>Save white-label config</Button></div>
             </>
           )}
         </Card>
 
         <Card title="Usage & billing">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Invoice</th><th style={th()}>Institution</th><th style={th()}>Period</th><th style={th()}>Seats</th><th style={th()}>Amount</th><th style={th()}>Due</th><th style={th()}>Status</th><th style={th()}>Action</th></tr></thead>
+            <thead><tr><th style={thCell}>Invoice</th><th style={thCell}>Institution</th><th style={thCell}>Period</th><th style={thCell}>Seats</th><th style={thCell}>Amount</th><th style={thCell}>Due</th><th style={thCell}>Status</th><th style={thCell}>Action</th></tr></thead>
             <tbody>
               {invoices.map((i) => (
                 <tr key={i.id}>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{i.id}</code></td>
-                  <td style={td()}>{instName(i.institution_id)}</td>
-                  <td style={td()}>{i.period}</td>
-                  <td style={td()}>{i.seats_billed.toLocaleString('en-NG')}</td>
-                  <td style={td()}>{formatNaira(i.amount_kobo)}</td>
-                  <td style={td()}>{fmtDate(i.due_on)}</td>
-                  <td style={td()}><Badge status={i.status} /></td>
-                  <td style={td()}>{i.status === 'paid' || i.status === 'void' ? <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>done</span> : <button onClick={() => charge(i)} disabled={busy === i.id} style={btnPrimary()}>Charge</button>}</td>
+                  <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{i.id}</code></td>
+                  <td style={tdCell}>{instName(i.institution_id)}</td>
+                  <td style={tdCell}>{i.period}</td>
+                  <td style={tdCell}>{i.seats_billed.toLocaleString('en-NG')}</td>
+                  <td style={tdCell}>{formatNaira(i.amount_kobo)}</td>
+                  <td style={tdCell}>{fmtDate(i.due_on)}</td>
+                  <td style={tdCell}><StatusBadge status={i.status} /></td>
+                  <td style={tdCell}>{i.status === 'paid' || i.status === 'void' ? <span style={{ color: colors.muted, fontSize: '0.8rem' }}>done</span> : <Button onClick={() => charge(i)} disabled={busy === i.id} variant="primary" sm>Charge</Button>}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem', alignItems: 'end', marginTop: '0.75rem', borderTop: '1px solid #f3f4f6', paddingTop: '0.75rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem', alignItems: 'end', marginTop: '0.75rem', borderTop: `1px solid ${colors.border}`, paddingTop: '0.75rem' }}>
             <div><label style={label()}>Institution</label><select style={select()} value={invForm.institution_id} onChange={(e) => setInvForm({ ...invForm, institution_id: e.target.value, licence_id: '' })}>{institutions.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}</select></div>
             <div><label style={label()}>Licence</label><select style={select()} value={invForm.licence_id} onChange={(e) => setInvForm({ ...invForm, licence_id: e.target.value })}><option value="">Select licence…</option>{licsFor(invForm.institution_id).map((l) => <option key={l.id} value={l.id}>{l.plan_name}</option>)}</select></div>
-            <div><label style={label()}>Period</label><input style={input()} value={invForm.period} onChange={(e) => setInvForm({ ...invForm, period: e.target.value })} placeholder="June 2026" /></div>
-            <div><button onClick={genInvoice} disabled={busy === 'inv'} style={btnPrimary()}>Generate invoice</button></div>
+            <div><label style={label()}>Period</label><Input value={invForm.period} onChange={(e) => setInvForm({ ...invForm, period: e.target.value })} placeholder="June 2026" /></div>
+            <div><Button onClick={genInvoice} disabled={busy === 'inv'} variant="primary" sm>Generate invoice</Button></div>
           </div>
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.text, marginTop: '0.6rem' }}>{notice}</p>}
           <AuditNote>Institution onboarding, licence changes, bulk enrolment, white-label edits and invoice generation/charges are recorded to the immutable audit log; charges post to the finance ledger.</AuditNote>
         </Card>
       </StateBlock>
-    </div>
+    </Page>
   );
 }

@@ -15,6 +15,7 @@ import {
   btn, btnPrimary, th, td, input, label, select, fmtDate,
 } from '../../_ui';
 import { FeesTabs, FeesGuard } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function FeesCompetitionPage() {
   const [comps, setComps] = useState<Competition[]>([]);
@@ -67,7 +68,7 @@ export default function FeesCompetitionPage() {
             {COMPETITION_FLOW.map((st, i) => (
               <span key={st} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
                 <Badge status={st === 'completed' ? 'approved' : st === 'draft' ? 'draft' : 'pending'} label={st.replace(/_/g, ' ')} />
-                {i < COMPETITION_FLOW.length - 1 ? <span style={{ color: '#9ca3af' }}>→</span> : null}
+                {i < COMPETITION_FLOW.length - 1 ? <span style={{ color: colors.muted }}>→</span> : null}
               </span>
             ))}
           </div>
@@ -78,7 +79,7 @@ export default function FeesCompetitionPage() {
             const open = c.status === 'open_registration';
             const f = form[c.id] ?? { school_id: schools[0]?.id ?? '', team_name: '', students: '' };
             return (
-              <div key={c.id} style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.85rem', marginBottom: '0.75rem' }}>
+              <div key={c.id} style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.85rem', marginBottom: '0.75rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <div>
                     <strong>{c.name}</strong> <Badge status="core" label={c.scope} />
@@ -94,7 +95,7 @@ export default function FeesCompetitionPage() {
                     <div><button onClick={() => register(c)} disabled={busy === c.id} style={btnPrimary()}>Register team</button></div>
                   </div>
                 ) : (
-                  <p style={{ fontSize: '0.78rem', color: '#9ca3af', marginTop: '0.5rem' }}>Registration is closed for this competition.</p>
+                  <p style={{ fontSize: '0.78rem', color: colors.muted, marginTop: '0.5rem' }}>Registration is closed for this competition.</p>
                 )}
               </div>
             );
@@ -109,7 +110,7 @@ export default function FeesCompetitionPage() {
               {regs.length === 0 && <tr><td style={td()} colSpan={6}><span style={{ color: '#6b7280' }}>No registrations yet.</span></td></tr>}
             </tbody>
           </table>
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: '0.6rem' }}>{notice}</p>}
           <AuditNote>Competition registrations are recorded to the immutable audit log (module <code>academy.fees</code>).</AuditNote>
         </Card>
       </StateBlock>

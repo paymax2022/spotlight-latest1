@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listEprescriptionAudit } from '@/services/healthVetAdminService';
 import type { EprescriptionAuditItem } from '@/types/healthVetAdmin';
 import { PageHeader, VetTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, btn, btnPrimary, th, td, input, select, label, fmtDate } from '../../_ui';
+import { colors, tint } from '@/components/ui/vuexy';
 
 const STATUSES = ['', 'issued', 'sent_to_pharmacy', 'verifying', 'verified', 'dispensed', 'fulfilled', 'rejected'];
 
@@ -74,9 +75,9 @@ export default function EprescriptionAuditPage() {
             </tr></thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} style={r.flagged ? { background: '#fff7ed' } : undefined}>
-                  <td style={td()}><strong>{r.drug_summary}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.pet_name} ({r.pet_species}) · {r.owner_masked} · {r.id}</div>{r.flagged && r.flag_reason ? <div style={{ fontSize: '0.72rem', color: '#b91c1c', marginTop: 3 }}>{r.flag_reason}</div> : null}</td>
-                  <td style={td()}>{r.vet_masked}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}><code>{r.vcn_licence_no}</code></div></td>
+                <tr key={r.id} style={r.flagged ? { background: tint(colors.warning, 0.08) } : undefined}>
+                  <td style={td()}><strong>{r.drug_summary}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.pet_name} ({r.pet_species}) · {r.owner_masked} · {r.id}</div>{r.flagged && r.flag_reason ? <div style={{ fontSize: '0.72rem', color: colors.danger, marginTop: 3 }}>{r.flag_reason}</div> : null}</td>
+                  <td style={td()}>{r.vet_masked}<div style={{ fontSize: '0.72rem', color: colors.muted }}><code>{r.vcn_licence_no}</code></div></td>
                   <td style={td()}>
                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                       {r.is_pom ? <Badge status="pom" label="POM" /> : <Badge status="otc" label="OTC" />}

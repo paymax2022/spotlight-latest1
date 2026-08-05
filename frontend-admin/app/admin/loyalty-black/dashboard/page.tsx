@@ -3,7 +3,21 @@
 import { useEffect, useState } from 'react';
 import { getBlackDashboard, formatNaira } from '@/services/blackAdminService';
 import type { BlackDashboard } from '@/types/blackAdmin';
-import { PageHeader, BlackTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, btn, th, td, timeAgo } from '../../creators/_ui';
+import { BlackTabs, Kpi, DisclosureNote, StateBlock, timeAgo } from '../../creators/_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(kind: string): string {
+  switch (kind) {
+    case 'redemption':
+      return colors.success;
+    case 'partner':
+      return colors.info;
+    case 'settlement':
+      return colors.primary;
+    default:
+      return colors.secondary;
+  }
+}
 
 export default function BlackDashboardPage() {
   const [data, setData] = useState<BlackDashboard | null>(null);
@@ -21,11 +35,11 @@ export default function BlackDashboardPage() {
   const maxRedeem = data ? Math.max(...data.redemption_mix.map((m) => m.count), 1) : 1;
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Paymax Black overview"
         subtitle="Premium membership: members, perk redemptions, perk cost/liability, partner offers and partner settlement due."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <BlackTabs active="overview" />
 
@@ -38,26 +52,26 @@ export default function BlackDashboardPage() {
         {data && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <Kpi label="Black members" value={data.members_total.toLocaleString('en-NG')} sub={`${data.members_active.toLocaleString('en-NG')} active`} accent="#340075" />
-              <Kpi label="New (30d)" value={data.members_new_30d.toLocaleString('en-NG')} accent="#15803d" />
-              <Kpi label="Churn (30d)" value={data.churn_30d.toLocaleString('en-NG')} accent={data.churn_30d > 0 ? '#9a3412' : undefined} />
+              <Kpi label="Black members" value={data.members_total.toLocaleString('en-NG')} sub={`${data.members_active.toLocaleString('en-NG')} active`} accent={colors.primary} />
+              <Kpi label="New (30d)" value={data.members_new_30d.toLocaleString('en-NG')} accent={colors.success} />
+              <Kpi label="Churn (30d)" value={data.churn_30d.toLocaleString('en-NG')} accent={data.churn_30d > 0 ? colors.warning : undefined} />
               <Kpi label="Membership revenue (30d)" value={formatNaira(data.membership_revenue_30d_kobo)} />
               <Kpi label="Perk redemptions (30d)" value={data.perk_redemptions_30d.toLocaleString('en-NG')} />
-              <Kpi label="Perk cost (30d)" value={formatNaira(data.perk_cost_30d_kobo)} sub="Platform-borne liability" accent={data.perk_cost_30d_kobo > 0 ? '#9a3412' : undefined} />
+              <Kpi label="Perk cost (30d)" value={formatNaira(data.perk_cost_30d_kobo)} sub="Platform-borne liability" accent={data.perk_cost_30d_kobo > 0 ? colors.warning : undefined} />
               <Kpi label="Active partner offers" value={data.partner_offers_active.toLocaleString('en-NG')} />
               <Kpi label="Partners active" value={data.partners_active.toLocaleString('en-NG')} />
-              <Kpi label="Settlement due" value={formatNaira(data.partner_settlement_due_kobo)} sub="Owed to partners" accent={data.partner_settlement_due_kobo > 0 ? '#9a3412' : undefined} />
-              <Kpi label="Settlement breaks" value={data.settlement_breaks_open.toLocaleString('en-NG')} accent={data.settlement_breaks_open > 0 ? '#b91c1c' : undefined} />
+              <Kpi label="Settlement due" value={formatNaira(data.partner_settlement_due_kobo)} sub="Owed to partners" accent={data.partner_settlement_due_kobo > 0 ? colors.warning : undefined} />
+              <Kpi label="Settlement breaks" value={data.settlement_breaks_open.toLocaleString('en-NG')} accent={data.settlement_breaks_open > 0 ? colors.danger : undefined} />
             </div>
 
-            <Card title="Redemption mix (30d)">
+            <Card title="Redemption mix (30d)" style={{ marginBottom: '1.25rem' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 {data.redemption_mix.map((m) => (
                   <div key={m.kind} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                    <span style={{ width: 140, flexShrink: 0 }}><Badge status={m.kind} /></span>
+                    <span style={{ width: 140, flexShrink: 0 }}><Badge text={m.kind.replace(/_/g, ' ')} color={statusColor(m.kind)} /></span>
                     <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                      <div style={{ height: 12, width: `${(m.count / maxRedeem) * 100}%`, minWidth: 2, background: '#340075', borderRadius: 2 }} />
-                      <span style={{ fontSize: '0.72rem', color: '#6b7280', whiteSpace: 'nowrap' }}>{m.count.toLocaleString('en-NG')} · cost {formatNaira(m.cost_kobo)}</span>
+                      <div style={{ height: 12, width: `${(m.count / maxRedeem) * 100}%`, minWidth: 2, background: colors.primary, borderRadius: 2 }} />
+                      <span style={{ fontSize: '0.72rem', color: colors.muted, whiteSpace: 'nowrap' }}>{m.count.toLocaleString('en-NG')} · cost {formatNaira(m.cost_kobo)}</span>
                     </div>
                   </div>
                 ))}
@@ -65,16 +79,16 @@ export default function BlackDashboardPage() {
             </Card>
 
             <Card title="Recent activity">
-              {data.activity.length === 0 ? <p style={{ color: '#6b7280' }}>No recent activity.</p> : (
+              {data.activity.length === 0 ? <p style={{ color: colors.muted }}>No recent activity.</p> : (
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr><th style={th()}>Event</th><th style={th()}>Type</th><th style={th()}>Ref</th><th style={th()}>When</th></tr></thead>
+                  <thead><tr><th style={thCell}>Event</th><th style={thCell}>Type</th><th style={thCell}>Ref</th><th style={thCell}>When</th></tr></thead>
                   <tbody>
                     {data.activity.map((a) => (
                       <tr key={a.id}>
-                        <td style={td()}>{a.label}</td>
-                        <td style={td()}><Badge status={a.kind} label={a.kind.replace(/_/g, ' ')} /></td>
-                        <td style={td()}><code style={{ fontSize: '0.78rem' }}>{a.ref ?? '—'}</code></td>
-                        <td style={td()}>{timeAgo(a.created_at)}</td>
+                        <td style={tdCell}>{a.label}</td>
+                        <td style={tdCell}><Badge text={a.kind.replace(/_/g, ' ')} color={statusColor(a.kind)} /></td>
+                        <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{a.ref ?? '—'}</code></td>
+                        <td style={tdCell}>{timeAgo(a.created_at)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -84,6 +98,6 @@ export default function BlackDashboardPage() {
           </>
         )}
       </StateBlock>
-    </div>
+    </Page>
   );
 }

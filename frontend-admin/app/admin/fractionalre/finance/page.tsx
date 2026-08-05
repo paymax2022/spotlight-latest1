@@ -5,7 +5,10 @@
 import { useEffect, useState } from 'react';
 import { getEscrow, getFees, refund } from '@/services/fractionalreAdminService';
 import type { EscrowAccount, FeeRevenue } from '@/types/fractionalreAdmin';
-import { PageHeader, FractionalReTabs, Card, Kpi, Badge, SodNote, btn, btnPrimary, th, td, input, label, money, timeAgo } from '../_ui';
+import { FractionalReTabs, Kpi, SodNote, money, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const labelStyle = { fontSize: '0.78rem', fontWeight: 600, color: colors.text, display: 'block', marginBottom: 4 } as const;
 
 export default function FinancePage() {
   const [escrows, setEscrows] = useState<EscrowAccount[]>([]);
@@ -32,34 +35,34 @@ export default function FinancePage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Finance & Treasury" subtitle="Escrow reconciliation, refunds and fee revenue." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Finance & Treasury" subtitle="Escrow reconciliation, refunds and fee revenue." actions={<Button onClick={load}>Refresh</Button>} />
       <FractionalReTabs active="finance" />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-      {msg && <p style={{ color: '#15803d' }}>{msg}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      {msg && <p style={{ color: colors.success }}>{msg}</p>}
 
-      {loading || !fees ? <p style={{ color: '#6b7280' }}>Loading finance…</p> : (
+      {loading || !fees ? <p style={{ color: colors.muted }}>Loading finance…</p> : (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <Kpi label="Total fees" value={money(fees.totalFeesKobo)} accent="#16a34a" sub={fees.period} />
-            <Kpi label="Management" value={money(fees.managementFeesKobo)} accent="#1d4ed8" />
-            <Kpi label="Listing" value={money(fees.listingFeesKobo)} accent="#1d4ed8" />
-            <Kpi label="Secondary" value={money(fees.secondaryFeesKobo)} accent="#6b21a8" />
-            <Kpi label="Performance" value={money(fees.performanceFeesKobo)} accent="#d97706" />
-            <Kpi label="FX" value={money(fees.fxFeesKobo)} accent="#6b21a8" />
+            <Kpi label="Total fees" value={money(fees.totalFeesKobo)} accent={colors.success} sub={fees.period} />
+            <Kpi label="Management" value={money(fees.managementFeesKobo)} accent={colors.info} />
+            <Kpi label="Listing" value={money(fees.listingFeesKobo)} accent={colors.info} />
+            <Kpi label="Secondary" value={money(fees.secondaryFeesKobo)} accent={colors.secondary} />
+            <Kpi label="Performance" value={money(fees.performanceFeesKobo)} accent={colors.warning} />
+            <Kpi label="FX" value={money(fees.fxFeesKobo)} accent={colors.secondary} />
           </div>
 
           <Card title="Escrow & funds-flow reconciliation">
-            {escrows.length === 0 ? <p style={{ color: '#6b7280' }}>No escrow accounts.</p> : (
+            {escrows.length === 0 ? <p style={{ color: colors.muted }}>No escrow accounts.</p> : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th style={th()}>Asset</th><th style={th()}>Escrow ref</th><th style={th()}>Inflows</th><th style={th()}>Outflows</th><th style={th()}>Balance</th><th style={th()}>Reconciled</th><th style={th()}>As of</th></tr></thead>
+                <thead><tr><th style={thCell}>Asset</th><th style={thCell}>Escrow ref</th><th style={thCell}>Inflows</th><th style={thCell}>Outflows</th><th style={thCell}>Balance</th><th style={thCell}>Reconciled</th><th style={thCell}>As of</th></tr></thead>
                 <tbody>{escrows.map((e) => (
                   <tr key={e.roundId}>
-                    <td style={td()}>{e.assetName}</td><td style={td()}>{e.escrowAccountRef}</td>
-                    <td style={td()}>{money(e.inflowsKobo)}</td><td style={td()}>{money(e.outflowsKobo)}</td>
-                    <td style={{ ...td(), fontWeight: 600 }}>{money(e.balanceKobo)}</td>
-                    <td style={td()}>{e.reconciled ? <Badge status="verified" label="reconciled" /> : <Badge status="high" label="unreconciled" />}</td>
-                    <td style={td()}>{timeAgo(e.asOf)}</td>
+                    <td style={tdCell}>{e.assetName}</td><td style={tdCell}>{e.escrowAccountRef}</td>
+                    <td style={tdCell}>{money(e.inflowsKobo)}</td><td style={tdCell}>{money(e.outflowsKobo)}</td>
+                    <td style={{ ...tdCell, fontWeight: 600 }}>{money(e.balanceKobo)}</td>
+                    <td style={tdCell}>{e.reconciled ? <Badge text="reconciled" color={colors.success} /> : <Badge text="unreconciled" color={colors.danger} />}</td>
+                    <td style={tdCell}>{timeAgo(e.asOf)}</td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -69,13 +72,13 @@ export default function FinancePage() {
           <SodNote>Refund processing is a <strong>dual-control</strong> money action: it returns escrowed funds to investor wallets for a failed-threshold round and requires checker approval. Each carries an Idempotency-Key.</SodNote>
           <Card title="Refund processing (failed-round / threshold)">
             <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'end', flexWrap: 'wrap' }}>
-              <div style={{ width: 200 }}><label style={label()}>Round ID</label><input value={roundId} onChange={(e) => setRoundId(e.target.value)} placeholder="rnd-2" style={input()} /></div>
-              <div style={{ width: 280 }}><label style={label()}>Reason (logged)</label><input value={reason} onChange={(e) => setReason(e.target.value)} style={input()} /></div>
-              <button onClick={doRefund} disabled={working || !roundId || !reason} style={{ ...btnPrimary('#dc2626'), opacity: working || !roundId || !reason ? 0.6 : 1 }}>{working ? 'Submitting…' : 'Submit refund (maker)'}</button>
+              <div style={{ width: 200 }}><label style={labelStyle}>Round ID</label><Input value={roundId} onChange={(e) => setRoundId(e.target.value)} placeholder="rnd-2" /></div>
+              <div style={{ width: 280 }}><label style={labelStyle}>Reason (logged)</label><Input value={reason} onChange={(e) => setReason(e.target.value)} /></div>
+              <Button variant="danger" onClick={doRefund} disabled={working || !roundId || !reason}>{working ? 'Submitting…' : 'Submit refund (maker)'}</Button>
             </div>
           </Card>
         </>
       )}
-    </div>
+    </Page>
   );
 }

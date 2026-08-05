@@ -2,7 +2,15 @@
 
 import { useEffect, useState } from 'react';
 import { getAssociationKpis, formatNaira, type AssociationKpis } from '@/services/associationAdminService';
-import { PageHeader, AssociationTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, btn, th, td, timeAgo } from '../_ui';
+import { AssociationTabs, Kpi, DisclosureNote, StateBlock, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function kindColor(kind: string) {
+  if (/approved|active|paid|resolved|verified/.test(kind)) return colors.success;
+  if (/rejected|suspended|failed|blocked|critical/.test(kind)) return colors.danger;
+  if (/pending|flagged|review/.test(kind)) return colors.warning;
+  return colors.info;
+}
 
 export default function AssociationDashboardPage() {
   const [data, setData] = useState<AssociationKpis | null>(null);
@@ -18,11 +26,11 @@ export default function AssociationDashboardPage() {
   useEffect(() => { load(); }, []);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Associations overview"
         subtitle="Association membership, application approvals and dues collection across the associations book."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <AssociationTabs active="overview" />
 
@@ -36,25 +44,25 @@ export default function AssociationDashboardPage() {
         {data && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <Kpi label="Associations" value={data.associations_total.toLocaleString('en-NG')} accent="#340075" />
+              <Kpi label="Associations" value={data.associations_total.toLocaleString('en-NG')} accent={colors.primary} />
               <Kpi label="Members" value={data.members_total.toLocaleString('en-NG')} sub={`${data.members_active} active / ${data.members_suspended} suspended`} />
-              <Kpi label="Dues outstanding" value={formatNaira(data.dues_outstanding_kobo)} accent={data.dues_outstanding_kobo > 0 ? '#9a3412' : undefined} />
+              <Kpi label="Dues outstanding" value={formatNaira(data.dues_outstanding_kobo)} accent={data.dues_outstanding_kobo > 0 ? colors.warning : undefined} />
               <Kpi label="Dues collected (30d)" value={formatNaira(data.dues_collected_30d_kobo)} />
-              <Kpi label="Approvals pending" value={data.approvals_pending.toLocaleString('en-NG')} accent={data.approvals_pending > 0 ? '#9a3412' : undefined} />
-              <Kpi label="Offline payments pending" value={data.offline_payments_pending.toLocaleString('en-NG')} accent={data.offline_payments_pending > 0 ? '#9a3412' : undefined} />
+              <Kpi label="Approvals pending" value={data.approvals_pending.toLocaleString('en-NG')} accent={data.approvals_pending > 0 ? colors.warning : undefined} />
+              <Kpi label="Offline payments pending" value={data.offline_payments_pending.toLocaleString('en-NG')} accent={data.offline_payments_pending > 0 ? colors.warning : undefined} />
             </div>
 
             <Card title="Recent activity">
-              {data.activity.length === 0 ? <p style={{ color: '#6b7280' }}>No recent activity.</p> : (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr><th style={th()}>Event</th><th style={th()}>Type</th><th style={th()}>Ref</th><th style={th()}>When</th></tr></thead>
+              {data.activity.length === 0 ? <p style={{ color: colors.muted, marginTop: 12 }}>No recent activity.</p> : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12 }}>
+                  <thead><tr><th style={thCell}>Event</th><th style={thCell}>Type</th><th style={thCell}>Ref</th><th style={thCell}>When</th></tr></thead>
                   <tbody>
                     {data.activity.map((a) => (
                       <tr key={a.id}>
-                        <td style={td()}>{a.label}</td>
-                        <td style={td()}><Badge status={a.kind} label={a.kind.replace(/_/g, ' ')} /></td>
-                        <td style={td()}><code style={{ fontSize: '0.78rem' }}>{a.ref ?? '—'}</code></td>
-                        <td style={td()}>{timeAgo(a.created_at)}</td>
+                        <td style={tdCell}>{a.label}</td>
+                        <td style={tdCell}><Badge text={a.kind.replace(/_/g, ' ')} color={kindColor(a.kind)} /></td>
+                        <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{a.ref ?? '—'}</code></td>
+                        <td style={tdCell}>{timeAgo(a.created_at)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -64,6 +72,6 @@ export default function AssociationDashboardPage() {
           </>
         )}
       </StateBlock>
-    </div>
+    </Page>
   );
 }

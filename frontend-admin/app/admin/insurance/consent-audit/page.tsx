@@ -5,8 +5,9 @@ import Link from 'next/link';
 import { getConsentAudit } from '@/services/insuranceAdminService';
 import type { ConsentAuditEntry } from '@/types/insuranceAdmin';
 import { PageHeader, InsuranceTabs, Card, Badge, btn, th, td, label, select, StateBlock, DisclosureNote, fmtDate } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
-const codeStyle: React.CSSProperties = { fontSize: '0.78rem', background: '#f3f4f6', padding: '0.1rem 0.35rem', borderRadius: '0.25rem' };
+const codeStyle: React.CSSProperties = { fontSize: '0.78rem', background: colors.border, padding: '0.1rem 0.35rem', borderRadius: '0.25rem' };
 
 function csvEscape(v: string): string {
   if (/[",\n]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
@@ -108,8 +109,8 @@ export default function ConsentAuditPage() {
                       <td style={td()}>{c.user_masked}</td>
                       <td style={td()}>
                         {c.policy_id
-                          ? <Link href={`/admin/insurance/policies/${c.policy_id}`} style={{ color: '#340075', fontWeight: 600, textDecoration: 'none' }}>{c.policy_id}</Link>
-                          : <span style={{ color: '#9ca3af' }}>—</span>}
+                          ? <Link href={`/admin/insurance/policies/${c.policy_id}`} style={{ color: colors.primary, fontWeight: 600, textDecoration: 'none' }}>{c.policy_id}</Link>
+                          : <span style={{ color: colors.muted }}>—</span>}
                       </td>
                       <td style={td()}>{c.consent_version}</td>
                       <td style={td()}>{c.scope}</td>

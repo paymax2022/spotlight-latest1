@@ -4,10 +4,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { adminListSwaps, formatKobo } from '@/services/cryptoAdminService';
 import type { CryptoSwapOrder } from '@/types/cryptoAdmin';
 import {
-  PageHeader, CryptoTabs, Card, Kpi, StatusBadge, DisclosureNote, StateBlock, PermissionBanner,
-  btn, th, td, mono, fmtDate, fmtUnits, FilterBar, label as lbl, select,
+  CryptoTabs, Kpi, StatusBadge, DisclosureNote, StateBlock, PermissionBanner,
+  mono, fmtDate, fmtUnits, FilterBar, label as lbl, select,
   CRYPTO_PERMS, useCryptoPermission,
 } from '../_ui';
+import { Page, PageHeader, Card, Button, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const PAGE_SIZE = 50;
 const SCALE: Record<string, number> = { BTC: 100_000_000, ETH: 1_000_000_000, USDT: 1_000_000 };
@@ -42,11 +43,11 @@ export default function CryptoSwapsPage() {
   })();
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Crypto — Swap Monitoring"
         subtitle="Recent asset→asset swaps across all users, with realised rates, spread (Paymax revenue), volume and anomaly detection. Read-only oversight — swaps are immutable ledger records."
-        action={<button onClick={() => void load(offset)} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={() => void load(offset)}>Refresh</Button>}
       />
       <CryptoTabs active="swaps" />
       <DisclosureNote>
@@ -57,14 +58,14 @@ export default function CryptoSwapsPage() {
       </DisclosureNote>
 
       {!canAdmin && <PermissionBanner permission={CRYPTO_PERMS.admin} />}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
         <Kpi label="Swaps (recent page)" value={String(rows.length)} />
-        <Kpi label="Filled volume (cash)" value={formatKobo(filledVolume)} accent="#340075" />
-        <Kpi label="Spread revenue" value={formatKobo(spreadRevenue)} accent="#15803d" />
+        <Kpi label="Filled volume (cash)" value={formatKobo(filledVolume)} accent={colors.primary} />
+        <Kpi label="Spread revenue" value={formatKobo(spreadRevenue)} accent={colors.success} />
         <Kpi label="Avg spread" value={`${avgSpreadBps} bps`} />
-        <Kpi label="Anomalies" value={String(anomalyCount)} accent={anomalyCount ? '#b91c1c' : undefined} />
+        <Kpi label="Anomalies" value={String(anomalyCount)} accent={anomalyCount ? colors.danger : undefined} />
       </div>
 
       <Card>
@@ -81,23 +82,23 @@ export default function CryptoSwapsPage() {
         <StateBlock loading={loading} error={null} empty={filtered.length === 0} emptyText="No swaps match this filter.">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>
-              <th style={th()}>Swap</th><th style={th()}>User</th><th style={th()}>Pair</th>
-              <th style={th()}>From</th><th style={th()}>To</th><th style={th()}>Cash</th>
-              <th style={th()}>Spread</th><th style={th()}>Status</th><th style={th()}>Anomaly</th><th style={th()}>Created</th>
+              <th style={thCell}>Swap</th><th style={thCell}>User</th><th style={thCell}>Pair</th>
+              <th style={thCell}>From</th><th style={thCell}>To</th><th style={thCell}>Cash</th>
+              <th style={thCell}>Spread</th><th style={thCell}>Status</th><th style={thCell}>Anomaly</th><th style={thCell}>Created</th>
             </tr></thead>
             <tbody>
               {filtered.map((s) => (
-                <tr key={s.id} style={s.anomaly ? { background: '#fef2f2' } : undefined}>
-                  <td style={{ ...td(), ...mono() }}>{s.id}</td>
-                  <td style={{ ...td(), ...mono() }}>{s.user_id}</td>
-                  <td style={td()}><strong>{s.from_symbol ?? s.from_asset_id}</strong> → <strong>{s.to_symbol ?? s.to_asset_id}</strong></td>
-                  <td style={td()}>{fmtUnits(s.from_units, SCALE[s.from_symbol ?? ''] ?? 0, s.from_symbol)}</td>
-                  <td style={td()}>{fmtUnits(s.to_units, SCALE[s.to_symbol ?? ''] ?? 0, s.to_symbol)}</td>
-                  <td style={td()}>{formatKobo(s.cash_kobo)}</td>
-                  <td style={td()}>{formatKobo(s.spread_kobo)} <span style={{ color: '#9ca3af' }}>({s.spread_bps}bps)</span></td>
-                  <td style={td()}><StatusBadge status={s.status} /></td>
-                  <td style={{ ...td(), color: '#b91c1c', maxWidth: 240 }}>{s.anomaly || <span style={{ color: '#9ca3af' }}>—</span>}</td>
-                  <td style={td()}>{fmtDate(s.created_at)}</td>
+                <tr key={s.id} style={s.anomaly ? { background: tint(colors.danger, 0.08) } : undefined}>
+                  <td style={{ ...tdCell, ...mono() }}>{s.id}</td>
+                  <td style={{ ...tdCell, ...mono() }}>{s.user_id}</td>
+                  <td style={tdCell}><strong>{s.from_symbol ?? s.from_asset_id}</strong> → <strong>{s.to_symbol ?? s.to_asset_id}</strong></td>
+                  <td style={tdCell}>{fmtUnits(s.from_units, SCALE[s.from_symbol ?? ''] ?? 0, s.from_symbol)}</td>
+                  <td style={tdCell}>{fmtUnits(s.to_units, SCALE[s.to_symbol ?? ''] ?? 0, s.to_symbol)}</td>
+                  <td style={tdCell}>{formatKobo(s.cash_kobo)}</td>
+                  <td style={tdCell}>{formatKobo(s.spread_kobo)} <span style={{ color: colors.muted }}>({s.spread_bps}bps)</span></td>
+                  <td style={tdCell}><StatusBadge status={s.status} /></td>
+                  <td style={{ ...tdCell, color: colors.danger, maxWidth: 240 }}>{s.anomaly || <span style={{ color: colors.muted }}>—</span>}</td>
+                  <td style={tdCell}>{fmtDate(s.created_at)}</td>
                 </tr>
               ))}
             </tbody>
@@ -105,10 +106,10 @@ export default function CryptoSwapsPage() {
         </StateBlock>
 
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem', justifyContent: 'flex-end' }}>
-          <button style={btn()} disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>Previous</button>
-          <button style={btn()} disabled={rows.length < PAGE_SIZE} onClick={() => setOffset(offset + PAGE_SIZE)}>Next</button>
+          <Button variant="outline" sm disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>Previous</Button>
+          <Button variant="outline" sm disabled={rows.length < PAGE_SIZE} onClick={() => setOffset(offset + PAGE_SIZE)}>Next</Button>
         </div>
       </Card>
-    </div>
+    </Page>
   );
 }

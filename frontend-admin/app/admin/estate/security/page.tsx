@@ -8,10 +8,17 @@ import {
   listOversightIncidents, listOversightGuardShifts, listOversightEmergencies,
 } from '@/services/estateAdminService';
 import type { OversightIncident, OversightGuardShift, OversightEmergency } from '@/types/estateAdmin';
-import {
-  PageHeader, EstateOversightTabs, Card, Badge, btn, th, td, timeAgo,
-  useEstatePermissions, ESTATE_ADMIN_PERMS, Restricted,
-} from '../_ui';
+import { EstateOversightTabs, Restricted, useEstatePermissions, ESTATE_ADMIN_PERMS, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const cap = (s: string) => s.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+function statusColor(status: string): string {
+  if (['active', 'paid', 'verified', 'online', 'on_duty', 'resolved', 'completed'].includes(status)) return colors.success;
+  if (['pending', 'scheduled', 'investigating', 'maintenance', 'medium'].includes(status)) return colors.warning;
+  if (['overdue', 'banned', 'restricted', 'rejected', 'suspended', 'offline', 'open', 'missed', 'high', 'critical'].includes(status)) return colors.danger;
+  if (status === 'low') return colors.info;
+  return colors.secondary;
+}
 
 export default function SecurityOversightPage() {
   const { can } = useEstatePermissions();
@@ -37,27 +44,27 @@ export default function SecurityOversightPage() {
   useEffect(() => { void load(); }, [load]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Security & Guard oversight" subtitle="Cross-estate guard roster, incident log and emergency alerts." action={<button onClick={() => void load()} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Security & Guard oversight" subtitle="Cross-estate guard roster, incident log and emergency alerts." actions={<Button variant="outline" sm onClick={() => void load()}>Refresh</Button>} />
       <EstateOversightTabs active="security" />
       {!canView ? <Restricted perm="estate.admin.security" /> : (
         <>
-          {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-          {loading ? <p style={{ color: '#6b7280' }}>Loading security data…</p> : (
+          {error && <p style={{ color: colors.danger }}>{error}</p>}
+          {loading ? <p style={{ color: colors.muted }}>Loading security data…</p> : (
             <>
-              <Card title="Emergency alerts">
-                {emergencies.length === 0 ? <p style={{ color: '#6b7280' }}>No emergency alerts.</p> : (
+              <Card title="Emergency alerts" style={{ marginBottom: '1.25rem' }}>
+                {emergencies.length === 0 ? <p style={{ color: colors.muted }}>No emergency alerts.</p> : (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead><tr><th style={th()}>Estate</th><th style={th()}>Kind</th><th style={th()}>Description</th><th style={th()}>Location</th><th style={th()}>Status</th><th style={th()}>When</th></tr></thead>
+                    <thead><tr><th style={thCell}>Estate</th><th style={thCell}>Kind</th><th style={thCell}>Description</th><th style={thCell}>Location</th><th style={thCell}>Status</th><th style={thCell}>When</th></tr></thead>
                     <tbody>
                       {emergencies.map((e) => (
                         <tr key={e.id}>
-                          <td style={td()}>{e.estateId}</td>
-                          <td style={td()}><Badge status={e.kind} /></td>
-                          <td style={td()}>{e.description ?? '—'}</td>
-                          <td style={td()}>{e.location ?? '—'}</td>
-                          <td style={td()}><Badge status={e.status} /></td>
-                          <td style={td()}>{timeAgo(e.createdAt)}</td>
+                          <td style={tdCell}>{e.estateId}</td>
+                          <td style={tdCell}><Badge text={cap(e.kind)} color={statusColor(e.kind)} /></td>
+                          <td style={tdCell}>{e.description ?? '—'}</td>
+                          <td style={tdCell}>{e.location ?? '—'}</td>
+                          <td style={tdCell}><Badge text={cap(e.status)} color={statusColor(e.status)} /></td>
+                          <td style={tdCell}>{timeAgo(e.createdAt)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -65,19 +72,19 @@ export default function SecurityOversightPage() {
                 )}
               </Card>
 
-              <Card title="Guard roster">
-                {shifts.length === 0 ? <p style={{ color: '#6b7280' }}>No guard shifts.</p> : (
+              <Card title="Guard roster" style={{ marginBottom: '1.25rem' }}>
+                {shifts.length === 0 ? <p style={{ color: colors.muted }}>No guard shifts.</p> : (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead><tr><th style={th()}>Estate</th><th style={th()}>Guard</th><th style={th()}>Gate</th><th style={th()}>Started</th><th style={th()}>Ended</th><th style={th()}>Status</th></tr></thead>
+                    <thead><tr><th style={thCell}>Estate</th><th style={thCell}>Guard</th><th style={thCell}>Gate</th><th style={thCell}>Started</th><th style={thCell}>Ended</th><th style={thCell}>Status</th></tr></thead>
                     <tbody>
                       {shifts.map((s) => (
                         <tr key={s.id}>
-                          <td style={td()}>{s.estateId}</td>
-                          <td style={td()}><strong>{s.guardId}</strong></td>
-                          <td style={td()}>{s.gateId}</td>
-                          <td style={td()}>{timeAgo(s.startedAt)}</td>
-                          <td style={td()}>{s.endedAt ? timeAgo(s.endedAt) : '—'}</td>
-                          <td style={td()}><Badge status={s.onDuty ? 'on_duty' : 'completed'} /></td>
+                          <td style={tdCell}>{s.estateId}</td>
+                          <td style={tdCell}><strong>{s.guardId}</strong></td>
+                          <td style={tdCell}>{s.gateId}</td>
+                          <td style={tdCell}>{timeAgo(s.startedAt)}</td>
+                          <td style={tdCell}>{s.endedAt ? timeAgo(s.endedAt) : '—'}</td>
+                          <td style={tdCell}><Badge text={s.onDuty ? 'On duty' : 'Completed'} color={s.onDuty ? colors.success : colors.secondary} /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -86,18 +93,18 @@ export default function SecurityOversightPage() {
               </Card>
 
               <Card title="Incident log">
-                {incidents.length === 0 ? <p style={{ color: '#6b7280' }}>No incidents logged.</p> : (
+                {incidents.length === 0 ? <p style={{ color: colors.muted }}>No incidents logged.</p> : (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead><tr><th style={th()}>Estate</th><th style={th()}>Type</th><th style={th()}>Description</th><th style={th()}>Guard</th><th style={th()}>Escalated</th><th style={th()}>When</th></tr></thead>
+                    <thead><tr><th style={thCell}>Estate</th><th style={thCell}>Type</th><th style={thCell}>Description</th><th style={thCell}>Guard</th><th style={thCell}>Escalated</th><th style={thCell}>When</th></tr></thead>
                     <tbody>
                       {incidents.map((i) => (
                         <tr key={i.id}>
-                          <td style={td()}>{i.estateId}</td>
-                          <td style={td()}><Badge status={i.incidentType} /></td>
-                          <td style={td()}>{i.description}</td>
-                          <td style={td()}>{i.guardId}</td>
-                          <td style={td()}><Badge status={i.escalated ? 'high' : 'low'} label={i.escalated ? 'Escalated' : 'No'} /></td>
-                          <td style={td()}>{timeAgo(i.createdAt)}</td>
+                          <td style={tdCell}>{i.estateId}</td>
+                          <td style={tdCell}><Badge text={cap(i.incidentType)} color={statusColor(i.incidentType)} /></td>
+                          <td style={tdCell}>{i.description}</td>
+                          <td style={tdCell}>{i.guardId}</td>
+                          <td style={tdCell}><Badge text={i.escalated ? 'Escalated' : 'No'} color={i.escalated ? colors.danger : colors.info} /></td>
+                          <td style={tdCell}>{timeAgo(i.createdAt)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -108,6 +115,6 @@ export default function SecurityOversightPage() {
           )}
         </>
       )}
-    </div>
+    </Page>
   );
 }

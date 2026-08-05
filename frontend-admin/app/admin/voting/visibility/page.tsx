@@ -7,9 +7,9 @@
 // `votes:manage` permission. Money is NOT involved here — these are display flags.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { CSSProperties } from 'react';
 import { env } from '@/config/env';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
+import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 // ─── Auth / fetch plumbing (mirrors connect/crowdfunding admin services) ──────
 
@@ -83,22 +83,13 @@ function settingsToUpsertBody(row: VotingSettingsRow): Record<string, unknown> {
   return out;
 }
 
-// ─── Styles (matches the realtor/connect light-card admin convention) ─────────
-
-const card = (): CSSProperties => ({ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem', background: '#fff', marginBottom: '1.25rem' });
-const btn = (primary?: boolean): CSSProperties => ({
-  padding: '0.45rem 0.9rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
-  border: primary ? '1px solid #340075' : '1px solid #d1d5db', background: primary ? '#340075' : '#fff', color: primary ? '#fff' : '#374151',
-});
-const dangerBtn = (): CSSProperties => ({ padding: '0.3rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.8rem', cursor: 'pointer', border: '1px solid #fecaca', background: '#fff', color: '#b91c1c' });
-const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: '#6b7280', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3 });
-const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: '#374151', fontSize: '0.85rem', borderTop: '1px solid #f3f4f6' });
-const input = (): CSSProperties => ({ padding: '0.4rem 0.55rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.85rem' });
-const label = (): CSSProperties => ({ fontSize: '0.72rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: 4, display: 'block' });
+function fieldLabel(): React.CSSProperties {
+  return { fontSize: '0.72rem', color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: 4, display: 'block' };
+}
 
 function Toggle({ checked, onChange, text }: { checked: boolean; onChange: (v: boolean) => void; text: string }) {
   return (
-    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.85rem', color: '#374151' }}>
+    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.85rem', color: colors.text }}>
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
       <span>{text}</span>
     </label>
@@ -262,68 +253,66 @@ export default function VotingVisibilityPage() {
   // ── Permission gate ─────────────────────────────────────────────────────────
   if (permsLoaded && !canManage) {
     return (
-      <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>Voting Visibility</h1>
-        <p style={{ color: '#b91c1c', marginTop: '1rem' }}>
+      <Page>
+        <PageHeader title="Voting Visibility" />
+        <p style={{ color: colors.danger, marginTop: '1rem' }}>
           You do not have the <code>votes:manage</code> permission required to access this page.
         </p>
-      </div>
+      </Page>
     );
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <div style={{ marginBottom: '1.25rem' }}>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>Voting Visibility</h1>
-        <p style={{ color: '#6b7280', margin: '0.25rem 0 0', fontSize: '0.85rem' }}>
-          Control whether the universal voting engine exposes the leaderboard, vote count and rank — per contest or per phase.
-        </p>
-      </div>
+    <Page>
+      <PageHeader
+        title="Voting Visibility"
+        subtitle="Control whether the universal voting engine exposes the leaderboard, vote count and rank — per contest or per phase."
+      />
 
       {/* Contest selector */}
-      <div style={card()}>
-        <span style={label()}>Contest ID</span>
+      <Card>
+        <span style={fieldLabel()}>Contest ID</span>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <input
-            style={{ ...input(), minWidth: 320 }}
+          <Input
+            style={{ minWidth: 320 }}
             placeholder="Enter a contest ID and click Load"
             value={contestIdInput}
             onChange={(e) => setContestIdInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') handleLoad(); }}
           />
-          <button style={btn(true)} onClick={handleLoad} disabled={loading}>{loading ? 'Loading…' : 'Load'}</button>
-          {contestId ? <button style={btn()} onClick={() => void load(contestId)} disabled={loading}>Refresh</button> : null}
+          <Button variant="primary" onClick={handleLoad} disabled={loading}>{loading ? 'Loading…' : 'Load'}</Button>
+          {contestId ? <Button onClick={() => void load(contestId)} disabled={loading}>Refresh</Button> : null}
         </div>
-      </div>
+      </Card>
 
-      {error ? <p style={{ color: '#dc2626', marginBottom: '1rem' }}>{error}</p> : null}
-      {success ? <p style={{ color: '#15803d', marginBottom: '1rem' }}>{success}</p> : null}
+      {error ? <p style={{ color: colors.danger, marginBottom: '1rem' }}>{error}</p> : null}
+      {success ? <p style={{ color: colors.success, marginBottom: '1rem' }}>{success}</p> : null}
 
       {!contestId && !loading ? (
-        <p style={{ color: '#6b7280' }}>Load a contest to manage its voting visibility.</p>
+        <p style={{ color: colors.muted }}>Load a contest to manage its voting visibility.</p>
       ) : null}
 
-      {loading ? <p style={{ color: '#6b7280' }}>Loading contest settings…</p> : null}
+      {loading ? <p style={{ color: colors.muted }}>Loading contest settings…</p> : null}
 
       {contestId && settings && !loading ? (
         <>
           {/* Effective summary */}
           {effective ? (
-            <div style={{ ...card(), borderLeft: '3px solid #340075' }}>
-              <span style={label()}>Effective public visibility</span>
-              <p style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', fontWeight: 600, color: '#111827' }}>{effective.scope}</p>
-              <p style={{ margin: 0, fontSize: '0.85rem', color: '#374151' }}>
+            <Card style={{ borderLeft: `3px solid ${colors.primary}` }}>
+              <span style={fieldLabel()}>Effective public visibility</span>
+              <p style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', fontWeight: 600, color: colors.text }}>{effective.scope}</p>
+              <p style={{ margin: 0, fontSize: '0.85rem', color: colors.text }}>
                 Leaderboard <strong>{effective.board ? 'shown' : 'hidden'}</strong>
                 {' · '}Vote count <strong>{effective.count ? 'shown' : 'hidden'}</strong>
                 {' · '}Rank <strong>{effective.rank ? 'shown' : 'hidden'}</strong>
               </p>
-            </div>
+            </Card>
           ) : null}
 
           {/* Contest-level flags */}
-          <div style={card()}>
+          <Card>
             <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: '0 0 0.75rem' }}>Contest-level visibility</h2>
-            <p style={{ color: '#6b7280', fontSize: '0.8rem', margin: '0 0 0.75rem' }}>
+            <p style={{ color: colors.muted, fontSize: '0.8rem', margin: '0 0 0.75rem' }}>
               Applies when no active phase is set. Saving merges these flags into the existing settings row.
             </p>
             <div style={{ display: 'grid', gap: '0.6rem' }}>
@@ -331,14 +320,14 @@ export default function VotingVisibilityPage() {
               <Toggle text="Show leaderboard" checked={!!settings.show_public_leaderboard} onChange={(v) => void saveContestFlag({ show_public_leaderboard: v })} />
               <Toggle text="Show rank" checked={!!settings.show_public_rank} onChange={(v) => void saveContestFlag({ show_public_rank: v })} />
             </div>
-          </div>
+          </Card>
 
           {/* Active phase */}
-          <div style={card()}>
+          <Card>
             <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: '0 0 0.75rem' }}>Active phase</h2>
-            <span style={label()}>Currently active phase</span>
+            <span style={fieldLabel()}>Currently active phase</span>
             <select
-              style={{ ...input(), minWidth: 260 }}
+              style={{ minWidth: 260 }}
               value={settings.active_phase_key ?? ''}
               onChange={(e) => void setActivePhase(e.target.value === '' ? null : e.target.value)}
               disabled={saving}
@@ -348,60 +337,62 @@ export default function VotingVisibilityPage() {
                 <option key={p.phase_key} value={p.phase_key}>{p.phase_label} ({p.phase_key})</option>
               ))}
             </select>
-          </div>
+          </Card>
 
           {/* Phases list */}
-          <div style={card()}>
+          <Card>
             <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: '0 0 0.75rem' }}>Phases</h2>
             {phases.length === 0 ? (
-              <p style={{ color: '#6b7280', fontSize: '0.85rem', margin: 0 }}>No phases yet. Add one below.</p>
+              <p style={{ color: colors.muted, fontSize: '0.85rem', margin: 0 }}>No phases yet. Add one below.</p>
             ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <th style={th()}>Label</th>
-                    <th style={th()}>Key</th>
-                    <th style={th()}>Vote count</th>
-                    <th style={th()}>Leaderboard</th>
-                    <th style={th()}>Rank</th>
-                    <th style={th()}>Order</th>
-                    <th style={th()}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {phases.map((p) => (
-                    <tr key={p.phase_key}>
-                      <td style={td()}>
-                        <strong>{p.phase_label}</strong>
-                        {settings.active_phase_key === p.phase_key ? (
-                          <span style={{ marginLeft: 6, fontSize: '0.68rem', color: '#340075', fontWeight: 700 }}>ACTIVE</span>
-                        ) : null}
-                      </td>
-                      <td style={td()}><code>{p.phase_key}</code></td>
-                      <td style={td()}>{p.show_public_vote_count ? 'Shown' : 'Hidden'}</td>
-                      <td style={td()}>{p.show_public_leaderboard ? 'Shown' : 'Hidden'}</td>
-                      <td style={td()}>{p.show_public_rank ? 'Shown' : 'Hidden'}</td>
-                      <td style={td()}>{p.sort_order}</td>
-                      <td style={{ ...td(), whiteSpace: 'nowrap' }}>
-                        <button style={{ ...btn(), padding: '0.3rem 0.7rem', fontSize: '0.8rem', marginRight: 6 }} onClick={() => startEdit(p)}>Edit</button>
-                        <button style={dangerBtn()} onClick={() => void deletePhase(p.phase_key)} disabled={saving}>Delete</button>
-                      </td>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={thCell}>Label</th>
+                      <th style={thCell}>Key</th>
+                      <th style={thCell}>Vote count</th>
+                      <th style={thCell}>Leaderboard</th>
+                      <th style={thCell}>Rank</th>
+                      <th style={thCell}>Order</th>
+                      <th style={thCell}></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {phases.map((p) => (
+                      <tr key={p.phase_key}>
+                        <td style={tdCell}>
+                          <strong>{p.phase_label}</strong>
+                          {settings.active_phase_key === p.phase_key ? (
+                            <span style={{ marginLeft: 6, fontSize: '0.68rem', color: colors.primary, fontWeight: 700 }}>ACTIVE</span>
+                          ) : null}
+                        </td>
+                        <td style={tdCell}><code>{p.phase_key}</code></td>
+                        <td style={tdCell}>{p.show_public_vote_count ? 'Shown' : 'Hidden'}</td>
+                        <td style={tdCell}>{p.show_public_leaderboard ? 'Shown' : 'Hidden'}</td>
+                        <td style={tdCell}>{p.show_public_rank ? 'Shown' : 'Hidden'}</td>
+                        <td style={tdCell}>{p.sort_order}</td>
+                        <td style={{ ...tdCell, whiteSpace: 'nowrap' }}>
+                          <Button sm onClick={() => startEdit(p)} style={{ marginRight: 6 }}>Edit</Button>
+                          <Button sm variant="danger" onClick={() => void deletePhase(p.phase_key)} disabled={saving}>Delete</Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
 
             {/* Phase editor */}
-            <div style={{ marginTop: '1.25rem', borderTop: '1px solid #e5e7eb', paddingTop: '1rem' }}>
+            <div style={{ marginTop: '1.25rem', borderTop: `1px solid ${colors.border}`, paddingTop: '1rem' }}>
               <h3 style={{ fontSize: '0.95rem', fontWeight: 700, margin: '0 0 0.75rem' }}>
                 {editingKey ? `Edit phase: ${editingKey}` : 'Add a phase'}
               </h3>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
                 <div>
-                  <span style={label()}>Phase key</span>
-                  <input
-                    style={{ ...input(), width: '100%' }}
+                  <span style={fieldLabel()}>Phase key</span>
+                  <Input
+                    style={{ width: '100%' }}
                     placeholder="e.g. auditions"
                     value={phaseForm.phase_key}
                     disabled={!!editingKey}
@@ -409,18 +400,18 @@ export default function VotingVisibilityPage() {
                   />
                 </div>
                 <div>
-                  <span style={label()}>Phase label</span>
-                  <input
-                    style={{ ...input(), width: '100%' }}
+                  <span style={fieldLabel()}>Phase label</span>
+                  <Input
+                    style={{ width: '100%' }}
                     placeholder="e.g. Auditions"
                     value={phaseForm.phase_label}
                     onChange={(e) => setPhaseForm((f) => ({ ...f, phase_label: e.target.value }))}
                   />
                 </div>
                 <div>
-                  <span style={label()}>Sort order</span>
-                  <input
-                    style={{ ...input(), width: '100%' }}
+                  <span style={fieldLabel()}>Sort order</span>
+                  <Input
+                    style={{ width: '100%' }}
                     type="number"
                     value={phaseForm.sort_order}
                     onChange={(e) => setPhaseForm((f) => ({ ...f, sort_order: Number(e.target.value) }))}
@@ -433,15 +424,15 @@ export default function VotingVisibilityPage() {
                 <Toggle text="Show rank" checked={phaseForm.show_public_rank} onChange={(v) => setPhaseForm((f) => ({ ...f, show_public_rank: v }))} />
               </div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button style={btn(true)} onClick={() => void savePhase()} disabled={saving}>
+                <Button variant="primary" onClick={() => void savePhase()} disabled={saving}>
                   {saving ? 'Saving…' : editingKey ? 'Update phase' : 'Add phase'}
-                </button>
-                {editingKey ? <button style={btn()} onClick={cancelEdit} disabled={saving}>Cancel</button> : null}
+                </Button>
+                {editingKey ? <Button onClick={cancelEdit} disabled={saving}>Cancel</Button> : null}
               </div>
             </div>
-          </div>
+          </Card>
         </>
       ) : null}
-    </div>
+    </Page>
   );
 }

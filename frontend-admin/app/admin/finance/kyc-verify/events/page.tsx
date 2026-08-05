@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { listEvents } from '@/services/kycAdminService';
 import type { KycEvent } from '@/types/kycAdmin';
 import { PageHeader, Card, btn, th, td, timeAgo, ScaffoldNotice } from '../_ui';
+import { Page, colors } from '@/components/ui/vuexy';
 
 const STATUS_COLORS: Record<string, { fg: string; bg: string }> = {
   delivered:        { fg: '#15803d', bg: '#dcfce7' },
@@ -18,7 +19,7 @@ const STATUS_COLORS: Record<string, { fg: string; bg: string }> = {
 };
 
 function StatusPill({ status }: { status: string }) {
-  const c = STATUS_COLORS[status] ?? { fg: '#374151', bg: '#f3f4f6' };
+  const c = STATUS_COLORS[status] ?? { fg: colors.muted, bg: '#f3f4f6' };
   return (
     <span style={{ display: 'inline-block', padding: '0.1rem 0.5rem', borderRadius: 9999, fontSize: '0.72rem', fontWeight: 600, color: c.fg, background: c.bg }}>
       {status.replace(/_/g, ' ')}
@@ -41,7 +42,7 @@ export default function KycEventsPage() {
   useEffect(() => { void load(); }, [load]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader
         title="KYC Webhook / Event Monitor (AK11)"
         subtitle="Provider webhook delivery, retries, dedupe and signature failures. RBAC: finance.admin.kyc (Compliance / Admin)."
@@ -52,13 +53,13 @@ export default function KycEventsPage() {
         Live event feed is wired to <code>GET /kyc/events</code>. Per-provider delivery-rate charts and retry drill-downs are follow-ups.
       </ScaffoldNotice>
 
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       <Card>
         {loading ? (
-          <p style={{ color: '#6b7280' }}>Loading events…</p>
+          <p style={{ color: colors.muted }}>Loading events…</p>
         ) : rows.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No webhook events recorded.</p>
+          <p style={{ color: colors.muted }}>No webhook events recorded.</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -96,6 +97,6 @@ export default function KycEventsPage() {
           </div>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

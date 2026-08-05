@@ -5,12 +5,27 @@ import {
   listTutors, vetTutor, listTutorPayouts, listTutorDisputes, noteTutorDispute,
 } from '@/services/academyAdminService';
 import type { Tutor, TutorPayout, TutorDispute } from '@/types/academyAdmin';
-import { PageHeader, AcademyTabs, Card, Badge, Kpi, StateBlock, AuditNote, DisclosureNote, btn, btnPrimary, btnDanger, th, td, input, select, formatNaira, fmtDate } from '../_ui';
+import { AcademyTabs, Kpi, StateBlock, AuditNote, DisclosureNote, select, formatNaira, fmtDate } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  const s = status.toLowerCase();
+  if (['active', 'approved', 'published', 'funded', 'paid', 'completed', 'allocated', 'live', 'reconciled', 'disbursed', 'collected', 'released', 'core', 'issued', 'routed', 'ready', 'eligible', 'actioned', 'verified', 'resolved', 'plan_published', 'badge_earned', 'pool_funded', 'item_approved'].includes(s)) return colors.success;
+  if (['pending', 'in_review', 'under_review', 'needs_info', 'scheduled', 'low_balance', 'review', 'in_translation', 'funding', 'fee_due', 'onboarding', 'frequent', 'packaged', 'matured', 'paused', 'processing', 'triaged', 'investigating', 'hide', 'warn', 'high', 'medium'].includes(s)) return colors.warning;
+  if (['draft', 'authoring', 'open', 'upcoming', 'generated', 'partial', 'submitted', 'trial', 'requested', 'applied', 'cards_generated', 'exam_opened', 'campaign_launched', 'tier1', 'tier2', 'tier3'].includes(s)) return colors.info;
+  if (['rejected', 'failed', 'suspended', 'blocked', 'unfunded', 'expired', 'duplicate', 'revoked', 'escalated', 'ban', 'critical', 'overdue', 'item_rejected'].includes(s)) return colors.danger;
+  if (['refunded', 'reversed', 'redeemed', 'reward_redeemed'].includes(s)) return colors.primary;
+  return colors.secondary;
+}
+
+function StatusBadge({ status, label: lbl }: { status: string; label?: string }) {
+  return <Badge text={lbl ?? status.replace(/_/g, ' ')} color={statusColor(status)} />;
+}
 
 function Stars({ value }: { value: number }) {
-  if (!value) return <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>—</span>;
+  if (!value) return <span style={{ color: colors.muted, fontSize: '0.8rem' }}>—</span>;
   const full = Math.round(value);
-  return <span style={{ fontSize: '0.85rem', color: '#374151' }} title={`${value.toFixed(1)} / 5`}>{'★'.repeat(full)}<span style={{ color: '#d1d5db' }}>{'★'.repeat(5 - full)}</span> {value.toFixed(1)}</span>;
+  return <span style={{ fontSize: '0.85rem', color: colors.text }} title={`${value.toFixed(1)} / 5`}>{'★'.repeat(full)}<span style={{ color: colors.inputBorder }}>{'★'.repeat(5 - full)}</span> {value.toFixed(1)}</span>;
 }
 
 export default function TutorOpsPage() {
@@ -54,43 +69,43 @@ export default function TutorOpsPage() {
   const openDisputes = disputes.filter((d) => d.status === 'open' || d.status === 'investigating').length;
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Tutor & marketplace ops" subtitle="Tutor vetting (verify/suspend) with KYC state, payout runs (requested/paid/failed), ratings, and dispute handling." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Tutor & marketplace ops" subtitle="Tutor vetting (verify/suspend) with KYC state, payout runs (requested/paid/failed), ratings, and dispute handling." actions={<Button onClick={load} variant="outline" sm>Refresh</Button>} />
       <AcademyTabs active="tutors" />
       <DisclosureNote>Requires <code>academy.tutor</code>. Vetting state machine: <strong>applied → in_review → verified | rejected</strong>; verified ↔ suspended. Payouts post to the finance ledger; all actions are audit-logged. Money in ₦ (kobo internally).</DisclosureNote>
 
       <StateBlock loading={loading} error={error} empty={false}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-          <Kpi label="Verified tutors" value={verified.toString()} sub={`${tutors.length} total`} accent="#340075" />
-          <Kpi label="Pending vetting" value={pendingVet.toString()} accent={pendingVet > 0 ? '#9a3412' : undefined} />
-          <Kpi label="Payouts due" value={formatNaira(payoutsDue)} accent="#15803d" />
-          <Kpi label="Failed payouts" value={failedPayouts.toString()} accent={failedPayouts > 0 ? '#b91c1c' : undefined} />
-          <Kpi label="Open disputes" value={openDisputes.toString()} accent={openDisputes > 0 ? '#9a3412' : undefined} />
+          <Kpi label="Verified tutors" value={verified.toString()} sub={`${tutors.length} total`} accent={colors.primary} />
+          <Kpi label="Pending vetting" value={pendingVet.toString()} accent={pendingVet > 0 ? colors.warning : undefined} />
+          <Kpi label="Payouts due" value={formatNaira(payoutsDue)} accent={colors.success} />
+          <Kpi label="Failed payouts" value={failedPayouts.toString()} accent={failedPayouts > 0 ? colors.danger : undefined} />
+          <Kpi label="Open disputes" value={openDisputes.toString()} accent={openDisputes > 0 ? colors.warning : undefined} />
         </div>
 
         <Card title="Tutors — vetting & KYC">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Tutor</th><th style={th()}>Subjects</th><th style={th()}>KYC</th><th style={th()}>Rating</th><th style={th()}>Sessions</th><th style={th()}>Disputes</th><th style={th()}>Vetting</th><th style={th()}>Actions</th></tr></thead>
+            <thead><tr><th style={thCell}>Tutor</th><th style={thCell}>Subjects</th><th style={thCell}>KYC</th><th style={thCell}>Rating</th><th style={thCell}>Sessions</th><th style={thCell}>Disputes</th><th style={thCell}>Vetting</th><th style={thCell}>Actions</th></tr></thead>
             <tbody>
               {tutors.map((t) => (
                 <tr key={t.id}>
-                  <td style={td()}><strong>{t.display_name}</strong><br /><span style={{ color: '#9ca3af', fontSize: '0.75rem' }}>{t.email}</span></td>
-                  <td style={td()}>{t.subjects.join(', ')}</td>
-                  <td style={td()}><Badge status={t.kyc} label={t.kyc.replace('tier', 'Tier ')} /></td>
-                  <td style={td()}><Stars value={t.rating_avg} /> {t.ratings_count ? <span style={{ color: '#9ca3af', fontSize: '0.72rem' }}>({t.ratings_count})</span> : null}</td>
-                  <td style={td()}>{t.sessions_delivered.toLocaleString('en-NG')}</td>
-                  <td style={td()}>{t.open_disputes > 0 ? <span style={{ color: '#b91c1c', fontWeight: 600 }}>{t.open_disputes}</span> : '0'}</td>
-                  <td style={td()}><Badge status={t.vetting} label={t.vetting.replace(/_/g, ' ')} /></td>
-                  <td style={td()}>
+                  <td style={tdCell}><strong>{t.display_name}</strong><br /><span style={{ color: colors.muted, fontSize: '0.75rem' }}>{t.email}</span></td>
+                  <td style={tdCell}>{t.subjects.join(', ')}</td>
+                  <td style={tdCell}><StatusBadge status={t.kyc} label={t.kyc.replace('tier', 'Tier ')} /></td>
+                  <td style={tdCell}><Stars value={t.rating_avg} /> {t.ratings_count ? <span style={{ color: colors.muted, fontSize: '0.72rem' }}>({t.ratings_count})</span> : null}</td>
+                  <td style={tdCell}>{t.sessions_delivered.toLocaleString('en-NG')}</td>
+                  <td style={tdCell}>{t.open_disputes > 0 ? <span style={{ color: colors.danger, fontWeight: 600 }}>{t.open_disputes}</span> : '0'}</td>
+                  <td style={tdCell}><StatusBadge status={t.vetting} label={t.vetting.replace(/_/g, ' ')} /></td>
+                  <td style={tdCell}>
                     <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
                       {t.vetting === 'verified'
-                        ? <button onClick={() => vet(t, 'suspend')} disabled={busy === t.id} style={btnDanger()}>Suspend</button>
+                        ? <Button onClick={() => vet(t, 'suspend')} disabled={busy === t.id} variant="danger" sm>Suspend</Button>
                         : t.vetting === 'suspended'
-                          ? <button onClick={() => vet(t, 'reactivate')} disabled={busy === t.id} style={btnPrimary()}>Reactivate</button>
+                          ? <Button onClick={() => vet(t, 'reactivate')} disabled={busy === t.id} variant="primary" sm>Reactivate</Button>
                           : (
                             <>
-                              <button onClick={() => vet(t, 'verify')} disabled={busy === t.id} style={btnPrimary()}>Verify</button>
-                              <button onClick={() => vet(t, 'reject')} disabled={busy === t.id} style={btnDanger()}>Reject</button>
+                              <Button onClick={() => vet(t, 'verify')} disabled={busy === t.id} variant="primary" sm>Verify</Button>
+                              <Button onClick={() => vet(t, 'reject')} disabled={busy === t.id} variant="danger" sm>Reject</Button>
                             </>
                           )}
                     </div>
@@ -103,17 +118,17 @@ export default function TutorOpsPage() {
 
         <Card title="Payouts">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Tutor</th><th style={th()}>Period</th><th style={th()}>Amount</th><th style={th()}>Bank</th><th style={th()}>Requested</th><th style={th()}>Settled</th><th style={th()}>Status</th></tr></thead>
+            <thead><tr><th style={thCell}>Tutor</th><th style={thCell}>Period</th><th style={thCell}>Amount</th><th style={thCell}>Bank</th><th style={thCell}>Requested</th><th style={thCell}>Settled</th><th style={thCell}>Status</th></tr></thead>
             <tbody>
               {payouts.map((p) => (
                 <tr key={p.id}>
-                  <td style={td()}>{p.tutor_name}</td>
-                  <td style={td()}>{p.period}</td>
-                  <td style={td()}>{formatNaira(p.amount_kobo)}</td>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{p.bank_account}</code></td>
-                  <td style={td()}>{fmtDate(p.requested_at)}</td>
-                  <td style={td()}>{p.settled_at ? fmtDate(p.settled_at) : '—'}</td>
-                  <td style={td()}><Badge status={p.status} />{p.failure_reason ? <div style={{ color: '#b91c1c', fontSize: '0.72rem', marginTop: '0.2rem' }}>{p.failure_reason}</div> : null}</td>
+                  <td style={tdCell}>{p.tutor_name}</td>
+                  <td style={tdCell}>{p.period}</td>
+                  <td style={tdCell}>{formatNaira(p.amount_kobo)}</td>
+                  <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{p.bank_account}</code></td>
+                  <td style={tdCell}>{fmtDate(p.requested_at)}</td>
+                  <td style={tdCell}>{p.settled_at ? fmtDate(p.settled_at) : '—'}</td>
+                  <td style={tdCell}><StatusBadge status={p.status} />{p.failure_reason ? <div style={{ color: colors.danger, fontSize: '0.72rem', marginTop: '0.2rem' }}>{p.failure_reason}</div> : null}</td>
                 </tr>
               ))}
             </tbody>
@@ -122,20 +137,20 @@ export default function TutorOpsPage() {
 
         <Card title="Ratings & disputes">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Tutor</th><th style={th()}>Learner</th><th style={th()}>Reason</th><th style={th()}>Detail</th><th style={th()}>Status</th><th style={th()}>Resolution note</th></tr></thead>
+            <thead><tr><th style={thCell}>Tutor</th><th style={thCell}>Learner</th><th style={thCell}>Reason</th><th style={thCell}>Detail</th><th style={thCell}>Status</th><th style={thCell}>Resolution note</th></tr></thead>
             <tbody>
               {disputes.map((d) => {
                 const f = noteForm[d.id] ?? { status: d.status, note: '' };
                 const terminal = d.status === 'resolved' || d.status === 'dismissed';
                 return (
                   <tr key={d.id}>
-                    <td style={td()}><strong>{d.tutor_name}</strong></td>
-                    <td style={td()}>{d.learner_name}</td>
-                    <td style={td()}><Badge status="medium" label={d.reason.replace(/_/g, ' ')} /></td>
-                    <td style={td()}>{d.detail}{d.note ? <div style={{ color: '#6b7280', fontSize: '0.72rem', marginTop: '0.25rem' }}>Note: {d.note}</div> : null}</td>
-                    <td style={td()}><Badge status={d.status} /></td>
-                    <td style={td()}>
-                      {terminal ? <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>closed</span> : (
+                    <td style={tdCell}><strong>{d.tutor_name}</strong></td>
+                    <td style={tdCell}>{d.learner_name}</td>
+                    <td style={tdCell}><StatusBadge status="medium" label={d.reason.replace(/_/g, ' ')} /></td>
+                    <td style={tdCell}>{d.detail}{d.note ? <div style={{ color: colors.muted, fontSize: '0.72rem', marginTop: '0.25rem' }}>Note: {d.note}</div> : null}</td>
+                    <td style={tdCell}><StatusBadge status={d.status} /></td>
+                    <td style={tdCell}>
+                      {terminal ? <span style={{ color: colors.muted, fontSize: '0.8rem' }}>closed</span> : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', minWidth: 200 }}>
                           <select style={select()} value={f.status} onChange={(e) => setNoteForm({ ...noteForm, [d.id]: { ...f, status: e.target.value as TutorDispute['status'] } })}>
                             <option value="open">open</option>
@@ -143,8 +158,8 @@ export default function TutorOpsPage() {
                             <option value="resolved">resolved</option>
                             <option value="dismissed">dismissed</option>
                           </select>
-                          <input style={input()} placeholder="Add a note…" value={f.note} onChange={(e) => setNoteForm({ ...noteForm, [d.id]: { ...f, note: e.target.value } })} />
-                          <button onClick={() => saveNote(d)} disabled={busy === d.id} style={btnPrimary()}>Save note</button>
+                          <Input placeholder="Add a note…" value={f.note} onChange={(e) => setNoteForm({ ...noteForm, [d.id]: { ...f, note: e.target.value } })} />
+                          <Button onClick={() => saveNote(d)} disabled={busy === d.id} variant="primary" sm>Save note</Button>
                         </div>
                       )}
                     </td>
@@ -153,10 +168,10 @@ export default function TutorOpsPage() {
               })}
             </tbody>
           </table>
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.text, marginTop: '0.6rem' }}>{notice}</p>}
           <AuditNote>Tutor vetting decisions, payout actions and dispute notes are recorded to the immutable audit log.</AuditNote>
         </Card>
       </StateBlock>
-    </div>
+    </Page>
   );
 }

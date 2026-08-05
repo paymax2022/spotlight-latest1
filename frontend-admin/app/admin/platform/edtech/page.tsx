@@ -10,6 +10,7 @@ import {
   PlatformGuard, PlatformTabs, formatNaira, fmtDate,
   PageHeader, Kpi, Card, Badge, StateBlock, DisclosureNote, Bar, th, td, input, select,
 } from './_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function PlatformDirectoryPage() {
   const [schools, setSchools] = useState<PlatformSchool[]>([]);
@@ -43,9 +44,9 @@ export default function PlatformDirectoryPage() {
 
         <StateBlock loading={loading} error={error} empty={false}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <Kpi label="Schools" value={schools.length.toString()} sub={`${schools.filter((s) => s.status === 'active').length} active`} accent="#340075" />
+            <Kpi label="Schools" value={schools.length.toString()} sub={`${schools.filter((s) => s.status === 'active').length} active`} accent={colors.primary} />
             <Kpi label="Verified+ tier" value={schools.filter((s) => s.verification_tier === 'verified' || s.verification_tier === 'premium').length.toString()} />
-            <Kpi label="Platform GMV" value={formatNaira(gmv)} accent="#15803d" />
+            <Kpi label="Platform GMV" value={formatNaira(gmv)} accent={colors.success} />
             <Kpi label="Students reached" value={schools.reduce((s, x) => s + x.students, 0).toLocaleString('en-NG')} />
           </div>
 
@@ -64,20 +65,20 @@ export default function PlatformDirectoryPage() {
               <tbody>
                 {rows.map((s) => (
                   <tr key={s.id}>
-                    <td style={td()}><strong>{s.name}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{s.id}</div></td>
+                    <td style={td()}><strong>{s.name}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{s.id}</div></td>
                     <td style={td()}>{s.state}</td>
                     <td style={td()}><Badge status={s.verification_tier} /></td>
                     <td style={td()}><Badge status={s.status} /></td>
                     <td style={td()}>{s.students.toLocaleString('en-NG')}</td>
                     <td style={td()}><div style={{ minWidth: 140 }}><Bar value={s.gmv_kobo} max={maxGmv} labelRight={formatNaira(s.gmv_kobo)} /></div></td>
-                    <td style={td()}><strong style={{ color: s.trust_score >= 75 ? '#15803d' : s.trust_score >= 50 ? '#9a3412' : '#b91c1c' }}>{s.trust_score}</strong></td>
+                    <td style={td()}><strong style={{ color: s.trust_score >= 75 ? colors.success : s.trust_score >= 50 ? colors.warning : colors.danger }}>{s.trust_score}</strong></td>
                     <td style={td()}>{s.gov_sync_opt_in ? <Badge status="active" label="opted in" /> : <Badge status="none" label="off" />}</td>
                     <td style={td()}>{fmtDate(s.created_at)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {rows.length === 0 ? <p style={{ color: '#6b7280', marginTop: '0.75rem' }}>No schools match the filters.</p> : null}
+            {rows.length === 0 ? <p style={{ color: colors.muted, marginTop: '0.75rem' }}>No schools match the filters.</p> : null}
           </Card>
         </StateBlock>
       </div>

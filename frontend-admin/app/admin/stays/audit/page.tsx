@@ -4,21 +4,16 @@ import { useEffect, useState } from 'react';
 import { getAudit } from '@/services/staysAdminService';
 import type { AuditLog } from '@/types/staysAdmin';
 import {
-  PageHeader,
   StaysTabs,
   Card,
   Badge,
   DisclosureNote,
   StateBlock,
   FilterBar,
-  btn,
-  btnPrimary,
-  th,
-  td,
-  input,
   label,
   fmtDate,
 } from '../_ui';
+import { Page, PageHeader, Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function StaysAuditPage() {
   const [data, setData] = useState<AuditLog | null>(null);
@@ -35,11 +30,11 @@ export default function StaysAuditPage() {
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [action]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Audit log & exports"
         subtitle="Immutable record of admin actions across Paymax Stays, plus scheduled compliance exports. Entries are append-only and cannot be edited or deleted."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" sm onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="platform" />
 
@@ -50,40 +45,42 @@ export default function StaysAuditPage() {
 
       <Card title="Exports">
         {(!data || data.exports.length === 0) ? (
-          <p style={{ color: '#6b7280' }}>No exports configured.</p>
+          <p style={{ color: colors.muted }}>No exports configured.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th style={th()}>Export</th>
-                <th style={th()}>Range</th>
-                <th style={th()}>Format</th>
-                <th style={th()}>Generated</th>
-                <th style={th()} />
+                <th style={thCell}>Export</th>
+                <th style={thCell}>Range</th>
+                <th style={thCell}>Format</th>
+                <th style={thCell}>Generated</th>
+                <th style={thCell} />
               </tr>
             </thead>
             <tbody>
               {data.exports.map((x) => (
                 <tr key={x.id}>
-                  <td style={td()}>{x.name}</td>
-                  <td style={td()}>{x.range}</td>
-                  <td style={td()}><Badge status={x.format} label={x.format.toUpperCase()} /></td>
-                  <td style={td()}>{x.generated_at ? fmtDate(x.generated_at) : 'never'}</td>
-                  <td style={td()}>
+                  <td style={tdCell}>{x.name}</td>
+                  <td style={tdCell}>{x.range}</td>
+                  <td style={tdCell}><Badge status={x.format} label={x.format.toUpperCase()} /></td>
+                  <td style={tdCell}>{x.generated_at ? fmtDate(x.generated_at) : 'never'}</td>
+                  <td style={tdCell}>
                     <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
-                      <button
-                        style={btn()}
+                      <Button
+                        variant="outline"
+                        sm
                         onClick={() => window.alert('Export generation is handled by the compliance pipeline.')}
                       >
                         Generate
-                      </button>
-                      <button
-                        style={x.generated_at ? btnPrimary() : { ...btn(), opacity: 0.5, cursor: 'not-allowed' }}
+                      </Button>
+                      <Button
+                        variant="primary"
+                        sm
                         disabled={!x.generated_at}
                         onClick={() => window.alert('Download will be available once the export is generated.')}
                       >
                         Download
-                      </button>
+                      </Button>
                     </div>
                   </td>
                 </tr>
@@ -96,8 +93,7 @@ export default function StaysAuditPage() {
       <FilterBar>
         <div>
           <label style={label()}>Filter by action</label>
-          <input
-            style={input()}
+          <Input
             placeholder="e.g. refund.decide"
             value={action}
             onChange={(e) => setAction(e.target.value)}
@@ -116,25 +112,25 @@ export default function StaysAuditPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>When</th>
-                  <th style={th()}>Actor</th>
-                  <th style={th()}>Action</th>
-                  <th style={th()}>Entity</th>
-                  <th style={th()}>Entity ID</th>
-                  <th style={th()}>Rail</th>
-                  <th style={th()}>IP</th>
+                  <th style={thCell}>When</th>
+                  <th style={thCell}>Actor</th>
+                  <th style={thCell}>Action</th>
+                  <th style={thCell}>Entity</th>
+                  <th style={thCell}>Entity ID</th>
+                  <th style={thCell}>Rail</th>
+                  <th style={thCell}>IP</th>
                 </tr>
               </thead>
               <tbody>
                 {data.entries.map((e) => (
                   <tr key={e.id}>
-                    <td style={td()}>{fmtDate(e.created_at)}</td>
-                    <td style={td()}>{e.actor_masked}</td>
-                    <td style={td()}><Badge status={e.action} label={e.action} /></td>
-                    <td style={td()}>{e.entity}</td>
-                    <td style={td()}><code style={{ fontSize: '0.78rem' }}>{e.entity_id}</code></td>
-                    <td style={td()}>{e.rail ? <Badge status={e.rail} label={e.rail} /> : '—'}</td>
-                    <td style={td()}><code style={{ fontSize: '0.78rem' }}>{e.ip_masked}</code></td>
+                    <td style={tdCell}>{fmtDate(e.created_at)}</td>
+                    <td style={tdCell}>{e.actor_masked}</td>
+                    <td style={tdCell}><Badge status={e.action} label={e.action} /></td>
+                    <td style={tdCell}>{e.entity}</td>
+                    <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{e.entity_id}</code></td>
+                    <td style={tdCell}>{e.rail ? <Badge status={e.rail} label={e.rail} /> : '—'}</td>
+                    <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{e.ip_masked}</code></td>
                   </tr>
                 ))}
               </tbody>
@@ -142,6 +138,6 @@ export default function StaysAuditPage() {
           )}
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

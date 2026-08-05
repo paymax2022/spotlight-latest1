@@ -10,6 +10,7 @@ import type {
   School, FeeSchedule, Disbursement, SchoolPot, Scholarship, DisbursementStatus,
 } from '@/types/academyAdmin';
 import { PageHeader, AcademyTabs, Card, Badge, Kpi, StateBlock, AuditNote, DisclosureNote, Bar, btn, btnPrimary, th, td, input, label, select, formatNaira, fmtDate } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function EduPayPage() {
   const [schools, setSchools] = useState<School[]>([]);
@@ -98,7 +99,7 @@ export default function EduPayPage() {
             {DISBURSEMENT_FLOW.map((st, i) => (
               <span key={st} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
                 <Badge status={st} label={st.replace(/_/g, ' ')} />
-                {i < DISBURSEMENT_FLOW.length - 1 ? <span style={{ color: '#9ca3af' }}>→</span> : null}
+                {i < DISBURSEMENT_FLOW.length - 1 ? <span style={{ color: colors.muted }}>→</span> : null}
               </span>
             ))}
           </div>
@@ -154,7 +155,7 @@ export default function EduPayPage() {
                     <td style={td()}><Badge status={d.status} label={d.status.replace(/_/g, ' ')} /></td>
                     <td style={td()}>{fmtDate(d.initiated_at)}</td>
                     <td style={td()}>{d.reconciled_at ? fmtDate(d.reconciled_at) : '—'}</td>
-                    <td style={td()}>{advanceable ? <button onClick={() => reconcile(d)} disabled={busy === d.id} style={btnPrimary()}>{nextLabel[d.status]}</button> : <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>done</span>}</td>
+                    <td style={td()}>{advanceable ? <button onClick={() => reconcile(d)} disabled={busy === d.id} style={btnPrimary()}>{nextLabel[d.status]}</button> : <span style={{ color: colors.muted, fontSize: '0.8rem' }}>done</span>}</td>
                   </tr>
                 );
               })}
@@ -191,7 +192,7 @@ export default function EduPayPage() {
                   <td style={td()}>{s.awarded_slots}/{s.slots}</td>
                   <td style={td()}><Badge status={s.status} /></td>
                   <td style={td()}>
-                    {s.status === 'closed' ? <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>full</span> : (
+                    {s.status === 'closed' ? <span style={{ color: colors.muted, fontSize: '0.8rem' }}>full</span> : (
                       <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
                         <input style={{ ...input(), width: 100 }} placeholder="Learner ID" value={awardForm[s.id]?.learner ?? ''} onChange={(e) => setAwardForm({ ...awardForm, [s.id]: { ...(awardForm[s.id] ?? { learner: '', amount: '' }), learner: e.target.value } })} />
                         <input style={{ ...input(), width: 80 }} placeholder="₦" value={awardForm[s.id]?.amount ?? ''} onChange={(e) => setAwardForm({ ...awardForm, [s.id]: { ...(awardForm[s.id] ?? { learner: '', amount: '' }), amount: e.target.value } })} />
@@ -210,7 +211,7 @@ export default function EduPayPage() {
             <div><label style={label()}>Slots</label><input type="number" style={input()} value={shpForm.slots} onChange={(e) => setShpForm({ ...shpForm, slots: e.target.value })} /></div>
             <div><button onClick={addScholarship} disabled={busy === 'shp'} style={btnPrimary()}>Create program</button></div>
           </div>
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: '0.6rem' }}>{notice}</p>}
           <AuditNote>School onboarding, fee schedules, disbursement transitions and scholarship awards are recorded to the immutable audit log and finance ledger.</AuditNote>
         </Card>
       </StateBlock>

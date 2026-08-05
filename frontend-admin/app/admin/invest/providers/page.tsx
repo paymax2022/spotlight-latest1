@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { getProviderHealth } from '@/services/investAdminService';
 import type { ProviderHealth } from '@/types/investAdmin';
-import { PageHeader, InvestTabs, Card, Badge, btn, th, td } from '../_ui';
+import { InvestTabs } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function InvestProvidersPage() {
   const [rows, setRows] = useState<ProviderHealth[]>([]);
@@ -19,40 +20,40 @@ export default function InvestProvidersPage() {
   useEffect(() => { load(); }, []);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Providers"
         subtitle="Broker and market-data adapter health. Mock adapters report healthy; HTTP adapters ping the partner gateway."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <InvestTabs />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-      <Card>
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      <Card style={{ padding: 0, overflow: 'auto' }}>
         {loading ? (
-          <p style={{ color: '#6b7280' }}>Checking providers…</p>
+          <p style={{ color: colors.muted, padding: 14 }}>Checking providers…</p>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr>
-                <th style={th()}>Role</th>
-                <th style={th()}>Provider</th>
-                <th style={th()}>Health</th>
-                <th style={th()}>Detail</th>
+                <th style={thCell}>Role</th>
+                <th style={thCell}>Provider</th>
+                <th style={thCell}>Health</th>
+                <th style={thCell}>Detail</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.role}>
-                  <td style={td()}>{r.role}</td>
-                  <td style={td()}><strong>{r.provider}</strong></td>
-                  <td style={td()}><Badge status={r.healthy ? 'Settled' : 'Failed'} label={r.healthy ? 'Healthy' : 'Unhealthy'} /></td>
-                  <td style={td()}>{r.detail}</td>
+                  <td style={tdCell}>{r.role}</td>
+                  <td style={tdCell}><strong>{r.provider}</strong></td>
+                  <td style={tdCell}><Badge text={r.healthy ? 'Healthy' : 'Unhealthy'} color={r.healthy ? colors.success : colors.danger} /></td>
+                  <td style={tdCell}>{r.detail}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }
