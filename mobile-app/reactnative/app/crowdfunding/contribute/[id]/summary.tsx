@@ -45,6 +45,12 @@ export default function ContributeSummaryScreen() {
     checkout.start({
       amountKobo: fees.totalKobo,
       title: 'Contribute to campaign',
+      // Honor the method already chosen on THIS screen so the shared sheet skips
+      // its wallet/card chooser (the redundant second modal): WALLET charges the
+      // wallet directly, and the card rails go straight to Paystack. CARD /
+      // BANK_TRANSFER / USSD all settle via the Paystack gateway → 'card'.
+      method: method === 'WALLET' ? 'wallet' : 'card',
+      domain: 'crowdfunding',
       charge: () => initiate.mutateAsync({ draft, idempotencyKey: generateIdempotencyKey() }),
       onPaid: (res) => {
         router.replace(`/crowdfunding/contribute/${params.id}/processing?reference=${res.reference}&status=${res.status}`);

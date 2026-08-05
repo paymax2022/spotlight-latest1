@@ -1,6 +1,6 @@
 import React from 'react';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Wallet, CreditCard, X } from 'lucide-react-native';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Wallet, CreditCard, X, ShieldCheck } from 'lucide-react-native';
 
 import { Colors } from '@/constants/colors';
 import type { PurchaseController } from './usePurchasePayment';
@@ -13,7 +13,10 @@ function naira(kobo: number): string {
 // OR directly via card (Paystack). Drop it once near a module's pay button and
 // drive it with usePurchasePayment().
 export default function PaymentSheet({ controller }: { controller: PurchaseController<any> }) {
-  const { visible, phase, error, request, walletKobo, walletLoading, pay, close, GatewaySheet } = controller;
+  const { visible, phase, error, request, walletKobo, walletLoading, pay, submitPin, close, GatewaySheet } = controller;
+  // Local PIN entry state, cleared whenever we leave the PIN step.
+  const [pin, setPin] = React.useState('');
+  React.useEffect(() => { if (phase !== 'pin') setPin(''); }, [phase]);
   if (!request) return null;
 
   const amount = request.amountKobo;
@@ -44,7 +47,35 @@ export default function PaymentSheet({ controller }: { controller: PurchaseContr
 
           <Text style={styles.amount}>{naira(amount)}</Text>
 
-          {busy ? (
+          {phase === 'pin' ? (
+            <View style={styles.pinWrap}>
+              <View style={styles.pinHeadRow}>
+                <ShieldCheck size={16} color={Colors.primary} strokeWidth={2.2} />
+                <Text style={styles.pinLabel}>Enter your 4-digit transaction PIN</Text>
+              </View>
+              <TextInput
+                style={styles.pinInput}
+                value={pin}
+                onChangeText={(t) => setPin(t.replace(/\D/g, '').slice(0, 4))}
+                keyboardType="number-pad"
+                secureTextEntry
+                maxLength={4}
+                placeholder="••••"
+                placeholderTextColor={Colors.onSurfaceVariant}
+                autoFocus
+                accessibilityLabel="Transaction PIN"
+              />
+              {error ? <Text style={styles.error}>{error}</Text> : null}
+              <Pressable
+                style={[styles.pinBtn, pin.length !== 4 && styles.pinBtnDim]}
+                disabled={pin.length !== 4}
+                onPress={() => submitPin(pin)}
+              >
+                <Text style={styles.pinBtnText}>Confirm &amp; pay {naira(amount)}</Text>
+              </Pressable>
+              <Text style={styles.secure}>Your PIN authorises this wallet debit.</Text>
+            </View>
+          ) : busy ? (
             <View style={styles.busy}>
               <ActivityIndicator color={Colors.primary} />
               <Text style={styles.busyText}>{phaseLabel[phase] ?? 'Processing…'}</Text>
@@ -143,4 +174,15 @@ const styles = StyleSheet.create({
   hint: { fontSize: 13, color: Colors.onSurfaceVariant, textAlign: 'center', paddingHorizontal: 12 },
   error: { color: Colors.error, fontSize: 13, marginTop: 4 },
   secure: { fontSize: 12, color: Colors.onSurfaceVariant, textAlign: 'center', marginTop: 4 },
+  pinWrap: { gap: 12, paddingTop: 4 },
+  pinHeadRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pinLabel: { fontSize: 14, fontWeight: '600', color: Colors.onSurface },
+  pinInput: {
+    borderWidth: 1.5, borderColor: Colors.outlineVariant, borderRadius: 14,
+    paddingVertical: 14, paddingHorizontal: 16, fontSize: 24, letterSpacing: 12,
+    textAlign: 'center', color: Colors.onSurface, backgroundColor: Colors.surfaceContainerLow,
+  },
+  pinBtn: { backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 16, alignItems: 'center' },
+  pinBtnDim: { opacity: 0.5 },
+  pinBtnText: { fontSize: 15, fontWeight: '700', color: Colors.surfaceContainerLowest },
 });

@@ -6,11 +6,14 @@ import { useAuthStore } from '@/store/authStore';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { usePaystackGateway } from './usePaystackGateway';
 import type { PaystackGatewayController } from './paystackGateway';
+import { verifyPin } from '@/features/transfers/api';
+import { WALLET_PIN_REQUIRED, requiresPin, type PayMethod } from './paymentFlow';
 
-export type PayMethod = 'wallet' | 'card';
+export type { PayMethod };
 export type PayPhase =
   | 'idle'
-  | 'charging'        // running the module's wallet charge / fulfilment
+  | 'pin'             // collecting the wallet transaction PIN
+  | 'charging'        // verifying PIN / running the module's wallet charge
   | 'awaiting'        // user is on the Paystack gateway
   | 'done'
   | 'error';
@@ -18,8 +21,13 @@ export type PayPhase =
 export interface PurchaseRequest<T = unknown> {
   amountKobo: number;
   title?: string;
-  /** The module's charge / fulfilment, told which rail confirmed the payment. */
-  charge: (method: PayMethod) => Promise<T>;
+  /**
+   * The module's charge / fulfilment, told which rail confirmed the payment.
+   * `pin` is the verified 4-digit wallet PIN when the wallet rail is used —
+   * modules whose debit endpoint enforces the PIN server-side (e.g. bill
+   * payments) forward it; modules without server enforcement ignore it.
+   */
+  charge: (method: PayMethod, pin?: string) => Promise<T>;
   onPaid?: (result: T, method: PayMethod) => void;
   /** Customer email for the card gateway (falls back to the signed-in user). */
   email?: string;
@@ -44,6 +52,8 @@ export interface PurchaseController<T = unknown> {
   start: (req: PurchaseRequest<T>) => void;
   /** Run a chosen method. */
   pay: (method: PayMethod) => Promise<void>;
+  /** Submit the wallet transaction PIN — verifies it, then runs the charge. */
+  submitPin: (pin: string) => Promise<void>;
   close: () => void;
   /** Render inside <PaymentSheet> — hosts the Paystack gateway on native. */
   GatewaySheet: PaystackGatewayController['Sheet'];
@@ -79,13 +89,27 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
     setRequest(null);
   }, []);
 
-  const finalize = useCallback(async (req: PurchaseRequest<T>, method: PayMethod) => {
+  const finalize = useCallback(async (req: PurchaseRequest<T>, method: PayMethod, pin?: string) => {
     setPhase('charging');
-    const result = await req.charge(method);
+    const result = await req.charge(method, pin);
     setPhase('done');
     req.onPaid?.(result, method);
     setVisible(false);
   }, []);
+
+  // Runs the module's wallet charge + fulfilment, surfacing errors in-sheet.
+  // `pin` is forwarded to charge for modules with server-side PIN enforcement.
+  const walletCharge = useCallback(
+    async (req: PurchaseRequest<T>, pin?: string) => {
+      try {
+        await finalize(req, 'wallet', pin);
+      } catch (e) {
+        setPhase('error');
+        setError(e instanceof Error ? e.message : 'Payment failed. Please try again.');
+      }
+    },
+    [finalize],
+  );
 
   // Runs a chosen method against an explicit request, so it can be triggered
   // both from the in-sheet chooser (`pay`) and auto-run from `start` when a
@@ -118,15 +142,36 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
         return;
       }
 
-      // Wallet: charge directly from balance.
-      try {
-        await finalize(req, 'wallet');
-      } catch (e) {
-        setPhase('error');
-        setError(e instanceof Error ? e.message : 'Payment failed. Please try again.');
+      // Wallet: gate on the 4-digit transaction PIN (uniform across all modules),
+      // then charge. The sheet renders the PIN entry during the 'pin' phase and
+      // calls submitPin(); the kill-switch flag skips straight to the charge.
+      if (requiresPin('wallet', WALLET_PIN_REQUIRED)) {
+        setPhase('pin');
+        return;
       }
+      await walletCharge(req);
     },
-    [gateway, user, finalize],
+    [gateway, user, finalize, walletCharge],
+  );
+
+  // Verify the entered PIN centrally (POST /transfers/pin/verify), then charge.
+  // Wrong PIN returns to the 'pin' phase with an error; the wallet is never hit.
+  const submitPin = useCallback(
+    async (pin: string) => {
+      const req = request;
+      if (!req) return;
+      setError(null);
+      setPhase('charging');
+      try {
+        await verifyPin(pin);
+      } catch {
+        setPhase('pin');
+        setError('Incorrect PIN. Please try again.');
+        return;
+      }
+      await walletCharge(req, pin);
+    },
+    [request, walletCharge],
   );
 
   const start = useCallback((req: PurchaseRequest<T>) => {
@@ -151,6 +196,7 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
     walletLoading: walletQ.isLoading,
     start,
     pay,
+    submitPin,
     close,
     GatewaySheet: gateway.Sheet,
   };
