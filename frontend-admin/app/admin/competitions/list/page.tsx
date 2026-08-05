@@ -8,7 +8,6 @@ type Benefit = {
   id: string;
   name: string;
   type: 'cash' | 'non-cash';
-  value?: string;
   description: string;
 };
 
@@ -16,6 +15,7 @@ type Award = {
   position: number;
   title: string;
   amount?: number;
+  benefits: Benefit[];
 };
 
 type Competition = {
@@ -28,7 +28,6 @@ type Competition = {
   participantCount: number;
   totalPrizePool: number;
   banner?: string;
-  benefits?: Benefit[];
   awards?: Award[];
 };
 
@@ -153,9 +152,9 @@ export default function CompetitionsListPage() {
                   <td style={tdCell}>{comp.participantCount.toLocaleString()}</td>
                   <td style={tdCell}>₦{(comp.totalPrizePool / 1000000).toFixed(1)}M</td>
                   <td style={tdCell}>
-                    {comp.benefits && comp.benefits.length > 0 ? (
+                    {comp.awards && comp.awards.some(a => a.benefits && a.benefits.length > 0) ? (
                       <span style={{ fontSize: '0.8rem', color: colors.success }}>
-                        {comp.benefits.length} benefit{comp.benefits.length !== 1 ? 's' : ''}
+                        {comp.awards.reduce((sum, a) => sum + (a.benefits?.length || 0), 0)} benefit{comp.awards.reduce((sum, a) => sum + (a.benefits?.length || 0), 0) !== 1 ? 's' : ''}
                       </span>
                     ) : (
                       <span style={{ fontSize: '0.8rem', color: colors.muted }}>None</span>
@@ -235,32 +234,29 @@ export default function CompetitionsListPage() {
               </div>
             </div>
 
-            {selectedComp.benefits && selectedComp.benefits.length > 0 && (
-              <div style={{ marginBottom: '1rem', paddingTop: '1rem', borderTop: `1px solid ${colors.border}` }}>
-                <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: colors.text, marginBottom: '0.75rem' }}>
-                  Benefits & Perks
-                </h3>
-                {selectedComp.benefits.map((benefit) => (
-                  <div key={benefit.id} style={{ padding: '0.75rem', background: colors.inputBorder + '10', borderRadius: '0.375rem', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                    <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
-                      {benefit.type === 'cash' ? '💰' : '🎁'} {benefit.name}
-                    </div>
-                    <div style={{ color: colors.muted }}>{benefit.description}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-
             {selectedComp.awards && selectedComp.awards.length > 0 && (
               <div style={{ paddingTop: '1rem', borderTop: `1px solid ${colors.border}` }}>
                 <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: colors.text, marginBottom: '0.75rem' }}>
-                  Recognition Awards
+                  Position Awards & Benefits
                 </h3>
                 {selectedComp.awards.map((award) => (
-                  <div key={award.position} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: `1px solid ${colors.border}`, fontSize: '0.85rem' }}>
-                    <span style={{ fontWeight: 600 }}>Position {award.position}</span>
-                    <span>{award.title}</span>
-                    {award.amount && <span style={{ color: colors.success }}>₦{award.amount.toLocaleString()}</span>}
+                  <div key={award.position} style={{ marginBottom: '1rem', padding: '0.75rem', background: colors.inputBorder + '15', borderRadius: '0.375rem', borderLeft: `3px solid ${colors.primary}` }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', paddingBottom: '0.5rem', borderBottom: `1px solid ${colors.border}` }}>
+                      <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Position {award.position}: {award.title}</span>
+                      {award.amount ? <span style={{ color: colors.success, fontWeight: 600 }}>₦{award.amount.toLocaleString()}</span> : null}
+                    </div>
+                    {award.benefits && award.benefits.length > 0 ? (
+                      <div>
+                        {award.benefits.map((benefit) => (
+                          <div key={benefit.id} style={{ padding: '0.4rem 0', fontSize: '0.8rem' }}>
+                            <span>{benefit.type === 'cash' ? '💰' : '🎁'} <strong>{benefit.name}</strong></span>
+                            <div style={{ color: colors.muted, fontSize: '0.75rem', marginLeft: '1.2rem' }}>{benefit.description}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span style={{ color: colors.muted, fontSize: '0.8rem' }}>No benefits assigned</span>
+                    )}
                   </div>
                 ))}
               </div>
