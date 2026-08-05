@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listEarnRules, updateEarnRule, formatPoints } from '@/services/loyaltyAdminService';
 import type { EarnRule, EarnRuleStatus } from '@/types/loyaltyAdmin';
 import { PageHeader, LoyaltyTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnPrimary, th, td, input, label, select, fmtDate } from '../../events/_ui';
+import { ConfirmDialog } from '@/components/rbac/ConfirmDialog';
 
 export default function EarnRulesPage() {
   const [rows, setRows] = useState<EarnRule[]>([]);
@@ -14,6 +15,7 @@ export default function EarnRulesPage() {
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [pending, setPending] = useState<{ rule: EarnRule; next: EarnRuleStatus } | null>(null);
 
   async function load() {
     setLoading(true); setError(null);
@@ -37,13 +39,22 @@ export default function EarnRulesPage() {
     finally { setBusy(null); }
   }
 
-  async function toggleStatus(r: EarnRule) {
+  function askToggle(r: EarnRule) {
     const next: EarnRuleStatus = r.status === 'active' ? 'disabled' : 'active';
-    if (!window.confirm(`Set "${r.action}" to ${next}? Audited, versioned config change.`)) return;
+    setMsg(null);
+    setPending({ rule: r, next });
+  }
+
+  // reason is captured as an operator acknowledgement for the audit trail;
+  // updateEarnRule does not accept a reason argument (signature unchanged).
+  async function confirmToggle(_reason: string) {
+    if (!pending) return;
+    const { rule: r, next } = pending;
     setBusy(r.id); setMsg(null);
     try {
       const res = await updateEarnRule(r.id, { status: next });
       setMsg(res.message + ` (now v${res.config_version}, audit ${res.audit_id})`);
+      setPending(null);
       await load();
     } catch (e) { setMsg(String(e)); }
     finally { setBusy(null); }
@@ -107,7 +118,7 @@ export default function EarnRulesPage() {
                   <td style={td()}>
                     <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                       <button style={btnPrimary()} disabled={busy === r.id} onClick={() => editRate(r)}>{busy === r.id ? '…' : 'Edit rate'}</button>
-                      <button style={btn()} disabled={busy === r.id} onClick={() => toggleStatus(r)}>{r.status === 'active' ? 'Disable' : 'Activate'}</button>
+                      <button style={btn()} disabled={busy === r.id} onClick={() => askToggle(r)}>{r.status === 'active' ? 'Disable' : 'Activate'}</button>
                     </div>
                   </td>
                 </tr>
@@ -116,6 +127,28 @@ export default function EarnRulesPage() {
           </table>
         </StateBlock>
       </Card>
+
+      {pending && (
+        <ConfirmDialog
+          open
+          level="warning"
+          title={pending.next === 'active' ? 'Activate earn rule' : 'Disable earn rule'}
+          description={`"${pending.rule.action}" → ${pending.next}. This creates a new versioned, money-affecting config.`}
+          reasons={[
+            'Changes how members earn points going forward — a versioned config change.',
+            'Prior versions stay in the audit trail (NL-12).',
+            'Recorded in the audit log with your name, reason and timestamp.',
+          ]}
+          requireReason
+          reasonPlaceholder="Why are you changing this earn rule?"
+          busy={busy === pending.rule.id}
+          confirmLabel={pending.next === 'active' ? 'Activate' : 'Disable'}
+          onConfirm={confirmToggle}
+          onCancel={() => {
+            if (busy !== pending.rule.id) setPending(null);
+          }}
+        />
+      )}
     </div>
   );
 }

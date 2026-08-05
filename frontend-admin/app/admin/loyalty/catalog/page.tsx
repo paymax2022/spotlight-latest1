@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listCatalog, upsertCatalogItem, formatNaira, formatPoints } from '@/services/loyaltyAdminService';
 import type { CatalogItem, RedemptionKind, CatalogStatus } from '@/types/loyaltyAdmin';
 import { PageHeader, LoyaltyTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnPrimary, th, td, input, label, select, fmtDate } from '../../events/_ui';
+import { ConfirmDialog } from '@/components/rbac/ConfirmDialog';
 
 export default function CatalogPage() {
   const [rows, setRows] = useState<CatalogItem[]>([]);
@@ -14,6 +15,7 @@ export default function CatalogPage() {
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [pending, setPending] = useState<{ item: CatalogItem; next: CatalogStatus } | null>(null);
 
   // simple create form
   const [showForm, setShowForm] = useState(false);
@@ -31,13 +33,22 @@ export default function CatalogPage() {
   }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [kind, status]);
 
-  async function toggleStatus(item: CatalogItem) {
+  function askToggle(item: CatalogItem) {
     const next: CatalogStatus = item.status === 'active' ? 'disabled' : 'active';
-    if (!window.confirm(`Set "${item.name}" to ${next}? Audited change.`)) return;
+    setMsg(null);
+    setPending({ item, next });
+  }
+
+  // reason is captured as an operator acknowledgement for the audit trail;
+  // upsertCatalogItem does not accept a reason argument (signature unchanged).
+  async function confirmToggle(_reason: string) {
+    if (!pending) return;
+    const { item, next } = pending;
     setBusy(item.id); setMsg(null);
     try {
       const res = await upsertCatalogItem({ id: item.id, name: item.name, kind: item.kind, cost_points: item.cost_points, cash_value_kobo: item.cash_value_kobo, stock: item.stock, status: next });
       setMsg(res.message + ` (audit ${res.audit_id})`);
+      setPending(null);
       await load();
     } catch (e) { setMsg(String(e)); }
     finally { setBusy(null); }
@@ -130,7 +141,7 @@ export default function CatalogPage() {
                   <td style={td()}><Badge status={r.status} /></td>
                   <td style={td()}>{fmtDate(r.updated_at)}</td>
                   <td style={td()}>
-                    <button style={btn()} disabled={busy === r.id} onClick={() => toggleStatus(r)}>{busy === r.id ? '…' : r.status === 'active' ? 'Disable' : 'Publish'}</button>
+                    <button style={btn()} disabled={busy === r.id} onClick={() => askToggle(r)}>{busy === r.id ? '…' : r.status === 'active' ? 'Disable' : 'Publish'}</button>
                   </td>
                 </tr>
               ))}
@@ -138,6 +149,29 @@ export default function CatalogPage() {
           </table>
         </StateBlock>
       </Card>
+
+      {pending && (
+        <ConfirmDialog
+          open
+          level="warning"
+          title={pending.next === 'active' ? 'Publish catalog item' : 'Disable catalog item'}
+          description={`"${pending.item.name}" → ${pending.next}. ${pending.next === 'active' ? 'Members will be able to redeem this item with points.' : 'Members will no longer be able to redeem this item.'}`}
+          reasons={[
+            pending.next === 'active'
+              ? 'Makes this reward redeemable with points (NL-4 — non-cash).'
+              : 'Removes this reward from redemption.',
+            'Recorded in the audit log with your name, reason and timestamp (NL-12).',
+          ]}
+          requireReason
+          reasonPlaceholder="Why are you changing this catalog item?"
+          busy={busy === pending.item.id}
+          confirmLabel={pending.next === 'active' ? 'Publish' : 'Disable'}
+          onConfirm={confirmToggle}
+          onCancel={() => {
+            if (busy !== pending.item.id) setPending(null);
+          }}
+        />
+      )}
     </div>
   );
 }

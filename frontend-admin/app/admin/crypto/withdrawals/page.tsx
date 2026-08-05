@@ -6,9 +6,10 @@ import type { CryptoWithdrawal } from '@/types/cryptoAdmin';
 import {
   PageHeader, CryptoTabs, Card, StatusBadge, RiskBadge, FlagPill, DisclosureNote, StateBlock,
   AuditNote, PermissionBanner, btn, btnPrimary, btnDisabled, th, td, mono, fmtDate, fmtUnits,
-  FilterBar, label as lbl, select, textarea,
+  FilterBar, label as lbl, select,
   CRYPTO_PERMS, useCryptoPermission,
 } from '../_ui';
+import { ConfirmDialog } from '@/components/rbac/ConfirmDialog';
 
 const PAGE_SIZE = 50;
 
@@ -28,7 +29,7 @@ export default function CryptoWithdrawalsPage() {
   // Decision drawer state.
   const [active, setActive] = useState<CryptoWithdrawal | null>(null);
   const [decision, setDecision] = useState<'approve' | 'reject'>('approve');
-  const [note, setNote] = useState('');
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async (off: number, status: string) => {
@@ -41,18 +42,19 @@ export default function CryptoWithdrawalsPage() {
   useEffect(() => { void load(offset, statusFilter); }, [offset, statusFilter, load]);
 
   function openDecision(w: CryptoWithdrawal, d: 'approve' | 'reject') {
-    setActive(w); setDecision(d); setNote(''); setError(null); setMsg(null);
+    setActive(w); setDecision(d); setConfirmOpen(false); setError(null); setMsg(null);
   }
 
-  const noteMissing = !note.trim();
-
-  async function submit() {
+  // Confirm gate: the high-impact decision runs only after the operator reaffirms
+  // it in the ConfirmDialog. The typed reason is passed straight through as the
+  // audited operator note (adminDecideWithdrawal already accepts `note`).
+  async function confirmDecision(reason: string) {
     if (!active) return;
-    if (noteMissing) { setError('An operator note is required.'); return; }
     setBusy(true); setError(null); setMsg(null);
     try {
-      const r = await adminDecideWithdrawal(active.id, { decision, note: note.trim() });
-      setMsg(`Withdrawal ${r.id} ${decision === 'approve' ? 'approved → pending broadcast' : 'rejected → failed (parked units returned)'}. Note: "${note.trim()}"`);
+      const r = await adminDecideWithdrawal(active.id, { decision, note: reason });
+      setMsg(`Withdrawal ${r.id} ${decision === 'approve' ? 'approved → pending broadcast' : 'rejected → failed (parked units returned)'}. Note: "${reason}"`);
+      setConfirmOpen(false);
       setActive(null);
       await load(offset, statusFilter);
     } catch (e) { setError(String(e)); }
@@ -102,24 +104,15 @@ export default function CryptoWithdrawalsPage() {
             <div style={{ gridColumn: '1 / -1' }}><strong>Destination:</strong> <span style={mono()}>{active.address}</span> ({active.network})</div>
             <div style={{ gridColumn: '1 / -1' }}><strong>AML score:</strong> <RiskBadge score={active.aml_score} /> {(active.aml_flags ?? []).map((f) => <FlagPill key={f}>{f}</FlagPill>)}</div>
           </div>
-          <div>
-            <label style={lbl()}>Operator note (mandatory — rationale for this decision)</label>
-            <textarea
-              style={textarea()}
-              placeholder={decision === 'approve' ? 'e.g. AML review passed, destination whitelisted, ref AML-2026-...' : 'e.g. Sanctioned-address hit; escalated to compliance, ticket AML-2026-...'}
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
-          </div>
           <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
             <button
-              style={canAdmin && !noteMissing && !busy ? btnPrimary() : btnDisabled()}
-              disabled={!canAdmin || noteMissing || busy}
-              onClick={() => void submit()}
+              style={canAdmin && !busy ? btnPrimary() : btnDisabled()}
+              disabled={!canAdmin || busy}
+              onClick={() => setConfirmOpen(true)}
             >{busy ? '…' : decision === 'approve' ? 'Confirm approve' : 'Confirm reject'}</button>
-            <button style={btn()} onClick={() => setActive(null)}>Cancel</button>
+            <button style={btn()} disabled={busy} onClick={() => setActive(null)}>Cancel</button>
           </div>
-          {noteMissing && <p style={{ color: '#9ca3af', fontSize: '0.75rem', marginTop: '0.4rem' }}>Submit is disabled until an operator note is entered.</p>}
+          <p style={{ color: '#9ca3af', fontSize: '0.75rem', marginTop: '0.4rem' }}>A final confirmation with a mandatory operator note is required before the decision is applied.</p>
         </Card>
       )}
 
@@ -183,6 +176,33 @@ export default function CryptoWithdrawalsPage() {
           <button style={btn()} disabled={rows.length < PAGE_SIZE} onClick={() => setOffset(offset + PAGE_SIZE)}>Next</button>
         </div>
       </Card>
+
+      {active && confirmOpen ? (
+        <ConfirmDialog
+          open
+          level="critical"
+          title={decision === 'approve' ? `Approve withdrawal ${active.id}` : `Reject withdrawal ${active.id}`}
+          description={`${active.symbol ?? active.asset_id} · ${formatKobo(active.value_kobo)} → ${active.address ?? '—'}`}
+          reasons={
+            decision === 'approve'
+              ? [
+                  'Approves an outbound crypto withdrawal — units are accepted for broadcast and leave the platform. Funds do not return automatically.',
+                  'Recorded in the audit log with your name, reason and timestamp.',
+                ]
+              : [
+                  'Rejects the withdrawal — it moves to failed and the parked holding units are returned to the member.',
+                  'Recorded in the audit log with your name, reason and timestamp.',
+                ]
+          }
+          requireReason
+          reasonLabel="Operator note (mandatory — rationale for this decision)"
+          reasonPlaceholder={decision === 'approve' ? 'e.g. AML review passed, destination whitelisted, ref AML-2026-...' : 'e.g. Sanctioned-address hit; escalated to compliance, ticket AML-2026-...'}
+          busy={busy}
+          confirmLabel={decision === 'approve' ? 'Approve withdrawal' : 'Reject withdrawal'}
+          onConfirm={confirmDecision}
+          onCancel={() => { if (!busy) setConfirmOpen(false); }}
+        />
+      ) : null}
     </div>
   );
 }
