@@ -15,6 +15,7 @@ import {
   type FilterChip,
   type SortState,
 } from '@/components/rbac';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const PAGE_SIZE = 20;
 
@@ -100,60 +101,71 @@ export default function AdminSecurityEventsPage() {
   const sortBy = (key: SortKey) => setSort((s) => nextSort(s, key));
 
   return (
-    <div>
+    <Page>
       <ToastStack toasts={toasts} onDismiss={dismiss} />
-      <h1>Security Events</h1>
-      <p>Review high-risk activity and failed login events.</p>
+      <PageHeader
+        title="Security Events"
+        subtitle="Review high-risk activity and failed login events."
+      />
 
-      <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(4, minmax(0,1fr))', marginTop: 12 }}>
-        <input placeholder="severity" value={draft.severity ?? ''} onChange={(e) => setInput('severity', e.target.value)} />
-        <input placeholder="module" value={draft.module ?? ''} onChange={(e) => setInput('module', e.target.value)} />
-        <input placeholder="dateFrom (ISO)" value={draft.dateFrom ?? ''} onChange={(e) => setInput('dateFrom', e.target.value)} />
-        <input placeholder="dateTo (ISO)" value={draft.dateTo ?? ''} onChange={(e) => setInput('dateTo', e.target.value)} />
-        <button onClick={apply}>Apply Filters</button>
-      </div>
+      <Card style={{ marginBottom: 16 }}>
+        <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(4, minmax(0,1fr))' }}>
+          <Input placeholder="Severity" value={draft.severity ?? ''} onChange={(e) => setInput('severity', e.target.value)} />
+          <Input placeholder="Module" value={draft.module ?? ''} onChange={(e) => setInput('module', e.target.value)} />
+          <Input placeholder="Date from (ISO)" value={draft.dateFrom ?? ''} onChange={(e) => setInput('dateFrom', e.target.value)} />
+          <Input placeholder="Date to (ISO)" value={draft.dateTo ?? ''} onChange={(e) => setInput('dateTo', e.target.value)} />
+        </div>
+        <Button variant="primary" style={{ marginTop: 14 }} onClick={apply}>Apply Filters</Button>
+      </Card>
 
       <FilterChips chips={chips} onClear={clearChip} onClearAll={clearAll} />
 
-      <table style={{ borderCollapse: 'collapse', width: '100%', marginTop: 16, fontSize: 13 }}>
-        <thead>
-          <tr>
-            <th style={th()}><SortHeaderButton label="Time" active={sort?.key === 'created_at'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('created_at')} /></th>
-            <th style={th()}><SortHeaderButton label="Type" active={sort?.key === 'type'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('type')} /></th>
-            <th style={th()}><SortHeaderButton label="Module" active={sort?.key === 'module'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('module')} /></th>
-            <th style={th()}><SortHeaderButton label="Severity" active={sort?.key === 'severity'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('severity')} /></th>
-            <th style={th()}>User / IP</th>
-          </tr>
-        </thead>
-        <tbody>
-          {loading ? (
-            <tr><td style={td()} colSpan={5}>Loading…</td></tr>
-          ) : errored ? (
-            <tr><td style={td()} colSpan={5}><button onClick={() => void load(applied)}>Retry</button> — failed to load.</td></tr>
-          ) : slice.length === 0 ? (
-            <tr><td style={td()} colSpan={5}>No security events to display.</td></tr>
-          ) : (
-            slice.map((row, idx) => (
-              <tr key={String(row.id || idx)}>
-                <td style={td()}><span style={{ fontFamily: 'monospace', fontSize: 12 }}>{String(row.created_at || '')}</span></td>
-                <td style={td()}><strong>{String(row.type || row.action || '-')}</strong></td>
-                <td style={td()}>{String(row.module || '-')}</td>
-                <td style={td()}>{String(row.severity || row.status || '-')}</td>
-                <td style={td()}><span style={{ fontSize: 12 }}>{String(row.user_id || row.actor_user_id || '-')} · {String(row.ip_address || '-')}</span></td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-
-      <Pagination page={safePage} pageCount={pageCount} total={total} pageSize={PAGE_SIZE} onPage={setPage} />
-    </div>
+      <Card style={{ padding: 0, overflow: 'hidden', marginTop: 16 }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+          <thead>
+            <tr>
+              <th style={thCell}><SortHeaderButton label="Time" active={sort?.key === 'created_at'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('created_at')} /></th>
+              <th style={thCell}><SortHeaderButton label="Type" active={sort?.key === 'type'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('type')} /></th>
+              <th style={thCell}><SortHeaderButton label="Module" active={sort?.key === 'module'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('module')} /></th>
+              <th style={thCell}><SortHeaderButton label="Severity" active={sort?.key === 'severity'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('severity')} /></th>
+              <th style={thCell}>User / IP</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={5}>Loading…</td></tr>
+            ) : errored ? (
+              <tr><td style={tdCell} colSpan={5}><Button variant="outline" sm onClick={() => void load(applied)}>Retry</Button> <span style={{ color: colors.danger }}>— failed to load.</span></td></tr>
+            ) : slice.length === 0 ? (
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={5}>No security events to display.</td></tr>
+            ) : (
+              slice.map((row, idx) => {
+                const severity = String(row.severity || row.status || '-');
+                return (
+                  <tr key={String(row.id || idx)}>
+                    <td style={{ ...tdCell, fontFamily: 'monospace', fontSize: 12, color: colors.muted }}>{String(row.created_at || '')}</td>
+                    <td style={tdCell}><strong>{String(row.type || row.action || '-')}</strong></td>
+                    <td style={{ ...tdCell, color: colors.muted }}>{String(row.module || '-')}</td>
+                    <td style={tdCell}>{severity === '-' ? <span style={{ color: colors.muted }}>—</span> : <Badge text={severity} color={severityColor(severity)} />}</td>
+                    <td style={{ ...tdCell, fontSize: 12, color: colors.muted }}>{String(row.user_id || row.actor_user_id || '-')} · {String(row.ip_address || '-')}</td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+        <div style={{ padding: '10px 14px' }}>
+          <Pagination page={safePage} pageCount={pageCount} total={total} pageSize={PAGE_SIZE} onPage={setPage} />
+        </div>
+      </Card>
+    </Page>
   );
 }
 
-function th(): React.CSSProperties {
-  return { textAlign: 'left', borderBottom: '1px solid #2a2a2a', padding: 8 };
-}
-function td(): React.CSSProperties {
-  return { borderBottom: '1px solid #1f1f1f', padding: 8, verticalAlign: 'top' };
+function severityColor(severity: string): string {
+  const s = severity.toLowerCase();
+  if (s === 'critical' || s === 'high') return colors.danger;
+  if (s === 'medium' || s === 'warning') return colors.warning;
+  if (s === 'low' || s === 'info') return colors.info;
+  return colors.secondary;
 }
