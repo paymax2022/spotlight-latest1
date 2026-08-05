@@ -39,6 +39,14 @@ export interface PurchaseRequest<T = unknown> {
    * modal (the default for every checkout).
    */
   method?: PayMethod;
+  /**
+   * Optional module-specific card handler. When provided, the card rail runs
+   * this INSTEAD of the built-in Paystack client gateway — for modules whose
+   * card payment is a server-initiated redirect (e.g. bill payments:
+   * initiate*Paystack → authorizationUrl → Linking.openURL). The module owns
+   * the redirect + return; `charge` is then only invoked for the wallet rail.
+   */
+  onCard?: () => Promise<void>;
 }
 
 export interface PurchaseController<T = unknown> {
@@ -119,6 +127,20 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
       setError(null);
 
       if (method === 'card') {
+        // Module-specific card flow (e.g. a server-initiated Paystack redirect)
+        // takes precedence over the built-in gateway. It owns redirect + return.
+        if (req.onCard) {
+          setPhase('awaiting');
+          setVisible(false);
+          try {
+            await req.onCard();
+          } catch (e) {
+            setVisible(true);
+            setPhase('error');
+            setError(e instanceof Error ? e.message : 'Could not start the card payment.');
+          }
+          return;
+        }
         // Hand off to the Paystack gateway SDK; fulfilment runs on its success.
         setPhase('awaiting');
         setVisible(false);

@@ -1,0 +1,132 @@
+'use client';
+
+import { useState, useMemo } from 'react';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
+
+type Competition = {
+  id: string;
+  title: string;
+  type: 'open-mic' | 'reality-tv' | 'multi-skill' | 'other';
+  status: 'draft' | 'upcoming' | 'active' | 'ended';
+  startDate: string;
+  endDate: string;
+  participantCount: number;
+  totalPrizePool: number;
+};
+
+// Mock data - replace with API call
+const MOCK_COMPETITIONS: Competition[] = [
+  { id: '1', title: 'Open Mic Q3 2024', type: 'open-mic', status: 'active', startDate: '2024-07-01', endDate: '2024-09-30', participantCount: 342, totalPrizePool: 500000 },
+  { id: '2', title: 'Reality TV Season 2', type: 'reality-tv', status: 'active', startDate: '2024-06-15', endDate: '2024-10-15', participantCount: 128, totalPrizePool: 2000000 },
+  { id: '3', title: 'Multi-Skill Challenge', type: 'multi-skill', status: 'upcoming', startDate: '2024-09-01', endDate: '2024-11-01', participantCount: 0, totalPrizePool: 750000 },
+  { id: '4', title: 'Open Mic Q2 2024', type: 'open-mic', status: 'ended', startDate: '2024-04-01', endDate: '2024-06-30', participantCount: 298, totalPrizePool: 450000 },
+];
+
+const statusColor: Record<string, string> = {
+  'draft': colors.muted,
+  'upcoming': colors.warning,
+  'active': colors.success,
+  'ended': colors.secondary,
+};
+
+const typeLabel: Record<string, string> = {
+  'open-mic': '🎤 Open Mic',
+  'reality-tv': '📺 Reality TV',
+  'multi-skill': '🎯 Multi-Skill',
+  'other': '📋 Other',
+};
+
+export default function CompetitionsListPage() {
+  const [search, setSearch] = useState('');
+  const [filterType, setFilterType] = useState<string>('');
+  const [filterStatus, setFilterStatus] = useState<string>('');
+
+  const filtered = useMemo(() => {
+    return MOCK_COMPETITIONS.filter((c) => {
+      const matchSearch = c.title.toLowerCase().includes(search.toLowerCase());
+      const matchType = !filterType || c.type === filterType;
+      const matchStatus = !filterStatus || c.status === filterStatus;
+      return matchSearch && matchType && matchStatus;
+    });
+  }, [search, filterType, filterStatus]);
+
+  return (
+    <Page>
+      <PageHeader
+        title="Competitions Management"
+        subtitle="Create, edit, and manage all contests across the platform."
+        actions={<Button variant="primary">+ New Competition</Button>}
+      />
+
+      {/* Filters */}
+      <Card title="Filters" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginTop: 12 }}>
+          <Input
+            placeholder="Search competitions..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <select value={filterType} onChange={(e) => setFilterType(e.target.value)} style={{
+            padding: '0.4rem 0.55rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem',
+            fontSize: '0.85rem', background: colors.card, cursor: 'pointer', color: colors.text
+          }}>
+            <option value="">All Types</option>
+            <option value="open-mic">Open Mic</option>
+            <option value="reality-tv">Reality TV</option>
+            <option value="multi-skill">Multi-Skill</option>
+          </select>
+          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={{
+            padding: '0.4rem 0.55rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem',
+            fontSize: '0.85rem', background: colors.card, cursor: 'pointer', color: colors.text
+          }}>
+            <option value="">All Status</option>
+            <option value="draft">Draft</option>
+            <option value="upcoming">Upcoming</option>
+            <option value="active">Active</option>
+            <option value="ended">Ended</option>
+          </select>
+        </div>
+      </Card>
+
+      {/* Competitions Table */}
+      <Card style={{ padding: 0, overflow: 'hidden' }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+          <thead>
+            <tr>
+              <th style={thCell}>Title</th>
+              <th style={thCell}>Type</th>
+              <th style={thCell}>Status</th>
+              <th style={thCell}>Participants</th>
+              <th style={thCell}>Prize Pool</th>
+              <th style={thCell}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 ? (
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={6}>No competitions found.</td></tr>
+            ) : (
+              filtered.map((comp) => (
+                <tr key={comp.id} style={{ background: comp.status === 'active' ? tint(colors.success, 0.04) : 'transparent' }}>
+                  <td style={tdCell}><strong>{comp.title}</strong></td>
+                  <td style={tdCell}>{typeLabel[comp.type]}</td>
+                  <td style={tdCell}><Badge text={comp.status} color={statusColor[comp.status]} /></td>
+                  <td style={tdCell}>{comp.participantCount.toLocaleString()}</td>
+                  <td style={tdCell}>₦{(comp.totalPrizePool / 1000000).toFixed(1)}M</td>
+                  <td style={tdCell}>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <Button variant="outline" sm>Edit</Button>
+                      <Button variant="outline" sm>View</Button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+        <div style={{ padding: '12px 14px', borderTop: `1px solid ${colors.border}`, fontSize: '0.85rem', color: colors.muted }}>
+          Showing {filtered.length} of {MOCK_COMPETITIONS.length} competitions
+        </div>
+      </Card>
+    </Page>
+  );
+}

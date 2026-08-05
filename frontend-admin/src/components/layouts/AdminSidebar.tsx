@@ -37,8 +37,12 @@ type NavItem = {
 const navItemsBase: NavItem[] = [
   { label: 'Dashboard', href: '/admin', section: 'Overview' },
   { label: 'Analytics', href: '/admin/analytics', section: 'Overview' },
-  { label: 'Competitions', href: '/admin/competitions', section: 'Contests', countKey: 'open_mic', permissions: ['contest.create', 'contest.update', 'contest.publish'] },
+  { label: 'Contests Dashboard', href: '/admin/competitions', section: 'Contests', countKey: 'open_mic', permissions: ['contest.create', 'contest.update', 'contest.publish'] },
+  { label: 'Competitions', href: '/admin/competitions/list', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
+  { label: 'Participants', href: '/admin/competitions/participants', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
+  { label: 'Results & Leaderboard', href: '/admin/competitions/results', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
   { label: 'Open Mic Editions', href: '/admin/competitions/open-mic', section: 'Contests' },
+  { label: 'Contest Settings', href: '/admin/competitions/settings', section: 'Contests', permissions: ['contest.create'] },
   { label: 'Voting Visibility', href: '/admin/voting/visibility', section: 'Voting', permissions: ['votes:manage'] },
   { label: 'Chat Sessions', href: '/admin/chatbot', section: 'Support' },
   { label: 'Leads Queue', href: '/admin/leads', section: 'Support' },
