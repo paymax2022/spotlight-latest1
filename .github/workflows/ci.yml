@@ -18,9 +18,21 @@ name: CI — CLAUDE.md gates
 # separately (push to main only, after this is green).
 
 on:
+  # Minute-thrift (private repo → metered Actions minutes): gate on PRs + pushes to
+  # main only. The full matrix already runs on every PR, so re-running it on every
+  # feature-branch push was pure waste. Docs-only changes are skipped on both.
+  # NOTE: if ci.yml is ever made a REQUIRED status check, drop the pull_request
+  # paths-ignore — GitHub reports a path-skipped required check as perpetually
+  # pending, which would block docs-only PRs from merging.
   push:
-    branches: ['**']
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
