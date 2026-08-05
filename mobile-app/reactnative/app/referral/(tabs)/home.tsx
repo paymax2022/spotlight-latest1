@@ -72,8 +72,8 @@ export default function ReferralHome() {
 
           {/* Invite funnel + rank */}
           <View style={styles.statsRow}>
-            <StatCard icon={<Users size={18} color={Colors.primary} strokeWidth={2} />} value={String(data.invitesSent)} label="Invited" />
-            <StatCard icon={<UserCheck size={18} color={ReferralColors.ok} strokeWidth={2} />} value={`${data.activated}/${data.signups}`} label="Activated" />
+            <StatCard icon={<Users size={18} color={Colors.primary} strokeWidth={2} />} value={data.invitesSent != null ? String(data.invitesSent) : '—'} label="Invited" />
+            <StatCard icon={<UserCheck size={18} color={ReferralColors.ok} strokeWidth={2} />} value={data.signups != null ? `${data.activated}/${data.signups}` : String(data.activated)} label="Activated" />
             <StatCard
               icon={<Trophy size={18} color={ReferralColors.warn} strokeWidth={2} />}
               value={data.rank ? `#${data.rank}` : '—'}

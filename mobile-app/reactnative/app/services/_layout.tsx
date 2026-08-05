@@ -9,6 +9,7 @@ export default function ServicesLayout() {
       <Stack.Screen name="cable-tv" />
       <Stack.Screen name="bills" />
       <Stack.Screen name="beneficiaries" />
+      <Stack.Screen name="support" />
       <Stack.Screen name="education" />
       <Stack.Screen name="transfer" />
       <Stack.Screen name="cards" />

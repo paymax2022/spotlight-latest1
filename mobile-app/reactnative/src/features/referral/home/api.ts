@@ -121,8 +121,8 @@ export async function getDashboard(): Promise<DashboardSummary> {
   };
   return {
     snapshot,
-    invitesSent: 0, // TODO(referral phase3): needs invite-tracking backend (R3)
-    signups: 0, // TODO(referral phase3): needs invite-tracking backend (R3)
+    invitesSent: null, // TODO(referral phase3): needs invite-tracking backend (R3)
+    signups: null, // TODO(referral phase3): needs invite-tracking backend (R3)
     activated: d.active_referral_count,
     rank: null, // TODO(referral phase3): needs leaderboard rank source (R2)
     rankTotal: null, // TODO(referral phase3): needs leaderboard total (R2)
@@ -169,8 +169,10 @@ export async function getActivity(): Promise<ActivityItem[]> {
 }
 
 // Map engine earning status → reward-ledger EarnStateKey (drives the pill).
+// The Direct Rewards engine returns UPPERCASE statuses (CREDITED/PENDING/REVERSED);
+// the RB0 reward-ledger uses lowercase states. Normalise so both map correctly.
 function mapEarningStatus(status: string): EarnStateKey {
-  switch (status) {
+  switch ((status ?? '').toLowerCase()) {
     case 'pending':
       return 'pending';
     case 'vesting':

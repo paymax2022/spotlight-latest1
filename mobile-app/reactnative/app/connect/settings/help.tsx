@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ScrollView, View, Text, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { ChevronDown, Headphones } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -32,7 +33,7 @@ export default function Help() {
               <Text style={styles.contactBody}>Our support team typically replies within a few hours.</Text>
             </View>
           </View>
-          <PrimaryButton label="Contact support" onPress={() => {}} />
+          <PrimaryButton label="Contact support" onPress={() => router.push('/services/support')} />
 
           <Text style={styles.group}>Frequently asked</Text>
           <View style={styles.card}>

@@ -5,7 +5,8 @@ import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Icons from 'lucide-react-native';
 import SearchBar from '@/components/SearchBar';
-import { BILL_CATEGORIES, RECENT_BILLERS } from '@/data/billPayment';
+import { BILL_CATEGORIES } from '@/data/billPayment';
+import { useBillerStore } from '@/features/services/billerStore';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
@@ -18,6 +19,7 @@ function DynamicIcon({ name, size = 24, color }: { name: string; size?: number; 
 }
 
 export default function BillsScreen() {
+  const recentBillers = useBillerStore((s) => s.billers);
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
@@ -73,7 +75,7 @@ export default function BillsScreen() {
         </View>
 
         <View style={[styles.recentCard, shadow1]}>
-          {RECENT_BILLERS.map((biller, index) => (
+          {recentBillers.map((biller, index) => (
             <View key={biller.id}>
               <View style={styles.recentRow}>
                 <View style={[styles.recentIcon, { backgroundColor: biller.bg }]}>
@@ -83,9 +85,9 @@ export default function BillsScreen() {
                   <Text style={styles.recentTitle}>{biller.title}</Text>
                   <Text style={styles.recentSubtitle}>{biller.subtitle}</Text>
                 </View>
-                <Text style={styles.recentAmount}>{biller.amount}</Text>
+                {biller.amount ? <Text style={styles.recentAmount}>{biller.amount}</Text> : null}
               </View>
-              {index < RECENT_BILLERS.length - 1 && <View style={styles.divider} />}
+              {index < recentBillers.length - 1 && <View style={styles.divider} />}
             </View>
           ))}
         </View>

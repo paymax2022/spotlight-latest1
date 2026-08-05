@@ -615,15 +615,43 @@ export const PREMIUM_PLANS: PremiumPlan[] = [
   },
 ];
 
+// Mock-only subscription state so subscribe/manage reflect in the UI. The real
+// backend owns this; the wallet charge itself runs through the shared checkout
+// (usePurchasePayment) which carries the Idempotency-Key.
+let MOCK_PREMIUM: PremiumStatus = { active: false };
+
 export async function getPremiumStatus(): Promise<PremiumStatus> {
   if (USE_MOCK) {
     await delay(160);
-    return { active: false };
+    return { ...MOCK_PREMIUM };
   }
   return liveOrDefault(async () => {
     const res = await api.get(`${CONNECT_API_BASE}/me/premium`);
     return unwrap<PremiumStatus>(res);
   }, { active: false });
+}
+
+/** Activate a plan after payment (the charge runs in the checkout layer). */
+export async function subscribePremium(planId: string): Promise<PremiumStatus> {
+  if (USE_MOCK) {
+    await delay(280);
+    const plan = PREMIUM_PLANS.find((p) => p.id === planId);
+    const days = plan?.cadence === 'yearly' ? 365 : 30;
+    MOCK_PREMIUM = { active: true, planId, renewsAt: new Date(Date.now() + days * 86_400_000).toISOString() };
+    return { ...MOCK_PREMIUM };
+  }
+  const res = await api.post(`${CONNECT_API_BASE}/me/premium/subscribe`, { plan_id: planId });
+  return unwrap<PremiumStatus>(res);
+}
+
+export async function cancelPremium(): Promise<PremiumStatus> {
+  if (USE_MOCK) {
+    await delay(220);
+    MOCK_PREMIUM = { active: false };
+    return { ...MOCK_PREMIUM };
+  }
+  const res = await api.post(`${CONNECT_API_BASE}/me/premium/cancel`, {});
+  return unwrap<PremiumStatus>(res);
 }
 
 export async function getPremiumPlans(): Promise<PremiumPlan[]> {
