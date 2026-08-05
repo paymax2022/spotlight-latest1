@@ -1,3 +1,4 @@
+import './globals.css';
 import type { PropsWithChildren } from 'react';
 import { Kumbh_Sans } from 'next/font/google';
 

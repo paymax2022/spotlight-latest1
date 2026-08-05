@@ -1,0 +1,123 @@
+/* ── Vuexy global stylesheet ───────────────────────────────────────────────────
+   frontend-admin previously shipped no CSS. This gives every admin page a Vuexy
+   baseline: bare <input>/<button>/<table>/headings/links across the ~470 pages
+   pick up the theme automatically, and the .vx-* classes (used by the
+   @/components/ui/vuexy kit) add hover/focus states inline styles can't. */
+
+:root {
+  --vx-primary: #7367f0;
+  --vx-primary-dark: #655bd8;
+  --vx-secondary: #82868b;
+  --vx-success: #28c76f;
+  --vx-warning: #ff9f43;
+  --vx-info: #00cfe8;
+  --vx-danger: #ea5455;
+  --vx-text: #2f2b3d;
+  --vx-muted: #6f6b7d;
+  --vx-border: #ebe9f1;
+  --vx-input-border: #d8d6de;
+  --vx-bg: #f8f7fa;
+  --vx-head-bg: #fafafc;
+  --vx-card: #ffffff;
+  --vx-radius: 6px;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--vx-bg);
+  color: var(--vx-text);
+  font-family: 'Kumbh Sans', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4, h5, h6 { color: var(--vx-text); margin: 0 0 0.5rem; font-weight: 700; line-height: 1.3; }
+h1 { font-size: 1.5rem; }
+h2 { font-size: 1.15rem; }
+h3 { font-size: 1rem; }
+p { color: var(--vx-text); }
+small { color: var(--vx-muted); }
+
+a { color: var(--vx-primary); text-decoration: none; transition: color .15s; }
+a:hover { text-decoration: underline; }
+
+hr { border: none; border-top: 1px solid var(--vx-border); margin: 1rem 0; }
+
+/* ── Base form controls: bare inputs across the app get the Vuexy look ── */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.vx-input),
+select, textarea {
+  font: inherit;
+  color: var(--vx-text);
+  background: #fff;
+  border: 1px solid var(--vx-input-border);
+  border-radius: var(--vx-radius);
+  padding: 8px 11px;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+input:not(.vx-input):focus, select:focus, textarea:focus {
+  border-color: var(--vx-primary);
+  box-shadow: 0 0 0 3px rgba(115, 103, 240, 0.15);
+}
+::placeholder { color: #b9b9c3; }
+
+/* ── Base bare buttons (kit .vx-btn is excluded and styled below) ── */
+button:not(.vx-btn) {
+  font: inherit;
+  cursor: pointer;
+  color: var(--vx-text);
+  background: #fff;
+  border: 1px solid var(--vx-input-border);
+  border-radius: var(--vx-radius);
+  padding: 8px 14px;
+  font-weight: 600;
+  transition: background .15s, border-color .15s, color .15s, opacity .15s;
+}
+button:not(.vx-btn):hover:not(:disabled) { border-color: var(--vx-primary); color: var(--vx-primary); }
+button:not(.vx-btn):disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── Base tables ── */
+table { border-collapse: collapse; width: 100%; }
+th { text-align: left; color: var(--vx-muted); font-weight: 700; font-size: 12px; }
+th, td { padding: 10px 12px; border-bottom: 1px solid var(--vx-border); }
+
+/* ── Kit component classes (used by @/components/ui/vuexy) ── */
+.vx-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: var(--vx-radius);
+  font-weight: 600; font-size: 13px; padding: 9px 15px; cursor: pointer;
+  transition: filter .15s, background .15s, box-shadow .15s, opacity .15s;
+}
+.vx-btn:disabled { opacity: .5; cursor: not-allowed; }
+.vx-btn--sm { font-size: 12px; padding: 5px 10px; }
+.vx-btn--primary { background: var(--vx-primary); color: #fff; box-shadow: 0 2px 6px rgba(115, 103, 240, .35); }
+.vx-btn--primary:hover:not(:disabled) { filter: brightness(1.07); }
+.vx-btn--outline { background: #fff; color: var(--vx-primary); border-color: rgba(115, 103, 240, .5); }
+.vx-btn--outline:hover:not(:disabled) { background: rgba(115, 103, 240, .08); }
+.vx-btn--danger { background: #fff; color: var(--vx-danger); border-color: rgba(234, 84, 85, .5); }
+.vx-btn--danger:hover:not(:disabled) { background: rgba(234, 84, 85, .08); }
+.vx-btn--secondary { background: #fff; color: var(--vx-secondary); border-color: var(--vx-input-border); }
+.vx-btn--secondary:hover:not(:disabled) { background: rgba(130, 134, 139, .08); }
+
+.vx-input {
+  border: 1px solid var(--vx-input-border); border-radius: var(--vx-radius);
+  padding: 9px 11px; font-size: 13px; color: var(--vx-text); background: #fff;
+  width: 100%; outline: none; transition: border-color .15s, box-shadow .15s;
+}
+.vx-input:focus { border-color: var(--vx-primary); box-shadow: 0 0 0 3px rgba(115, 103, 240, .15); }
+
+.vx-card {
+  background: var(--vx-card); border: 1px solid var(--vx-border);
+  border-radius: 8px; padding: 18px; box-shadow: 0 4px 18px rgba(47, 43, 61, .06);
+}
+
+.vx-badge { display: inline-block; padding: 2px 9px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+
+/* ── Scrollbars ── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #d8d6de; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #b9b9c3; }
