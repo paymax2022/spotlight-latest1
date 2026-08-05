@@ -13,6 +13,7 @@ import (
 	"os"
 	"spotlight/backend/internal/aicare"
 	"spotlight/backend/internal/association"
+	"spotlight/backend/internal/business"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/crowdfunding"
 	cfadminext "spotlight/backend/internal/crowdfunding/adminext"
@@ -58,6 +59,7 @@ import (
 	platformWS "spotlight/backend/internal/platform/ws"
 	"spotlight/backend/internal/property"
 	providerInterfaces "spotlight/backend/internal/provider"
+	"spotlight/backend/internal/provider/cac"
 	"spotlight/backend/internal/provider/disbursement"
 	"spotlight/backend/internal/provider/eversend"
 	"spotlight/backend/internal/provider/maplerad"
@@ -2470,6 +2472,34 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		}
 	} else {
 		log.Println("[trading] FEATURE_TRADING_ENABLED is false — skipping routes")
+	}
+
+	// --- Business registry (CAC business-name verification + registration) ---
+	// Member routes hang off the finance group (RequireAuthContext + requireUserID);
+	// the fee is charged through the finance ledger via the shared wallet service.
+	// The CAC provider is the sandbox adapter unless CAC_VAS_* creds are supplied.
+	// NOTE: the onboarding merchant-upgrade gate (SetBusinessGate/HasVerifiedBusiness)
+	// is a deliberate follow-up — main's onboarding.Service has no SetBusinessGate yet.
+	if cfg.FeatureBusinessRegistryEnabled && pool != nil {
+		cacProvider := cac.New(cac.Config{
+			BaseURL:        cfg.CACVASBaseURL,
+			APIKey:         cfg.CACVASApiKey,
+			ConsumerSecret: cfg.CACVASConsumerSecret,
+		})
+		businessAdmin := r.Group("/api/business/admin")
+		businessAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
+		businessAdmin.Use(requireUserID())
+		_ = business.Register(finance, businessAdmin, business.RouteDeps{
+			Pool:     pool,
+			Ledger:   ledgerSvc,
+			Wallet:   walletSvc,
+			Provider: cacProvider,
+			Payment:  paymentProvider,
+			RBAC:     rbac,
+		})
+		log.Println("[business] registry routes registered (CAC verification + registration)")
+	} else {
+		log.Println("[business] FEATURE_BUSINESS_REGISTRY_ENABLED is false — skipping routes")
 	}
 
 	// --- Realtor admin control plane (moderation, verification, payments, escrow) ---
