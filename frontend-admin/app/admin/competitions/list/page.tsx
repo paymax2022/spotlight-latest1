@@ -4,6 +4,20 @@ import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
+type Benefit = {
+  id: string;
+  name: string;
+  type: 'cash' | 'non-cash';
+  value?: string;
+  description: string;
+};
+
+type Award = {
+  position: number;
+  title: string;
+  amount?: number;
+};
+
 type Competition = {
   id: string;
   title: string;
@@ -13,6 +27,9 @@ type Competition = {
   endDate: string;
   participantCount: number;
   totalPrizePool: number;
+  banner?: string;
+  benefits?: Benefit[];
+  awards?: Award[];
 };
 
 // Mock data - replace with API call
@@ -43,6 +60,7 @@ export default function CompetitionsListPage() {
   const [filterType, setFilterType] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [competitions, setCompetitions] = useState<Competition[]>(MOCK_COMPETITIONS);
+  const [selectedComp, setSelectedComp] = useState<Competition | null>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -119,12 +137,13 @@ export default function CompetitionsListPage() {
               <th style={thCell}>Status</th>
               <th style={thCell}>Participants</th>
               <th style={thCell}>Prize Pool</th>
+              <th style={thCell}>Benefits</th>
               <th style={thCell}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={6}>No competitions found.</td></tr>
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={7}>No competitions found.</td></tr>
             ) : (
               filtered.map((comp) => (
                 <tr key={comp.id} style={{ background: comp.status === 'active' ? tint(colors.success, 0.04) : 'transparent' }}>
@@ -134,9 +153,18 @@ export default function CompetitionsListPage() {
                   <td style={tdCell}>{comp.participantCount.toLocaleString()}</td>
                   <td style={tdCell}>₦{(comp.totalPrizePool / 1000000).toFixed(1)}M</td>
                   <td style={tdCell}>
+                    {comp.benefits && comp.benefits.length > 0 ? (
+                      <span style={{ fontSize: '0.8rem', color: colors.success }}>
+                        {comp.benefits.length} benefit{comp.benefits.length !== 1 ? 's' : ''}
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: '0.8rem', color: colors.muted }}>None</span>
+                    )}
+                  </td>
+                  <td style={tdCell}>
                     <div style={{ display: 'flex', gap: 6 }}>
+                      <Button variant="outline" sm onClick={() => setSelectedComp(comp)}>Details</Button>
                       <Button variant="outline" sm>Edit</Button>
-                      <Button variant="outline" sm>View</Button>
                     </div>
                   </td>
                 </tr>
@@ -148,6 +176,98 @@ export default function CompetitionsListPage() {
           Showing {filtered.length} of {competitions.length} competitions
         </div>
       </Card>
+
+      {/* Details Modal */}
+      {selectedComp && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '1rem'
+        }}>
+          <Card style={{ maxWidth: '600px', width: '100%', maxHeight: '90vh', overflow: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h2 style={{ margin: 0, fontSize: '1.25rem', color: colors.text }}>{selectedComp.title}</h2>
+              <button
+                onClick={() => setSelectedComp(null)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '1.5rem',
+                  cursor: 'pointer',
+                  color: colors.muted,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {selectedComp.banner && (
+              <div style={{ marginBottom: '1rem' }}>
+                <img
+                  src={selectedComp.banner}
+                  alt="Competition Banner"
+                  style={{ width: '100%', maxHeight: '200px', objectFit: 'cover', borderRadius: '0.375rem' }}
+                  onError={(e) => (e.currentTarget.style.display = 'none')}
+                />
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem', fontSize: '0.85rem' }}>
+              <div>
+                <span style={{ color: colors.muted }}>Type:</span> {typeLabel[selectedComp.type]}
+              </div>
+              <div>
+                <span style={{ color: colors.muted }}>Status:</span> <Badge text={selectedComp.status} color={statusColor[selectedComp.status]} />
+              </div>
+              <div>
+                <span style={{ color: colors.muted }}>Prize Pool:</span> ₦{(selectedComp.totalPrizePool / 1000000).toFixed(1)}M
+              </div>
+              <div>
+                <span style={{ color: colors.muted }}>Participants:</span> {selectedComp.participantCount}
+              </div>
+            </div>
+
+            {selectedComp.benefits && selectedComp.benefits.length > 0 && (
+              <div style={{ marginBottom: '1rem', paddingTop: '1rem', borderTop: `1px solid ${colors.border}` }}>
+                <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: colors.text, marginBottom: '0.75rem' }}>
+                  Benefits & Perks
+                </h3>
+                {selectedComp.benefits.map((benefit) => (
+                  <div key={benefit.id} style={{ padding: '0.75rem', background: colors.inputBorder + '10', borderRadius: '0.375rem', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                    <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
+                      {benefit.type === 'cash' ? '💰' : '🎁'} {benefit.name}
+                    </div>
+                    <div style={{ color: colors.muted }}>{benefit.description}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {selectedComp.awards && selectedComp.awards.length > 0 && (
+              <div style={{ paddingTop: '1rem', borderTop: `1px solid ${colors.border}` }}>
+                <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: colors.text, marginBottom: '0.75rem' }}>
+                  Recognition Awards
+                </h3>
+                {selectedComp.awards.map((award) => (
+                  <div key={award.position} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: `1px solid ${colors.border}`, fontSize: '0.85rem' }}>
+                    <span style={{ fontWeight: 600 }}>Position {award.position}</span>
+                    <span>{award.title}</span>
+                    {award.amount && <span style={{ color: colors.success }}>₦{award.amount.toLocaleString()}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
     </Page>
   );
 }
