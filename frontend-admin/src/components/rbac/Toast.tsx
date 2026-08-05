@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
+import { colors } from '@/components/ui/vuexy';
 
 export type ToastKind = 'success' | 'error' | 'info' | 'warning';
 
@@ -55,11 +56,11 @@ export function useToasts(autoDismissMs = 4500) {
   return { toasts, toast, dismiss };
 }
 
-const kindStyles: Record<ToastKind, { bg: string; fg: string; border: string; label: string }> = {
-  success: { bg: '#10331f', fg: '#7ee2a8', border: '#1f6b3f', label: 'Success' },
-  error: { bg: '#3a1414', fg: '#ff9b9b', border: '#7a2222', label: 'Error' },
-  info: { bg: '#13283d', fg: '#8fc4f5', border: '#235682', label: 'Info' },
-  warning: { bg: '#3a2e10', fg: '#f3cd7a', border: '#7a611f', label: 'Warning' },
+const kindStyles: Record<ToastKind, { accent: string; label: string }> = {
+  success: { accent: colors.success, label: 'Success' },
+  error: { accent: colors.danger, label: 'Error' },
+  info: { accent: colors.info, label: 'Info' },
+  warning: { accent: colors.warning, label: 'Warning' },
 };
 
 export function ToastStack({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: string) => void }) {
@@ -86,19 +87,20 @@ export function ToastStack({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: 
             key={t.id}
             role={t.kind === 'error' || t.kind === 'warning' ? 'alert' : 'status'}
             style={{
-              background: s.bg,
-              color: s.fg,
-              border: `1px solid ${s.border}`,
+              background: '#fff',
+              color: colors.text,
+              border: `1px solid ${colors.border}`,
+              borderLeft: `3px solid ${s.accent}`,
               borderRadius: 8,
               padding: '10px 12px',
               display: 'flex',
               alignItems: 'flex-start',
               gap: 10,
-              boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
+              boxShadow: '0 4px 16px rgba(47,43,61,0.16)',
               fontSize: 13,
             }}
           >
-            <span style={{ fontWeight: 700, textTransform: 'uppercase', fontSize: 10, letterSpacing: 0.5, paddingTop: 1 }}>
+            <span style={{ fontWeight: 700, textTransform: 'uppercase', fontSize: 10, letterSpacing: 0.5, paddingTop: 2, color: s.accent }}>
               {s.label}
             </span>
             <span style={{ flex: 1 }}>{t.message}</span>
@@ -106,7 +108,7 @@ export function ToastStack({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: 
               type="button"
               aria-label="Dismiss notification"
               onClick={() => onDismiss(t.id)}
-              style={{ background: 'transparent', color: s.fg, border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1 }}
+              style={{ background: 'transparent', color: colors.muted, border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1 }}
             >
               ×
             </button>
