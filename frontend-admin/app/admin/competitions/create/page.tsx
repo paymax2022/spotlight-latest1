@@ -31,10 +31,42 @@ export default function CreateCompetitionPage() {
     setSaving(true);
     setError('');
     try {
-      // TODO: Replace with actual API call
-      console.log('Creating competition:', formData);
       // Simulate API delay
       await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Create new competition with unique ID
+      const newCompetition = {
+        id: `comp-${Date.now()}`,
+        title: formData.title.trim(),
+        type: formData.type as 'open-mic' | 'reality-tv' | 'multi-skill' | 'other',
+        status: formData.status as 'draft' | 'upcoming' | 'active' | 'ended',
+        startDate: formData.startDate,
+        endDate: formData.endDate,
+        participantCount: 0,
+        totalPrizePool: parseInt(formData.prizePool) || 0,
+      };
+
+      // Load existing competitions from localStorage or use defaults
+      let competitions: any[] = [];
+      if (typeof window !== 'undefined') {
+        const stored = localStorage.getItem('competitions');
+        if (stored) {
+          try {
+            competitions = JSON.parse(stored);
+          } catch {
+            // If corrupted, start fresh
+            competitions = [];
+          }
+        }
+      }
+
+      // Add new competition and save
+      competitions.push(newCompetition);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('competitions', JSON.stringify(competitions));
+      }
+
+      console.log('Created competition:', newCompetition);
       // Redirect back to list
       router.push('/admin/competitions/list');
     } catch (err) {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
@@ -42,15 +42,34 @@ export default function CompetitionsListPage() {
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('');
+  const [competitions, setCompetitions] = useState<Competition[]>(MOCK_COMPETITIONS);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('competitions');
+      if (stored) {
+        try {
+          setCompetitions(JSON.parse(stored));
+        } catch {
+          setCompetitions(MOCK_COMPETITIONS);
+          localStorage.setItem('competitions', JSON.stringify(MOCK_COMPETITIONS));
+        }
+      } else {
+        // Initialize localStorage with mock data on first load
+        setCompetitions(MOCK_COMPETITIONS);
+        localStorage.setItem('competitions', JSON.stringify(MOCK_COMPETITIONS));
+      }
+    }
+  }, []);
 
   const filtered = useMemo(() => {
-    return MOCK_COMPETITIONS.filter((c) => {
+    return competitions.filter((c) => {
       const matchSearch = c.title.toLowerCase().includes(search.toLowerCase());
       const matchType = !filterType || c.type === filterType;
       const matchStatus = !filterStatus || c.status === filterStatus;
       return matchSearch && matchType && matchStatus;
     });
-  }, [search, filterType, filterStatus]);
+  }, [search, filterType, filterStatus, competitions]);
 
   return (
     <Page>
@@ -126,7 +145,7 @@ export default function CompetitionsListPage() {
           </tbody>
         </table>
         <div style={{ padding: '12px 14px', borderTop: `1px solid ${colors.border}`, fontSize: '0.85rem', color: colors.muted }}>
-          Showing {filtered.length} of {MOCK_COMPETITIONS.length} competitions
+          Showing {filtered.length} of {competitions.length} competitions
         </div>
       </Card>
     </Page>
