@@ -9,6 +9,22 @@ import { canManageStem, canReadStem, getCurrentStemRole } from '@/config/stemAcc
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 import { colors, tint } from '@/components/ui/vuexy';
 
+type SectionIcon = '📊' | '🏆' | '👥' | '💰' | '🏥' | '🎓' | '🏨' | '🚗' | '🍽️' | '🏠' | '⚙️';
+
+const sectionIcons: Record<string, SectionIcon> = {
+  'Overview': '📊',
+  'Contests': '🏆',
+  'Support': '👥',
+  'Finance': '💰',
+  'Health': '🏥',
+  'Academy': '🎓',
+  'Stays': '🏨',
+  'Mobility': '🚗',
+  'Restaurant': '🍽️',
+  'Property Management': '🏠',
+  'Platform': '⚙️',
+};
+
 type NavItem = {
   label: string;
   href: string;
@@ -477,6 +493,7 @@ export function AdminSidebar() {
   const pathname = usePathname() ?? '';
   const [counts, setCounts] = useState<AdminMenuCounts | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const role = getCurrentStemRole();
   const allowRead = canReadStem(role);
   const allowManage = canManageStem(role);
@@ -486,14 +503,29 @@ export function AdminSidebar() {
     try {
       const raw = localStorage.getItem('spotlight_admin_user');
       if (raw) setAuthUser(JSON.parse(raw) as AuthUser);
+      const exp = localStorage.getItem('admin_sidebar_expanded');
+      if (exp) setExpanded(JSON.parse(exp) as Record<string, boolean>);
     } catch {}
   }, []);
 
   const isActive = (href: string) => (href === '/admin' ? pathname === '/admin' : pathname === href || pathname.startsWith(`${href}/`));
 
+  const toggleSection = (section: string) => {
+    const next = { ...expanded, [section]: !expanded[section] };
+    setExpanded(next);
+    localStorage.setItem('admin_sidebar_expanded', JSON.stringify(next));
+  };
+
   return (
-    <aside style={{ width: 280, borderRight: `1px solid ${colors.border}`, minHeight: '100vh', padding: 16, background: colors.bg }}>
-      <h2 style={{ marginTop: 0, color: colors.text, fontSize: 16, fontWeight: 700 }}>Spotlight Admin</h2>
+    <aside style={{ width: 280, borderRight: `1px solid ${colors.border}`, minHeight: '100vh', padding: 12, background: colors.bg, overflowY: 'auto' }}>
+      <Link href="/admin" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, padding: '10px 8px', borderRadius: '0.375rem', background: isActive('/admin') ? tint(colors.primary, 0.1) : 'transparent', textDecoration: 'none', transition: 'all .15s' }}>
+        <span style={{ fontSize: 20 }}>📊</span>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: colors.text }}>Admin</div>
+          <div style={{ fontSize: 11, color: colors.muted }}>Dashboard</div>
+        </div>
+      </Link>
+
       {sections.map((section) => {
         const items = navItemsBase.filter((item) => {
           if (item.section !== section) return false;
@@ -503,37 +535,76 @@ export function AdminSidebar() {
           return true;
         });
         if (!items.length) return null;
+
+        const isExpanded = expanded[section] ?? true;
+        const icon = sectionIcons[section.split(' · ')[0]] || '📋';
+
         return (
-          <div key={section} style={{ marginTop: 16 }}>
-            <p style={{ fontSize: 11, color: colors.muted, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>{section}</p>
-            <div style={{ display: 'grid', gap: 6 }}>
-              {items.map((item) => {
-                const count = item.countKey && counts ? counts[item.countKey] : null;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      padding: '8px 10px',
-                      border: `1px solid ${colors.border}`,
-                      background: isActive(item.href) ? tint(colors.primary, 0.08) : 'transparent',
-                      color: isActive(item.href) ? colors.primary : colors.text,
-                      borderRadius: '0.375rem',
-                      fontSize: '0.875rem',
-                      textDecoration: 'none',
-                      transition: 'all .15s',
-                      cursor: 'pointer',
-                      fontWeight: isActive(item.href) ? 600 : 500,
-                    }}
-                  >
-                    <span>{item.label}</span>
-                    {typeof count === 'number' && count > 0 ? <strong style={{ color: colors.primary }}>{count}</strong> : null}
-                  </Link>
-                );
-              })}
-            </div>
+          <div key={section} style={{ marginBottom: 8 }}>
+            <button
+              onClick={() => toggleSection(section)}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px 8px',
+                border: 'none',
+                background: 'transparent',
+                color: colors.text,
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: 0.4,
+                transition: 'all .15s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = tint(colors.primary, 0.05))}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              <span>{icon}</span>
+              <span style={{ flex: 1, textAlign: 'left', color: colors.muted }}>{section}</span>
+              <span style={{ opacity: 0.6, fontSize: 10 }}>{isExpanded ? '▼' : '▶'}</span>
+            </button>
+
+            {isExpanded && (
+              <div style={{ display: 'grid', gap: 4, marginTop: 4, paddingLeft: 4 }}>
+                {items.map((item) => {
+                  const count = item.countKey && counts ? counts[item.countKey] : null;
+                  const active = isActive(item.href);
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '6px 8px',
+                        borderLeft: `2px solid ${active ? colors.primary : 'transparent'}`,
+                        background: active ? tint(colors.primary, 0.08) : 'transparent',
+                        color: active ? colors.primary : colors.text,
+                        borderRadius: '0.25rem',
+                        fontSize: '0.8125rem',
+                        textDecoration: 'none',
+                        transition: 'all .12s',
+                        cursor: 'pointer',
+                        fontWeight: active ? 600 : 500,
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!active) e.currentTarget.style.background = tint(colors.primary, 0.04);
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!active) e.currentTarget.style.background = 'transparent';
+                      }}
+                    >
+                      <span>{item.label}</span>
+                      {typeof count === 'number' && count > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: colors.danger, background: tint(colors.danger, 0.12), padding: '2px 5px', borderRadius: '999px' }}>{count}</span>}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
           </div>
         );
       })}
