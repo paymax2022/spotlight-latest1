@@ -61,6 +61,12 @@ type Service struct {
 	rt         *Realtime           // optional; nil → no WS fan-out
 	tiers      *tiers.Service      // optional; nil → no tier-limit gate on the order escrow
 	zones      DeliveryZoneChecker // optional; nil → no delivery-zone gate on PlaceOrder
+
+	// Merchant WITHDRAWAL money path (wallet → bank). Wired only when
+	// FEATURE_RESTAURANT_WITHDRAWALS_ENABLED is on; see withdrawal.go. The `tiers`
+	// field above doubles as the fail-closed tier gate on the wallet debit.
+	disburser     WithdrawalDisburser // outbound bank disbursement; nil ⇒ NoopDisburser (executes nothing)
+	withdrawalsOn bool                // feature flag: no flag, no money path
 }
 
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {

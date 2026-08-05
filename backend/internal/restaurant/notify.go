@@ -75,4 +75,8 @@ const (
 	EventOnboardingDecision = "restaurant.onboarding.decision"
 	// Payout run disbursed to a restaurant owner / rider wallet.
 	EventPayoutDisbursed = "restaurant.payout.disbursed"
+	// Merchant wallet→bank withdrawal lifecycle (money-path audit events).
+	EventWithdrawalRequested = "restaurant.withdrawal.requested" // funds reserved, handed to disburser
+	EventWithdrawalPaid      = "restaurant.withdrawal.paid"      // provider confirmed the payout landed
+	EventWithdrawalReversed  = "restaurant.withdrawal.reversed"  // provider failed → funds returned to wallet
 )
