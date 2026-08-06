@@ -67,6 +67,89 @@ func RegisterMockExamRoutes(member, admin *gin.RouterGroup, pool *pgxpool.Pool, 
 	adminMocks.PUT("/templates/:id", guard("academy.assessment"), h.AdminUpdateTemplate)
 	adminMocks.DELETE("/templates/:id", guard("academy.assessment"), h.AdminArchiveTemplate)
 	adminMocks.GET("/analytics", guard("academy.assessment"), h.GetAdminAnalytics)
+
+	// ── Advanced Analytics Routes ──────────────────────────────────────────
+	advancedAnalytics := NewAdvancedAnalyticsService(pool)
+	advancedAnalyticsGroup := admin.Group("/analytics")
+	advancedAnalyticsGroup.GET("/trends/performance", guard("academy.assessment"), func(c *gin.Context) {
+		trends, err := advancedAnalytics.GetPerformanceTrends(c.Request.Context(), 12)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch trends"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": trends})
+	})
+
+	advancedAnalyticsGroup.GET("/comparison/class", guard("academy.assessment"), func(c *gin.Context) {
+		metrics, err := advancedAnalytics.GetClassComparison(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch class comparison"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": metrics})
+	})
+
+	advancedAnalyticsGroup.GET("/rankings/exam", guard("academy.assessment"), func(c *gin.Context) {
+		limit := 20
+		if l := c.Query("limit"); l != "" {
+			if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		rankings, err := advancedAnalytics.GetExamRankings(c.Request.Context(), limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch exam rankings"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": rankings})
+	})
+
+	advancedAnalyticsGroup.GET("/distribution/grades", guard("academy.assessment"), func(c *gin.Context) {
+		days := 30
+		if d := c.Query("days"); d != "" {
+			if parsed, err := strconv.Atoi(d); err == nil && parsed > 0 {
+				days = parsed
+			}
+		}
+		distribution, err := advancedAnalytics.GetGradeDistributionTrend(c.Request.Context(), days)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch grade distribution"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": distribution})
+	})
+
+	advancedAnalyticsGroup.GET("/retention/cohorts", guard("academy.assessment"), func(c *gin.Context) {
+		cohorts, err := advancedAnalytics.GetRetentionAnalysis(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch retention analysis"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": cohorts})
+	})
+
+	advancedAnalyticsGroup.GET("/difficulty/subjects/:classId", guard("academy.assessment"), func(c *gin.Context) {
+		classID := c.Param("classId")
+		subjects, err := advancedAnalytics.GetSubjectDifficulty(c.Request.Context(), classID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch subject difficulty"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": subjects})
+	})
+
+	// Refresh endpoint (admin only, for manual refresh)
+	advancedAnalyticsGroup.POST("/refresh", guard("academy.assessment"), func(c *gin.Context) {
+		times, err := advancedAnalytics.RefreshAnalyticsViews(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to refresh analytics"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Analytics views refreshed successfully",
+			"timings": times,
+		})
+	})
 }
 
 // ── Helper ──────────────────────────────────────────────────────────────
