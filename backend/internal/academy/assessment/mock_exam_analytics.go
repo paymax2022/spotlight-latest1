@@ -9,11 +9,18 @@ import (
 
 // AnalyticsService provides real data aggregations for mock exams
 type AnalyticsService struct {
-	pool *pgxpool.Pool
+	pool  *pgxpool.Pool
+	cache *CacheService
 }
 
 func NewAnalyticsService(pool *pgxpool.Pool) *AnalyticsService {
-	return &AnalyticsService{pool: pool}
+	return &AnalyticsService{pool: pool, cache: nil}
+}
+
+// WithCache adds Redis caching to the analytics service
+func (s *AnalyticsService) WithCache(cache *CacheService) *AnalyticsService {
+	s.cache = cache
+	return s
 }
 
 // LearnerAnalytics aggregates learner performance data
@@ -98,8 +105,16 @@ type ExamStat struct {
 	PassRate float64 `json:"pass_rate"`
 }
 
-// GetLearnerAnalytics computes real learner analytics from database
+// GetLearnerAnalytics computes real learner analytics from database with caching
 func (s *AnalyticsService) GetLearnerAnalytics(ctx context.Context, userID string) (*LearnerAnalytics, error) {
+	// Try cache first if available
+	if s.cache != nil {
+		if cached, err := s.cache.GetLearnerAnalyticsFromCache(ctx, userID); err == nil {
+			return cached, nil
+		}
+		// Cache miss or error - continue to compute
+	}
+
 	analytics := &LearnerAnalytics{
 		TrendData:          []TrendPoint{},
 		SubjectPerformance: []SubjectPerf{},
@@ -145,6 +160,11 @@ func (s *AnalyticsService) GetLearnerAnalytics(ctx context.Context, userID strin
 
 	// Get preferred exam type
 	s.getPreferredExamType(ctx, userID, analytics)
+
+	// Store in cache for next request
+	if s.cache != nil {
+		s.cache.SetLearnerAnalyticsCache(ctx, userID, analytics)
+	}
 
 	return analytics, nil
 }
@@ -357,11 +377,19 @@ func (s *AnalyticsService) getPreferredExamType(ctx context.Context, userID stri
 	}
 }
 
-// GetAdminAnalytics computes system-wide analytics
+// GetAdminAnalytics computes system-wide analytics with caching
 func (s *AnalyticsService) GetAdminAnalytics(ctx context.Context, timeRange string) (*AdminAnalytics, error) {
+	// Try cache first if available
+	if s.cache != nil {
+		if cached, err := s.cache.GetAdminAnalyticsFromCache(ctx, timeRange); err == nil {
+			return cached, nil
+		}
+		// Cache miss or error - continue to compute
+	}
+
 	analytics := &AdminAnalytics{
-		TimeRange:       timeRange,
-		ActivityData:    []ActivityPoint{},
+		TimeRange:        timeRange,
+		ActivityData:     []ActivityPoint{},
 		ClassPerformance: []ClassPerf{},
 		GradeDistribution: []GradeCount{},
 		ExamStatistics:   []ExamStat{},
@@ -431,6 +459,11 @@ func (s *AnalyticsService) GetAdminAnalytics(ctx context.Context, timeRange stri
 
 	// Get most attempted exam
 	s.getMostAttemptedExam(ctx, startDate, analytics)
+
+	// Store in cache for next request
+	if s.cache != nil {
+		s.cache.SetAdminAnalyticsCache(ctx, timeRange, analytics)
+	}
 
 	return analytics, nil
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
@@ -27,9 +28,17 @@ func NewMockExamHandler(svc *MockExamService, analytics *AnalyticsService) *Mock
 // RegisterMockExamRoutes wires mock exam routes under /academy/mock-exams
 // Public routes (GET templates) available to all authenticated users
 // Protected routes (START, SUBMIT, RESULTS) require learner authentication
-func RegisterMockExamRoutes(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+// Optional: pass Redis client for caching support
+func RegisterMockExamRoutes(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, redisClient ...*redis.Client) {
 	svc := NewMockExamService(pool)
 	analyticsSvc := NewAnalyticsService(pool)
+
+	// Inject cache service if Redis is available
+	if len(redisClient) > 0 && redisClient[0] != nil {
+		cacheService := NewCacheService(redisClient[0])
+		analyticsSvc.WithCache(cacheService)
+	}
+
 	h := NewMockExamHandler(svc, analyticsSvc)
 
 	// ── Member (learner) routes ──────────────────────────────────────────
