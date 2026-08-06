@@ -333,7 +333,7 @@ func (h *MockExamHandler) AdminArchiveTemplate(c *gin.Context) {
 // GetLearnerAnalytics returns learner's personal analytics
 // GET /api/academy/mock-exams/analytics
 func (h *MockExamHandler) GetLearnerAnalytics(c *gin.Context) {
-	userID, err := getUserID(c)
+	_, err := getUserID(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 		return

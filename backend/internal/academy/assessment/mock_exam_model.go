@@ -1,9 +1,7 @@
 package assessment
 
 import (
-	"database/sql/driver"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/lib/pq"
@@ -160,22 +158,4 @@ func secsToMins(secs int) int {
 		return 0
 	}
 	return (secs + 59) / 60 // round up
-}
-
-// Value/Scan for JSON types if needed
-func (r json.RawMessage) Value() (driver.Value, error) {
-	return string(r), nil
-}
-
-func (r *json.RawMessage) Scan(value interface{}) error {
-	if value == nil {
-		*r = nil
-		return nil
-	}
-	bytes, ok := value.([]byte)
-	if !ok {
-		return errors.New("type assertion failed")
-	}
-	*r = bytes
-	return nil
 }
