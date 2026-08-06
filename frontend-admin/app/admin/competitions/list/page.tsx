@@ -34,7 +34,22 @@ type Competition = {
 
 // Mock data - replace with API call
 const MOCK_COMPETITIONS: Competition[] = [
-  { id: '1', title: 'Open Mic Q3 2024', type: 'open-mic', status: 'active', startDate: '2024-07-01', endDate: '2024-09-30', participantCount: 342, totalPrizePool: 500000 },
+  {
+    id: '1',
+    title: 'Open Mic Q3 2024',
+    type: 'open-mic',
+    status: 'active',
+    startDate: '2024-07-01',
+    endDate: '2024-09-30',
+    participantCount: 342,
+    totalPrizePool: 500000,
+    currency: 'NGN',
+    awards: [
+      { position: 1, title: 'Gold Medal', amount: 250000, benefits: [{ id: 'b1', name: 'Cash Prize', type: 'cash', description: '250K naira' }] },
+      { position: 2, title: 'Silver Medal', amount: 150000, benefits: [{ id: 'b2', name: 'Cash Prize', type: 'cash', description: '150K naira' }] },
+      { position: 3, title: 'Bronze Medal', amount: 100000, benefits: [{ id: 'b3', name: 'Certificate', type: 'non-cash', description: 'Recognition certificate' }] },
+    ]
+  },
   { id: '2', title: 'Reality TV Season 2', type: 'reality-tv', status: 'active', startDate: '2024-06-15', endDate: '2024-10-15', participantCount: 128, totalPrizePool: 2000000 },
   { id: '3', title: 'Multi-Skill Challenge', type: 'multi-skill', status: 'upcoming', startDate: '2024-09-01', endDate: '2024-11-01', participantCount: 0, totalPrizePool: 750000 },
   { id: '4', title: 'Open Mic Q2 2024', type: 'open-mic', status: 'ended', startDate: '2024-04-01', endDate: '2024-06-30', participantCount: 298, totalPrizePool: 450000 },
@@ -179,7 +194,7 @@ export default function CompetitionsListPage() {
                   <td style={tdCell}>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <Button variant="outline" sm onClick={() => setSelectedComp(comp)}>Details</Button>
-                      <Button variant="outline" sm>Edit</Button>
+                      <Button variant="outline" sm onClick={() => router.push(`/admin/competitions/create?id=${comp.id}`)}>Edit</Button>
                     </div>
                   </td>
                 </tr>
