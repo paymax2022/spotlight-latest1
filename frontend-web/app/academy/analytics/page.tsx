@@ -57,7 +57,7 @@ interface AnalyticsData {
   best_score: number;
   worst_score: number;
   pass_rate: number;
-  preferred_exam_type: string;
+  preferred_exam_type?: string;
   attempts: ExamAttempt[];
   trend_data: Array<{ date: string; score: number; average: number }>;
   subject_performance: Array<{ subject: string; average: number; attempts: number }>;
