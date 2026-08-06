@@ -73,10 +73,9 @@ export default function AnalyticsPage() {
     const fetchAnalytics = async () => {
       try {
         setLoading(true);
-        const response = await fetch('/api/academy/mock-exams/analytics');
-        if (!response.ok) throw new Error('Failed to fetch analytics');
-        const data = await response.json();
-        setAnalytics(data.data);
+        const { mockExamClient } = await import('@/lib/api/mockExamClient');
+        const data = await mockExamClient.getLearnerAnalytics();
+        setAnalytics(data);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error');
       } finally {
