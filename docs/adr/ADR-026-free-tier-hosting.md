@@ -1,7 +1,10 @@
 # ADR-026 — Free-tier hosting topology for the development period
 
 **Date:** 2026-08-04
-**Status:** Proposed
+**Status:** Superseded by [ADR-027](ADR-027-deploy-target-cloud-run.md) — the deploy target was
+settled as Cloud Run (backend) + Vercel (web); the Render free-tier path proposed here was not
+adopted and `render.yaml` has been removed. This ADR is retained as the record of the free-tier
+option (recoverable from git history) should it ever be revisited.
 **Deciders:** Platform team · DevOps
 **Scope:** How the super-app is hosted while traffic is low and cost must be ~£0.
 Artifacts: `render.yaml` (Blueprint) and `.github/workflows/deploy.yml` (deploy pipeline).
