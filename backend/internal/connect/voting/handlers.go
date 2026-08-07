@@ -120,6 +120,10 @@ func (h *Handler) Results(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
+// PermissionGuard mirrors middleware.RequirePermission: route file supplies
+// a factory that builds the per-permission gin.HandlerFunc.
+type PermissionGuard func(permission string) gin.HandlerFunc
+
 // Register wires the voting routes onto the auth-gated member group.
 func Register(member gin.IRouter, svc *Service) {
 	h := NewHandler(svc)
@@ -128,4 +132,49 @@ func Register(member gin.IRouter, svc *Service) {
 	member.POST("/contests/:id/vote", h.FreeVote)      // free
 	member.POST("/contests/:id/paid-vote", h.PaidVote) // Idempotency-Key required
 	member.GET("/contests/:id/results", h.Results)
+
+	// Stage eviction routes (admin/judge) — wired without RBAC guards here;
+	// admin routes with guards are in RegisterAdmin.
+	member.GET("/contests/:id/stages/:stageNum/contestants", h.GetContestantsByStage)
+	member.GET("/contests/:id/evictions", h.GetEvictions)
+	member.POST("/contests/:id/stages/:stageNum/evict", h.TriggerEvictions)
+	member.POST("/contests/:id/save", h.SaveContestant)
+	member.POST("/contests/:id/extend-grace-period", h.ExtendGracePeriod)
+	member.POST("/contests/:id/stages/:stageNum/finalize-evictions", h.FinalizeEvictions)
+	member.POST("/contests/:id/admin-vote", h.AdminVote)
+}
+
+// RegisterAdmin wires admin eviction routes with RBAC permission guards.
+// The caller passes a guard factory (built from middleware.RequirePermission + the RBAC
+// service) so each route enforces its connect.contests.* permission.
+func RegisterAdmin(admin gin.IRouter, svc *Service, guard PermissionGuard) {
+	h := NewHandler(svc)
+	g := admin.Group("/contests")
+
+	// Admin-only eviction management
+	g.POST("/:id/stages/:stageNum/evict",
+		guard("connect.contests.manage"),
+		h.TriggerEvictions)
+	g.POST("/:id/extend-grace-period",
+		guard("connect.contests.manage"),
+		h.ExtendGracePeriod)
+	g.POST("/:id/stages/:stageNum/finalize-evictions",
+		guard("connect.contests.manage"),
+		h.FinalizeEvictions)
+	g.POST("/:id/admin-vote",
+		guard("connect.contests.manage"),
+		h.AdminVote)
+
+	// Judge/admin save (can have different permission if needed)
+	g.POST("/:id/save",
+		guard("connect.contests.judge"),
+		h.SaveContestant)
+
+	// View routes (lower permission level)
+	g.GET("/:id/evictions",
+		guard("connect.contests.view"),
+		h.GetEvictions)
+	g.GET("/:id/stages/:stageNum/contestants",
+		guard("connect.contests.view"),
+		h.GetContestantsByStage)
 }

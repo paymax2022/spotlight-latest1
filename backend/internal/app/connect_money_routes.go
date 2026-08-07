@@ -96,13 +96,16 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, cfg c
 		audit, amlSvc)
 	connectpayouts.Register(member, payoutSvc)
 
-	// --- AML admin (per-route RBAC connect.aml.*) ---
+	// --- Admin routes with RBAC (per-route permission checks) ---
 	guard := func(permission string) gin.HandlerFunc {
 		return middleware.RequirePermission(rbac, permission)
 	}
+	// Voting admin routes (eviction management, stage progression)
+	connectvoting.RegisterAdmin(admin, voteSvc, guard)
+	// AML admin routes
 	connectaml.Register(admin, amlSvc, guard)
 
-	log.Println("[connect-money] routes registered — gifting/voting/aml/payouts live")
+	log.Println("[connect-money] routes registered — gifting/voting (+ eviction/stages)/aml/payouts live")
 }
 
 // connectMoneyAuditAdapter bridges the per-package Auditor interface to the

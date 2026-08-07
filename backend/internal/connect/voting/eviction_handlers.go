@@ -1,7 +1,6 @@
 package connectvoting
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
