@@ -545,6 +545,31 @@ func (s *Service) requireAssocAdmin(ctx context.Context, userID string) error {
 	return nil
 }
 
+// adminPrimaryOrg resolves the single organisation an admin acts within, mirroring
+// the scoping GetAdminKpis already uses. Admin dashboard LIST endpoints (approval
+// queue, offline-payments queue) must scope their rows to this org so an admin of
+// one org cannot read another org's applicant/financial PII (cross-org IDOR). The
+// highest-priority admin role's org wins when the caller is an admin of several.
+// Fail-closed: no admin role → ErrForbidden.
+func (s *Service) adminPrimaryOrg(ctx context.Context, adminID string) (string, error) {
+	var orgID string
+	if err := s.db.QueryRow(ctx, `
+		SELECT m.organisation_id FROM assoc_member_roles r
+		JOIN assoc_memberships m ON m.id=r.membership_id
+		WHERE m.user_id=$1 AND r.role != 'NONE'
+		ORDER BY CASE r.role
+			WHEN 'SUPER_ADMIN'    THEN 1
+			WHEN 'NATIONAL_ADMIN' THEN 2
+			WHEN 'FINANCE_ADMIN'  THEN 3
+			WHEN 'CHAPTER_ADMIN'  THEN 4
+			WHEN 'SECRETARY'      THEN 5
+			ELSE 6 END
+		LIMIT 1`, adminID).Scan(&orgID); err != nil {
+		return "", ErrForbidden
+	}
+	return orgID, nil
+}
+
 // requireCap fetches the caller's highest-privilege role and checks that the
 // requested capability is set. Returns ErrForbidden when not an admin or when
 // the role lacks the capability.
@@ -998,6 +1023,13 @@ func (s *Service) GetApprovalQueue(ctx context.Context, adminID, jurisdiction st
 	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
 		return nil, err
 	}
+	// Org-scope: the queue must only surface applications for the admin's own
+	// organisation — otherwise any admin of any org reads every org's pending
+	// applicant PII (cross-org IDOR). $1 is always the admin's org.
+	orgID, err := s.adminPrimaryOrg(ctx, adminID)
+	if err != nil {
+		return nil, err
+	}
 	q := `
 		SELECT a.id, COALESCE(mp.full_name, u.email, a.user_id::text),
 		       COALESCE(mc.label,''), COALESCE(ch.name,''), a.submitted_at::text,
@@ -1007,8 +1039,9 @@ func (s *Service) GetApprovalQueue(ctx context.Context, adminID, jurisdiction st
 		LEFT JOIN assoc_membership_categories mc ON mc.id=a.category_id
 		LEFT JOIN assoc_chapters ch ON ch.id=a.chapter_id
 		LEFT JOIN auth.users u ON u.id=a.user_id
-		WHERE a.status IN ('PENDING','PENDING_CHAPTER','PENDING_NATIONAL','INFO_REQUESTED')`
-	args := []any{}
+		WHERE a.organisation_id=$1
+		  AND a.status IN ('PENDING','PENDING_CHAPTER','PENDING_NATIONAL','INFO_REQUESTED')`
+	args := []any{orgID}
 	if jurisdiction != "" && jurisdiction != "ALL" {
 		args = append(args, jurisdiction)
 		q += fmt.Sprintf(` AND a.jurisdiction=$%d`, len(args))
@@ -1094,6 +1127,13 @@ func (s *Service) GetOfflinePayments(ctx context.Context, adminID string) ([]Off
 	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
 		return nil, err
 	}
+	// Org-scope: only the admin's own organisation's offline payments (member name,
+	// amount, reference are financial PII) — otherwise any admin reads every org's
+	// pending offline payments (cross-org IDOR).
+	orgID, err := s.adminPrimaryOrg(ctx, adminID)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Query(ctx, `
 		SELECT p.id, COALESCE(mp.full_name,''), m.member_code,
 		       p.amount_kobo, p.method, COALESCE(p.reference,''),
@@ -1103,7 +1143,8 @@ func (s *Service) GetOfflinePayments(ctx context.Context, adminID string) ([]Off
 		JOIN assoc_dues_invoices i ON i.id=p.invoice_id
 		LEFT JOIN assoc_member_profiles mp ON mp.membership_id=m.id
 		WHERE p.offline=true AND p.status='PENDING'
-		ORDER BY p.created_at DESC LIMIT 200`)
+		  AND m.organisation_id=$1
+		ORDER BY p.created_at DESC LIMIT 200`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("association: offline payments: %w", err)
 	}

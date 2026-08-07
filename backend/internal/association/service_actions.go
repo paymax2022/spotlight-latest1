@@ -396,7 +396,10 @@ type BulkImportRow struct {
 // Rows with no matching user are silently skipped. Requires ImportMembers capability.
 // Returns the count of successfully inserted memberships.
 func (s *Service) BulkImportMembers(ctx context.Context, adminID, orgID string, r io.Reader) (int, error) {
-	if err := s.requireCap(ctx, adminID, func(c AdminCapabilities) bool { return c.ImportMembers }); err != nil {
+	// Org-scope: the caller must hold ImportMembers IN the target org. The old
+	// org-agnostic requireCap let an admin of any org bulk-insert ACTIVE
+	// memberships into a caller-supplied foreign org (cross-org write IDOR).
+	if err := s.requireCapInOrg(ctx, adminID, orgID, func(c AdminCapabilities) bool { return c.ImportMembers }); err != nil {
 		return 0, err
 	}
 

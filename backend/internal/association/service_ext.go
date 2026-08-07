@@ -609,7 +609,10 @@ func (s *Service) SubmitApplication(ctx context.Context, userID string, d JoinDr
 // ─── Bulk import (admin) ──────────────────────────────────────────────────────
 
 func (s *Service) ImportPreview(ctx context.Context, adminID, orgID, fileName string, r io.Reader) (*ImportPreview, error) {
-	if err := s.requireCap(ctx, adminID, func(c AdminCapabilities) bool { return c.ImportMembers }); err != nil {
+	// Org-scope: caller must hold ImportMembers IN the target org. The old
+	// org-agnostic requireCap let an admin of any org preview membership against a
+	// foreign org — a per-email cross-org membership-existence oracle.
+	if err := s.requireCapInOrg(ctx, adminID, orgID, func(c AdminCapabilities) bool { return c.ImportMembers }); err != nil {
 		return nil, err
 	}
 	// Resolve the target organisation: explicit org_id wins, else the caller's
