@@ -333,6 +333,10 @@ func (s *Service) ReactToMessage(ctx context.Context, userID, threadID, messageI
 	if err != nil {
 		return err
 	}
+	// Committee/executive isolation (CM-002): fail-closed before any write.
+	if err := s.assertThreadAccess(ctx, userID, threadID); err != nil {
+		return err
+	}
 	// Object-level + cross-group check (CH-005 / §4.9): the message must belong to
 	// the named thread AND the caller must hold an ACTIVE membership in the thread's
 	// organisation. A foreign-org caller is rejected (fail-closed) before any write.
