@@ -155,31 +155,53 @@ export function buildQuote(asset: CryptoAsset, req: QuoteRequest): CryptoQuote {
   const allInUnit = Math.round(unitPrice * spreadFactor);
 
   // Resolve crypto quantity + the net trade value (pre-fee, at all-in rate).
+  const feeBpsTotal = PAYMAX_FEE_BPS + PROVIDER_FEE_BPS;
   let cryptoMinor: number;
   let tradeFiat: number;       // value of the crypto at the all-in rate (pre-fee)
   if (basis === 'fiat') {
-    // Approximate: derive crypto from the gross fiat the user entered.
-    cryptoMinor = Math.round((amount / allInUnit) * 10 ** decimals);
-    tradeFiat = Math.round((cryptoMinor / 10 ** decimals) * allInUnit);
+    if (side === 'buy') {
+      // Fiat basis on a BUY: the entered `amount` is the GROSS the user pays
+      // (crypto value + percentage fees). Carve the % fees back out so the
+      // total-to-pay equals exactly what the user typed — fees are NOT added on
+      // top of the entered amount.
+      tradeFiat = Math.round((amount * 10_000) / (10_000 + feeBpsTotal));
+    } else {
+      // Fiat basis on a SELL: the entered `amount` is the trade value; the user
+      // receives that value minus fees (applied below).
+      tradeFiat = amount;
+    }
+    cryptoMinor = Math.round((tradeFiat / allInUnit) * 10 ** decimals);
   } else {
     cryptoMinor = amount;
     tradeFiat = Math.round((amount / 10 ** decimals) * allInUnit);
   }
 
-  // Fees expressed in settlement fiat.
+  // Fees expressed in settlement fiat (percentage fees are charged on trade value).
   const paymaxFee = Math.round((tradeFiat * PAYMAX_FEE_BPS) / 10_000);
   const providerFee = Math.round((tradeFiat * PROVIDER_FEE_BPS) / 10_000);
   const spreadFiat = Math.round((tradeFiat * spreadBps) / 10_000);
+  const feeSum = paymaxFee + providerFee;
+
+  // Buy: total debit = trade value + fees. Sell: total credit = trade value − fees.
+  let totalFiat: number;
+  if (side === 'buy' && basis === 'fiat') {
+    // Gross is fixed to exactly what the user entered; absorb sub-kobo rounding
+    // into the trade value so `total === entered` and `trade + fees === total`
+    // both hold precisely.
+    totalFiat = amount;
+    tradeFiat = amount - feeSum;
+    cryptoMinor = Math.round((tradeFiat / allInUnit) * 10 ** decimals);
+  } else if (side === 'buy') {
+    totalFiat = tradeFiat + feeSum;
+  } else {
+    totalFiat = Math.max(0, tradeFiat - feeSum);
+  }
 
   const fees: CryptoFee[] = [
     { type: 'spread', amount: { amount: spreadFiat, currency } },
     { type: 'paymax_fee', amount: { amount: paymaxFee, currency } },
     { type: 'provider_fee', amount: { amount: providerFee, currency } },
   ];
-  const feeSum = paymaxFee + providerFee;
-
-  // Buy: total debit = trade value + fees. Sell: total credit = trade value − fees.
-  const totalFiat = side === 'buy' ? tradeFiat + feeSum : Math.max(0, tradeFiat - feeSum);
 
   return {
     id: `cq_${Math.random().toString(36).slice(2, 8)}`,
@@ -214,11 +236,13 @@ export function buildSwapQuote(from: CryptoAsset, to: CryptoAsset, fromAmountMin
   // Fiat value of what's being swapped in (settlement fiat is the `from` price's).
   const fromFiat = Math.round((fromAmountMinor / fromUnit) * from.price.amount);
 
-  // Apply spread (customer receives slightly less value than mid).
-  const netFiat = Math.round(fromFiat * (1 - SWAP_SPREAD_BPS / 10_000));
+  // The customer receives value after BOTH the spread AND the swap fee. The fee
+  // must actually reduce the output — mirroring buy/sell, where the itemised fee
+  // is charged, not merely displayed.
+  const feeFiat = Math.round((fromFiat * SWAP_FEE_BPS) / 10_000);
+  const netFiat = Math.max(0, Math.round(fromFiat * (1 - SWAP_SPREAD_BPS / 10_000)) - feeFiat);
   const toAmountMinor = to.price.amount > 0 ? Math.round((netFiat / to.price.amount) * toUnit) : 0;
 
-  const feeFiat = Math.round((fromFiat * SWAP_FEE_BPS) / 10_000);
   const rate = fromAmountMinor > 0 ? (toAmountMinor / toUnit) / (fromAmountMinor / fromUnit) : 0;
 
   return {

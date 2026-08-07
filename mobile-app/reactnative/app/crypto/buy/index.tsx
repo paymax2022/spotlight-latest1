@@ -153,7 +153,7 @@ export default function BuyEntryScreen() {
         {quote ? (
           <View style={styles.rateLine}>
             <Text style={styles.rateText}>{formatPrice(a.symbol, quote.allInRate)}</Text>
-            <Text style={styles.rateSub}>Includes spread & fees · final quote locks on the next screen</Text>
+            <Text style={styles.rateSub}>Includes spread · Paymax & provider fees itemised on the next screen</Text>
           </View>
         ) : (
           <StateView kind="empty" icon="Coins" title="Enter an amount" message="We'll show a live, all-in price before you confirm." compact />

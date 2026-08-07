@@ -9,7 +9,7 @@
 //  • the client never computes fees/eligibility authoritatively — server wins.
 
 import { api } from '@/api/client';
-import { buildEstimate, chartFor } from '../utils/stockFormatters';
+import { aggregatePortfolio, buildEstimate, chartFor } from '../utils/stockFormatters';
 import {
   MOCK_CORPORATE_ACTIONS,
   MOCK_DIVIDENDS,
@@ -124,22 +124,17 @@ export async function getPortfolio(): Promise<StockPortfolio> {
   if (USE_MOCK) {
     await delay(280);
     const positions = [...MOCK_POSITIONS];
-    // Base everything in NGN for the summary (display only in mock mode).
-    const totalValue = positions.reduce((s, p) => s + p.marketValue.amount, 0);
-    const totalCost = positions.reduce((s, p) => s + p.costBasis.amount, 0);
-    const gain = totalValue - totalCost;
-    const day = positions.reduce(
-      (s, p) => s + Math.round((p.marketValue.amount * p.change24hPct) / 100), 0,
-    );
-    const prevValue = totalValue - day;
+    // Summary is displayed in NGN. Positions can be NGN (NGX) or USD (US
+    // stocks), so aggregate with FX conversion — never a raw mixed-currency sum.
+    const t = aggregatePortfolio(positions, 'NGN');
     return {
       baseCurrency: 'NGN',
-      totalValue: { amount: totalValue, currency: 'NGN' },
-      totalCostBasis: { amount: totalCost, currency: 'NGN' },
-      totalGainLoss: { amount: gain, currency: 'NGN' },
-      totalGainLossPct: totalCost ? +((gain / totalCost) * 100).toFixed(2) : 0,
-      dayChange: { amount: day, currency: 'NGN' },
-      dayChangePct: prevValue ? +((day / prevValue) * 100).toFixed(2) : 0,
+      totalValue: { amount: t.totalValue, currency: 'NGN' },
+      totalCostBasis: { amount: t.totalCostBasis, currency: 'NGN' },
+      totalGainLoss: { amount: t.totalGainLoss, currency: 'NGN' },
+      totalGainLossPct: t.totalGainLossPct,
+      dayChange: { amount: t.dayChange, currency: 'NGN' },
+      dayChangePct: t.dayChangePct,
       investableBalance: { amount: Math.round(1_250_000 * 100), currency: 'NGN' },
       positions,
     };
