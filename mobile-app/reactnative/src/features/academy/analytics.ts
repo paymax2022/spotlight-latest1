@@ -12,7 +12,7 @@ export type AcademyEvent =
   // Engagement
   | 'lesson_started' | 'lesson_completed' | 'practice_completed' | 'streak_extended' | 'challenge_completed'
   // Outcomes
-  | 'mastery_gained' | 'mock_completed' | 'readiness_updated'
+  | 'mastery_gained' | 'mock_completed' | 'exam_completed' | 'readiness_updated'
   // Monetisation
   | 'plan_viewed' | 'checkout_started' | 'bnpl_started' | 'bundle_purchased' | 'edupay_paid'
   // Rewards

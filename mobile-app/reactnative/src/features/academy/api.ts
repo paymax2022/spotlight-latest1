@@ -704,9 +704,12 @@ export async function getRewardBalance(): Promise<RewardBalance> {
   if (USE_MOCK) { await delay(); return rewardBalance; }
   // Live: Go returns { data: { balance_minor } } — the confirmed reward-points
   // ledger sum (non-monetary, distinct from the wallet). pendingPoints is a local
-  // offline concept the server doesn't track, so it reads 0 here.
+  // offline concept the server doesn't track, so it reads 0 here. The server does
+  // not expose a separate lifetime figure, so lifetimeEarned mirrors the confirmed
+  // balance as a best-effort until a dedicated endpoint lands.
   const { data } = await api.get<{ data?: { balance_minor?: number } }>(`${B}/rewards/balance`);
-  return { points: data.data?.balance_minor ?? 0, pendingPoints: 0 };
+  const balance = data.data?.balance_minor ?? 0;
+  return { points: balance, pendingPoints: 0, lifetimeEarned: balance };
 }
 
 export async function getRewardHistory(): Promise<RewardLedgerEntry[]> {
