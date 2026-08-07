@@ -551,8 +551,28 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			quoteStore = orchestration.NewRedisQuoteBook(redisClient, 90*time.Second)
 		}
 
+		// Rate-integrity feed: versioned, staleness- and spike-guarded rate store
+		// (RT-002/RT-005/RT-006). Seeded from the deterministic baseline and kept
+		// fresh by a refresher until live provider ticks call Publish directly; a
+		// stale corridor rate then blocks quoting fail-closed.
+		rateFeed := orchestration.NewRateFeed(orchestration.RateFeedConfig{
+			TTL: 30 * time.Minute, MaxDeviationPct: 10, Source: "baseline",
+		})
+		orchestration.StartRateFeedRefresher(ctx, rateFeed, 5*time.Minute)
+
+		// Limits & velocity: per-tier per-txn/daily/monthly caps + anti-structuring
+		// throttle, denominated in USD and normalized via the mid rate (TS-8). Usage
+		// is ledger-derived. A hard gate before any conversion is priced.
+		limitsEngine := orchestration.NewLimitsEngine("USD",
+			orchestration.LimitRule{PerTxnMinMinor: 1_00, PerTxnMaxMinor: 10_000_00, DailyMaxMinor: 20_000_00, MonthlyMaxMinor: 100_000_00, MaxTxnsPerHour: 30},
+			map[string]orchestration.LimitRule{
+				"business": {PerTxnMinMinor: 1_00, PerTxnMaxMinor: 250_000_00, DailyMaxMinor: 1_000_000_00, MonthlyMaxMinor: 5_000_000_00, MaxTxnsPerHour: 200},
+			},
+			orchestration.NewStoreUsage(orchStore, "USD"),
+		)
+
 		orchSvc := orchestration.NewService(providers, orchStore, orchestration.Options{
-			Spread: spreadEngine, Treasury: treasury, QuoteStore: quoteStore, LockWindow: 90 * time.Second,
+			Spread: spreadEngine, Treasury: treasury, QuoteStore: quoteStore, Rates: rateFeed, Limits: limitsEngine, LockWindow: 90 * time.Second,
 		})
 		// Outbound webhooks (signed) to the caller endpoint, when configured.
 		orchSvc.SetEmitter(orchestration.NewWebhookEmitter(cfg.PaymaxWebhookOutURL, cfg.PaymaxWebhookSecret))
