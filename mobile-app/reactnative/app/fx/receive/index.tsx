@@ -51,9 +51,9 @@ export default function ReceiveScreen() {
                 <Pressable key={a.id} style={[styles.acctCard, shadow1]} onPress={() => router.push(`/fx/receive/${a.id}`)} accessibilityRole="button">
                   <View style={styles.acctIcon}><Icon size={18} color={Colors.secondary} strokeWidth={2} /></View>
                   <View style={styles.flex}>
-                    <Text style={styles.acctTitle}>{meta.flag} {a.currency} {a.type === 'iban' ? 'IBAN' : 'Virtual account'}</Text>
+                    <Text style={styles.acctTitle}>{meta?.flag ?? ''} {a.currency} {a.type === 'iban' ? 'IBAN' : 'Virtual account'}</Text>
                     <Text style={styles.acctSub} numberOfLines={1}>
-                      {a.type === 'iban' ? a.details.iban : `${a.details.bankName} · ${a.details.accountNumber}`}
+                      {a.type === 'iban' ? (a.details?.iban ?? '—') : `${a.details?.bankName ?? '—'} · ${a.details?.accountNumber ?? '—'}`}
                     </Text>
                   </View>
                   <ChevronRight size={18} color={Colors.outline} strokeWidth={2} />

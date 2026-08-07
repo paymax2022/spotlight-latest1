@@ -26,7 +26,8 @@ func (h *Handler) MoverQuote(c *gin.Context) {
 
 // MoverList returns the caller's mover jobs (GET /mobility/movers). Sibling to
 // MoverGet (:id) — needs registering in finance_routes.go's `mob` group:
-//   mob.GET("/movers", transportHandler.MoverList)
+//
+//	mob.GET("/movers", transportHandler.MoverList)
 func (h *Handler) MoverList(c *gin.Context) {
 	userID := c.GetString("user_id")
 	jobs, err := h.svc.ListMoverJobs(c.Request.Context(), userID)

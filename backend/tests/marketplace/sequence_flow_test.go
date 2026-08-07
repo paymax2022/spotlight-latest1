@@ -39,6 +39,18 @@ import (
 	mkt "spotlight/backend/internal/marketplace"
 )
 
+// ADR-023 NOTICE: every §6 flow in this file drives the escrow ORDER / DISPUTE
+// money-path (CreateOrder, FundOrder, HandleDeliveryConfirmed, AutoReleaseDue,
+// OpenDispute, DecideDispute, ApproveDispute) or reconciliation over escrow — ALL
+// REMOVED in the listings-and-connect pivot (ADR-023). The live-DB TestFlow_* cases
+// already t.Skip (no MARKETPLACE_TEST_DATABASE_URL); the DB-free "structural" halves
+// used to RUN while asserting mirrors of deleted code (deterministic order fund-ref
+// naming, delivery-webhook idempotency state-set, dispute dual-approval boundary,
+// escrow reconciliation arithmetic) — false confidence. Those are now t.Skip'd with
+// this pointer, kept as the historical §6 record rather than deleted.
+const adr023SeqSkip = "ADR-023: escrow order/dispute/webhook flow removed (listings-and-connect pivot); " +
+	"this asserts a mirror of deleted code. Kept as the historical §6 record. See ADR-023."
+
 // newTestService is the single place a live-DB flow test would construct the
 // service under test. It returns (nil, false) today because no pgxpool/ledger
 // wiring is available in this sandbox; when infra is available, wire:
@@ -101,6 +113,7 @@ func TestFlow_EscrowCheckoutToFunding_IdempotentSingleLedgerEffect(t *testing.T)
 // one. This is the same style as split_invariant_test.go's settleLegKeys: correct
 // by construction, transcribed from the production formula.
 func TestFlow_EscrowCheckoutToFunding_DeterministicKeyNaming(t *testing.T) {
+	t.Skip(adr023SeqSkip)
 	fundRef := func(orderID string) string { return fmt.Sprintf("mkt:order:%s:fund", orderID) }
 
 	const orderID = "order-abc-123"
@@ -165,6 +178,7 @@ func TestFlow_DeliveryToAutoRelease_DeadlineDrivesRelease(t *testing.T) {
 // InspectionDeadline extension) on every duplicate webhook delivery — a real
 // scenario per §8's "duplicate webhook delivery" row.
 func TestFlow_DeliveryToAutoRelease_WebhookIdempotencyIsStructural(t *testing.T) {
+	t.Skip(adr023SeqSkip)
 	// Mirrors the exact switch in HandleDeliveryConfirmed (webhooks.go).
 	isIdempotentNoOp := func(status mkt.OrderStatus) bool {
 		switch status {
@@ -270,6 +284,7 @@ func TestFlow_DisputeSingleApproval_BelowThresholdExecutesImmediately(t *testing
 // decision the DecideDispute code path takes: `d.RequiresDualApproval ||
 // o.AmountKobo > DualApprovalThresholdKobo`).
 func TestFlow_DisputeDualApproval_ThresholdBoundaryIsDeterministic(t *testing.T) {
+	t.Skip(adr023SeqSkip)
 	requiresDual := func(disputeRequiresDual bool, amountKobo int64) bool {
 		return disputeRequiresDual || amountKobo > mkt.DualApprovalThresholdKobo
 	}
@@ -303,6 +318,7 @@ func TestFlow_DisputeDualApproval_ThresholdBoundaryIsDeterministic(t *testing.T)
 // per-leg arithmetic (sellerNet = AmountKobo, feeTotal = EscrowFeeKobo+DeliveryFeeKobo,
 // split legs) is transcribed from service_order.go / service_dispute.go.
 func TestReconciliation_TerminalOrderIsExactlyOneBalancedPosting(t *testing.T) {
+	t.Skip(adr023SeqSkip)
 	type order struct {
 		amountKobo, escrowFeeKobo, deliveryFeeKobo int64
 	}

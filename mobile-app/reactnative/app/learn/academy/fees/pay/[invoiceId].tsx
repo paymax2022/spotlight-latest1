@@ -14,6 +14,7 @@ import StateView from '@/components/StateView';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { formatNaira } from '@/features/academy/constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { PAYMENT_METHODS } from '@/features/academy/fees/constants';
 import { useInvoice, usePayInvoice } from '@/features/academy/fees/hooks';
 import type { PayMethod } from '@/features/academy/fees/types';
@@ -88,8 +89,10 @@ export default function PayInvoice() {
         <TextInputField
           placeholder={`Full balance (${formatNaira(outstanding)})`}
           value={amountNaira}
-          onChangeText={setAmountNaira}
-          keyboardType="numeric"
+          onChangeText={(v) => setAmountNaira(sanitizeMoneyInput(v))}
+          keyboardType="decimal-pad"
+          inputMode="decimal"
+          maxLength={13}
           leftIcon={<Text style={styles.naira}>₦</Text>}
         />
         <View style={styles.chipRow}>

@@ -11,6 +11,8 @@ import {
   Zap,
   Sparkles,
   MapPin,
+  UserRound,
+  Users,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -51,8 +53,15 @@ const DEFAULT_FILTERS: DiscoveryFilters = {
  */
 export default function DiscoveryStackScreen() {
   const [mode, setMode] = useState<DiscoveryMode>('date');
-  const [filters] = useState<DiscoveryFilters>(DEFAULT_FILTERS);
   const [index, setIndex] = useState(0);
+  // The deck follows the selected persona. Deriving filters from `mode` makes the
+  // query re-run when the toggle changes and restarts the deck — this is what fixes
+  // the previously-dead Network / Discover tabs (they never updated the filters).
+  const filters = useMemo<DiscoveryFilters>(() => ({ ...DEFAULT_FILTERS, mode }), [mode]);
+  const onModeChange = (m: DiscoveryMode) => {
+    setMode(m);
+    setIndex(0);
+  };
 
   const stackQuery = useDiscoveryStack(filters);
   const swipe = useSwipe();
@@ -63,6 +72,14 @@ export default function DiscoveryStackScreen() {
   const headerRight = useMemo(
     () => (
       <View style={styles.headerActions}>
+        <Pressable
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Your profile"
+          onPress={() => router.push('/connect/profile/view')}
+        >
+          <UserRound size={22} color={Colors.onSurface} strokeWidth={2} />
+        </Pressable>
         <Pressable
           hitSlop={8}
           accessibilityRole="button"
@@ -122,7 +139,7 @@ export default function DiscoveryStackScreen() {
       <ScreenHeader title="Discover" showBack={false} rightSlot={headerRight} />
 
       <View style={styles.modeWrap}>
-        <SegmentedControl options={MODE_OPTIONS} value={mode} onChange={setMode} />
+        <SegmentedControl options={MODE_OPTIONS} value={mode} onChange={onModeChange} />
       </View>
 
       {stackQuery.isLoading ? (
@@ -179,10 +196,28 @@ export default function DiscoveryStackScreen() {
                   {current.age ? `, ${current.age}` : ''}
                 </Text>
                 {current.headline ? <Text style={styles.headline}>{current.headline}</Text> : null}
-                {current.distanceLabel ? (
+                {current.distanceLabel && mode !== 'network' ? (
                   <View style={styles.distanceRow}>
                     <MapPin size={14} color={ConnectColors.muted} strokeWidth={2} />
                     <Text style={styles.distance}>{current.distanceLabel}</Text>
+                  </View>
+                ) : null}
+                {mode === 'network' && (current.occupation || current.mutualConnections) ? (
+                  <View style={styles.networkRow}>
+                    {current.occupation ? (
+                      <Text style={styles.networkMeta}>
+                        {[current.occupation, current.company].filter(Boolean).join(' · ')}
+                      </Text>
+                    ) : null}
+                    {current.mutualConnections ? (
+                      <View style={styles.mutualRow}>
+                        <Users size={14} color={ConnectColors.brand} strokeWidth={2} />
+                        <Text style={styles.mutual}>
+                          {current.mutualConnections} mutual connection
+                          {current.mutualConnections === 1 ? '' : 's'}
+                        </Text>
+                      </View>
+                    ) : null}
                   </View>
                 ) : null}
                 <DiscoveryVerifiedBadges flags={current.verified ?? []} size="sm" />
@@ -293,6 +328,10 @@ const styles = StyleSheet.create({
   headline: { ...Typography.bodyMd, color: ConnectColors.muted },
   distanceRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   distance: { ...Typography.labelSm, color: ConnectColors.muted },
+  networkRow: { gap: 4 },
+  networkMeta: { ...Typography.bodyMd, color: Colors.onSurface },
+  mutualRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  mutual: { ...Typography.labelSm, color: ConnectColors.brand },
   promptCard: {
     backgroundColor: Colors.surfaceContainerLow,
     borderRadius: Radius.lg,

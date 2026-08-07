@@ -1,21 +1,28 @@
 package feesadminapi
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	feesschool "spotlight/backend/internal/academy/fees/school"
+	feessession "spotlight/backend/internal/academy/fees/session"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 )
 
 // Handler serves the flat admin oversight surface at /api/academy/admin/fees/*. It is
-// read-heavy: list/aggregate GETs plus two config writes that have real backing tables
-// (create/issue fee schedule, set gov-export opt-in). Every route is RBAC-gated at
-// registration time with the seeded academy.fees.* slugs. No money path lives here.
+// read-heavy: list/aggregate GETs plus a handful of config writes that have real backing
+// tables (create/issue fee schedule, set gov-export opt-in, and the setup-wizard
+// school/session/class creates which REUSE the feesschool / feessession domain services).
+// Every route is RBAC-gated at registration time with the seeded academy.fees.* slugs.
+// No money path lives here.
 type Handler struct {
-	repo *Repository
+	repo       *Repository
+	schoolSvc  *feesschool.Service  // setup-wizard school create (reused; owns audit + tier machine)
+	sessionSvc *feessession.Service // setup-wizard session/class create (reused; owns audit)
 }
 
 // NewHandler builds the admin oversight handler.
@@ -45,6 +52,10 @@ func RegisterFeesAdminAPI(admin *gin.RouterGroup, pool *pgxpool.Pool, rbac servi
 		return nil
 	}
 	h := NewHandler(NewRepository(pool))
+	// Reuse the domain services for the setup-wizard creates — they own the guarded state
+	// machines + immutable audit (academy_commerce_audit), so no parallel insert logic here.
+	h.schoolSvc = feesschool.NewService(pool)
+	h.sessionSvc = feessession.NewService(pool)
 	g := admin.Group("/fees")
 
 	guard := func(perm string) gin.HandlerFunc { return middleware.RequirePermission(rbac, perm) }
@@ -52,15 +63,18 @@ func RegisterFeesAdminAPI(admin *gin.RouterGroup, pool *pgxpool.Pool, rbac servi
 	// SC-29 setup wizard (school → session → class → fee schedule). academy.fees.setup,
 	// except the schools directory which is also reachable with school.verify.
 	g.GET("/schools", guard("academy.fees.setup"), h.ListSchools)
+	g.POST("/schools", guard("academy.fees.setup"), h.CreateSchool) // create school (reuses feesschool.Service)
 	g.GET("/schools/:schoolId/sessions", guard("academy.fees.setup"), h.ListSessionsForSchool)
 	g.GET("/schools/:schoolId/classes", guard("academy.fees.setup"), h.ListClassesForSchool)
 	// Paths below match the console service's TODO(no backend route) calls verbatim so
 	// those branches can be switched live unchanged.
-	g.GET("/sessions", guard("academy.fees.setup"), h.ListSessions)                     // ?school_id=
-	g.GET("/classes", guard("academy.fees.setup"), h.ListClasses)                       // ?session_id=
-	g.GET("/schedules", guard("academy.fees.setup"), h.ListFeeSchedules)                // ?class_id=
-	g.POST("/schedules", guard("academy.fees.setup"), h.CreateFeeSchedule)              // create draft
-	g.POST("/schedules/:id/issue", guard("academy.fees.setup"), h.IssueFeeSchedule)     // SF-1 lock/issue
+	g.GET("/sessions", guard("academy.fees.setup"), h.ListSessions)                 // ?school_id=
+	g.POST("/sessions", guard("academy.fees.setup"), h.CreateSession)               // create session (reuses feessession.Service)
+	g.GET("/classes", guard("academy.fees.setup"), h.ListClasses)                   // ?session_id=
+	g.POST("/classes", guard("academy.fees.setup"), h.CreateClass)                  // create class (reuses feessession.Service)
+	g.GET("/schedules", guard("academy.fees.setup"), h.ListFeeSchedules)            // ?class_id=
+	g.POST("/schedules", guard("academy.fees.setup"), h.CreateFeeSchedule)          // create draft
+	g.POST("/schedules/:id/issue", guard("academy.fees.setup"), h.IssueFeeSchedule) // SF-1 lock/issue
 
 	// SC-33 collections. academy.fees.collections.
 	g.GET("/collections/overview", guard("academy.fees.collections"), h.Collections) // ?school_id=
@@ -189,6 +203,101 @@ func (h *Handler) CreateFeeSchedule(c *gin.Context) {
 	}
 	_ = created
 	c.JSON(http.StatusCreated, gin.H{"data": out})
+}
+
+// CreateSchool onboards a school from the flat admin surface. It REUSES feesschool.Service
+// (owner = the authenticated admin), which stamps the immutable audit row + starts the
+// tier state machine at 'unverified'. No parallel insert.
+func (h *Handler) CreateSchool(c *gin.Context) {
+	if h.schoolSvc == nil {
+		h.fail(c, errors.New("school service unavailable"))
+		return
+	}
+	var req CreateSchoolAdminRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		return
+	}
+	out, err := h.schoolSvc.Create(c.Request.Context(), actorID(c), feesschool.CreateSchoolRequest{
+		Name:              req.Name,
+		Code:              req.Code,
+		Level:             req.Level,
+		VirtualAccountRef: req.VirtualAccountRef,
+		Contact:           req.Contact,
+	})
+	if err != nil {
+		h.failCreate(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": out})
+}
+
+// CreateSession opens an academic session for a school. Reuses feessession.Service (audit
+// + status machine start = 'active').
+func (h *Handler) CreateSession(c *gin.Context) {
+	if h.sessionSvc == nil {
+		h.fail(c, errors.New("session service unavailable"))
+		return
+	}
+	var req CreateSessionAdminRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		return
+	}
+	out, err := h.sessionSvc.CreateSession(c.Request.Context(), actorID(c), req.SchoolID, feessession.CreateSessionRequest{
+		Name:          req.Name,
+		TermStructure: req.TermStructure,
+		StartDate:     req.StartDate,
+		EndDate:       req.EndDate,
+	})
+	if err != nil {
+		h.failCreate(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": out})
+}
+
+// CreateClass opens a class within a school. Reuses feessession.Service (validates the
+// session belongs to the same school, then audits).
+func (h *Handler) CreateClass(c *gin.Context) {
+	if h.sessionSvc == nil {
+		h.fail(c, errors.New("session service unavailable"))
+		return
+	}
+	var req CreateClassAdminRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+		return
+	}
+	out, err := h.sessionSvc.CreateClass(c.Request.Context(), actorID(c), req.SchoolID, feessession.CreateClassRequest{
+		SessionID:          req.SessionID,
+		Name:               req.Name,
+		Level:              req.Level,
+		ClassTeacherUserID: req.ClassTeacherUserID,
+	})
+	if err != nil {
+		h.failCreate(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": out})
+}
+
+// failCreate maps the domain services' validation sentinels to stable HTTP codes; anything
+// else falls through to the generic 500 (h.fail).
+func (h *Handler) failCreate(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, feesschool.ErrUnauthenticated), errors.Is(err, feessession.ErrUnauthenticated):
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated", "message": err.Error()})
+	case errors.Is(err, feesschool.ErrMissingName), errors.Is(err, feessession.ErrMissingName),
+		errors.Is(err, feessession.ErrInvalidDate):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+	case errors.Is(err, feessession.ErrSchoolMismatch):
+		c.JSON(http.StatusConflict, gin.H{"error": "school_mismatch", "message": err.Error()})
+	case errors.Is(err, feessession.ErrNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+	default:
+		h.fail(c, err)
+	}
 }
 
 func (h *Handler) IssueFeeSchedule(c *gin.Context) {

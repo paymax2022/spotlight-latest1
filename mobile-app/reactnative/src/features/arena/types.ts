@@ -161,8 +161,8 @@ export interface PlayAlongQuestion {
   /** Question category tag (e.g. "road_signs") — informational only. */
   category?: string;
   prompt: string;
-  /** Optional image shown with the prompt (present in the mock question bank). */
-  imageUrl?: string;
+  /** Optional illustration shown with the prompt (e.g. a road-sign image; present in the mock question bank). */
+  imageUrl?: string | null;
   options: QuizOption[];
   /** Per-question limit (seconds). Defaults to 120 for this bank. */
   timeLimitSecs?: number | null;

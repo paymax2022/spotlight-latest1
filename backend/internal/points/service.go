@@ -189,7 +189,10 @@ func (s *Service) ExpireDue(ctx context.Context, limit int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	type due struct{ id, uid string; pts int64 }
+	type due struct {
+		id, uid string
+		pts     int64
+	}
 	var batch []due
 	for rows.Next() {
 		var d due

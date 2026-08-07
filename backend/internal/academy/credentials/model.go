@@ -42,7 +42,7 @@ const (
 type Credential struct {
 	ID             string     `json:"id"`
 	UserID         string     `json:"user_id"`
-	Kind           string     `json:"kind"`        // academic | trade
+	Kind           string     `json:"kind"` // academic | trade
 	Title          string     `json:"title"`
 	TradeTrack     *string    `json:"trade_track,omitempty"`
 	SubjectID      *string    `json:"subject_id,omitempty"`

@@ -9,18 +9,18 @@ import (
 
 // Task type constants — all background jobs use these.
 const (
-	TypeWalletCreditNotify     = "wallet:credit:notify"
-	TypeWalletDebitNotify      = "wallet:debit:notify"
-	TypeReferralOutboxProcess  = "referral:outbox:process"
-	TypeBankTransferInitiate   = "bank:transfer:initiate"
-	TypeBankTransferWebhook    = "bank:transfer:webhook"
-	TypeKYCProvisioned         = "kyc:provisioned"
-	TypeVAProvision            = "va:provision"
-	TypeNotificationPush       = "notification:push"
-	TypeNotificationEmail      = "notification:email"
-	TypeNotificationSMS        = "notification:sms"
-	TypeReconciliationRun      = "reconciliation:run"
-	TypeOutboxSync             = "outbox:es:sync"
+	TypeWalletCreditNotify    = "wallet:credit:notify"
+	TypeWalletDebitNotify     = "wallet:debit:notify"
+	TypeReferralOutboxProcess = "referral:outbox:process"
+	TypeBankTransferInitiate  = "bank:transfer:initiate"
+	TypeBankTransferWebhook   = "bank:transfer:webhook"
+	TypeKYCProvisioned        = "kyc:provisioned"
+	TypeVAProvision           = "va:provision"
+	TypeNotificationPush      = "notification:push"
+	TypeNotificationEmail     = "notification:email"
+	TypeNotificationSMS       = "notification:sms"
+	TypeReconciliationRun     = "reconciliation:run"
+	TypeOutboxSync            = "outbox:es:sync"
 )
 
 // Client wraps asynq.Client for enqueuing jobs.

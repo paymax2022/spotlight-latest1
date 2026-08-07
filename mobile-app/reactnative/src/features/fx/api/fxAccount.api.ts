@@ -11,7 +11,16 @@ import type {
 
 const USE_MOCK = (process.env.EXPO_PUBLIC_FX_USE_MOCK ?? 'true').toLowerCase() !== 'false';
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
-const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
+// Unwrap { data: ... } by key presence so an empty { data: null } yields null,
+// not the wrapper object (see fx.api.ts). arr() coerces list payloads to arrays.
+const unwrap = <T>(res: { data: unknown }): T => {
+  const body = res?.data;
+  if (body && typeof body === 'object' && !Array.isArray(body) && 'data' in body) {
+    return (body as { data: T }).data;
+  }
+  return body as T;
+};
+const arr = <T>(v: T[] | null | undefined): T[] => (Array.isArray(v) ? v : []);
 
 const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
 
@@ -55,7 +64,7 @@ let WEBHOOKS: WebhookSetting[] = [
 
 export async function getTeam(): Promise<TeamMember[]> {
   if (USE_MOCK) { await delay(); return [...TEAM]; }
-  return unwrap<TeamMember[]>(await api.get('/api/v1/fx/team'));
+  return arr(unwrap<TeamMember[]>(await api.get('/api/v1/fx/team')));
 }
 export async function updateMemberRole(id: string, role: TeamRole): Promise<void> {
   if (USE_MOCK) { await delay(250); TEAM = TEAM.map((m) => (m.id === id ? { ...m, role } : m)); return; }
@@ -63,7 +72,7 @@ export async function updateMemberRole(id: string, role: TeamRole): Promise<void
 }
 export async function getApprovals(): Promise<ApprovalRequest[]> {
   if (USE_MOCK) { await delay(); return [...APPROVALS].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)); }
-  return unwrap<ApprovalRequest[]>(await api.get('/api/v1/fx/approvals'));
+  return arr(unwrap<ApprovalRequest[]>(await api.get('/api/v1/fx/approvals')));
 }
 export async function decideApproval(id: string, decision: 'APPROVED' | 'REJECTED'): Promise<void> {
   if (USE_MOCK) { await delay(400); APPROVALS = APPROVALS.map((a) => (a.id === id ? { ...a, status: decision } : a)); return; }
@@ -71,7 +80,7 @@ export async function decideApproval(id: string, decision: 'APPROVED' | 'REJECTE
 }
 export async function getThresholds(): Promise<ApprovalThreshold[]> {
   if (USE_MOCK) { await delay(); return [...THRESHOLDS]; }
-  return unwrap<ApprovalThreshold[]>(await api.get('/api/v1/fx/approvals/thresholds'));
+  return arr(unwrap<ApprovalThreshold[]>(await api.get('/api/v1/fx/approvals/thresholds')));
 }
 export async function updateThreshold(id: string, amount: number, approversRequired: number): Promise<void> {
   if (USE_MOCK) { await delay(300); THRESHOLDS = THRESHOLDS.map((t) => (t.id === id ? { ...t, amount, approversRequired } : t)); return; }
@@ -79,11 +88,11 @@ export async function updateThreshold(id: string, amount: number, approversRequi
 }
 export async function getActivity(): Promise<ActivityEvent[]> {
   if (USE_MOCK) { await delay(); return [...ACTIVITY]; }
-  return unwrap<ActivityEvent[]>(await api.get('/api/v1/fx/activity'));
+  return arr(unwrap<ActivityEvent[]>(await api.get('/api/v1/fx/activity')));
 }
 export async function getApiKeys(): Promise<TeamApiKey[]> {
   if (USE_MOCK) { await delay(); return [...API_KEYS]; }
-  return unwrap<TeamApiKey[]>(await api.get('/api/v1/fx/api-keys'));
+  return arr(unwrap<TeamApiKey[]>(await api.get('/api/v1/fx/api-keys')));
 }
 export async function rotateApiKey(id: string): Promise<TeamApiKey> {
   if (USE_MOCK) {
@@ -96,7 +105,7 @@ export async function rotateApiKey(id: string): Promise<TeamApiKey> {
 }
 export async function getWebhookSettings(): Promise<WebhookSetting[]> {
   if (USE_MOCK) { await delay(); return [...WEBHOOKS]; }
-  return unwrap<WebhookSetting[]>(await api.get('/api/v1/fx/webhooks'));
+  return arr(unwrap<WebhookSetting[]>(await api.get('/api/v1/fx/webhooks')));
 }
 export async function toggleWebhook(id: string, enabled: boolean): Promise<void> {
   if (USE_MOCK) { await delay(250); WEBHOOKS = WEBHOOKS.map((w) => (w.id === id ? { ...w, enabled } : w)); return; }
@@ -116,7 +125,7 @@ let NOTIFICATIONS: AppNotification[] = [
 
 export async function getNotifications(): Promise<AppNotification[]> {
   if (USE_MOCK) { await delay(); return [...NOTIFICATIONS].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)); }
-  return unwrap<AppNotification[]>(await api.get('/api/v1/fx/notifications'));
+  return arr(unwrap<AppNotification[]>(await api.get('/api/v1/fx/notifications')));
 }
 export async function markNotificationRead(id: string): Promise<void> {
   if (USE_MOCK) { await delay(120); NOTIFICATIONS = NOTIFICATIONS.map((n) => (n.id === id ? { ...n, read: true } : n)); return; }

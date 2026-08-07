@@ -48,9 +48,15 @@ export default function ListingDetail() {
   }
 
   const l = listing.data;
+  const media = l.media ?? [];
   const unavailable = l.status === 'sold' || l.status === 'expired' || l.status === 'removed_policy' || l.status === 'removed_user';
   const verdict = fairPriceVerdict(l.priceKobo, l.fairPriceBand);
   const attrs = Object.entries(l.attrs ?? {});
+
+  const openReport = () =>
+    router.push(
+      `/marketplace/account/report?targetType=listing&targetId=${l.id}&targetName=${encodeURIComponent(l.title)}&sellerId=${l.sellerId}` as never,
+    );
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -76,24 +82,24 @@ export default function ListingDetail() {
               message: `${l.title} — ${formatNaira(l.priceKobo)} on Paymax Marketplace\nhttps://paymax.ng/marketplace/listing/${l.id}`,
             })}
           ><Share2 size={18} color={Colors.onSurface} /></Pressable>
-          <Pressable style={styles.roundBtn} hitSlop={8} accessibilityLabel="Report listing" onPress={() => router.push(`/marketplace/account/report?targetType=listing&targetId=${l.id}&targetName=${encodeURIComponent(l.title)}&sellerId=${l.sellerId}` as never)}><Flag size={18} color={Colors.onSurface} /></Pressable>
+          <Pressable style={styles.roundBtn} onPress={openReport} hitSlop={8} accessibilityLabel="Report listing"><Flag size={18} color={Colors.onSurface} /></Pressable>
         </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Gallery */}
         <View style={[styles.gallery, unavailable && styles.galleryDimmed]}>
-          {l.media.length > 0 ? (
+          {media.length > 0 ? (
             <>
               <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onMomentumScrollEnd={(e) => setGallery(Math.round(e.nativeEvent.contentOffset.x / width))}>
-                {l.media.map((m) => (
+                {media.map((m) => (
                   <View key={m.id} style={styles.slide}>
                     {m.urlFull ? <Image source={{ uri: m.urlFull }} style={StyleSheet.absoluteFill} /> : <View style={styles.slidePlaceholder} />}
                   </View>
                 ))}
               </ScrollView>
-              {l.media.length > 1 ? (
-                <View style={styles.dots}>{l.media.map((_, i) => <View key={i} style={[styles.dot, i === gallery && styles.dotActive]} />)}</View>
+              {media.length > 1 ? (
+                <View style={styles.dots}>{media.map((_, i) => <View key={i} style={[styles.dot, i === gallery && styles.dotActive]} />)}</View>
               ) : null}
             </>
           ) : (

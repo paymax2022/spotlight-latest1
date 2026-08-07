@@ -443,6 +443,88 @@ func (h *Handler) SetBusinessHours(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"windows": hours})
 }
 
+// ── Store management (owner only) ─────────────────────────────────────────────
+// NOTE: the bank-account CAPTURE handlers (AddBankAccount / ListBankAccounts /
+// SetDefaultBankAccount / DeleteBankAccount) and the shared ownerErrStatus helper
+// live in handler_withdrawal.go on this branch (re-applied there to avoid colliding
+// with this file). They are intentionally NOT redefined here.
+
+// Earnings → GET /restaurant/earnings (the caller's food-delivery earnings).
+func (h *Handler) Earnings(c *gin.Context) {
+	userID := c.GetString("user_id")
+	e, err := h.svc.GetMerchantEarnings(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": e})
+}
+
+// MyRestaurants → GET /restaurant/mine (the caller's own stores).
+func (h *Handler) MyRestaurants(c *gin.Context) {
+	userID := c.GetString("user_id")
+	list, err := h.svc.ListMyRestaurants(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": list})
+}
+
+// UpdateRestaurant → PATCH /restaurant/:id (edit store profile).
+func (h *Handler) UpdateRestaurant(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req UpdateRestaurantRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	r, err := h.svc.UpdateRestaurant(c.Request.Context(), c.Param("id"), userID, req)
+	if err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, r)
+}
+
+// SetAvailability → PATCH /restaurant/:id/availability (merchant open/close).
+func (h *Handler) SetAvailability(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var body struct {
+		IsOpen *bool `json:"is_open" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.IsOpen == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "is_open is required"})
+		return
+	}
+	r, err := h.svc.SetAvailability(c.Request.Context(), c.Param("id"), userID, *body.IsOpen)
+	if err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, r)
+}
+
+// DeleteItem → DELETE /restaurant/:id/menu/items/:itemId.
+func (h *Handler) DeleteItem(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if err := h.svc.DeleteItem(c.Request.Context(), c.Param("id"), userID, c.Param("itemId")); err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
+}
+
+// DeleteCategory → DELETE /restaurant/:id/menu/categories/:categoryId.
+func (h *Handler) DeleteCategory(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if err := h.svc.DeleteCategory(c.Request.Context(), c.Param("id"), userID, c.Param("categoryId")); err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
+}
+
 // ── Rider / delivery lifecycle ────────────────────────────────────────────────
 
 // AssignRider → POST /restaurant/orders/:orderId/assign (owner offers a rider).

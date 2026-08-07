@@ -27,8 +27,8 @@ type ContestantPort interface {
 
 // Service holds the quiz bank logic shared by Play-Along and the Theory exam.
 type Service struct {
-	repo      *Repository
-	playalong PlayAlongPort
+	repo       *Repository
+	playalong  PlayAlongPort
 	contestant ContestantPort
 }
 
@@ -52,6 +52,7 @@ func ContestantView(qs []Question) []QuestionView {
 			ID:            q.ExternalID,
 			Category:      q.Category,
 			Prompt:        q.Prompt,
+			ImageURL:      q.ImageURL,
 			Options:       opts,
 			TimeLimitSecs: q.TimeLimitSecs,
 		})

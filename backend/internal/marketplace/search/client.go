@@ -79,18 +79,18 @@ type esSearchResponse struct {
 // local (not imported from marketplace) so this package has zero dependency
 // on the outbox payload shape beyond what search actually renders.
 type esListingDoc struct {
-	ListingID        string  `json:"listing_id"`
-	Title            string  `json:"title"`
-	PriceKobo        int64   `json:"price_kobo"`
-	Condition        string  `json:"condition"`
-	CategoryID       string  `json:"category_id"`
-	State            string  `json:"state"`
-	LGA              string  `json:"lga"`
-	ThumbURL         string  `json:"thumb_url"`
-	SellerTrustScore float64 `json:"seller_trust_score"`
-	QualityScore     float64 `json:"quality_score"`
-	BoostWeight      float64 `json:"boost_weight"`
-	EscrowEligible   bool    `json:"escrow_eligible"`
+	ListingID        string    `json:"listing_id"`
+	Title            string    `json:"title"`
+	PriceKobo        int64     `json:"price_kobo"`
+	Condition        string    `json:"condition"`
+	CategoryID       string    `json:"category_id"`
+	State            string    `json:"state"`
+	LGA              string    `json:"lga"`
+	ThumbURL         string    `json:"thumb_url"`
+	SellerTrustScore float64   `json:"seller_trust_score"`
+	QualityScore     float64   `json:"quality_score"`
+	BoostWeight      float64   `json:"boost_weight"`
+	EscrowEligible   bool      `json:"escrow_eligible"`
 	CreatedAt        time.Time `json:"created_at"`
 }
 

@@ -21,11 +21,11 @@ func TestOrderStateMachine_HappyBuyPath(t *testing.T) {
 
 func TestOrderStateMachine_IllegalTransitions(t *testing.T) {
 	illegal := [][2]OrderStatus{
-		{StatusSettled, StatusFilled},        // terminal
-		{StatusCancelled, StatusSubmitted},   // terminal
-		{StatusDraft, StatusFilled},          // skips locking
-		{StatusFilled, StatusCancelled},      // can't cancel a filled order
-		{StatusRejected, StatusAccepted},     // terminal
+		{StatusSettled, StatusFilled},      // terminal
+		{StatusCancelled, StatusSubmitted}, // terminal
+		{StatusDraft, StatusFilled},        // skips locking
+		{StatusFilled, StatusCancelled},    // can't cancel a filled order
+		{StatusRejected, StatusAccepted},   // terminal
 	}
 	for _, tc := range illegal {
 		if CanTransition(tc[0], tc[1]) {
@@ -66,9 +66,9 @@ func TestFeeFor(t *testing.T) {
 		want     int64
 	}{
 		{0, 0},
-		{100_000, 10_000},      // 1.5% = 1,500 kobo → floored to min 10,000
-		{10_000_000, 150_000},  // ₦100,000 → 1.5% = ₦1,500
-		{1_000_000, 15_000},    // ₦10,000 → 1.5% = ₦150
+		{100_000, 10_000},     // 1.5% = 1,500 kobo → floored to min 10,000
+		{10_000_000, 150_000}, // ₦100,000 → 1.5% = ₦1,500
+		{1_000_000, 15_000},   // ₦10,000 → 1.5% = ₦150
 	}
 	for _, c := range cases {
 		if got := f.FeeFor(c.notional); got != c.want {
@@ -191,13 +191,13 @@ func TestAlertHit(t *testing.T) {
 		target int64
 		want   bool
 	}{
-		{"above", 4_900_00, true},   // price >= target
-		{"above", 5_100_00, false},  // price < target
-		{"below", 5_100_00, true},   // price <= target
-		{"below", 4_900_00, false},  // price > target
-		{"pct_gain", 500, true},     // +6% >= 5.00%
-		{"pct_gain", 700, false},    // +6% < 7.00%
-		{"pct_loss", 500, false},    // not a loss
+		{"above", 4_900_00, true},  // price >= target
+		{"above", 5_100_00, false}, // price < target
+		{"below", 5_100_00, true},  // price <= target
+		{"below", 4_900_00, false}, // price > target
+		{"pct_gain", 500, true},    // +6% >= 5.00%
+		{"pct_gain", 700, false},   // +6% < 7.00%
+		{"pct_loss", 500, false},   // not a loss
 	}
 	for _, c := range cases {
 		got := alertHit(PriceAlert{Condition: c.cond, TargetPriceKobo: c.target}, q)

@@ -34,6 +34,7 @@ func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
 // debit and exactly one row:
 //   - ledger Debit is idempotent on "<key>:escrow" (duplicate → ErrDuplicate).
 //   - settlements.idempotency_key is UNIQUE; the insert is ON CONFLICT DO NOTHING.
+//
 // If the debit succeeds but the process dies before the insert, a retry with the
 // SAME idempotencyKey sees ErrDuplicate from the ledger (funds already held) and
 // falls through to ensure the tracking row exists — so escrow is never stranded

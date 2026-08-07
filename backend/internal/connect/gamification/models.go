@@ -77,12 +77,12 @@ type LeaderboardEntry struct {
 
 // Season is a time-boxed pass period.
 type Season struct {
-	ID        string    `json:"id"`
-	Code      string    `json:"code"`
-	Name      string    `json:"name"`
-	StartsAt  time.Time `json:"starts_at"`
-	EndsAt    time.Time `json:"ends_at"`
-	Active    bool      `json:"active"`
+	ID       string    `json:"id"`
+	Code     string    `json:"code"`
+	Name     string    `json:"name"`
+	StartsAt time.Time `json:"starts_at"`
+	EndsAt   time.Time `json:"ends_at"`
+	Active   bool      `json:"active"`
 }
 
 // --- Request DTOs ---

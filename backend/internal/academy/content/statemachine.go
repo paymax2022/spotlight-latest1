@@ -19,10 +19,10 @@ package content
 
 var publishTransitions = map[PublishStatus]map[PublishStatus]bool{
 	StatusDraft:    {StatusReview: true, StatusArchived: true},
-	StatusReview:   {StatusApproved: true, StatusDraft: true, StatusArchived: true},   // review can bounce to draft
-	StatusApproved: {StatusLive: true, StatusReview: true, StatusArchived: true},      // approved can kick back to review
-	StatusLive:     {StatusArchived: true},                                            // live only archives
-	StatusArchived: {},                                                                // terminal
+	StatusReview:   {StatusApproved: true, StatusDraft: true, StatusArchived: true}, // review can bounce to draft
+	StatusApproved: {StatusLive: true, StatusReview: true, StatusArchived: true},    // approved can kick back to review
+	StatusLive:     {StatusArchived: true},                                          // live only archives
+	StatusArchived: {},                                                              // terminal
 }
 
 // canPublish reports whether the publish lifecycle permits from→to. Idempotent
@@ -84,4 +84,11 @@ func canStage(from, to ProductionStage) bool {
 // validStage reports whether s is a known pipeline stage.
 func validStage(s ProductionStage) bool {
 	return stageIndex(s) >= 0
+}
+
+// canBlock reports whether a production may be moved to the blocked status: only an
+// ACTIVE card can be blocked. done is terminal and an already-blocked card is a
+// no-op (rejected), so every committed block is a real state change.
+func canBlock(from ProductionStatus) bool {
+	return from == ProdActive
 }

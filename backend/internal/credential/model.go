@@ -29,25 +29,25 @@ const (
 // validation is self-describing (an offline gate can enforce it from the signed
 // token alone, then reconcile later).
 type Policy struct {
-	SingleUse   bool          `json:"single_use"`   // true => one scan only (NL: QR single-use)
-	AllowReentry bool         `json:"allow_reentry"` // re-entry: many scans, deduped per gate-window
+	SingleUse     bool          `json:"single_use"`     // true => one scan only (NL: QR single-use)
+	AllowReentry  bool          `json:"allow_reentry"`  // re-entry: many scans, deduped per gate-window
 	ReentryWindow time.Duration `json:"reentry_window"` // dedupe window for re-entry scans
-	RotateTTL   time.Duration `json:"rotate_ttl"`   // QR rotates every RotateTTL (anti-screenshot)
-	ValidFrom   time.Time     `json:"valid_from"`
-	ValidTo     time.Time     `json:"valid_to"`
+	RotateTTL     time.Duration `json:"rotate_ttl"`     // QR rotates every RotateTTL (anti-screenshot)
+	ValidFrom     time.Time     `json:"valid_from"`
+	ValidTo       time.Time     `json:"valid_to"`
 }
 
 // Credential is the persisted issuance record. The on-the-wire token is signed and
 // carries a rotating nonce; this row is the authority that the token references.
 type Credential struct {
-	ID         string    `json:"id"`
-	SubjectRef string    `json:"subject_ref"` // owning user id (FK auth.users) or vendor id
-	Kind       Kind      `json:"kind"`
-	State      State     `json:"state"`
-	Secret     string    `json:"-"`            // HMAC signing secret (never serialised out)
-	Policy     Policy    `json:"policy"`
-	NFCToken   string    `json:"nfc_token,omitempty"` // long-lived tap token (single-use enforced same path)
-	IssuedAt   time.Time `json:"issued_at"`
+	ID         string     `json:"id"`
+	SubjectRef string     `json:"subject_ref"` // owning user id (FK auth.users) or vendor id
+	Kind       Kind       `json:"kind"`
+	State      State      `json:"state"`
+	Secret     string     `json:"-"` // HMAC signing secret (never serialised out)
+	Policy     Policy     `json:"policy"`
+	NFCToken   string     `json:"nfc_token,omitempty"` // long-lived tap token (single-use enforced same path)
+	IssuedAt   time.Time  `json:"issued_at"`
 	UsedAt     *time.Time `json:"used_at,omitempty"`
 }
 
@@ -57,9 +57,9 @@ type Credential struct {
 // nonce so the token cannot be forged or replayed across windows.
 type Token struct {
 	CredentialID string `json:"cid"`
-	Window       int64  `json:"w"`     // unix-time bucket = floor(now/rotateTTL)
-	Nonce        string `json:"n"`     // per-window random nonce
-	Sig          string `json:"sig"`   // HMAC-SHA256(secret, cid|window|nonce)
+	Window       int64  `json:"w"`   // unix-time bucket = floor(now/rotateTTL)
+	Nonce        string `json:"n"`   // per-window random nonce
+	Sig          string `json:"sig"` // HMAC-SHA256(secret, cid|window|nonce)
 }
 
 // Gate identifies where a validation happens (entry gate, stall, perk counter). It
@@ -94,11 +94,11 @@ type Validation struct {
 
 // Rejection reasons (stable strings for audit + client UX).
 const (
-	ReasonReplay      = "replay_rejected"   // token already used / window already consumed
+	ReasonReplay      = "replay_rejected" // token already used / window already consumed
 	ReasonExpired     = "expired"
 	ReasonNotYetValid = "not_yet_valid"
 	ReasonBadSig      = "bad_signature"
-	ReasonStaleWindow = "stale_window"      // screenshot from an older rotation window
+	ReasonStaleWindow = "stale_window" // screenshot from an older rotation window
 	ReasonRevoked     = "revoked"
 	ReasonNotFound    = "not_found"
 )

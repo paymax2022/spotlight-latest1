@@ -78,6 +78,9 @@ func RegisterAcademyExam(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	// ── Admin (academy.exam) ──
 	guard := func(p string) gin.HandlerFunc { return middleware.RequirePermission(rbac, p) }
 	ex := admin.Group("/exam")
+	ex.GET("/arenas", guard("academy.exam"), h.AdminListArenas)
+	ex.GET("/blueprints", guard("academy.exam"), h.AdminListBlueprints)
+	ex.GET("/combinations", guard("academy.exam"), h.AdminListCombinations)
 	ex.POST("/arenas", guard("academy.exam"), h.AdminCreateArena)
 	ex.PUT("/arenas/:id", guard("academy.exam"), h.AdminUpdateArena)
 	ex.POST("/arenas/:id/blueprints", guard("academy.exam"), h.AdminCreateBlueprint)
@@ -218,9 +221,9 @@ func (h *Handler) GetAttemptQuestions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
-// GetAttemptResult returns the stored score/readiness/predicted projection for a
-// submitted/scored attempt the caller owns. Same {data} envelope; 404 until
-// submitted.
+// GetAttemptResult returns the stored score/result projection for a submitted/scored
+// attempt the caller owns (subjects/overall/grade/late + readiness + predicted). Same
+// {data} envelope as the other exam reads; 404 if not owned or not yet scored.
 func (h *Handler) GetAttemptResult(c *gin.Context) {
 	u := uid(c)
 	if u == "" {
@@ -247,6 +250,37 @@ func (h *Handler) GetCombinations(c *gin.Context) {
 }
 
 // ── Admin handlers ──────────────────────────────────────────────────────────────
+
+// AdminListArenas returns all arenas (admin-scoped; mirrors the member arena list).
+func (h *Handler) AdminListArenas(c *gin.Context) {
+	out, err := h.svc.ListArenas(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminListBlueprints returns every blueprint across all arenas (admin flat list).
+func (h *Handler) AdminListBlueprints(c *gin.Context) {
+	out, err := h.svc.ListAllBlueprints(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminListCombinations returns UTME/arena course→subject-set rules (admin-scoped;
+// mirrors the member combinations read). ?arena= / ?course= optionally filter.
+func (h *Handler) AdminListCombinations(c *gin.Context) {
+	out, err := h.svc.GetCombinations(c.Request.Context(), c.Query("arena"), c.Query("course"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
 
 func (h *Handler) AdminCreateArena(c *gin.Context) {
 	var req CreateArenaRequest

@@ -10,7 +10,7 @@
 // Sell, or Transact). Account-specific types are declared here because the
 // foundation types.ts (frozen) does not carry them.
 
-import { MKT_USE_MOCK, mktGet, mktPost, mktPatch, mktDelete } from './client';
+import { MKT_USE_MOCK, mktGet, mktPost, mktPatch, mktDelete, arr } from './client';
 import type { Listing } from '../types';
 
 // ─── Account-domain types (camelCase; mirror the Go snake_case wire) ─────────
@@ -163,7 +163,7 @@ export async function getSavedItems(): Promise<SavedItem[]> {
     await delay();
     return [];
   }
-  return mktGet<SavedItem[]>('/saved-items');
+  return arr(await mktGet<SavedItem[]>('/saved-items'));
 }
 
 // ─── Reports ─────────────────────────────────────────────────────────────────
@@ -195,7 +195,7 @@ export async function listBlocks(): Promise<Block[]> {
     await delay();
     return [...mockBlocks];
   }
-  return mktGet<Block[]>('/blocks');
+  return arr(await mktGet<Block[]>('/blocks'));
 }
 
 export async function blockUser(blockedUserId: string, blockedUserName?: string): Promise<Block> {
@@ -355,5 +355,5 @@ export async function getSafeSpots(filter?: { state?: string; lga?: string }): P
         (!filter?.lga || s.lga.toLowerCase() === filter.lga.toLowerCase()),
     );
   }
-  return mktGet<SafeSpot[]>('/meetup/safe-spots', filter as Record<string, unknown>);
+  return arr(await mktGet<SafeSpot[]>('/meetup/safe-spots', filter as Record<string, unknown>));
 }

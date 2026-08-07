@@ -34,8 +34,8 @@ func NewGateway(reg *Registry, table RoutingTable) *Gateway {
 // (facial-gated) normalized result, and the ordered list of providers skipped by
 // failover (for audit).
 type GatewayResult struct {
-	Provider  string
-	Result    provider.KycCheckResult
+	Provider   string
+	Result     provider.KycCheckResult
 	FailedOver []string
 }
 
@@ -151,9 +151,9 @@ type breakerKey struct {
 // per (provider,checktype); open() reports whether the cooldown is still active.
 // Concurrency-safe (KYC checks run per-request across goroutines).
 type breaker struct {
-	mu       sync.Mutex
+	mu        sync.Mutex
 	trippedAt map[breakerKey]time.Time
-	cooldown time.Duration
+	cooldown  time.Duration
 }
 
 func newBreaker(cooldown time.Duration) *breaker {

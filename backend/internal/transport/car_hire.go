@@ -337,6 +337,13 @@ func (s *Service) CompleteCarHire(ctx context.Context, id, callerID string) erro
 			return fmt.Errorf("transport: settle car-hire %s: %w", sid, err)
 		}
 	}
+	// Record realized Spotlight profit (best-effort + idempotent; booking id as source
+	// ref + idempotency key). gross = the full hire fare (base + extensions; the
+	// separately-escrowed deposit is refunded, not charged). A recorder failure is
+	// logged and swallowed — it must NEVER affect the settlement above (earning-row
+	// only; no ledger re-post).
+	ownerID := b.UserID
+	s.recordCommissionSafe(ctx, "Lifestyle", "Car Hire", "", b.FareKobo, id, &ownerID)
 	// Refund the deposit settlement back to the customer.
 	var depositSettID string
 	if err := s.db.QueryRow(ctx,

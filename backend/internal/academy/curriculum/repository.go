@@ -242,6 +242,20 @@ func (r *Repository) ListSubjects(ctx context.Context, classID string) ([]Subjec
 	return out, rows.Err()
 }
 
+// GetSubjectByID returns a single subject row (mirrors ListSubjects columns).
+func (r *Repository) GetSubjectByID(ctx context.Context, id string) (*Subject, error) {
+	const q = `
+		SELECT id, version_id, class_id, code, name, kind, stream, exam_relevance
+		FROM public.academy_subjects WHERE id = $1`
+	s := &Subject{}
+	err := r.db.QueryRow(ctx, q, id).Scan(&s.ID, &s.VersionID, &s.ClassID, &s.Code, &s.Name,
+		&s.Kind, &s.Stream, &s.ExamRelevance)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return s, err
+}
+
 func (r *Repository) CreateSubject(ctx context.Context, req CreateSubjectRequest) (*Subject, error) {
 	kind := req.Kind
 	if kind == "" {
@@ -301,6 +315,19 @@ func (r *Repository) ListTopics(ctx context.Context, subjectID string) ([]Topic,
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// GetTopicByID returns a single topic row (mirrors ListTopics columns).
+func (r *Repository) GetTopicByID(ctx context.Context, id string) (*Topic, error) {
+	const q = `
+		SELECT id, subject_id, code, title, ordinal
+		FROM public.academy_topics WHERE id = $1`
+	t := &Topic{}
+	err := r.db.QueryRow(ctx, q, id).Scan(&t.ID, &t.SubjectID, &t.Code, &t.Title, &t.Ordinal)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return t, err
 }
 
 func (r *Repository) CreateTopic(ctx context.Context, req CreateTopicRequest) (*Topic, error) {

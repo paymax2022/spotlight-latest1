@@ -16,6 +16,7 @@ import CurrencyPickerSheet from '@/features/fx/components/CurrencyPickerSheet';
 import QuoteBreakdown from '@/features/fx/components/QuoteBreakdown';
 import { useBeneficiaries, useBalances } from '@/features/fx/hooks/useFx';
 import { buildQuote, formatMoney, parseToMinor } from '@/features/fx/utils/fxFormatters';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { WALLET_CURRENCIES } from '@/features/fx/constants/fx.constants';
 import type { CurrencyCode } from '@/features/fx/types/fx.types';
 
@@ -84,10 +85,12 @@ export default function SendAmountScreen() {
               <TextInput
                 style={styles.amountInput}
                 value={input}
-                onChangeText={setInput}
+                onChangeText={(v) => setInput(sanitizeMoneyInput(v))}
                 placeholder="0.00"
                 placeholderTextColor={Colors.outline}
                 keyboardType="decimal-pad"
+                inputMode="decimal"
+                maxLength={13}
                 autoFocus
                 accessibilityLabel="Amount to send"
               />

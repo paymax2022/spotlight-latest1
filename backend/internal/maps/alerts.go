@@ -22,7 +22,7 @@ func NewWebhookAlerter(url string) AlertFunc {
 		// Always log too, so the signal survives webhook failures.
 		defaultAlert(provider, primitive, pct, count, cap)
 		body, err := json.Marshal(map[string]any{
-			"text": "[maps] budget alert " + itoa(pct) + "% — " + provider + "." + string(primitive),
+			"text":      "[maps] budget alert " + itoa(pct) + "% — " + provider + "." + string(primitive),
 			"provider":  provider,
 			"primitive": string(primitive),
 			"pct":       pct,

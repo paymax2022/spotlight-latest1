@@ -10,17 +10,17 @@ package arena
 type ContestantState string
 
 const (
-	StApplied         ContestantState = "APPLIED"
-	StScreened        ContestantState = "SCREENED"
-	StTrained         ContestantState = "TRAINED"
-	StTheoryAssigned  ContestantState = "THEORY_ASSIGNED"
-	StTheoryTaken     ContestantState = "THEORY_TAKEN"
-	StQualified       ContestantState = "QUALIFIED"
-	StFinalist        ContestantState = "FINALIST"
-	StCrowned         ContestantState = "CROWNED"
-	StEliminated      ContestantState = "ELIMINATED"
-	StRejected        ContestantState = "REJECTED"
-	StWithdrawn       ContestantState = "WITHDRAWN"
+	StApplied        ContestantState = "APPLIED"
+	StScreened       ContestantState = "SCREENED"
+	StTrained        ContestantState = "TRAINED"
+	StTheoryAssigned ContestantState = "THEORY_ASSIGNED"
+	StTheoryTaken    ContestantState = "THEORY_TAKEN"
+	StQualified      ContestantState = "QUALIFIED"
+	StFinalist       ContestantState = "FINALIST"
+	StCrowned        ContestantState = "CROWNED"
+	StEliminated     ContestantState = "ELIMINATED"
+	StRejected       ContestantState = "REJECTED"
+	StWithdrawn      ContestantState = "WITHDRAWN"
 )
 
 // allowed encodes the §8 graph.

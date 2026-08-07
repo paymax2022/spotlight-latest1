@@ -36,6 +36,12 @@ func (s *Service) GetLesson(ctx context.Context, id string) (*Lesson, error) {
 	return s.repo.GetLesson(ctx, id)
 }
 
+// ListLessons serves the admin CMS surface: lessons across all statuses, optionally
+// filtered by objective_id / status.
+func (s *Service) ListLessons(ctx context.Context, objectiveID, status string, limit, offset int) ([]Lesson, error) {
+	return s.repo.ListLessons(ctx, objectiveID, status, limit, offset)
+}
+
 // LiveLessonsForObjective serves the learner surface: only live lessons.
 func (s *Service) LiveLessonsForObjective(ctx context.Context, objectiveID string, limit int) ([]Lesson, error) {
 	if objectiveID == "" {
@@ -96,6 +102,12 @@ func (s *Service) AdvanceProduction(ctx context.Context, actor, id string, to Pr
 		return nil, ErrInvalidInput
 	}
 	return s.repo.AdvanceProduction(ctx, actor, id, to)
+}
+
+// BlockProduction moves a production card to the blocked status (active→blocked),
+// reusing the guarded production state machine + audit pattern.
+func (s *Service) BlockProduction(ctx context.Context, actor, id string) (*Production, error) {
+	return s.repo.BlockProduction(ctx, actor, id)
 }
 
 func (s *Service) GetProduction(ctx context.Context, id string) (*Production, error) {

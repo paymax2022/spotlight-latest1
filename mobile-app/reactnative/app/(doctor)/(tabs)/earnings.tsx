@@ -12,6 +12,7 @@ import { shadow1, shadow2 } from '@/constants/shadows';
 import SectionHeader from '@/components/SectionHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { formatKobo } from '@/api/doctor.batch6.api';
 import { useEarningsBreakdown, useWalletBalance, useWithdrawEarnings } from '@/features/doctor/hooks';
 import { StatCard, StateView, EarningsSourceBar } from '@/features/doctor/components';
@@ -161,7 +162,7 @@ export default function DoctorEarningsScreen() {
             </Pressable>
           </View>
           <Text style={styles.sheetMeta}>Available {formatKobo(wallet?.availableKobo ?? 0)}</Text>
-          <TextInputField label="Amount (₦)" placeholder="0.00" value={amount} onChangeText={setAmount} keyboardType="numeric" />
+          <TextInputField label="Amount (₦)" placeholder="0.00" value={amount} onChangeText={(v) => setAmount(sanitizeMoneyInput(v))} keyboardType="decimal-pad" maxLength={13} />
           <PrimaryButton label="Request withdrawal" onPress={handleWithdraw} loading={withdraw.isPending} style={styles.sheetBtn} />
         </View>
       </Modal>

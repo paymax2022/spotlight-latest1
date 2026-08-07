@@ -33,7 +33,7 @@ export default function RateTicker({ rates, onPressRate }: Props) {
             accessibilityLabel={`${r.from} to ${r.to}, ${r.sell}, ${formatPct(r.change24hPct)} today`}
           >
             <Text style={styles.pair}>{r.from}/{r.to}</Text>
-            <Text style={styles.rate}>{r.sell.toLocaleString('en-NG', { maximumFractionDigits: 2 })}</Text>
+            <Text style={styles.rate}>{(r.sell ?? 0).toLocaleString('en-NG', { maximumFractionDigits: 2 })}</Text>
             <View style={styles.changeRow}>
               {up
                 ? <TrendingUp size={12} color={Colors.teal} strokeWidth={2} />

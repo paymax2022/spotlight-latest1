@@ -114,6 +114,14 @@ const (
 	CodeReviewExists   = "REVIEW_ALREADY_EXISTS"
 	CodeNotFound       = "NOT_FOUND"
 
+	// Messaging (ADR-023 listings-and-connect "connect" model; non-money metadata)
+	CodeThreadNotFound      = "THREAD_NOT_FOUND"
+	CodeCannotMessageSelf   = "CANNOT_MESSAGE_SELF"
+	CodeMessageBodyRequired = "MESSAGE_BODY_REQUIRED"
+	CodeMessageBodyTooLong  = "MESSAGE_BODY_TOO_LONG"
+	// Deal reviews (ADR-023: thread-keyed reviews behind the "mark met" signal).
+	CodeDealNotMet = "DEAL_NOT_MARKED_MET"
+
 	// Cross-cutting
 	CodeForbidden           = "FORBIDDEN"
 	CodeIdempotencyReplay   = "IDEMPOTENCY_KEY_REPLAY"
@@ -136,16 +144,19 @@ const (
 
 // Constructor helpers for the most common coded errors.
 var (
-	ErrForbidden       = newErr(http.StatusForbidden, CodeForbidden, "you may not act on this resource")
-	ErrUnauthenticated = newErr(http.StatusUnauthorized, CodeUnauthenticated, "authentication required")
-	ErrListingNotFound = newErr(http.StatusNotFound, CodeListingNotFound, "listing not found")
-	ErrOrderNotFound   = newErr(http.StatusNotFound, CodeOrderNotFound, "order not found")
-	ErrDisputeNotFound = newErr(http.StatusNotFound, CodeDisputeNotFound, "dispute not found")
-	ErrBoostNotFound   = newErr(http.StatusNotFound, CodeBoostNotFound, "boost not found")
-	ErrOfferNotFound   = newErr(http.StatusNotFound, CodeOfferNotFound, "offer not found")
-	ErrReasonRequired  = newErr(http.StatusBadRequest, CodeReasonCodeRequired, "reason_code is required")
-	ErrIdemMissing     = newErr(http.StatusBadRequest, CodeIdempotencyMissing, "Idempotency-Key header required")
-	ErrConflict        = newErr(http.StatusConflict, CodeConflict, "conflicting concurrent write")
+	ErrForbidden         = newErr(http.StatusForbidden, CodeForbidden, "you may not act on this resource")
+	ErrUnauthenticated   = newErr(http.StatusUnauthorized, CodeUnauthenticated, "authentication required")
+	ErrListingNotFound   = newErr(http.StatusNotFound, CodeListingNotFound, "listing not found")
+	ErrOrderNotFound     = newErr(http.StatusNotFound, CodeOrderNotFound, "order not found")
+	ErrDisputeNotFound   = newErr(http.StatusNotFound, CodeDisputeNotFound, "dispute not found")
+	ErrBoostNotFound     = newErr(http.StatusNotFound, CodeBoostNotFound, "boost not found")
+	ErrOfferNotFound     = newErr(http.StatusNotFound, CodeOfferNotFound, "offer not found")
+	ErrThreadNotFound    = newErr(http.StatusNotFound, CodeThreadNotFound, "thread not found")
+	ErrReviewExists      = newErr(http.StatusConflict, CodeReviewExists, "you have already reviewed this deal")
+	ErrCannotMessageSelf = newErr(422, CodeCannotMessageSelf, "you cannot start a conversation with yourself")
+	ErrReasonRequired    = newErr(http.StatusBadRequest, CodeReasonCodeRequired, "reason_code is required")
+	ErrIdemMissing       = newErr(http.StatusBadRequest, CodeIdempotencyMissing, "Idempotency-Key header required")
+	ErrConflict          = newErr(http.StatusConflict, CodeConflict, "conflicting concurrent write")
 	// ErrListingNotActiveRace is returned by InsertOrderAtomic when the DB-level
 	// optimistic lock finds the listing is no longer purchasable (status flipped, or
 	// another buyer's order already holds this single-quantity listing). The service

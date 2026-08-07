@@ -294,9 +294,9 @@ func (r *Repository) OverridesByBeneficiary(ctx context.Context, beneficiaryID s
 	var out []Override
 	for rows.Next() {
 		var (
-			o                Override
-			net, src, camp   *string
-			ledger           *string
+			o              Override
+			net, src, camp *string
+			ledger         *string
 		)
 		if err := rows.Scan(&o.ID, &o.BeneficiaryID, &net, &src, &camp, &o.ActivityBaseKobo,
 			&o.OverrideBps, &o.AmountKobo, &o.CapAppliedKobo, &ledger, &o.CreatedAt); err != nil {

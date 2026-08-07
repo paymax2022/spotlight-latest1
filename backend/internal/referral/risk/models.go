@@ -14,10 +14,10 @@ import "time"
 
 // Rule actions.
 const (
-	ActionReview    = "review"
-	ActionHold      = "hold"
-	ActionClawback  = "clawback"
-	ActionBlock     = "block"
+	ActionReview   = "review"
+	ActionHold     = "hold"
+	ActionClawback = "clawback"
+	ActionBlock    = "block"
 )
 
 // Rule types.
@@ -141,15 +141,15 @@ type ReviewItem struct {
 // EvaluateInput is the signup/earning evaluation request fed to the rules engine.
 // Hashes are supplied by the caller (never raw PII).
 type EvaluateInput struct {
-	SubjectID      string `json:"subject_id"`       // the earning/referred user under evaluation
-	ReferrerID     string `json:"referrer_id"`      // attributed referrer (self-referral check)
-	RewardID       string `json:"reward_id"`        // RB0 reward ledger row to hold, if any
-	AttributionID  string `json:"attribution_id"`   // RB0 attribution row, if any
-	IdentityHash   string `json:"identity_hash"`    // argon2id/sha256 of BVN/NIN (reuse finance KYC)
-	DeviceHash     string `json:"device_hash"`      // hashed device fingerprint
-	IPHash         string `json:"ip_hash"`          // hashed IP
-	EmailHash      string `json:"email_hash"`       // hashed email
-	IdempotencyKey string `json:"idempotency_key"`  // for any clawback posting
+	SubjectID      string `json:"subject_id"`      // the earning/referred user under evaluation
+	ReferrerID     string `json:"referrer_id"`     // attributed referrer (self-referral check)
+	RewardID       string `json:"reward_id"`       // RB0 reward ledger row to hold, if any
+	AttributionID  string `json:"attribution_id"`  // RB0 attribution row, if any
+	IdentityHash   string `json:"identity_hash"`   // argon2id/sha256 of BVN/NIN (reuse finance KYC)
+	DeviceHash     string `json:"device_hash"`     // hashed device fingerprint
+	IPHash         string `json:"ip_hash"`         // hashed IP
+	EmailHash      string `json:"email_hash"`      // hashed email
+	IdempotencyKey string `json:"idempotency_key"` // for any clawback posting
 }
 
 // EvaluateResult summarises the decision and the alerts raised.

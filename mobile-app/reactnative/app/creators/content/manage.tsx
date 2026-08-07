@@ -13,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { useMyContent, useCreateContent } from '@/features/creators/hooks';
 import { CreatorsColors, formatNaira } from '@/features/creators/constants/creators.constants';
 import type { ContentKind, GatedContent } from '@/features/creators/types';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 const KINDS: ContentKind[] = ['video', 'image', 'article', 'audio'];
 
@@ -80,7 +81,7 @@ export default function ContentManage() {
             {gated ? (
               <>
                 <Text style={styles.label}>Pay-per-view price (₦, leave blank for subscriber-only)</Text>
-                <TextInput style={styles.input} placeholder="e.g. 2500" placeholderTextColor={CreatorsColors.muted} keyboardType="number-pad" value={price} onChangeText={setPrice} />
+                <TextInput style={styles.input} placeholder="e.g. 2500" placeholderTextColor={CreatorsColors.muted} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} value={price} onChangeText={(v) => setPrice(sanitizeMoneyInput(v))} />
               </>
             ) : null}
             <Pressable style={styles.toggleRow} onPress={() => setAdult(!adult)}>

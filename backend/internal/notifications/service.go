@@ -13,38 +13,38 @@ import (
 type Channel string
 
 const (
-	ChannelPush    Channel = "push"
-	ChannelEmail   Channel = "email"
-	ChannelSMS     Channel = "sms"
-	ChannelInApp   Channel = "in_app"
+	ChannelPush  Channel = "push"
+	ChannelEmail Channel = "email"
+	ChannelSMS   Channel = "sms"
+	ChannelInApp Channel = "in_app"
 )
 
 // Event is the domain event that triggered the notification.
 type Event string
 
 const (
-	EventWalletCredit        Event = "wallet.credit"
-	EventWalletDebit         Event = "wallet.debit"
-	EventTransferSuccess     Event = "transfer.success"
-	EventTransferFailed      Event = "transfer.failed"
-	EventKYCApproved         Event = "kyc.approved"
-	EventKYCFailed           Event = "kyc.failed"
-	EventReferralReward      Event = "referral.reward"
-	EventVAProvisioned       Event = "va.provisioned"
-	EventFXConverted         Event = "fx.converted"
-	EventOrderStatusUpdate   Event = "order.status_update"
-	EventDisputeOpened       Event = "dispute.opened"
-	EventDisputeResolved     Event = "dispute.resolved"
+	EventWalletCredit      Event = "wallet.credit"
+	EventWalletDebit       Event = "wallet.debit"
+	EventTransferSuccess   Event = "transfer.success"
+	EventTransferFailed    Event = "transfer.failed"
+	EventKYCApproved       Event = "kyc.approved"
+	EventKYCFailed         Event = "kyc.failed"
+	EventReferralReward    Event = "referral.reward"
+	EventVAProvisioned     Event = "va.provisioned"
+	EventFXConverted       Event = "fx.converted"
+	EventOrderStatusUpdate Event = "order.status_update"
+	EventDisputeOpened     Event = "dispute.opened"
+	EventDisputeResolved   Event = "dispute.resolved"
 )
 
 // Notification is the payload enqueued for delivery.
 type Notification struct {
-	UserID    string         `json:"user_id"`
-	Event     Event          `json:"event"`
-	Title     string         `json:"title"`
-	Body      string         `json:"body"`
-	Data      map[string]any `json:"data,omitempty"`
-	Channels  []Channel      `json:"channels"`
+	UserID   string         `json:"user_id"`
+	Event    Event          `json:"event"`
+	Title    string         `json:"title"`
+	Body     string         `json:"body"`
+	Data     map[string]any `json:"data,omitempty"`
+	Channels []Channel      `json:"channels"`
 	// Delivery addresses — populated by callers when known.
 	PushToken string `json:"push_token,omitempty"` // Expo push token
 	Email     string `json:"email,omitempty"`      // recipient email address

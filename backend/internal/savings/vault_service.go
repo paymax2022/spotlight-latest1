@@ -3,6 +3,7 @@ package savings
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,14 +29,57 @@ const AutoSaveJobType = "savings.autosave"
 // withdrawals reverse. NL-1: a withdrawal can never exceed the derived balance;
 // NL-2: no yield is ever credited.
 type VaultService struct {
-	db    *pgxpool.Pool
-	led   *ledger.Service
-	sched *scheduler.Service
-	audit Auditor
+	db         *pgxpool.Pool
+	led        *ledger.Service
+	sched      *scheduler.Service
+	audit      Auditor
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 }
 
 func NewVaultService(db *pgxpool.Pool, led *ledger.Service, sched *scheduler.Service, audit Auditor) *VaultService {
 	return &VaultService{db: db, led: led, sched: sched, audit: audit}
+}
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module. app-wiring injects a thin adapter over the finance commission service;
+// when the commission feature is off (or no recorder is wired) the field is nil and
+// recording is a silent no-op. Modeled as a LOCAL interface so savings never imports
+// the commission package at compile time (mirrors transport/service.go).
+//
+// This records realized profit ONLY; it never moves money. The savings module's own
+// money movements (the early-break penalty debit into paymax_revenue) are unchanged,
+// and the injected recorder is deliberately constructed WITHOUT a ledger so RecordFor
+// never re-posts to the ledger — it appends the immutable earning row only. It is
+// wired on VaultService ONLY: the ONLY Spotlight-earned fee in savings is the
+// early-withdrawal penalty (deposits, normal withdrawals, target/Ajo flows are all
+// fee-free — NL-2, no yield — so those services record nothing).
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+	RecordExact(ctx context.Context, category, service, subtype string, grossKobo, recordedRevenueKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *VaultService) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a completed early-
+// withdrawal that incurred a penalty. Best-effort + MUST NEVER affect the caller: a
+// nil recorder is a no-op, and any error is logged and swallowed so a profit-registry
+// failure can never fail or reverse the withdrawal. The module's ACTUAL earning is the
+// exact penalty already computed and debited into paymax_revenue, NOT a % of the
+// principal, so we record the EXACT penaltyKobo via RecordExact (grossKobo = the
+// withdrawal principal is passed for context). source ref + idempotency key = the
+// per-penalty idempotency token so replays never double-count.
+func (s *VaultService) recordCommissionSafe(ctx context.Context, grossKobo, penaltyKobo int64, sourceRef string, userID *string) {
+	if s.commission == nil || penaltyKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordExact(ctx, "Finance", "Savings", "", grossKobo, penaltyKobo,
+		"savings", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[savings] commission record (source=%s gross=%d penalty=%d) failed, continuing: %v", sourceRef, grossKobo, penaltyKobo, err)
+	}
 }
 
 // RegisterAutoSave wires the recurring auto-save handler into the scheduler. The

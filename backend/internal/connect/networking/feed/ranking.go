@@ -14,7 +14,7 @@ type RankSignals struct {
 	ReshareCount  int
 
 	// Verified-outcome signals (the PN-3 primary weight).
-	AuthorVerified       bool // Connect professional verification (verified badge)
+	AuthorVerified         bool // Connect professional verification (verified badge)
 	AuthorPassedAssessment bool // author has a passed, timestamped skill assessment (PN-5)
 	LinksCompletedOutcome  bool // post links to a completed booking/mentorship
 
@@ -87,7 +87,7 @@ func RankScore(s RankSignals) float64 {
 // VerifiedWeight and EngagementWeight expose the two weight regimes so PN-3 can be
 // asserted directly: a single verified signal must weigh at least as much as the
 // entire engagement contribution.
-func VerifiedWeight() float64  { return BandVerifiedOutcome }
+func VerifiedWeight() float64   { return BandVerifiedOutcome }
 func EngagementWeight() float64 { return EngagementCap }
 
 // rankable pairs a post with its precomputed signals for sorting.

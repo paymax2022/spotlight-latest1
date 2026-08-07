@@ -56,11 +56,16 @@ export interface CourierRow {
 // ─── Bus ──────────────────────────────────────────────────────────────────────
 export interface BusOperator {
   id: string;
-  name: string;
-  zone: string;
-  status: 'active' | 'inactive' | 'suspended';
-  routes: number;
-  fleetSize: number;
+  businessName: string;
+  ownerUserId?: string | null;
+  baseState?: string | null;
+  verificationStatus: 'pending' | 'verified' | 'suspended';
+  verified: boolean;
+  status: 'active' | 'inactive';
+  ratingAvg: number;
+  ratingCount: number;
+  routeCount: number;
+  createdAt: string;
 }
 
 export interface BusRoute {

@@ -82,8 +82,32 @@ components:
       required: true
       schema: { type: string }
       description: Menu item id.
+    CategoryIdParam:
+      name: categoryId
+      in: path
+      required: true
+      schema: { type: string }
+      description: Menu category id.
+    AccountIdParam:
+      name: accountId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Settlement bank-account id.
   schemas:
     Money: { type: integer, format: int64, description: Amount in kobo (minor units) }
+    BankAccount:
+      type: object
+      description: A merchant settlement account. The account number is masked to the last 4 digits.
+      properties:
+        id: { type: string, format: uuid }
+        bank_name: { type: string }
+        bank_code: { type: string }
+        account_number_masked: { type: string, example: '****6789' }
+        account_name: { type: string }
+        is_verified: { type: boolean }
+        is_default: { type: boolean }
+        created_at: { type: string, format: date-time }
     Error:
       type: object
       properties:
@@ -219,6 +243,148 @@ paths:
                   items: { type: array, items: { $ref: '#/components/schemas/MenuItem' } }
         '401': { description: Not authenticated }
         '404': { description: Not found }
+    patch:
+      tags: [restaurant]
+      summary: Update store profile (operator)
+      description: Owner-only partial update of name/description/address/logo_url (unset fields are left unchanged; changing the address re-geocodes the pin).
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string }
+                address: { type: string }
+                logo_url: { type: string }
+      responses:
+        '200': { description: Updated store, content: { application/json: { schema: { $ref: '#/components/schemas/Restaurant' } } } }
+        '401': { description: Not authenticated }
+        '403': { description: Not the restaurant owner }
+        '404': { description: Not found }
+  /{id}/availability:
+    patch:
+      tags: [restaurant]
+      summary: Open or close the store (operator)
+      description: Owner-only operational open/close switch. Eligibility/KYC gating is handled upstream by the merchant-onboarding engine.
+      parameters: [{ $ref: '#/components/parameters/IdParam' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_open]
+              properties:
+                is_open: { type: boolean }
+      responses:
+        '200': { description: Updated store, content: { application/json: { schema: { $ref: '#/components/schemas/Restaurant' } } } }
+        '400': { description: is_open is required }
+        '401': { description: Not authenticated }
+        '403': { description: Not the restaurant owner }
+  /mine:
+    get:
+      tags: [restaurant]
+      summary: List the caller's own stores (operator)
+      description: The stores owned by the authenticated caller, newest first.
+      responses:
+        '200':
+          description: The caller's stores
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Restaurant' } }
+        '401': { description: Not authenticated }
+  /earnings:
+    get:
+      tags: [restaurant]
+      summary: Merchant earnings summary (operator)
+      description: >
+        Owner-scoped, read-only. Projects the payout/settlement tables — moves no
+        money. Paid-out is the net of PAID payout runs; pending is settled provider
+        shares not yet claimed by a payout line (what the next run would disburse).
+      responses:
+        '200':
+          description: Earnings summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      paid_out_kobo: { $ref: '#/components/schemas/Money' }
+                      pending_kobo: { $ref: '#/components/schemas/Money' }
+                      runs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string, format: uuid }
+                            period_key: { type: string }
+                            net_kobo: { $ref: '#/components/schemas/Money' }
+                            status: { type: string, enum: [draft, processing, paid, failed] }
+                            processed_at: { type: string, format: date-time, nullable: true }
+        '401': { description: Not authenticated }
+  /bank-accounts:
+    post:
+      tags: [restaurant]
+      summary: Save a settlement bank account (operator)
+      description: >
+        Capture only — NO money movement. The first account for an owner becomes
+        the default. Idempotent on (bank_code, account_number). The account number
+        is returned masked to the last 4 digits.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bank_name, bank_code, account_number, account_name]
+              properties:
+                bank_name: { type: string }
+                bank_code: { type: string }
+                account_number: { type: string, description: 10-digit NUBAN }
+                account_name: { type: string }
+      responses:
+        '201': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/BankAccount' } } } }
+        '400': { description: Invalid account number (must be 10 digits) }
+        '401': { description: Not authenticated }
+    get:
+      tags: [restaurant]
+      summary: List the caller's settlement accounts (operator)
+      responses:
+        '200':
+          description: Saved accounts (default first)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/BankAccount' } }
+        '401': { description: Not authenticated }
+  /bank-accounts/{accountId}/default:
+    patch:
+      tags: [restaurant]
+      summary: Mark a saved account as the payout default (operator)
+      parameters: [{ $ref: '#/components/parameters/AccountIdParam' }]
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { type: object, properties: { updated: { type: boolean } } } } } }
+        '401': { description: Not authenticated }
+        '404': { description: Account not found }
+  /bank-accounts/{accountId}:
+    delete:
+      tags: [restaurant]
+      summary: Remove a saved settlement account (operator)
+      parameters: [{ $ref: '#/components/parameters/AccountIdParam' }]
+      responses:
+        '200': { description: Deleted, content: { application/json: { schema: { type: object, properties: { deleted: { type: boolean } } } } } }
+        '401': { description: Not authenticated }
+        '404': { description: Account not found }
   /{id}/menu/categories:
     post:
       tags: [restaurant]
@@ -232,6 +398,19 @@ paths:
         '200': { description: Category created, content: { application/json: { schema: { $ref: '#/components/schemas/MenuCategory' } } } }
         '401': { description: Not authenticated }
         '403': { description: Not the restaurant owner }
+  /{id}/menu/categories/{categoryId}:
+    delete:
+      tags: [restaurant]
+      summary: Delete an empty menu category (operator)
+      description: Blocked (403) while the category still has items — remove them first.
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/CategoryIdParam' }
+      responses:
+        '200': { description: Deleted, content: { application/json: { schema: { type: object, properties: { deleted: { type: boolean } } } } } }
+        '401': { description: Not authenticated }
+        '403': { description: Not the restaurant owner / category not empty }
+        '404': { description: Category not found }
   /{id}/menu/items:
     post:
       tags: [restaurant]
@@ -263,6 +442,17 @@ paths:
                 available: { type: boolean }
       responses:
         '200': { description: Updated item, content: { application/json: { schema: { $ref: '#/components/schemas/MenuItem' } } } }
+        '401': { description: Not authenticated }
+        '403': { description: Not the restaurant owner }
+        '404': { description: Item not found }
+    delete:
+      tags: [restaurant]
+      summary: Delete a menu item (operator)
+      parameters:
+        - { $ref: '#/components/parameters/IdParam' }
+        - { $ref: '#/components/parameters/ItemIdParam' }
+      responses:
+        '200': { description: Deleted, content: { application/json: { schema: { type: object, properties: { deleted: { type: boolean } } } } } }
         '401': { description: Not authenticated }
         '403': { description: Not the restaurant owner }
         '404': { description: Item not found }

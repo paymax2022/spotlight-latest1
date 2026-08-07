@@ -43,19 +43,19 @@ const driverPresignTTL = 10 * time.Minute
 // transport document vocabulary so newer clients are not rejected.
 var driverDocTypes = map[string]bool{
 	// mobile DocType union
-	"drivers_licence":  true,
-	"government_id":    true,
-	"proof_of_address": true,
+	"drivers_licence":   true,
+	"government_id":     true,
+	"proof_of_address":  true,
 	"vehicle_insurance": true,
-	"roadworthiness":   true,
+	"roadworthiness":    true,
 	// broader transport document vocabulary
-	"license":          true,
-	"vehicle_reg":      true,
-	"insurance":        true,
-	"road_worthiness":  true,
-	"lasrra":           true,
-	"psv":              true,
-	"profile_photo":    true,
+	"license":         true,
+	"vehicle_reg":     true,
+	"insurance":       true,
+	"road_worthiness": true,
+	"lasrra":          true,
+	"psv":             true,
+	"profile_photo":   true,
 }
 
 // driverAllowedUploadContentTypes restricts what a presigned PUT may upload

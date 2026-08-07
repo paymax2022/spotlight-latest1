@@ -72,31 +72,31 @@ func (s State) IsTerminal() bool {
 // Reservation is the durable booking projection. Money columns are kobo (minor
 // units); state is the guarded lifecycle; version is the optimistic lock.
 type Reservation struct {
-	ID                  string                `json:"id"`
-	GuestUserID         string                `json:"guest_user_id"`
-	PropertyID          string                `json:"property_id"`
-	RoomTypeID          string                `json:"room_type_id"`
-	RatePlanID          string                `json:"rate_plan_id"`
-	SourceRail          gateway.SourceRail    `json:"source_rail"`
-	SupplierCode        string                `json:"supplier_code"`
-	SupplierRef         *string               `json:"supplier_ref"` // NULL until confirmed
-	State               State                 `json:"state"`
-	CheckIn             time.Time             `json:"check_in"`
-	CheckOut            time.Time             `json:"check_out"`
-	Rooms               int                   `json:"rooms"`
-	Occupancy           map[string]any        `json:"occupancy"`
-	Currency            string                `json:"currency"`
-	GrossAmountKobo     int64                 `json:"gross_amount_kobo"`
-	TaxAmountKobo       int64                 `json:"tax_amount_kobo"`
-	NetRateKobo         int64                 `json:"net_rate_kobo"`
-	MarkupKobo          int64                 `json:"markup_kobo"`
-	CommissionKobo      int64                 `json:"commission_kobo"`
-	PaymentMethod       gateway.PaymentMethod `json:"payment_method"`
-	CancellationPolicy  map[string]any        `json:"cancellation_policy_snapshot"`
-	IdempotencyKey      string                `json:"idempotency_key"`
-	BookTokenRef        *string               `json:"book_token_ref"`
-	VoucherRef          *string               `json:"voucher_ref"`
-	CreatedAt           time.Time             `json:"created_at"`
-	UpdatedAt           time.Time             `json:"updated_at"`
-	Version             int                   `json:"version"`
+	ID                 string                `json:"id"`
+	GuestUserID        string                `json:"guest_user_id"`
+	PropertyID         string                `json:"property_id"`
+	RoomTypeID         string                `json:"room_type_id"`
+	RatePlanID         string                `json:"rate_plan_id"`
+	SourceRail         gateway.SourceRail    `json:"source_rail"`
+	SupplierCode       string                `json:"supplier_code"`
+	SupplierRef        *string               `json:"supplier_ref"` // NULL until confirmed
+	State              State                 `json:"state"`
+	CheckIn            time.Time             `json:"check_in"`
+	CheckOut           time.Time             `json:"check_out"`
+	Rooms              int                   `json:"rooms"`
+	Occupancy          map[string]any        `json:"occupancy"`
+	Currency           string                `json:"currency"`
+	GrossAmountKobo    int64                 `json:"gross_amount_kobo"`
+	TaxAmountKobo      int64                 `json:"tax_amount_kobo"`
+	NetRateKobo        int64                 `json:"net_rate_kobo"`
+	MarkupKobo         int64                 `json:"markup_kobo"`
+	CommissionKobo     int64                 `json:"commission_kobo"`
+	PaymentMethod      gateway.PaymentMethod `json:"payment_method"`
+	CancellationPolicy map[string]any        `json:"cancellation_policy_snapshot"`
+	IdempotencyKey     string                `json:"idempotency_key"`
+	BookTokenRef       *string               `json:"book_token_ref"`
+	VoucherRef         *string               `json:"voucher_ref"`
+	CreatedAt          time.Time             `json:"created_at"`
+	UpdatedAt          time.Time             `json:"updated_at"`
+	Version            int                   `json:"version"`
 }

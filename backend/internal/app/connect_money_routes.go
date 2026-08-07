@@ -7,11 +7,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/internal/config"
 	connectaml "spotlight/backend/internal/connect/aml"
 	connectgifting "spotlight/backend/internal/connect/gifting"
 	connectpayouts "spotlight/backend/internal/connect/payouts"
 	connectsafety "spotlight/backend/internal/connect/safety"
 	connectvoting "spotlight/backend/internal/connect/voting"
+	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
@@ -35,7 +37,7 @@ import (
 //
 // The orchestrator (connect_routes.go) calls this; this file is the only one the
 // orchestrator wires in. It edits no existing file.
-func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.Config, pool *pgxpool.Pool, rbac services.RBACService) {
 	if pool == nil {
 		log.Println("[connect-money] nil pool — skipping Connect money routes")
 		return
@@ -73,6 +75,18 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, pool 
 	// --- Voting (free polls + paid voting) ---
 	voteSvc := connectvoting.NewService(
 		connectvoting.NewRepository(pool), walletSvc, revenue, audit, amlSvc)
+	// ── Central Commission & Profit recording (§ profit registry) ──
+	// When the commission feature is on, inject a nil-safe recorder so realized
+	// paid-vote profit lands in commission_earnings for the profit report. The
+	// recorder is built WITHOUT a ledger (nil ledgerService) on purpose: the paid-vote
+	// debit already posts the money into paymax_revenue, so a second ledger post would
+	// double-count. RecordFor therefore appends the earning ROW only. Recording is
+	// best-effort and can never fail or reverse a vote (see recordCommissionSafe). Flag
+	// off ⇒ no recorder is set ⇒ the seam stays nil ⇒ silent no-op.
+	if cfg.FeatureCommissionEnabled {
+		voteSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+		log.Println("[connect-money] commission recording wired → Contest/Voting (earning-row only; no ledger re-post)")
+	}
 	connectvoting.Register(member, voteSvc)
 
 	// --- Payouts (creator gift-revenue payout request) ---

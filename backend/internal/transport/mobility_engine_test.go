@@ -162,12 +162,12 @@ func TestCanTransition_HappyPath(t *testing.T) {
 
 func TestCanTransition_IllegalRejected(t *testing.T) {
 	illegal := [][2]TripPhase{
-		{PhaseRequested, PhaseInProgress},   // can't skip assignment + PIN
-		{PhaseRequested, PhaseCompleted},    // can't complete an unstarted trip
+		{PhaseRequested, PhaseInProgress},      // can't skip assignment + PIN
+		{PhaseRequested, PhaseCompleted},       // can't complete an unstarted trip
 		{PhaseDriverArriving, PhaseInProgress}, // PIN must be verified first
-		{PhaseCompleted, PhaseInProgress},   // terminal state is final
-		{PhaseCompleted, PhaseCancelled},    // can't cancel a completed trip
-		{PhaseInProgress, PhaseCancelled},   // in-progress rides aren't cancellable here
+		{PhaseCompleted, PhaseInProgress},      // terminal state is final
+		{PhaseCompleted, PhaseCancelled},       // can't cancel a completed trip
+		{PhaseInProgress, PhaseCancelled},      // in-progress rides aren't cancellable here
 	}
 	for _, tc := range illegal {
 		if canTransition(tc[0], tc[1]) {

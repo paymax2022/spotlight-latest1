@@ -10,9 +10,9 @@ import (
 // AMLConfig is versioned velocity policy for P2P sends (NL-10). Defaults are
 // conservative; admin tooling can override per-tier in later phases.
 type AMLConfig struct {
-	MaxSendsPerDay   int   // count cap in a rolling 24h window
-	MaxAmountPerDay  int64 // total kobo cap in a rolling 24h window
-	MaxSingleKobo    int64 // single-transfer cap
+	MaxSendsPerDay  int   // count cap in a rolling 24h window
+	MaxAmountPerDay int64 // total kobo cap in a rolling 24h window
+	MaxSingleKobo   int64 // single-transfer cap
 }
 
 // DefaultAMLConfig is the closed-loop default applied when none is supplied.

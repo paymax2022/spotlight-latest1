@@ -131,8 +131,8 @@ func TestFoldHealth(t *testing.T) {
 
 func TestBudgetDayKey(t *testing.T) {
 	// Bucket is UTC date regardless of input zone.
-	loc := time.FixedZone("WAT", 1*60*60) // Lagos +1
-	ts := time.Date(2026, 6, 27, 0, 30, 0, 0, loc)  // 23:30 UTC on the 26th
+	loc := time.FixedZone("WAT", 1*60*60)          // Lagos +1
+	ts := time.Date(2026, 6, 27, 0, 30, 0, 0, loc) // 23:30 UTC on the 26th
 	if got := budgetDayKey(ts); got != "2026-06-26" {
 		t.Fatalf("budgetDayKey should use UTC date, got %q", got)
 	}

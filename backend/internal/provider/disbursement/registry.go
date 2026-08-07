@@ -115,9 +115,9 @@ func minInt(a, b int) int {
 // PayoutResult reports which provider ultimately succeeded and the provider's
 // normalized payout response, plus the provider we failed over from (if any).
 type PayoutResult struct {
-	Provider     string
-	FailoverFrom string
-	Response     *provider.PayoutResponse
+	Provider      string
+	FailoverFrom  string
+	Response      *provider.PayoutResponse
 	RecipientCode string
 }
 

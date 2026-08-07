@@ -7,9 +7,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/cashtag"
+	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/creators"
 	"spotlight/backend/internal/credential"
 	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/kyc"
 	financeledger "spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
@@ -46,7 +48,7 @@ func guardFor(rbac services.RBACService) func(string) gin.HandlerFunc {
 //
 //   - member: /api/finance/creators/*
 //   - admin : /api/creators/admin/*  (RBAC creators.*)
-func RegisterCreators(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterCreators(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config) {
 	if pool == nil {
 		log.Println("[creators] nil pool — skipping creators routes")
 		return
@@ -66,6 +68,22 @@ func RegisterCreators(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgx
 	var auditor creators.Auditor = nil
 	var age creators.AgeProvider = nil // nil ⇒ age gate fails CLOSED for rated content (NL-11)
 	svc := creators.NewService(pool, ledgerSvc, walletSvc, tags, sched, kycSvc, age, auditor)
+
+	// ── Central Commission & Profit recording (§ profit registry) ──
+	// When the commission feature is on, inject a nil-safe recorder so realized creator
+	// profit (tips, content sales, subscription charges) lands in commission_earnings
+	// for the profit report under 'Lifestyle / Creators'. The recorder is built WITHOUT
+	// a ledger (nil) on purpose: creditCreator already posts the platform fee to the
+	// ledger (fee → Paymax revenue), so a second ledger post would double count —
+	// RecordFor therefore appends the earning ROW only. Recording is best-effort +
+	// idempotent (the per-event reference as key) and can never fail or reverse a
+	// creator earnings credit / payout (see creators.recordCommissionSafe). Flag off ⇒
+	// no recorder is set ⇒ the seam stays nil ⇒ silent no-op ⇒ creators unchanged.
+	if cfg.FeatureCommissionEnabled {
+		creatorsCommission := commission.NewService(commission.NewRepository(pool), nil)
+		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: creatorsCommission})
+		log.Println("[creators] commission recording wired → Lifestyle/Creators (earning-row only; no ledger re-post)")
+	}
 
 	handler := creators.NewHandler(svc)
 	handler.Register(member, admin, creators.GuardFunc(guardFor(rbac)))

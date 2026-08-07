@@ -104,6 +104,7 @@ const DASHBOARD: AcademyDashboard = {
 
 export async function getAcademyDashboard(): Promise<AcademyDashboard> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(DASHBOARD)); }
+  // TODO(no backend route): there is no academy admin dashboard/summary endpoint. Mock.
   return getJson<AcademyDashboard>('/admin/dashboard');
 }
 
@@ -135,6 +136,9 @@ const CURRICULUM: CurriculumTree = {
 
 export async function getCurriculumTree(): Promise<CurriculumTree> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(CURRICULUM)); }
+  // TODO(no backend route): curriculum READS (versions/classes/subjects/topics) are MEMBER routes
+  // under /api/finance/academy/curriculum; the curriculum admin group is write-only (create/update/
+  // publish) with no /tree aggregate. Not reachable from the admin base. Mock.
   return getJson<CurriculumTree>('/admin/curriculum/tree');
 }
 
@@ -147,6 +151,8 @@ export async function getTopics(subjectId: string): Promise<CurriculumTopic[]> {
       { id: `${subjectId}_t3`, subject_id: subjectId, name: 'Topic C', objectives_count: 3 },
     ];
   }
+  // TODO(no backend route): topic reads are MEMBER-only (GET /academy/curriculum/subjects/:id/topics);
+  // no admin read. Mock.
   return getJson<CurriculumTopic[]>(`/admin/curriculum/subjects/${subjectId}/topics`);
 }
 
@@ -188,7 +194,8 @@ export async function reviewQuestionItem(id: string, input: QuestionReviewInput)
     const status = input.action === 'approve' ? 'approved' : input.action === 'reject' ? 'rejected' : 'duplicate';
     return { ...base, review_status: status };
   }
-  return sendJson<QuestionItem>('POST', `/admin/question-bank/items/${id}/review`, input);
+  // backend: POST /question-bank/items/:id/transition (assessment.RegisterAcademyAssessment).
+  return sendJson<QuestionItem>('POST', `/admin/question-bank/items/${id}/transition`, input);
 }
 
 // ════════════════════════ EXAMS ════════════════════════
@@ -213,18 +220,28 @@ const COMBINATIONS: SubjectCombinationRule[] = [
 
 export async function listExamArenas(): Promise<ExamArena[]> {
   if (USE_MOCK) { await delay(); return ARENAS.map((a) => ({ ...a })); }
+  // TODO(no backend route): exam arena READS are MEMBER-only (GET /academy/exam/arenas); the exam
+  // admin group is write-only (create/update arenas, blueprints, combinations). Mock.
   return getJson<ExamArena[]>('/admin/exam/arenas');
 }
 export async function listExamBlueprints(): Promise<ExamBlueprint[]> {
   if (USE_MOCK) { await delay(); return BLUEPRINTS.map((b) => ({ ...b })); }
+  // TODO(no backend route): blueprint READS are MEMBER-only (GET /academy/exam/arenas/:id/blueprints);
+  // no admin blueprint list. Mock.
   return getJson<ExamBlueprint[]>('/admin/exam/blueprints');
 }
 export async function listSubjectCombinations(): Promise<SubjectCombinationRule[]> {
   if (USE_MOCK) { await delay(); return COMBINATIONS.map((c) => ({ ...c })); }
+  // TODO(no backend route): combination READS are MEMBER-only (GET /academy/exam/utme/combinations);
+  // no admin combinations list. Mock.
   return getJson<SubjectCombinationRule[]>('/admin/exam/combinations');
 }
 export async function createExamBlueprint(input: ExamBlueprintInput): Promise<ExamBlueprint> {
   if (USE_MOCK) { await delay(); return { id: `bp_${Date.now()}`, ...input }; }
+  // TODO(no backend route as-shaped): the backend creates blueprints nested under an arena
+  // (POST /exam/arenas/:id/blueprints, exam.AdminCreateBlueprint), not at a flat /exam/blueprints.
+  // ExamBlueprintInput carries arena_id, so a nested path could be built, but the flat route
+  // does not exist — left on mock pending confirmation of the intended admin contract.
   return sendJson<ExamBlueprint>('POST', '/admin/exam/blueprints', input);
 }
 
@@ -257,6 +274,9 @@ const GAMIFICATION: GamificationConfig = {
 
 export async function getGamificationConfig(): Promise<GamificationConfig> {
   if (USE_MOCK) { await delay(); return JSON.parse(JSON.stringify(GAMIFICATION)); }
+  // TODO(no backend route): the gamification admin group exposes badges/challenges/leaderboards
+  // endpoints but NO single /config aggregate (xp curve + streak + badges + challenges +
+  // leaderboards). Mock.
   return getJson<GamificationConfig>('/admin/gamification/config');
 }
 
@@ -304,7 +324,8 @@ export async function fundRewardPool(input: RewardFundInput): Promise<RewardPool
     const balance = base.balance_kobo + input.amount_kobo;
     return { ...base, funded_kobo: funded, balance_kobo: balance, status: balance > 0 ? 'funded' : base.status };
   }
-  return sendJson<RewardPool>('POST', '/admin/rewards/pools/fund', input);
+  // backend: POST /rewards/pools/:id/fund (pool id in path, not body).
+  return sendJson<RewardPool>('POST', `/admin/rewards/pools/${input.pool_id}/fund`, input);
 }
 export async function listRewardCatalog(): Promise<RewardCatalogItem[]> {
   if (USE_MOCK) { await delay(); return CATALOG.map((c) => ({ ...c })); }
@@ -312,6 +333,8 @@ export async function listRewardCatalog(): Promise<RewardCatalogItem[]> {
 }
 export async function getRewardLedger(): Promise<RewardLedgerEntry[]> {
   if (USE_MOCK) { await delay(); return LEDGER.map((l) => ({ ...l })); }
+  // TODO(no backend route): rewards ledger is per-pool only (GET /rewards/pools/:id/ledger);
+  // there is no cross-pool aggregate ledger endpoint. Mock.
   return getJson<RewardLedgerEntry[]>('/admin/rewards/ledger');
 }
 
@@ -378,7 +401,11 @@ export async function allocateAccessCards(input: AccessCardAllocateInput): Promi
 }
 export async function issueRefund(input: RefundInput): Promise<{ ok: true; ref: string }> {
   if (USE_MOCK) { await delay(); return { ok: true, ref: input.txn_ref }; }
-  return sendJson<{ ok: true; ref: string }>('POST', '/commerce/admin/refunds', input);
+  // backend: POST /academy/commerce/admin/orders/:id/refund (commerce AdminRefund).
+  // NOTE(payload): the backend keys the refund by order id in the path; RefundInput carries
+  // a txn_ref (transaction reference), not an order id — passed as :id here, but the caller/UI
+  // must supply the order id for this to resolve. Body-field alignment is a types-owned follow-up.
+  return sendJson<{ ok: true; ref: string }>('POST', `/commerce/admin/orders/${encodeURIComponent(input.txn_ref)}/refund`, input);
 }
 
 // ── Identity admin (user lookup) — /api/academy/* ──────────────────────────────
@@ -395,7 +422,11 @@ export async function lookupUser(query: string): Promise<AcademyUser[]> {
     if (!q) return USERS.map((u) => ({ ...u }));
     return USERS.filter((u) => u.display_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || u.id.includes(q));
   }
-  return getJson<AcademyUser[]>(`/admin/users?q=${encodeURIComponent(query)}`);
+  // backend: GET /admin/users/:id (identity.AdminLookup) — single exact-id lookup ONLY.
+  // NOTE(no backend search): there is no query/search endpoint; `query` is treated as an
+  // exact user id and the single result is wrapped in an array to satisfy the caller shape.
+  const u = await getJson<AcademyUser>(`/admin/users/${encodeURIComponent(query.trim())}`);
+  return u ? [u] : [];
 }
 
 // ════════════════════════ SPONSORS ════════════════════════
@@ -414,10 +445,13 @@ const CAMPAIGNS: SponsorCampaign[] = [
 
 export async function listSponsors(): Promise<Sponsor[]> {
   if (USE_MOCK) { await delay(); return SPONSORS.map((s) => ({ ...s })); }
+  // TODO(no backend route): there is no sponsors admin endpoint (sponsor reporting is not wired
+  // as a standalone route). Mock.
   return getJson<Sponsor[]>('/admin/sponsors');
 }
 export async function listSponsorCampaigns(): Promise<SponsorCampaign[]> {
   if (USE_MOCK) { await delay(); return CAMPAIGNS.map((c) => ({ ...c })); }
+  // TODO(no backend route): no sponsor campaigns endpoint exists. Mock.
   return getJson<SponsorCampaign[]>('/admin/sponsors/campaigns');
 }
 
@@ -454,6 +488,9 @@ const LOCALIZATIONS: Localization[] = [
 
 export async function listContent(): Promise<ContentItem[]> {
   if (USE_MOCK) { await delay(); return CONTENT.map((c) => ({ ...c, variants: c.variants.map((v) => ({ ...v })), localizations: [...c.localizations] })); }
+  // TODO(no backend route): the content admin group has no generic content-items list; content is
+  // read as member lessons/bundles (GET /content/lessons/:objectiveId, /content/bundles). No admin
+  // CMS item list. Mock.
   return getJson<ContentItem[]>('/admin/content/items');
 }
 export async function transitionContent(input: ContentTransitionInput): Promise<ContentItem> {
@@ -463,6 +500,12 @@ export async function transitionContent(input: ContentTransitionInput): Promise<
     const next = CONTENT_NEXT[input.action];
     return { ...base, status: next?.status ?? base.status, version: base.version + (input.action === 'publish' ? 1 : 0), updated_at: new Date().toISOString() };
   }
+  // TODO(no backend route): the content admin surface exposes only single-step publish
+  // transitions split by kind — POST /content/lessons/:id/publish and
+  // POST /content/bundles/:id/publish — not a generic /content/items/:id/transition with the
+  // full draft→review→approved→live→archived lifecycle. A ContentItem (kind lesson|series_episode)
+  // does not map unambiguously to lessons-vs-bundles, and only "publish" exists (no submit/approve/
+  // archive/send_back), so a correct mapping needs a backend lifecycle endpoint. Left on mock.
   return sendJson<ContentItem>('POST', `/admin/content/items/${input.id}/transition`, input);
 }
 export async function listLocalizations(): Promise<Localization[]> {
@@ -487,7 +530,8 @@ const PRODUCTION: ProductionCard[] = [
 
 export async function listProductionCards(): Promise<ProductionCard[]> {
   if (USE_MOCK) { await delay(); return PRODUCTION.map((c) => ({ ...c })); }
-  return getJson<ProductionCard[]>('/admin/production/cards');
+  // backend: GET /content/productions (content.AdminListProductions).
+  return getJson<ProductionCard[]>('/admin/content/productions');
 }
 export async function advanceProductionCard(input: ProductionAdvanceInput): Promise<ProductionCard> {
   if (USE_MOCK) {
@@ -497,7 +541,8 @@ export async function advanceProductionCard(input: ProductionAdvanceInput): Prom
     const next = PRODUCTION_STAGES[Math.min(idx + 1, PRODUCTION_STAGES.length - 1)];
     return { ...base, stage: next, blocked: false, blocked_reason: null, updated_at: new Date().toISOString() };
   }
-  return sendJson<ProductionCard>('POST', `/admin/production/cards/${input.id}/advance`, input);
+  // backend: POST /content/productions/:id/advance (content.AdminAdvanceProduction).
+  return sendJson<ProductionCard>('POST', `/admin/content/productions/${input.id}/advance`, input);
 }
 export async function blockProductionCard(input: ProductionBlockInput): Promise<ProductionCard> {
   if (USE_MOCK) {
@@ -505,7 +550,11 @@ export async function blockProductionCard(input: ProductionBlockInput): Promise<
     const base = PRODUCTION.find((c) => c.id === input.id) ?? PRODUCTION[0];
     return { ...base, blocked: input.blocked, blocked_reason: input.blocked ? (input.reason ?? 'Blocked') : null, updated_at: new Date().toISOString() };
   }
-  return sendJson<ProductionCard>('POST', `/admin/production/cards/${input.id}/block`, input);
+  // TODO(no backend route): content productions expose GET /content/productions,
+  // POST /content/productions, GET /content/productions/:id, PUT /content/productions/:id and
+  // POST /content/productions/:id/advance — there is NO block/unblock endpoint. Blocking would
+  // need either a dedicated route or a PUT-update contract (blocked flag). Left on mock.
+  return sendJson<ProductionCard>('POST', `/admin/content/productions/${input.id}/block`, input);
 }
 
 // ════════════════════════ OFFLINE BUNDLE BUILDER ════════════════════════
@@ -518,6 +567,8 @@ const OFFLINE_BUNDLES: OfflineBundle[] = [
 
 export async function listOfflineBundles(): Promise<OfflineBundle[]> {
   if (USE_MOCK) { await delay(); return OFFLINE_BUNDLES.map((b) => ({ ...b, lesson_ids: [...b.lesson_ids] })); }
+  // TODO(no backend route): offline-bundle builder has no admin endpoints; offlinesync only exposes
+  // a member ingest route (POST /academy/sync). Mock.
   return getJson<OfflineBundle[]>('/admin/offline-bundles');
 }
 export async function buildOfflineBundle(input: BundleBuildInput): Promise<OfflineBundle> {
@@ -531,6 +582,7 @@ export async function buildOfflineBundle(input: BundleBuildInput): Promise<Offli
     }, 0);
     return { id: `ob_${Date.now()}`, name: input.name, exam_code: input.exam_code, lesson_ids: [...input.lesson_ids], size_mb: size, size_budget_mb: input.size_budget_mb, access_card_plan_id: input.access_card_plan_id ?? null, status: 'draft', updated_at: new Date().toISOString() };
   }
+  // TODO(no backend route): no offline-bundle build endpoint on the backend. Mock.
   return sendJson<OfflineBundle>('POST', '/admin/offline-bundles', input);
 }
 
@@ -552,6 +604,8 @@ export async function getObjectives(topicId: string): Promise<CurriculumObjectiv
       { id: `${topicId}_o2`, topic_id: topicId, code: 'OBJ.2', statement: 'Sample objective two for this topic.', bloom_level: 'apply', exam_relevance: [{ exam_code: 'WASSCE', relevance: 'occasional' }] },
     ];
   }
+  // TODO(no backend route): objective reads are MEMBER-only (GET /academy/curriculum/topics/:id/objectives);
+  // no admin read. (Objective CREATE is correctly wired below.) Mock.
   return getJson<CurriculumObjective[]>(`/admin/curriculum/topics/${topicId}/objectives`);
 }
 export async function createCurriculumClass(input: CurriculumClassInput): Promise<CurriculumClass> {
@@ -612,22 +666,30 @@ const SCHOLARSHIPS: Scholarship[] = [
 
 export async function listSchools(): Promise<School[]> {
   if (USE_MOCK) { await delay(); return SCHOOLS.map((s) => ({ ...s })); }
+  // TODO(no backend route): edupay exposes GET schools only as a MEMBER route
+  // (/api/finance/academy/edupay/schools); the edupay admin group has no GET schools list. Mock.
   return getJson<School[]>('/admin/edupay/schools');
 }
 export async function createSchool(input: SchoolInput): Promise<School> {
   if (USE_MOCK) { await delay(); return { id: `sch_${Date.now()}`, name: input.name, state: input.state, status: 'onboarding', students: 0, bank_account: input.bank_account, created_at: new Date().toISOString() }; }
-  return sendJson<School>('POST', '/admin/edupay/schools', input);
+  // backend: POST /edupay/admin/schools (edupay admin group is admin.Group("/edupay/admin")).
+  return sendJson<School>('POST', '/admin/edupay/admin/schools', input);
 }
 export async function listFeeSchedules(): Promise<FeeSchedule[]> {
   if (USE_MOCK) { await delay(); return FEE_SCHEDULES.map((f) => ({ ...f })); }
+  // TODO(no backend route): edupay GET fee-schedules is MEMBER-only
+  // (/api/finance/academy/edupay/fee-schedules); no admin-group list endpoint. Mock.
   return getJson<FeeSchedule[]>('/admin/edupay/fee-schedules');
 }
 export async function createFeeSchedule(input: FeeScheduleInput): Promise<FeeSchedule> {
   if (USE_MOCK) { await delay(); return { id: `fee_${Date.now()}`, school_id: input.school_id, term: input.term, amount_kobo: input.amount_kobo, due_date: input.due_date, status: 'draft', collected_kobo: 0 }; }
-  return sendJson<FeeSchedule>('POST', '/admin/edupay/fee-schedules', input);
+  // backend: POST /edupay/admin/fee-schedules (edupay admin group).
+  return sendJson<FeeSchedule>('POST', '/admin/edupay/admin/fee-schedules', input);
 }
 export async function listDisbursements(): Promise<Disbursement[]> {
   if (USE_MOCK) { await delay(); return DISBURSEMENTS.map((d) => ({ ...d })); }
+  // TODO(no backend route): edupay has no GET disbursements list (member or admin) — only
+  // POST /edupay/admin/disbursements/:id/reconcile. A list endpoint is needed. Mock.
   return getJson<Disbursement[]>('/admin/edupay/disbursements');
 }
 export async function reconcileDisbursement(input: DisbursementReconcileInput): Promise<Disbursement> {
@@ -640,19 +702,24 @@ export async function reconcileDisbursement(input: DisbursementReconcileInput): 
     const reconciled = next === 'reconciled';
     return { ...base, status: next, reference: input.bank_reference || base.reference, reconciled_at: reconciled ? new Date().toISOString() : base.reconciled_at };
   }
-  return sendJson<Disbursement>('POST', `/admin/edupay/disbursements/${input.id}/reconcile`, input);
+  // backend: POST /edupay/admin/disbursements/:id/reconcile (edupay admin group).
+  return sendJson<Disbursement>('POST', `/admin/edupay/admin/disbursements/${input.id}/reconcile`, input);
 }
 export async function listSchoolPots(): Promise<SchoolPot[]> {
   if (USE_MOCK) { await delay(); return SCHOOL_POTS.map((p) => ({ ...p })); }
+  // TODO(no backend route): edupay pots are guardian MEMBER routes only (POST /edupay/pots,
+  // /pots/:id/fund, /pots/:id/pay); no admin GET pots list exists. Mock.
   return getJson<SchoolPot[]>('/admin/edupay/pots');
 }
 export async function listScholarships(): Promise<Scholarship[]> {
   if (USE_MOCK) { await delay(); return SCHOLARSHIPS.map((s) => ({ ...s })); }
-  return getJson<Scholarship[]>('/admin/edupay/scholarships');
+  // backend: GET /edupay/admin/scholarships (edupay admin group).
+  return getJson<Scholarship[]>('/admin/edupay/admin/scholarships');
 }
 export async function createScholarship(input: ScholarshipInput): Promise<Scholarship> {
   if (USE_MOCK) { await delay(); return { id: `shp_${Date.now()}`, name: input.name, sponsor: input.sponsor, pool_kobo: input.pool_kobo, awarded_kobo: 0, slots: input.slots, awarded_slots: 0, status: 'draft' }; }
-  return sendJson<Scholarship>('POST', '/admin/edupay/scholarships', input);
+  // backend: POST /edupay/admin/scholarships (edupay admin group).
+  return sendJson<Scholarship>('POST', '/admin/edupay/admin/scholarships', input);
 }
 export async function awardScholarship(input: ScholarshipAwardInput): Promise<Scholarship> {
   if (USE_MOCK) {
@@ -660,7 +727,8 @@ export async function awardScholarship(input: ScholarshipAwardInput): Promise<Sc
     const base = SCHOLARSHIPS.find((s) => s.id === input.scholarship_id) ?? SCHOLARSHIPS[0];
     return { ...base, awarded_kobo: base.awarded_kobo + input.amount_kobo, awarded_slots: Math.min(base.slots, base.awarded_slots + 1), status: base.awarded_slots + 1 >= base.slots ? 'closed' : (base.status === 'draft' ? 'open' : base.status) };
   }
-  return sendJson<Scholarship>('POST', '/admin/edupay/scholarships/award', input);
+  // backend: POST /edupay/admin/scholarships/award (edupay admin group).
+  return sendJson<Scholarship>('POST', '/admin/edupay/admin/scholarships/award', input);
 }
 
 // ════════════════════════ NOTIFICATIONS & MESSAGING ════════════════════════
@@ -675,10 +743,12 @@ const TEMPLATES: NotificationTemplate[] = [
 
 export async function listNotificationTemplates(): Promise<NotificationTemplate[]> {
   if (USE_MOCK) { await delay(); return TEMPLATES.map((t) => ({ ...t })); }
+  // TODO(no backend route): no notifications/messaging module on the backend (no templates routes). Mock.
   return getJson<NotificationTemplate[]>('/admin/notifications/templates');
 }
 export async function createNotificationTemplate(input: NotificationTemplateInput): Promise<NotificationTemplate> {
   if (USE_MOCK) { await delay(); return { id: `nt_${Date.now()}`, name: input.name, channel: input.channel, subject: input.subject, body: input.body, segment: input.segment, schedule: input.schedule, status: 'draft', updated_at: new Date().toISOString() }; }
+  // TODO(no backend route): no notification-template create endpoint. Mock.
   return sendJson<NotificationTemplate>('POST', '/admin/notifications/templates', input);
 }
 
@@ -718,14 +788,19 @@ const EARNING_APPLICATIONS: EarningApplication[] = [
 
 export async function listCredentialTemplates(): Promise<CredentialTemplate[]> {
   if (USE_MOCK) { await delay(); return CREDENTIAL_TEMPLATES.map((t) => ({ ...t })); }
+  // TODO(no backend route): credentials admin has revoke + earning opportunities only; there is no
+  // credential-templates endpoint (list or create). Mock.
   return getJson<CredentialTemplate[]>('/admin/credentials/templates');
 }
 export async function createCredentialTemplate(input: CredentialTemplateInput): Promise<CredentialTemplate> {
   if (USE_MOCK) { await delay(); return { id: `ct_${Date.now()}`, name: input.name, track: input.track, issuer: input.issuer, validity_months: input.validity_months ?? null, signature_authority: input.signature_authority, status: 'draft', issued_count: 0, updated_at: new Date().toISOString() }; }
+  // TODO(no backend route): no credential-template create endpoint. Mock.
   return sendJson<CredentialTemplate>('POST', '/admin/credentials/templates', input);
 }
 export async function listIssuedCredentials(): Promise<IssuedCredential[]> {
   if (USE_MOCK) { await delay(); return ISSUED_CREDENTIALS.map((c) => ({ ...c })); }
+  // TODO(no backend route): no admin GET issued-credentials list — issued credentials are read as
+  // member routes (GET /credentials, /credentials/:id). Only admin revoke exists. Mock.
   return getJson<IssuedCredential[]>('/admin/credentials/issued');
 }
 export async function revokeCredential(input: CredentialRevokeInput): Promise<IssuedCredential> {
@@ -734,7 +809,8 @@ export async function revokeCredential(input: CredentialRevokeInput): Promise<Is
     const base = ISSUED_CREDENTIALS.find((c) => c.id === input.id) ?? ISSUED_CREDENTIALS[0];
     return { ...base, status: 'revoked', revoke_reason: input.reason };
   }
-  return sendJson<IssuedCredential>('POST', `/admin/credentials/issued/${input.id}/revoke`, input);
+  // backend: POST /credentials/:id/revoke (credentials.AdminRevoke) — no "/issued" segment.
+  return sendJson<IssuedCredential>('POST', `/admin/credentials/${input.id}/revoke`, input);
 }
 export async function verifyCredential(query: string): Promise<CredentialVerification> {
   if (USE_MOCK) {
@@ -743,6 +819,8 @@ export async function verifyCredential(query: string): Promise<CredentialVerific
     const found = ISSUED_CREDENTIALS.find((c) => c.serial.toLowerCase() === q || c.learner_id.toLowerCase() === q || c.learner_name.toLowerCase().includes(q));
     return { found: !!found, serial: query.trim(), credential: found ? { ...found } : null, verified_at: new Date().toISOString() };
   }
+  // TODO(no backend route): credential verification is a MEMBER route keyed by verification id
+  // (GET /credentials/verify/:verificationId), not an admin query-search endpoint. Mock.
   return getJson<CredentialVerification>(`/admin/credentials/verify?q=${encodeURIComponent(query)}`);
 }
 export async function listEarningOpportunities(): Promise<EarningOpportunity[]> {
@@ -755,6 +833,8 @@ export async function createEarningOpportunity(input: EarningOpportunityInput): 
 }
 export async function listEarningApplications(): Promise<EarningApplication[]> {
   if (USE_MOCK) { await delay(); return EARNING_APPLICATIONS.map((a) => ({ ...a })); }
+  // TODO(no backend route): credentials admin exposes earning OPPORTUNITIES (list/create/update)
+  // but no earning-APPLICATIONS list endpoint. Mock.
   return getJson<EarningApplication[]>('/admin/earning/applications');
 }
 
@@ -774,6 +854,9 @@ const LIVE_REPLAYS: LiveReplay[] = [
 
 export async function listLiveSessions(): Promise<LiveSession[]> {
   if (USE_MOCK) { await delay(); return LIVE_SESSIONS.map((s) => ({ ...s })); }
+  // TODO(no backend route): live-session LISTING is a MEMBER route (GET /academy/live/sessions);
+  // the live admin group only has schedule/start/end/cancel (no admin list). Mock.
+  // (scheduleLiveSession below is correctly wired to POST /admin/live/sessions.)
   return getJson<LiveSession[]>('/admin/live/sessions');
 }
 export async function scheduleLiveSession(input: LiveSessionInput): Promise<LiveSession> {
@@ -785,6 +868,7 @@ export async function scheduleLiveSession(input: LiveSessionInput): Promise<Live
 }
 export async function listLiveReplays(): Promise<LiveReplay[]> {
   if (USE_MOCK) { await delay(); return LIVE_REPLAYS.map((r) => ({ ...r })); }
+  // TODO(no backend route): the live module has no replays endpoint (VOD/replay is not wired). Mock.
   return getJson<LiveReplay[]>('/admin/live/replays');
 }
 
@@ -809,6 +893,8 @@ export async function triageModerationReport(input: ModerationTriageInput): Prom
     const base = MODERATION_REPORTS.find((r) => r.id === input.id) ?? MODERATION_REPORTS[0];
     return { ...base, state: 'triaged', assignee: input.assignee ?? base.assignee ?? 'you', updated_at: new Date().toISOString() };
   }
+  // TODO(no backend route): the moderation admin surface has GET /moderation/reports and
+  // POST /moderation/reports/:id/decide only — there is NO /triage transition. Mock.
   return sendJson<ModerationReport>('POST', `/admin/moderation/reports/${input.id}/triage`, input);
 }
 export async function decideModerationReport(input: ModerationDecisionInput): Promise<ModerationReport> {
@@ -826,6 +912,7 @@ export async function escalateModerationReport(input: ModerationEscalateInput): 
     const base = MODERATION_REPORTS.find((r) => r.id === input.id) ?? MODERATION_REPORTS[0];
     return { ...base, state: 'escalated', notes: input.reason, updated_at: new Date().toISOString() };
   }
+  // TODO(no backend route): no /escalate endpoint on moderation admin — only /decide exists. Mock.
   return sendJson<ModerationReport>('POST', `/admin/moderation/reports/${input.id}/escalate`, input);
 }
 
@@ -885,18 +972,25 @@ export async function getSchoolsOverview(): Promise<SchoolsOverview> {
     const outstanding = INVOICES.filter((i) => i.status === 'issued' || i.status === 'overdue').reduce((s, i) => s + i.amount_kobo, 0);
     return { institutions_total: INSTITUTIONS.length, institutions_active: active.length, seats_sold: seatsSold, seats_used: seatsUsed, learners_total: INSTITUTIONS.reduce((s, i) => s + i.learners, 0), mrr_kobo: mrr, outstanding_kobo: outstanding };
   }
+  // TODO(no backend route): schools admin exposes only per-institution overview
+  // (GET /schools/admin/institutions/:id/overview); there is no cross-institution aggregate
+  // overview endpoint. Mock.
   return getJson<SchoolsOverview>('/admin/schools/overview');
 }
 export async function listInstitutions(): Promise<Institution[]> {
   if (USE_MOCK) { await delay(); return INSTITUTIONS.map((i) => ({ ...i })); }
-  return getJson<Institution[]>('/admin/schools/institutions');
+  // backend: GET /schools/admin/institutions (schools admin group is admin.Group("/schools/admin")).
+  return getJson<Institution[]>('/admin/schools/admin/institutions');
 }
 export async function createInstitution(input: InstitutionInput): Promise<Institution> {
   if (USE_MOCK) { await delay(); return { id: `inst_${Date.now()}`, name: input.name, type: input.type, state: input.state, contact_name: input.contact_name, contact_email: input.contact_email, status: 'onboarding', learners: 0, class_groups: 0, created_at: new Date().toISOString() }; }
-  return sendJson<Institution>('POST', '/admin/schools/institutions', input);
+  // backend: POST /schools/admin/institutions (schools.AdminOnboard).
+  return sendJson<Institution>('POST', '/admin/schools/admin/institutions', input);
 }
 export async function listLicences(): Promise<Licence[]> {
   if (USE_MOCK) { await delay(); return LICENCES.map((l) => ({ ...l })); }
+  // TODO(no backend route): schools admin has no GET licences list — only POST /licences and the
+  // lifecycle verbs (suspend/reactivate/expire). A licences list endpoint is needed. Mock.
   return getJson<Licence[]>('/admin/schools/licences');
 }
 export async function issueLicence(input: LicenceIssueInput): Promise<Licence> {
@@ -905,7 +999,8 @@ export async function issueLicence(input: LicenceIssueInput): Promise<Licence> {
     const plan = PLANS.find((p) => p.id === input.plan_id);
     return { id: `lic_${Date.now()}`, institution_id: input.institution_id, plan_id: input.plan_id, plan_name: plan?.name ?? input.plan_id, seats_total: input.seats_total, seats_used: 0, status: 'trial', starts_on: dateStr(0), expires_on: input.expires_on, price_per_seat_kobo: input.price_per_seat_kobo, created_at: new Date().toISOString() };
   }
-  return sendJson<Licence>('POST', '/admin/schools/licences', input);
+  // backend: POST /schools/admin/licences (schools.AdminIssueLicence).
+  return sendJson<Licence>('POST', '/admin/schools/admin/licences', input);
 }
 export async function manageLicence(input: LicenceManageInput): Promise<Licence> {
   if (USE_MOCK) {
@@ -917,15 +1012,27 @@ export async function manageLicence(input: LicenceManageInput): Promise<Licence>
     const seats = Math.max(input.seats_total ?? base.seats_total, base.seats_used);
     return { ...base, seats_total: seats };
   }
-  return sendJson<Licence>('PATCH', `/admin/schools/licences/${input.id}`, input);
+  // backend: licence lifecycle is split into discrete POST verbs, not a PATCH:
+  //   POST /schools/admin/licences/:id/suspend | /reactivate | /expire (schools handler).
+  // Map the action → verb for the two verbs the frontend exposes.
+  if (input.action === 'suspend' || input.action === 'reactivate') {
+    return sendJson<Licence>('POST', `/admin/schools/admin/licences/${input.id}/${input.action}`, input);
+  }
+  // TODO(no backend route): "set_seats" (licence seat-count change) has NO backend endpoint — the
+  // schools admin surface only supports suspend/reactivate/expire lifecycle transitions. Mock.
+  return sendJson<Licence>('POST', `/admin/schools/admin/licences/${input.id}/set-seats`, input);
 }
 export async function listClassGroups(): Promise<ClassGroup[]> {
   if (USE_MOCK) { await delay(); return CLASS_GROUPS.map((c) => ({ ...c })); }
+  // TODO(no backend route): class-groups are listed per-institution only
+  // (GET /schools/admin/institutions/:id/class-groups); there is no flat cross-institution
+  // class-groups list. This function takes no institution id, so no route matches. Mock.
   return getJson<ClassGroup[]>('/admin/schools/class-groups');
 }
 export async function createClassGroup(input: ClassGroupInput): Promise<ClassGroup> {
   if (USE_MOCK) { await delay(); return { id: `cg_${Date.now()}`, institution_id: input.institution_id, name: input.name, teacher: input.teacher, learners: 0, exam_focus: input.exam_focus, created_at: new Date().toISOString() }; }
-  return sendJson<ClassGroup>('POST', '/admin/schools/class-groups', input);
+  // backend: POST /schools/admin/class-groups (schools.AdminCreateClassGroup).
+  return sendJson<ClassGroup>('POST', '/admin/schools/admin/class-groups', input);
 }
 export async function bulkEnrol(input: BulkEnrolInput): Promise<BulkEnrolResult> {
   if (USE_MOCK) {
@@ -946,7 +1053,8 @@ export async function bulkEnrol(input: BulkEnrolInput): Promise<BulkEnrolResult>
       reason: rejectedIds.length ? (lic ? 'Seat cap reached — increase the licence seat count to enrol the rest.' : 'Licence not found.') : null,
     };
   }
-  return sendJson<BulkEnrolResult>('POST', '/admin/schools/enrolments/bulk', input);
+  // backend: POST /schools/admin/enrollments/bulk (US spelling "enrollments"; schools.AdminBulkEnroll).
+  return sendJson<BulkEnrolResult>('POST', '/admin/schools/admin/enrollments/bulk', input);
 }
 export async function getWhiteLabelConfig(institutionId: string): Promise<WhiteLabelConfig> {
   if (USE_MOCK) {
@@ -956,6 +1064,8 @@ export async function getWhiteLabelConfig(institutionId: string): Promise<WhiteL
     const inst = INSTITUTIONS.find((i) => i.id === institutionId);
     return { institution_id: institutionId, subdomain: '', brand_name: inst?.name ?? '', primary_color: '#340075', logo_url: '', custom_domain: null, support_email: inst?.contact_email ?? '', hide_spotlight_branding: false, updated_at: new Date().toISOString() };
   }
+  // TODO(no backend route): schools admin exposes no white-label config endpoints (GET or PUT).
+  // White-label branding is not yet wired on the backend. Mock.
   return getJson<WhiteLabelConfig>(`/admin/schools/${institutionId}/white-label`);
 }
 export async function saveWhiteLabelConfig(input: WhiteLabelConfigInput): Promise<WhiteLabelConfig> {
@@ -975,10 +1085,14 @@ export async function saveWhiteLabelConfig(input: WhiteLabelConfigInput): Promis
       updated_at: new Date().toISOString(),
     };
   }
+  // TODO(no backend route): no white-label save endpoint on schools admin. Mock.
   return sendJson<WhiteLabelConfig>('PUT', `/admin/schools/${input.institution_id}/white-label`, input);
 }
 export async function listInvoices(): Promise<Invoice[]> {
   if (USE_MOCK) { await delay(); return INVOICES.map((i) => ({ ...i })); }
+  // TODO(no backend route): schools admin has no GET billing/invoices list — only
+  // POST /schools/admin/billing and POST /schools/admin/billing/:id/charge. A list endpoint
+  // is needed. Mock.
   return getJson<Invoice[]>('/admin/schools/invoices');
 }
 export async function generateInvoice(input: InvoiceGenerateInput): Promise<Invoice> {
@@ -989,7 +1103,8 @@ export async function generateInvoice(input: InvoiceGenerateInput): Promise<Invo
     const amount = seats * (lic?.price_per_seat_kobo ?? 0);
     return { id: `inv_${Date.now()}`, institution_id: input.institution_id, period: input.period, seats_billed: seats, amount_kobo: amount, status: 'issued', issued_on: dateStr(0), due_on: dateStr(14), paid_on: null };
   }
-  return sendJson<Invoice>('POST', '/admin/schools/invoices/generate', input);
+  // backend: POST /schools/admin/billing (schools.AdminGenerateBilling) — "billing", not "invoices".
+  return sendJson<Invoice>('POST', '/admin/schools/admin/billing', input);
 }
 export async function chargeInvoice(input: InvoiceChargeInput): Promise<Invoice> {
   if (USE_MOCK) {
@@ -997,7 +1112,8 @@ export async function chargeInvoice(input: InvoiceChargeInput): Promise<Invoice>
     const base = INVOICES.find((i) => i.id === input.id) ?? INVOICES[0];
     return { ...base, status: 'paid', paid_on: dateStr(0) };
   }
-  return sendJson<Invoice>('POST', `/admin/schools/invoices/${input.id}/charge`, input);
+  // backend: POST /schools/admin/billing/:id/charge (schools.AdminChargeBilling).
+  return sendJson<Invoice>('POST', `/admin/schools/admin/billing/${input.id}/charge`, input);
 }
 
 // ════════════════════════ TUTOR & MARKETPLACE OPS ════════════════════════
@@ -1028,6 +1144,8 @@ const TUTOR_DISPUTES: TutorDispute[] = [
 
 export async function listTutors(): Promise<Tutor[]> {
   if (USE_MOCK) { await delay(); return TUTORS.map((t) => ({ ...t, subjects: [...t.subjects] })); }
+  // TODO(no backend route): tutor listing is a MEMBER route (GET /api/finance/academy/tutors);
+  // the tutor admin surface has no GET tutors list. Not reachable from the admin base. Mock.
   return getJson<Tutor[]>('/admin/tutors');
 }
 export async function vetTutor(input: TutorVetInput): Promise<Tutor> {
@@ -1037,14 +1155,22 @@ export async function vetTutor(input: TutorVetInput): Promise<Tutor> {
     const vetting: Tutor['vetting'] = input.action === 'verify' ? 'verified' : input.action === 'suspend' ? 'suspended' : input.action === 'reactivate' ? 'verified' : 'rejected';
     return { ...base, subjects: [...base.subjects], vetting, updated_at: new Date().toISOString() };
   }
-  return sendJson<Tutor>('POST', `/admin/tutors/${input.id}/vet`, input);
+  // backend: tutor vetting is split into POST /tutor/:id/verify and POST /tutor/:id/suspend
+  // (singular "tutor" segment; tutor.AdminVerify / AdminSuspend). Map action → verb; treat
+  // "reactivate" as a re-verify. NOTE(no backend route): "reject" has no endpoint — only
+  // verify/suspend exist — so a reject action falls through to /verify here (imperfect); a
+  // dedicated reject route is a backend follow-up.
+  const verb = input.action === 'suspend' ? 'suspend' : 'verify';
+  return sendJson<Tutor>('POST', `/admin/tutor/${input.id}/${verb}`, input);
 }
 export async function listTutorPayouts(): Promise<TutorPayout[]> {
   if (USE_MOCK) { await delay(); return TUTOR_PAYOUTS.map((p) => ({ ...p })); }
-  return getJson<TutorPayout[]>('/admin/tutors/payouts');
+  // backend: GET /tutor/payouts (singular "tutor"; tutor.AdminListPayouts).
+  return getJson<TutorPayout[]>('/admin/tutor/payouts');
 }
 export async function listTutorDisputes(): Promise<TutorDispute[]> {
   if (USE_MOCK) { await delay(); return TUTOR_DISPUTES.map((d) => ({ ...d })); }
+  // TODO(no backend route): the tutor package has no disputes endpoints (list or mutate). Mock.
   return getJson<TutorDispute[]>('/admin/tutors/disputes');
 }
 export async function noteTutorDispute(input: TutorDisputeNoteInput): Promise<TutorDispute> {
@@ -1053,6 +1179,7 @@ export async function noteTutorDispute(input: TutorDisputeNoteInput): Promise<Tu
     const base = TUTOR_DISPUTES.find((d) => d.id === input.id) ?? TUTOR_DISPUTES[0];
     return { ...base, status: input.status ?? base.status, note: input.note, updated_at: new Date().toISOString() };
   }
+  // TODO(no backend route): no tutor dispute route exists on the backend. Mock.
   return sendJson<TutorDispute>('PATCH', `/admin/tutors/disputes/${input.id}`, input);
 }
 
@@ -1107,10 +1234,12 @@ const BI_COHORTS: BiCohortRow[] = [
 
 export async function getBiDashboard(range: BiDateRange): Promise<BiDashboard> {
   if (USE_MOCK) { await delay(); return buildBiDashboard(range); }
+  // TODO(no backend route): no analytics/BI module on the backend (dashboard/cohorts/export). Mock.
   return getJson<BiDashboard>(`/admin/analytics/dashboard?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`);
 }
 export async function getBiCohorts(range: BiDateRange): Promise<BiCohortRow[]> {
   if (USE_MOCK) { await delay(); return BI_COHORTS.map((c) => ({ ...c, retention: [...c.retention] })); }
+  // TODO(no backend route): no analytics cohorts endpoint. Mock.
   return getJson<BiCohortRow[]>(`/admin/analytics/cohorts?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`);
 }
 export async function exportBi(input: BiExportInput): Promise<BiExportResult> {
@@ -1129,5 +1258,6 @@ export async function exportBi(input: BiExportInput): Promise<BiExportResult> {
     const csv = [header, ...rows.map((r) => `${r.label},${r.value}`)].join('\n');
     return { dataset: input.dataset, filename: `academy_${input.dataset}_${input.from}_${input.to}.csv`, csv, rows: rows.length };
   }
+  // TODO(no backend route): no analytics export endpoint. Mock.
   return sendJson<BiExportResult>('POST', '/admin/analytics/export', input);
 }

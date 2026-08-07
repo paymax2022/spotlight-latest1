@@ -65,6 +65,7 @@ func RegisterAcademyLive(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 
 	// ── Member ──
 	member.GET("/live/sessions", h.ListSessions)
+	member.GET("/live/sessions/:id", h.GetSession)
 	member.POST("/live/sessions/:id/join", h.JoinSession)
 	member.GET("/community/groups", h.ListGroups)
 	member.POST("/community/groups", h.CreateGroup)
@@ -74,6 +75,8 @@ func RegisterAcademyLive(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	member.POST("/moderation/report", h.ReportContent)
 
 	// ── Admin: live-session management (academy.live) ──
+	admin.GET("/live/sessions", guard("academy.live"), h.AdminListSessions)
+	admin.GET("/live/replays", guard("academy.live"), h.AdminListReplays)
 	admin.POST("/live/sessions", guard("academy.live"), h.AdminScheduleSession)
 	admin.POST("/live/sessions/:id/start", guard("academy.live"), h.AdminStartSession)
 	admin.POST("/live/sessions/:id/end", guard("academy.live"), h.AdminEndSession)
@@ -82,6 +85,8 @@ func RegisterAcademyLive(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	// ── Admin: moderation (academy.moderation) ──
 	admin.GET("/moderation/reports", guard("academy.moderation"), h.AdminListReports)
 	admin.POST("/moderation/reports/:id/decide", guard("academy.moderation"), h.AdminDecideReport)
+	admin.POST("/moderation/reports/:id/triage", guard("academy.moderation"), h.AdminTriageReport)
+	admin.POST("/moderation/reports/:id/escalate", guard("academy.moderation"), h.AdminEscalateReport)
 }
 
 // ── Member handlers ──────────────────────────────────────────────────────────
@@ -89,6 +94,17 @@ func RegisterAcademyLive(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 func (h *Handler) ListSessions(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	out, err := h.svc.ListSessions(c.Request.Context(), SessionFilter{View: c.Query("view"), Limit: limit})
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// GetSession returns a single live session by id (public catalog read; same
+// LiveSession shape as the ListSessions list item).
+func (h *Handler) GetSession(c *gin.Context) {
+	out, err := h.svc.GetSession(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -247,6 +263,28 @@ func (h *Handler) AdminCancelSession(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
+// AdminListSessions lists ALL live sessions regardless of state (admin-wide oversight).
+func (h *Handler) AdminListSessions(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	out, err := h.svc.ListAllSessions(c.Request.Context(), limit)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminListReplays lists ended sessions that have a stored replay reference.
+func (h *Handler) AdminListReplays(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	out, err := h.svc.ListReplays(c.Request.Context(), limit)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
 func (h *Handler) AdminListReports(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	out, err := h.svc.ListReports(c.Request.Context(), c.Query("state"), limit)
@@ -264,6 +302,26 @@ func (h *Handler) AdminDecideReport(c *gin.Context) {
 		return
 	}
 	out, err := h.svc.DecideReport(c.Request.Context(), uid(c), c.Param("id"), req.Action)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminTriageReport moves a report into triaged (guarded transition + audit; sibling of decide).
+func (h *Handler) AdminTriageReport(c *gin.Context) {
+	out, err := h.svc.TriageReport(c.Request.Context(), uid(c), c.Param("id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminEscalateReport moves a report into escalated (guarded transition + audit; sibling of decide).
+func (h *Handler) AdminEscalateReport(c *gin.Context) {
+	out, err := h.svc.EscalateReport(c.Request.Context(), uid(c), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return

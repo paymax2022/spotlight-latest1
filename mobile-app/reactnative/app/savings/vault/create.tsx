@@ -13,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import DisclosureBanner from '@/features/savings/components/DisclosureBanner';
 import { useCreateVault } from '@/features/savings/hooks';
 import { SavingsColors, NO_YIELD_DISCLOSURE, formatNaira } from '@/features/savings/constants/savings.constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 const EMOJIS = ['☔️', '🚗', '🏖️', '🎓', '🏠', '💍', '🎁', '💰'];
 
@@ -52,8 +53,8 @@ export default function CreateVault() {
         </View>
 
         <TextInputField label="Vault name" placeholder="e.g. New Car" value={name} onChangeText={setName} />
-        <TextInputField label="Target amount (optional)" placeholder="0" keyboardType="numeric" value={targetNaira} onChangeText={setTargetNaira} />
-        <TextInputField label="Initial deposit (optional)" placeholder="0" keyboardType="numeric" value={initialNaira} onChangeText={setInitialNaira} />
+        <TextInputField label="Target amount (optional)" placeholder="0" keyboardType="decimal-pad" maxLength={13} value={targetNaira} onChangeText={(t) => setTargetNaira(sanitizeMoneyInput(t))} />
+        <TextInputField label="Initial deposit (optional)" placeholder="0" keyboardType="decimal-pad" maxLength={13} value={initialNaira} onChangeText={(t) => setInitialNaira(sanitizeMoneyInput(t))} />
 
         <Text style={styles.label}>Savings type</Text>
         <View style={styles.typeRow}>

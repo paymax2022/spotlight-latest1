@@ -35,7 +35,6 @@ export function MarketplaceTabs({ active }: { active: string }) {
     { href: '/admin/marketplace/users', label: 'Users', key: 'users' },
     { href: '/admin/marketplace/fraud', label: 'Fraud', key: 'fraud' },
     { href: '/admin/marketplace/flags', label: 'Flags', key: 'flags' },
-    { href: '/admin/marketplace/orders-aging', label: 'Orders Aging', key: 'orders-aging' },
     { href: '/admin/marketplace/boosts', label: 'Boosts', key: 'boosts' },
     { href: '/admin/marketplace/pricing', label: 'Pricing', key: 'pricing' },
     { href: '/admin/marketplace/cms', label: 'CMS', key: 'cms' },

@@ -75,11 +75,11 @@ func (r *Repository) LatestByApplication(ctx context.Context, applicationID stri
 
 // QueueItem is an admin-queue row: the record joined to its application.
 type QueueItem struct {
-	Record        *VerificationRecord `json:"record"`
-	OwnerUserID   string              `json:"owner_user_id"`
-	DisplayName   string              `json:"display_name"`
-	ApplicationState string           `json:"application_state"`
-	IdentityFlag  bool                `json:"identity_flag"`
+	Record           *VerificationRecord `json:"record"`
+	OwnerUserID      string              `json:"owner_user_id"`
+	DisplayName      string              `json:"display_name"`
+	ApplicationState string              `json:"application_state"`
+	IdentityFlag     bool                `json:"identity_flag"`
 }
 
 // ListQueue returns verification records in a given status (default PENDING for

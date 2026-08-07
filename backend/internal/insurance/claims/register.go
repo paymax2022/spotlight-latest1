@@ -9,15 +9,15 @@ import (
 // guards; this keeps the package self-describing about its own surface.
 //
 //   - member (object-level authZ; claimant owns claim):
-//       POST   /claims                  (FNOL — Idempotency-Key REQUIRED)
-//       GET    /claims
-//       GET    /claims/:id
-//       POST   /claims/:id/evidence
-//       GET    /claims/:id/evidence
+//     POST   /claims                  (FNOL — Idempotency-Key REQUIRED)
+//     GET    /claims
+//     GET    /claims/:id
+//     POST   /claims/:id/evidence
+//     GET    /claims/:id/evidence
 //   - admin (per-route RBAC insurance.claim.*):
-//       GET    /claims                  (insurance.claim.view)
-//       GET    /claims/:id              (insurance.claim.view)
-//       POST   /claims/:id/decision     (insurance.claim.manage)
+//     GET    /claims                  (insurance.claim.view)
+//     GET    /claims/:id              (insurance.claim.view)
+//     POST   /claims/:id/decision     (insurance.claim.manage)
 func Register(member *gin.RouterGroup, admin *gin.RouterGroup, h *Handler, guard func(permission string) gin.HandlerFunc) {
 	// Member routes.
 	mc := member.Group("/claims")

@@ -128,6 +128,13 @@ const (
 	ReportPending   ReportState = "pending"
 	ReportActioned  ReportState = "actioned"
 	ReportDismissed ReportState = "dismissed"
+	// ReportTriaged / ReportEscalated are the intermediate moderation-workflow states
+	// reached via the triage / escalate transitions (siblings of decide). NOTE: the
+	// academy_moderation_reports.state CHECK currently permits only
+	// pending|actioned|dismissed — persisting these two requires an additive migration
+	// widening that CHECK (see academy_routes report / handler.go).
+	ReportTriaged   ReportState = "triaged"
+	ReportEscalated ReportState = "escalated"
 )
 
 // Moderation actions written to academy_moderation_reports.action.

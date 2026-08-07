@@ -12,8 +12,8 @@ import "spotlight/backend/internal/provider"
 var checkTransitions = map[provider.KycCheckStatus]map[provider.KycCheckStatus]bool{
 	provider.KycInitiated: {provider.KycPending: true, provider.KycPassed: true, provider.KycFailed: true, provider.KycReview: true},
 	provider.KycPending:   {provider.KycPassed: true, provider.KycFailed: true, provider.KycReview: true},
-	provider.KycPassed:    {}, // terminal
-	provider.KycFailed:    {}, // terminal
+	provider.KycPassed:    {},                                                   // terminal
+	provider.KycFailed:    {},                                                   // terminal
 	provider.KycReview:    {provider.KycPassed: true, provider.KycFailed: true}, // admin resolves a review
 }
 
@@ -27,12 +27,12 @@ func CanTransitionCheck(from, to provider.KycCheckStatus) bool {
 
 // sessionTransitions is the allowed session status graph.
 var sessionTransitions = map[SessionStatus]map[SessionStatus]bool{
-	SessUnverified:  {SessTierPending: true},
-	SessTierPending: {SessTierVerified: true, SessTierFailed: true, SessNeedsReview: true},
-	SessNeedsReview: {SessApproved: true, SessRejected: true, SessTierVerified: true, SessTierFailed: true},
-	SessTierFailed:  {SessTierPending: true}, // retry
-	SessRejected:    {SessTierPending: true}, // retry after rejection
-	SessTierVerified: {},                     // terminal (for this target tier)
+	SessUnverified:   {SessTierPending: true},
+	SessTierPending:  {SessTierVerified: true, SessTierFailed: true, SessNeedsReview: true},
+	SessNeedsReview:  {SessApproved: true, SessRejected: true, SessTierVerified: true, SessTierFailed: true},
+	SessTierFailed:   {SessTierPending: true}, // retry
+	SessRejected:     {SessTierPending: true}, // retry after rejection
+	SessTierVerified: {},                      // terminal (for this target tier)
 	SessApproved:     {},
 }
 

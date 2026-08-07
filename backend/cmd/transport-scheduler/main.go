@@ -2,15 +2,15 @@
 // Transport Trip Scheduling feature depends on:
 //
 //   - dispatch-due       every 60s: find `scheduled` bookings whose lead window
-//                        has arrived, flip to `dispatch_pending`, and materialize
-//                        the real trip/parcel/bus artifact via the existing
-//                        transport.Service (which escrows via `settlement` at
-//                        dispatch). Idempotent per booking (deterministic idem key
-//                        sched:<id>:dispatch).
+//     has arrived, flip to `dispatch_pending`, and materialize
+//     the real trip/parcel/bus artifact via the existing
+//     transport.Service (which escrows via `settlement` at
+//     dispatch). Idempotent per booking (deterministic idem key
+//     sched:<id>:dispatch).
 //   - reminders          every 60s: send idempotent 24h/1h pre-pickup reminders
-//                        (guarded by reminder_*_sent_at columns).
+//     (guarded by reminder_*_sent_at columns).
 //   - expire-stale       every 60s: safety-net expiry of past-due, never-dispatched
-//                        `scheduled` bookings.
+//     `scheduled` bookings.
 //
 // House pattern: ticker-goroutine-style runLoop per job, mirroring
 // backend/cmd/marketplace-cron/main.go — this repo has no pg_cron / asynq
@@ -30,6 +30,11 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	// Embed the IANA tz database so MaterializeBusDepartures can resolve
+	// "Africa/Lagos" even on a minimal/scratch container image without system
+	// tzdata (otherwise LoadLocation fails and departures fall back to UTC, 1h off).
+	_ "time/tzdata"
 
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/finance/ledger"
@@ -73,10 +78,10 @@ func main() {
 	// per-mode path the API uses; in production the maps provider should be wired
 	// identically to the API if scheduled fares must match live routing exactly.
 
-	log.Println("transport-scheduler: starting (dispatch-due / reminders / expire-stale every 60s)")
+	log.Println("transport-scheduler: starting (dispatch-due / reminders / expire-stale every 60s; materialize-departures every 6h)")
 
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 	go runLoop(ctx, &wg, "dispatch-due", 60*time.Second, func(c context.Context) {
 		dispatchDue(c, svc)
 	})
@@ -92,6 +97,17 @@ func main() {
 			log.Printf("transport-scheduler: expire-stale: %v", err)
 		} else if n > 0 {
 			log.Printf("transport-scheduler: expire-stale: expired %d", n)
+		}
+	})
+	// materialize-departures: project active recurring departure templates
+	// (ADR-020) forward into concrete bus_schedules over each template's rolling
+	// horizon. Idempotent via the partial unique index on (template_id,
+	// departure_time), so the 6h cadence never duplicates a departure.
+	go runLoop(ctx, &wg, "materialize-departures", 6*time.Hour, func(c context.Context) {
+		if n, err := svc.MaterializeBusDepartures(c, 14); err != nil {
+			log.Printf("transport-scheduler: materialize-departures: %v", err)
+		} else if n > 0 {
+			log.Printf("transport-scheduler: materialize-departures: created %d schedules", n)
 		}
 	})
 

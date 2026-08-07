@@ -52,11 +52,11 @@ func TestCanLicence_IllegalTransitions(t *testing.T) {
 // ── Fake store (in-memory seat accounting) ───────────────────────────────────────
 
 type fakeStore struct {
-	insts     map[string]*Institution
-	licences  map[string]*Licence // by institution id (single active licence per inst for tests)
-	enrolled  map[string]string   // "instID|learner" → state
-	billings  map[string]*Billing
-	auditCnt  int
+	insts    map[string]*Institution
+	licences map[string]*Licence // by institution id (single active licence per inst for tests)
+	enrolled map[string]string   // "instID|learner" → state
+	billings map[string]*Billing
+	auditCnt int
 }
 
 func newFakeStore() *fakeStore {

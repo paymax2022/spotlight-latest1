@@ -47,6 +47,17 @@ export function formatNaira(kobo: number, opts?: { decimals?: boolean }): string
   );
 }
 
+/**
+ * Compact ₦ for tight stat cells (e.g. hub "Total cover"), so a large sum like
+ * ₦11,500,000 renders as "₦11.5M" instead of truncating to "₦11,500…".
+ */
+export function formatNairaCompact(kobo: number): string {
+  const naira = (kobo ?? 0) / 100;
+  if (naira >= 1_000_000) return '₦' + (naira / 1_000_000).toFixed(naira % 1_000_000 === 0 ? 0 : 1) + 'M';
+  if (naira >= 10_000) return '₦' + (naira / 1_000).toFixed(naira % 1_000 === 0 ? 0 : 1) + 'k';
+  return '₦' + naira.toLocaleString('en-NG', { maximumFractionDigits: 0 });
+}
+
 /** Cadence → human suffix on a premium row (e.g. "₦1,200 / mo"). */
 export const CADENCE_SUFFIX: Record<string, string> = {
   'one-off': '',

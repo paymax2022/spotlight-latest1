@@ -17,8 +17,8 @@ type AIProvider interface {
 
 // Service manages AI customer care sessions and message routing.
 type Service struct {
-	db  *pgxpool.Pool
-	ai  AIProvider
+	db *pgxpool.Pool
+	ai AIProvider
 }
 
 func NewService(db *pgxpool.Pool, ai AIProvider) *Service {

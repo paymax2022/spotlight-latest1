@@ -24,16 +24,16 @@ import "time"
 type ProfileStatus string
 
 const (
-	ProfileNotStarted         ProfileStatus = "not_started"
-	ProfileStarted            ProfileStatus = "started"
-	ProfileKYCRequired        ProfileStatus = "kyc_required"
-	ProfileKYCPending         ProfileStatus = "kyc_pending"
-	ProfileKYCRejected        ProfileStatus = "kyc_rejected"
-	ProfileTermsRequired      ProfileStatus = "terms_required"
-	ProfileSuitabilityReq     ProfileStatus = "suitability_required"
-	ProfileApproved           ProfileStatus = "approved"
-	ProfileRestricted         ProfileStatus = "restricted"
-	ProfileSuspended          ProfileStatus = "suspended"
+	ProfileNotStarted     ProfileStatus = "not_started"
+	ProfileStarted        ProfileStatus = "started"
+	ProfileKYCRequired    ProfileStatus = "kyc_required"
+	ProfileKYCPending     ProfileStatus = "kyc_pending"
+	ProfileKYCRejected    ProfileStatus = "kyc_rejected"
+	ProfileTermsRequired  ProfileStatus = "terms_required"
+	ProfileSuitabilityReq ProfileStatus = "suitability_required"
+	ProfileApproved       ProfileStatus = "approved"
+	ProfileRestricted     ProfileStatus = "restricted"
+	ProfileSuspended      ProfileStatus = "suspended"
 )
 
 // RiskCategory drives product eligibility (compliance.md).
@@ -63,45 +63,45 @@ const (
 type OrderStatus string
 
 const (
-	StatusDraft               OrderStatus = "Draft"
-	StatusPendingReview       OrderStatus = "PendingReview"
-	StatusAwaitingConfirm     OrderStatus = "AwaitingConfirmation"
-	StatusCashLocked          OrderStatus = "CashLocked"
-	StatusSubmitted           OrderStatus = "Submitted"
-	StatusAccepted            OrderStatus = "Accepted"
-	StatusPartiallyFilled     OrderStatus = "PartiallyFilled"
-	StatusFilled              OrderStatus = "Filled"
-	StatusPendingSettlement   OrderStatus = "PendingSettlement"
-	StatusSettled             OrderStatus = "Settled"
-	StatusCancelRequested     OrderStatus = "CancelRequested"
-	StatusCancelled           OrderStatus = "Cancelled"
-	StatusRejected            OrderStatus = "Rejected"
-	StatusFailed              OrderStatus = "Failed"
-	StatusReversalPending     OrderStatus = "ReversalPending"
-	StatusReversed            OrderStatus = "Reversed"
-	StatusComplianceHold      OrderStatus = "ComplianceHold"
+	StatusDraft             OrderStatus = "Draft"
+	StatusPendingReview     OrderStatus = "PendingReview"
+	StatusAwaitingConfirm   OrderStatus = "AwaitingConfirmation"
+	StatusCashLocked        OrderStatus = "CashLocked"
+	StatusSubmitted         OrderStatus = "Submitted"
+	StatusAccepted          OrderStatus = "Accepted"
+	StatusPartiallyFilled   OrderStatus = "PartiallyFilled"
+	StatusFilled            OrderStatus = "Filled"
+	StatusPendingSettlement OrderStatus = "PendingSettlement"
+	StatusSettled           OrderStatus = "Settled"
+	StatusCancelRequested   OrderStatus = "CancelRequested"
+	StatusCancelled         OrderStatus = "Cancelled"
+	StatusRejected          OrderStatus = "Rejected"
+	StatusFailed            OrderStatus = "Failed"
+	StatusReversalPending   OrderStatus = "ReversalPending"
+	StatusReversed          OrderStatus = "Reversed"
+	StatusComplianceHold    OrderStatus = "ComplianceHold"
 )
 
 // orderTransitions defines the only legal status transitions. Any move not in
 // this table is rejected by the service — the state machine is fail-closed.
 var orderTransitions = map[OrderStatus]map[OrderStatus]bool{
-	StatusDraft:           {StatusPendingReview: true, StatusCancelled: true},
-	StatusPendingReview:   {StatusAwaitingConfirm: true, StatusRejected: true, StatusComplianceHold: true},
-	StatusAwaitingConfirm: {StatusCashLocked: true, StatusCancelled: true, StatusRejected: true},
-	StatusCashLocked:      {StatusSubmitted: true, StatusFailed: true, StatusCancelled: true},
-	StatusSubmitted:       {StatusAccepted: true, StatusRejected: true, StatusFailed: true, StatusCancelRequested: true},
-	StatusAccepted:        {StatusPartiallyFilled: true, StatusFilled: true, StatusRejected: true, StatusFailed: true, StatusCancelRequested: true},
-	StatusPartiallyFilled: {StatusFilled: true, StatusPendingSettlement: true, StatusFailed: true, StatusCancelRequested: true},
-	StatusFilled:          {StatusPendingSettlement: true},
+	StatusDraft:             {StatusPendingReview: true, StatusCancelled: true},
+	StatusPendingReview:     {StatusAwaitingConfirm: true, StatusRejected: true, StatusComplianceHold: true},
+	StatusAwaitingConfirm:   {StatusCashLocked: true, StatusCancelled: true, StatusRejected: true},
+	StatusCashLocked:        {StatusSubmitted: true, StatusFailed: true, StatusCancelled: true},
+	StatusSubmitted:         {StatusAccepted: true, StatusRejected: true, StatusFailed: true, StatusCancelRequested: true},
+	StatusAccepted:          {StatusPartiallyFilled: true, StatusFilled: true, StatusRejected: true, StatusFailed: true, StatusCancelRequested: true},
+	StatusPartiallyFilled:   {StatusFilled: true, StatusPendingSettlement: true, StatusFailed: true, StatusCancelRequested: true},
+	StatusFilled:            {StatusPendingSettlement: true},
 	StatusPendingSettlement: {StatusSettled: true, StatusReversalPending: true},
-	StatusSettled:         {},
-	StatusCancelRequested: {StatusCancelled: true, StatusFilled: true, StatusPartiallyFilled: true},
-	StatusCancelled:       {},
-	StatusRejected:        {},
-	StatusFailed:          {StatusReversalPending: true},
-	StatusReversalPending: {StatusReversed: true},
-	StatusReversed:        {},
-	StatusComplianceHold:  {StatusAwaitingConfirm: true, StatusRejected: true, StatusCancelled: true},
+	StatusSettled:           {},
+	StatusCancelRequested:   {StatusCancelled: true, StatusFilled: true, StatusPartiallyFilled: true},
+	StatusCancelled:         {},
+	StatusRejected:          {},
+	StatusFailed:            {StatusReversalPending: true},
+	StatusReversalPending:   {StatusReversed: true},
+	StatusReversed:          {},
+	StatusComplianceHold:    {StatusAwaitingConfirm: true, StatusRejected: true, StatusCancelled: true},
 }
 
 // CanTransition reports whether moving from→to is a legal order transition.
@@ -157,26 +157,26 @@ type Account struct {
 }
 
 type StockAsset struct {
-	ID                 string `json:"id"`
-	Symbol             string `json:"symbol"`
-	Name               string `json:"name"`
-	Exchange           string `json:"exchange"`
-	Sector             string `json:"sector"`
-	Board              string `json:"board"`
-	ISIN               string `json:"isin"`
-	AssetClass         string `json:"asset_class"`
-	Status             string `json:"status"`
-	BuyEnabled         bool   `json:"buy_enabled"`
-	SellEnabled        bool   `json:"sell_enabled"`
-	RiskRating         string `json:"risk_rating"`
-	MinimumOrderAmount int64  `json:"minimum_order_amount"` // kobo
-	MaximumOrderAmount int64  `json:"maximum_order_amount"` // kobo; 0 = uncapped
-	KYCTierRequired    int    `json:"kyc_tier_required"`
+	ID                  string `json:"id"`
+	Symbol              string `json:"symbol"`
+	Name                string `json:"name"`
+	Exchange            string `json:"exchange"`
+	Sector              string `json:"sector"`
+	Board               string `json:"board"`
+	ISIN                string `json:"isin"`
+	AssetClass          string `json:"asset_class"`
+	Status              string `json:"status"`
+	BuyEnabled          bool   `json:"buy_enabled"`
+	SellEnabled         bool   `json:"sell_enabled"`
+	RiskRating          string `json:"risk_rating"`
+	MinimumOrderAmount  int64  `json:"minimum_order_amount"` // kobo
+	MaximumOrderAmount  int64  `json:"maximum_order_amount"` // kobo; 0 = uncapped
+	KYCTierRequired     int    `json:"kyc_tier_required"`
 	CountryAvailability string `json:"country_availability"`
-	ProviderSymbol     string `json:"provider_symbol"`
-	LogoURL            string `json:"logo_url"`
-	Description        string `json:"description"`
-	SettlementDays     int    `json:"settlement_days"`
+	ProviderSymbol      string `json:"provider_symbol"`
+	LogoURL             string `json:"logo_url"`
+	Description         string `json:"description"`
+	SettlementDays      int    `json:"settlement_days"`
 }
 
 // StockWithQuote enriches a StockAsset with live (mock) market data.
@@ -219,29 +219,29 @@ type Order struct {
 }
 
 type Position struct {
-	ID               string    `json:"id"`
-	UserID           string    `json:"user_id"`
-	StockAssetID     string    `json:"stock_asset_id"`
-	Symbol           string    `json:"symbol"`
-	Quantity         float64   `json:"quantity"`
-	LockedQuantity   float64   `json:"locked_quantity"`
-	AvailableQty     float64   `json:"available_quantity"`
-	AverageCostKobo  int64     `json:"average_cost_kobo"`
-	RealizedGainKobo int64     `json:"realized_gain_kobo"`
+	ID               string  `json:"id"`
+	UserID           string  `json:"user_id"`
+	StockAssetID     string  `json:"stock_asset_id"`
+	Symbol           string  `json:"symbol"`
+	Quantity         float64 `json:"quantity"`
+	LockedQuantity   float64 `json:"locked_quantity"`
+	AvailableQty     float64 `json:"available_quantity"`
+	AverageCostKobo  int64   `json:"average_cost_kobo"`
+	RealizedGainKobo int64   `json:"realized_gain_kobo"`
 	// Derived (filled by service using market data):
-	CurrentPriceKobo   int64   `json:"current_price_kobo"`
-	MarketValueKobo    int64   `json:"market_value_kobo"`
-	UnrealizedGainKobo int64   `json:"unrealized_gain_kobo"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	CurrentPriceKobo   int64     `json:"current_price_kobo"`
+	MarketValueKobo    int64     `json:"market_value_kobo"`
+	UnrealizedGainKobo int64     `json:"unrealized_gain_kobo"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 type Watchlist struct {
-	ID        string         `json:"id"`
-	UserID    string         `json:"user_id"`
-	Name      string         `json:"name"`
-	IsDefault bool           `json:"is_default"`
+	ID        string          `json:"id"`
+	UserID    string          `json:"user_id"`
+	Name      string          `json:"name"`
+	IsDefault bool            `json:"is_default"`
 	Items     []WatchlistItem `json:"items,omitempty"`
-	CreatedAt time.Time      `json:"created_at"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
 type WatchlistItem struct {
@@ -252,15 +252,15 @@ type WatchlistItem struct {
 }
 
 type PriceAlert struct {
-	ID             string     `json:"id"`
-	UserID         string     `json:"user_id"`
-	StockAssetID   string     `json:"stock_asset_id"`
-	Symbol         string     `json:"symbol"`
-	Condition      string     `json:"condition"`
-	TargetPriceKobo int64     `json:"target_price_kobo"`
-	Status         string     `json:"status"`
-	TriggeredAt    *time.Time `json:"triggered_at,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
+	ID              string     `json:"id"`
+	UserID          string     `json:"user_id"`
+	StockAssetID    string     `json:"stock_asset_id"`
+	Symbol          string     `json:"symbol"`
+	Condition       string     `json:"condition"`
+	TargetPriceKobo int64      `json:"target_price_kobo"`
+	Status          string     `json:"status"`
+	TriggeredAt     *time.Time `json:"triggered_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
 }
 
 type Dividend struct {
@@ -291,15 +291,15 @@ type CorporateAction struct {
 }
 
 type PublicOffer struct {
-	ID                  string  `json:"id"`
-	IssuerName          string  `json:"issuer_name"`
-	Symbol              string  `json:"symbol"`
-	OfferPriceKobo      int64   `json:"offer_price_kobo"`
-	MinimumSubKobo      int64   `json:"minimum_subscription_kobo"`
-	OpeningDate         *string `json:"opening_date,omitempty"`
-	ClosingDate         *string `json:"closing_date,omitempty"`
-	ProspectusURL       string  `json:"prospectus_url,omitempty"`
-	Status              string  `json:"status"`
+	ID             string  `json:"id"`
+	IssuerName     string  `json:"issuer_name"`
+	Symbol         string  `json:"symbol"`
+	OfferPriceKobo int64   `json:"offer_price_kobo"`
+	MinimumSubKobo int64   `json:"minimum_subscription_kobo"`
+	OpeningDate    *string `json:"opening_date,omitempty"`
+	ClosingDate    *string `json:"closing_date,omitempty"`
+	ProspectusURL  string  `json:"prospectus_url,omitempty"`
+	Status         string  `json:"status"`
 }
 
 type PublicOfferApplication struct {
@@ -314,15 +314,15 @@ type PublicOfferApplication struct {
 }
 
 type RightsIssue struct {
-	ID               string  `json:"id"`
-	IssuerName       string  `json:"issuer_name"`
-	Symbol           string  `json:"symbol"`
-	Ratio            string  `json:"ratio"`
-	OfferPriceKobo   int64   `json:"offer_price_kobo"`
+	ID                string  `json:"id"`
+	IssuerName        string  `json:"issuer_name"`
+	Symbol            string  `json:"symbol"`
+	Ratio             string  `json:"ratio"`
+	OfferPriceKobo    int64   `json:"offer_price_kobo"`
 	QualificationDate *string `json:"qualification_date,omitempty"`
-	OpeningDate      *string `json:"opening_date,omitempty"`
-	ClosingDate      *string `json:"closing_date,omitempty"`
-	Status           string  `json:"status"`
+	OpeningDate       *string `json:"opening_date,omitempty"`
+	ClosingDate       *string `json:"closing_date,omitempty"`
+	Status            string  `json:"status"`
 }
 
 type RightsIssueApplication struct {
@@ -346,13 +346,13 @@ type Agreement struct {
 
 // WalletView is the projected investment-wallet snapshot (data-model.md balances).
 type WalletView struct {
-	Currency               string `json:"currency"`
-	AvailableCashKobo      int64  `json:"available_cash_kobo"`
-	LockedCashKobo         int64  `json:"locked_cash_kobo"`
-	PendingSettlementKobo  int64  `json:"pending_settlement_kobo"`
-	InvestedValueKobo      int64  `json:"invested_value_kobo"`
-	TotalPortfolioKobo     int64  `json:"total_portfolio_value_kobo"`
-	WithdrawableCashKobo   int64  `json:"withdrawable_cash_kobo"`
+	Currency              string `json:"currency"`
+	AvailableCashKobo     int64  `json:"available_cash_kobo"`
+	LockedCashKobo        int64  `json:"locked_cash_kobo"`
+	PendingSettlementKobo int64  `json:"pending_settlement_kobo"`
+	InvestedValueKobo     int64  `json:"invested_value_kobo"`
+	TotalPortfolioKobo    int64  `json:"total_portfolio_value_kobo"`
+	WithdrawableCashKobo  int64  `json:"withdrawable_cash_kobo"`
 }
 
 // PortfolioView aggregates holdings + cash for the invest home / portfolio tab.
@@ -401,9 +401,9 @@ func (f FeeSchedule) FeeFor(notionalKobo int64) int64 {
 type BuyOrderRequest struct {
 	Symbol         string    `json:"symbol" binding:"required"`
 	OrderType      OrderType `json:"order_type"`
-	AmountKobo     int64     `json:"amount_kobo"`     // buy-by-amount (preferred for beginners)
-	Quantity       float64   `json:"quantity"`        // buy-by-quantity (optional)
-	LimitPriceKobo int64     `json:"limit_price_kobo"` // required for limit orders
+	AmountKobo     int64     `json:"amount_kobo"`            // buy-by-amount (preferred for beginners)
+	Quantity       float64   `json:"quantity"`               // buy-by-quantity (optional)
+	LimitPriceKobo int64     `json:"limit_price_kobo"`       // required for limit orders
 	PIN            string    `json:"pin" binding:"required"` // confirmation factor
 }
 
@@ -433,7 +433,7 @@ type SuitabilitySubmitRequest struct {
 // Receipt is returned after an order is confirmed (every trade-confirmation
 // screen must show estimate, fees, total, settlement timeline).
 type Receipt struct {
-	Order           Order  `json:"order"`
-	RiskDisclosure  string `json:"risk_disclosure"`
-	SettlementNote  string `json:"settlement_note"`
+	Order          Order  `json:"order"`
+	RiskDisclosure string `json:"risk_disclosure"`
+	SettlementNote string `json:"settlement_note"`
 }

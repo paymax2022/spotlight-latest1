@@ -21,6 +21,7 @@ import {
   CARD_BRANDS, CARD_COLOR_OPTIONS, CARD_GRADIENTS, CARD_CURRENCIES, CARD_FUND_PRESETS,
 } from '@/features/fx/constants/fx.constants';
 import { formatMoney, parseToMinor, minorToInput } from '@/features/fx/utils/fxFormatters';
+import { sanitizeMoneyInput } from '@/utils/money';
 import type { CardBrand, CardColor, CurrencyCode, Card } from '@/features/fx/types/fx.types';
 
 export default function CreateCardScreen() {
@@ -97,10 +98,12 @@ export default function CreateCardScreen() {
             <TextInput
               style={styles.amountInput}
               value={fundInput}
-              onChangeText={setFundInput}
+              onChangeText={(v) => setFundInput(sanitizeMoneyInput(v))}
               placeholder="0.00"
               placeholderTextColor={Colors.outline}
               keyboardType="decimal-pad"
+              inputMode="decimal"
+              maxLength={13}
               accessibilityLabel="Initial funding amount"
             />
           </View>

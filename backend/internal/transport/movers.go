@@ -22,11 +22,11 @@ import (
 // Provider starts → in_progress. Customer confirms completion → settle provider.
 
 var moverTransitions = map[string]map[string]bool{
-	"quote_requested":      {"bids_received": true, "bid_accepted": true, "cancelled": true},
-	"bids_received":        {"bid_accepted": true, "cancelled": true},
-	"bid_accepted":         {"crew_assigned": true, "in_progress": true, "cancelled": true, "disputed": true},
-	"crew_assigned":        {"in_progress": true, "cancelled": true, "disputed": true},
-	"in_progress":          {"completion_confirmed": true, "disputed": true},
+	"quote_requested": {"bids_received": true, "bid_accepted": true, "cancelled": true},
+	"bids_received":   {"bid_accepted": true, "cancelled": true},
+	"bid_accepted":    {"crew_assigned": true, "in_progress": true, "cancelled": true, "disputed": true},
+	"crew_assigned":   {"in_progress": true, "cancelled": true, "disputed": true},
+	"in_progress":     {"completion_confirmed": true, "disputed": true},
 }
 
 func canTransitionMover(from, to string) bool {

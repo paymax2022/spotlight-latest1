@@ -24,9 +24,9 @@ type Animation struct {
 // ledger when this row is written; the row is the idempotent audit projection.
 type Spray struct {
 	ID             string    `json:"id"`
-	FromUserID     string    `json:"from_user_id"`      // FK auth.users(id)
-	ToUserID       string    `json:"to_user_id"`        // FK auth.users(id)
-	ContextRef     string    `json:"context_ref"`       // live id / event id / creator id
+	FromUserID     string    `json:"from_user_id"` // FK auth.users(id)
+	ToUserID       string    `json:"to_user_id"`   // FK auth.users(id)
+	ContextRef     string    `json:"context_ref"`  // live id / event id / creator id
 	AmountKobo     int64     `json:"amount_kobo"`
 	IdempotencyKey string    `json:"idempotency_key"`
 	Animation      Animation `json:"animation"`

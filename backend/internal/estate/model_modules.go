@@ -124,16 +124,16 @@ type UpdateTaskStatusRequest struct {
 
 // RepairRequest is a maintenance ticket raised by a resident.
 type RepairRequest struct {
-	ID               string  `json:"id"`
-	EstateID         string  `json:"estate_id"`
-	PropertyID       *string `json:"property_id,omitempty"`
-	ReporterID       string  `json:"reporter_id"`
-	Category         string  `json:"category"`
-	Description      string  `json:"description"`
-	Urgency          string  `json:"urgency"`
-	Status           string  `json:"status"`
-	VendorID         *string `json:"vendor_id,omitempty"`
-	CostEstimateKobo *int64  `json:"cost_estimate_kobo,omitempty"`
+	ID               string    `json:"id"`
+	EstateID         string    `json:"estate_id"`
+	PropertyID       *string   `json:"property_id,omitempty"`
+	ReporterID       string    `json:"reporter_id"`
+	Category         string    `json:"category"`
+	Description      string    `json:"description"`
+	Urgency          string    `json:"urgency"`
+	Status           string    `json:"status"`
+	VendorID         *string   `json:"vendor_id,omitempty"`
+	CostEstimateKobo *int64    `json:"cost_estimate_kobo,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 }
 
@@ -327,7 +327,7 @@ type FinanceDashboard struct {
 // Notification (Block 43) is a unified feed item for a resident.
 type Notification struct {
 	ID        string    `json:"id"`
-	Kind      string    `json:"kind"`  // announcement|emergency|dues|repair
+	Kind      string    `json:"kind"` // announcement|emergency|dues|repair
 	Title     string    `json:"title"`
 	Body      string    `json:"body,omitempty"`
 	CreatedAt time.Time `json:"created_at"`

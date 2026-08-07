@@ -4,16 +4,16 @@ import "time"
 
 // Campaign is a fundraising campaign with a goal amount and deadline.
 type Campaign struct {
-	ID           string    `json:"id"`
-	CreatorID    string    `json:"creator_id"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description,omitempty"`
-	GoalKobo     int64     `json:"goal_kobo"`
-	RaisedKobo   int64     `json:"raised_kobo"`
-	Status       string    `json:"status"` // draft | active | funded | failed | cancelled
-	Deadline     time.Time `json:"deadline"`
-	CoverURL     *string   `json:"cover_url,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID          string    `json:"id"`
+	CreatorID   string    `json:"creator_id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description,omitempty"`
+	GoalKobo    int64     `json:"goal_kobo"`
+	RaisedKobo  int64     `json:"raised_kobo"`
+	Status      string    `json:"status"` // draft | active | funded | failed | cancelled
+	Deadline    time.Time `json:"deadline"`
+	CoverURL    *string   `json:"cover_url,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Contribution is a single pledge to a campaign.

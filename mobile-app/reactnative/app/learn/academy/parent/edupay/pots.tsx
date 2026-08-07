@@ -15,6 +15,7 @@ import StateView from '@/components/StateView';
 import ProgressBar from '@/features/academy/components/ProgressBar';
 import { usePots, useCreatePot, useFundPot, usePayFromPot, useFeeSchedules, useWallet } from '@/features/academy/hooks';
 import { formatNaira } from '@/features/academy/constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 import type { SavingsPot } from '@/features/academy/types';
 
 const FUND_PRESETS = [500000, 1000000, 2500000, 5000000]; // kobo
@@ -69,7 +70,7 @@ export default function PotsScreen() {
           <View style={[styles.createCard, shadow1]}>
             <Text style={styles.createTitle}>New savings pot</Text>
             <TextInputField label="Pot name" placeholder="e.g. SSS3 fees" value={name} onChangeText={setName} />
-            <TextInputField label="Target amount (₦)" placeholder="13000" value={target} onChangeText={setTarget} keyboardType="numeric" />
+            <TextInputField label="Target amount (₦)" placeholder="13000" value={target} onChangeText={(v) => setTarget(sanitizeMoneyInput(v))} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} />
             <Text style={styles.fieldLabel}>Earmark for a fee schedule (optional)</Text>
             <View style={styles.chipRow}>
               {fees.data?.map((f) => (

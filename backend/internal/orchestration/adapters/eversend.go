@@ -17,8 +17,8 @@ import (
 // Eversend favours wholesale FX and USD/EUR inbound (spec §3). Tighter spreads,
 // strong East/pan-African MoMo & bank corridors, USD/EUR IBANs (ACH/SEPA).
 type Eversend struct {
-	prod      bool
-	feeBPS    int
+	prod        bool
+	feeBPS      int
 	reliability float64
 }
 

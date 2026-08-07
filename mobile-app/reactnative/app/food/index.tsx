@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Icons from 'lucide-react-native';
 import SearchBar from '@/components/SearchBar';
@@ -26,6 +26,32 @@ const CUISINE_FILTERS = [
   { key: 'healthy', label: 'Healthy' },
 ] as const;
 type Cuisine = (typeof CUISINE_FILTERS)[number]['key'];
+
+/**
+ * Browse views reachable from the "Browse" tiles on /services/food, passed in as
+ * ?view=. Each one re-orders or narrows the same restaurant list — they are not
+ * separate screens, so the cuisine chips and search keep working on top of them.
+ */
+const BROWSE_VIEWS = {
+  nearby:  { label: 'Nearby',  icon: 'MapPin' },
+  popular: { label: 'Popular', icon: 'Flame' },
+  offers:  { label: 'Offers',  icon: 'Tag' },
+} as const;
+type BrowseView = keyof typeof BROWSE_VIEWS;
+
+function asBrowseView(v: unknown): BrowseView | null {
+  return typeof v === 'string' && v in BROWSE_VIEWS ? (v as BrowseView) : null;
+}
+
+/**
+ * Lower bound of an ETA label ("20–30 min" → 20) for the Nearby sort. There is
+ * no distance on Restaurant, and ETA is what the cards already show, so sorting
+ * by it is the honest proxy for "closest to you". Unparseable labels sort last.
+ */
+function etaMinutes(label: string): number {
+  const m = label.match(/\d+/);
+  return m ? Number(m[0]) : Number.MAX_SAFE_INTEGER;
+}
 
 function StarRow({ rating }: { rating: number }) {
   return (
@@ -111,22 +137,43 @@ const rc = StyleSheet.create({
 });
 
 export default function FoodDiscoveryScreen() {
+  const params = useLocalSearchParams<{ view?: string }>();
   const [cuisine, setCuisine] = useState<Cuisine>('all');
   const [search, setSearch] = useState('');
+  const [view, setView] = useState<BrowseView | null>(() => asBrowseView(params.view));
   const { data, isLoading, isError, refetch } = useRestaurants();
   const cartPackages = useCartStore((s) => s.packages);
   const cartCount = cartItemCount(cartPackages);
 
+  // Expo Router can hand this screen a new ?view= without remounting it (e.g.
+  // navigating Browse → Nearby, back, then Browse → Offers), so mirror the param
+  // instead of only seeding state on mount.
+  useEffect(() => {
+    setView(asBrowseView(params.view));
+  }, [params.view]);
+
   const filtered = useMemo(() => {
-    const list = data ?? [];
-    return list.filter((r) => {
+    const list = (data ?? []).filter((r) => {
       const matchesCuisine = cuisine === 'all' || r.cuisine === cuisine;
       const q = search.toLowerCase();
       const matchesSearch =
         !search || r.name.toLowerCase().includes(q) || r.tags.some((t) => t.toLowerCase().includes(q));
-      return matchesCuisine && matchesSearch;
+      const matchesView = view !== 'offers' || Boolean(r.promo);
+      return matchesCuisine && matchesSearch && matchesView;
     });
-  }, [data, cuisine, search]);
+
+    // Open restaurants always outrank closed ones; the view decides the rest.
+    const byView =
+      view === 'nearby'
+        ? (a: Restaurant, b: Restaurant) => etaMinutes(a.etaLabel) - etaMinutes(b.etaLabel)
+        : view === 'popular'
+          ? (a: Restaurant, b: Restaurant) => b.rating - a.rating || (b.ratingCount ?? 0) - (a.ratingCount ?? 0)
+          : null;
+    if (!byView) return list;
+    return [...list].sort((a, b) => Number(b.isOpen) - Number(a.isOpen) || byView(a, b));
+  }, [data, cuisine, search, view]);
+
+  const viewMeta = view ? BROWSE_VIEWS[view] : null;
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
@@ -154,6 +201,22 @@ export default function FoodDiscoveryScreen() {
 
         <SearchBar value={search} onChangeText={setSearch} placeholder="Search restaurant or dish…" />
 
+        {/* Active browse view (arrived via ?view=), clearable back to the full list */}
+        {viewMeta ? (
+          <View style={s.viewPillRow}>
+            <Pressable
+              onPress={() => setView(null)}
+              style={({ pressed }) => [s.viewPill, pressed && { opacity: 0.85 }]}
+              accessibilityRole="button"
+              accessibilityLabel={`Clear ${viewMeta.label} filter`}
+            >
+              <DynamicIcon name={viewMeta.icon} color={Colors.white} size={14} />
+              <Text style={s.viewPillLabel}>{viewMeta.label}</Text>
+              <Icons.X size={14} color={Colors.white} strokeWidth={2.4} />
+            </Pressable>
+          </View>
+        ) : null}
+
         {/* Role entry points (rider / restaurant) */}
         <View style={s.roleRow}>
           <Pressable style={({ pressed }) => [s.roleCard, shadow1, pressed && { opacity: 0.85 }]} onPress={() => router.push('/food/rider')}>
@@ -175,7 +238,13 @@ export default function FoodDiscoveryScreen() {
         </ScrollView>
 
         <View style={s.sectionHeader}>
-          <Text style={s.sectionTitle}>{cuisine === 'all' ? 'All Restaurants' : CUISINE_FILTERS.find((f) => f.key === cuisine)?.label}</Text>
+          <Text style={s.sectionTitle}>
+            {viewMeta
+              ? viewMeta.label
+              : cuisine === 'all'
+                ? 'All Restaurants'
+                : CUISINE_FILTERS.find((f) => f.key === cuisine)?.label}
+          </Text>
           {!isLoading && !isError ? <Text style={s.sectionMeta}>{filtered.filter((r) => r.isOpen).length} open</Text> : null}
         </View>
 
@@ -185,7 +254,20 @@ export default function FoodDiscoveryScreen() {
           ) : isError ? (
             <StateView kind="error" title="Couldn't load restaurants" message="Check your connection and try again." actionLabel="Retry" onAction={() => refetch()} />
           ) : filtered.length === 0 ? (
-            <StateView kind="empty" icon="SearchX" title="No restaurants found" message={search ? `Nothing matches "${search}".` : 'Try a different cuisine filter.'} />
+            <StateView
+              kind="empty"
+              icon="SearchX"
+              title="No restaurants found"
+              message={
+                search
+                  ? `Nothing matches "${search}".`
+                  : view === 'offers'
+                    ? 'No restaurants are running offers right now.'
+                    : 'Try a different cuisine filter.'
+              }
+              actionLabel={viewMeta ? `Show all restaurants` : undefined}
+              onAction={viewMeta ? () => setView(null) : undefined}
+            />
           ) : (
             filtered.map((item) => (
               <RestaurantCard key={item.id} item={item} onPress={() => router.push(`/food/restaurant/${item.id}`)} />
@@ -225,6 +307,17 @@ const s = StyleSheet.create({
   heroEyebrow: { ...Typography.labelSm, color: 'rgba(255,255,255,0.85)' },
   heroTitle: { ...Typography.headlineLgMobile, color: Colors.white, marginTop: Spacing.xs },
   heroSubtitle: { ...Typography.bodySm, color: 'rgba(255,255,255,0.85)', marginTop: Spacing.xs },
+  viewPillRow: { flexDirection: 'row', paddingHorizontal: Spacing.containerMargin, marginTop: Spacing.md },
+  viewPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#EF4444',
+    borderRadius: Radius.full,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+  },
+  viewPillLabel: { ...Typography.labelMd, color: Colors.white },
   roleRow: { flexDirection: 'row', gap: Spacing.sm, paddingHorizontal: Spacing.containerMargin, marginTop: Spacing.lg },
   roleCard: {
     flex: 1,

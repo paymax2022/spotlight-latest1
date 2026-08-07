@@ -277,6 +277,17 @@ export default function ArenaQuizBankPage() {
                       {open && (
                         <tr>
                           <td style={{ ...td(), background: '#fafafa' }} colSpan={6}>
+                            {q.imageUrl ? (
+                              <div style={{ marginBottom: '0.75rem' }}>
+                                <div style={{ fontSize: '0.72rem', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: 4 }}>Illustration</div>
+                                {q.imageUrl.startsWith('sign:') ? (
+                                  <Pill fg="#1d4ed8" bg="#dbeafe">Sign: {q.imageUrl.slice('sign:'.length)}</Pill>
+                                ) : (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={q.imageUrl} alt="Question illustration" style={{ maxWidth: 220, maxHeight: 160, borderRadius: '0.5rem', border: '1px solid #e5e7eb', objectFit: 'contain', background: '#fff' }} />
+                                )}
+                              </div>
+                            ) : null}
                             <div style={{ display: 'grid', gap: 6, marginBottom: '0.75rem' }}>
                               {q.options.map((opt, i) => {
                                 const correct = i === q.correctIndex;

@@ -54,7 +54,7 @@ func (f *fakeMDCNStore) GetVerificationOwner(_ context.Context, id string) (stri
 	}
 	return o, f.status[id], nil
 }
-func (f *fakeMDCNStore) DecideMDCN(_ context.Context, id, from, to, _ , _ string, _ *time.Time, _ *string, _ *string) (bool, error) {
+func (f *fakeMDCNStore) DecideMDCN(_ context.Context, id, from, to, _, _ string, _ *time.Time, _ *string, _ *string) (bool, error) {
 	if f.status[id] != from {
 		return false, nil
 	}
@@ -153,7 +153,7 @@ func setup(t *testing.T) (*MDCNReviewService, *fakeMDCNStore, *fakeSched) {
 	return newSvc(store, "Dr Jane Doe", sched), store, sched
 }
 
-func medical() *string { s := "medical"; return &s }
+func medical() *string   { s := "medical"; return &s }
 func expiry() *time.Time { t := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC); return &t }
 
 func TestDecide_NoSelfApproval(t *testing.T) {

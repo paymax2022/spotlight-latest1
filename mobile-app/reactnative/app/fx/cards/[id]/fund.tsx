@@ -14,6 +14,7 @@ import { useCard, useFundCard } from '@/features/fx/hooks/useFxCards';
 import { useBalances } from '@/features/fx/hooks/useFx';
 import { CARD_FUND_PRESETS } from '@/features/fx/constants/fx.constants';
 import { formatMoney, parseToMinor, minorToInput } from '@/features/fx/utils/fxFormatters';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 export default function FundCardScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -56,10 +57,12 @@ export default function FundCardScreen() {
             <TextInput
               style={styles.amountInput}
               value={input}
-              onChangeText={setInput}
+              onChangeText={(v) => setInput(sanitizeMoneyInput(v))}
               placeholder="0.00"
               placeholderTextColor={Colors.outline}
               keyboardType="decimal-pad"
+              inputMode="decimal"
+              maxLength={13}
               autoFocus
               accessibilityLabel="Amount to fund"
             />

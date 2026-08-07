@@ -28,6 +28,7 @@ import (
 //   - RED-FLAG: clinician-governed DB rules layered over the always-on safety net (SC-2)
 //   - care: wallet pay (ledger), emergency locator (MapService), notifier (notifications)
 //   - WhatsApp omnichannel driven by the core session service (gated)
+//
 // Member: /api/finance/health/triage/*; admin: /api/health/triage/admin/*.
 func RegisterHealthTriage(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService,
 	ledgerSvc *ledger.Service, mapSvc *maps.Service, anthropicKey, redisURL, engineName, infID, infKey, waSecret string,

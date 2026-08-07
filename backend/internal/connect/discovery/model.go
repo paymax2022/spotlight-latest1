@@ -8,19 +8,19 @@ package connectdiscovery
 // Candidate is a discovery/search result. Exact coordinates are NEVER returned —
 // only a coarse, bucketed distance label preserves location privacy (invariant 3).
 type Candidate struct {
-	ProfileID     string         `json:"profile_id"`
-	DisplayName   *string        `json:"display_name,omitempty"`
-	City          *string        `json:"city,omitempty"`
-	Verified      bool           `json:"verified"`
-	IntentTags    []string       `json:"intent_tags"`
-	DistanceLabel string         `json:"distance_label,omitempty"` // e.g. "within 25 km"
-	MatchReason   *MatchReason   `json:"match_reason,omitempty"`   // present on curated discovery
+	ProfileID     string       `json:"profile_id"`
+	DisplayName   *string      `json:"display_name,omitempty"`
+	City          *string      `json:"city,omitempty"`
+	Verified      bool         `json:"verified"`
+	IntentTags    []string     `json:"intent_tags"`
+	DistanceLabel string       `json:"distance_label,omitempty"` // e.g. "within 25 km"
+	MatchReason   *MatchReason `json:"match_reason,omitempty"`   // present on curated discovery
 }
 
 // MatchReason is the "match-reason card" surfaced with curated daily matches.
 type MatchReason struct {
-	Headline string   `json:"headline"`           // short human reason
-	Factors  []string `json:"factors"`            // e.g. ["shared intent: hiking", "verified", "within 25 km"]
+	Headline string   `json:"headline"` // short human reason
+	Factors  []string `json:"factors"`  // e.g. ["shared intent: hiking", "verified", "within 25 km"]
 	Score    float64  `json:"score"`
 }
 

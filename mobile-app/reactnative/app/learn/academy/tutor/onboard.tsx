@@ -13,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import Chip from '@/features/academy/components/Chip';
 import { formatNaira } from '@/features/academy/constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { useTutorMe, useOnboardTutor } from '@/features/academy/hooks';
 
 const SUBJECTS = ['Mathematics', 'Physics', 'Chemistry', 'Biology', 'English Language', 'Further Mathematics', 'Economics', 'Government'];
@@ -124,7 +125,7 @@ export default function TutorOnboard() {
 
         {/* Rate */}
         <Text style={styles.label}>Hourly rate (₦)</Text>
-        <TextInput style={styles.input} keyboardType="number-pad" value={rate} onChangeText={setRate} placeholder="3500" placeholderTextColor={Colors.onSurfaceVariant} />
+        <TextInput style={styles.input} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} value={rate} onChangeText={(v) => setRate(sanitizeMoneyInput(v))} placeholder="3500" placeholderTextColor={Colors.onSurfaceVariant} />
         <Text style={styles.hint}>Learners will see {formatNaira(rateKobo)}/hr.</Text>
 
         {/* Payout setup (payout rail) */}

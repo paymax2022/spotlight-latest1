@@ -117,7 +117,7 @@ type TheoryExamAdapter struct{ signer *crypto.Signer }
 // NewTheoryExamAdapter builds the theory adapter over a signer.
 func NewTheoryExamAdapter(s *crypto.Signer) *TheoryExamAdapter { return &TheoryExamAdapter{signer: s} }
 
-func (a *TheoryExamAdapter) ID() string             { return a.signer.ID() }
+func (a *TheoryExamAdapter) ID() string               { return a.signer.ID() }
 func (a *TheoryExamAdapter) Source() arena.SourceType { return arena.SourceTheoryExam }
 
 func (a *TheoryExamAdapter) Supports(stage arena.Stage) bool {

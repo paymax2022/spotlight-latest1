@@ -19,6 +19,7 @@ import {
 } from '@/features/crypto/utils/cryptoFormatters';
 import { DEFAULT_FIAT } from '@/features/crypto/constants/crypto.constants';
 import type { AmountBasis } from '@/features/crypto/types/crypto.types';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 const PERCENTS = [25, 50, 75, 100];
 
@@ -126,10 +127,12 @@ export default function SellEntryScreen() {
             <TextInput
               style={styles.amountInput}
               value={input}
-              onChangeText={setInput}
+              onChangeText={(v) => setInput(sanitizeMoneyInput(v))}
               placeholder="0.00"
               placeholderTextColor={Colors.outline}
               keyboardType="decimal-pad"
+              inputMode="decimal"
+              maxLength={13}
               autoFocus
               accessibilityLabel={basis === 'crypto' ? `Amount of ${a.symbol} to sell` : 'Cash to receive'}
             />

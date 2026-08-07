@@ -5,9 +5,9 @@ import "sort"
 // Weights are the smart-order-routing score weights (spec §6). Config per
 // corridor/tier in the control plane; this struct carries the resolved set.
 type Weights struct {
-	Cost     float64
-	Coverage float64
-	Liquidity float64
+	Cost        float64
+	Coverage    float64
+	Liquidity   float64
 	Reliability float64
 }
 
@@ -29,7 +29,7 @@ type Candidate struct {
 	Reliability float64
 
 	// Penalties in [0,1].
-	FloatCost      float64
+	FloatCost       float64
 	ExposurePenalty float64
 
 	Viable bool

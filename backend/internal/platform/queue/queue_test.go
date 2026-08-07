@@ -43,9 +43,9 @@ func TestTaskTypes_AreNonEmpty(t *testing.T) {
 
 func TestPayload_MarshalRoundtrip(t *testing.T) {
 	p := queue.Payload{
-		"user_id":    "abc-123",
+		"user_id":     "abc-123",
 		"amount_kobo": float64(50000),
-		"ref":        "TXN-XYZ",
+		"ref":         "TXN-XYZ",
 	}
 	b, err := json.Marshal(p)
 	if err != nil {

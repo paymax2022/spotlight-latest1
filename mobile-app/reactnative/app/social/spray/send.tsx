@@ -13,6 +13,7 @@ import { PaymentSheet, usePurchasePayment } from '@/features/payments';
 import SprayButton from '@/features/social/components/spray-SprayButton';
 import { useSprayTarget, useSendSpray, formatNaira, SPRAY_PRESETS_KOBO, SPRAY_DISCLOSURE } from '@/features/social/spray';
 import { SocialColors } from '@/features/social/constants/social.constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 export default function SpraySend() {
   // targetId is supplied when wired from a live/event; falls back to a demo live.
@@ -77,7 +78,7 @@ export default function SpraySend() {
           </View>
 
           <Text style={styles.label}>Or custom amount (₦)</Text>
-          <TextInput style={styles.input} placeholder="e.g. 3000" placeholderTextColor={SocialColors.muted} keyboardType="number-pad" value={custom} onChangeText={setCustom} />
+          <TextInput style={styles.input} placeholder="e.g. 3000" placeholderTextColor={SocialColors.muted} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} value={custom} onChangeText={(t) => setCustom(sanitizeMoneyInput(t))} />
 
           <View style={styles.disclosure}><Text style={styles.disclosureText}>{SPRAY_DISCLOSURE}</Text></View>
 

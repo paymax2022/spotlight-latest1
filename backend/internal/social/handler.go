@@ -160,10 +160,10 @@ func (h *Handler) CancelRequest(c *gin.Context) {
 
 func (h *Handler) CreateSplit(c *gin.Context) {
 	var req struct {
-		Title      string       `json:"title"`
-		TotalKobo  int64        `json:"total_kobo"`
-		Mode       string       `json:"mode"`
-		Shares     []ShareInput `json:"shares"`
+		Title     string       `json:"title"`
+		TotalKobo int64        `json:"total_kobo"`
+		Mode      string       `json:"mode"`
+		Shares    []ShareInput `json:"shares"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})

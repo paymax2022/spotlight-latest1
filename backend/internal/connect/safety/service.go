@@ -165,10 +165,47 @@ func (s *Service) UpdateCase(ctx context.Context, id, adminID string, in UpdateC
 		return nil, err
 	}
 
+	// TS-009 / invariant 6 (report→moderation→ACTION) + invariant 12 (fail-safe):
+	// a 'suspended'/'banned' resolution must ENFORCE, not just record. Write an
+	// active account restriction for the case subject in the SAME tx, so the
+	// decision and its enforcement are atomic and attributable — if this fails the
+	// whole case update rolls back rather than leaving an un-enforced ban.
+	if (in.Resolution == "suspended" || in.Resolution == "banned") && c.SubjectID != nil && *c.SubjectID != "" {
+		if err := applyRestrictionTx(ctx, tx, *c.SubjectID, in.Resolution, adminID, c.ID,
+			"case "+c.ID+" resolved "+in.Resolution); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("connect: commit case update: %w", err)
 	}
 	return c, nil
+}
+
+// applyRestrictionTx activates an account restriction of the given type
+// ('suspended'|'banned') for subjectID within the caller's tx. Idempotent via the
+// one-active-per-user unique index: re-resolving a case keeps a single active row
+// and refreshes its type/reason/attribution.
+func applyRestrictionTx(ctx context.Context, tx execer, subjectID, restrictionType, adminID, caseID, reason string) error {
+	const ins = `INSERT INTO connect_account_restrictions (user_id, type, active, reason, case_id, created_by)
+		VALUES ($1::uuid, $2, true, $3, NULLIF($4,'')::uuid, NULLIF($5,'')::uuid)
+		ON CONFLICT (user_id) WHERE active
+		DO UPDATE SET type = EXCLUDED.type, reason = EXCLUDED.reason,
+		              case_id = EXCLUDED.case_id, created_by = EXCLUDED.created_by,
+		              updated_at = now()`
+	if _, err := tx.Exec(ctx, ins, subjectID, restrictionType, reason, caseID, adminID); err != nil {
+		return fmt.Errorf("connect: apply account restriction: %w", err)
+	}
+	return writeAudit(ctx, tx, AuditInput{
+		ActorID:    adminID,
+		ActorRole:  "admin",
+		Action:     "connect.account.restrict",
+		EntityType: "connect_user",
+		EntityID:   subjectID,
+		Reason:     reason,
+		NewValue:   map[string]any{"type": restrictionType, "case_id": caseID},
+	})
 }
 
 // GetCase fetches a single case.

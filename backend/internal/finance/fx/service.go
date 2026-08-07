@@ -3,6 +3,7 @@ package fx
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,14 +19,54 @@ const quoteTTL = 5 * time.Minute
 
 // Service manages FX quotes, conversions, and currency wallets.
 type Service struct {
-	db       *pgxpool.Pool
-	ledger   *ledger.Service
-	provider *maplerad.Client
-	redis    *goredis.Client // for quote reservation
+	db         *pgxpool.Pool
+	ledger     *ledger.Service
+	provider   *maplerad.Client
+	redis      *goredis.Client    // for quote reservation
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 }
 
 func NewService(db *pgxpool.Pool, ledger *ledger.Service, provider *maplerad.Client, redis *goredis.Client) *Service {
 	return &Service{db: db, ledger: ledger, provider: provider, redis: redis}
+}
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module. app-wiring injects a thin adapter over the finance commission service;
+// when the commission feature is off (or no recorder is wired) the field is nil and
+// recording is a silent no-op. Modeled as a LOCAL interface so fx never imports the
+// commission package at compile time (mirrors transport/service.go).
+//
+// This records realized profit ONLY; it never moves money. The conversion's own
+// ledger legs are unchanged, and the injected recorder is deliberately constructed
+// WITHOUT a ledger so RecordFor never re-posts to the ledger — it appends the
+// immutable earning row only.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+	RecordExact(ctx context.Context, category, service, subtype string, grossKobo, recordedRevenueKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a completed FX
+// conversion. Best-effort + MUST NEVER affect the caller: a nil recorder is a no-op,
+// and any error is logged and swallowed so a profit-registry failure can never fail
+// or reverse the conversion. The module's ACTUAL earning is the provider spread /
+// FeeKobo, NOT a % of the source principal, so we record the EXACT feeKobo via
+// RecordExact (grossKobo = the source/principal amount is passed for context only).
+// The conversion id doubles as source ref + idempotency key so replays never
+// double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, grossKobo, feeKobo int64, sourceRef string, userID *string) {
+	if s.commission == nil || feeKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordExact(ctx, "Finance", "Currency Exchange", "", grossKobo, feeKobo,
+		"fx", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[fx] commission record (source=%s gross=%d fee=%d) failed, continuing: %v", sourceRef, grossKobo, feeKobo, err)
+	}
 }
 
 // GetOrCreateCurrencyWallet returns the user's wallet for a currency, creating it if absent.
@@ -62,17 +103,17 @@ func (s *Service) GetQuote(ctx context.Context, userID string, req QuoteRequest)
 
 	expiresAt := time.Now().Add(quoteTTL)
 	q := &FXQuote{
-		ID:               uuid.New().String(),
-		UserID:           userID,
-		ProviderQuoteID:  providerResp.QuoteID,
-		SourceCurrency:   req.SourceCurrency,
-		TargetCurrency:   req.TargetCurrency,
-		SourceAmountKobo: req.AmountKobo,
+		ID:                uuid.New().String(),
+		UserID:            userID,
+		ProviderQuoteID:   providerResp.QuoteID,
+		SourceCurrency:    req.SourceCurrency,
+		TargetCurrency:    req.TargetCurrency,
+		SourceAmountKobo:  req.AmountKobo,
 		TargetAmountMinor: providerResp.TargetAmountMinor,
-		Rate:             providerResp.Rate,
-		FeeKobo:          providerResp.Fee,
-		ExpiresAt:        expiresAt,
-		CreatedAt:        time.Now(),
+		Rate:              providerResp.Rate,
+		FeeKobo:           providerResp.Fee,
+		ExpiresAt:         expiresAt,
+		CreatedAt:         time.Now(),
 	}
 
 	const insert = `
@@ -246,6 +287,12 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("fx: commit conversion tx: %w", err)
 	}
+	// Record realized Spotlight profit into the central Commission & Profit registry
+	// at the ONLY successful-conversion point (NOT the idempotent replay short-circuits
+	// above, which return before here, so replays never double-count). gross = the
+	// source/principal amount; source ref + idempotency key = the conversion id.
+	// Best-effort + nil-safe — a recorder failure can never fail/reverse the conversion.
+	s.recordCommissionSafe(ctx, conv.SourceAmountKobo, conv.FeeKobo, conv.ID, &conv.UserID)
 	return conv, nil
 }
 

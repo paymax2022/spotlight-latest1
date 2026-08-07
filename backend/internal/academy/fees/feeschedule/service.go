@@ -14,10 +14,11 @@ import (
 // SF-1 ENFORCEMENT (the load-bearing invariant of this package): a FeeSchedule is
 // immutable once an Invoice references it. Every mutating operation calls
 // ensureMutable(), which refuses with ErrFeeScheduleImmutable when EITHER:
-//   1. the schedule's `locked` flag is true (set when the first invoice issues), OR
-//   2. one or more academy_invoices rows already reference the schedule
-//      (CountReferencingInvoices > 0) — a belt-and-braces check so the guard holds even
-//      if a caller somehow issued an invoice without setting `locked`.
+//  1. the schedule's `locked` flag is true (set when the first invoice issues), OR
+//  2. one or more academy_invoices rows already reference the schedule
+//     (CountReferencingInvoices > 0) — a belt-and-braces check so the guard holds even
+//     if a caller somehow issued an invoice without setting `locked`.
+//
 // This lives in the SERVICE layer (not only the DB trigger) per build-spec §4 SF-1.
 //
 // SF-6: fee_items + installment_policy are captured at Create only and are never exposed

@@ -21,10 +21,10 @@ type Auditor interface {
 // AMLConfig bounds spray velocity (NL-10). Defaults are conservative; admins can
 // widen via config. Zero values fall back to the defaults below.
 type AMLConfig struct {
-	MaxSingleKobo  int64 // reject a single spray above this
-	MaxDailyKobo   int64 // reject when the sender's rolling-24h spray total would exceed this
-	MaxDailyCount  int64 // reject when the sender's rolling-24h spray count would exceed this
-	MinSingleKobo  int64 // reject dust sprays (anti-structuring noise)
+	MaxSingleKobo int64 // reject a single spray above this
+	MaxDailyKobo  int64 // reject when the sender's rolling-24h spray total would exceed this
+	MaxDailyCount int64 // reject when the sender's rolling-24h spray count would exceed this
+	MinSingleKobo int64 // reject dust sprays (anti-structuring noise)
 }
 
 func (c AMLConfig) withDefaults() AMLConfig {

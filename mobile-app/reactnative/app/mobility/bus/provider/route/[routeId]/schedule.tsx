@@ -9,6 +9,7 @@ import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import SelectField from '@/components/SelectField';
 import DatePickerField from '@/components/DatePickerField';
 import { useCreateSchedule } from '@/features/mobility/hooks/useBusMarketplace';
@@ -75,9 +76,15 @@ export default function BusProviderAddScheduleScreen() {
             </View>
           </View>
           <TextInputField label="Total seats" value={seats} onChangeText={setSeats} placeholder="e.g. 30" keyboardType="number-pad" />
-          <TextInputField label="Fare per seat (₦)" value={fare} onChangeText={setFare} placeholder="e.g. 18500" keyboardType="number-pad" />
+          <TextInputField label="Fare per seat (₦)" value={fare} onChangeText={(t) => setFare(sanitizeMoneyInput(t))} placeholder="e.g. 18500" keyboardType="decimal-pad" inputMode="decimal" maxLength={13} />
           {error ? <Text style={styles.error}>{error}</Text> : null}
         </View>
+        <PrimaryButton
+          label="Recurring departures"
+          variant="secondary"
+          onPress={() => routeId && router.push(`/mobility/bus/provider/route/${routeId}/templates`)}
+          style={styles.recurringBtn}
+        />
       </ScrollView>
       <View style={styles.footer}>
         <PrimaryButton label="Add departure" onPress={onSubmit} disabled={!canSubmit} loading={create.isPending} />
@@ -94,5 +101,6 @@ const styles = StyleSheet.create({
   timeRow: { flexDirection: 'row', gap: Spacing.md },
   timeCol: { flex: 1 },
   error: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.xs },
+  recurringBtn: { marginTop: Spacing.md },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md, paddingBottom: Spacing.lg, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLowest },
 });

@@ -18,14 +18,14 @@ type Tier int
 
 // Profile is the KYC state for a user.
 type Profile struct {
-	UserID           string     `json:"user_id"`
-	Tier             Tier       `json:"kyc_tier"`
-	Status           Status     `json:"kyc_status"`
-	SubmittedAt      *time.Time `json:"kyc_submitted_at,omitempty"`
-	VerifiedAt       *time.Time `json:"kyc_verified_at,omitempty"`
-	PhoneVerified    bool       `json:"phone_verified"`
-	DocumentType     *string    `json:"document_type,omitempty"`
-	RequestedTier    *int       `json:"requested_tier,omitempty"`
+	UserID        string     `json:"user_id"`
+	Tier          Tier       `json:"kyc_tier"`
+	Status        Status     `json:"kyc_status"`
+	SubmittedAt   *time.Time `json:"kyc_submitted_at,omitempty"`
+	VerifiedAt    *time.Time `json:"kyc_verified_at,omitempty"`
+	PhoneVerified bool       `json:"phone_verified"`
+	DocumentType  *string    `json:"document_type,omitempty"`
+	RequestedTier *int       `json:"requested_tier,omitempty"`
 }
 
 // InitiateRequest is the body for POST /finance/kyc/initiate.

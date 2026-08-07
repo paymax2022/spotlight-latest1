@@ -25,7 +25,9 @@ export default function RestaurantQueueScreen() {
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Restaurant · Orders</Text>
-        <View style={s.iconButton} />
+        <Pressable onPress={() => router.push('/food/restaurant/manage')} style={s.iconButton} accessibilityLabel="Manage store">
+          <Icons.Store size={22} color={Colors.primary} strokeWidth={2.2} />
+        </Pressable>
       </View>
 
       {isLoading ? (

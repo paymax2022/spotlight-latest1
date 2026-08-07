@@ -23,6 +23,7 @@ type store interface {
 	SumUserBalance(ctx context.Context, userID string) (int64, error)
 	ListUserEntries(ctx context.Context, userID string, limit int) ([]LedgerEntry, error)
 	ListPoolEntries(ctx context.Context, poolID string, limit int) ([]LedgerEntry, error)
+	ListAllEntries(ctx context.Context, limit int) ([]LedgerEntry, error)
 	GetCatalogBySKU(ctx context.Context, sku string) (*CatalogItem, error)
 	ListCatalog(ctx context.Context, activeOnly bool) ([]CatalogItem, error)
 	UpsertCatalog(ctx context.Context, req UpsertCatalogRequest) (*CatalogItem, error)
@@ -399,6 +400,12 @@ func (s *Service) UpsertCatalog(ctx context.Context, req UpsertCatalogRequest) (
 }
 func (s *Service) PoolLedger(ctx context.Context, poolID string, limit int) ([]LedgerEntry, error) {
 	return s.repo.ListPoolEntries(ctx, poolID, limit)
+}
+
+// GlobalLedger returns the reward ledger across ALL pools, newest first (admin
+// oversight report). Mirrors PoolLedger without the pool filter.
+func (s *Service) GlobalLedger(ctx context.Context, limit int) ([]LedgerEntry, error) {
+	return s.repo.ListAllEntries(ctx, limit)
 }
 
 // ── internal audit helpers ──────────────────────────────────────────────────────

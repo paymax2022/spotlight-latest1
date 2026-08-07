@@ -98,12 +98,12 @@ export const SERVICE_MODULES: ServiceModule[] = [
   { id: 'crypto',          label: 'Crypto',          icon: 'Bitcoin',         iconColor: '#F7931A',         bgColor: 'rgba(247,147,26,0.10)', route: '/crypto',            category: 'investment', badge: 'New' },
   { id: 'learn',           label: 'Learn',           icon: 'GraduationCap',   iconColor: Colors.teal,       bgColor: Colors.iconBgTeal,   route: '/learn',                category: 'investment' },
   { id: 'invest-ai',       label: 'Invest AI',       icon: 'Sparkles',        iconColor: Colors.secondary,  bgColor: Colors.iconBgBlue,   route: '/invest-ai',            category: 'investment', badge: 'New' },
-  // AI Trading fund (§16A) — custodial managed-fund member surface (KYC → fund → redeem).
-  // Distinct from 'invest-ai' (the education chat assistant).
-  { id: 'ai-trading',      label: 'AI Trading',      icon: 'Bot',             iconColor: Colors.primary,    bgColor: Colors.iconBgPurple, route: '/ai-trading',           category: 'investment', badge: 'New' },
   { id: 'academy',         label: 'Academy',         icon: 'GraduationCap',   iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/learn/academy',        category: 'investment', badge: 'New' },
   { id: 'spotlight-wealth', label: 'Spotlight Wealth', icon: 'Trophy',        iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/spotlight-wealth',     category: 'investment' },
   { id: 'fractionalre',    label: 'Real Estate Invest', icon: 'Building',     iconColor: Colors.teal,       bgColor: Colors.iconBgTeal,   route: '/fractionalre',         category: 'investment', badge: 'New' },
+  // AI Trading — custodial, paper/eligibility-gated managed fund (member surface).
+  // Landing screen carries the honest risk/fee framing; nothing places a real order.
+  { id: 'ai-trading',      label: 'AI Trading',      icon: 'BrainCircuit',    iconColor: Colors.primary,    bgColor: Colors.iconBgPurple, route: '/ai-trading',           category: 'investment', badge: 'Beta' },
 
   // ── Utility ──────────────────────────────────────────────────────────────────
   { id: 'bills',           label: 'Bill Payments',   icon: 'ReceiptText',     iconColor: Colors.primary,    bgColor: Colors.iconBgPurple, route: '/services/bills',       category: 'utility' },

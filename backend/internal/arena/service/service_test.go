@@ -156,7 +156,9 @@ func (f *fakeLedger) Debit(_ context.Context, _, _, idem, _ string, _ int64) err
 	f.debits++
 	return nil
 }
-func (f *fakeLedger) StandingAccountID(context.Context, string) (string, error) { return "acct-pot", nil }
+func (f *fakeLedger) StandingAccountID(context.Context, string) (string, error) {
+	return "acct-pot", nil
+}
 
 type fakeTier struct{ tier int }
 

@@ -16,6 +16,7 @@ import { useAssets, useChart, useCreateAlert } from '@/features/crypto/hooks/use
 import { formatFiatObj, formatPrice, parseFiatToMinor } from '@/features/crypto/utils/cryptoFormatters';
 import { DEFAULT_FIAT } from '@/features/crypto/constants/crypto.constants';
 import type { AlertCondition } from '@/features/crypto/types/crypto.types';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 export default function NewCryptoAlertScreen() {
   const params = useLocalSearchParams<{ symbol?: string }>();
@@ -109,10 +110,12 @@ export default function NewCryptoAlertScreen() {
           <TextInput
             style={styles.targetInput}
             value={target}
-            onChangeText={setTarget}
+            onChangeText={(v) => setTarget(sanitizeMoneyInput(v))}
             placeholder={String(selected.price.amount / 100)}
             placeholderTextColor={Colors.outline}
             keyboardType="decimal-pad"
+            inputMode="decimal"
+            maxLength={13}
             accessibilityLabel="Target price"
           />
         </View>

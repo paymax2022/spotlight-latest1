@@ -66,10 +66,10 @@ type ChatRequest struct {
 // wrapper unwraps: { text, refused? }. session_id / message / disclaimer are
 // additive fields the client may ignore.
 type ChatResponse struct {
-	SessionID  string   `json:"session_id"`
-	Text       string   `json:"text"`
-	Refused    bool     `json:"refused"`
-	Disclaimer string   `json:"disclaimer"`
+	SessionID  string       `json:"session_id"`
+	Text       string       `json:"text"`
+	Refused    bool         `json:"refused"`
+	Disclaimer string       `json:"disclaimer"`
 	Message    *ChatMessage `json:"message,omitempty"`
 }
 

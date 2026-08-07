@@ -133,9 +133,9 @@ func Register(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.
 	h := NewHandler(svc)
 
 	g := member.Group("/networking/assessments")
-	g.GET("", h.Catalogue)                                // SA-01
-	g.POST("/:id/attempts", h.StartAttempt)               // SA-02 (Idempotency-Key)
-	g.PATCH("/:id/attempts/:attemptId/submit", h.Submit)  // SA-03 (Idempotency-Key)
+	g.GET("", h.Catalogue)                               // SA-01
+	g.POST("/:id/attempts", h.StartAttempt)              // SA-02 (Idempotency-Key)
+	g.PATCH("/:id/attempts/:attemptId/submit", h.Submit) // SA-03 (Idempotency-Key)
 
 	// Badges live on a distinct path (not /assessments/badges) so the static child
 	// never conflicts with the /:id param child in Gin's route tree.

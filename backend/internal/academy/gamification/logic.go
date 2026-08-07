@@ -40,9 +40,9 @@ func xpForNextLevel(currentLevel int, cfg Config) int64 {
 
 // StreakOutcome is the pure result of evaluating a streak tick.
 type StreakOutcome struct {
-	StreakDays   int
-	Freezes      int
-	FreezeUsed   bool
+	StreakDays    int
+	Freezes       int
+	FreezeUsed    bool
 	NewLastActive string // YYYY-MM-DD
 }
 

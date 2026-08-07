@@ -57,13 +57,15 @@ export function formatMoneyCompact(amount: number, currency: CurrencyCode): stri
 /** Rate display, e.g. "1 USD = ₦1,581.43". */
 export function formatRate(from: CurrencyCode, to: CurrencyCode, rate: number): string {
   const toMeta = CURRENCIES[to];
-  const formatted = rate.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  const safe = Number.isFinite(rate) ? rate : 0; // live payload may omit a leg
+  const formatted = safe.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
   return `1 ${from} = ${toMeta.symbol}${formatted}`;
 }
 
 export function formatPct(pct: number): string {
-  const sign = pct > 0 ? '+' : '';
-  return `${sign}${pct.toFixed(2)}%`;
+  const safe = Number.isFinite(pct) ? pct : 0;
+  const sign = safe > 0 ? '+' : '';
+  return `${sign}${safe.toFixed(2)}%`;
 }
 
 /** Parse a user-typed major-unit string into integer minor units. */

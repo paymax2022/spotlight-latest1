@@ -29,7 +29,7 @@ func isUniqueViolation(err error) bool {
 }
 
 const questionCols = `id, COALESCE(competition_id::text,''), bank_key, rubric_version, external_id,
-	stage, category, prompt, options, correct_index, correct_answer, explanation,
+	stage, category, prompt, COALESCE(image_url,''), options, correct_index, correct_answer, explanation,
 	time_limit_seconds, COALESCE(pass_mark_percent,0)`
 
 func scanQuestion(row pgx.Row) (Question, error) {
@@ -38,7 +38,7 @@ func scanQuestion(row pgx.Row) (Question, error) {
 		optsRaw []byte
 	)
 	if err := row.Scan(&q.ID, &q.CompetitionID, &q.BankKey, &q.RubricVersion, &q.ExternalID,
-		&q.Stage, &q.Category, &q.Prompt, &optsRaw, &q.CorrectIndex, &q.CorrectAnswer,
+		&q.Stage, &q.Category, &q.Prompt, &q.ImageURL, &optsRaw, &q.CorrectIndex, &q.CorrectAnswer,
 		&q.Explanation, &q.TimeLimitSecs, &q.PassMarkPercent); err != nil {
 		return Question{}, err
 	}
@@ -109,10 +109,10 @@ func (r *Repository) ImportBank(ctx context.Context, competitionID, bankKey, rub
 	tag, err := r.pool.Exec(ctx, `
 		INSERT INTO arena_quiz_question
 			(competition_id, bank_key, rubric_version, external_id, stage, category,
-			 prompt, options, correct_index, correct_answer, explanation,
+			 prompt, image_url, options, correct_index, correct_answer, explanation,
 			 time_limit_seconds, pass_mark_percent)
 		SELECT $1, bank_key, rubric_version, external_id, stage, category,
-		       prompt, options, correct_index, correct_answer, explanation,
+		       prompt, image_url, options, correct_index, correct_answer, explanation,
 		       time_limit_seconds, pass_mark_percent
 		  FROM arena_quiz_question
 		 WHERE bank_key = $2 AND rubric_version = $3 AND competition_id IS NULL
@@ -192,8 +192,8 @@ func (r *Repository) AttemptStats(ctx context.Context, competitionID string) (at
 func (r *Repository) InsertAttempt(ctx context.Context, a AttemptRecord) (AttemptRecord, bool, error) {
 	respJSON, _ := json.Marshal(a.Responses)
 	var (
-		id       string
-		dup      bool
+		id  string
+		dup bool
 	)
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO arena_quiz_attempt

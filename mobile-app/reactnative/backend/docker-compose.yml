@@ -54,6 +54,8 @@ services:
       - ALLOW_DEV_AUTH=${ALLOW_DEV_AUTH:-}
       - TRUST_ADMIN_ROLE_HEADER=${TRUST_ADMIN_ROLE_HEADER:-}
       - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-}
+      # Webhook auth (fail-closed): unset → 503 unless ALLOW_DEV_AUTH=true. Set in prod.
+      - CRYPTO_WEBHOOK_SECRET=${CRYPTO_WEBHOOK_SECRET:-}
       # Stocks venue: Alpaca Broker API (blank → mock broker)
       - ALPACA_BASE_URL=${ALPACA_BASE_URL:-}
       - ALPACA_API_KEY=${ALPACA_API_KEY:-}

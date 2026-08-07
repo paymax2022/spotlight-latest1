@@ -93,7 +93,7 @@ type CBTBlueprint struct {
 	ArenaID      string           `json:"arena_id"`
 	Name         string           `json:"name"`
 	Variant      BlueprintVariant `json:"variant"`
-	Sections     []any            `json:"sections"`     // jsonb array
+	Sections     []any            `json:"sections"` // jsonb array
 	TotalItems   int              `json:"total_items"`
 	TotalSeconds int              `json:"total_seconds"` // server timer budget
 	Navigation   map[string]any   `json:"navigation"`    // jsonb
@@ -127,7 +127,7 @@ type Attempt struct {
 	ServerDeadline *time.Time     `json:"server_deadline,omitempty"` // server-authoritative
 	PausedAt       *time.Time     `json:"paused_at,omitempty"`
 	SubmittedAt    *time.Time     `json:"submitted_at,omitempty"`
-	Score          map[string]any `json:"score"`     // jsonb; per-subject + overall
+	Score          map[string]any `json:"score"` // jsonb; per-subject + overall
 	Readiness      *float64       `json:"readiness,omitempty"`
 	Predicted      map[string]any `json:"predicted"` // jsonb
 	Integrity      map[string]any `json:"integrity"` // jsonb; anti-cheat signals (logged, not punitive)
@@ -256,7 +256,7 @@ type SubjectScore struct {
 // Result is the pure scoring output (per-subject + overall + readiness + predicted).
 type Result struct {
 	Subjects  []SubjectScore `json:"subjects"`
-	Overall   float64        `json:"overall"`   // UTME 400-scale OR aggregate of bands
+	Overall   float64        `json:"overall"` // UTME 400-scale OR aggregate of bands
 	Grade     string         `json:"grade,omitempty"`
 	Readiness float64        `json:"readiness"` // coverage × mastery × mock
 	Predicted map[string]any `json:"predicted"`

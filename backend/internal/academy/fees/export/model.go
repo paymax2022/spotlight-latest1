@@ -30,11 +30,11 @@ import (
 type DataCategory string
 
 const (
-	CategoryEnrollment DataCategory = "enrollment"  // roster / admissions
-	CategoryFees       DataCategory = "fees"         // fee schedules / collection stats
-	CategoryResults    DataCategory = "results"      // exam / academic results
-	CategoryAttendance DataCategory = "attendance"   // attendance records
-	CategoryStaff      DataCategory = "staff"        // staff / teacher records
+	CategoryEnrollment DataCategory = "enrollment" // roster / admissions
+	CategoryFees       DataCategory = "fees"       // fee schedules / collection stats
+	CategoryResults    DataCategory = "results"    // exam / academic results
+	CategoryAttendance DataCategory = "attendance" // attendance records
+	CategoryStaff      DataCategory = "staff"      // staff / teacher records
 )
 
 // ── ComplianceExport (SF-11 append-only immutable log row) ──────────────────────
@@ -59,7 +59,7 @@ type ComplianceExport struct {
 // exporting is still audited (public.audit_logs, module 'academy.fees').
 type SchoolDataExport struct {
 	SchoolID    string    `json:"schoolId"`
-	Sections    []string  `json:"sections"`    // e.g. ["roster","fees","results"]
+	Sections    []string  `json:"sections"` // e.g. ["roster","fees","results"]
 	PayloadRef  *string   `json:"payloadRef,omitempty"`
 	GeneratedAt time.Time `json:"generatedAt"`
 }
@@ -90,11 +90,11 @@ type SchoolDataExportRequest struct {
 // ── Sentinel errors ─────────────────────────────────────────────────────────────
 
 var (
-	ErrNotFound            = errors.New("not_found")
-	ErrUnauthenticated     = errors.New("unauthenticated")
-	ErrMissingSchool       = errors.New("missing_school")
-	ErrMissingReportType   = errors.New("missing_report_type")
-	ErrNoCategories        = errors.New("no_data_categories")
-	ErrCategoryNotOptedIn  = errors.New("data_category_not_opted_in")
-	ErrSchoolNotVerified   = errors.New("school_not_verified")
+	ErrNotFound           = errors.New("not_found")
+	ErrUnauthenticated    = errors.New("unauthenticated")
+	ErrMissingSchool      = errors.New("missing_school")
+	ErrMissingReportType  = errors.New("missing_report_type")
+	ErrNoCategories       = errors.New("no_data_categories")
+	ErrCategoryNotOptedIn = errors.New("data_category_not_opted_in")
+	ErrSchoolNotVerified  = errors.New("school_not_verified")
 )

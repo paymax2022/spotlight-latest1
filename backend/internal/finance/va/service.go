@@ -23,8 +23,8 @@ var (
 
 // Service manages virtual account provisioning and inbound credit.
 type Service struct {
-	db       *pgxpool.Pool
-	ledger   *ledger.Service
+	db         *pgxpool.Pool
+	ledger     *ledger.Service
 	vaProvider provider.VirtualAccountProvider
 }
 

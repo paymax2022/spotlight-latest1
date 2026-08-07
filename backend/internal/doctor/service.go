@@ -4,15 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
-	goredis "github.com/redis/go-redis/v9"
 	"github.com/jackc/pgx/v5/pgxpool"
+	goredis "github.com/redis/go-redis/v9"
 
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/integrations/rtc"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	platformWS "spotlight/backend/internal/platform/ws"
-	"spotlight/backend/internal/finance/tiers"
 )
 
 // Service implements the doctor (provider) telemedicine MVP.
@@ -25,12 +26,13 @@ import (
 //  5. emits an immutable audit row,
 //  6. returns the payout result.
 type Service struct {
-	repo   *Repository
-	ledger *ledger.Service
-	tiers  *tiers.Service
-	redis  *goredis.Client    // optional; nil disables the fast idempotency lock
-	rtc    *rtc.Issuer        // optional; nil/disabled → empty token + "not configured"
-	hub    *platformWS.Hub    // optional; nil disables realtime WS push (best-effort)
+	repo       *Repository
+	ledger     *ledger.Service
+	tiers      *tiers.Service
+	redis      *goredis.Client    // optional; nil disables the fast idempotency lock
+	rtc        *rtc.Issuer        // optional; nil/disabled → empty token + "not configured"
+	hub        *platformWS.Hub    // optional; nil disables realtime WS push (best-effort)
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 }
 
 // NewService wires the doctor service. redis may be nil (lock falls back to the
@@ -46,6 +48,47 @@ func (s *Service) WithRealtime(issuer *rtc.Issuer, hub *platformWS.Hub) *Service
 	s.rtc = issuer
 	s.hub = hub
 	return s
+}
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module (§ profit registry). app-wiring injects a thin adapter over the finance
+// commission service; when the commission feature is off (or no recorder is wired)
+// the field is nil and recording is a silent no-op. Modeled as a LOCAL interface so
+// doctor never imports the commission package at compile time (mirrors the
+// transport/stays seams) — the adapter, which lives in app-wiring, discards the
+// returned earning row and surfaces only the error.
+//
+// This records realized profit ONLY; it never moves money. The doctor module's own
+// money movements (the RequestPayout wallet debit and the per-consult commission
+// withheld into doctor_invoices) are unchanged, and the injected recorder is
+// deliberately constructed WITHOUT a ledger so RecordFor never re-posts to the ledger
+// (no double count of the commission revenue account) — it appends the immutable
+// earning row used by profit reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a completed
+// consultation. It is best-effort and MUST NEVER affect the caller's outcome: a nil
+// recorder is a no-op, and any error is logged and swallowed so a profit-registry
+// failure can never fail or reverse the consult completion / provider payout. The
+// recorded breakdown is resolved server-side from the central rate card; the source
+// ref (the appointment / consult id) doubles as the idempotency key so retries and
+// reconciliation sweeps never double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
+		"doctor", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[doctor] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
+	}
 }
 
 // Sentinel errors mapped to HTTP statuses by the handler.

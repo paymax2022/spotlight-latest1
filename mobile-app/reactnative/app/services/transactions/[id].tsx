@@ -8,6 +8,7 @@ import { ArrowLeft, CheckCircle2, Clock, Receipt, RefreshCw, XCircle } from 'luc
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PrimaryButton from '@/components/PrimaryButton';
 import { Colors } from '@/constants/colors';
+import { formatNaira } from '@/utils/money';
 import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
@@ -114,7 +115,7 @@ export default function TransactionDetailScreen() {
               <StatusIcon status={tx.status} color={statusClr} />
             </View>
             <Text style={[styles.status, { color: statusClr }]}>{tx.status}</Text>
-            <Text style={styles.amount}>₦{tx.totalAmount.toLocaleString('en-NG', { minimumFractionDigits: 2 })}</Text>
+            <Text style={styles.amount}>{formatNaira(tx.totalAmount)}</Text>
             <Text style={styles.ref}>{tx.reference}</Text>
             <Text style={styles.statusSummary}>{statusSummary(tx.status)}</Text>
           </View>
@@ -128,9 +129,9 @@ export default function TransactionDetailScreen() {
             <Row label="Provider Attempts" value={tx.providerAttempts} />
             <Row label="Product"     value={tx.productName} />
             <Row label="Account"     value={tx.customerIdentifier} />
-            <Row label="Amount"      value={`₦${tx.amount.toLocaleString()}`} />
-            <Row label="Charges"     value={`₦${tx.charges.toLocaleString()}`} />
-            <Row label="Total Paid"  value={`₦${tx.totalAmount.toLocaleString()}`} />
+            <Row label="Amount"      value={formatNaira(tx.amount)} />
+            <Row label="Charges"     value={formatNaira(tx.charges)} />
+            <Row label="Total Paid"  value={formatNaira(tx.totalAmount)} />
             <Row label="Date"        value={new Date(tx.createdAt).toLocaleString('en-NG')} />
             {tx.token && <Row label="Token"  value={tx.token} />}
             {tx.units && <Row label="Units"  value={tx.units} />}

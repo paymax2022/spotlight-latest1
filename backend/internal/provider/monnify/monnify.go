@@ -155,13 +155,13 @@ func (c *Client) InitiatePayout(ctx context.Context, req provider.PayoutRequest)
 	// RecipientCode encodes "monnify:<bankCode>:<accountNumber>" (see above).
 	bankCode, accountNumber := parseRecipientCode(req.RecipientCode)
 	body := map[string]any{
-		"amount":                 nairaFromKobo(req.AmountKobo),
-		"reference":              req.Reference,
-		"narration":              req.Narration,
-		"destinationBankCode":    bankCode,
+		"amount":                   nairaFromKobo(req.AmountKobo),
+		"reference":                req.Reference,
+		"narration":                req.Narration,
+		"destinationBankCode":      bankCode,
 		"destinationAccountNumber": accountNumber,
-		"currency":               "NGN",
-		"sourceAccountNumber":    c.contractCode, // wallet/contract-funded disbursement
+		"currency":                 "NGN",
+		"sourceAccountNumber":      c.contractCode, // wallet/contract-funded disbursement
 	}
 	var resp struct {
 		RequestSuccessful bool `json:"requestSuccessful"`

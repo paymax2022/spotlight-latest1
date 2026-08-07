@@ -14,9 +14,9 @@ func (h *Handler) Home(c *gin.Context) {
 	active, _ := h.svc.ActiveRide(c.Request.Context(), userID)
 	profile, _ := h.svc.GetProfile(c.Request.Context(), userID)
 	c.JSON(http.StatusOK, gin.H{
-		"active_trip": active,
-		"profile":     profile,
-		"quick_tiles": []string{"ride", "package", "scheduled"},
+		"active_trip":     active,
+		"profile":         profile,
+		"quick_tiles":     []string{"ride", "package", "scheduled"},
 		"safety_reminder": "Share your trip and verify the driver PIN before starting.",
 	})
 }

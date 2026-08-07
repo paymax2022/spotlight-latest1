@@ -77,6 +77,7 @@ func TestClassSpineContract(t *testing.T) {
 //   - 3-5 subjects per class, each with 1-2 topics and each topic 1-3 objectives;
 //   - exam_relevance tags follow the phase rule (P4→CCE, JSS1→BECE, SSS1→WASSCE/NECO/UTME);
 //   - P1 (Lower Primary, no terminal exam) carries no exam tags.
+//
 // This is the idempotency/insert contract that Seed's ON CONFLICT DO NOTHING relies
 // on: every node has a stable natural key (subject.code / topic.code / objective.code)
 // unique within its parent, so re-running Seed inserts nothing new.

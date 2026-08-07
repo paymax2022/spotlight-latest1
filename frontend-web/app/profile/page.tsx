@@ -1,5 +1,6 @@
 import Layout from '@/components/layout/Layout';
 import ProfileEditorClient from '@/components/user/ProfileEditorClient';
+import BusinessRegistryClient from '@/src/components/business/BusinessRegistryClient';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +17,7 @@ export default function ProfilePage() {
       <section className="about-section section-padding fix bg-cover" style={{ backgroundImage: 'url("/assets/img/service/service-bg-2.jpg")' }}>
         <div className="container">
           <ProfileEditorClient />
+          <BusinessRegistryClient />
         </div>
       </section>
     </Layout>

@@ -19,10 +19,10 @@ func (c *Client) submitJob(ctx context.Context, jobType int, req provider.KycVer
 	}
 	sig, ts := c.generateSignature()
 	body := map[string]any{
-		"partner_id": c.partnerID,
-		"signature":  sig,
-		"timestamp":  ts,
-		"sid_server": c.sidServer,
+		"partner_id":   c.partnerID,
+		"signature":    sig,
+		"timestamp":    ts,
+		"sid_server":   c.sidServer,
 		"callback_url": c.callbackURL,
 		"partner_params": map[string]any{
 			"job_id":   req.ClientRef, // idempotency / correlation key
@@ -45,9 +45,9 @@ func (c *Client) submitJob(ctx context.Context, jobType int, req provider.KycVer
 func (c *Client) VerifyIDFacial(ctx context.Context, req provider.KycVerifyRequest) (provider.KycCheckResult, error) {
 	extra := map[string]any{
 		"id_info": map[string]any{
-			"country":   "NG",
-			"id_type":   req.IDType,
-			"id_number": req.IDNumber,
+			"country":    "NG",
+			"id_type":    req.IDType,
+			"id_number":  req.IDNumber,
 			"first_name": req.FirstName,
 			"last_name":  req.LastName,
 			"dob":        req.DOB,
@@ -84,8 +84,8 @@ func (c *Client) VerifyDocument(ctx context.Context, req provider.KycVerifyReque
 	}
 	extra := map[string]any{
 		"id_info": map[string]any{
-			"country":  "NG",
-			"id_type":  req.DocType,
+			"country": "NG",
+			"id_type": req.DocType,
 		},
 		"images": images,
 	}

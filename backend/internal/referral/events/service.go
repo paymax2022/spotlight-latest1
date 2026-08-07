@@ -14,15 +14,15 @@ import (
 
 // Event type constants (subset of §12 analytics events relevant to §7A).
 const (
-	TypeSignupAttributed       = "signup_attributed"
-	TypeAttributionToHouse     = "attribution_defaulted_to_house"
-	TypeLateClaimed            = "referral_code_late_claimed"
-	TypeReassigned             = "attribution_reassigned"
-	TypeInvalidCodeAttempt     = "invalid_code_attempt"
-	TypeSelfReferralBlocked    = "self_referral_blocked"
-	TypeRewardAccrued          = "reward_accrued"
-	TypeRewardStateTransition  = "reward_state_transition"
-	TypeRewardClawedBack       = "reward_clawed_back"
+	TypeSignupAttributed      = "signup_attributed"
+	TypeAttributionToHouse    = "attribution_defaulted_to_house"
+	TypeLateClaimed           = "referral_code_late_claimed"
+	TypeReassigned            = "attribution_reassigned"
+	TypeInvalidCodeAttempt    = "invalid_code_attempt"
+	TypeSelfReferralBlocked   = "self_referral_blocked"
+	TypeRewardAccrued         = "reward_accrued"
+	TypeRewardStateTransition = "reward_state_transition"
+	TypeRewardClawedBack      = "reward_clawed_back"
 )
 
 // Input describes one engine event to record.

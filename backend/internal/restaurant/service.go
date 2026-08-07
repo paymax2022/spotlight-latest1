@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"time"
 
@@ -61,6 +62,7 @@ type Service struct {
 	rt         *Realtime           // optional; nil → no WS fan-out
 	tiers      *tiers.Service      // optional; nil → no tier-limit gate on the order escrow
 	zones      DeliveryZoneChecker // optional; nil → no delivery-zone gate on PlaceOrder
+	commission CommissionRecorder  // optional; nil ⇒ realized-profit recording is a no-op
 
 	// Merchant WITHDRAWAL money path (wallet → bank). Wired only when
 	// FEATURE_RESTAURANT_WITHDRAWALS_ENABLED is on; see withdrawal.go. The `tiers`
@@ -676,6 +678,46 @@ func canTransition(from, to OrderStatus) bool {
 	}
 }
 
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module (§ profit registry). app-wiring injects a thin adapter over the finance
+// commission service; when the commission feature is off (or no recorder is wired)
+// the field is nil and recording is a silent no-op. Modeled as a LOCAL interface so
+// restaurant never imports the commission package at compile time (mirrors the
+// Notifier / AddressGeocoder seams) — the adapter, which lives in app-wiring,
+// discards the returned earning row and surfaces only the error.
+//
+// This records realized profit ONLY; it never moves money. Restaurant's own money
+// movements (the 80/10/10 settlement split into owner/rider/platform wallets) are
+// unchanged, and the injected recorder is deliberately constructed WITHOUT a ledger
+// so RecordFor never re-posts to the ledger (no double count of the commission
+// revenue account) — it appends the immutable earning row used by profit reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a settled food order.
+// It is best-effort and MUST NEVER affect the caller's outcome: a nil recorder is a
+// no-op, and any error is logged and swallowed so a profit-registry failure can
+// never fail or reverse the order settlement / payout. The recorded breakdown is
+// resolved server-side from the central rate card; the order id doubles as the
+// source ref + idempotency key so retries and the crash-recovery reconciler never
+// double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
+		"restaurant", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[restaurant] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
+	}
+}
+
 // settleOrder releases an order's escrow with the standard split: 80% restaurant
 // owner / 10% rider / 10% platform, folding the rider share back into the
 // restaurant (90/10) when no rider is assigned so escrow is fully released.
@@ -694,7 +736,23 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 	var ownerID string
 	s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID)
 	platformFunded := promoFunder != nil && *promoFunder == string(FunderPlatform)
-	return s.settlement.Settle(ctx, settlementID, orderSettlementSplit(ownerID, riderID, tipKobo, discountKobo, serviceFeeKobo, platformFunded))
+	if err := s.settlement.Settle(ctx, settlementID, orderSettlementSplit(ownerID, riderID, tipKobo, discountKobo, serviceFeeKobo, platformFunded)); err != nil {
+		return err
+	}
+
+	// Record realized Spotlight profit into the central Commission & Profit registry.
+	// This is the food-delivery settlement point (shared by the live UpdateStatus
+	// (delivered) path and the crash-recovery reconciler re-drive). Best-effort +
+	// idempotent: the order id doubles as source ref + idempotency key, so retries /
+	// reconciliation never double-count. gross = the full order value the customer
+	// paid (total_kobo). A recorder failure is logged and swallowed — it must NEVER
+	// fail the settlement above (restaurant's own settle already posted the platform
+	// cut to the ledger; this appends the earning row only). userID is the paying customer.
+	var grossKobo int64
+	var customerID string
+	s.db.QueryRow(ctx, `SELECT total_kobo, customer_id FROM orders WHERE id=$1`, orderID).Scan(&grossKobo, &customerID)
+	s.recordCommissionSafe(ctx, "Lifestyle", "Restaurant", "", grossKobo, orderID, &customerID)
+	return nil
 }
 
 // orderSettlementSplit builds the settlement split for a food order. Pure (no DB) so

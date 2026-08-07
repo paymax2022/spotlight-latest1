@@ -137,6 +137,7 @@ const MOCK_PROFILES: DiscoveryProfile[] = [
     occupation: 'Product Designer',
     company: 'Paystack',
     mutualConnections: 4,
+    modes: ['date', 'network', 'discover'],
   },
   {
     id: 'p2',
@@ -156,6 +157,7 @@ const MOCK_PROFILES: DiscoveryProfile[] = [
     occupation: 'Software Engineer',
     company: 'Flutterwave',
     mutualConnections: 2,
+    modes: ['date', 'network', 'discover'],
   },
   {
     id: 'p3',
@@ -172,6 +174,7 @@ const MOCK_PROFILES: DiscoveryProfile[] = [
     likedYou: true,
     occupation: 'Medical Doctor',
     mutualConnections: 1,
+    modes: ['date', 'discover'],
   },
   {
     id: 'p4',
@@ -189,6 +192,7 @@ const MOCK_PROFILES: DiscoveryProfile[] = [
     occupation: 'Founder & CEO',
     company: 'Stealth',
     mutualConnections: 7,
+    modes: ['date', 'network', 'discover'],
   },
 ];
 
@@ -207,6 +211,7 @@ export async function getDiscoveryStack(filters: DiscoveryFilters): Promise<Disc
   if (USE_MOCK) {
     await delay();
     return MOCK_PROFILES.filter((p) => {
+      if (p.modes && !p.modes.includes(filters.mode)) return false;
       if (p.age < filters.minAge || p.age > filters.maxAge) return false;
       if (filters.verifiedOnly && p.verified.length === 0) return false;
       return true;

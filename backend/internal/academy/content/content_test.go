@@ -84,13 +84,13 @@ func TestCanStage(t *testing.T) {
 	}
 
 	illegal := []struct{ from, to ProductionStage }{
-		{StageScript, StageShoot},      // skip storyboard
-		{StageScript, StagePublish},    // big jump
-		{StageQA, StageScript},         // big jump back
-		{StageScript, StageScript},     // self-loop
-		{StagePublish, StagePublish},   // self-loop
-		{"bogus", StageScript},         // unknown from
-		{StageScript, "bogus"},         // unknown to
+		{StageScript, StageShoot},    // skip storyboard
+		{StageScript, StagePublish},  // big jump
+		{StageQA, StageScript},       // big jump back
+		{StageScript, StageScript},   // self-loop
+		{StagePublish, StagePublish}, // self-loop
+		{"bogus", StageScript},       // unknown from
+		{StageScript, "bogus"},       // unknown to
 	}
 	for _, c := range illegal {
 		if canStage(c.from, c.to) {

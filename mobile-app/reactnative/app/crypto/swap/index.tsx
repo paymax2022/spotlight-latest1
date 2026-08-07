@@ -16,6 +16,7 @@ import { useAssets, useCryptoPortfolio } from '@/features/crypto/hooks/useCrypto
 import {
   buildSwapQuote, formatCrypto, formatFiatObj, parseCryptoToMinor,
 } from '@/features/crypto/utils/cryptoFormatters';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 const PERCENTS = [25, 50, 100];
 
@@ -115,10 +116,12 @@ export default function SwapEntryScreen() {
             <TextInput
               style={styles.amountInput}
               value={input}
-              onChangeText={setInput}
+              onChangeText={(v) => setInput(sanitizeMoneyInput(v))}
               placeholder="0.00"
               placeholderTextColor={Colors.outline}
               keyboardType="decimal-pad"
+              inputMode="decimal"
+              maxLength={13}
               autoFocus
               accessibilityLabel={`Amount of ${fromAsset.symbol} to swap`}
             />

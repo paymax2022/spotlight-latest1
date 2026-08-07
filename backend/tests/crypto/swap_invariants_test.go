@@ -58,13 +58,13 @@ func cashForUnitsMirror(units, priceKobo, scale int64) int64 {
 
 func TestUnitsForCash_TruncatesNeverOverCredits(t *testing.T) {
 	cases := []struct {
-		name                          string
-		cashKobo, priceKobo, scale    int64
-		wantUnits                     int64
+		name                       string
+		cashKobo, priceKobo, scale int64
+		wantUnits                  int64
 	}{
-		{"exact division", 1000, 100, 1, 10}, // 1000*1/100 = 10
+		{"exact division", 1000, 100, 1, 10},                           // 1000*1/100 = 10
 		{"truncates remainder down (never rounds up)", 999, 100, 1, 9}, // 999*1/100 = 9.99 -> 9
-		{"exact division with larger scale", 1000, 100, 1000, 10_000}, // 1000*1000/100 = 10000
+		{"exact division with larger scale", 1000, 100, 1000, 10_000},  // 1000*1000/100 = 10000
 		{"zero price is guarded", 1_000_00, 0, 1, 0},
 		{"zero scale is guarded", 1_000_00, 100, 0, 0},
 		{"negative price is guarded", 1_000_00, -100, 1, 0},
@@ -87,12 +87,12 @@ func TestUnitsForCash_TruncatesNeverOverCredits(t *testing.T) {
 
 func TestCashForUnits_TruncatesAndGuardsZeroScale(t *testing.T) {
 	cases := []struct {
-		name              string
+		name                    string
 		units, priceKobo, scale int64
-		wantCash          int64
+		wantCash                int64
 	}{
-		{"exact division", 10, 100, 1, 1000}, // 10*100/1 = 1000
-		{"truncates remainder down", 3, 100, 2, 150}, // 3*100/2 = 150 exact
+		{"exact division", 10, 100, 1, 1000},                 // 10*100/1 = 1000
+		{"truncates remainder down", 3, 100, 2, 150},         // 3*100/2 = 150 exact
 		{"truncates a non-exact result down", 3, 100, 7, 42}, // 300/7 = 42.86 -> 42
 		{"zero scale is guarded", 1000, 100, 0, 0},
 	}
@@ -151,7 +151,7 @@ func priceSwapMirror(fromUnits, fromPrice, fromScale, toPrice, toScale int64) (c
 // never credited or debited a net nonzero amount, and nothing is minted.
 func TestSwap_NetWalletDeltaIsAlwaysZero(t *testing.T) {
 	cases := []struct {
-		name                          string
+		name                                              string
 		fromUnits, fromPrice, fromScale, toPrice, toScale int64
 	}{
 		// 0.01 BTC (1e6 minor units at 1e8 scale) -> ETH: realistic "large value,
@@ -220,7 +220,7 @@ func TestPriceSwap_LargeWholeUnitCountOverflowsInt64_KnownGap(t *testing.T) {
 // back to the user under any code path.
 func TestSwap_SpreadIsRetainedToRevenue_NeverReturnedToWallet(t *testing.T) {
 	const fromUnits, fromPrice, fromScale = int64(1_000_000), int64(160_000), int64(1_000_000) // USDT-like
-	const toPrice, toScale = int64(250_000_00), int64(100_000_000)                              // SOL-like
+	const toPrice, toScale = int64(250_000_00), int64(100_000_000)                             // SOL-like
 
 	cashKobo, spreadKobo, netCash, _ := priceSwapMirror(fromUnits, fromPrice, fromScale, toPrice, toScale)
 	if spreadKobo <= 0 {

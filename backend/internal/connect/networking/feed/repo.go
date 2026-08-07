@@ -198,7 +198,14 @@ func (r *Repository) SetVisible(ctx context.Context, postID string, visible bool
 //	             + LEAST(reactions*1 + comments*2 + reshares*3, EngagementCap)
 //
 // If `hashtag` is non-empty the feed is filtered to posts carrying that tag.
-func (r *Repository) FeedCandidates(ctx context.Context, hashtag string, limit int) ([]rankable, error) {
+//
+// PN-011 (safety invariant 3 — block is absolute & mutual-invisible): posts by a
+// user the viewer has blocked, OR who has blocked the viewer, are excluded from
+// the candidate set. `viewerID` is the authenticated auth user id; when empty
+// (no viewer) the block predicate is a no-op via NULLIF, so the feed is unchanged
+// for unauthenticated callers. Only `author_type='user'` posts are block-checked
+// (company-page posts have no personal block relationship).
+func (r *Repository) FeedCandidates(ctx context.Context, viewerID, hashtag string, limit int) ([]rankable, error) {
 	const q = `
 WITH base AS (
   SELECT p.id, p.author_type, p.author_id, p.body, p.media_refs, p.hashtags,
@@ -217,6 +224,12 @@ WITH base AS (
          ON sig.user_id = p.author_id
   WHERE p.visible = true
     AND ($1 = '' OR p.hashtags @> ARRAY[$1]::text[])
+    AND NOT EXISTS (
+      SELECT 1 FROM connect_blocks b
+      WHERE p.author_type = 'user'
+        AND ( (b.blocker_id = NULLIF($3,'')::uuid AND b.blocked_id = p.author_id)
+           OR (b.blocked_id = NULLIF($3,'')::uuid AND b.blocker_id = p.author_id) )
+    )
 )
 SELECT id, author_type, author_id, body, media_refs, hashtags, reshare_of_post_id,
        linked_outcome_type, visible, created_at, reactions, comments, reshares,
@@ -226,7 +239,7 @@ SELECT id, author_type, author_id, body, media_refs, hashtags, reshare_of_post_i
 FROM base
 ORDER BY rank_score DESC, created_at DESC
 LIMIT $2`
-	rows, err := r.db.Query(ctx, q, hashtag, limit)
+	rows, err := r.db.Query(ctx, q, hashtag, limit, viewerID)
 	if err != nil {
 		return nil, fmt.Errorf("connect: feed candidates: %w", err)
 	}

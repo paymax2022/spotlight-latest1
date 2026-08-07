@@ -105,3 +105,29 @@ func reportStateForAction(action string) ReportState {
 	}
 	return ReportActioned
 }
+
+// ── Report workflow guards (triage / escalate) ─────────────────────────────────
+//
+// reportTransitions is the legal adjacency for the moderation-report workflow. decide
+// keeps its own pending-only guard (unchanged); these transitions add the intermediate
+// triage / escalate steps ahead of a final decide:
+//
+//	pending   → triaged | escalated | actioned | dismissed
+//	triaged   → escalated | actioned | dismissed
+//	escalated → actioned | dismissed
+var reportTransitions = map[ReportState]map[ReportState]bool{
+	ReportPending:   {ReportTriaged: true, ReportEscalated: true, ReportActioned: true, ReportDismissed: true},
+	ReportTriaged:   {ReportEscalated: true, ReportActioned: true, ReportDismissed: true},
+	ReportEscalated: {ReportActioned: true, ReportDismissed: true},
+	ReportActioned:  {}, // terminal
+	ReportDismissed: {}, // terminal
+}
+
+// canReport reports whether the moderation-report workflow permits from→to.
+func canReport(from, to ReportState) bool {
+	targets, ok := reportTransitions[from]
+	if !ok {
+		return false
+	}
+	return targets[to]
+}

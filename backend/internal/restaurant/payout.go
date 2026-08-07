@@ -462,3 +462,70 @@ func (s *Service) GetRun(ctx context.Context, runID string) (*PayoutRunDetail, e
 	}
 	return &d, rows.Err()
 }
+
+// ── Merchant earnings (owner-scoped read) ─────────────────────────────────────
+
+// EarningsRun is a payout-run summary line for the merchant earnings screen.
+type EarningsRun struct {
+	ID          string     `json:"id"`
+	PeriodKey   string     `json:"period_key"`
+	NetKobo     int64      `json:"net_kobo"`
+	Status      string     `json:"status"`
+	ProcessedAt *time.Time `json:"processed_at,omitempty"`
+}
+
+// MerchantEarnings summarizes a restaurant owner's food-delivery earnings: what
+// has been paid out (net of paid runs), what is still pending (settled provider
+// shares not yet claimed by a payout line), and the recent runs. Read-only — it
+// projects the ledger/payout tables and never moves money.
+type MerchantEarnings struct {
+	PaidOutKobo int64         `json:"paid_out_kobo"`
+	PendingKobo int64         `json:"pending_kobo"`
+	Runs        []EarningsRun `json:"runs"`
+}
+
+// GetMerchantEarnings computes the earnings summary for a restaurant owner.
+func (s *Service) GetMerchantEarnings(ctx context.Context, ownerID string) (*MerchantEarnings, error) {
+	out := &MerchantEarnings{Runs: []EarningsRun{}}
+
+	// Paid out: net of all PAID runs for this provider.
+	if err := s.db.QueryRow(ctx,
+		`SELECT COALESCE(sum(net_minor),0) FROM restaurant_payout_runs
+		  WHERE provider_type=$2 AND provider_id=$1 AND status='paid'`,
+		ownerID, PayoutProviderRestaurant).Scan(&out.PaidOutKobo); err != nil {
+		return nil, fmt.Errorf("restaurant: earnings paid-out: %w", err)
+	}
+
+	// Pending: settled provider shares not yet claimed by a payout line. Mirrors
+	// loadUnpaidSettlements' restaurant branch so the number matches what the next
+	// payout run would disburse.
+	if err := s.db.QueryRow(ctx,
+		`SELECT COALESCE(sum(st.provider_kobo),0)
+		   FROM settlements st
+		   JOIN orders o        ON o.id = replace(st.reference, 'order:', '')::uuid
+		   JOIN restaurants res ON res.id = o.restaurant_id
+		  WHERE st.module_type='food_delivery' AND st.status='settled'
+		    AND res.owner_id=$1 AND st.provider_kobo > 0
+		    AND NOT EXISTS (SELECT 1 FROM restaurant_payout_lines pl WHERE pl.settlement_id = st.id)`,
+		ownerID).Scan(&out.PendingKobo); err != nil {
+		return nil, fmt.Errorf("restaurant: earnings pending: %w", err)
+	}
+
+	// Recent runs (most recent first).
+	rows, err := s.db.Query(ctx,
+		`SELECT id, period_key, net_minor, status, processed_at
+		   FROM restaurant_payout_runs WHERE provider_type=$2 AND provider_id=$1
+		  ORDER BY created_at DESC LIMIT 20`, ownerID, PayoutProviderRestaurant)
+	if err != nil {
+		return nil, fmt.Errorf("restaurant: earnings runs: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r EarningsRun
+		if err := rows.Scan(&r.ID, &r.PeriodKey, &r.NetKobo, &r.Status, &r.ProcessedAt); err != nil {
+			return nil, err
+		}
+		out.Runs = append(out.Runs, r)
+	}
+	return out, rows.Err()
+}

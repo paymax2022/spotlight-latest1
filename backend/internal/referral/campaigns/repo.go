@@ -24,9 +24,9 @@ const campaignCols = `id, name, slug, description, status, reward_model, reward_
 
 func scanCampaign(row pgx.Row) (*Campaign, error) {
 	var (
-		c                              Campaign
-		desc, vest, merch, createdBy   *string
-		rawCfg                         []byte
+		c                            Campaign
+		desc, vest, merch, createdBy *string
+		rawCfg                       []byte
 	)
 	if err := row.Scan(&c.ID, &c.Name, &c.Slug, &desc, &c.Status, &c.RewardModel, &rawCfg,
 		&vest, &c.StartsAt, &c.EndsAt, &c.FundingSource, &merch, &createdBy,

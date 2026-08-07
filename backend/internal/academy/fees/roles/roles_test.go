@@ -18,7 +18,7 @@ import (
 
 type userRoleRow struct {
 	userID, roleID, scopeType, scopeID, assignedBy string
-	createdAt                                       time.Time
+	createdAt                                      time.Time
 }
 
 type fakeRBAC struct {

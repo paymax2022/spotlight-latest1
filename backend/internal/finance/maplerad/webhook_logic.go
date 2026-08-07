@@ -8,12 +8,12 @@ package maplerad
 type EventKind string
 
 const (
-	EventVACredit        EventKind = "va_credit"        // inbound collection → ledger CREDIT
-	EventTransferSuccess EventKind = "transfer_success" // → state machine SUCCESS
-	EventTransferFailed  EventKind = "transfer_failed"  // → state machine FAILED
+	EventVACredit        EventKind = "va_credit"         // inbound collection → ledger CREDIT
+	EventTransferSuccess EventKind = "transfer_success"  // → state machine SUCCESS
+	EventTransferFailed  EventKind = "transfer_failed"   // → state machine FAILED
 	EventTransferReverse EventKind = "transfer_reversed" // → state machine REVERSED
-	EventBillResult      EventKind = "bill_result"      // → bill resolution
-	EventUnknown         EventKind = "unknown"          // stored + logged, never dropped
+	EventBillResult      EventKind = "bill_result"       // → bill resolution
+	EventUnknown         EventKind = "unknown"           // stored + logged, never dropped
 )
 
 // ClassifyEvent maps a raw provider event-type string to an EventKind. Unknown

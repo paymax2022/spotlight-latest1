@@ -37,9 +37,9 @@ func canTransition(from, to State) bool {
 // never advances principal (NL-1) and never pays yield on the float (NL-2).
 type Hold struct {
 	ID             string     `json:"id"`
-	Reference      string     `json:"reference"`       // domain ref (split id, pool id, order id…)
-	ModuleType     string     `json:"module_type"`     // social | events | creators …
-	PayerID        string     `json:"payer_id"`        // FK auth.users(id)
+	Reference      string     `json:"reference"`   // domain ref (split id, pool id, order id…)
+	ModuleType     string     `json:"module_type"` // social | events | creators …
+	PayerID        string     `json:"payer_id"`    // FK auth.users(id)
 	PayeeID        *string    `json:"payee_id,omitempty"`
 	AmountKobo     int64      `json:"amount_kobo"`
 	State          State      `json:"state"`

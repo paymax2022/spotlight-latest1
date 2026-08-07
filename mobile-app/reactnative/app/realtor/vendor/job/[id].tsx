@@ -10,6 +10,7 @@ import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import StateView from '@/components/StateView';
 import SectionHeader from '@/components/SectionHeader';
 import StatusBadge from '@/features/realtor/components/StatusBadge';
@@ -40,7 +41,7 @@ export default function VendorJobDetailScreen() {
   const meta = MAINT_STATUS_META[r.status];
 
   const doQuote = async () => {
-    const kobo = (Number(amount.replace(/\D/g, '')) || 0) * 100;
+    const kobo = (Number(amount.replace(/[^0-9.]/g, '')) || 0) * 100;
     if (kobo <= 0) return setError('Enter a quote amount.');
     setError(undefined);
     await submitQuote.mutateAsync({ requestId: r.id, amount: kobo, note: note.trim() });
@@ -77,7 +78,7 @@ export default function VendorJobDetailScreen() {
         {r.status === 'vendor_assigned' ? (
           <>
             <SectionHeader title="Submit a quote" style={styles.sectionFlush} />
-            <TextInputField label="Quote amount (₦)" placeholder="e.g. 35000" keyboardType="number-pad" value={amount} onChangeText={setAmount} />
+            <TextInputField label="Quote amount (₦)" placeholder="e.g. 35000" keyboardType="decimal-pad" inputMode="decimal" maxLength={13} value={amount} onChangeText={(t) => setAmount(sanitizeMoneyInput(t))} />
             <TextInputField label="Note (scope, parts, labour)" placeholder="What the job involves…" value={note} onChangeText={setNote} multiline />
           </>
         ) : null}

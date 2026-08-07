@@ -24,12 +24,12 @@ func TestCanCred_Allowed(t *testing.T) {
 
 func TestCanCred_Illegal(t *testing.T) {
 	illegal := [][2]CredState{
-		{CredPending, CredRevoked},  // skip issued
-		{CredPending, CredPending},  // self-loop
-		{CredIssued, CredIssued},    // self-loop (replay is idem, not SM)
-		{CredIssued, CredPending},   // backwards
-		{CredRevoked, CredIssued},   // terminal
-		{CredRevoked, CredRevoked},  // terminal self-loop
+		{CredPending, CredRevoked}, // skip issued
+		{CredPending, CredPending}, // self-loop
+		{CredIssued, CredIssued},   // self-loop (replay is idem, not SM)
+		{CredIssued, CredPending},  // backwards
+		{CredRevoked, CredIssued},  // terminal
+		{CredRevoked, CredRevoked}, // terminal self-loop
 		{CredState("bogus"), CredIssued},
 	}
 	for _, tr := range illegal {
@@ -81,13 +81,13 @@ func TestEligible_Rules(t *testing.T) {
 // ── Fake store + upgrader ────────────────────────────────────────────────────────
 
 type fakeStore struct {
-	issued     []Credential
-	opps       map[string]*EarningOpportunity
-	apps       map[string]*EarningApplication // by id
-	byIdem     map[string]*EarningApplication // by idempotency_key
-	verif      map[string]*PublicVerification // by verification_id
-	insertCnt  int
-	routeCnt   int
+	issued    []Credential
+	opps      map[string]*EarningOpportunity
+	apps      map[string]*EarningApplication // by id
+	byIdem    map[string]*EarningApplication // by idempotency_key
+	verif     map[string]*PublicVerification // by verification_id
+	insertCnt int
+	routeCnt  int
 }
 
 func newFakeStore() *fakeStore {

@@ -99,6 +99,18 @@ func (s *Service) GetModule(ctx context.Context, id string) (*ModuleWithLessons,
 	return &ModuleWithLessons{Module: *m, Lessons: lessons, Projects: projects}, nil
 }
 
+// ListTracks returns the seeded trade-track catalog (public catalog read; mirrors
+// the visibility of the other trade catalog lists).
+func (s *Service) ListTracks(ctx context.Context) ([]TradeTrack, error) {
+	return s.repo.ListTracks(ctx)
+}
+
+// GetProject returns a single trade project by id (public catalog read; mirrors the
+// row loaded during project submit).
+func (s *Service) GetProject(ctx context.Context, id string) (*TradeProject, error) {
+	return s.repo.GetProject(ctx, id)
+}
+
 // ── Project submission & review ───────────────────────────────────────────────
 
 // SubmitProject opens a submission in 'submitted'. files are signed-URL refs only
@@ -138,6 +150,12 @@ func (s *Service) ListMySubmissions(ctx context.Context, userID string) ([]Proje
 // ListSkillAssessments returns active assessments for a trade track (or all).
 func (s *Service) ListSkillAssessments(ctx context.Context, tradeTrack string) ([]SkillAssessment, error) {
 	return s.repo.ListAssessments(ctx, tradeTrack)
+}
+
+// GetSkillAssessment returns a single assessment by id (public catalog read; mirrors
+// the row shape returned by ListSkillAssessments).
+func (s *Service) GetSkillAssessment(ctx context.Context, id string) (*SkillAssessment, error) {
+	return s.repo.GetAssessment(ctx, id)
 }
 
 // TakeSkillAssessment grades a learner's score against the assessment's pass_threshold

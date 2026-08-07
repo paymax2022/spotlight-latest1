@@ -260,6 +260,26 @@ func (r *Repository) ListBlueprintsForArena(ctx context.Context, arenaID string)
 	return out, rows.Err()
 }
 
+// ListAllBlueprints reads every blueprint across all arenas (admin flat list).
+// Mirrors ListBlueprintsForArena without the arena filter.
+func (r *Repository) ListAllBlueprints(ctx context.Context) ([]CBTBlueprint, error) {
+	q := `SELECT ` + blueprintCols + ` FROM public.academy_cbt_blueprints ORDER BY name`
+	rows, err := r.db.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CBTBlueprint{}
+	for rows.Next() {
+		b, err := scanBlueprint(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *b)
+	}
+	return out, rows.Err()
+}
+
 // UpdateBlueprint partial-updates a blueprint (admin).
 func (r *Repository) UpdateBlueprint(ctx context.Context, actor, id string, req UpdateBlueprintRequest) (*CBTBlueprint, error) {
 	const q = `

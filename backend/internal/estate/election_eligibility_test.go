@@ -66,16 +66,16 @@ func TestEvaluateEligibility(t *testing.T) {
 			eligible:  false, reasons: []string{ReasonResidentTypeError},
 		},
 		{
-			name:      "multiple failures accumulate",
-			rules:     EligibilityRules{RequireKYC: true, RequirePayment: true, ResidentTypes: []string{"homeowner"}},
-			kycAvail:  true, kycVerified: false, dues: true, voterType: "tenant",
+			name:     "multiple failures accumulate",
+			rules:    EligibilityRules{RequireKYC: true, RequirePayment: true, ResidentTypes: []string{"homeowner"}},
+			kycAvail: true, kycVerified: false, dues: true, voterType: "tenant",
 			eligible: false,
 			reasons:  []string{ReasonKYCRequired, ReasonOutstandingDues, ReasonResidentTypeError},
 		},
 		{
-			name:      "all requirements satisfied",
-			rules:     EligibilityRules{RequireKYC: true, RequirePayment: true, ResidentTypes: []string{"homeowner"}},
-			kycAvail:  true, kycVerified: true, dues: false, voterType: "homeowner",
+			name:     "all requirements satisfied",
+			rules:    EligibilityRules{RequireKYC: true, RequirePayment: true, ResidentTypes: []string{"homeowner"}},
+			kycAvail: true, kycVerified: true, dues: false, voterType: "homeowner",
 			eligible: true,
 		},
 	}

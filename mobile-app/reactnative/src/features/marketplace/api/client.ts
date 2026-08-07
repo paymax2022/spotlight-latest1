@@ -20,18 +20,17 @@
 // the gin engine, NOT under /api/finance, so the blanket /api/finance/:path*
 // rewrite in frontend-web/next.config.mjs does not cover it either).
 //
-// STATUS (go-live audit): that proxy route file does NOT exist yet in
-// frontend-web/app/api/v1/ — grepped the repo, only frontend-web/app/api/v1/
-// estate/admin/summary/route.ts exists under app/api/v1. Until the proxy (or a
-// rewrite for /api/v1/marketplace/:path* → GO_BACKEND_URL/v1/marketplace/:path*)
-// is added, every live call below 404s. This file is out of the mobile-only
-// go-live cluster's edit boundary (frontend-web is owned by a different
-// agent/cluster) — flagged here as a MISSING backend-proxy endpoint.
+// STATUS (go-live audit): the proxy route now EXISTS at
+// frontend-web/app/api/v1/marketplace/[...path]/route.ts — it forwards every
+// /api/v1/marketplace/* call to the Go backend's /v1/marketplace group. Live
+// calls below therefore resolve once EXPO_PUBLIC_MARKETPLACE_USE_MOCK=false;
+// mock stays the default so the group is demoable/offline out of the box.
 // Money POSTs attach an Idempotency-Key.
 
 import { api } from '@/api/client';
 
-/** Base path on the frontend-web proxy. Proxy → Go /v1/marketplace/* (proxy route missing — see note above). */
+/** Base path on the frontend-web proxy. Proxy → Go /v1/marketplace/* (route lives at
+ *  frontend-web/app/api/v1/marketplace/[...path]/route.ts). */
 export const MKT_BASE = '/api/v1/marketplace';
 
 /**
@@ -151,7 +150,10 @@ function toMktError(err: unknown): MktApiError {
 
 // ─── Response envelope unwrap ────────────────────────────────────────────────
 // House convention: handlers may reply { data: <payload> } or the bare payload.
-// Unwrap the { data } wrapper, then deep-camel the result.
+// Unwrap by KEY PRESENCE (not nullishness): if the body carries a `data` key we
+// return its value even when null — so an empty result serialized as
+// { data: null } yields null, never the wrapper object (which would break Array
+// ops downstream). Then deep-camel the result. Mirrors fx.api.ts's unwrap().
 function unwrap<T>(res: { data?: unknown }): T {
   const body = res.data as { data?: unknown } | unknown;
   const payload =
@@ -159,6 +161,12 @@ function unwrap<T>(res: { data?: unknown }): T {
       ? (body as { data: unknown }).data
       : body;
   return deepCamel<T>(payload);
+}
+
+// Coerce a list payload to an array — a live empty result may arrive as null.
+// Wrap every list projection with this so screens always receive an array.
+export function arr<T>(v: T[] | null | undefined): T[] {
+  return Array.isArray(v) ? v : [];
 }
 
 // ─── Verbs ───────────────────────────────────────────────────────────────────
