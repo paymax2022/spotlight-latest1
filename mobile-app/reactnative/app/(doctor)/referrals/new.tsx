@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Check } from 'lucide-react-native';
@@ -14,6 +14,7 @@ import { SectionCard, SoapSection, StateView } from '@/features/doctor/component
 import { useSpecialists, useCreateReferral } from '@/features/doctor/hooks';
 import { REFERRAL_SPECIALTY_OPTIONS, REFERRAL_URGENCY_OPTIONS } from '@/features/doctor/constants';
 import type { SpecialistReferral } from '@/types/doctor.phase2';
+import { alertAsync } from '@/lib/confirm';
 
 export default function NewReferralScreen() {
   const { patientId, patientName } = useLocalSearchParams<{ patientId?: string; patientName?: string }>();
@@ -35,11 +36,11 @@ export default function NewReferralScreen() {
 
   const handleSubmit = async () => {
     if (!patientId) {
-      Alert.alert('No patient', 'Open a referral from a patient record to select the patient.');
+      alertAsync({ title: 'No patient', message: 'Open a referral from a patient record to select the patient.' });
       return;
     }
     if (!canSubmit) {
-      Alert.alert('Incomplete', 'Choose a specialist and add a reason for the referral.');
+      alertAsync({ title: 'Incomplete', message: 'Choose a specialist and add a reason for the referral.' });
       return;
     }
     try {
@@ -50,11 +51,10 @@ export default function NewReferralScreen() {
         urgency,
         attachments: [],
       });
-      Alert.alert('Referral sent', `${result.ref} has been created.`, [
-        { text: 'View', onPress: () => router.replace(`/(doctor)/referrals/${result.referralId}`) },
-      ]);
+      await alertAsync({ title: 'Referral sent', message: `${result.ref} has been created.`, buttonLabel: 'View' });
+      router.replace(`/(doctor)/referrals/${result.referralId}`);
     } catch {
-      Alert.alert('Failed', 'Could not create the referral. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not create the referral. Please try again.' });
     }
   };
 

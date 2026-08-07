@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, FlatList, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, FlatList, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Plus, ShieldCheck } from 'lucide-react-native';
@@ -12,24 +12,18 @@ import StateView from '@/components/StateView';
 import { ConsentToggleRow } from '@/features/health/components';
 import { useConsents, useRevokeConsent } from '@/features/health/hooks';
 import { NDPA_CONSENT_COPY } from '@/features/health/constants/health.constants';
+import { confirmAsync } from '@/lib/confirm';
 
 export default function ConsentManagerScreen() {
   const { data: consents, isLoading, isError, refetch, isRefetching } = useConsents();
   const revoke = useRevokeConsent();
   const [revokingId, setRevokingId] = useState<string | null>(null);
 
-  const onRevoke = (id: string) => {
-    Alert.alert('Revoke access?', 'This provider will immediately lose access to the shared data.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Revoke',
-        style: 'destructive',
-        onPress: () => {
-          setRevokingId(id);
-          revoke.mutate(id, { onSettled: () => setRevokingId(null) });
-        },
-      },
-    ]);
+  const onRevoke = async (id: string) => {
+    const ok = await confirmAsync({ title: 'Revoke access?', message: 'This provider will immediately lose access to the shared data.', confirmLabel: 'Revoke', destructive: true });
+    if (!ok) return;
+    setRevokingId(id);
+    revoke.mutate(id, { onSettled: () => setRevokingId(null) });
   };
 
   return (

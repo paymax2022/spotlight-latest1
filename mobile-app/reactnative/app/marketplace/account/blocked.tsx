@@ -2,7 +2,7 @@
 // User-controlled safety list. GET /blocks → list; DELETE /blocks/:id → unblock.
 // Empty state is an invitation, not a bare blank.
 import React from 'react';
-import { View, Text, StyleSheet, FlatList, Pressable, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { UserX } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -14,18 +14,23 @@ import StateView from '@/components/StateView';
 import { MarketColors } from '@/features/marketplace';
 import { useBlocks, useUnblockUser } from '@/features/marketplace/api/account.hooks';
 import type { Block } from '@/features/marketplace/api/account.api';
+import { confirmAsync } from '@/lib/confirm';
 
 export default function BlockedUsers() {
   const blocks = useBlocks();
   const unblock = useUnblockUser();
   const items = blocks.data ?? [];
 
-  const confirmUnblock = (b: Block) => {
+  const confirmUnblock = async (b: Block) => {
     const name = b.blockedUserName ?? 'this user';
-    Alert.alert('Unblock user?', `${name} will be able to contact you and see your listings again.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Unblock', style: 'destructive', onPress: () => unblock.mutate(b.id) },
-    ]);
+    const ok = await confirmAsync({
+      title: 'Unblock user?',
+      message: `${name} will be able to contact you and see your listings again.`,
+      confirmLabel: 'Unblock',
+      destructive: true,
+    });
+    if (!ok) return;
+    unblock.mutate(b.id);
   };
 
   return (

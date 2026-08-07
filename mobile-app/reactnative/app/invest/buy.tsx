@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, TextInput, ScrollView, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, TextInput, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { CheckCircle2, Lock } from 'lucide-react-native';
@@ -14,6 +14,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { useStock, useInvestWallet, useBuyOrder } from '@/features/invest/hooks/useInvest';
 import { formatNaira, nairaToKobo, formatQty, orderStatusLabel } from '@/features/invest/utils/format';
 import type { Receipt } from '@/features/invest/types/invest.types';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 // Estimated commission for DISPLAY only — the server recomputes and is the
 // source of truth (iron rule: never trust client-side fee calc).
@@ -54,14 +55,12 @@ export default function BuyScreen() {
     } catch (e: any) {
       const code = e?.response?.data?.code;
       if (code === 'pin_not_set') {
-        Alert.alert('Set a transaction PIN', 'You need a transaction PIN before you can trade.', [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Set PIN', onPress: () => router.push('/invest/security/pin') },
-        ]);
+        const ok = await confirmAsync({ title: 'Set a transaction PIN', message: 'You need a transaction PIN before you can trade.', confirmLabel: 'Set PIN' });
+        if (ok) router.push('/invest/security/pin');
         return;
       }
       const msg = e?.response?.data?.error ?? 'Your order could not be placed. Any locked cash has been released.';
-      Alert.alert('Order failed', msg);
+      alertAsync({ title: 'Order failed', message: msg });
     }
   }
 

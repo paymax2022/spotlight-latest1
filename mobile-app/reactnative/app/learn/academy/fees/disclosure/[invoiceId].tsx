@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Lock, Check, FileText } from 'lucide-react-native';
@@ -14,6 +14,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { formatNaira, formatDate } from '@/features/academy/constants';
 import { INSTALLMENT_DISCLOSURE_COPY } from '@/features/academy/fees/constants';
 import { useInvoice, useInstallmentPlan, useAcceptDisclosure } from '@/features/academy/fees/hooks';
+import { alertAsync } from '@/lib/confirm';
 
 /**
  * PA-06 · SF-6 — Mandatory installment DISCLOSURE screen, shown BEFORE the first
@@ -52,11 +53,9 @@ export default function InstallmentDisclosure() {
     if (!acked) return;
     accept.mutate(invoiceId as string, {
       onSuccess: () => {
-        Alert.alert('Terms accepted', 'Your installment plan is now active. You can pay the first installment.', [
-          { text: 'Continue', onPress: () => router.replace(`/learn/academy/fees/installments/${inv.id}`) },
-        ]);
+        alertAsync({ title: 'Terms accepted', message: 'Your installment plan is now active. You can pay the first installment.', buttonLabel: 'Continue' }).then(() => router.replace(`/learn/academy/fees/installments/${inv.id}`));
       },
-      onError: (e) => Alert.alert('Could not record acceptance', (e as Error).message),
+      onError: (e) => alertAsync({ title: 'Could not record acceptance', message: (e as Error).message }),
     });
   };
 

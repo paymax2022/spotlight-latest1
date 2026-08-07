@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { UserPlus, User, Trash2 } from 'lucide-react-native';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -68,24 +69,18 @@ export default function BeneficiariesScreen() {
       {
         onSuccess: resetForm,
         onError: (err) => {
-          Alert.alert('Could not add beneficiary', err instanceof Error ? err.message : 'Please try again.');
+          alertAsync({ title: 'Could not add beneficiary', message: err instanceof Error ? err.message : 'Please try again.' });
         },
       },
     );
   };
 
-  const confirmRemove = (id: string, benName: string) => {
-    Alert.alert('Remove beneficiary', `Remove ${benName}? Their share will be freed up.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: () =>
-          removeBeneficiary.mutate(id, {
-            onError: () => Alert.alert('Could not remove', 'Please try again.'),
-          }),
-      },
-    ]);
+  const confirmRemove = async (id: string, benName: string) => {
+    const ok = await confirmAsync({ title: 'Remove beneficiary', message: `Remove ${benName}? Their share will be freed up.`, confirmLabel: 'Remove', destructive: true });
+    if (!ok) return;
+    removeBeneficiary.mutate(id, {
+      onError: () => alertAsync({ title: 'Could not remove', message: 'Please try again.' }),
+    });
   };
 
   if (beneficiaries.isLoading) {

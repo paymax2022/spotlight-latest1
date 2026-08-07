@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { router } from 'expo-router';
 import { CalendarClock, Plus, HeartPulse, Bell, CheckCircle2, XCircle, X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -40,25 +41,19 @@ export default function FollowUpsScreen() {
   const [reminderFor, setReminderFor] = useState<FollowUpPlan | null>(null);
   const [completeFor, setCompleteFor] = useState<FollowUpPlan | null>(null);
 
-  const handleReview = (plan: FollowUpPlan, decision: 'approve' | 'reject') => {
-    Alert.alert(
-      decision === 'approve' ? 'Approve request?' : 'Reject request?',
-      `${plan.reason} for ${plan.patient.name}.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: decision === 'approve' ? 'Approve' : 'Reject',
-          style: decision === 'reject' ? 'destructive' : 'default',
-          onPress: async () => {
-            try {
-              await review.mutateAsync({ followUpId: plan.id, decision });
-            } catch {
-              Alert.alert('Failed', 'Please try again.');
-            }
-          },
-        },
-      ],
-    );
+  const handleReview = async (plan: FollowUpPlan, decision: 'approve' | 'reject') => {
+    const ok = await confirmAsync({
+      title: decision === 'approve' ? 'Approve request?' : 'Reject request?',
+      message: `${plan.reason} for ${plan.patient.name}.`,
+      confirmLabel: decision === 'approve' ? 'Approve' : 'Reject',
+      destructive: decision === 'reject',
+    });
+    if (!ok) return;
+    try {
+      await review.mutateAsync({ followUpId: plan.id, decision });
+    } catch {
+      alertAsync({ title: 'Failed', message: 'Please try again.' });
+    }
   };
 
   return (
@@ -140,14 +135,11 @@ export default function FollowUpsScreen() {
                       </Pressable>
                       <Pressable
                         style={styles.iconBtn}
-                        onPress={() => {
-                          Alert.alert('Mark as missed?', `${f.patient.name} did not attend the follow-up.`, [
-                            { text: 'Cancel', style: 'cancel' },
-                            { text: 'Mark missed', style: 'destructive', onPress: async () => {
-                              try { await complete.mutateAsync({ followUpId: f.id, missed: true }); }
-                              catch { Alert.alert('Failed', 'Please try again.'); }
-                            } },
-                          ]);
+                        onPress={async () => {
+                          const ok = await confirmAsync({ title: 'Mark as missed?', message: `${f.patient.name} did not attend the follow-up.`, confirmLabel: 'Mark missed', destructive: true });
+                          if (!ok) return;
+                          try { await complete.mutateAsync({ followUpId: f.id, missed: true }); }
+                          catch { alertAsync({ title: 'Failed', message: 'Please try again.' }); }
                         }}
                         accessibilityRole="button"
                         accessibilityLabel="Mark missed"
@@ -180,9 +172,9 @@ export default function FollowUpsScreen() {
                 try {
                   await setReminder.mutateAsync({ followUpId: reminderFor.id, remindAt });
                   setReminderFor(null);
-                  Alert.alert('Reminder set', 'A reminder has been scheduled.');
+                  alertAsync({ title: 'Reminder set', message: 'A reminder has been scheduled.' });
                 } catch {
-                  Alert.alert('Failed', 'Please try again.');
+                  alertAsync({ title: 'Failed', message: 'Please try again.' });
                 }
               }}
             />
@@ -206,9 +198,9 @@ export default function FollowUpsScreen() {
                 try {
                   await complete.mutateAsync({ followUpId: completeFor.id, outcomeNote: outcomeNote.trim() || undefined });
                   setCompleteFor(null);
-                  Alert.alert('Marked complete', 'The follow-up has been completed.');
+                  alertAsync({ title: 'Marked complete', message: 'The follow-up has been completed.' });
                 } catch {
-                  Alert.alert('Failed', 'Please try again.');
+                  alertAsync({ title: 'Failed', message: 'Please try again.' });
                 }
               }}
             />

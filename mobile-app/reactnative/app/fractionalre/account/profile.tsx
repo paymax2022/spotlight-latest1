@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { confirmAsync } from '@/lib/confirm';
 import { TrendingUp, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -80,9 +81,9 @@ export default function InvestorProfileScreen() {
             <PrimaryButton
               label="Request HNI upgrade"
               variant="secondary"
-              onPress={() => Alert.alert('HNI upgrade', 'Submit income and net-worth evidence via KYC to be reviewed for HNI classification.', [
-                { text: 'Open KYC', onPress: () => {} }, { text: 'Close', style: 'cancel' },
-              ])}
+              onPress={async () => {
+                await confirmAsync({ title: 'HNI upgrade', message: 'Submit income and net-worth evidence via KYC to be reviewed for HNI classification.', confirmLabel: 'Open KYC', cancelLabel: 'Close' });
+              }}
             />
           </View>
         ) : null}

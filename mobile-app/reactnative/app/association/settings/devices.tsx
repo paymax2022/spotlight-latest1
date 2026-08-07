@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, FlatList, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, FlatList, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Smartphone, Monitor, MapPin } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -12,16 +12,17 @@ import StateView from '@/components/StateView';
 import { useDevices, useRevokeDevice } from '@/features/association/hooks/useSettings';
 import { relativeTime } from '@/features/association/utils/associationFormatters';
 import type { Device } from '@/features/association/types/settings.types';
+import { confirmAsync } from '@/lib/confirm';
 
 export default function DevicesScreen() {
   const devices = useDevices();
   const revoke = useRevokeDevice();
 
-  const confirmRevoke = (d: Device) =>
-    Alert.alert('Sign out device', `Sign out ${d.name}? It will need to log in again.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => revoke.mutate(d.id) },
-    ]);
+  const confirmRevoke = async (d: Device) => {
+    const ok = await confirmAsync({ title: 'Sign out device', message: `Sign out ${d.name}? It will need to log in again.`, confirmLabel: 'Sign out', destructive: true });
+    if (!ok) return;
+    revoke.mutate(d.id);
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

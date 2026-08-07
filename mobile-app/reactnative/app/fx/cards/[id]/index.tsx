@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Eye, EyeOff, Plus, Snowflake, Sun, SlidersHorizontal, ListOrdered, Trash2 } from 'lucide-react-native';
@@ -13,6 +13,7 @@ import CardVisual from '@/features/fx/components/CardVisual';
 import SummaryRow from '@/features/fx/components/SummaryRow';
 import { useCard, useRevealCard, useSetCardFrozen, useTerminateCard } from '@/features/fx/hooks/useFxCards';
 import { formatMoney } from '@/features/fx/utils/fxFormatters';
+import { confirmAsync } from '@/lib/confirm';
 import type { CardSensitive } from '@/features/fx/types/fx.types';
 
 export default function CardDetailScreen() {
@@ -34,15 +35,15 @@ export default function CardDetailScreen() {
     setSensitive(s);
   };
 
-  const confirmTerminate = () => {
-    Alert.alert(
-      'Terminate card',
-      `Permanently terminate "${card.label}"? Any remaining ${formatMoney(card.balance, card.currency)} is returned to your wallet. This can't be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Terminate', style: 'destructive', onPress: async () => { await terminate.mutateAsync(card.id); router.back(); } },
-      ],
-    );
+  const confirmTerminate = async () => {
+    const ok = await confirmAsync({
+      title: 'Terminate card',
+      message: `Permanently terminate "${card.label}"? Any remaining ${formatMoney(card.balance, card.currency)} is returned to your wallet. This can't be undone.`,
+      confirmLabel: 'Terminate',
+      destructive: true,
+    });
+    if (!ok) return;
+    await terminate.mutateAsync(card.id); router.back();
   };
 
   return (

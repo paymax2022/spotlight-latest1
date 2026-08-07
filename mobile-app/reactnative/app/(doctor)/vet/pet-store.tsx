@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ShoppingBag, Info, Truck } from 'lucide-react-native';
@@ -14,6 +14,7 @@ import { usePetProducts, usePetRecommendations, useRecommendProducts } from '@/f
 import { PET_PRODUCT_CATEGORIES } from '@/features/doctor/constants';
 import { formatKobo } from '@/api/doctor.phase3.api';
 import type { PetProductCategory } from '@/types/doctor.phase3';
+import { alertAsync } from '@/lib/confirm';
 
 export default function PetStoreScreen() {
   const { petId } = useLocalSearchParams<{ petId?: string }>();
@@ -36,20 +37,19 @@ export default function PetStoreScreen() {
 
   const handleSubmit = async () => {
     if (!pet) {
-      Alert.alert('No pet selected', 'Open this from a pet profile to recommend products.');
+      alertAsync({ title: 'No pet selected', message: 'Open this from a pet profile to recommend products.' });
       return;
     }
     if (selected.length === 0) {
-      Alert.alert('Select products', 'Choose at least one product to recommend.');
+      alertAsync({ title: 'Select products', message: 'Choose at least one product to recommend.' });
       return;
     }
     try {
       const result = await recommend.mutateAsync({ petId: pet, productIds: selected, note });
-      Alert.alert('Recommendation sent', `${result.ref} ${result.sharedWithOwner ? 'shared with the owner.' : 'saved.'}`, [
-        { text: 'Done', onPress: () => { setSelected([]); setNote(''); } },
-      ]);
+      await alertAsync({ title: 'Recommendation sent', message: `${result.ref} ${result.sharedWithOwner ? 'shared with the owner.' : 'saved.'}`, buttonLabel: 'Done' });
+      setSelected([]); setNote('');
     } catch {
-      Alert.alert('Failed', 'Could not send the recommendation. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not send the recommendation. Please try again.' });
     }
   };
 

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Switch, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { Colors } from '@/constants/colors';
@@ -19,6 +19,7 @@ import {
 } from '@/features/mobility/hooks/useBusMarketplace';
 import { nairaToKobo, formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import type { BusDepartureTemplate } from '@/features/mobility/types/busProvider.types';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
 const MINUTES = ['00', '15', '30', '45'];
@@ -106,29 +107,23 @@ export default function BusProviderTemplatesScreen() {
     try {
       await setActive.mutateAsync({ id: t.id, active: !t.active });
     } catch (e) {
-      Alert.alert('Could not update', e instanceof Error ? e.message : 'Please try again.');
+      alertAsync({ title: 'Could not update', message: e instanceof Error ? e.message : 'Please try again.' });
     }
   };
 
-  const onDelete = (t: BusDepartureTemplate) => {
-    Alert.alert(
-      'Delete template',
-      `Stop generating ${formatDays(t.daysOfWeek)} departures at ${t.departTime}? Existing departures are not removed.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await remove.mutateAsync(t.id);
-            } catch (e) {
-              Alert.alert('Could not delete', e instanceof Error ? e.message : 'Please try again.');
-            }
-          },
-        },
-      ],
-    );
+  const onDelete = async (t: BusDepartureTemplate) => {
+    const ok = await confirmAsync({
+      title: 'Delete template',
+      message: `Stop generating ${formatDays(t.daysOfWeek)} departures at ${t.departTime}? Existing departures are not removed.`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await remove.mutateAsync(t.id);
+    } catch (e) {
+      alertAsync({ title: 'Could not delete', message: e instanceof Error ? e.message : 'Please try again.' });
+    }
   };
 
   return (

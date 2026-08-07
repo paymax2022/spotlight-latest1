@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, ScrollView, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, TextInput, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Check } from 'lucide-react-native';
@@ -13,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { useHoldings, useListFraction } from '@/features/fractionalre/hooks';
 import { formatNaira, makeIdempotencyKey } from '@/features/fractionalre/utils';
 import { sanitizeMoneyInput } from '@/utils/money';
+import { alertAsync } from '@/lib/confirm';
 import type { Holding } from '@/features/fractionalre/types';
 
 export default function ListFractionScreen() {
@@ -39,11 +40,10 @@ export default function ListFractionScreen() {
         input: { holdingId: selected.id, units: unitsNum, pricePerUnitKobo: priceKobo },
         idempotencyKey: makeIdempotencyKey('fre-list'),
       });
-      Alert.alert('Listed', 'Your fraction is now on the secondary market.', [
-        { text: 'OK', onPress: () => router.replace('/fractionalre/market/orders') },
-      ]);
+      await alertAsync({ title: 'Listed', message: 'Your fraction is now on the secondary market.' });
+      router.replace('/fractionalre/market/orders');
     } catch {
-      Alert.alert('Could not list', 'Please try again.');
+      alertAsync({ title: 'Could not list', message: 'Please try again.' });
     }
   };
 

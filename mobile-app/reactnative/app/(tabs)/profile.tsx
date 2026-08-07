@@ -5,7 +5,6 @@ import {
   ScrollView,
   StyleSheet,
   Platform,
-  Alert,
   Pressable,
   ActivityIndicator,
   RefreshControl,
@@ -53,6 +52,7 @@ import {
 } from '@/api/profile.api';
 import { STATE_NAMES, getLGAsForState } from '@/data/nigeria';
 import { getErrorMessage } from '@/utils/errorMapper';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 type ProfileForm = {
   firstName: string;
@@ -289,7 +289,7 @@ export default function ProfileScreen() {
           phone: updated.phone ?? user.phone,
         });
       }
-      Alert.alert('Profile updated', 'Your account information has been saved.');
+      alertAsync({ title: 'Profile updated', message: 'Your account information has been saved.' });
     },
     onError: (error) => setProfileError(getErrorMessage(error)),
   });
@@ -306,7 +306,7 @@ export default function ProfileScreen() {
       setDocumentNumber('');
       qc.setQueryData(['kyc'], updated);
       if (user) setUser({ ...user, kycStatus: updated.status });
-      Alert.alert('KYC submitted', `Your Tier ${selectedTier} KYC request is pending review.`);
+      alertAsync({ title: 'KYC submitted', message: `Your Tier ${selectedTier} KYC request is pending review.` });
     },
     onError: (error) => setKycError(getErrorMessage(error)),
   });
@@ -317,7 +317,7 @@ export default function ProfileScreen() {
       setKycError('');
       qc.setQueryData(['kyc'], updated);
       if (user) setUser({ ...user, kycStatus: updated.status });
-      Alert.alert('Tier 0 activated', 'Your account is now Tier 0 verified.');
+      alertAsync({ title: 'Tier 0 activated', message: 'Your account is now Tier 0 verified.' });
     },
     onError: (error) => setKycError(getErrorMessage(error)),
   });
@@ -369,18 +369,11 @@ export default function ProfileScreen() {
     submitKycRequest.mutate();
   };
 
-  const handleLogout = () => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign Out',
-        style: 'destructive',
-        onPress: async () => {
-          await logout();
-          router.replace('/(auth)/login');
-        },
-      },
-    ]);
+  const handleLogout = async () => {
+    const ok = await confirmAsync({ title: 'Sign Out', message: 'Are you sure you want to sign out?', confirmLabel: 'Sign Out', destructive: true });
+    if (!ok) return;
+    await logout();
+    router.replace('/(auth)/login');
   };
 
   return (

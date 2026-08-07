@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Platform, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Store, AlertTriangle } from 'lucide-react-native';
@@ -18,6 +18,7 @@ import {
   useSelectPharmacy,
 } from '@/features/doctor/hooks';
 import type { Pharmacy } from '@/types/doctor.batch3';
+import { alertAsync } from '@/lib/confirm';
 
 // ── Section L — Pharmacy directory ────────────────────────────────────────────
 // NEW screen: preferred + nearby verified pharmacies (PharmacyRow), per-drug
@@ -37,20 +38,20 @@ export default function PharmacyDirectoryScreen() {
 
   const handleSelect = async () => {
     if (!chosen) {
-      Alert.alert('Select a pharmacy', 'Choose a pharmacy to continue.');
+      alertAsync({ title: 'Select a pharmacy', message: 'Choose a pharmacy to continue.' });
       return;
     }
     if (!prescriptionId) {
-      Alert.alert('Selected', `${chosen.name} selected.`, [{ text: 'OK', onPress: () => router.back() }]);
+      await alertAsync({ title: 'Selected', message: `${chosen.name} selected.` });
+      router.back();
       return;
     }
     try {
       await select.mutateAsync({ prescriptionId: String(prescriptionId), pharmacyId: chosen.id });
-      Alert.alert('Sent', `The prescription has been sent to ${chosen.name}.`, [
-        { text: 'View pharmacy', onPress: () => router.replace('/(doctor)/pharmacy') },
-      ]);
+      await alertAsync({ title: 'Sent', message: `The prescription has been sent to ${chosen.name}.`, buttonLabel: 'View pharmacy' });
+      router.replace('/(doctor)/pharmacy');
     } catch {
-      Alert.alert('Failed', 'Could not select the pharmacy. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not select the pharmacy. Please try again.' });
     }
   };
 

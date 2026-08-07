@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, ScrollView, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TextInput, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { alertAsync } from '@/lib/confirm';
 import { Lock, AlertTriangle, CheckCircle2, ShieldX } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -52,9 +53,8 @@ export default function BuyListingScreen() {
         req: { units: unitsNum, pin, idempotencyKey: makeIdempotencyKey('fre-mktbuy') },
       }),
       onPaid: () => {
-        Alert.alert('Purchase complete', 'The units have been transferred to your portfolio.', [
-          { text: 'View orders', onPress: () => router.replace('/fractionalre/market/orders') },
-        ]);
+        alertAsync({ title: 'Purchase complete', message: 'The units have been transferred to your portfolio.', buttonLabel: 'View orders' })
+          .then(() => router.replace('/fractionalre/market/orders'));
       },
     });
   };

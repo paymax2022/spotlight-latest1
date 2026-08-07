@@ -1,7 +1,8 @@
 import React from 'react';
-import { ScrollView, View, Text, Pressable, StyleSheet, Alert } from 'react-native';
+import { ScrollView, View, Text, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { confirmAsync } from '@/lib/confirm';
 import { Lightbulb, UserX } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -68,10 +69,10 @@ export default function SafetyCenter() {
                   <View style={styles.blockIcon}><UserX size={16} color={Colors.error} strokeWidth={2} /></View>
                   <Text style={styles.blockName}>{u.displayName}</Text>
                   <Pressable
-                    onPress={() => Alert.alert('Unblock?', `Unblock ${u.displayName}?`, [
-                      { text: 'Cancel', style: 'cancel' },
-                      { text: 'Unblock', onPress: () => unblock.mutate(u.id) },
-                    ])}
+                    onPress={async () => {
+                      const ok = await confirmAsync({ title: 'Unblock?', message: `Unblock ${u.displayName}?`, confirmLabel: 'Unblock' });
+                      if (ok) unblock.mutate(u.id);
+                    }}
                   >
                     <Text style={styles.unblock}>Unblock</Text>
                   </Pressable>

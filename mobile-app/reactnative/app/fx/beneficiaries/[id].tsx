@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Star, Pencil, Trash2, Send, BadgeCheck, ShieldAlert } from 'lucide-react-native';
@@ -15,6 +15,7 @@ import {
   useBeneficiaries, useToggleFavoriteBeneficiary, useDeleteBeneficiary,
 } from '@/features/fx/hooks/useFx';
 import { CURRENCIES, RAIL_LABEL } from '@/features/fx/constants/fx.constants';
+import { confirmAsync } from '@/lib/confirm';
 
 export default function BeneficiaryDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -34,18 +35,15 @@ export default function BeneficiaryDetailScreen() {
   const meta = CURRENCIES[beneficiary.currency];
   const initials = (beneficiary.name ?? '').split(' ').slice(0, 2).map((s) => s[0] ?? '').join('').toUpperCase();
 
-  const confirmRemove = () => {
-    Alert.alert(
-      'Remove beneficiary',
-      `Remove ${beneficiary.name}? This can't be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove', style: 'destructive',
-          onPress: async () => { setRemoving(true); await del.mutateAsync(beneficiary.id); router.back(); },
-        },
-      ],
-    );
+  const confirmRemove = async () => {
+    const ok = await confirmAsync({
+      title: 'Remove beneficiary',
+      message: `Remove ${beneficiary.name}? This can't be undone.`,
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
+    setRemoving(true); await del.mutateAsync(beneficiary.id); router.back();
   };
 
   return (

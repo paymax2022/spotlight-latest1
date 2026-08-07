@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { router } from 'expo-router';
 import { ShieldCheck, ChevronRight, Plus, FileCheck, MessageSquare, X, Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -101,12 +102,10 @@ export default function ClaimsScreen() {
           try {
             const result = await submit.mutateAsync(input);
             setPreviewOpen(false);
-            Alert.alert('Claim submitted', `${result.ref} has been submitted.`, [
-              { text: 'View', onPress: () => router.push(`/(doctor)/claims/${result.claimId}`) },
-              { text: 'Done' },
-            ]);
+            const ok = await confirmAsync({ title: 'Claim submitted', message: `${result.ref} has been submitted.`, confirmLabel: 'View', cancelLabel: 'Done' });
+            if (ok) { router.push(`/(doctor)/claims/${result.claimId}`); }
           } catch {
-            Alert.alert('Failed', 'Could not submit the claim. Please try again.');
+            alertAsync({ title: 'Failed', message: 'Could not submit the claim. Please try again.' });
           }
         }}
       />

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Image, ScrollView, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, Image, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { Briefcase, MapPin, CalendarDays, UserCog, ArrowRightLeft, Ban, RotateCcw, Lock } from 'lucide-react-native';
@@ -20,6 +20,7 @@ import {
 import { initials, formatDate } from '@/features/association/utils/associationFormatters';
 import { ASSIGNABLE_ROLES } from '@/features/association/types/adminRole.types';
 import type { AdminRole } from '@/features/association/types/adminRole.types';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 const CHAPTERS = ['Lagos State Chapter', 'FCT Abuja Chapter', 'Rivers State Chapter', 'Kano State Chapter'];
 
@@ -65,23 +66,25 @@ export default function AdminMemberDetail() {
   const m = member.data;
   const suspended = m.status === 'SUSPENDED' || m.status === 'RESTRICTED';
 
-  const confirm = (title: string, msg: string, onYes: () => void, destructive = false) =>
-    Alert.alert(title, msg, [{ text: 'Cancel', style: 'cancel' }, { text: 'Confirm', style: destructive ? 'destructive' : 'default', onPress: onYes }]);
+  const confirm = async (title: string, msg: string, onYes: () => void, destructive = false) => {
+    const ok = await confirmAsync({ title, message: msg, confirmLabel: 'Confirm', destructive });
+    if (ok) onYes();
+  };
 
   const onSuspend = () => confirm('Suspend member', `Suspend ${m.fullName}? They lose access until restored.`, () =>
-    suspend.mutate({ id: m.id, reason: 'Administrative action' }, { onSuccess: () => Alert.alert('Done', 'Member suspended.') }), true);
+    suspend.mutate({ id: m.id, reason: 'Administrative action' }, { onSuccess: () => alertAsync({ title: 'Done', message: 'Member suspended.' }) }), true);
   const onRestore = () => confirm('Restore member', `Restore ${m.fullName}'s access?`, () =>
-    restore.mutate(m.id, { onSuccess: () => Alert.alert('Done', 'Member restored.') }));
+    restore.mutate(m.id, { onSuccess: () => alertAsync({ title: 'Done', message: 'Member restored.' }) }));
   const onTransfer = () => {
     if (!chapter) return;
     confirm('Transfer member', `Move ${m.fullName} to ${chapter}? This is logged.`, () =>
-      transfer.mutate({ id: m.id, chapter }, { onSuccess: () => { Alert.alert('Done', 'Member transferred.'); setChapter(''); } }));
+      transfer.mutate({ id: m.id, chapter }, { onSuccess: () => { alertAsync({ title: 'Done', message: 'Member transferred.' }); setChapter(''); } }));
   };
   const onAssignRole = () => {
     const picked = ASSIGNABLE_ROLES.find((r) => r.label === newRole);
     if (!picked) return;
     confirm('Assign role', `Assign “${picked.label}” to ${m.fullName}?`, () =>
-      role.mutate({ id: m.id, role: picked.value as AdminRole }, { onSuccess: () => { Alert.alert('Done', 'Role assigned.'); setNewRole(''); } }));
+      role.mutate({ id: m.id, role: picked.value as AdminRole }, { onSuccess: () => { alertAsync({ title: 'Done', message: 'Role assigned.' }); setNewRole(''); } }));
   };
 
   return (

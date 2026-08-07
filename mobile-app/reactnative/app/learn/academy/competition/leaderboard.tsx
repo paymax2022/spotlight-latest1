@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ShieldCheck, ShieldQuestion, ChevronUp, ChevronDown, Minus, School } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -12,6 +12,7 @@ import StateView from '@/components/StateView';
 import { MINOR_SAFE_NOTE } from '@/features/academy/fees/constants';
 import { useLeaderboard, useCompetitionProfile, useSetCompetitionConsent } from '@/features/academy/fees/hooks';
 import type { LeaderboardScope, CompetitionLeaderboardEntry } from '@/features/academy/fees/types';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 const SCOPES: { value: LeaderboardScope; label: string }[] = [
   { value: 'class', label: 'Class' },
@@ -34,15 +35,16 @@ export default function CompetitionLeaderboard() {
 
   const consentGiven = profile.data?.consentGiven ?? false;
 
-  const toggleConsent = () => {
+  const toggleConsent = async () => {
     const next = !consentGiven;
-    const doIt = () => setConsent.mutate(next, { onError: (e) => Alert.alert('Could not update', (e as Error).message) });
+    const doIt = () => setConsent.mutate(next, { onError: (e) => alertAsync({ title: 'Could not update', message: (e as Error).message }) });
     if (next) {
-      Alert.alert(
-        'Show full name?',
-        'As a guardian, you can allow this student to appear with their full name and avatar on public boards. You can turn this off any time.',
-        [{ text: 'Cancel', style: 'cancel' }, { text: 'Allow', onPress: doIt }],
-      );
+      const ok = await confirmAsync({
+        title: 'Show full name?',
+        message: 'As a guardian, you can allow this student to appear with their full name and avatar on public boards. You can turn this off any time.',
+        confirmLabel: 'Allow',
+      });
+      if (ok) doIt();
     } else {
       doIt();
     }

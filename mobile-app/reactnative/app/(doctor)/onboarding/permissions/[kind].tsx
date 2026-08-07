@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
@@ -16,6 +16,7 @@ import type { StatusTone } from '@/features/doctor/components';
 import { usePermissionStates, useRecordPermissionDecision } from '@/features/doctor/hooks';
 import { PERMISSION_LABELS, PERMISSION_ORDER } from '@/features/doctor/constants';
 import type { AppPermissionKind, PermissionState } from '@/types/doctor.onboarding';
+import { confirmAsync } from '@/lib/confirm';
 
 // ── Section A · Entries 13–16 — One permission primer screen ─────────────────
 // Parameterised by AppPermissionKind. Shows the rationale (PERMISSION_LABELS),
@@ -69,17 +70,16 @@ export default function PermissionPrimerScreen() {
 
   // Simulate the OS dialog (no native permission deps added) then record the
   // chosen outcome via the hook.
-  const requestPermission = () => {
+  const requestPermission = async () => {
     if (!valid) return;
     const meta = PERMISSION_LABELS[kind];
-    Alert.alert(
-      `Allow ${meta.label}?`,
-      meta.rationale,
-      [
-        { text: "Don't allow", style: 'cancel', onPress: () => recordDecision('denied') },
-        { text: 'Allow', onPress: () => recordDecision('granted') },
-      ],
-    );
+    const ok = await confirmAsync({
+      title: `Allow ${meta.label}?`,
+      message: meta.rationale,
+      confirmLabel: 'Allow',
+      cancelLabel: "Don't allow",
+    });
+    recordDecision(ok ? 'granted' : 'denied');
   };
 
   if (!valid) {

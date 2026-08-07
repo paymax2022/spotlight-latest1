@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { AlertTriangle } from 'lucide-react-native';
@@ -12,6 +12,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard } from '@/features/doctor/components';
 import { useRequestAccountDeletion } from '@/features/doctor/hooks';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 // ── Section AC — Delete account request (AC.16) ───────────────────────────────
 // NEW screen: a gated account-deletion request. Imports the SINGLE shared
@@ -27,29 +28,22 @@ export default function DeleteAccountScreen() {
 
   const gated = confirmText.trim().toUpperCase() === CONFIRM_WORD;
 
-  const handleDelete = () => {
-    if (!gated) { Alert.alert('Confirm required', `Type ${CONFIRM_WORD} to confirm.`); return; }
-    Alert.alert(
-      'Delete your account?',
-      'This permanently deletes your account and data and cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete account',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await remove.mutateAsync({ reason: reason.trim() || undefined });
-              Alert.alert('Request submitted', 'Your account deletion request has been received.', [
-                { text: 'OK', onPress: () => router.back() },
-              ]);
-            } catch {
-              Alert.alert('Failed', 'Could not submit your request. Please try again.');
-            }
-          },
-        },
-      ],
-    );
+  const handleDelete = async () => {
+    if (!gated) { alertAsync({ title: 'Confirm required', message: `Type ${CONFIRM_WORD} to confirm.` }); return; }
+    const ok = await confirmAsync({
+      title: 'Delete your account?',
+      message: 'This permanently deletes your account and data and cannot be undone.',
+      confirmLabel: 'Delete account',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await remove.mutateAsync({ reason: reason.trim() || undefined });
+      await alertAsync({ title: 'Request submitted', message: 'Your account deletion request has been received.' });
+      router.back();
+    } catch {
+      await alertAsync({ title: 'Failed', message: 'Could not submit your request. Please try again.' });
+    }
   };
 
   return (

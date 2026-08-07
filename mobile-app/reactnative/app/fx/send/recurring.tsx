@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, TextInput, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, Alert } from 'react-native';
+import { View, Text, TextInput, ScrollView, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Colors } from '@/constants/colors';
@@ -16,6 +16,7 @@ import CurrencyChip from '@/features/fx/components/CurrencyChip';
 import { useBeneficiaries, useBalances } from '@/features/fx/hooks/useFx';
 import { parseToMinor, formatMoney } from '@/features/fx/utils/fxFormatters';
 import { sanitizeMoneyInput } from '@/utils/money';
+import { alertAsync } from '@/lib/confirm';
 import type { CurrencyCode } from '@/features/fx/types/fx.types';
 
 type Frequency = 'weekly' | 'monthly';
@@ -39,11 +40,11 @@ export default function RecurringPayoutScreen() {
     setSubmitting(true);
     setTimeout(() => {
       setSubmitting(false);
-      Alert.alert(
-        'Schedule created',
-        `${formatMoney(amount, source)} to ${beneficiaryName} every ${frequency === 'weekly' ? 'week' : 'month'}, starting ${startDate}.`,
-        [{ text: 'Done', onPress: () => router.back() }],
-      );
+      alertAsync({
+        title: 'Schedule created',
+        message: `${formatMoney(amount, source)} to ${beneficiaryName} every ${frequency === 'weekly' ? 'week' : 'month'}, starting ${startDate}.`,
+        buttonLabel: 'Done',
+      }).then(() => router.back());
     }, 900);
   };
 

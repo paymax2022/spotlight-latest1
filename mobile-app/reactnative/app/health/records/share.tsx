@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Icons from 'lucide-react-native';
@@ -19,6 +19,7 @@ import {
   NDPA_CONSENT_COPY,
   scopeLabel,
 } from '@/features/health/constants/health.constants';
+import { alertAsync } from '@/lib/confirm';
 
 /**
  * Share a specific record with a provider — creates a scoped, revocable consent
@@ -44,11 +45,9 @@ export default function ShareRecordScreen() {
       },
       {
         onSuccess: () => {
-          Alert.alert('Shared', 'A revocable consent grant was created. Manage it anytime in Consent.', [
-            { text: 'Done', onPress: () => router.back() },
-          ]);
+          alertAsync({ title: 'Shared', message: 'A revocable consent grant was created. Manage it anytime in Consent.', buttonLabel: 'Done' }).then(() => router.back());
         },
-        onError: () => Alert.alert('Could not share', 'Please try again.'),
+        onError: () => alertAsync({ title: 'Could not share', message: 'Please try again.' }),
       },
     );
   };

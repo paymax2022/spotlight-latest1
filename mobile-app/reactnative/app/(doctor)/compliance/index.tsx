@@ -1,6 +1,7 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Platform, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { router } from 'expo-router';
 import { ShieldCheck, AlertTriangle, Info, ShieldAlert, FileCheck2, Activity } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
@@ -34,20 +35,14 @@ export default function ComplianceScreen() {
   const { data: dashboard, isLoading, isError, refetch } = useComplianceDashboard();
   const acknowledge = useAcknowledgePolicy();
 
-  const handleAcknowledge = (policy: PolicyAcknowledgement) => {
-    Alert.alert('Acknowledge policy', `${policy.title} (${policy.version})`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Acknowledge',
-        onPress: async () => {
-          try {
-            await acknowledge.mutateAsync({ policyKey: policy.policyKey, version: policy.version });
-          } catch {
-            Alert.alert('Failed', 'Please try again.');
-          }
-        },
-      },
-    ]);
+  const handleAcknowledge = async (policy: PolicyAcknowledgement) => {
+    const ok = await confirmAsync({ title: 'Acknowledge policy', message: `${policy.title} (${policy.version})`, confirmLabel: 'Acknowledge' });
+    if (!ok) return;
+    try {
+      await acknowledge.mutateAsync({ policyKey: policy.policyKey, version: policy.version });
+    } catch {
+      alertAsync({ title: 'Failed', message: 'Please try again.' });
+    }
   };
 
   return (

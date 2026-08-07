@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, ScrollView, StyleSheet, Platform, Alert } from 'react-native';
+import { Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Smartphone } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -8,6 +8,7 @@ import { Typography } from '@/constants/typography';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, DeviceRow } from '@/features/doctor/components';
 import { useDevices, useRevokeDevice } from '@/features/doctor/hooks';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 // ── Section AC — Device management (AC.14) ────────────────────────────────────
 // NEW screen: lists active devices/sessions; the current device cannot be
@@ -17,21 +18,19 @@ export default function DeviceManagementScreen() {
   const { data: devices = [], isLoading, isError, refetch } = useDevices();
   const revoke = useRevokeDevice();
 
-  const handleRevoke = (deviceId: string, label: string) => {
-    Alert.alert('Revoke device?', `${label} will be signed out immediately.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Revoke',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await revoke.mutateAsync({ deviceId });
-          } catch {
-            Alert.alert('Failed', 'Could not revoke the device. Please try again.');
-          }
-        },
-      },
-    ]);
+  const handleRevoke = async (deviceId: string, label: string) => {
+    const ok = await confirmAsync({
+      title: 'Revoke device?',
+      message: `${label} will be signed out immediately.`,
+      confirmLabel: 'Revoke',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await revoke.mutateAsync({ deviceId });
+    } catch {
+      await alertAsync({ title: 'Failed', message: 'Could not revoke the device. Please try again.' });
+    }
   };
 
   return (

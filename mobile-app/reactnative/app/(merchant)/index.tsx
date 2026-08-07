@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, RefreshControl, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Store, ChevronRight, Sparkles } from 'lucide-react-native';
@@ -16,6 +16,7 @@ import { CapabilityRow } from '@/features/merchant/components';
 import { useCapabilities } from '@/features/merchant/hooks/useMerchant';
 import { APP_STATUS_DISPLAY, PROFILE_STATUS_DISPLAY } from '@/features/merchant/constants/statusDisplay';
 import { getMyBusinesses, isBusinessActive } from '@/api/business.api';
+import { confirmAsync } from '@/lib/confirm';
 
 // Screen: Capabilities dashboard + context switcher (PRD §6.3, FR-25/FR-26).
 // One identity, many capabilities — Customer is always present; each approved
@@ -28,21 +29,21 @@ export default function CapabilitiesScreen() {
   // We fail OPEN on load/error so a business-API outage never blocks the flow.
   const businessQuery = useQuery({ queryKey: ['business', 'me'], queryFn: getMyBusinesses });
 
-  const handleUpgrade = () => {
+  const handleUpgrade = async () => {
     const businesses = businessQuery.data;
     const hasActiveBusiness = !businesses || businesses.some(isBusinessActive);
     if (hasActiveBusiness) {
       router.push('/(merchant)/modules');
       return;
     }
-    Alert.alert(
-      'Business required',
-      'Becoming a merchant or service provider requires a CAC-registered or verified business. Set one up first — it only takes a few minutes.',
-      [
-        { text: 'Not now', style: 'cancel' },
-        { text: 'Set up business', onPress: () => router.push('/profile/business') },
-      ],
-    );
+    const ok = await confirmAsync({
+      title: 'Business required',
+      message: 'Becoming a merchant or service provider requires a CAC-registered or verified business. Set one up first — it only takes a few minutes.',
+      confirmLabel: 'Set up business',
+      cancelLabel: 'Not now',
+    });
+    if (!ok) return;
+    router.push('/profile/business');
   };
 
   return (

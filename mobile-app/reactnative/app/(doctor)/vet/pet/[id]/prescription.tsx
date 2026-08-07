@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Alert, Modal } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Plus, Trash2, Calculator, Sparkles, X, Search } from 'lucide-react-native';
@@ -15,6 +15,7 @@ import { usePetProfile, useCreatePetPrescription, computePetDosage, checkPetRxWa
 import { PET_DRUG_CATALOGUE, FREQUENCY_OPTIONS, DURATION_OPTIONS } from '@/features/doctor/constants';
 import type { PetPrescriptionItem } from '@/types/doctor.phase3';
 import type { PetRxWarning } from '@/types/doctor.batch5';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 const DRUG_NAMES = PET_DRUG_CATALOGUE.map((d) => d.name);
 
@@ -66,17 +67,15 @@ export default function PetPrescriptionScreen() {
 
   const handleSubmit = async () => {
     if (!canSubmit) {
-      Alert.alert('Incomplete', 'Add a diagnosis and at least one medication.');
+      alertAsync({ title: 'Incomplete', message: 'Add a diagnosis and at least one medication.' });
       return;
     }
     try {
       const result = await create.mutateAsync({ petId, diagnosis, items });
-      Alert.alert('Draft created', `${result.ref} is ready to issue.`, [
-        { text: 'Review & issue', onPress: () => router.push(`/(doctor)/vet/pet/${petId}/prescription/issue?prescriptionId=${result.prescriptionId}`) },
-        { text: 'Done', style: 'cancel', onPress: () => router.back() },
-      ]);
+      const ok = await confirmAsync({ title: 'Draft created', message: `${result.ref} is ready to issue.`, confirmLabel: 'Review & issue', cancelLabel: 'Done' });
+      if (ok) { router.push(`/(doctor)/vet/pet/${petId}/prescription/issue?prescriptionId=${result.prescriptionId}`); } else { router.back(); }
     } catch {
-      Alert.alert('Failed', 'Could not create the prescription. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not create the prescription. Please try again.' });
     }
   };
 

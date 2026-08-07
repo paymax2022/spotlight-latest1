@@ -6,7 +6,7 @@
 // Connect model: no escrow — an accepted offer just agrees a price for the
 // off-platform meetup. Chat text is local (TODO(messaging) in offers.mock.ts).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, FlatList, TextInput, KeyboardAvoidingView, Platform, Alert, Modal } from 'react-native';
+import { View, Text, StyleSheet, Pressable, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Send, HandCoins, Handshake, CheckCircle2, Star } from 'lucide-react-native';
@@ -38,6 +38,7 @@ import PriceOfferSheet from '@/features/marketplace/components/PriceOfferSheet';
 import ScamWarningBanner from '@/features/marketplace/components/ScamWarningBanner';
 import MeetupModeSheet from '@/features/marketplace/components/MeetupModeSheet';
 import { detectScamHint } from '@/features/marketplace/transact.constants';
+import { confirmAsync } from '@/lib/confirm';
 
 type Item = { kind: 'msg'; msg: MockMessage } | { kind: 'offer'; offer: Offer };
 
@@ -75,15 +76,14 @@ export default function DealRoom() {
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewText, setReviewText] = useState('');
 
-  const handleMarkMet = () => {
-    Alert.alert(
-      'Mark deal as met?',
-      'Confirm you met and completed this deal. Both of you will then be able to leave a review.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Mark as met', onPress: () => markMet.mutate() },
-      ],
-    );
+  const handleMarkMet = async () => {
+    const ok = await confirmAsync({
+      title: 'Mark deal as met?',
+      message: 'Confirm you met and completed this deal. Both of you will then be able to leave a review.',
+      confirmLabel: 'Mark as met',
+    });
+    if (!ok) return;
+    markMet.mutate();
   };
 
   const handleSubmitReview = () => {

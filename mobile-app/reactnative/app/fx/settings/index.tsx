@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Colors } from '@/constants/colors';
@@ -11,12 +11,19 @@ import ProfileMenuItem from '@/components/ProfileMenuItem';
 import StateView from '@/components/StateView';
 import { useSettings } from '@/features/fx/hooks/useFxAccount';
 import { CURRENCIES } from '@/features/fx/constants/fx.constants';
+import { confirmAsync } from '@/lib/confirm';
 
 export default function FxSettingsScreen() {
   const { data, isLoading } = useSettings();
 
-  const confirmLogout = () => Alert.alert('Log out', 'Log out of Spotlight?', [{ text: 'Cancel', style: 'cancel' }, { text: 'Log out', style: 'destructive', onPress: () => router.replace('/(auth)/login') }]);
-  const confirmDelete = () => Alert.alert('Delete account', 'This permanently deletes your account and data. This cannot be undone.', [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => {} }]);
+  const confirmLogout = async () => {
+    const ok = await confirmAsync({ title: 'Log out', message: 'Log out of Spotlight?', confirmLabel: 'Log out', destructive: true });
+    if (ok) router.replace('/(auth)/login');
+  };
+  const confirmDelete = async () => {
+    const ok = await confirmAsync({ title: 'Delete account', message: 'This permanently deletes your account and data. This cannot be undone.', confirmLabel: 'Delete', destructive: true });
+    if (!ok) return;
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

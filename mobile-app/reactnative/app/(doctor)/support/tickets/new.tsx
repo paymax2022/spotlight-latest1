@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Colors } from '@/constants/colors';
@@ -12,6 +12,7 @@ import { TeleHeader } from '@/features/telemedicine/components';
 import { SoapSection, SectionCard } from '@/features/doctor/components';
 import { useCreateSupportTicket } from '@/features/doctor/hooks';
 import { SUPPORT_CATEGORIES } from '@/features/doctor/constants';
+import { alertAsync } from '@/lib/confirm';
 
 // ── Section AA — Create / contact support ticket (AA.3 / AA.5 / AA.6) ──────────
 // NEW screen. REUSES the Phase 1 useCreateSupportTicket mutation. When a
@@ -30,16 +31,15 @@ export default function NewSupportTicketScreen() {
 
   const handleSubmit = async () => {
     if (!canSubmit || !category) {
-      Alert.alert('Incomplete', 'Fill in the subject, category and message.');
+      alertAsync({ title: 'Incomplete', message: 'Fill in the subject, category and message.' });
       return;
     }
     try {
       const result = await create.mutateAsync({ subject: subject.trim(), category, body: body.trim() });
-      Alert.alert('Ticket created', `${result.ref} has been opened. We'll get back to you shortly.`, [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
+      await alertAsync({ title: 'Ticket created', message: `${result.ref} has been opened. We'll get back to you shortly.` });
+      router.back();
     } catch {
-      Alert.alert('Failed', 'Could not create your ticket. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not create your ticket. Please try again.' });
     }
   };
 

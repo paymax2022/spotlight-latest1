@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Icons from 'lucide-react-native';
 import { Lock } from 'lucide-react-native';
@@ -17,6 +17,7 @@ import {
   useCompetitionBadges, useCompetitionRewards, useCompetitionProfile, useRedeemCompetitionReward,
 } from '@/features/academy/fees/hooks';
 import type { CompetitionBadge, CompetitionReward } from '@/features/academy/fees/types';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 const TIER_META = {
   bronze: { color: Colors.onWarning, bg: Colors.iconBgGold },
@@ -44,15 +45,14 @@ export default function BadgesAndRewards() {
   const badgeList = badges.data ?? [];
   const rewardList = rewards.data ?? [];
 
-  const onRedeem = (r: CompetitionReward) => {
-    if (points < r.pointsCost) { Alert.alert('Not enough points', `You need ${formatPoints(r.pointsCost)} to redeem this.`); return; }
-    Alert.alert('Redeem?', `Spend ${formatPoints(r.pointsCost)} on "${r.name}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Redeem', onPress: () => redeem.mutate(r.id, {
-        onSuccess: () => Alert.alert('Redeemed', `"${r.name}" is on its way.`),
-        onError: (e) => Alert.alert('Could not redeem', (e as Error).message),
-      }) },
-    ]);
+  const onRedeem = async (r: CompetitionReward) => {
+    if (points < r.pointsCost) { alertAsync({ title: 'Not enough points', message: `You need ${formatPoints(r.pointsCost)} to redeem this.` }); return; }
+    const ok = await confirmAsync({ title: 'Redeem?', message: `Spend ${formatPoints(r.pointsCost)} on "${r.name}"?`, confirmLabel: 'Redeem' });
+    if (!ok) return;
+    redeem.mutate(r.id, {
+      onSuccess: () => alertAsync({ title: 'Redeemed', message: `"${r.name}" is on its way.` }),
+      onError: (e) => alertAsync({ title: 'Could not redeem', message: (e as Error).message }),
+    });
   };
 
   return (

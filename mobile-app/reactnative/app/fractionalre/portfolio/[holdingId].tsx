@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, ScrollView, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, Image, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import Svg, { Polyline } from 'react-native-svg';
@@ -14,6 +14,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { useHolding } from '@/features/fractionalre/hooks';
 import { formatNaira, formatNairaCompact, formatYield, relativeDate } from '@/features/fractionalre/utils';
 import { KIND_LABEL } from '@/features/fractionalre/constants';
+import { confirmAsync } from '@/lib/confirm';
 
 export default function HoldingDetail() {
   const { holdingId } = useLocalSearchParams<{ holdingId: string }>();
@@ -49,10 +50,10 @@ export default function HoldingDetail() {
   }).join(' ');
 
   const onSell = () => router.push({ pathname: '/fractionalre/market/list', params: { holdingId: h.id } } as never);
-  const onReinvest = () => Alert.alert('Reinvest', 'Auto-reinvest of payouts can be configured under Auto-invest.', [
-    { text: 'Open Auto-invest', onPress: () => router.push('/fractionalre/portfolio/auto-invest') },
-    { text: 'Close', style: 'cancel' },
-  ]);
+  const onReinvest = async () => {
+    const ok = await confirmAsync({ title: 'Reinvest', message: 'Auto-reinvest of payouts can be configured under Auto-invest.', confirmLabel: 'Open Auto-invest', cancelLabel: 'Close' });
+    if (ok) router.push('/fractionalre/portfolio/auto-invest');
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

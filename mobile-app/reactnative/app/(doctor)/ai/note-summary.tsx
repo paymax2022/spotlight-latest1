@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { alertAsync } from '@/lib/confirm';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Sparkles, RefreshCw } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -55,9 +56,10 @@ export default function AiNoteSummaryScreen() {
     if (!draft) return;
     try {
       await accept.mutateAsync({ appointmentId: apptId, output: draft, edited });
-      Alert.alert('Draft accepted', 'The summary has been saved to the consultation notes.', [{ text: 'Done', onPress: () => router.back() }]);
+      await alertAsync({ title: 'Draft accepted', message: 'The summary has been saved to the consultation notes.', buttonLabel: 'Done' });
+      router.back();
     } catch {
-      Alert.alert('Failed', 'Could not save the draft. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not save the draft. Please try again.' });
     }
   };
 

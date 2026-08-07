@@ -14,6 +14,7 @@ import Chip from '@/features/academy/components/Chip';
 import ProgressBar from '@/features/academy/components/ProgressBar';
 import { formatNaira } from '@/features/academy/constants';
 import { useSponsorships, usePledgeSponsorship } from '@/features/academy/fees/hooks';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import type { SponsorshipOpportunity } from '@/features/academy/fees/types';
 
 /** PA-14 — Sponsor a student (extends academy scholarships). SF-7: first-name only. */
@@ -32,15 +33,15 @@ export default function SponsorAStudent() {
 
   const list = sponsorships.data ?? [];
 
-  const onPledge = (o: SponsorshipOpportunity) => {
+  const onPledge = async (o: SponsorshipOpportunity) => {
     const doPledge = (naira: number) => {
       const kobo = Math.round(naira * 100);
       if (kobo <= 0) return;
       pledge.mutate(
         { opportunityId: o.id, amountKobo: kobo },
         {
-          onSuccess: () => Alert.alert('Thank you', `Your ${formatNaira(kobo)} pledge to ${o.studentFirstName} is confirmed.`),
-          onError: (e) => Alert.alert('Could not pledge', (e as Error).message),
+          onSuccess: () => alertAsync({ title: 'Thank you', message: `Your ${formatNaira(kobo)} pledge to ${o.studentFirstName} is confirmed.` }),
+          onError: (e) => alertAsync({ title: 'Could not pledge', message: (e as Error).message }),
         },
       );
     };
@@ -48,10 +49,8 @@ export default function SponsorAStudent() {
       Alert.prompt('Sponsor ' + o.studentFirstName, 'Pledge amount (₦)', (v) => doPledge(parseFloat(v || '') || 0), 'plain-text', '5000', 'numeric');
     } else {
       // Android fallback: pledge a sensible default share.
-      Alert.alert('Sponsor ' + o.studentFirstName, `Pledge ${formatNaira(500_000)} towards ${o.studentFirstName}'s fees?`, [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Pledge', onPress: () => doPledge(5000) },
-      ]);
+      const ok = await confirmAsync({ title: 'Sponsor ' + o.studentFirstName, message: `Pledge ${formatNaira(500_000)} towards ${o.studentFirstName}'s fees?`, confirmLabel: 'Pledge' });
+      if (ok) doPledge(5000);
     }
   };
 

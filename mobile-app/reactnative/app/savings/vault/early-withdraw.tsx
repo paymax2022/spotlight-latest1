@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, Alert } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { TriangleAlert, CircleCheck } from 'lucide-react-native';
@@ -13,6 +13,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useEarlyWithdrawQuote, useEarlyWithdraw } from '@/features/savings/hooks';
 import { SavingsColors, formatNaira } from '@/features/savings/constants/savings.constants';
+import { alertAsync } from '@/lib/confirm';
 
 export default function EarlyWithdraw() {
   const { id, matured } = useLocalSearchParams<{ id: string; matured?: string }>();
@@ -30,9 +31,10 @@ export default function EarlyWithdraw() {
   const confirm = async () => {
     try {
       await withdraw.mutateAsync();
-      Alert.alert('Done', `${formatNaira(q.netKobo)} sent to your wallet.`, [{ text: 'OK', onPress: () => router.dismissAll?.() ?? router.back() }]);
+      await alertAsync({ title: 'Done', message: `${formatNaira(q.netKobo)} sent to your wallet.` });
+      router.dismissAll?.() ?? router.back();
     } catch {
-      Alert.alert('Could not withdraw', 'Please try again.');
+      alertAsync({ title: 'Could not withdraw', message: 'Please try again.' });
     }
   };
 

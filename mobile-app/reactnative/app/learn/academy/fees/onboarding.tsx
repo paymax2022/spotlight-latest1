@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ShieldCheck, GraduationCap } from 'lucide-react-native';
@@ -14,6 +14,7 @@ import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useDirectory, useLinkChild } from '@/features/academy/fees/hooks';
+import { alertAsync } from '@/lib/confirm';
 
 /** PA-01 — Onboarding: link a child to a school by admission number (guardian link). */
 export default function FeesOnboarding() {
@@ -35,11 +36,9 @@ export default function FeesOnboarding() {
       { schoolId: selected.id, admissionNumber: admissionNumber.trim(), firstName: firstName.trim() },
       {
         onSuccess: (child) => {
-          Alert.alert('Child linked', `${child.firstName} at ${child.schoolName} is now linked to your account.`, [
-            { text: 'View family', onPress: () => router.replace('/learn/academy/fees') },
-          ]);
+          alertAsync({ title: 'Child linked', message: `${child.firstName} at ${child.schoolName} is now linked to your account.`, buttonLabel: 'View family' }).then(() => router.replace('/learn/academy/fees'));
         },
-        onError: (e) => Alert.alert('Could not link', (e as Error).message),
+        onError: (e) => alertAsync({ title: 'Could not link', message: (e as Error).message }),
       },
     );
   };

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { alertAsync } from '@/lib/confirm';
 import { router, useLocalSearchParams } from 'expo-router';
 import { CalendarClock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -37,11 +38,11 @@ export default function NewFollowUpScreen() {
 
   const handleSubmit = async () => {
     if (!patientId) {
-      Alert.alert('No patient', 'Open a follow-up from a patient record to select the patient.');
+      alertAsync({ title: 'No patient', message: 'Open a follow-up from a patient record to select the patient.' });
       return;
     }
     if (!canSubmit) {
-      Alert.alert('Incomplete', 'Add a reason, due date and (for paid plans) a fee.');
+      alertAsync({ title: 'Incomplete', message: 'Add a reason, due date and (for paid plans) a fee.' });
       return;
     }
     try {
@@ -53,11 +54,10 @@ export default function NewFollowUpScreen() {
         kind,
         feeKobo,
       });
-      Alert.alert('Follow-up created', `${result.ref} has been scheduled.`, [
-        { text: 'Done', onPress: () => router.replace('/(doctor)/follow-ups') },
-      ]);
+      await alertAsync({ title: 'Follow-up created', message: `${result.ref} has been scheduled.`, buttonLabel: 'Done' });
+      router.replace('/(doctor)/follow-ups');
     } catch {
-      Alert.alert('Failed', 'Could not create the follow-up. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not create the follow-up. Please try again.' });
     }
   };
 

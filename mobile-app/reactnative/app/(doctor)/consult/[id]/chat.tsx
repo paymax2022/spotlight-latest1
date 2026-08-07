@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Modal, TextInput, Image, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Modal, TextInput, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
   NotebookPen, MessageSquare, ShieldCheck, Phone, Video as VideoIcon, FileText,
@@ -73,7 +74,7 @@ export default function ConsultChatScreen() {
     try {
       await sendVoice.mutateAsync({ threadId, uri: 'file://demo/voice-note.m4a', durationSecs: 12 });
       closeSheet();
-    } catch { Alert.alert('Failed', 'Could not send the voice note.'); }
+    } catch { alertAsync({ title: 'Failed', message: 'Could not send the voice note.' }); }
   };
 
   const doSendAttachment = async (kind: 'image' | 'document') => {
@@ -85,39 +86,36 @@ export default function ConsultChatScreen() {
         mimeType: kind === 'image' ? 'image/jpeg' : 'application/pdf',
       });
       closeSheet();
-    } catch { Alert.alert('Failed', 'Could not upload the attachment.'); }
+    } catch { alertAsync({ title: 'Failed', message: 'Could not upload the attachment.' }); }
   };
 
   const doShare = async () => {
     try {
       await shareInChat.mutateAsync({ threadId, kind: shareKind, entityId: `${shareKind}-demo` });
       closeSheet();
-    } catch { Alert.alert('Failed', 'Could not share into the chat.'); }
+    } catch { alertAsync({ title: 'Failed', message: 'Could not share into the chat.' }); }
   };
 
   const doEscalate = async (mode: 'audio' | 'video') => {
     try {
       await escalate.mutateAsync({ threadId, mode });
       router.push(`/(doctor)/consult/${appointmentId}/call?mode=${mode}`);
-    } catch { Alert.alert('Failed', 'Could not start the call.'); }
+    } catch { alertAsync({ title: 'Failed', message: 'Could not start the call.' }); }
   };
 
   const doReport = async () => {
-    if (!reportTarget || !reportReason) { Alert.alert('Select a reason', 'Choose why you are reporting this message.'); return; }
+    if (!reportTarget || !reportReason) { alertAsync({ title: 'Select a reason', message: 'Choose why you are reporting this message.' }); return; }
     try {
       await reportMessage.mutateAsync({ messageId: reportTarget, reason: reportReason });
-      Alert.alert('Reported', 'This message has been flagged for moderation.');
+      alertAsync({ title: 'Reported', message: 'This message has been flagged for moderation.' });
       setReportTarget(null); setReportReason('');
-    } catch { Alert.alert('Failed', 'Please try again.'); }
+    } catch { alertAsync({ title: 'Failed', message: 'Please try again.' }); }
   };
 
-  const doEndChat = () => {
-    Alert.alert('End chat', 'End this chat consultation? The patient can no longer send messages.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'End chat', style: 'destructive', onPress: async () => {
-        try { await endChat.mutateAsync({ threadId }); } catch { Alert.alert('Failed', 'Please try again.'); }
-      } },
-    ]);
+  const doEndChat = async () => {
+    const ok = await confirmAsync({ title: 'End chat', message: 'End this chat consultation? The patient can no longer send messages.', confirmLabel: 'End chat', destructive: true });
+    if (!ok) return;
+    try { await endChat.mutateAsync({ threadId }); } catch { alertAsync({ title: 'Failed', message: 'Please try again.' }); }
   };
 
   const doAnnotate = async () => {
@@ -128,7 +126,7 @@ export default function ConsultChatScreen() {
         annotations: [...(attachTarget.annotations ?? []), { id: `ann-${Date.now()}`, x: 0.5, y: 0.5, note: annotationNote || 'Marked area' }],
       });
       setAttachTarget(null); setAnnotationNote('');
-    } catch { Alert.alert('Failed', 'Could not save the annotation.'); }
+    } catch { alertAsync({ title: 'Failed', message: 'Could not save the annotation.' }); }
   };
 
   return (

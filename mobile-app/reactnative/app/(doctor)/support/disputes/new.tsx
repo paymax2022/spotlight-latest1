@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Colors } from '@/constants/colors';
@@ -14,6 +14,7 @@ import { SoapSection, SectionCard } from '@/features/doctor/components';
 import { useCreateDispute } from '@/features/doctor/hooks';
 import { DISPUTE_KIND_LABELS } from '@/features/doctor/constants';
 import type { DisputeKind } from '@/types/doctor.batch7';
+import { alertAsync } from '@/lib/confirm';
 
 // ── Section AA — Create dispute (AA.7-14, unified by kind) ─────────────────────
 // NEW screen: a single create flow keyed by DisputeKind. Reference label adapts
@@ -74,7 +75,7 @@ export default function NewDisputeScreen() {
 
   const handleSubmit = async () => {
     if (!canSubmit || !kind) {
-      Alert.alert('Incomplete', 'Choose a dispute type and fill in the subject and description.');
+      alertAsync({ title: 'Incomplete', message: 'Choose a dispute type and fill in the subject and description.' });
       return;
     }
     const amountKobo = SHOWS_AMOUNT[kind] && amountNaira.trim()
@@ -88,11 +89,10 @@ export default function NewDisputeScreen() {
         amountKobo,
         ...buildRefPatch(kind),
       });
-      Alert.alert('Dispute raised', `${result.ref} has been opened.`, [
-        { text: 'OK', onPress: () => router.replace({ pathname: '/(doctor)/support/dispute/[id]', params: { id: result.disputeId } }) },
-      ]);
+      await alertAsync({ title: 'Dispute raised', message: `${result.ref} has been opened.` });
+      router.replace({ pathname: '/(doctor)/support/dispute/[id]', params: { id: result.disputeId } });
     } catch {
-      Alert.alert('Failed', 'Could not raise the dispute. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not raise the dispute. Please try again.' });
     }
   };
 

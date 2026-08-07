@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, Switch, Pressable, Alert, ActivityIndicator,
+  View, Text, StyleSheet, ScrollView, TextInput, Switch, Pressable, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { Trash2, Plus, ClipboardList, Wallet } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Spacing } from '@/constants/spacing';
@@ -171,11 +172,10 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
     if (!newCat.trim()) return;
     createCat.mutate(newCat.trim(), { onSuccess: () => setNewCat('') });
   };
-  const confirmDeleteItem = (itemId: string, itemName: string) =>
-    Alert.alert('Remove item', `Delete "${itemName}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteItem.mutate(itemId) },
-    ]);
+  const confirmDeleteItem = async (itemId: string, itemName: string) => {
+    const ok = await confirmAsync({ title: 'Remove item', message: `Delete "${itemName}"?`, confirmLabel: 'Delete', destructive: true });
+    if (ok) deleteItem.mutate(itemId);
+  };
 
   return (
     <View style={{ gap: Spacing.md }}>
@@ -190,7 +190,7 @@ function MenuBuilder({ storeId, categories }: { storeId: string; categories: Mer
             <Pressable
               onPress={() =>
                 cat.items.length > 0
-                  ? Alert.alert('Category not empty', 'Remove its items before deleting the category.')
+                  ? alertAsync({ title: 'Category not empty', message: 'Remove its items before deleting the category.' })
                   : deleteCat.mutate(cat.id)
               }
               hitSlop={8}

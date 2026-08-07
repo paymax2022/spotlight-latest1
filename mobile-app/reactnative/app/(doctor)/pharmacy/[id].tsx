@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Alert, Modal } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowRightLeft, Truck, MessageSquare, CheckCircle2, Flag, X, ChevronRight } from 'lucide-react-native';
@@ -15,6 +15,7 @@ import type { StatusTone } from '@/features/doctor/components';
 import { usePharmacyFulfilment, useReviewSubstitute, useConfirmPatientReceived, useReportPharmacy } from '@/features/doctor/hooks';
 import { PHARMACY_STATUS_LABELS, PHARMACY_REPORT_REASONS } from '@/features/doctor/constants';
 import type { PharmacyFulfilmentStatus } from '@/types/doctor.phase2';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 const STATUS_TONE: Record<PharmacyFulfilmentStatus, StatusTone> = {
   received:             'neutral',
@@ -35,21 +36,19 @@ export default function PharmacyDetailScreen() {
   const [reportOpen, setReportOpen] = useState(false);
 
   // L19 — patient-received confirmation.
-  const handleConfirmReceived = () => {
-    Alert.alert('Confirm receipt?', 'Mark this fulfilment as received by the patient.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Confirm',
-        onPress: async () => {
-          try {
-            await confirmReceived.mutateAsync({ fulfilmentId });
-            Alert.alert('Confirmed', 'Marked as received by the patient.');
-          } catch {
-            Alert.alert('Failed', 'Please try again.');
-          }
-        },
-      },
-    ]);
+  const handleConfirmReceived = async () => {
+    const ok = await confirmAsync({
+      title: 'Confirm receipt?',
+      message: 'Mark this fulfilment as received by the patient.',
+      confirmLabel: 'Confirm',
+    });
+    if (!ok) return;
+    try {
+      await confirmReceived.mutateAsync({ fulfilmentId });
+      await alertAsync({ title: 'Confirmed', message: 'Marked as received by the patient.' });
+    } catch {
+      await alertAsync({ title: 'Failed', message: 'Please try again.' });
+    }
   };
 
   // L20 — pharmacy complaint / report.
@@ -58,34 +57,28 @@ export default function PharmacyDetailScreen() {
     try {
       await report.mutateAsync({ pharmacyId: fulfilment.pharmacyName, fulfilmentId, reason });
       setReportOpen(false);
-      Alert.alert('Reported', 'Your report has been submitted for review.');
+      alertAsync({ title: 'Reported', message: 'Your report has been submitted for review.' });
     } catch {
-      Alert.alert('Failed', 'Please try again.');
+      alertAsync({ title: 'Failed', message: 'Please try again.' });
     }
   };
 
-  const handleReview = (decision: 'approve' | 'reject') => {
-    Alert.alert(
-      decision === 'approve' ? 'Approve substitute?' : 'Reject substitute?',
-      decision === 'approve'
+  const handleReview = async (decision: 'approve' | 'reject') => {
+    const ok = await confirmAsync({
+      title: decision === 'approve' ? 'Approve substitute?' : 'Reject substitute?',
+      message: decision === 'approve'
         ? 'The pharmacy will dispense the proposed substitute.'
         : 'The pharmacy will be asked to dispense the original medication.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: decision === 'approve' ? 'Approve' : 'Reject',
-          style: decision === 'reject' ? 'destructive' : 'default',
-          onPress: async () => {
-            try {
-              await review.mutateAsync({ fulfilmentId, decision });
-              Alert.alert('Done', `Substitute ${decision === 'approve' ? 'approved' : 'rejected'}.`);
-            } catch {
-              Alert.alert('Failed', 'Please try again.');
-            }
-          },
-        },
-      ],
-    );
+      confirmLabel: decision === 'approve' ? 'Approve' : 'Reject',
+      destructive: decision === 'reject',
+    });
+    if (!ok) return;
+    try {
+      await review.mutateAsync({ fulfilmentId, decision });
+      await alertAsync({ title: 'Done', message: `Substitute ${decision === 'approve' ? 'approved' : 'rejected'}.` });
+    } catch {
+      await alertAsync({ title: 'Failed', message: 'Please try again.' });
+    }
   };
 
   return (

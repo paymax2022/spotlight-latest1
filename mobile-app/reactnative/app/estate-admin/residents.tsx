@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, FlatList, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, FlatList, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ShieldBan, ShieldCheck } from 'lucide-react-native';
+import { confirmAsync } from '@/lib/confirm';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -17,11 +18,10 @@ export default function AdminResidentsScreen() {
   const ban = useBanResident();
   const restore = useRestoreResident();
 
-  const confirmBan = (r: AdminResident) =>
-    Alert.alert('Ban resident?', `${r.unit || r.userId} will lose access to the estate until restored.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Ban', style: 'destructive', onPress: () => ban.mutate({ userId: r.userId }) },
-    ]);
+  const confirmBan = async (r: AdminResident) => {
+    const ok = await confirmAsync({ title: 'Ban resident?', message: `${r.unit || r.userId} will lose access to the estate until restored.`, confirmLabel: 'Ban', destructive: true });
+    if (ok) ban.mutate({ userId: r.userId });
+  };
 
   const renderItem = ({ item }: { item: AdminResident }) => (
     <View style={styles.card}>
