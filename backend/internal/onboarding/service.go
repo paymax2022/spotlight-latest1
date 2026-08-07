@@ -94,6 +94,17 @@ func (s *Service) CreateApplication(ctx context.Context, userID string, req Crea
 	if mt.Status != "open" {
 		return nil, ErrModuleClosed
 	}
+	// Also reject when the parent MODULE is closed. The merchant-type check above does
+	// not catch an open type under a closed module — the listing endpoints filter by
+	// module status, so a direct create must too (defense against a stale/deep-linked
+	// type id in a module that has since been closed).
+	mod, err := s.repo.GetModule(ctx, mt.ModuleID)
+	if err != nil {
+		return nil, err
+	}
+	if mod.Status != "open" {
+		return nil, ErrModuleClosed
+	}
 	dup, err := s.repo.HasActiveApplicationOrProfile(ctx, userID, req.MerchantTypeID)
 	if err != nil {
 		return nil, err
