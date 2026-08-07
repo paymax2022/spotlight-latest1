@@ -1,0 +1,74 @@
+version: 2
+updates:
+  # ── Go modules ───────────────────────────────────────────────────────────────
+  - package-ecosystem: gomod
+    directory: /backend
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      go-minor-patch:
+        update-types: [minor, patch]
+    commit-message: { prefix: "chore(deps)" }
+    labels: [dependencies, backend]
+
+  # Standalone trading service (its own Go module)
+  - package-ecosystem: gomod
+    directory: /mobile-app/reactnative/backend
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      go-minor-patch:
+        update-types: [minor, patch]
+    commit-message: { prefix: "chore(deps)" }
+    labels: [dependencies, crypto-backend]
+
+  # ── Node / npm ───────────────────────────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /frontend-web
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+    commit-message: { prefix: "chore(deps)" }
+    labels: [dependencies, frontend-web]
+
+  - package-ecosystem: npm
+    directory: /frontend-admin
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+    commit-message: { prefix: "chore(deps)" }
+    labels: [dependencies, frontend-admin]
+
+  - package-ecosystem: npm
+    directory: /mobile-app/reactnative
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+    commit-message: { prefix: "chore(deps)" }
+    labels: [dependencies, mobile]
+
+  # ── GitHub Actions ───────────────────────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    commit-message: { prefix: "chore(ci)" }
+    labels: [dependencies, ci]
+
+  # ── Docker base images ───────────────────────────────────────────────────────
+  - package-ecosystem: docker
+    directory: /backend
+    schedule: { interval: weekly }
+    commit-message: { prefix: "chore(deps)" }
+    labels: [dependencies, docker]
+
+  - package-ecosystem: docker
+    directory: /frontend-admin
+    schedule: { interval: weekly }
+    commit-message: { prefix: "chore(deps)" }
+    labels: [dependencies, docker]

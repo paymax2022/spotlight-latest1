@@ -33,7 +33,8 @@
           "locationWhenInUsePermission": "Spotlight uses your location to set your delivery and pickup address accurately."
         }
       ],
-      "@maplibre/maplibre-react-native"
+      "@maplibre/maplibre-react-native",
+      "@sentry/react-native"
     ],
     "experiments": {
       "typedRoutes": false

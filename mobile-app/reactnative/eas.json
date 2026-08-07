@@ -1,0 +1,36 @@
+{
+  "cli": {
+    "version": ">= 12.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "channel": "development",
+      "env": { "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "development" }
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "autoIncrement": true,
+      "env": { "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "staging" }
+    },
+    "production": {
+      "channel": "production",
+      "autoIncrement": true,
+      "env": { "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "production" }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "//": "TODO(you): appleId, ascAppId, appleTeamId — or use an App Store Connect API key in EAS secrets"
+      },
+      "android": {
+        "//": "TODO(you): serviceAccountKeyPath (Play Console) + track (internal→production)",
+        "track": "internal"
+      }
+    }
+  }
+}
