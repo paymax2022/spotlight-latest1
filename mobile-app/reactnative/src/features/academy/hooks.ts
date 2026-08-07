@@ -159,6 +159,10 @@ export function useLeaderboard(id = 'national') {
   return useQuery({ queryKey: [KEY, 'leaderboard', id], queryFn: () => Api.getLeaderboard(id), staleTime: 60_000 });
 }
 
+export function useClassLeaderboard() {
+  return useQuery({ queryKey: [KEY, 'class-leaderboard'], queryFn: Api.getClassLeaderboard, staleTime: 60_000 });
+}
+
 // ── Rewards ──────────────────────────────────────────────────────────────────
 export function useRewardBalance() {
   return useQuery({ queryKey: [KEY, 'rewards', 'balance'], queryFn: Api.getRewardBalance, staleTime: 15_000 });

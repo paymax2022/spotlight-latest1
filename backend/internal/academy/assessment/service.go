@@ -13,6 +13,18 @@ import (
 type Service struct {
 	repo       *Repository
 	thresholds MasteryThresholds
+	gamifier   Gamifier
+}
+
+// Gamifier is the engagement hook fired on a practice submission — the attempt
+// awards XP and marks the day active for the streak. When nil (default) practice
+// runs with no gamification side-effects. Best-effort: awarding never fails a
+// submission. Wired to academy/gamification in academy_routes.go.
+type Gamifier interface {
+	AwardXP(ctx context.Context, userID, action string, amount int64) error
+	ExtendStreak(ctx context.Context, userID string) error
+	EvaluateBadges(ctx context.Context, userID string, counters map[string]int64) error
+	RecordClassScore(ctx context.Context, userID string, delta int64) error
 }
 
 // NewService wires the assessment service with the default thresholds.
@@ -23,6 +35,12 @@ func NewService(db *pgxpool.Pool) *Service {
 // WithThresholds overrides the progression thresholds (curriculum-as-data hook).
 func (s *Service) WithThresholds(t MasteryThresholds) *Service {
 	s.thresholds = t
+	return s
+}
+
+// WithGamifier injects the engagement hook (gamification wiring). Nil-safe.
+func (s *Service) WithGamifier(g Gamifier) *Service {
+	s.gamifier = g
 	return s
 }
 
@@ -125,17 +143,29 @@ func (s *Service) RunMasteryCheck(ctx context.Context, userID, objectiveID strin
 		return nil, ErrInvalidInput
 	}
 
-	// Score server-side against the canonical answers.
+	// Score server-side against the canonical answers, collecting a per-question
+	// review for the learner's post-submission feedback.
 	correct := 0
+	breakdown := make([]PracticeReview, 0, len(answers))
 	for _, a := range answers {
 		item, err := s.repo.GetItem(ctx, a.QuestionItemID)
 		if err != nil {
 			// Unknown item id is an invalid submission, fail closed on that item.
+			breakdown = append(breakdown, PracticeReview{QuestionItemID: a.QuestionItemID, Correct: false})
 			continue
 		}
-		if isCorrect(item.Answer, a.Selected) {
+		ok := isCorrect(item.Answer, a.Selected)
+		if ok {
 			correct++
 		}
+		expl, _ := item.Answer["explanation"].(string)
+		breakdown = append(breakdown, PracticeReview{
+			QuestionItemID: a.QuestionItemID,
+			Stem:           item.Stem,
+			Correct:        ok,
+			CorrectAnswer:  item.Answer["correct"],
+			Explanation:    expl,
+		})
 	}
 	scored := len(answers)
 	score := 0.0
@@ -166,9 +196,33 @@ func (s *Service) RunMasteryCheck(ctx context.Context, userID, objectiveID strin
 	}
 
 	evtType := progressEventTypeFor(from, to)
+	if evtType == "" {
+		// No state change this submission, but it is still a practice attempt —
+		// log it as practice_recorded so it counts toward the min-practice-attempts
+		// guard (CountPracticeAttempts). Without this, in_progress → practiced is
+		// unreachable: the count never grows past the first bootstrap event and the
+		// mastery ladder dead-ends. Mirrors the standalone RecordPractice path.
+		evtType = EvtPracticeRecorded
+	}
 	if _, err := s.repo.ApplyProgression(ctx, userID, objectiveID, from, to, score, evtType,
 		map[string]any{"score": score, "correct": correct, "scored": scored, "attempts": attempts}); err != nil {
 		return nil, err
+	}
+
+	// Engagement: a completed practice set awards XP (10 per correct answer) and
+	// marks the day active for the streak. Best-effort — a gamification hiccup
+	// never fails the (already-persisted) progression.
+	if s.gamifier != nil {
+		_ = s.gamifier.AwardXP(ctx, userID, "practice_completed", int64(correct*10))
+		_ = s.gamifier.ExtendStreak(ctx, userID)
+		// Counters for milestone badges (increments suffice for "first X" at min:1;
+		// grants are idempotent). objectives_mastered only when this run mastered it.
+		counters := map[string]int64{"practices_completed": 1}
+		if to == StateMastered {
+			counters["objectives_mastered"] = 1
+		}
+		_ = s.gamifier.EvaluateBadges(ctx, userID, counters)
+		_ = s.gamifier.RecordClassScore(ctx, userID, int64(correct*10))
 	}
 
 	return &PracticeResult{
@@ -179,6 +233,7 @@ func (s *Service) RunMasteryCheck(ctx context.Context, userID, objectiveID strin
 		FromState:   from,
 		ToState:     to,
 		Upgraded:    from != to,
+		Breakdown:   breakdown,
 	}, nil
 }
 

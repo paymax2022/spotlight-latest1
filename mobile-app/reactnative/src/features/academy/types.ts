@@ -256,6 +256,15 @@ export interface LeaderboardEntry {
   isMe: boolean;
 }
 
+/** A learner's class XP ranking (classmates only, first names). */
+export interface ClassLeaderboard {
+  classCode: string;
+  periodKey: string;
+  /** The caller's rank, or 0 if not yet ranked. */
+  myRank: number;
+  entries: LeaderboardEntry[];
+}
+
 // ── Rewards (learn-to-earn) ──────────────────────────────────────────────────
 export interface RewardBalance {
   /** Non-monetary reward points. */

@@ -35,11 +35,32 @@ type Badge struct {
 	Icon     *string        `json:"icon,omitempty"`
 }
 
+// BadgeView is a badge definition joined with the caller's earned status — the
+// member read surface (the whole catalog, each flagged earned/not). description
+// is lifted from the criteria jsonb.
+type BadgeView struct {
+	ID          string     `json:"id"`
+	Code        string     `json:"code"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Icon        *string    `json:"icon,omitempty"`
+	Earned      bool       `json:"earned"`
+	EarnedAt    *time.Time `json:"earned_at,omitempty"`
+}
+
 // UserBadge mirrors public.academy_user_badges (PK user_id, badge_id).
 type UserBadge struct {
 	UserID   string    `json:"user_id"`
 	BadgeID  string    `json:"badge_id"`
 	EarnedAt time.Time `json:"earned_at"`
+}
+
+// ChallengeView is a challenge plus the caller's progress toward it — the member
+// read surface. progress is capped at the criteria target; completed = reached it.
+type ChallengeView struct {
+	Challenge
+	Progress  int  `json:"progress"`
+	Completed bool `json:"completed"`
 }
 
 // Challenge mirrors public.academy_challenges.
@@ -63,6 +84,23 @@ type Leaderboard struct {
 	ScopeRef    *string `json:"scope_ref,omitempty"`
 	Period      string  `json:"period"`
 	ResetPolicy string  `json:"reset_policy"`
+}
+
+// ClassLeaderboardEntry is one ranked row of a class XP board — the child-safe
+// member surface: first name only, no user_id leaked to peers.
+type ClassLeaderboardEntry struct {
+	Rank int    `json:"rank"`
+	Name string `json:"name"`
+	XP   int64  `json:"xp"`
+	IsMe bool   `json:"is_me"`
+}
+
+// ClassLeaderboard is a learner's class XP ranking (classmates only).
+type ClassLeaderboard struct {
+	ClassCode string                  `json:"class_code"`
+	PeriodKey string                  `json:"period_key"`
+	MyRank    int                     `json:"my_rank"` // 0 = not yet ranked
+	Entries   []ClassLeaderboardEntry `json:"entries"`
 }
 
 // LeaderboardEntry mirrors public.academy_leaderboard_entries

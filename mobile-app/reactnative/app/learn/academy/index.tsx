@@ -92,11 +92,11 @@ export default function AcademyHome() {
             <Text style={styles.statNum}>{gam.data?.streakDays ?? 0}</Text>
             <Text style={styles.statLabel}>day streak</Text>
           </View>
-          <View style={[styles.statCard, shadow1]}>
+          <Pressable style={[styles.statCard, shadow1]} onPress={() => router.push('/learn/academy/class-leaderboard')} accessibilityLabel="Class leaderboard">
             <Trophy size={20} color={Colors.secondary} />
             <Text style={styles.statNum}>Lv {gam.data?.level ?? 1}</Text>
             <Text style={styles.statLabel}>{gam.data?.xp ?? 0} XP</Text>
-          </View>
+          </Pressable>
           <Pressable style={[styles.statCard, shadow1]} onPress={() => router.push('/learn/academy/rewards')}>
             <Gift size={20} color={Colors.teal} />
             <Text style={styles.statNum}>{(balance.data?.points ?? 0).toLocaleString()}</Text>

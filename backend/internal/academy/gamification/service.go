@@ -2,8 +2,12 @@ package gamification
 
 import (
 	"context"
+	"strings"
 	"time"
 )
+
+// classPeriodKey is the (single, non-resetting) period for class XP boards.
+const classPeriodKey = "all-time"
 
 // Service orchestrates engagement mechanics. It NEVER moves money or touches the
 // wallet ledger — that boundary belongs exclusively to the rewards package.
@@ -119,6 +123,8 @@ func (s *Service) EvaluateBadges(ctx context.Context, userID string, counters ma
 			}
 			if ok {
 				granted = append(granted, b.Code)
+				// Best-effort notification for the achievements surface.
+				_ = s.repo.InsertBadgeNotification(ctx, userID, b.Name)
 			}
 		}
 	}
@@ -131,12 +137,120 @@ func (s *Service) GetProfile(ctx context.Context, userID string) (*Profile, erro
 	return s.loadOrInit(ctx, userID)
 }
 
-func (s *Service) GetBadges(ctx context.Context, userID string) ([]UserBadge, error) {
-	return s.repo.ListUserBadges(ctx, userID)
+// GetBadges returns the full badge catalogue flagged with the caller's earned
+// status (was: earned ids only, which the UI can't render without names/icons).
+func (s *Service) GetBadges(ctx context.Context, userID string) ([]BadgeView, error) {
+	return s.repo.ListBadgesWithEarned(ctx, userID)
 }
 
-func (s *Service) GetChallenges(ctx context.Context) ([]Challenge, error) {
-	return s.repo.ListChallenges(ctx)
+// GetChallenges returns the active challenges with the caller's progress toward
+// each (metric counted in its window vs criteria.target). Challenges without a
+// metric report 0 progress.
+func (s *Service) GetChallenges(ctx context.Context, userID string) ([]ChallengeView, error) {
+	chs, err := s.repo.ListChallenges(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	out := make([]ChallengeView, 0, len(chs))
+	for _, ch := range chs {
+		metric, _ := ch.Criteria["metric"].(string)
+		window, _ := ch.Criteria["window"].(string)
+		target := 0
+		if v, ok := numFromAny(ch.Criteria["target"]); ok {
+			target = int(v)
+		}
+		progress := 0
+		if metric != "" && userID != "" {
+			n, err := s.repo.CountMetric(ctx, userID, metric, windowStart(now, window))
+			if err != nil {
+				return nil, err
+			}
+			progress = n
+			if target > 0 && progress > target {
+				progress = target // cap the display at the target
+			}
+		}
+		out = append(out, ChallengeView{
+			Challenge: ch,
+			Progress:  progress,
+			Completed: target > 0 && progress >= target,
+		})
+	}
+	return out, nil
+}
+
+// RecordClassScore adds an XP delta to the learner's class board (created on
+// first use). No-op when the delta is non-positive or the learner has no class.
+// Fired from the earn-path alongside AwardXP.
+func (s *Service) RecordClassScore(ctx context.Context, userID string, delta int64) error {
+	if delta <= 0 {
+		return nil
+	}
+	classID, ok, err := s.repo.UserClassID(ctx, userID)
+	if err != nil || !ok {
+		return err
+	}
+	lb, err := s.repo.GetOrCreateClassLeaderboard(ctx, classID, classPeriodKey)
+	if err != nil {
+		return err
+	}
+	return s.repo.AddLeaderboardScore(ctx, lb.ID, userID, classPeriodKey, delta)
+}
+
+// GetClassLeaderboard returns the caller's class XP ranking (classmates only,
+// first-name). Empty board when the learner has no class yet.
+func (s *Service) GetClassLeaderboard(ctx context.Context, userID string) (*ClassLeaderboard, error) {
+	out := &ClassLeaderboard{PeriodKey: classPeriodKey, Entries: []ClassLeaderboardEntry{}}
+	classID, ok, err := s.repo.UserClassID(ctx, userID)
+	if err != nil || !ok {
+		return out, err
+	}
+	code, err := s.repo.ClassCode(ctx, classID)
+	if err != nil {
+		return nil, err
+	}
+	out.ClassCode = code
+	lb, err := s.repo.GetOrCreateClassLeaderboard(ctx, classID, classPeriodKey)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.repo.ClassRankedEntries(ctx, lb.ID, classPeriodKey, 100)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		isMe := row.UserID == userID
+		if isMe {
+			out.MyRank = row.Rank
+		}
+		out.Entries = append(out.Entries, ClassLeaderboardEntry{
+			Rank: row.Rank, Name: firstName(row.Name), XP: row.XP, IsMe: isMe,
+		})
+	}
+	return out, nil
+}
+
+// firstName keeps only the first token of a display name (child-safety: peers
+// never see a learner's full name on the class board).
+func firstName(full string) string {
+	full = strings.TrimSpace(full)
+	if i := strings.IndexByte(full, ' '); i > 0 {
+		return full[:i]
+	}
+	if full == "" {
+		return "Learner"
+	}
+	return full
+}
+
+// windowStart returns the lower bound for a challenge window: 'week' = last 7
+// days, anything else = start of today (UTC).
+func windowStart(now time.Time, window string) time.Time {
+	if window == "week" {
+		return now.AddDate(0, 0, -7)
+	}
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 func (s *Service) GetLeaderboard(ctx context.Context, id, periodKey string, limit int) (*Leaderboard, []LeaderboardEntry, error) {

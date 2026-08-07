@@ -150,6 +150,19 @@ type Response struct {
 	CreatedAt      time.Time      `json:"created_at"`
 }
 
+// ServedQuestion is a single question delivered to a learner for an attempt.
+// The canonical answer key is NEVER included — grading is server-authoritative
+// (Submit re-scores against academy_question_items). Mirrors the fields the CBT
+// simulator needs to render a question.
+type ServedQuestion struct {
+	ID          string  `json:"id"`
+	Type        string  `json:"type"`
+	Stem        string  `json:"stem"`
+	Options     []any   `json:"options"` // jsonb array, e.g. [{id,text}]
+	SubjectID   *string `json:"subject_id,omitempty"`
+	ObjectiveID *string `json:"objective_id,omitempty"`
+}
+
 // ── Request DTOs ────────────────────────────────────────────────────────────────
 
 // BeginAttemptRequest — member POST /exam/attempts.
@@ -232,10 +245,11 @@ type CombinationRequest struct {
 
 // SubjectScore is the per-subject scoring breakdown.
 type SubjectScore struct {
-	Subject string  `json:"subject"`
-	Raw     int     `json:"raw"`      // correct count
-	Total   int     `json:"total"`    // items in subject
-	Scaled  float64 `json:"scaled"`   // scaled per scoring_rules (e.g. /100 of the 400 scale)
+	Subject string  `json:"subject"`                // subject id (uuid)
+	Name    string  `json:"subject_name,omitempty"` // human label, resolved from academy_subjects at scoring time
+	Raw     int     `json:"raw"`                    // correct count
+	Total   int     `json:"total"`                  // items in subject
+	Scaled  float64 `json:"scaled"`                 // scaled per scoring_rules (e.g. /100 of the 400 scale)
 	Grade   string  `json:"grade,omitempty"`
 }
 

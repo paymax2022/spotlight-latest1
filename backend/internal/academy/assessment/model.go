@@ -164,13 +164,25 @@ type PracticeAnswer struct {
 
 // PracticeResult is returned from a practice submission.
 type PracticeResult struct {
-	ObjectiveID string       `json:"objective_id"`
-	Scored      int          `json:"scored"`
-	Correct     int          `json:"correct"`
-	Score       float64      `json:"score"` // 0..1
-	FromState   MasteryState `json:"from_state"`
-	ToState     MasteryState `json:"to_state"`
-	Upgraded    bool         `json:"upgraded"`
+	ObjectiveID string           `json:"objective_id"`
+	Scored      int              `json:"scored"`
+	Correct     int              `json:"correct"`
+	Score       float64          `json:"score"` // 0..1
+	FromState   MasteryState     `json:"from_state"`
+	ToState     MasteryState     `json:"to_state"`
+	Upgraded    bool             `json:"upgraded"`
+	Breakdown   []PracticeReview `json:"breakdown"` // per-question review (post-submission)
+}
+
+// PracticeReview is one graded question in a submission's breakdown. Unlike the
+// /practice read (which strips the answer key), the post-submission result may
+// reveal the canonical answer + explanation so the learner sees worked feedback.
+type PracticeReview struct {
+	QuestionItemID string `json:"question_item_id"`
+	Stem           string `json:"stem"`
+	Correct        bool   `json:"correct"`
+	CorrectAnswer  any    `json:"correct_answer"`
+	Explanation    string `json:"explanation,omitempty"`
 }
 
 // ItemAnalysis is the simple item-analysis read (difficulty/discrimination passthrough).

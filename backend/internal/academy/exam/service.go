@@ -16,6 +16,7 @@ import (
 type Service struct {
 	repo        *Repository
 	entitlement EntitlementChecker
+	gamifier    Gamifier
 	now         func() time.Time // injectable clock for deadline tests
 }
 
@@ -26,10 +27,27 @@ type EntitlementChecker interface {
 	HasAccess(ctx context.Context, userID, arenaID string) (bool, error)
 }
 
+// Gamifier is the engagement hook fired on a scored submission — the completion
+// awards XP and marks the day active for the streak. When nil (default) the exam
+// runs with no gamification side-effects. Best-effort: awarding never fails a
+// submit. Wired to academy/gamification in academy_routes.go.
+type Gamifier interface {
+	AwardXP(ctx context.Context, userID, action string, amount int64) error
+	ExtendStreak(ctx context.Context, userID string) error
+	EvaluateBadges(ctx context.Context, userID string, counters map[string]int64) error
+	RecordClassScore(ctx context.Context, userID string, delta int64) error
+}
+
 // NewService wires the exam service with a system clock and no entitlement checker
 // (default-allow until commerce injects one).
 func NewService(db *pgxpool.Pool) *Service {
 	return &Service{repo: NewRepository(db), now: time.Now}
+}
+
+// WithGamifier injects the engagement hook (gamification wiring). Nil-safe.
+func (s *Service) WithGamifier(g Gamifier) *Service {
+	s.gamifier = g
+	return s
 }
 
 // WithEntitlement injects the entitlement checker (commerce wiring hook).
@@ -158,6 +176,80 @@ func (s *Service) Begin(ctx context.Context, userID, blueprintID string, offline
 	return s.repo.CreateAttempt(ctx, userID, blueprintID, &arenaID, started, deadline, offlineOrigin, idemArg)
 }
 
+// AttemptQuestions returns the question set for an attempt the caller owns,
+// composed from the blueprint's sections ([{subject_id, count}]) and served
+// WITHOUT the answer key. The set is deterministic per blueprint (repo orders by
+// id), so pause/resume/re-fetch yield a stable set; grading remains server-side.
+func (s *Service) AttemptQuestions(ctx context.Context, userID, attemptID string) ([]ServedQuestion, error) {
+	att, err := s.ownedAttempt(ctx, userID, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	bp, err := s.repo.GetBlueprint(ctx, att.BlueprintID)
+	if err != nil {
+		return nil, err
+	}
+	out := []ServedQuestion{}
+	for _, sec := range bp.Sections {
+		m, ok := sec.(map[string]any)
+		if !ok {
+			continue
+		}
+		subjectID, _ := m["subject_id"].(string)
+		count := sectionCount(m["count"])
+		if subjectID == "" || count <= 0 {
+			continue
+		}
+		qs, err := s.repo.SelectApprovedQuestions(ctx, subjectID, count)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, qs...)
+	}
+	return out, nil
+}
+
+// GetAttemptResult returns the stored score/readiness/predicted projection for a
+// submitted/scored attempt the caller owns. 404 until the attempt is submitted.
+func (s *Service) GetAttemptResult(ctx context.Context, userID, attemptID string) (map[string]any, error) {
+	att, err := s.ownedAttempt(ctx, userID, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	switch att.State {
+	case AttemptSubmitted, AttemptScored, AttemptReviewed:
+		// result is available
+	default:
+		return nil, ErrNotFound // not yet submitted → no result projection
+	}
+	res := map[string]any{}
+	for k, v := range att.Score { // subjects, overall, grade, late
+		res[k] = v
+	}
+	if att.Readiness != nil {
+		res["readiness"] = *att.Readiness
+	}
+	if att.Predicted != nil {
+		res["predicted"] = att.Predicted
+	}
+	return res, nil
+}
+
+// sectionCount coerces a jsonb section count (float64 from JSON, or int/string)
+// into an int; unparseable → 0.
+func sectionCount(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	default:
+		return 0
+	}
+}
+
 // Pause runs started→paused (only if the blueprint's pause_policy = allowed).
 func (s *Service) Pause(ctx context.Context, userID, attemptID string) (*Attempt, error) {
 	att, err := s.ownedAttempt(ctx, userID, attemptID)
@@ -273,6 +365,18 @@ func (s *Service) Submit(ctx context.Context, userID, attemptID string, response
 	if err != nil {
 		return nil, err
 	}
+
+	// Engagement: a completed exam awards XP (= overall score) and marks the day
+	// active for the streak. Best-effort — a gamification hiccup never fails the
+	// (already-persisted) submit, and this only runs on the first scoring pass.
+	if s.gamifier != nil {
+		_ = s.gamifier.AwardXP(ctx, userID, "exam_completed", int64(res.Overall))
+		_ = s.gamifier.ExtendStreak(ctx, userID)
+		// Increment counter is enough for "first exam"-style badges (min:1); the
+		// grant is idempotent, so re-passing 1 on later exams is a no-op.
+		_ = s.gamifier.EvaluateBadges(ctx, userID, map[string]int64{"exams_completed": 1})
+		_ = s.gamifier.RecordClassScore(ctx, userID, int64(res.Overall))
+	}
 	return s.repo.GetAttempt(ctx, attemptID)
 }
 
@@ -383,7 +487,37 @@ func (s *Service) scoreAttempt(ctx context.Context, att *Attempt, responses []Re
 
 	res := score(rules, responses, correctByID, subjects, mastered, totalObj)
 	res.Late = late
+
+	// Enrich each per-subject score with a human label so all clients render a
+	// name, not a raw subject uuid. Best-effort: on lookup failure (or the synthetic
+	// "general" bucket, which is not a uuid) the Subject id remains the fallback.
+	s.attachSubjectNames(ctx, res.Subjects)
+
 	return res, correctByID, nil
+}
+
+// attachSubjectNames resolves the subject ids present in the score to human names
+// (from academy_subjects) and sets SubjectScore.Name in place. Best-effort: a lookup
+// error leaves names empty so scoring never fails on a labelling concern.
+func (s *Service) attachSubjectNames(ctx context.Context, subjects []SubjectScore) {
+	if len(subjects) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(subjects))
+	for _, ss := range subjects {
+		if ss.Subject != "" {
+			ids = append(ids, ss.Subject)
+		}
+	}
+	names, err := s.repo.GetSubjectNames(ctx, ids)
+	if err != nil {
+		return // labelling is non-fatal — clients fall back to the subject id
+	}
+	for i := range subjects {
+		if n, ok := names[subjects[i].Subject]; ok {
+			subjects[i].Name = n
+		}
+	}
 }
 
 // ── Pure scoring core ────────────────────────────────────────────────────────────
@@ -543,6 +677,9 @@ func resultToScoreMap(res Result) map[string]any {
 	subs := make([]map[string]any, 0, len(res.Subjects))
 	for _, s := range res.Subjects {
 		m := map[string]any{"subject": s.Subject, "raw": s.Raw, "total": s.Total, "scaled": s.Scaled}
+		if s.Name != "" {
+			m["subject_name"] = s.Name
+		}
 		if s.Grade != "" {
 			m["grade"] = s.Grade
 		}

@@ -18,6 +18,9 @@ import { creditPoints, type PointsLedgerState } from './pointsLedger';
 import { assertCanSpend, type SpendConsentState } from './consent';
 import { upsertBookmark } from './bookmarks';
 import { adaptClasses, adaptVersions, adaptSubjects, adaptTopics, adaptObjectives, adaptLessons, adaptLesson, type GoClass, type GoVersion, type GoSubject, type GoTopic, type GoObjective, type GoLesson } from './curriculumAdapters';
+import { adaptPracticeItems, toPracticeSubmit, adaptPracticeResult, type GoQuestionItem, type GoPracticeResult } from './practiceAdapters';
+import { adaptStartedAttempt, toExamSubmit, adaptExamResult, adaptArena, adaptArenas, adaptBlueprints, type GoExamAttempt, type GoScoredAttempt, type GoExamResultProjection, type GoArena, type GoBlueprint } from './examAdapters';
+import { adaptGamificationProfile, adaptChallenges, adaptBadges, adaptClassLeaderboard, type GoGamificationProfile, type GoChallenge, type GoBadgeView, type GoClassLeaderboard } from './gamificationAdapters';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -40,6 +43,7 @@ import type {
   Badge,
   Challenge,
   LeaderboardEntry,
+  ClassLeaderboard,
   RewardBalance,
   RewardLedgerEntry,
   RewardCatalogItem,
@@ -352,8 +356,10 @@ export async function getPractice(objectiveId?: string): Promise<Question[]> {
     // Fall back to a small mixed set if the objective has no dedicated items.
     return pool.length ? pool : M.MOCK_QUESTIONS.slice(0, 3);
   }
-  const { data } = await api.get<Question[]>(`${B}/practice`, { params: { objective: objectiveId } });
-  return data;
+  // Live: Go returns { data: [question items] } with the answer key stripped →
+  // adapt to mobile Question (grading stays server-authoritative).
+  const { data } = await api.get<{ data?: GoQuestionItem[] }>(`${B}/practice`, { params: { objective: objectiveId } });
+  return adaptPracticeItems(data.data);
 }
 
 export async function submitPractice(sub: PracticeSubmission): Promise<PracticeResult> {
@@ -395,8 +401,18 @@ export async function submitPractice(sub: PracticeSubmission): Promise<PracticeR
     if (result.masteryGained) track('mastery_gained', { objective: sub.objectiveId });
     return result;
   }
-  const { data } = await api.post<PracticeResult>(`${B}/practice/submit`, sub);
-  return data;
+  // Live: send the learner's selections in the grader's shape and let the server
+  // score against the canonical key + advance mastery; adapt the result back.
+  const { data } = await api.post<{ data: GoPracticeResult }>(
+    `${B}/practice/submit`,
+    toPracticeSubmit(sub.objectiveId, sub.answers),
+  );
+  const result = adaptPracticeResult(data.data, sub.answers);
+  // Mirror the offline reward + telemetry so live and mock behave identically.
+  creditPointsLocal(result.pointsEarned, 'Practice set completed');
+  track('practice_completed', { score: result.scorePct, objective: sub.objectiveId });
+  if (result.masteryGained) track('mastery_gained', { objective: sub.objectiveId });
+  return result;
 }
 
 export async function getMastery(): Promise<MasterySnapshot[]> {
@@ -421,8 +437,9 @@ export async function getMastery(): Promise<MasterySnapshot[]> {
 // ── Exam (the Crown) ─────────────────────────────────────────────────────────
 export async function getArenas(): Promise<ExamArena[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_ARENAS; }
-  const { data } = await api.get<ExamArena[]>(`${B}/exam/arenas`);
-  return data;
+  // Live: Go returns { data: [snake_case arena rows] } → unwrap + adapt.
+  const { data } = await api.get<{ data?: GoArena[] }>(`${B}/exam/arenas`);
+  return adaptArenas(data.data);
 }
 
 export async function getArena(id: string): Promise<ExamArena> {
@@ -432,8 +449,8 @@ export async function getArena(id: string): Promise<ExamArena> {
     if (!a) throw new Error('Arena not found');
     return a;
   }
-  const { data } = await api.get<ExamArena>(`${B}/exam/arenas/${id}`);
-  return data;
+  const { data } = await api.get<{ data: GoArena }>(`${B}/exam/arenas/${id}`);
+  return adaptArena(data.data);
 }
 
 export async function getBlueprints(arenaId: string): Promise<ExamBlueprint[]> {
@@ -441,8 +458,8 @@ export async function getBlueprints(arenaId: string): Promise<ExamBlueprint[]> {
     await delay();
     return M.MOCK_BLUEPRINTS.filter((b) => b.arenaId === arenaId);
   }
-  const { data } = await api.get<ExamBlueprint[]>(`${B}/exam/arenas/${arenaId}/blueprints`);
-  return data;
+  const { data } = await api.get<{ data?: GoBlueprint[] }>(`${B}/exam/arenas/${arenaId}/blueprints`);
+  return adaptBlueprints(data.data);
 }
 
 export async function getUtmeCombinations(course?: string): Promise<UtmeCombination[]> {
@@ -490,8 +507,16 @@ export async function startAttempt(blueprintId: string): Promise<ExamAttempt> {
     attempts.set(attempt.id, attempt);
     return attempt;
   }
-  const { data } = await api.post<ExamAttempt>(`${B}/exam/attempts`, { blueprintId });
-  return data;
+  // Live: create the server attempt, then fetch its served question set (answer
+  // key stripped) and compose the client working copy. Stored locally so the CBT
+  // screen, patchAttemptLocal and submit all read from it (questions live only
+  // client-side; grading is server-authoritative on submit).
+  const { data: started } = await api.post<{ data: GoExamAttempt }>(`${B}/exam/attempts`, { blueprint_id: blueprintId });
+  const go = started.data;
+  const { data: qwrap } = await api.get<{ data?: GoQuestionItem[] }>(`${B}/exam/attempts/${go.id}/questions`);
+  const attempt = adaptStartedAttempt(go, adaptPracticeItems(qwrap.data));
+  attempts.set(attempt.id, attempt);
+  return attempt;
 }
 
 export async function getAttempt(id: string): Promise<ExamAttempt> {
@@ -501,8 +526,16 @@ export async function getAttempt(id: string): Promise<ExamAttempt> {
     if (!a) throw new Error('Attempt not found');
     return a;
   }
-  const { data } = await api.get<ExamAttempt>(`${B}/exam/attempts/${id}`);
-  return data;
+  // Live: the working copy (with its served questions) lives client-side — prefer
+  // it. On a cold read (e.g. app relaunch) rebuild it from the server attempt +
+  // freshly-served questions so the CBT screen still has a set to render.
+  const local = attempts.get(id);
+  if (local) return local;
+  const { data: awrap } = await api.get<{ data: GoExamAttempt }>(`${B}/exam/attempts/${id}`);
+  const { data: qwrap } = await api.get<{ data?: GoQuestionItem[] }>(`${B}/exam/attempts/${id}/questions`);
+  const rebuilt = adaptStartedAttempt(awrap.data, adaptPracticeItems(qwrap.data));
+  attempts.set(id, rebuilt);
+  return rebuilt;
 }
 
 /** Persist answers/flags/remaining locally (the offline working copy). */
@@ -586,8 +619,20 @@ export async function submitAttempt(id: string): Promise<ExamResult> {
     track('readiness_updated', { delta: result.readinessDelta });
     return result;
   }
-  const { data } = await api.post<ExamResult>(`${B}/exam/attempts/${id}/submit`, {});
-  return data;
+  // Live: send the collected selections (grader shape) and let the server score
+  // against the canonical key; adapt the scored attempt to the results screen.
+  const local = attempts.get(id);
+  if (!local) throw new Error('Attempt not found');
+  const { data } = await api.post<{ data: GoScoredAttempt }>(`${B}/exam/attempts/${id}/submit`, toExamSubmit(local));
+  const scored = data.data;
+  const result = adaptExamResult(id, scored.score ?? { overall: 0 }, scored.readiness, local);
+  attempts.set(id, { ...local, status: 'submitted' });
+  examResults.set(id, result);
+  // Idempotent on the attempt id so revisiting a submitted attempt never re-awards.
+  creditPointsLocal(result.pointsEarned, 'Exam completed', `exam:${id}`);
+  track('exam_completed', { score: result.scorePct, offlineOrigin: local.offlineOrigin });
+  track('readiness_updated', { delta: result.readinessDelta });
+  return result;
 }
 
 /** Read back a previously computed exam result (X9). */
@@ -598,27 +643,40 @@ export async function getExamResult(id: string): Promise<ExamResult> {
     if (!r) throw new Error('Result not ready');
     return r;
   }
-  const { data } = await api.get<ExamResult>(`${B}/exam/attempts/${id}/result`);
-  return data;
+  // Live: the just-computed result is cached from submit — prefer it (it carries
+  // the client timing/answered counts). Otherwise read the server projection and
+  // adapt against whatever local working copy we still hold.
+  const cached = examResults.get(id);
+  if (cached) return cached;
+  const { data } = await api.get<{ data: GoExamResultProjection }>(`${B}/exam/attempts/${id}/result`);
+  const proj = data.data;
+  const local = attempts.get(id) ?? { questions: [], answers: {}, durationSec: 0, remainingSec: 0 };
+  return adaptExamResult(id, proj, proj.readiness, local);
 }
 
 // ── Gamification ─────────────────────────────────────────────────────────────
 export async function getGamificationProfile(): Promise<GamificationProfile> {
   if (USE_MOCK) { await delay(); return M.MOCK_GAMIFICATION; }
-  const { data } = await api.get<GamificationProfile>(`${B}/gamification/profile`);
-  return data;
+  // Live: Go returns the raw profile ({xp, level, streak_days, freezes}); adapt to
+  // the mobile shape (xpToNext computed from the level curve). XP/streak are
+  // awarded server-side on practice/exam completion.
+  const { data } = await api.get<GoGamificationProfile>(`${B}/gamification/profile`);
+  return adaptGamificationProfile(data);
 }
 
 export async function getBadges(): Promise<Badge[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_BADGES; }
-  const { data } = await api.get<Badge[]>(`${B}/gamification/badges`);
-  return data;
+  // Live: Go returns { badges: [catalogue rows + earned status] } → unwrap + adapt.
+  const { data } = await api.get<{ badges?: GoBadgeView[] }>(`${B}/gamification/badges`);
+  return adaptBadges(data.badges);
 }
 
 export async function getChallenges(): Promise<Challenge[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_CHALLENGES; }
-  const { data } = await api.get<Challenge[]>(`${B}/gamification/challenges`);
-  return data;
+  // Live: Go returns { challenges: [snake_case rows] } → unwrap + adapt (kind →
+  // cadence; target/reward from criteria). Per-user progress isn't tracked yet.
+  const { data } = await api.get<{ challenges?: GoChallenge[] }>(`${B}/gamification/challenges`);
+  return adaptChallenges(data.challenges);
 }
 
 export async function getLeaderboard(id = 'national'): Promise<LeaderboardEntry[]> {
@@ -627,11 +685,28 @@ export async function getLeaderboard(id = 'national'): Promise<LeaderboardEntry[
   return data;
 }
 
+/**
+ * The learner's class XP ranking (classmates only, first names, 'you' flagged).
+ * XP is earned on the practice/exam earn-path; child-safe by construction (the
+ * server scopes to the caller's class and never returns full names or user ids).
+ */
+export async function getClassLeaderboard(): Promise<ClassLeaderboard> {
+  if (USE_MOCK) {
+    await delay();
+    return { classCode: '', periodKey: 'all-time', myRank: 0, entries: M.MOCK_LEADERBOARD };
+  }
+  const { data } = await api.get<GoClassLeaderboard>(`${B}/gamification/leaderboard/class`);
+  return adaptClassLeaderboard(data);
+}
+
 // ── Rewards ──────────────────────────────────────────────────────────────────
 export async function getRewardBalance(): Promise<RewardBalance> {
   if (USE_MOCK) { await delay(); return rewardBalance; }
-  const { data } = await api.get<RewardBalance>(`${B}/rewards/balance`);
-  return data;
+  // Live: Go returns { data: { balance_minor } } — the confirmed reward-points
+  // ledger sum (non-monetary, distinct from the wallet). pendingPoints is a local
+  // offline concept the server doesn't track, so it reads 0 here.
+  const { data } = await api.get<{ data?: { balance_minor?: number } }>(`${B}/rewards/balance`);
+  return { points: data.data?.balance_minor ?? 0, pendingPoints: 0 };
 }
 
 export async function getRewardHistory(): Promise<RewardLedgerEntry[]> {
@@ -1229,7 +1304,9 @@ export async function saveNote(lessonId: string, lessonTitle: string, subjectNam
     enqueue({ type: 'progress', payload: { kind: 'note', lessonId } });
     return note;
   }
-  const { data } = await api.post<LessonNote>(`${B}/learner/notes`, { lessonId, body });
+  // Send the title + subject too so the persisted note round-trips them (the
+  // backend stores what it's given; it can't resolve them from lessonId alone).
+  const { data } = await api.post<LessonNote>(`${B}/learner/notes`, { lessonId, lessonTitle, subjectName, body });
   return data;
 }
 

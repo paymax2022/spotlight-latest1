@@ -55,8 +55,11 @@ func (h *Handler) fail(c *gin.Context, err error) {
 //
 //	member: /exam/arenas[...], /exam/attempts[...], /exam/utme/combinations
 //	admin : /exam/arenas, /exam/blueprints, /exam/combinations CRUD under RBAC academy.exam
-func RegisterAcademyExam(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterAcademyExam(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, gamifier Gamifier) {
 	svc := NewService(pool)
+	if gamifier != nil {
+		svc = svc.WithGamifier(gamifier)
+	}
 	h := NewHandler(svc)
 
 	// ── Member ──
@@ -68,6 +71,8 @@ func RegisterAcademyExam(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	member.POST("/exam/attempts/:id/resume", h.ResumeAttempt)
 	member.POST("/exam/attempts/:id/submit", h.SubmitAttempt)
 	member.GET("/exam/attempts/:id", h.GetAttempt)
+	member.GET("/exam/attempts/:id/questions", h.GetAttemptQuestions)
+	member.GET("/exam/attempts/:id/result", h.GetAttemptResult)
 	member.GET("/exam/utme/combinations", h.GetCombinations)
 
 	// ── Admin (academy.exam) ──
@@ -189,6 +194,40 @@ func (h *Handler) GetAttempt(c *gin.Context) {
 		return
 	}
 	out, err := h.svc.GetAttempt(c.Request.Context(), u, c.Param("id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// GetAttemptQuestions serves the question set for an attempt the caller owns,
+// composed from the blueprint sections and stripped of the answer key. Same
+// {data} envelope as the other reads; 404 if the attempt is not owned/found.
+func (h *Handler) GetAttemptQuestions(c *gin.Context) {
+	u := uid(c)
+	if u == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	out, err := h.svc.AttemptQuestions(c.Request.Context(), u, c.Param("id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// GetAttemptResult returns the stored score/readiness/predicted projection for a
+// submitted/scored attempt the caller owns. Same {data} envelope; 404 until
+// submitted.
+func (h *Handler) GetAttemptResult(c *gin.Context) {
+	u := uid(c)
+	if u == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	out, err := h.svc.GetAttemptResult(c.Request.Context(), u, c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return

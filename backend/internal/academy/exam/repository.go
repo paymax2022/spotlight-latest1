@@ -627,6 +627,58 @@ func (r *Repository) GetQuestionAnswers(ctx context.Context, ids []string) (map[
 	return answers, subjects, rows.Err()
 }
 
+// GetSubjectNames resolves subject ids → human names from public.academy_subjects
+// so the per-subject score carries a label (not a raw uuid). Unknown ids are simply
+// absent from the returned map; callers fall back to the id. Empty input → empty map.
+func (r *Repository) GetSubjectNames(ctx context.Context, ids []string) (map[string]string, error) {
+	names := map[string]string{}
+	if len(ids) == 0 {
+		return names, nil
+	}
+	const q = `SELECT id, name FROM public.academy_subjects WHERE id = ANY($1)`
+	rows, err := r.db.Query(ctx, q, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		names[id] = name
+	}
+	return names, rows.Err()
+}
+
+// SelectApprovedQuestions returns up to `limit` approved question items for a
+// subject, WITHOUT the answer key (served to learners). Deterministic order (by
+// id) so the same blueprint yields the same set across fetches within an attempt.
+func (r *Repository) SelectApprovedQuestions(ctx context.Context, subjectID string, limit int) ([]ServedQuestion, error) {
+	const q = `
+		SELECT id, type, stem, options, subject_id, objective_id
+		FROM public.academy_question_items
+		WHERE subject_id = $1 AND status = 'approved'
+		ORDER BY id
+		LIMIT $2`
+	rows, err := r.db.Query(ctx, q, subjectID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ServedQuestion{}
+	for rows.Next() {
+		sq := ServedQuestion{}
+		var options []byte
+		if err := rows.Scan(&sq.ID, &sq.Type, &sq.Stem, &options, &sq.SubjectID, &sq.ObjectiveID); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(options, &sq.Options)
+		out = append(out, sq)
+	}
+	return out, rows.Err()
+}
+
 // CountMasteredForUser returns how many of the user's objectives are mastered/
 // exam_ready — feeds the mastery factor of the readiness formula.
 func (r *Repository) CountMasteredForUser(ctx context.Context, userID string) (mastered, total int, err error) {
