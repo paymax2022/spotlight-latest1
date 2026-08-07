@@ -19,6 +19,11 @@ import type {
   DuesSummary,
   PaymentReceipt,
   PayInvoiceResult,
+  ElectionSummary,
+  ElectionDetail,
+  ElectionStatus,
+  VoteReceipt,
+  CardVerification,
 } from '../types/association.types';
 import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
 import {
@@ -116,6 +121,39 @@ export async function getMembershipCard(): Promise<MembershipCard> {
   return data;
 }
 
+/**
+ * Verify a scanned membership-card QR token. Authenticity + live standing are
+ * decided server-side; an invalid/forged/expired/arrears card returns
+ * `{ valid:false, reason }` rather than throwing. In mock mode the holder's own
+ * card token verifies valid; anything else is INVALID_SIGNATURE.
+ */
+export async function verifyMembershipCard(token: string): Promise<CardVerification> {
+  if (USE_MOCK) {
+    await delay();
+    const t = (token || '').trim();
+    if (t && t === MOCK_MEMBER_CARD.qrPayload) {
+      const overdue = MOCK_MEMBER_CARD.paymentStanding === 'OVERDUE';
+      const inactive = MOCK_MEMBER_CARD.status !== 'ACTIVE';
+      return {
+        valid: !overdue && !inactive,
+        reason: inactive ? 'REVOKED' : overdue ? 'ARREARS' : undefined,
+        memberId: MOCK_MEMBER_CARD.memberId,
+        fullName: MOCK_MEMBER_CARD.fullName,
+        organisationName: MOCK_MEMBER_CARD.organisationName,
+        organisationAcronym: MOCK_MEMBER_CARD.organisationAcronym,
+        categoryLabel: MOCK_MEMBER_CARD.categoryLabel,
+        status: MOCK_MEMBER_CARD.status,
+        paymentStanding: MOCK_MEMBER_CARD.paymentStanding,
+        validThrough: MOCK_MEMBER_CARD.validThrough,
+        verifiedAt: new Date().toISOString(),
+      };
+    }
+    return { valid: false, reason: 'INVALID_SIGNATURE', verifiedAt: new Date().toISOString() };
+  }
+  const { data } = await api.post(`${BASE}/cards/verify`, { token });
+  return data;
+}
+
 // ─── Member directory ─────────────────────────────────────────────────────────
 
 export async function getDirectory(query?: MemberDirectoryQuery): Promise<MemberProfileSummary[]> {
@@ -178,4 +216,85 @@ export async function payInvoice(
     { headers: { 'Idempotency-Key': generateIdempotencyKey() } },
   );
   return data;
+}
+
+// ─── Elections (TS-13) ────────────────────────────────────────────────────────
+// Wired to /associations/elections. In mock mode a single VOTING election is
+// served with a small in-memory ballot state so the vote flow is demoable.
+
+const MOCK_ELECTION: ElectionDetail = {
+  id: 'elec_mock_1',
+  title: '2026 National Executive Election',
+  description: 'Elect your incoming national executive council. One vote per position — your ballot is secret.',
+  status: 'VOTING' as ElectionStatus,
+  votingOpensAt: '2026-07-01T09:00:00Z',
+  votingClosesAt: '2026-08-30T17:00:00Z',
+  eligible: true,
+  sealedResults: true,
+  positions: [
+    {
+      id: 'pos_pres', title: 'President', seats: 1, hasVoted: false,
+      candidates: [
+        { id: 'c_pres_a', name: 'Dr. Amaka Obi', manifesto: 'Transparency in dues, quarterly town halls, and a members’ welfare fund.', status: 'APPROVED' },
+        { id: 'c_pres_b', name: 'Engr. Tunde Bello', manifesto: 'Digitise the register, expand CPD, and negotiate group insurance for members.', status: 'APPROVED' },
+      ],
+    },
+    {
+      id: 'pos_sec', title: 'Secretary', seats: 1, hasVoted: false,
+      candidates: [
+        { id: 'c_sec_a', name: 'Barr. Ngozi Eze', manifesto: 'Minutes circulated within 48 hours and an open official-records portal.', status: 'APPROVED' },
+        { id: 'c_sec_b', name: 'Mr. Kofi Mensah', manifesto: 'Streamlined committees and a shared, versioned document library.', status: 'APPROVED' },
+      ],
+    },
+  ],
+};
+
+// positionId -> { hasVoted, receipt } (mock ballot state).
+const mockBallots: Record<string, { receipt: string }> = {};
+
+export async function getElections(): Promise<ElectionSummary[]> {
+  if (USE_MOCK) {
+    await delay();
+    return [{
+      id: MOCK_ELECTION.id, title: MOCK_ELECTION.title, status: MOCK_ELECTION.status,
+      votingOpensAt: MOCK_ELECTION.votingOpensAt, votingClosesAt: MOCK_ELECTION.votingClosesAt,
+      positionCount: MOCK_ELECTION.positions.length,
+    }];
+  }
+  const { data } = await api.get(`${BASE}/elections`);
+  return data;
+}
+
+export async function getElection(id: string): Promise<ElectionDetail> {
+  if (USE_MOCK) {
+    await delay();
+    return {
+      ...MOCK_ELECTION,
+      positions: MOCK_ELECTION.positions.map((p) => ({ ...p, hasVoted: Boolean(mockBallots[p.id]) })),
+    };
+  }
+  const { data } = await api.get(`${BASE}/elections/${id}`);
+  return data;
+}
+
+export async function castVote(electionId: string, positionId: string, candidateId: string): Promise<VoteReceipt> {
+  if (USE_MOCK) {
+    await delay(420);
+    const already = mockBallots[positionId];
+    if (already) {
+      return { receipt: already.receipt, positionId, confirmedAt: new Date().toISOString(), alreadyCast: true };
+    }
+    const receipt = 'VR-' + Math.abs(hashString(positionId + candidateId)).toString(16);
+    mockBallots[positionId] = { receipt };
+    return { receipt, positionId, confirmedAt: new Date().toISOString(), alreadyCast: false };
+  }
+  const { data } = await api.post(`${BASE}/elections/${electionId}/vote`, { positionId, candidateId });
+  return data;
+}
+
+// Small deterministic hash for a stable mock receipt (no crypto in the app path).
+function hashString(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return h;
 }

@@ -26,6 +26,21 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.GET("/me/admin-access", h.GetAdminAccess)
 	rg.GET("/me/dues", h.GetDues)
 
+	// ── Elections & voting (TS-13) ──────────────────────────────
+	rg.GET("/elections", h.ListElections)
+	rg.GET("/elections/:id", h.GetElection)
+	rg.POST("/elections", h.CreateElection)                        // officer
+	rg.POST("/elections/:id/candidates", h.AddElectionCandidate)   // officer
+	rg.POST("/elections/:id/open", h.OpenElection)                 // officer
+	rg.POST("/elections/:id/close", h.CloseElection)               // officer
+	rg.POST("/elections/:id/publish", h.PublishElectionResults)    // officer
+	rg.POST("/elections/:id/handover", h.HandoverElection)         // senior officer
+	rg.GET("/elections/:id/tally", h.GetElectionTally)             // officer
+	rg.POST("/elections/:id/vote", h.CastVote)                     // eligible voter
+
+	// ── Membership card verification (MC-003/004/005) ───────────
+	rg.POST("/cards/verify", h.VerifyCard)
+
 	// ── Directory ───────────────────────────────────────────────
 	rg.GET("/members", h.ListMembers)
 	rg.GET("/members/:id", h.GetMember)

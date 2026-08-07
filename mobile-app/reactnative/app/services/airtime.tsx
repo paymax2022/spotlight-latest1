@@ -21,6 +21,7 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1, shadow2 } from '@/constants/shadows';
 import { getAirtimeNetworks, initiateAirtimePaystack, purchaseAirtime, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
+import { useGatewayCheckout } from '@/features/payments';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
@@ -142,20 +143,40 @@ export default function AirtimeScreen() {
     });
   };
 
+  // In-app Paystack SDK checkout (flag-gated). Resumes the server-initialized
+  // transaction in-app, then routes to the payment-status resolver; falls back
+  // to the legacy external redirect when the flag is off.
+  const paystackCheckout = useGatewayCheckout();
+  React.useEffect(() => {
+    if (paystackCheckout.error) setPaystackError(paystackCheckout.error);
+  }, [paystackCheckout.error]);
+
   const onConfirmPaystack = async () => {
     if (!pendingPayload || !selectedNetwork || paystackLoading) return;
     setPaystackError('');
     setPaystackLoading(true);
     try {
-      const { authorizationUrl } = await initiateAirtimePaystack({
-        networkCode: selectedNetwork.code,
-        phoneNumber: pendingPayload.phoneNumber,
-        amount: pendingPayload.amount,
-        idempotencyKey: generateIdempotencyKey(),
+      await paystackCheckout.start({
+        domain: 'bills',
+        initialize: async () => {
+          const r = await initiateAirtimePaystack({
+            networkCode: selectedNetwork.code,
+            phoneNumber: pendingPayload.phoneNumber,
+            amount: pendingPayload.amount,
+            idempotencyKey: generateIdempotencyKey(),
+          });
+          if (!r.authorizationUrl) throw new Error('Paystack did not return a payment URL.');
+          return { authorizationUrl: r.authorizationUrl, reference: r.paymentReference };
+        },
+        onResolved: (res) => {
+          setShowConfirm(false);
+          router.replace(`/services/paystack/${res.reference}` as never);
+        },
+        onFallback: async (res) => {
+          setShowConfirm(false);
+          await Linking.openURL(res.authorizationUrl);
+        },
       });
-      if (!authorizationUrl) throw new Error('Paystack did not return a payment URL.');
-      setShowConfirm(false);
-      await Linking.openURL(authorizationUrl);
     } catch (err) {
       setPaystackError(getErrorMessage(err));
     } finally {
@@ -406,6 +427,9 @@ export default function AirtimeScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Hosts the in-app Paystack checkout WebView on native (nothing on web). */}
+      <paystackCheckout.Sheet />
     </SafeAreaView>
   );
 }

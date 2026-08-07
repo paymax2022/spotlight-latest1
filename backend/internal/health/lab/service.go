@@ -223,7 +223,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	}
 
 	// Price every line from the catalog (server-side, kobo integers).
-	var total int64
+	prices := make([]int64, 0, len(in.TestIDs))
 	lines := make([]OrderLine, 0, len(in.TestIDs))
 	for _, testID := range in.TestIDs {
 		var name string
@@ -239,10 +239,15 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		if !active {
 			return nil, fmt.Errorf("lab: test is not active")
 		}
-		total += price
+		prices = append(prices, price)
 		lines = append(lines, OrderLine{
 			ID: uuid.New().String(), TestID: testID, TestName: name, UnitPriceKobo: price,
 		})
+	}
+	// Exact, overflow-guarded minor-unit total (PM-008/PM-011).
+	total, err := sumLineKobo(prices)
+	if err != nil {
+		return nil, err
 	}
 	if total <= 0 {
 		return nil, fmt.Errorf("lab: order total must be positive")
@@ -433,7 +438,7 @@ func (s *Service) FlagBreach(ctx context.Context, actorID, sampleID, reason stri
 // A BREACHED / RECOLLECT_REQUIRED sample is rejected — no result without a
 // complete custody chain. On success the sample → ACCESSIONED, the order
 // SAMPLE_COLLECTED/IN_TRANSIT → ACCESSIONED, then → PROCESSING.
-func (s *Service) Accession(ctx context.Context, scientistID, sampleID, note string) (*Sample, error) {
+func (s *Service) Accession(ctx context.Context, scientistID, sampleID, scannedBarcode, note string) (*Sample, error) {
 	sm, err := s.loadSample(ctx, sampleID)
 	if err != nil {
 		return nil, err
@@ -451,6 +456,14 @@ func (s *Service) Accession(ctx context.Context, scientistID, sampleID, note str
 		if !ok {
 			return nil, fmt.Errorf("lab: only a verified lab scientist may accession (HL-2)")
 		}
+	}
+	// Sample↔patient integrity (EC-001/LB-005): if the accessioning scientist
+	// scanned the tube, the barcode MUST match the one minted at collection — a
+	// mismatch is a possible swap/mislabel and is rejected before intake.
+	if err := verifyBarcodeScan(scannedBarcode, sm.BarcodeRef); err != nil {
+		s.audited(scientistID, o.PatientID, "health.lab.sample.barcode_mismatch", sampleID, nil,
+			map[string]any{"scanned": normalizeBarcode(scannedBarcode), "expected": sm.BarcodeRef})
+		return nil, err
 	}
 	// HL-6: an unbroken chain is mandatory. Breach/recollect cannot be accessioned.
 	if !chainIntact(sm.State) {
@@ -524,7 +537,7 @@ type EnterResultInput struct {
 // entered when the order's sample is ACCESSIONED (unbroken chain). The clinical
 // status flag drives HL-7 — if any line is critical/abnormal the order is taken
 // down the ESCALATED path on release, never silently released.
-func (s *Service) EnterResults(ctx context.Context, scientistID, orderID string, results []EnterResultInput) (*Order, error) {
+func (s *Service) EnterResults(ctx context.Context, scientistID, orderID, scannedBarcode string, results []EnterResultInput) (*Order, error) {
 	o, err := s.load(ctx, orderID)
 	if err != nil {
 		return nil, err
@@ -553,6 +566,14 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID string,
 	if sm.State != SampleAccessioned {
 		return nil, fmt.Errorf("lab: sample not accessioned (state %s) — no result without an unbroken chain (HL-6)", sm.State)
 	}
+	// LR-001: results bind to the correct sample/patient. If the scientist scanned
+	// the tube at result entry, its barcode MUST match this order's sample — a
+	// mismatch means results are being entered against the wrong sample; reject.
+	if err := verifyBarcodeScan(scannedBarcode, sm.BarcodeRef); err != nil {
+		s.audited(scientistID, o.PatientID, "health.lab.result.barcode_mismatch", orderID, nil,
+			map[string]any{"scanned": normalizeBarcode(scannedBarcode), "expected": sm.BarcodeRef})
+		return nil, err
+	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -571,12 +592,25 @@ func (s *Service) EnterResults(ctx context.Context, scientistID, orderID string,
 			}
 			return nil, err
 		}
+		// Fail-safe interpretation backstop (LR-002/003/008, EC-002): reject a
+		// wrong-unit value, and UPGRADE a mis-entered status so a critical/abnormal
+		// value can never be released as NORMAL. Never downgrades the scientist.
+		effStatus, unitMismatch := deriveEffectiveStatus(r.Status, name, r.Value, r.Unit, r.RefRange)
+		if unitMismatch {
+			return nil, fmt.Errorf("lab: result unit %q for %s disagrees with the reference-range/expected unit (possible transposition) — rejected (EC-002)", r.Unit, name)
+		}
 		const ins = `
 			INSERT INTO lab_results (id, order_id, test_id, test_name, value, unit, ref_range, status, validated_by)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`
 		if _, err := tx.Exec(ctx, ins, uuid.New().String(), orderID, r.TestID, name,
-			r.Value, r.Unit, r.RefRange, string(r.Status), scientistID); err != nil {
+			r.Value, r.Unit, r.RefRange, string(effStatus), scientistID); err != nil {
 			return nil, fmt.Errorf("lab: insert result: %w", err)
+		}
+		if effStatus != r.Status {
+			// Attributable record that the safety backstop escalated the severity.
+			s.audited(scientistID, o.PatientID, "health.lab.result.status_upgraded", orderID,
+				map[string]any{"test": name, "entered": string(r.Status)},
+				map[string]any{"effective": string(effStatus)})
 		}
 	}
 	o2, err := lockOrder(ctx, tx, orderID)
@@ -611,7 +645,7 @@ func (s *Service) Release(ctx context.Context, scientistID, orderID string) (*Or
 	if err != nil {
 		return nil, err
 	}
-	if o.State != StateResultReady && o.State != StateEscalated {
+	if !canReleaseFrom(o.State) {
 		return nil, fmt.Errorf("lab: order not ready for release, is %s", o.State)
 	}
 	// HL-2: only a verified scientist of this lab may sign off and release.
@@ -754,7 +788,7 @@ func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin 
 		return nil, err
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
-	if !isAdmin && requesterID != o.PatientID && requesterID != owner {
+	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
 		return nil, fmt.Errorf("lab: forbidden")
 	}
 	o.Lines, _ = s.loadLines(ctx, orderID)
@@ -770,7 +804,7 @@ func (s *Service) Results(ctx context.Context, requesterID, orderID string, isAd
 		return nil, err
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
-	if !isAdmin && requesterID != o.PatientID && requesterID != owner {
+	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
 		return nil, fmt.Errorf("lab: forbidden")
 	}
 	return s.loadResults(ctx, orderID)
@@ -784,7 +818,7 @@ func (s *Service) CustodyTrail(ctx context.Context, requesterID, orderID string,
 		return nil, err
 	}
 	owner, _ := s.labOwner(ctx, o.LabProviderID)
-	if !isAdmin && requesterID != o.PatientID && requesterID != owner {
+	if !authorizeOrderAccess(requesterID, o.PatientID, owner, isAdmin) {
 		return nil, fmt.Errorf("lab: forbidden")
 	}
 	sm, err := s.sampleByOrder(ctx, orderID)
@@ -1018,9 +1052,12 @@ func (s *Service) sampleByOrder(ctx context.Context, orderID string) (*Sample, e
 }
 
 func (s *Service) loadResults(ctx context.Context, orderID string) ([]Result, error) {
+	// LR-006: return only the CURRENT version of each result — a superseded row is
+	// retained for audit but never surfaced as the live result.
 	const q = `SELECT id, order_id, test_id, test_name, value, unit, ref_range, status,
-	                  validated_by, released_by, escalated_at, released_at, created_at
-	           FROM lab_results WHERE order_id=$1 ORDER BY created_at ASC`
+	                  validated_by, released_by, escalated_at, released_at, created_at,
+	                  version, amended_by, amended_at, amendment_reason
+	           FROM lab_results WHERE order_id=$1 AND superseded_by IS NULL ORDER BY created_at ASC`
 	rows, err := s.db.Query(ctx, q, orderID)
 	if err != nil {
 		return nil, err
@@ -1031,7 +1068,8 @@ func (s *Service) loadResults(ctx context.Context, orderID string) ([]Result, er
 		var r Result
 		var status string
 		if err := rows.Scan(&r.ID, &r.OrderID, &r.TestID, &r.TestName, &r.Value, &r.Unit, &r.RefRange,
-			&status, &r.ValidatedBy, &r.ReleasedBy, &r.EscalatedAt, &r.ReleasedAt, &r.CreatedAt); err != nil {
+			&status, &r.ValidatedBy, &r.ReleasedBy, &r.EscalatedAt, &r.ReleasedAt, &r.CreatedAt,
+			&r.Version, &r.AmendedBy, &r.AmendedAt, &r.AmendmentReason); err != nil {
 			return nil, err
 		}
 		r.Status = ResultStatus(status)

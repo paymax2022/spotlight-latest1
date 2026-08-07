@@ -246,4 +246,11 @@ type Result struct {
 	EscalatedAt   *time.Time   `json:"escalated_at,omitempty"`
 	ReleasedAt    *time.Time   `json:"released_at,omitempty"`
 	CreatedAt     time.Time    `json:"created_at"`
+	// LR-006 versioned amendment. Version is 1 for an original result; a corrected
+	// re-issue is version+1 and the prior row is retained (superseded). loadResults
+	// returns only the current (non-superseded) version, so callers see the latest.
+	Version         int        `json:"version"`
+	AmendedBy       *string    `json:"amended_by,omitempty"`
+	AmendedAt       *time.Time `json:"amended_at,omitempty"`
+	AmendmentReason string     `json:"amendment_reason,omitempty"`
 }

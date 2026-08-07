@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Vote, CheckCircle2, Lock, ChevronRight, ListChecks, ShieldCheck, CreditCard } from 'lucide-react-native';
+import { Vote, CheckCircle2, Lock, ChevronRight, CreditCard } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -11,19 +11,23 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useDashboard } from '@/features/association/hooks/useAssociation';
-import { useActiveElection } from '@/features/election/hooks/useElection';
+import { useDashboard, useElections } from '@/features/association/hooks/useAssociation';
 import { formatDateTime } from '@/features/association/utils/associationFormatters';
+import type { ElectionSummary } from '@/features/association/types/association.types';
+
+const STATUS_LABEL: Record<string, string> = {
+  VOTING: 'Voting open', NOMINATION: 'Nominations', CLOSED: 'Closed',
+  PUBLISHED: 'Results published', DRAFT: 'Draft', CANCELLED: 'Cancelled',
+};
 
 export default function GovernanceLanding() {
   const dash = useDashboard();
-  const active = useActiveElection();
+  const elections = useElections();
 
-  // Voter eligibility is payment-gated (PRD §23 + §13): members in good standing
-  // can vote; overdue / restricted members are blocked until they pay.
+  // Voter eligibility is payment-gated: members in good standing can vote;
+  // overdue / restricted members are blocked until they settle dues.
   const standing = dash.data?.card.paymentStanding;
   const restricted = Boolean(dash.data?.restriction) || standing === 'OVERDUE';
-  const election = active.data;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -50,51 +54,52 @@ export default function GovernanceLanding() {
           <PrimaryButton label="Pay to restore eligibility" onPress={() => router.push('/association/dues')} />
         ) : null}
 
-        {/* Active election */}
-        <Text style={styles.sectionTitle}>Active election</Text>
-        {active.isLoading ? (
-          <StateView kind="loading" compact message="Loading…" />
-        ) : !election ? (
+        {/* Elections */}
+        <Text style={styles.sectionTitle}>Elections</Text>
+        {elections.isLoading ? (
+          <StateView kind="loading" compact message="Loading elections…" />
+        ) : elections.isError ? (
+          <StateView kind="error" compact title="Couldn't load" message="Please try again." actionLabel="Retry" onAction={() => elections.refetch()} />
+        ) : !elections.data?.length ? (
           <View style={[styles.card, shadow1]}>
-            <StateView kind="empty" compact icon="Vote" title="No active election" message="You’ll be notified when voting opens." />
+            <StateView kind="empty" compact icon="Vote" title="No elections yet" message="You’ll be notified when voting opens." />
           </View>
         ) : (
-          <Pressable
-            style={[styles.electionCard, shadow1]}
-            onPress={() => router.push(restricted ? '/association/governance' : `/election?id=${election.id}`)}
-            disabled={restricted}
-            accessibilityRole="button"
-            accessibilityLabel={`Open election ${election.title}`}
-          >
-            <View style={styles.electionIcon}><Vote size={22} color={Colors.primary} strokeWidth={2} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.electionTitle} numberOfLines={2}>{election.title}</Text>
-              <Text style={styles.electionMeta}>Closes {formatDateTime(election.endsAt)}</Text>
-              <Text style={styles.electionMeta}>{election.positions.length} position{election.positions.length === 1 ? '' : 's'} on the ballot</Text>
-            </View>
-            {!restricted ? <ChevronRight size={18} color={Colors.outline} strokeWidth={2} /> : <Lock size={16} color={Colors.outline} strokeWidth={2} />}
-          </Pressable>
+          elections.data.map((e) => <ElectionRow key={e.id} election={e} />)
         )}
-
-        {/* Links */}
-        <Text style={styles.sectionTitle}>More</Text>
-        <LinkRow icon={<ListChecks size={18} color={Colors.primary} strokeWidth={2} />} label="All elections & results" onPress={() => router.push('/election/list')} />
-        <LinkRow icon={<ShieldCheck size={18} color={Colors.primary} strokeWidth={2} />} label="Set up an election (admin)" onPress={() => router.push('/election/admin/setup')} />
 
         <View style={styles.note}>
           <CreditCard size={14} color={Colors.onSurfaceVariant} strokeWidth={2} />
-          <Text style={styles.noteText}>Eligibility, candidate rules, and results are managed by your organisation’s electoral committee.</Text>
+          <Text style={styles.noteText}>Eligibility, candidate rules, and results are managed by your organisation’s electoral committee. Your ballot is secret.</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function LinkRow({ icon, label, onPress }: { icon: React.ReactNode; label: string; onPress: () => void }) {
+function ElectionRow({ election }: { election: ElectionSummary }) {
+  const open = election.status === 'VOTING';
+  const published = election.status === 'PUBLISHED';
   return (
-    <Pressable style={[styles.linkRow, shadow1]} onPress={onPress} accessibilityRole="button" accessibilityLabel={label}>
-      <View style={styles.linkIcon}>{icon}</View>
-      <Text style={styles.linkLabel}>{label}</Text>
+    <Pressable
+      style={[styles.electionCard, shadow1]}
+      onPress={() => router.push(`/association/elections/${election.id}`)}
+      accessibilityRole="button"
+      accessibilityLabel={`Open election ${election.title}`}
+    >
+      <View style={styles.electionIcon}><Vote size={22} color={Colors.primary} strokeWidth={2} /></View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.electionTitle} numberOfLines={2}>{election.title}</Text>
+        <View style={[styles.chip, open ? styles.chipOpen : published ? styles.chipPublished : styles.chipNeutral]}>
+          <Text style={[styles.chipText, open ? styles.chipTextOpen : published ? styles.chipTextPublished : styles.chipTextNeutral]}>
+            {STATUS_LABEL[election.status] ?? election.status}
+          </Text>
+        </View>
+        {election.votingClosesAt ? (
+          <Text style={styles.electionMeta}>{open ? 'Closes' : 'Closed'} {formatDateTime(election.votingClosesAt)}</Text>
+        ) : null}
+        <Text style={styles.electionMeta}>{election.positionCount} position{election.positionCount === 1 ? '' : 's'} on the ballot</Text>
+      </View>
       <ChevronRight size={18} color={Colors.outline} strokeWidth={2} />
     </Pressable>
   );
@@ -114,9 +119,14 @@ const styles = StyleSheet.create({
   electionIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
   electionTitle: { ...Typography.labelLg, color: Colors.onSurface },
   electionMeta: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 1 },
-  linkRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.outlineVariant, padding: Spacing.md },
-  linkIcon: { width: 36, height: 36, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
-  linkLabel: { ...Typography.labelLg, color: Colors.onSurface, flex: 1 },
+  chip: { alignSelf: 'flex-start', borderRadius: Radius.full, paddingHorizontal: Spacing.sm, paddingVertical: 2, marginTop: 4, marginBottom: 2 },
+  chipOpen: { backgroundColor: Colors.tertiaryContainer },
+  chipPublished: { backgroundColor: Colors.iconBgPurple },
+  chipNeutral: { backgroundColor: Colors.surfaceContainerHigh },
+  chipText: { ...Typography.labelSm },
+  chipTextOpen: { color: Colors.onTertiaryContainer },
+  chipTextPublished: { color: Colors.primary },
+  chipTextNeutral: { color: Colors.onSurfaceVariant },
   note: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.xs },
   noteText: { ...Typography.bodySm, color: Colors.onSurfaceVariant, flex: 1 },
 });

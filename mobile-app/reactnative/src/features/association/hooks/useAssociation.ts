@@ -14,6 +14,10 @@ import {
   getDues,
   getReceipt,
   payInvoice,
+  getElections,
+  getElection,
+  castVote,
+  verifyMembershipCard,
 } from '../api/association.api';
 import type { JoinDraft, MemberDirectoryQuery } from '../types/association.types';
 
@@ -58,6 +62,11 @@ export function useMembershipCard() {
   });
 }
 
+/** Verify a scanned membership-card QR token (POST /cards/verify). */
+export function useVerifyCard() {
+  return useMutation({ mutationFn: (token: string) => verifyMembershipCard(token) });
+}
+
 export function useDirectory(query?: MemberDirectoryQuery) {
   return useQuery({
     queryKey: [KEY, 'directory', query ?? {}],
@@ -100,6 +109,32 @@ export function usePayInvoice() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [KEY, 'dues'] });
       qc.invalidateQueries({ queryKey: [KEY, 'dashboard'] });
+    },
+  });
+}
+
+// ─── Elections (TS-13) ────────────────────────────────────────────────────────
+
+export function useElections() {
+  return useQuery({ queryKey: [KEY, 'elections'], queryFn: getElections, staleTime: 30_000 });
+}
+
+export function useElection(id?: string) {
+  return useQuery({
+    queryKey: [KEY, 'election', id],
+    queryFn: () => getElection(id as string),
+    enabled: !!id,
+    staleTime: 15_000,
+  });
+}
+
+export function useCastVote(electionId?: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { positionId: string; candidateId: string }) =>
+      castVote(electionId as string, v.positionId, v.candidateId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'election', electionId] });
     },
   });
 }

@@ -118,6 +118,21 @@ export interface MembershipCard {
   qrPayload:     string;           // opaque verification token
 }
 
+/** Result of scanning + verifying a membership-card QR (POST /cards/verify). */
+export interface CardVerification {
+  valid:                boolean;
+  reason?:              string;     // when invalid: INVALID_SIGNATURE | NOT_FOUND | SUSPENDED | EXPIRED | REVOKED | ARREARS
+  memberId?:            string;
+  fullName?:            string;
+  organisationName?:    string;
+  organisationAcronym?: string | null;
+  categoryLabel?:       string;
+  status?:              string;
+  paymentStanding?:     string;
+  validThrough?:        string | null;
+  verifiedAt:           string;     // ISO timestamp
+}
+
 export interface MemberProfileSummary {
   id:            string;
   fullName:      string;
@@ -224,3 +239,68 @@ export type AssociationEdgeType =
   | 'invite-invalid'
   | 'offline'
   | 'error';
+
+// ─── Elections (TS-13) — wired to /associations/elections ─────────────────────
+
+export type ElectionStatus = 'DRAFT' | 'NOMINATION' | 'VOTING' | 'CLOSED' | 'PUBLISHED' | 'CANCELLED';
+
+export interface ElectionSummary {
+  id:             string;
+  title:          string;
+  status:         ElectionStatus;
+  votingOpensAt:  string | null;
+  votingClosesAt: string | null;
+  positionCount:  number;
+}
+
+export interface ElectionCandidate {
+  id:        string;
+  name:      string;
+  manifesto: string;
+  status:    string;
+}
+
+export interface ElectionPosition {
+  id:         string;
+  title:      string;
+  seats:      number;
+  candidates: ElectionCandidate[];
+  hasVoted:   boolean;
+}
+
+export interface CandidateResult {
+  candidateId: string;
+  name:        string;
+  votes:       number;
+  isWinner:    boolean;
+}
+
+export interface PositionResult {
+  positionId:  string;
+  title:       string;
+  seats:       number;
+  ballotsCast: number;
+  results:     CandidateResult[];
+  checksum?:   string;
+}
+
+export interface ElectionDetail {
+  id:                string;
+  title:             string;
+  description:       string;
+  status:            ElectionStatus;
+  votingOpensAt:     string | null;
+  votingClosesAt:    string | null;
+  eligible:          boolean;
+  eligibilityReason?: string;
+  sealedResults:     boolean;
+  positions:         ElectionPosition[];
+  results?:          PositionResult[];   // only when PUBLISHED
+}
+
+export interface VoteReceipt {
+  receipt:     string;
+  positionId:  string;
+  confirmedAt: string;
+  alreadyCast: boolean;
+}

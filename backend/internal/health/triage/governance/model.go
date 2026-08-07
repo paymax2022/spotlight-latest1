@@ -25,17 +25,18 @@ import (
 // triage.ContentState (draft→clinical_review→approved→published→deprecated) and
 // publish requires a licensed-clinician sign-off (reviewer_id + published_at).
 type ContentItem struct {
-	ID          string               `json:"id"`
-	Code        string               `json:"code"`
-	Kind        string               `json:"kind"` // condition|first_aid|disclaimer|self_care|question
-	Language    string               `json:"language"`
-	Body        string               `json:"body"`
-	RAGTags     []string             `json:"rag_tags"`
-	State       triage.ContentState  `json:"state"`
-	Version     int                  `json:"version"`
-	ReviewerID  *string              `json:"reviewer_id,omitempty"`
-	PublishedAt *time.Time           `json:"published_at,omitempty"`
-	CreatedAt   time.Time            `json:"created_at"`
+	ID          string              `json:"id"`
+	Code        string              `json:"code"`
+	Kind        string              `json:"kind"` // condition|first_aid|disclaimer|self_care|question
+	Language    string              `json:"language"`
+	Body        string              `json:"body"`
+	RAGTags     []string            `json:"rag_tags"`
+	State       triage.ContentState `json:"state"`
+	Version     int                 `json:"version"`
+	ReviewerID  *string             `json:"reviewer_id,omitempty"`
+	CreatedBy   string              `json:"created_by,omitempty"` // author (maker); the approver must differ (SC-011)
+	PublishedAt *time.Time          `json:"published_at,omitempty"`
+	CreatedAt   time.Time           `json:"created_at"`
 }
 
 // RedFlagRule is a deterministic, clinician-authored emergency rule. SC-2: a rule
@@ -53,6 +54,7 @@ type RedFlagRule struct {
 	State        triage.ContentState `json:"state"`
 	Version      int                 `json:"version"`
 	ReviewerID   *string             `json:"reviewer_id,omitempty"`
+	CreatedBy    string              `json:"created_by,omitempty"` // author (maker); the approver must differ (SC-011)
 	PublishedAt  *time.Time          `json:"published_at,omitempty"`
 	CreatedAt    time.Time           `json:"created_at"`
 }
@@ -62,12 +64,12 @@ type RedFlagRule struct {
 // present, optionally gated on pregnancy / age band. Conservative by design:
 // an empty/unknown condition never fires (fail-closed → no spurious override).
 type RuleCondition struct {
-	AllPresent  []string `json:"all_present,omitempty"`  // every code must be value=present
-	AnyPresent  []string `json:"any_present,omitempty"`  // at least one code present
-	NonePresent []string `json:"none_present,omitempty"` // none of these may be present
-	RequirePregnant bool `json:"require_pregnant,omitempty"`
-	MaxAgeYears *int     `json:"max_age_years,omitempty"` // rule only applies at/below this age
-	MinAgeYears *int     `json:"min_age_years,omitempty"`
+	AllPresent      []string `json:"all_present,omitempty"`  // every code must be value=present
+	AnyPresent      []string `json:"any_present,omitempty"`  // at least one code present
+	NonePresent     []string `json:"none_present,omitempty"` // none of these may be present
+	RequirePregnant bool     `json:"require_pregnant,omitempty"`
+	MaxAgeYears     *int     `json:"max_age_years,omitempty"` // rule only applies at/below this age
+	MinAgeYears     *int     `json:"min_age_years,omitempty"`
 }
 
 // Vignette is an African clinical test case for the validation harness. The engine

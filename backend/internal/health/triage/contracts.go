@@ -17,6 +17,17 @@ const (
 	LevelSelfCare           = 5 // home care + OTC guidance + follow-up
 )
 
+// SafeLevel normalizes a disposition level to a valid 1..5 band, failing SAFE
+// (TR-007 / SC-3): any out-of-range level — 0/unset, negative, or above self-care
+// (garbage/uncertain engine output) — is clamped to a conservative clinician
+// consult rather than silently routing to self-care. Valid levels pass through.
+func SafeLevel(level int) int {
+	if level < LevelEmergencyAmbulance || level > LevelSelfCare {
+		return LevelConsult // when in doubt, route to a clinician — never self-care
+	}
+	return level
+}
+
 // RouteForLevel maps a disposition level to the care-loop route (§6).
 func RouteForLevel(level int) string {
 	switch level {

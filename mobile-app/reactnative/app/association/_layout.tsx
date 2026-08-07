@@ -23,6 +23,7 @@ export default function AssociationLayout() {
       {/* Member area (C, D, E) */}
       <Stack.Screen name="home" />
       <Stack.Screen name="card" />
+      <Stack.Screen name="verify-card" options={{ animation: 'slide_from_bottom' }} />
       <Stack.Screen name="directory" />
       <Stack.Screen name="member/[id]" />
 
@@ -111,6 +112,7 @@ export default function AssociationLayout() {
       <Stack.Screen name="support/tickets" />
       <Stack.Screen name="support/new" />
       <Stack.Screen name="support/[id]" />
+      <Stack.Screen name="elections/[id]" />
 
       {/* Edge / restriction states (H, Z) */}
       <Stack.Screen name="edge/[type]" options={{ animation: 'fade' }} />

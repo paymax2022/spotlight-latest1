@@ -63,6 +63,11 @@ type Profile struct {
 	DisplayName *string   `json:"display_name,omitempty"`
 	AvatarURL   *string   `json:"avatar_url,omitempty"`
 	EntryYear   *int      `json:"entry_year,omitempty"`
+	// Minor-safety attributes — the consent gate keys off IsMinor, so these must
+	// round-trip on the profile (dob is an ISO yyyy-mm-dd date).
+	Dob         *string   `json:"dob,omitempty"`
+	IsMinor     bool      `json:"is_minor"`
+	KycTier     int       `json:"kyc_tier"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -106,6 +111,9 @@ type UpsertProfileRequest struct {
 	DisplayName *string `json:"display_name,omitempty"`
 	AvatarURL   *string `json:"avatar_url,omitempty"`
 	EntryYear   *int    `json:"entry_year,omitempty"`
+	Dob         *string `json:"dob,omitempty"`
+	IsMinor     *bool   `json:"is_minor,omitempty"`
+	KycTier     *int    `json:"kyc_tier,omitempty"`
 }
 
 // LinkGuardianRequest is the body for POST /academy/guardians/link.

@@ -13,5 +13,13 @@ export { startCardTopup, getTopupStatus, waitForTopup } from './api';
 export type { TopupStatus } from './api';
 // Direct Paystack gateway (Inline SDK) — charges an amount, not a wallet top-up.
 export { usePaystackGateway } from './usePaystackGateway';
-export { PAYSTACK_PUBLIC_KEY } from './paystackGateway';
+export { PAYSTACK_PUBLIC_KEY, extractAccessCode } from './paystackGateway';
 export type { PaystackChargeArgs, PaystackGatewayController, PaystackMetaField } from './paystackGateway';
+// Server-initialized in-app checkout (resume) + auto-return to a status screen.
+export { useGatewayCheckout, SDK_CHECKOUT_ENABLED } from './useGatewayCheckout';
+export type {
+  GatewayCheckoutController,
+  GatewayCheckoutRequest,
+  GatewayInitResult,
+  GatewayPhase,
+} from './useGatewayCheckout';

@@ -398,3 +398,140 @@ export async function listAuditLog(action?: string): Promise<AuditLogEntry[]> {
   if (action) qs.set('action', action);
   return getJson<AuditLogEntry[]>(`/audit-log${qs.toString() ? `?${qs}` : ''}`);
 }
+
+// ── Elections (TS-13 / AD-004/005) ───────────────────────────────────────────
+// Officer-facing election administration. Routes live on the MODULE group
+// (/api/finance/associations/elections, base:'module'), not under /admin.
+// Results stay sealed until PUBLISHED (AD-005): during VOTING only turnout is
+// exposed via the tally endpoint.
+
+export type ElectionStatus = 'DRAFT' | 'NOMINATION' | 'VOTING' | 'CLOSED' | 'PUBLISHED' | 'CANCELLED';
+export type ElectionRole = 'CHAPTER_ADMIN' | 'FINANCE_ADMIN' | 'SECRETARY' | 'NATIONAL_ADMIN' | '';
+
+export interface AdminElectionSummary {
+  id: string; title: string; status: ElectionStatus;
+  votingOpensAt: string | null; votingClosesAt: string | null; positionCount: number;
+}
+export interface AdminElectionCandidate { id: string; name: string; manifesto: string; status: string }
+export interface AdminElectionPosition { id: string; title: string; seats: number; role?: ElectionRole; candidates: AdminElectionCandidate[] }
+export interface AdminCandidateResult { candidateId: string; name: string; votes: number; isWinner: boolean }
+export interface AdminPositionResult { positionId: string; title: string; seats: number; ballotsCast: number; results: AdminCandidateResult[]; checksum?: string }
+export interface AdminElectionDetail {
+  id: string; title: string; description: string; status: ElectionStatus;
+  votingOpensAt: string | null; votingClosesAt: string | null;
+  positions: AdminElectionPosition[]; results?: AdminPositionResult[];
+}
+export interface CreateElectionInput {
+  title: string; description?: string; votingOpensAt?: string | null; votingClosesAt?: string | null;
+  requireGoodStanding?: boolean;
+  positions: { title: string; seats: number; role?: ElectionRole }[];
+}
+export interface ElectionHandoverResult {
+  positions: { positionId: string; title: string; role: string; winners: string[]; revoked: number }[];
+}
+
+// ── Mock lifecycle state (USE_MOCK) ──
+const mockElections: AdminElectionDetail[] = [
+  {
+    id: 'elec_mock_1', title: '2026 National Executive Election',
+    description: 'Elect the incoming national executive council.', status: 'VOTING',
+    votingOpensAt: '2026-07-01T09:00:00Z', votingClosesAt: '2026-08-30T17:00:00Z',
+    positions: [
+      { id: 'pos_pres', title: 'President', seats: 1, role: 'NATIONAL_ADMIN', candidates: [
+        { id: 'c_pres_a', name: 'Dr. Amaka Obi', manifesto: 'Transparency in dues and quarterly town halls.', status: 'APPROVED' },
+        { id: 'c_pres_b', name: 'Engr. Tunde Bello', manifesto: 'Digitise the register; group insurance.', status: 'APPROVED' },
+      ] },
+      { id: 'pos_sec', title: 'Secretary', seats: 1, role: 'SECRETARY', candidates: [
+        { id: 'c_sec_a', name: 'Barr. Ngozi Eze', manifesto: 'Minutes within 48 hours; open records.', status: 'APPROVED' },
+      ] },
+    ],
+  },
+];
+const mockTally: Record<string, number> = { c_pres_a: 128, c_pres_b: 74, c_sec_a: 190 };
+let mockSeq = 2;
+
+function mockSummary(e: AdminElectionDetail): AdminElectionSummary {
+  return { id: e.id, title: e.title, status: e.status, votingOpensAt: e.votingOpensAt, votingClosesAt: e.votingClosesAt, positionCount: e.positions.length };
+}
+function mockPositionResults(e: AdminElectionDetail): AdminPositionResult[] {
+  return e.positions.map((p) => {
+    const results: AdminCandidateResult[] = p.candidates
+      .map((c) => ({ candidateId: c.id, name: c.name, votes: mockTally[c.id] ?? 0, isWinner: false }))
+      .sort((a, b) => b.votes - a.votes);
+    results.forEach((r, i) => { if (i < p.seats && r.votes > 0) r.isWinner = true; });
+    const ballotsCast = results.reduce((s, r) => s + r.votes, 0);
+    return { positionId: p.id, title: p.title, seats: p.seats, ballotsCast, results, checksum: 'mock-' + p.id };
+  });
+}
+
+export async function listElections(): Promise<AdminElectionSummary[]> {
+  if (USE_MOCK) { await delay(); return mockElections.map(mockSummary); }
+  return getJson<AdminElectionSummary[]>('/elections', 'module');
+}
+export async function getElection(id: string): Promise<AdminElectionDetail> {
+  if (USE_MOCK) {
+    await delay();
+    const e = mockElections.find((x) => x.id === id);
+    if (!e) throw new Error('Election not found');
+    return { ...e, results: e.status === 'PUBLISHED' ? mockPositionResults(e) : undefined };
+  }
+  return getJson<AdminElectionDetail>(`/elections/${id}`, 'module');
+}
+export async function getElectionTally(id: string): Promise<AdminPositionResult[]> {
+  if (USE_MOCK) {
+    await delay();
+    const e = mockElections.find((x) => x.id === id);
+    return e ? mockPositionResults(e) : [];
+  }
+  return getJson<AdminPositionResult[]>(`/elections/${id}/tally`, 'module');
+}
+export async function createElection(input: CreateElectionInput): Promise<{ id: string }> {
+  if (USE_MOCK) {
+    await delay();
+    const id = `elec_mock_${mockSeq++}`;
+    mockElections.unshift({
+      id, title: input.title, description: input.description ?? '', status: 'DRAFT',
+      votingOpensAt: input.votingOpensAt ?? null, votingClosesAt: input.votingClosesAt ?? null,
+      positions: input.positions.map((p, i) => ({ id: `${id}_p${i}`, title: p.title, seats: p.seats || 1, role: p.role || '', candidates: [] })),
+    });
+    return { id };
+  }
+  return sendJson<{ id: string }>('POST', '/elections', input, { base: 'module' });
+}
+export async function addElectionCandidate(id: string, input: { positionId: string; membershipId: string; manifesto?: string }): Promise<{ id: string }> {
+  if (USE_MOCK) {
+    await delay();
+    const e = mockElections.find((x) => x.id === id);
+    const p = e?.positions.find((pp) => pp.id === input.positionId);
+    const cid = `c_${Math.random().toString(36).slice(2, 8)}`;
+    p?.candidates.push({ id: cid, name: input.membershipId, manifesto: input.manifesto ?? '', status: 'APPROVED' });
+    return { id: cid };
+  }
+  return sendJson<{ id: string }>('POST', `/elections/${id}/candidates`, input, { base: 'module' });
+}
+function mockTransition(id: string, from: ElectionStatus[], to: ElectionStatus) {
+  const e = mockElections.find((x) => x.id === id);
+  if (!e || !from.includes(e.status)) throw new Error(`Invalid state: election is ${e?.status ?? 'missing'}`);
+  e.status = to;
+}
+export async function openElection(id: string): Promise<void> {
+  if (USE_MOCK) { await delay(); mockTransition(id, ['DRAFT', 'NOMINATION'], 'VOTING'); return; }
+  await sendJson('POST', `/elections/${id}/open`, {}, { base: 'module' });
+}
+export async function closeElection(id: string): Promise<void> {
+  if (USE_MOCK) { await delay(); mockTransition(id, ['VOTING'], 'CLOSED'); return; }
+  await sendJson('POST', `/elections/${id}/close`, {}, { base: 'module' });
+}
+export async function publishElectionResults(id: string): Promise<AdminPositionResult[]> {
+  if (USE_MOCK) { await delay(); mockTransition(id, ['CLOSED'], 'PUBLISHED'); return mockPositionResults(mockElections.find((x) => x.id === id)!); }
+  return sendJson<AdminPositionResult[]>('POST', `/elections/${id}/publish`, {}, { base: 'module' });
+}
+export async function handoverElection(id: string): Promise<ElectionHandoverResult> {
+  if (USE_MOCK) {
+    await delay();
+    const e = mockElections.find((x) => x.id === id);
+    if (!e || e.status !== 'PUBLISHED') throw new Error('Handover requires a published election');
+    return { positions: mockPositionResults(e).filter((p) => e.positions.find((pp) => pp.id === p.positionId)?.role).map((p) => ({ positionId: p.positionId, title: p.title, role: e.positions.find((pp) => pp.id === p.positionId)?.role || '', winners: p.results.filter((r) => r.isWinner).map((r) => r.name), revoked: 1 })) };
+  }
+  return sendJson<ElectionHandoverResult>('POST', `/elections/${id}/handover`, {}, { base: 'module' });
+}

@@ -548,7 +548,18 @@ func (s *Service) HealthProfile(ctx context.Context, caller string) (*HealthProf
 	if caller == "" {
 		return nil, fmt.Errorf("preconsult: unauthenticated")
 	}
-	prior, err := s.latestPriorResponse(ctx, caller, "")
+	return s.HealthProfileFor(ctx, caller)
+}
+
+// HealthProfileFor returns a patient's persistent conditions/meds/allergies keyed
+// by patient id (not caller). It backs the clinical-safety context provider so the
+// pre-issue drug-allergy/interaction screen (RX-002/003) checks against the correct
+// patient's documented allergies and current medications.
+func (s *Service) HealthProfileFor(ctx context.Context, patientID string) (*HealthProfile, error) {
+	if patientID == "" {
+		return nil, fmt.Errorf("preconsult: patient required")
+	}
+	prior, err := s.latestPriorResponse(ctx, patientID, "")
 	if err != nil {
 		return nil, err
 	}

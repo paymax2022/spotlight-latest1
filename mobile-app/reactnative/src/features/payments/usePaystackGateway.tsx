@@ -10,8 +10,15 @@ import {
   type PaystackGatewayController,
 } from './paystackGateway';
 
+interface PaystackPopCallbacks {
+  onSuccess: (t: { reference: string }) => void;
+  onCancel: () => void;
+  onError: (e: { message: string }) => void;
+}
 interface PaystackPopInstance {
   newTransaction(config: Record<string, unknown>): void;
+  /** Resume a transaction created server-side via the Initialize API. */
+  resumeTransaction(accessCode: string, callbacks: PaystackPopCallbacks): void;
 }
 type PaystackPopCtor = new () => PaystackPopInstance;
 
@@ -41,13 +48,25 @@ const NoSheet = () => null;
 
 export function usePaystackGateway(): PaystackGatewayController {
   const open = useCallback((args: PaystackChargeArgs) => {
-    if (!PAYSTACK_PUBLIC_KEY) {
+    // newTransaction needs the public key; resumeTransaction rides on the
+    // server-issued access code and does not.
+    if (!args.accessCode && !PAYSTACK_PUBLIC_KEY) {
       args.onError?.('Paystack key missing — set EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY.');
       return;
     }
     loadPaystack()
       .then((PaystackPop) => {
         const popup = new PaystackPop();
+        const onSuccess = (t: { reference: string }) => args.onSuccess(t.reference);
+        const onCancel = () => args.onCancel?.();
+        const onError = (e: { message: string }) => args.onError?.(e?.message ?? 'Payment error');
+
+        // Resume a server-initialized transaction when an access code is given;
+        // otherwise open a fresh client-initialized one.
+        if (args.accessCode) {
+          popup.resumeTransaction(args.accessCode, { onSuccess, onCancel, onError });
+          return;
+        }
         popup.newTransaction({
           key: PAYSTACK_PUBLIC_KEY,
           email: args.email,
@@ -55,9 +74,9 @@ export function usePaystackGateway(): PaystackGatewayController {
           currency: 'NGN',
           ...(args.reference ? { reference: args.reference } : {}),
           metadata: buildPaystackMetadata(args),
-          onSuccess: (t: { reference: string }) => args.onSuccess(t.reference),
-          onCancel: () => args.onCancel?.(),
-          onError: (e: { message: string }) => args.onError?.(e?.message ?? 'Payment error'),
+          onSuccess,
+          onCancel,
+          onError,
         });
       })
       .catch((e: unknown) =>

@@ -13,6 +13,7 @@ import PaymentMethodSelector, { type PaymentMethod } from '@/components/PaymentM
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { getEducationProducts, getEducationProviders, initiateEducationPaystack, payEducation, getProviderLogos, resolveProviderImage } from '@/api/billing.api';
+import { useGatewayCheckout } from '@/features/payments';
 import ProviderLogo from '@/components/ProviderLogo';
 import { getWallet } from '@/api/wallet.api';
 import { Colors } from '@/constants/colors';
@@ -140,21 +141,33 @@ export default function EducationScreen() {
     });
   };
 
+  // In-app Paystack SDK checkout (flag-gated); falls back to the legacy redirect.
+  const paystackCheckout = useGatewayCheckout();
+  React.useEffect(() => {
+    if (paystackCheckout.error) setPaystackError(paystackCheckout.error);
+  }, [paystackCheckout.error]);
+
   const onConfirmPaystack = async () => {
     if (!pendingForm || !selectedProvider || !selectedProduct || paystackLoading) return;
     setPaystackError('');
     setPaystackLoading(true);
     try {
-      const { authorizationUrl } = await initiateEducationPaystack({
-        providerCode: selectedProvider.code,
-        productId: selectedProduct.id,
-        customerReference: pendingForm.customerReference,
-        customerPhone: pendingForm.customerPhone,
-        idempotencyKey: generateIdempotencyKey(),
+      await paystackCheckout.start({
+        domain: 'bills',
+        initialize: async () => {
+          const r = await initiateEducationPaystack({
+            providerCode: selectedProvider.code,
+            productId: selectedProduct.id,
+            customerReference: pendingForm.customerReference,
+            customerPhone: pendingForm.customerPhone,
+            idempotencyKey: generateIdempotencyKey(),
+          });
+          if (!r.authorizationUrl) throw new Error('Paystack did not return a payment URL.');
+          return { authorizationUrl: r.authorizationUrl, reference: r.paymentReference };
+        },
+        onResolved: (res) => { setShowConfirm(false); router.replace(`/services/paystack/${res.reference}` as never); },
+        onFallback: async (res) => { setShowConfirm(false); await Linking.openURL(res.authorizationUrl); },
       });
-      if (!authorizationUrl) throw new Error('Paystack did not return a payment URL.');
-      setShowConfirm(false);
-      await Linking.openURL(authorizationUrl);
     } catch (err) {
       setPaystackError(getErrorMessage(err));
     } finally {
@@ -419,6 +432,9 @@ export default function EducationScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Hosts the in-app Paystack checkout WebView on native (nothing on web). */}
+      <paystackCheckout.Sheet />
     </SafeAreaView>
   );
 }

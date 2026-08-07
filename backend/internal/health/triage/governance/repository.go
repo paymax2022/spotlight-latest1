@@ -63,13 +63,13 @@ func (r *Repository) audit(ctx context.Context, actor, action, resourceType, res
 
 // ─────────────────────────────── Content items ───────────────────────────────
 
-const contentCols = `id, code, kind, language, body, rag_tags, state, version, reviewer_id, published_at, created_at`
+const contentCols = `id, code, kind, language, body, rag_tags, state, version, reviewer_id, published_at, created_at, created_by`
 
 func scanContent(row pgx.Row) (*ContentItem, error) {
 	var ci ContentItem
 	var state string
 	if err := row.Scan(&ci.ID, &ci.Code, &ci.Kind, &ci.Language, &ci.Body, &ci.RAGTags,
-		&state, &ci.Version, &ci.ReviewerID, &ci.PublishedAt, &ci.CreatedAt); err != nil {
+		&state, &ci.Version, &ci.ReviewerID, &ci.PublishedAt, &ci.CreatedAt, &ci.CreatedBy); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -83,13 +83,13 @@ func scanContent(row pgx.Row) (*ContentItem, error) {
 func (r *Repository) CreateContent(ctx context.Context, ci *ContentItem) (*ContentItem, error) {
 	const q = `
 		INSERT INTO public.health_triage_content_items
-			(code, kind, language, body, rag_tags, state, version)
-		VALUES ($1,$2,$3,$4,$5,'draft',$6)
+			(code, kind, language, body, rag_tags, state, version, created_by)
+		VALUES ($1,$2,$3,$4,$5,'draft',$6,$7)
 		RETURNING ` + contentCols
 	if ci.Version == 0 {
 		ci.Version = 1
 	}
-	return scanContent(r.db.QueryRow(ctx, q, ci.Code, ci.Kind, ci.Language, ci.Body, ci.RAGTags, ci.Version))
+	return scanContent(r.db.QueryRow(ctx, q, ci.Code, ci.Kind, ci.Language, ci.Body, ci.RAGTags, ci.Version, ci.CreatedBy))
 }
 
 // GetContent fetches a content item by id.
@@ -137,10 +137,10 @@ func (r *Repository) TransitionContent(ctx context.Context, id string, from, to 
 func (r *Repository) BumpContentVersion(ctx context.Context, base *ContentItem, body string, ragTags []string) (*ContentItem, error) {
 	const q = `
 		INSERT INTO public.health_triage_content_items
-			(code, kind, language, body, rag_tags, state, version)
-		VALUES ($1,$2,$3,$4,$5,'draft',$6)
+			(code, kind, language, body, rag_tags, state, version, created_by)
+		VALUES ($1,$2,$3,$4,$5,'draft',$6,$7)
 		RETURNING ` + contentCols
-	return scanContent(r.db.QueryRow(ctx, q, base.Code, base.Kind, base.Language, body, ragTags, base.Version+1))
+	return scanContent(r.db.QueryRow(ctx, q, base.Code, base.Kind, base.Language, body, ragTags, base.Version+1, base.CreatedBy))
 }
 
 // ListContent lists content items, optionally filtered by state/kind/language.
@@ -159,7 +159,7 @@ func (r *Repository) ListContent(ctx context.Context, state, kind, language stri
 		var ci ContentItem
 		var st string
 		if err := rows.Scan(&ci.ID, &ci.Code, &ci.Kind, &ci.Language, &ci.Body, &ci.RAGTags,
-			&st, &ci.Version, &ci.ReviewerID, &ci.PublishedAt, &ci.CreatedAt); err != nil {
+			&st, &ci.Version, &ci.ReviewerID, &ci.PublishedAt, &ci.CreatedAt, &ci.CreatedBy); err != nil {
 			return nil, err
 		}
 		ci.State = triage.ContentState(st)
@@ -170,14 +170,14 @@ func (r *Repository) ListContent(ctx context.Context, state, kind, language stri
 
 // ─────────────────────────────── Red-flag rules ──────────────────────────────
 
-const ruleCols = `id, code, name, condition, urgency_level, severity, state, version, reviewer_id, published_at, created_at`
+const ruleCols = `id, code, name, condition, urgency_level, severity, state, version, reviewer_id, published_at, created_at, created_by`
 
 func scanRule(row pgx.Row) (*RedFlagRule, error) {
 	var rr RedFlagRule
 	var state string
 	var cond []byte
 	if err := row.Scan(&rr.ID, &rr.Code, &rr.Name, &cond, &rr.UrgencyLevel, &rr.Severity,
-		&state, &rr.Version, &rr.ReviewerID, &rr.PublishedAt, &rr.CreatedAt); err != nil {
+		&state, &rr.Version, &rr.ReviewerID, &rr.PublishedAt, &rr.CreatedAt, &rr.CreatedBy); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -192,8 +192,8 @@ func scanRule(row pgx.Row) (*RedFlagRule, error) {
 func (r *Repository) CreateRule(ctx context.Context, rr *RedFlagRule) (*RedFlagRule, error) {
 	const q = `
 		INSERT INTO public.health_triage_red_flag_rules
-			(code, name, condition, urgency_level, severity, state, version)
-		VALUES ($1,$2,$3,$4,$5,'draft',$6)
+			(code, name, condition, urgency_level, severity, state, version, created_by)
+		VALUES ($1,$2,$3,$4,$5,'draft',$6,$7)
 		RETURNING ` + ruleCols
 	if rr.Version == 0 {
 		rr.Version = 1
@@ -201,7 +201,7 @@ func (r *Repository) CreateRule(ctx context.Context, rr *RedFlagRule) (*RedFlagR
 	if rr.Severity == "" {
 		rr.Severity = "emergency"
 	}
-	return scanRule(r.db.QueryRow(ctx, q, rr.Code, rr.Name, toJSONB(rr.Condition), rr.UrgencyLevel, rr.Severity, rr.Version))
+	return scanRule(r.db.QueryRow(ctx, q, rr.Code, rr.Name, toJSONB(rr.Condition), rr.UrgencyLevel, rr.Severity, rr.Version, rr.CreatedBy))
 }
 
 // GetRule fetches a rule by id.
@@ -248,10 +248,10 @@ func (r *Repository) TransitionRule(ctx context.Context, id string, from, to tri
 func (r *Repository) BumpRuleVersion(ctx context.Context, base *RedFlagRule, name string, cond RuleCondition, urgency int, severity string) (*RedFlagRule, error) {
 	const q = `
 		INSERT INTO public.health_triage_red_flag_rules
-			(code, name, condition, urgency_level, severity, state, version)
-		VALUES ($1,$2,$3,$4,$5,'draft',$6)
+			(code, name, condition, urgency_level, severity, state, version, created_by)
+		VALUES ($1,$2,$3,$4,$5,'draft',$6,$7)
 		RETURNING ` + ruleCols
-	return scanRule(r.db.QueryRow(ctx, q, base.Code, name, toJSONB(cond), urgency, severity, base.Version+1))
+	return scanRule(r.db.QueryRow(ctx, q, base.Code, name, toJSONB(cond), urgency, severity, base.Version+1, base.CreatedBy))
 }
 
 // ListRules lists rules optionally filtered by state.
@@ -286,7 +286,7 @@ func collectRules(rows pgx.Rows) ([]RedFlagRule, error) {
 		var st string
 		var cond []byte
 		if err := rows.Scan(&rr.ID, &rr.Code, &rr.Name, &cond, &rr.UrgencyLevel, &rr.Severity,
-			&st, &rr.Version, &rr.ReviewerID, &rr.PublishedAt, &rr.CreatedAt); err != nil {
+			&st, &rr.Version, &rr.ReviewerID, &rr.PublishedAt, &rr.CreatedAt, &rr.CreatedBy); err != nil {
 			return nil, err
 		}
 		rr.State = triage.ContentState(st)

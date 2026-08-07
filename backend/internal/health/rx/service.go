@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/health/clinicalsafety"
 )
 
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
@@ -60,7 +62,11 @@ type Item struct {
 	IsPOM        bool   `json:"is_pom"`
 	IsControlled bool   `json:"is_controlled"` // HL-4: must be false at MVP
 	Dosage       string `json:"dosage"`
-	Quantity     int    `json:"quantity"`
+	// DoseMg is the structured single-dose amount in mg used by the RX-004 dose-range
+	// safety check at Issue. 0 = not provided (dose check skipped for this item);
+	// Dosage stays the free-text sig for the label.
+	DoseMg   float64 `json:"dose_mg"`
+	Quantity int     `json:"quantity"`
 }
 
 type Prescription struct {
@@ -75,11 +81,17 @@ type Prescription struct {
 	RejectReason       string     `json:"reject_reason"`
 	Items              []Item     `json:"items,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
+	// DP-004 refills: RefillsAuthorized is the number of refills the prescriber
+	// granted beyond the initial fill; RefillsUsed is how many have been dispensed.
+	RefillsAuthorized int `json:"refills_authorized"`
+	RefillsUsed       int `json:"refills_used"`
 }
 
 type Service struct {
-	db    *pgxpool.Pool
-	audit Auditor
+	db             *pgxpool.Pool
+	audit          Auditor
+	clinical       ClinicalContextProvider // optional; supplies allergies/meds for the pre-issue safety screen
+	prescriberAuth PrescriberAuthorizer    // optional; scope-of-practice gate at the prescribe boundary (CR-004)
 }
 
 func NewService(db *pgxpool.Pool, audit Auditor) *Service {
@@ -90,8 +102,27 @@ func NewService(db *pgxpool.Pool, audit Auditor) *Service {
 // rejected at write (excluded at MVP). HL-1: this only records the clinician's
 // order — Paymax neither prescribes nor dispenses.
 func (s *Service) Issue(ctx context.Context, prescriberID, patientID string, consultID *string, items []Item) (*Prescription, error) {
+	return s.IssueChecked(ctx, prescriberID, patientID, consultID, items, nil, "")
+}
+
+// IssueChecked is Issue with the clinical safety screen (§4.2, RX-002/003/004/005,
+// VT-003/004). It runs BEFORE any write: a hard-stop finding (drug-allergy,
+// contraindicated/major interaction, out-of-range dose, species-toxic/human-only
+// drug) blocks issuance with a *SafetyBlockError unless overrideReason documents a
+// licensed prescriber's decision to proceed (RX-011), which is then audited.
+//
+//   - pc != nil: caller supplies the clinical context explicitly (vet passes the
+//     pet's species/weight so species-toxicity rules apply).
+//   - pc == nil: the injected ClinicalContextProvider is consulted (human path);
+//     when none is wired, the screen runs against an empty context (no findings).
+func (s *Service) IssueChecked(ctx context.Context, prescriberID, patientID string, consultID *string, items []Item, pc *clinicalsafety.PatientContext, overrideReason string) (*Prescription, error) {
 	if prescriberID == "" || patientID == "" {
 		return nil, fmt.Errorf("rx: prescriber and patient required")
+	}
+	// Scope-of-practice gate (CR-004): only a verified, unexpired prescriber may
+	// issue. Fail-closed when an authorizer is wired; no-op otherwise.
+	if err := authorizePrescriber(ctx, s.prescriberAuth, prescriberID); err != nil {
+		return nil, err
 	}
 	if len(items) == 0 {
 		return nil, fmt.Errorf("rx: at least one item required")
@@ -106,6 +137,21 @@ func (s *Service) Issue(ctx context.Context, prescriberID, patientID string, con
 		if it.Quantity <= 0 {
 			return nil, fmt.Errorf("rx: item quantity must be positive")
 		}
+	}
+
+	// Clinical safety screen (fail-closed on hard stops). Resolve context: explicit
+	// (vet) → provider (human) → empty.
+	safetyCtx := clinicalsafety.PatientContext{}
+	if pc != nil {
+		safetyCtx = *pc
+	} else if s.clinical != nil {
+		if c, ok, cerr := s.clinical.ClinicalContext(ctx, patientID); cerr == nil && ok {
+			safetyCtx = c
+		}
+	}
+	safetyRes, serr := screenRx(safetyCtx, items, overrideReason)
+	if serr != nil {
+		return nil, serr
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -126,10 +172,10 @@ func (s *Service) Issue(ctx context.Context, prescriberID, patientID string, con
 	if _, err := tx.Exec(ctx, insRx, p.ID, consultID, prescriberID, patientID); err != nil {
 		return nil, fmt.Errorf("rx: insert prescription: %w", err)
 	}
-	const insItem = `INSERT INTO health_prescription_items (id, prescription_id, drug_name, nafdac_ref, is_pom, is_controlled, dosage, quantity) VALUES ($1,$2,$3,$4,$5,false,$6,$7)`
+	const insItem = `INSERT INTO health_prescription_items (id, prescription_id, drug_name, nafdac_ref, is_pom, is_controlled, dosage, dose_mg, quantity) VALUES ($1,$2,$3,$4,$5,false,$6,$7,$8)`
 	for i := range items {
 		items[i].ID = uuid.New().String()
-		if _, err := tx.Exec(ctx, insItem, items[i].ID, p.ID, items[i].DrugName, items[i].NAFDACRef, items[i].IsPOM, items[i].Dosage, items[i].Quantity); err != nil {
+		if _, err := tx.Exec(ctx, insItem, items[i].ID, p.ID, items[i].DrugName, items[i].NAFDACRef, items[i].IsPOM, items[i].Dosage, items[i].DoseMg, items[i].Quantity); err != nil {
 			return nil, fmt.Errorf("rx: insert item: %w", err)
 		}
 	}
@@ -137,7 +183,11 @@ func (s *Service) Issue(ctx context.Context, prescriberID, patientID string, con
 		return nil, fmt.Errorf("rx: commit: %w", err)
 	}
 	p.Items = items
-	s.audited(prescriberID, patientID, "health.rx.issue", p.ID, nil, map[string]any{"items": len(items), "state": string(StateIssued)})
+	meta := map[string]any{"items": len(items), "state": string(StateIssued)}
+	for k, v := range safetyAudit(safetyRes, overrideReason) {
+		meta[k] = v
+	}
+	s.audited(prescriberID, patientID, "health.rx.issue", p.ID, nil, meta)
 	return p, nil
 }
 
@@ -272,10 +322,12 @@ func lockPrescription(ctx context.Context, tx pgx.Tx, rxID string) (*prescriptio
 func (s *Service) load(ctx context.Context, rxID string) (*Prescription, error) {
 	var p Prescription
 	var state string
-	const q = `SELECT id, consult_id, prescriber_id, patient_id, pharmacy_provider_id, verified_by, state, dispensed_at, reject_reason, created_at
+	const q = `SELECT id, consult_id, prescriber_id, patient_id, pharmacy_provider_id, verified_by, state, dispensed_at, reject_reason, created_at,
+	                  refills_authorized, refills_used
 	           FROM health_prescriptions WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, rxID).Scan(&p.ID, &p.ConsultID, &p.PrescriberID, &p.PatientID,
-		&p.PharmacyProviderID, &p.VerifiedBy, &state, &p.DispensedAt, &p.RejectReason, &p.CreatedAt); err != nil {
+		&p.PharmacyProviderID, &p.VerifiedBy, &state, &p.DispensedAt, &p.RejectReason, &p.CreatedAt,
+		&p.RefillsAuthorized, &p.RefillsUsed); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("rx: not found")
 		}
@@ -286,7 +338,7 @@ func (s *Service) load(ctx context.Context, rxID string) (*Prescription, error) 
 }
 
 func (s *Service) loadItems(ctx context.Context, rxID string) ([]Item, error) {
-	const q = `SELECT id, drug_name, nafdac_ref, is_pom, is_controlled, dosage, quantity FROM health_prescription_items WHERE prescription_id=$1`
+	const q = `SELECT id, drug_name, nafdac_ref, is_pom, is_controlled, dosage, dose_mg, quantity FROM health_prescription_items WHERE prescription_id=$1`
 	rows, err := s.db.Query(ctx, q, rxID)
 	if err != nil {
 		return nil, err
@@ -295,7 +347,7 @@ func (s *Service) loadItems(ctx context.Context, rxID string) ([]Item, error) {
 	var out []Item
 	for rows.Next() {
 		var it Item
-		if err := rows.Scan(&it.ID, &it.DrugName, &it.NAFDACRef, &it.IsPOM, &it.IsControlled, &it.Dosage, &it.Quantity); err != nil {
+		if err := rows.Scan(&it.ID, &it.DrugName, &it.NAFDACRef, &it.IsPOM, &it.IsControlled, &it.Dosage, &it.DoseMg, &it.Quantity); err != nil {
 			return nil, err
 		}
 		out = append(out, it)

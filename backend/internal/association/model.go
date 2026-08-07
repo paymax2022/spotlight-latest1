@@ -114,6 +114,28 @@ type Organisation struct {
 
 // ── Member identity ───────────────────────────────────────────────────────────
 
+// VerifyCardRequest is the body of POST /associations/cards/verify.
+type VerifyCardRequest struct {
+	Token string `json:"token" binding:"required"`
+}
+
+// CardVerification is the result of scanning + verifying a membership-card QR.
+// Valid is the authoritative verdict; Reason is set only when Valid is false
+// (INVALID_SIGNATURE, NOT_FOUND, SUSPENDED, EXPIRED, REVOKED, ARREARS).
+type CardVerification struct {
+	Valid               bool    `json:"valid"`
+	Reason              string  `json:"reason,omitempty"`
+	MemberID            string  `json:"memberId,omitempty"`
+	FullName            string  `json:"fullName,omitempty"`
+	OrganisationName    string  `json:"organisationName,omitempty"`
+	OrganisationAcronym *string `json:"organisationAcronym,omitempty"`
+	CategoryLabel       string  `json:"categoryLabel,omitempty"`
+	Status              string  `json:"status,omitempty"`
+	PaymentStanding     string  `json:"paymentStanding,omitempty"`
+	ValidThrough        *string `json:"validThrough,omitempty"`
+	VerifiedAt          string  `json:"verifiedAt"`
+}
+
 type MembershipCard struct {
 	MemberID             string  `json:"memberId"`
 	FullName             string  `json:"fullName"`
