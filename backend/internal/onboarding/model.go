@@ -6,15 +6,15 @@ import "time"
 
 // Module is a super-app vertical that can accept merchant onboarding.
 type Module struct {
-	ID          string  `json:"id"`
-	Slug        string  `json:"slug"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Icon        string  `json:"icon"`
-	IconColor   string  `json:"iconColor"`
-	BgColor     string  `json:"bgColor"`
-	Status      string  `json:"status"` // open | closed | coming_soon
-	TypeCount   int     `json:"typeCount"`
+	ID          string `json:"id"`
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"`
+	IconColor   string `json:"iconColor"`
+	BgColor     string `json:"bgColor"`
+	Status      string `json:"status"` // open | closed | coming_soon
+	TypeCount   int    `json:"typeCount"`
 }
 
 // MerchantType is a role a user can apply for within a module.
@@ -32,6 +32,7 @@ type MerchantType struct {
 	RoleToGrant         string   `json:"roleToGrant"`
 	CurrentFormSchemaID string   `json:"currentFormSchemaId"`
 	Status              string   `json:"status"`
+	RequiresBusiness    bool     `json:"requiresBusiness"`
 }
 
 // ─── Form schema engine ──────────────────────────────────────────────────────
