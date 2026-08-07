@@ -12,7 +12,7 @@ RUN go mod download \
  # behind the `transport-scheduling` profile and FEATURE_TRANSPORT_SCHEDULING_ENABLED.
  && go build -o transport-scheduler ./cmd/transport-scheduler
 
-FROM alpine:3.20
+FROM alpine:3.24
 WORKDIR /app
 # curl is used by the compose healthchecks (ES) and is handy for indexer/cron probes.
 RUN apk add --no-cache curl
