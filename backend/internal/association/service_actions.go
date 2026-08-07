@@ -211,7 +211,17 @@ func (s *Service) DecideOfflinePayment(ctx context.Context, adminID, paymentID, 
 	if approve && idempotencyKey == "" {
 		return ErrIdempotencyRequired
 	}
-	if err := s.requireCap(ctx, adminID, func(c AdminCapabilities) bool { return c.ManageFinance }); err != nil {
+	// Org-scoped finance authorization (cross-org IDOR fix): resolve the payment's
+	// organisation via its membership and require ManageFinance IN THAT org, so a
+	// finance admin of another org cannot approve/reject this org's payment.
+	var payOrg string
+	if err := s.db.QueryRow(ctx, `
+		SELECT m.organisation_id FROM assoc_payments p
+		JOIN assoc_memberships m ON m.id = p.membership_id
+		WHERE p.id=$1`, paymentID).Scan(&payOrg); err != nil {
+		return fmt.Errorf("association: payment not found: %w", err)
+	}
+	if err := s.requireCapInOrg(ctx, adminID, payOrg, func(c AdminCapabilities) bool { return c.ManageFinance }); err != nil {
 		return err
 	}
 
@@ -283,7 +293,13 @@ func (s *Service) RestoreMember(ctx context.Context, adminID, memberID string) e
 }
 
 func (s *Service) memberStatusAction(ctx context.Context, adminID, memberID, status, action string, meta map[string]any) error {
-	if err := s.requireCap(ctx, adminID, func(c AdminCapabilities) bool { return c.ManageMembers }); err != nil {
+	// Org-scoped member authorization (cross-org IDOR fix): the admin must hold
+	// ManageMembers in the TARGET member's organisation.
+	memOrg, err := s.membershipOrg(ctx, memberID)
+	if err != nil {
+		return err
+	}
+	if err := s.requireCapInOrg(ctx, adminID, memOrg, func(c AdminCapabilities) bool { return c.ManageMembers }); err != nil {
 		return err
 	}
 	tx, err := s.db.Begin(ctx)
@@ -301,7 +317,12 @@ func (s *Service) memberStatusAction(ctx context.Context, adminID, memberID, sta
 }
 
 func (s *Service) TransferMember(ctx context.Context, adminID, memberID, chapter string) error {
-	if err := s.requireCap(ctx, adminID, func(c AdminCapabilities) bool { return c.ManageMembers }); err != nil {
+	// Org-scoped: admin must hold ManageMembers in the target member's org.
+	memOrg, err := s.membershipOrg(ctx, memberID)
+	if err != nil {
+		return err
+	}
+	if err := s.requireCapInOrg(ctx, adminID, memOrg, func(c AdminCapabilities) bool { return c.ManageMembers }); err != nil {
 		return err
 	}
 	tx, err := s.db.Begin(ctx)
@@ -329,7 +350,14 @@ func (s *Service) TransferMember(ctx context.Context, adminID, memberID, chapter
 // ManageFinance capabilities) — CHAPTER_ADMIN and FINANCE_ADMIN may not
 // self-escalate or delegate.
 func (s *Service) AssignRole(ctx context.Context, adminID, memberID, role string) error {
-	if err := s.requireCap(ctx, adminID, func(c AdminCapabilities) bool {
+	// Org-scoped: role grants require SUPER_ADMIN/NATIONAL_ADMIN (ManageMembers &&
+	// ManageFinance) IN THE TARGET member's organisation — an admin of another org
+	// cannot assign roles here (cross-org IDOR fix), and lower roles cannot escalate.
+	memOrg, err := s.membershipOrg(ctx, memberID)
+	if err != nil {
+		return err
+	}
+	if err := s.requireCapInOrg(ctx, adminID, memOrg, func(c AdminCapabilities) bool {
 		return c.ManageMembers && c.ManageFinance // only SUPER_ADMIN / NATIONAL_ADMIN
 	}); err != nil {
 		return err
