@@ -6,15 +6,28 @@ import type { Analytics } from '@/types/analytics';
 
 export default function AdminAnalyticsPage() {
   const [data, setData] = useState<Analytics | null>(null);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    void getAnalyticsSummary().then(setData);
+    let active = true;
+    getAnalyticsSummary()
+      .then((d) => {
+        if (active) setData(d);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   return (
     <div>
       <h1>Chatbot Analytics</h1>
-      {!data ? (
-        <p>Loading analytics...</p>
+      {loading ? (
+        <p>Loading analytics…</p>
+      ) : !data ? (
+        <p>Analytics are unavailable right now. Check that the backend is running, then reload.</p>
       ) : (
         <div style={{ display: 'grid', gap: 8 }}>
           <p>Sessions: {data.sessionsTotal}</p>
