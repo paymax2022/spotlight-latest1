@@ -6,6 +6,7 @@ import { useEffect, useRef } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import ToastHost from '@/components/ToastHost';
+import ConfirmHost from '@/components/ConfirmHost';
 import { Colors } from '@/constants/colors';
 import { useAuthStore } from '@/store/authStore';
 import { getPinStatus } from '@/features/transfers/api';
@@ -191,6 +192,8 @@ export default function RootLayout() {
         </AuthGate>
         {/* Overlay sits above the navigator so toasts survive screen changes. */}
         <ToastHost />
+        {/* Web renderer for confirmAsync/alertAsync (no-op on native). */}
+        <ConfirmHost />
       </SafeAreaProvider>
     </QueryClientProvider>
   );

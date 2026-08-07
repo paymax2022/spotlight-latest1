@@ -10,6 +10,7 @@
     "web": "expo start --web --port 8083",
     "uat:insurance": "EXPO_PUBLIC_INSURANCE_USE_MOCK=false expo start --web --port 8083",
     "typecheck": "tsc --noEmit",
+    "check:confirm": "node scripts/check-no-alert-confirm.mjs",
     "test:payment-routes": "node scripts/smoke-payment-routes.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
