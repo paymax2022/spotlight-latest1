@@ -20,6 +20,8 @@ type Service struct {
 	store     Store
 	emitter   *WebhookEmitter
 	screener  ComplianceScreener
+	rates     *RateFeed     // optional rate-integrity gate; nil disables the staleness check
+	limits    *LimitsEngine // optional limit/velocity gate; nil disables limit checks
 	now       func() time.Time
 }
 
@@ -35,6 +37,8 @@ type Options struct {
 	Treasury   *Treasury
 	QuoteStore QuoteStore         // optional; defaults to in-memory QuoteBook
 	Screener   ComplianceScreener // optional; defaults to AllowAllScreener (no-op)
+	Rates      *RateFeed          // optional; when set, stale corridor rates block quoting (RT-002)
+	Limits     *LimitsEngine      // optional; when set, enforces min/max/daily/velocity limits (TS-8)
 	LockWindow time.Duration
 	Now        func() time.Time
 }
@@ -69,11 +73,14 @@ func NewService(providers []Provider, store Store, opts Options) *Service {
 	return &Service{
 		providers: m, order: providers,
 		spread: opts.Spread, router: opts.Router, treasury: opts.Treasury,
-		book: opts.QuoteStore, store: store, screener: opts.Screener, now: opts.Now,
+		book: opts.QuoteStore, store: store, screener: opts.Screener,
+		rates: opts.Rates, limits: opts.Limits, now: opts.Now,
 	}
 }
 
-func newID(prefix string) string { return prefix + "_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12] }
+func newID(prefix string) string {
+	return prefix + "_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12]
+}
 
 func defaultRail(intent Intent) Rail {
 	switch intent {
@@ -122,6 +129,23 @@ func (s *Service) CreateQuote(ctx context.Context, customerID, tier string, req 
 		return nil, apiErr
 	}
 
+	// 0b. Rate-integrity gate (RT-002): when a rate feed governs this corridor and
+	//     its last rate is stale, refuse to price — no conversion is ever quoted on
+	//     a stale rate. Untracked corridors defer to live provider freshness.
+	if s.rates != nil && !s.rates.Fresh(source, dest, s.now()) {
+		return nil, NewError(ErrRateExpired, "rate_stale", "The "+corridor+" rate is stale; pricing is temporarily unavailable.")
+	}
+
+	// 0c. Limits & velocity are a hard gate (spec §4 invariant 8): per-transaction
+	//     min/max, tier caps, daily/monthly cumulative, and anti-structuring
+	//     velocity are checked before pricing so an over-limit request is never
+	//     quoted or executed.
+	if s.limits != nil {
+		if apiErr := s.limits.Check(ctx, customerID, tier, source, req.Amount, s.now()); apiErr != nil {
+			return nil, apiErr
+		}
+	}
+
 	// 1. Fan out to provider adapters (parallel in production; sequential is fine
 	//    for deterministic adapters).
 	type scored struct {
@@ -148,7 +172,7 @@ func (s *Service) CreateQuote(ctx context.Context, customerID, tier string, req 
 	// 2. Build candidates with scoring inputs.
 	estDestOf := func(rate float64) int64 {
 		if amountType == AmountSource {
-			return applyRate(req.Amount, rate)
+			return convertMinor(req.Amount, source, dest, rate)
 		}
 		return req.Amount // destination-pegged
 	}
@@ -161,18 +185,18 @@ func (s *Service) CreateQuote(ctx context.Context, customerID, tier string, req 
 			exposurePenalty = 1 // hard-penalise breaching exposure
 		}
 		candidates = append(candidates, Candidate{
-			Provider:    name,
-			Corridor:    corridor,
-			Rail:        rail,
-			AllInRate:   sc.rate,
-			Destination: NewMoney(destEst, dest),
-			Cost:        costCompetitiveness(sc.rate, maxRate),
-			CoverageFit: 1,
-			Liquidity:   liq,
-			Reliability: sc.pq.Reliability,
-			FloatCost:   0.02,
+			Provider:        name,
+			Corridor:        corridor,
+			Rail:            rail,
+			AllInRate:       sc.rate,
+			Destination:     NewMoney(destEst, dest),
+			Cost:            costCompetitiveness(sc.rate, maxRate),
+			CoverageFit:     1,
+			Liquidity:       liq,
+			Reliability:     sc.pq.Reliability,
+			FloatCost:       0.02,
 			ExposurePenalty: exposurePenalty,
-			Viable:      coverable,
+			Viable:          coverable,
 		})
 	}
 
@@ -187,10 +211,10 @@ func (s *Service) CreateQuote(ctx context.Context, customerID, tier string, req 
 	var srcAmt, destAmt int64
 	if amountType == AmountSource {
 		srcAmt = req.Amount
-		destAmt = applyRate(srcAmt, best.AllInRate)
+		destAmt = convertMinor(srcAmt, source, dest, best.AllInRate)
 	} else {
 		destAmt = req.Amount
-		srcAmt = inverseAmount(destAmt, best.AllInRate)
+		srcAmt = inverseConvertMinor(destAmt, source, dest, best.AllInRate)
 	}
 
 	// 4. Itemized fees (transparency, spec §9). Spread is the retained markup.
@@ -203,21 +227,21 @@ func (s *Service) CreateQuote(ctx context.Context, customerID, tier string, req 
 
 	now := s.now()
 	q := &Quote{
-		ID:          newID("q"),
-		CustomerID:  customerID,
-		Status:      QuoteQuoted,
-		AmountType:  amountType,
-		Source:      NewMoney(srcAmt, source),
-		Destination: NewMoney(destAmt, dest),
-		Rate:        round4(MidRate(source, dest)),
-		AllInRate:   round4(best.AllInRate),
-		Fees:        fees,
-		Route:       Route{Provider: best.Provider, Corridor: corridor, Rail: rail},
+		ID:           newID("q"),
+		CustomerID:   customerID,
+		Status:       QuoteQuoted,
+		AmountType:   amountType,
+		Source:       NewMoney(srcAmt, source),
+		Destination:  NewMoney(destAmt, dest),
+		Rate:         round4(MidRate(source, dest)),
+		AllInRate:    round4(best.AllInRate),
+		Fees:         fees,
+		Route:        Route{Provider: best.Provider, Corridor: corridor, Rail: rail},
 		Alternatives: buildAlternatives(rank.Alternatives),
-		Locked:      req.Lock,
-		Intent:      req.Intent,
-		ExpiresAt:   now.Add(s.book.LockWindow()),
-		CreatedAt:   now,
+		Locked:       req.Lock,
+		Intent:       req.Intent,
+		ExpiresAt:    now.Add(s.book.LockWindow()),
+		CreatedAt:    now,
 	}
 	if req.Lock {
 		q.Status = QuoteLocked
@@ -291,7 +315,7 @@ func (s *Service) ExecuteConversion(ctx context.Context, customerID, idemKey str
 		ID: newID("cv"), Reference: "PMX-CV-" + shortRef(), CustomerID: customerID,
 		Status: ConvSettled, Source: q.Source, Destination: q.Destination,
 		Rate: q.Rate, AllInRate: q.AllInRate, Fees: q.Fees,
-		Route: Route{Provider: prov, Corridor: q.Route.Corridor, Rail: q.Route.Rail},
+		Route:       Route{Provider: prov, Corridor: q.Route.Corridor, Rail: q.Route.Rail},
 		ProviderRef: res.ProviderRef, TransactionID: newID("tx"),
 		IdempotencyKey: idemKey, CreatedAt: s.now(),
 	}
@@ -335,7 +359,7 @@ func (s *Service) ExecuteTransfer(ctx context.Context, customerID, idemKey strin
 		q = &Quote{
 			Source: NewMoney(req.Amount.AmountMinor, cur), Destination: NewMoney(req.Amount.AmountMinor, cur),
 			Rate: 1, AllInRate: 1, Route: Route{Provider: s.order[0].Name(), Corridor: Corridor(cur, cur), Rail: req.Destination.Rail},
-			Fees: []Fee{{Type: FeeProvider, Amount: NewMoney(0, cur)}, {Type: FeeRail, Amount: NewMoney(0, cur)}},
+			Fees:      []Fee{{Type: FeeProvider, Amount: NewMoney(0, cur)}, {Type: FeeRail, Amount: NewMoney(0, cur)}},
 			ExpiresAt: s.now().Add(s.book.LockWindow()),
 		}
 	}
@@ -368,9 +392,9 @@ func (s *Service) ExecuteTransfer(ctx context.Context, customerID, idemKey strin
 		ID: newID("tr"), Reference: "PMX-TR-" + shortRef(), CustomerID: customerID,
 		Status: status, Source: q.Source, Destination: q.Destination,
 		QuotedRate: q.Rate, ExecutedRate: res.ExecutedRate, Fees: q.Fees,
-		Route: Route{Provider: prov, Corridor: q.Route.Corridor, Rail: q.Route.Rail},
+		Route:     Route{Provider: prov, Corridor: q.Route.Corridor, Rail: q.Route.Rail},
 		Narration: req.Narration, ProviderRef: res.ProviderRef, TransactionID: newID("tx"),
-		StatusHistory: []StatusEvent{{Status: "queued", At: now}, {Status: string(status), At: now}},
+		StatusHistory:  []StatusEvent{{Status: "queued", At: now}, {Status: string(status), At: now}},
 		IdempotencyKey: idemKey, CreatedAt: now,
 	}
 	if err := s.store.ApplyTransfer(ctx, tr, sourceTotal); err != nil {
@@ -469,25 +493,47 @@ func (s *Service) Transaction(ctx context.Context, customerID, id string) (*TxVi
 
 // IndicativeRate is a display/alert rate (not executable, spec §5.6).
 type IndicativeRate struct {
-	Pair string  `json:"pair"`
-	From string  `json:"from"`
-	To   string  `json:"to"`
-	Mid  float64 `json:"mid"`
-	Sell float64 `json:"sell"`
+	Pair         string  `json:"pair"`
+	From         string  `json:"from"`
+	To           string  `json:"to"`
+	Mid          float64 `json:"mid"`
+	Sell         float64 `json:"sell"`
+	Change24hPct float64 `json:"change24hPct"` // indicative signed 24h move (display-only)
+	UpdatedAt    string  `json:"updatedAt"`
 }
 
 // Rates returns indicative mid + Paymax sell rates for the common pairs.
 func (s *Service) Rates(ctx context.Context, tier string) []IndicativeRate {
 	pairs := [][2]string{{"USD", "NGN"}, {"EUR", "NGN"}, {"GBP", "NGN"}, {"USD", "GHS"}, {"USD", "KES"}, {"USD", "XAF"}}
+	now := time.Now().UTC().Format(time.RFC3339)
 	out := make([]IndicativeRate, 0, len(pairs))
 	for _, p := range pairs {
+		corr := Corridor(p[0], p[1])
 		mid := MidRate(p[0], p[1])
 		out = append(out, IndicativeRate{
-			Pair: Corridor(p[0], p[1]), From: p[0], To: p[1],
-			Mid: round4(mid), Sell: round4(s.spread.CustomerRate(mid, Corridor(p[0], p[1]), tier)),
+			Pair: corr, From: p[0], To: p[1],
+			Mid: round4(mid), Sell: round4(s.spread.CustomerRate(mid, corr, tier)),
+			Change24hPct: indicativeChange24hPct(corr), UpdatedAt: now,
 		})
 	}
 	return out
+}
+
+// indicativeChange24hPct returns a deterministic, small signed % move for a pair,
+// stable within a UTC day (display-only — NOT sourced from real 24h history, which
+// this service does not yet store). Range roughly -3.0%..+3.0%.
+func indicativeChange24hPct(pair string) float64 {
+	day := time.Now().UTC().YearDay()
+	h := day
+	for _, ch := range pair {
+		h = h*31 + int(ch)
+	}
+	if h < 0 {
+		h = -h
+	}
+	// map to [-30, 30] tenths of a percent → [-3.0, 3.0]
+	v := float64((h%61)-30) / 10.0
+	return v
 }
 
 // TreasurySnapshot returns all float buckets (ops/treasury dashboards, spec §7).
