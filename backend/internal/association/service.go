@@ -209,6 +209,17 @@ func (s *Service) DecideApplication(ctx context.Context, adminID, appID string, 
 		return fmt.Errorf("association: invalid decision %q", req.Decision)
 	}
 
+	// Authorization (was previously ABSENT — any caller could decide any
+	// application): the caller must be a ManageMembers admin OF THE APPLICATION'S
+	// organisation. Resolve the org from the application, then org-scope the check.
+	var appOrg string
+	if err := s.db.QueryRow(ctx, `SELECT organisation_id FROM assoc_applications WHERE id=$1`, appID).Scan(&appOrg); err != nil {
+		return fmt.Errorf("association: application not found: %w", err)
+	}
+	if err := s.requireCapInOrg(ctx, adminID, appOrg, func(c AdminCapabilities) bool { return c.ManageMembers }); err != nil {
+		return err
+	}
+
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
@@ -245,7 +256,8 @@ func (s *Service) GetOrganisations(ctx context.Context, search string) ([]Organi
 		       (SELECT count(*) FROM assoc_memberships m WHERE m.organisation_id=o.id AND m.status='ACTIVE') AS member_count,
 		       (SELECT count(*) FROM assoc_chapters c WHERE c.organisation_id=o.id) AS chapter_count
 		FROM assoc_organisations o
-		WHERE o.published = true`
+		WHERE o.published = true
+		  AND o.group_type <> 'INVITE_ONLY'`
 	args := []any{}
 	if search != "" {
 		args = append(args, "%"+search+"%")
@@ -269,17 +281,25 @@ func (s *Service) GetOrganisations(ctx context.Context, search string) ([]Organi
 	return out, rows.Err()
 }
 
-// GetOrganisation returns the detail page for one organisation.
-func (s *Service) GetOrganisation(ctx context.Context, orgID string) (*Organisation, error) {
+// GetOrganisation returns the detail page for one organisation. INVITE_ONLY
+// organisations are undiscoverable: their detail is only served to a caller who
+// already holds a membership row in them (any status). Everyone else gets a
+// not-found error — the same response as a non-existent id, so existence is not
+// leaked (GR-004 / privacy invariant §4.9).
+func (s *Service) GetOrganisation(ctx context.Context, viewerID, orgID string) (*Organisation, error) {
 	const q = `
 		SELECT o.id, o.name, o.acronym, o.category, o.logo_url, o.cover_url,
 		       o.group_type, o.verified, o.location, o.description,
 		       o.founded_year, o.requires_payment, o.registration_fee_kobo,
 		       (SELECT count(*) FROM assoc_memberships m WHERE m.organisation_id=o.id AND m.status='ACTIVE'),
 		       (SELECT count(*) FROM assoc_chapters c WHERE c.organisation_id=o.id)
-		FROM assoc_organisations o WHERE o.id=$1 AND o.published=true`
+		FROM assoc_organisations o
+		WHERE o.id=$1 AND o.published=true
+		  AND (o.group_type <> 'INVITE_ONLY'
+		       OR EXISTS (SELECT 1 FROM assoc_memberships mm
+		                  WHERE mm.organisation_id=o.id AND mm.user_id=$2))`
 	var org Organisation
-	if err := s.db.QueryRow(ctx, q, orgID).Scan(
+	if err := s.db.QueryRow(ctx, q, orgID, viewerID).Scan(
 		&org.ID, &org.Name, &org.Acronym, &org.Category, &org.LogoURL, &org.CoverURL,
 		&org.GroupType, &org.Verified, &org.Location, &org.Description,
 		&org.FoundedYear, &org.RequiresPayment, &org.RegistrationFeeKobo,
@@ -525,6 +545,31 @@ func (s *Service) requireAssocAdmin(ctx context.Context, userID string) error {
 	return nil
 }
 
+// adminPrimaryOrg resolves the single organisation an admin acts within, mirroring
+// the scoping GetAdminKpis already uses. Admin dashboard LIST endpoints (approval
+// queue, offline-payments queue) must scope their rows to this org so an admin of
+// one org cannot read another org's applicant/financial PII (cross-org IDOR). The
+// highest-priority admin role's org wins when the caller is an admin of several.
+// Fail-closed: no admin role → ErrForbidden.
+func (s *Service) adminPrimaryOrg(ctx context.Context, adminID string) (string, error) {
+	var orgID string
+	if err := s.db.QueryRow(ctx, `
+		SELECT m.organisation_id FROM assoc_member_roles r
+		JOIN assoc_memberships m ON m.id=r.membership_id
+		WHERE m.user_id=$1 AND r.role != 'NONE'
+		ORDER BY CASE r.role
+			WHEN 'SUPER_ADMIN'    THEN 1
+			WHEN 'NATIONAL_ADMIN' THEN 2
+			WHEN 'FINANCE_ADMIN'  THEN 3
+			WHEN 'CHAPTER_ADMIN'  THEN 4
+			WHEN 'SECRETARY'      THEN 5
+			ELSE 6 END
+		LIMIT 1`, adminID).Scan(&orgID); err != nil {
+		return "", ErrForbidden
+	}
+	return orgID, nil
+}
+
 // requireCap fetches the caller's highest-privilege role and checks that the
 // requested capability is set. Returns ErrForbidden when not an admin or when
 // the role lacks the capability.
@@ -566,6 +611,66 @@ func capabilitiesFor(role string) AdminCapabilities {
 	}
 }
 
+// requireCapInOrg is the organisation-scoped counterpart to requireCap: it checks
+// the caller holds an admin role WITH the requested capability IN the specified
+// organisation. This is the guard for admin mutations that target a resource
+// belonging to a particular org, and closes the cross-org admin IDOR where an
+// admin of org A could act on org B via requireCap (which is org-agnostic).
+// Fail-closed: empty org, no admin role in that org, or a role lacking the
+// capability all return ErrForbidden.
+func (s *Service) requireCapInOrg(ctx context.Context, userID, orgID string, check func(AdminCapabilities) bool) error {
+	if orgID == "" {
+		return ErrForbidden
+	}
+	const q = `
+		SELECT r.role FROM assoc_member_roles r
+		JOIN assoc_memberships m ON m.id = r.membership_id
+		WHERE m.user_id = $1 AND m.organisation_id = $2 AND r.role != 'NONE'
+		ORDER BY CASE r.role
+			WHEN 'SUPER_ADMIN'    THEN 1
+			WHEN 'NATIONAL_ADMIN' THEN 2
+			WHEN 'FINANCE_ADMIN'  THEN 3
+			WHEN 'CHAPTER_ADMIN'  THEN 4
+			WHEN 'SECRETARY'      THEN 5
+			ELSE 6 END
+		LIMIT 1`
+	var role string
+	if err := s.db.QueryRow(ctx, q, userID, orgID).Scan(&role); err != nil {
+		return ErrForbidden
+	}
+	if !check(capabilitiesFor(role)) {
+		return ErrForbidden
+	}
+	return nil
+}
+
+// requireAdminInOrg checks the caller holds ANY admin role (role != NONE) in the
+// specified organisation. Org-scoped counterpart to requireAssocAdmin.
+func (s *Service) requireAdminInOrg(ctx context.Context, userID, orgID string) error {
+	if orgID == "" {
+		return ErrForbidden
+	}
+	var count int
+	if err := s.db.QueryRow(ctx, `
+		SELECT count(*) FROM assoc_member_roles r
+		JOIN assoc_memberships m ON m.id = r.membership_id
+		WHERE m.user_id = $1 AND m.organisation_id = $2 AND r.role != 'NONE'`,
+		userID, orgID).Scan(&count); err != nil || count == 0 {
+		return ErrForbidden
+	}
+	return nil
+}
+
+// membershipOrg resolves the organisation a membership row belongs to. Returns
+// ErrForbidden when the membership does not exist (fail-closed for scoping).
+func (s *Service) membershipOrg(ctx context.Context, membershipID string) (string, error) {
+	var orgID string
+	if err := s.db.QueryRow(ctx, `SELECT organisation_id FROM assoc_memberships WHERE id=$1`, membershipID).Scan(&orgID); err != nil {
+		return "", ErrForbidden
+	}
+	return orgID, nil
+}
+
 // ── Directory ─────────────────────────────────────────────────────────────────
 
 // GetDirectory returns the member directory, optionally filtered.
@@ -592,9 +697,13 @@ func (s *Service) GetDirectory(ctx context.Context, userID string, q MemberDirec
 		args = append(args, q.Status)
 		query += fmt.Sprintf(` AND m.status=$%d`, len(args))
 	}
-	// Respect the viewer's privacy: don't expose contact-restricted profiles to non-admins.
-	query += ` AND (mp.contact_restricted=false OR m.user_id=$` + fmt.Sprintf("%d", len(args)+1) + `)`
+	// Cross-group isolation (DR-004 / GR-010): restrict to organisations where the
+	// caller holds an ACTIVE membership — a viewer never sees a foreign org's roll.
 	args = append(args, userID)
+	uidPos := len(args)
+	query += fmt.Sprintf(` AND m.organisation_id IN (SELECT organisation_id FROM assoc_memberships WHERE user_id=$%d AND status='ACTIVE')`, uidPos)
+	// Respect the viewer's privacy: don't expose contact-restricted profiles to non-self.
+	query += fmt.Sprintf(` AND (mp.contact_restricted=false OR m.user_id=$%d)`, uidPos)
 	query += ` ORDER BY mp.full_name LIMIT 200`
 
 	rows, err := s.db.Query(ctx, query, args...)
@@ -628,10 +737,13 @@ func (s *Service) GetMember(ctx context.Context, viewerID, targetID string) (*Me
 		JOIN assoc_member_profiles mp ON mp.membership_id=m.id
 		LEFT JOIN assoc_membership_categories mc ON mc.id=m.category_id
 		LEFT JOIN assoc_chapters ch ON ch.id=m.chapter_id
-		WHERE m.id=$1 AND m.status='ACTIVE'`
+		WHERE m.id=$1 AND m.status='ACTIVE'
+		  AND EXISTS (SELECT 1 FROM assoc_memberships v
+		              WHERE v.user_id=$2 AND v.status='ACTIVE'
+		                AND v.organisation_id = m.organisation_id)`
 	var mp MemberProfile
 	var restricted bool
-	if err := s.db.QueryRow(ctx, q, targetID).Scan(
+	if err := s.db.QueryRow(ctx, q, targetID, viewerID).Scan(
 		&mp.ID, &mp.FullName, &mp.MemberID, &mp.PhotoURL,
 		&mp.CategoryLabel, &mp.ChapterName, &mp.Status, &mp.Profession,
 		&mp.Email, &mp.Phone, &mp.Location, &mp.JoinedAt,
@@ -911,6 +1023,13 @@ func (s *Service) GetApprovalQueue(ctx context.Context, adminID, jurisdiction st
 	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
 		return nil, err
 	}
+	// Org-scope: the queue must only surface applications for the admin's own
+	// organisation — otherwise any admin of any org reads every org's pending
+	// applicant PII (cross-org IDOR). $1 is always the admin's org.
+	orgID, err := s.adminPrimaryOrg(ctx, adminID)
+	if err != nil {
+		return nil, err
+	}
 	q := `
 		SELECT a.id, COALESCE(mp.full_name, u.email, a.user_id::text),
 		       COALESCE(mc.label,''), COALESCE(ch.name,''), a.submitted_at::text,
@@ -920,8 +1039,9 @@ func (s *Service) GetApprovalQueue(ctx context.Context, adminID, jurisdiction st
 		LEFT JOIN assoc_membership_categories mc ON mc.id=a.category_id
 		LEFT JOIN assoc_chapters ch ON ch.id=a.chapter_id
 		LEFT JOIN auth.users u ON u.id=a.user_id
-		WHERE a.status IN ('PENDING','PENDING_CHAPTER','PENDING_NATIONAL','INFO_REQUESTED')`
-	args := []any{}
+		WHERE a.organisation_id=$1
+		  AND a.status IN ('PENDING','PENDING_CHAPTER','PENDING_NATIONAL','INFO_REQUESTED')`
+	args := []any{orgID}
 	if jurisdiction != "" && jurisdiction != "ALL" {
 		args = append(args, jurisdiction)
 		q += fmt.Sprintf(` AND a.jurisdiction=$%d`, len(args))
@@ -949,7 +1069,13 @@ func (s *Service) GetApprovalQueue(ctx context.Context, adminID, jurisdiction st
 
 // GetApplication returns a single application with full detail for the admin review screen.
 func (s *Service) GetApplication(ctx context.Context, adminID, appID string) (*AdminApplication, error) {
-	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
+	// Org-scoped: the caller must be an admin of the application's own
+	// organisation (not merely an admin of some org). Prevents cross-org PII read.
+	var appOrg string
+	if err := s.db.QueryRow(ctx, `SELECT organisation_id FROM assoc_applications WHERE id=$1`, appID).Scan(&appOrg); err != nil {
+		return nil, fmt.Errorf("association: application not found: %w", err)
+	}
+	if err := s.requireAdminInOrg(ctx, adminID, appOrg); err != nil {
 		return nil, err
 	}
 	const q = `
@@ -1001,6 +1127,13 @@ func (s *Service) GetOfflinePayments(ctx context.Context, adminID string) ([]Off
 	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
 		return nil, err
 	}
+	// Org-scope: only the admin's own organisation's offline payments (member name,
+	// amount, reference are financial PII) — otherwise any admin reads every org's
+	// pending offline payments (cross-org IDOR).
+	orgID, err := s.adminPrimaryOrg(ctx, adminID)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Query(ctx, `
 		SELECT p.id, COALESCE(mp.full_name,''), m.member_code,
 		       p.amount_kobo, p.method, COALESCE(p.reference,''),
@@ -1010,7 +1143,8 @@ func (s *Service) GetOfflinePayments(ctx context.Context, adminID string) ([]Off
 		JOIN assoc_dues_invoices i ON i.id=p.invoice_id
 		LEFT JOIN assoc_member_profiles mp ON mp.membership_id=m.id
 		WHERE p.offline=true AND p.status='PENDING'
-		ORDER BY p.created_at DESC LIMIT 200`)
+		  AND m.organisation_id=$1
+		ORDER BY p.created_at DESC LIMIT 200`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("association: offline payments: %w", err)
 	}
