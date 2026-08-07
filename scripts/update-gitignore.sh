@@ -53,8 +53,9 @@ coverage/
 *.tsbuildinfo
 
 # Compiled Go binaries (build artifacts — never track). Anchored to the repo-root
-# backend binary so it never matches the backend/cmd/server source package.
+# backend binaries so they never match the backend/cmd/* source packages.
 /backend/server
+/backend/marketplace-cron
 
 # Sensitive keys/certs (keep out of git by default)
 *.pem
