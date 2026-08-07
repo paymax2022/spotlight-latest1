@@ -76,6 +76,21 @@
 6. GET /v1/connect/contests/{id}/evictions
 7. POST /v1/connect/contests/{id}/admin-vote
 
+### ✅ Phase 2.5: Backend Router Wiring (COMPLETE)
+
+**Files Modified**:
+- `backend/internal/connect/voting/handlers.go` - Added `RegisterAdmin()` with PermissionGuard
+- `backend/internal/app/connect_money_routes.go` - Wired `RegisterAdmin()` with RBAC
+
+**Routes Registered**:
+- 7 member routes (public/member endpoints)
+- 7 admin routes with RBAC:
+  - `connect.contests.manage` - trigger/extend/finalize/admin-vote
+  - `connect.contests.judge` - save contestant
+  - `connect.contests.view` - view evictions/contestants
+
+**Build Status**: ✓ Voting package compiles successfully
+
 ### ✅ Phase 3: Admin UI (IN PROGRESS - COMPONENTS COMPLETE)
 
 **Files Created**:
@@ -132,7 +147,13 @@
 
 ## Remaining Work
 
-### Phase 3 (Frontend): 
+### Phase 3.1 (Backend Integration): ✅ COMPLETE
+- [x] Wire eviction handlers to Gin router
+- [x] Add RBAC middleware with permission guards
+- [x] Routes compiled successfully
+- **Next**: Test endpoints with curl/Postman + integration tests
+
+### Phase 3.2 (Frontend): 
 - [ ] Create API route handlers in Next.js (if not proxying to Go)
 - [ ] Add RBAC checks to admin pages
 - [ ] Add permission-based UI (hide buttons for non-admins/judges)
