@@ -28,17 +28,21 @@ const ConfigurePermission = "onboarding.configure"
 // Register mounts all onboarding routes under /api/v1 on the given engine.
 // Customer routes require an authenticated session; admin routes additionally
 // require the onboarding.review / onboarding.configure RBAC permission.
-func Register(r *gin.Engine, d Deps) {
+//
+// Returns the constructed *Service so callers can inject optional collaborators
+// (e.g. SetBusinessGate). Returns nil when routes are skipped (flag off / no DB).
+func Register(r *gin.Engine, d Deps) *Service {
 	if !d.Enabled {
 		log.Println("[onboarding] FEATURE_ONBOARDING_ENABLED is false — skipping routes")
-		return
+		return nil
 	}
 	if d.DB == nil {
 		log.Println("[onboarding] no database pool — skipping routes")
-		return
+		return nil
 	}
 
-	h := NewHandler(NewService(d.DB))
+	svc := NewService(d.DB)
+	h := NewHandler(svc)
 
 	// authn validates the bearer token and stores the AuthenticatedUser on the gin
 	// context. Handlers read it via middleware.GetAuthenticatedUser (see userID()).
@@ -96,4 +100,5 @@ func Register(r *gin.Engine, d Deps) {
 	}
 
 	log.Println("[onboarding] routes registered under /api/v1/onboarding, /api/v1/me, /api/admin/onboarding")
+	return svc
 }

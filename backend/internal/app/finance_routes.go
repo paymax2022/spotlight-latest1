@@ -23,7 +23,6 @@ import (
 	cfinvestment "spotlight/backend/internal/crowdfunding/investment"
 	cfwallet "spotlight/backend/internal/crowdfunding/wallet"
 	"spotlight/backend/internal/crypto"
-	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/doctor"
 	"spotlight/backend/internal/estate"
 	"spotlight/backend/internal/finance/disputes"
@@ -70,6 +69,7 @@ import (
 	"spotlight/backend/internal/restaurant"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/telemedicine"
+	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
 	"spotlight/backend/internal/votebridge"
 	"spotlight/backend/internal/webhooks"
@@ -1240,7 +1240,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Promo codes (owner-created, restaurant-funded).
 		restGroup.POST("/:id/promos", restaurantHandler.CreatePromo)
 		// Weekly business hours: public read (schedule + open-now), owner replace-all.
-		restGroup.GET("/:id/reviews", restaurantHandler.ListReviews)     // public reviews (hidden excluded, rater anonymized)
+		restGroup.GET("/:id/reviews", restaurantHandler.ListReviews)        // public reviews (hidden excluded, rater anonymized)
 		restGroup.GET("/:id/earnings", restaurantHandler.EarningsStatement) // owner earnings statement (PY-008)
 		restGroup.GET("/:id/hours", restaurantHandler.GetBusinessHours)
 		restGroup.PUT("/:id/hours", restaurantHandler.SetBusinessHours)
@@ -1284,12 +1284,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Rider / delivery lifecycle. Marking an order "ready" (via the status
 		// endpoint) auto-dispatches to nearby available riders; the first to
 		// accept wins, picks up, then confirms handoff with the delivery code.
-		restGroup.POST("/orders/:orderId/assign", restaurantHandler.AssignRider)     // manual offer (fallback)
-		restGroup.POST("/orders/:orderId/dispatch", restaurantHandler.Redispatch)    // owner re-runs auto-dispatch
+		restGroup.POST("/orders/:orderId/assign", restaurantHandler.AssignRider)      // manual offer (fallback)
+		restGroup.POST("/orders/:orderId/dispatch", restaurantHandler.Redispatch)     // owner re-runs auto-dispatch
 		restGroup.POST("/orders/:orderId/accept", restaurantHandler.AcceptDelivery)   // rider claims the delivery
 		restGroup.POST("/orders/:orderId/decline", restaurantHandler.DeclineDelivery) // rider declines → reassign (DP-002)
-		restGroup.POST("/orders/:orderId/pickup", restaurantHandler.ConfirmPickup)   // rider confirms pickup
-		restGroup.POST("/orders/:orderId/handoff", restaurantHandler.ConfirmHandoff) // rider confirms drop-off (code)
+		restGroup.POST("/orders/:orderId/pickup", restaurantHandler.ConfirmPickup)    // rider confirms pickup
+		restGroup.POST("/orders/:orderId/handoff", restaurantHandler.ConfirmHandoff)  // rider confirms drop-off (code)
 		restGroup.POST("/orders/:orderId/location", restaurantHandler.PostLocation)
 		restGroup.GET("/rider/offers", restaurantHandler.RiderOffers)
 		restGroup.GET("/rider/active", restaurantHandler.RiderActive)
@@ -1852,7 +1852,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	}
 
 	// --- Merchant Onboarding & Role-Upgrade routes ---
-	onboarding.Register(r, onboarding.Deps{
+	// Captured so the CAC business-registry gate can be injected below once the
+	// business service is built (SetBusinessGate). Nil when onboarding is flag-off.
+	merchantOnboardingSvc := onboarding.Register(r, onboarding.Deps{
 		DB:       pool,
 		Supabase: supabase,
 		RBAC:     rbac,
@@ -2478,8 +2480,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// Member routes hang off the finance group (RequireAuthContext + requireUserID);
 	// the fee is charged through the finance ledger via the shared wallet service.
 	// The CAC provider is the sandbox adapter unless CAC_VAS_* creds are supplied.
-	// NOTE: the onboarding merchant-upgrade gate (SetBusinessGate/HasVerifiedBusiness)
-	// is a deliberate follow-up — main's onboarding.Service has no SetBusinessGate yet.
+	// The returned service is injected as the onboarding merchant-upgrade gate:
+	// merchant types flagged requires_business demand a verified/registered CAC
+	// business before a user can submit or be approved for that merchant role.
 	if cfg.FeatureBusinessRegistryEnabled && pool != nil {
 		cacProvider := cac.New(cac.Config{
 			BaseURL:        cfg.CACVASBaseURL,
@@ -2489,7 +2492,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		businessAdmin := r.Group("/api/business/admin")
 		businessAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
 		businessAdmin.Use(requireUserID())
-		_ = business.Register(finance, businessAdmin, business.RouteDeps{
+		businessSvc := business.Register(finance, businessAdmin, business.RouteDeps{
 			Pool:     pool,
 			Ledger:   ledgerSvc,
 			Wallet:   walletSvc,
@@ -2497,6 +2500,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			Payment:  paymentProvider,
 			RBAC:     rbac,
 		})
+		// Wire the merchant-upgrade gate: onboarding will require a verified CAC
+		// business for any merchant type flagged requires_business. Both nil-safe.
+		if merchantOnboardingSvc != nil && businessSvc != nil {
+			merchantOnboardingSvc.SetBusinessGate(businessSvc)
+			log.Println("[business] onboarding merchant-upgrade gate wired (requires_business)")
+		}
 		log.Println("[business] registry routes registered (CAC verification + registration)")
 	} else {
 		log.Println("[business] FEATURE_BUSINESS_REGISTRY_ENABLED is false — skipping routes")
