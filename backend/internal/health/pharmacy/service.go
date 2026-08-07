@@ -97,6 +97,7 @@ type Service struct {
 	audit    Auditor
 	reviews  ReviewCaseOpener // optional (nil-safe), injected via SetReviewCaseOpener
 	qty      QuantityGate     // optional (nil-safe), injected via SetQuantityGate (PRD §5.5)
+	rxItems  RxItems          // optional; nil ⇒ dispensed-item↔Rx match check is skipped (DP-002)
 }
 
 func NewService(db *pgxpool.Pool, escrow EscrowHolder, rx RxGate, verifier RxVerifier, dispatch Dispatcher, prov ProviderGate, payout PayoutGate, audit Auditor) *Service {
@@ -105,6 +106,43 @@ func NewService(db *pgxpool.Pool, escrow EscrowHolder, rx RxGate, verifier RxVer
 
 // SetReviewCaseOpener injects the optional symptom-search seam at wiring time.
 func (s *Service) SetReviewCaseOpener(r ReviewCaseOpener) { s.reviews = r }
+
+// RxItems is the nil-safe seam that returns the drug identity (NAFDAC reference) +
+// prescribed quantity for each item on a verified prescription — the authority the
+// dispensed lines are checked against at dispense time (DP-002). Satisfied by a thin
+// app-wiring adapter over healthrx (e.g. healthrx.Service.Get(...).Items). When no
+// adapter is wired the field is nil and the match check is skipped (dispense still
+// requires a verified pharmacy owner + healthrx dispense-once).
+type RxItems interface {
+	PrescribedItems(ctx context.Context, rxID string) ([]PrescribedItem, error)
+}
+
+// SetRxItems injects the prescribed-items seam used by the DP-002 dispense-match
+// safety gate (app-wiring, post-construction). Nil disables the check.
+func (s *Service) SetRxItems(r RxItems) { s.rxItems = r }
+
+// dispensedRxLines returns the Rx-required dispensed lines of an order joined to
+// their product's NAFDAC reference — the identity checked against the prescription.
+func (s *Service) dispensedRxLines(ctx context.Context, orderID string) ([]DispensedLine, error) {
+	const q = `SELECT p.nafdac_ref, ol.quantity, ol.product_name
+	           FROM pharmacy_order_lines ol
+	           JOIN pharmacy_products p ON p.id = ol.product_id
+	           WHERE ol.order_id=$1 AND ol.rx_required = true`
+	rows, err := s.db.Query(ctx, q, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DispensedLine
+	for rows.Next() {
+		var d DispensedLine
+		if err := rows.Scan(&d.NAFDACRef, &d.Quantity, &d.Label); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
 
 // ─── Catalog (HL-5 NAFDAC gating at write) ──────────────────────────────────
 
@@ -479,6 +517,26 @@ func (s *Service) Dispense(ctx context.Context, pharmacistID, orderID string) (*
 		}
 		if !ok {
 			return nil, fmt.Errorf("pharmacy: only the verified pharmacy may dispense (HL-2)")
+		}
+	}
+	// DP-002/DP-003: the dispensed Rx-required lines must match the verified
+	// prescription — the right drugs (by NAFDAC registration reference) in no more
+	// than the prescribed quantity. Checked BEFORE any state change or e-Rx fill so a
+	// wrong-drug / over-quantity dispense is blocked with nothing mutated. Fail-closed
+	// on any lookup error; skipped only when no prescribed-items adapter is wired.
+	if o.PrescriptionID != nil && s.rxItems != nil {
+		dispensed, derr := s.dispensedRxLines(ctx, orderID)
+		if derr != nil {
+			return nil, fmt.Errorf("pharmacy: load dispensed lines (DP-002): %w", derr)
+		}
+		prescribed, perr := s.rxItems.PrescribedItems(ctx, *o.PrescriptionID)
+		if perr != nil {
+			return nil, fmt.Errorf("pharmacy: load prescribed items (DP-002): %w", perr)
+		}
+		if err := VerifyDispenseMatch(dispensed, prescribed); err != nil {
+			s.audited(pharmacistID, o.PatientID, "health.pharmacy.dispense.mismatch", orderID, nil,
+				map[string]any{"error": err.Error()})
+			return nil, err
 		}
 	}
 	// HL-3 dispense-once: delegate to healthrx BEFORE flipping order state so a
