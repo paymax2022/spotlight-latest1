@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, Platform, ActivityIndicator, RefreshControl, Alert,
+  View, Text, ScrollView, StyleSheet, Platform, ActivityIndicator, RefreshControl,
 } from 'react-native';
+import { alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ShieldCheck, ShieldAlert, ShieldQuestion, Clock } from 'lucide-react-native';
@@ -58,11 +59,11 @@ export default function KycScreen() {
       qc.invalidateQueries({ queryKey: ['kyc', 'me'] });
       setDocNumber('');
       setDocLabel('');
-      Alert.alert('Submitted', 'Your verification is now in review. We will notify you once it is processed.');
+      alertAsync({ title: 'Submitted', message: 'Your verification is now in review. We will notify you once it is processed.' });
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : 'Could not submit your documents. Please try again.';
-      Alert.alert('Submission failed', message);
+      alertAsync({ title: 'Submission failed', message });
     },
   });
 

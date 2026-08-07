@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, Pressable, Alert,
+  View, Text, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, Pressable,
 } from 'react-native';
+import { alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, Check, ShieldCheck } from 'lucide-react-native';
@@ -143,7 +144,7 @@ export default function PreConsultIntakeWizard() {
       const nextRefs = [...attachments, attachment].map((a) => a.storageKey);
       setValue(field.id, nextRefs);
     } catch {
-      Alert.alert('Upload failed', 'Could not attach that file. Please try again.');
+      alertAsync({ title: 'Upload failed', message: 'Could not attach that file. Please try again.' });
     } finally {
       setAttachBusy(false);
     }
@@ -276,7 +277,7 @@ export default function PreConsultIntakeWizard() {
     setErrors(found);
     if (Object.keys(found).length > 0) {
       setPhase('wizard');
-      Alert.alert('Please review', 'Some required answers are missing or invalid.');
+      alertAsync({ title: 'Please review', message: 'Some required answers are missing or invalid.' });
       return;
     }
     submit.mutate(
@@ -290,7 +291,7 @@ export default function PreConsultIntakeWizard() {
           }
           goDone();
         },
-        onError: () => Alert.alert('Could not submit', 'Please try again.'),
+        onError: () => alertAsync({ title: 'Could not submit', message: 'Please try again.' }),
       },
     );
   }

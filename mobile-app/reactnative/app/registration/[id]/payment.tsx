@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, Pressable, Platform, Linking, Alert,
+  View, Text, ScrollView, StyleSheet, Pressable, Platform, Linking,
 } from 'react-native';
+import { alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Wallet, CreditCard, ShieldCheck } from 'lucide-react-native';
@@ -92,7 +93,7 @@ export default function RegistrationPaymentScreen() {
       router.push(`/registration/${appId}/payment-processing?${params}` as never);
     } catch (e: any) {
       const msg = e?.response?.data?.error ?? e?.message ?? 'Could not start payment. Please try again.';
-      Alert.alert('Payment failed', msg);
+      alertAsync({ title: 'Payment failed', message: msg });
     }
   };
 
