@@ -34,6 +34,10 @@ out/
 coverage/
 *.tsbuildinfo
 
+# Compiled Go binaries (build artifacts — never track). Anchored to the repo-root
+# backend binary so it never matches the backend/cmd/server source package.
+/backend/server
+
 # Sensitive keys/certs (keep out of git by default)
 *.pem
 *.key
