@@ -41,7 +41,7 @@ type GazetteerEntry struct {
 	H3Cell         string
 	Lat, Lng       float64
 	NormalizedAddr string
-	Components      string // JSON address components
+	Components     string // JSON address components
 	Source         string // courier_pin | user_saved | property | estate | agent
 	VerifiedBy     string // user id
 	VerifiedAt     time.Time
@@ -132,5 +132,5 @@ func (nopRecorder) Record(context.Context, ResolutionEvent) error { return nil }
 
 type allowGuard struct{}
 
-func (allowGuard) Allow(context.Context, string, Primitive) bool       { return true }
-func (allowGuard) Observe(context.Context, string, bool, int64)        {}
+func (allowGuard) Allow(context.Context, string, Primitive) bool { return true }
+func (allowGuard) Observe(context.Context, string, bool, int64)  {}

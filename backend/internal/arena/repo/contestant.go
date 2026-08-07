@@ -22,11 +22,11 @@ var _ service.ContestantRepo = (*ContestantRepo)(nil)
 
 func scanContestant(row pgx.Row) (*service.Contestant, error) {
 	var (
-		c        service.Contestant
-		state    string
-		kycTier  *int
-		home     *string
-		batch    *string
+		c       service.Contestant
+		state   string
+		kycTier *int
+		home    *string
+		batch   *string
 	)
 	if err := row.Scan(&c.ID, &c.CompetitionID, &c.UserID, &state, &kycTier, &home, &batch); err != nil {
 		return nil, err

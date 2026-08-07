@@ -115,9 +115,10 @@ func packAgoraService(channel, uid string, expire uint32) []byte {
 // agoraSign derives the signing key from the App Certificate via Agora's two-step
 // HMAC (keyed by issueTs then salt) and signs the message. Matches AccessToken2
 // getSign():
-//   val     = HMAC-SHA256(key = LE(issueTs), msg = appCert)
-//   signKey = HMAC-SHA256(key = LE(salt),    msg = val)
-//   sig     = HMAC-SHA256(key = signKey,     msg = message)
+//
+//	val     = HMAC-SHA256(key = LE(issueTs), msg = appCert)
+//	signKey = HMAC-SHA256(key = LE(salt),    msg = val)
+//	sig     = HMAC-SHA256(key = signKey,     msg = message)
 func agoraSign(appCert string, issueTs, salt uint32, msg []byte) []byte {
 	tsBuf := new(bytes.Buffer)
 	putU32(tsBuf, issueTs)

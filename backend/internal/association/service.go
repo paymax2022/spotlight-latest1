@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,8 +24,9 @@ var ErrForbidden = errors.New("association: forbidden")
 
 // Service manages association dues payments, receipts, and admin approvals.
 type Service struct {
-	db     *pgxpool.Pool
-	ledger *ledger.Service
+	db         *pgxpool.Pool
+	ledger     *ledger.Service
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	// cardKey is the HMAC key used to sign/verify membership-card QR tokens.
 	// Defaults to a dev key (defaultDevCardKey); production wiring MUST override
 	// it via SetCardSigningSecret with a real server secret.
@@ -33,6 +35,56 @@ type Service struct {
 
 func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
 	return &Service{db: db, ledger: ledger, cardKey: defaultDevCardKey}
+}
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module. app-wiring injects a thin adapter over the finance commission service;
+// when the commission feature is off (or no recorder is wired) the field is nil and
+// recording is a silent no-op. Modeled as a LOCAL interface so association never
+// imports the commission package at compile time (mirrors transport/service.go). It
+// records realized profit ONLY; it never moves money. The injected recorder is built
+// WITHOUT a ledger so RecordFor never re-posts (the dues split above already routes
+// the platform fee) — it appends the immutable earning row used by profit reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+	RecordExact(ctx context.Context, category, service, subtype string, grossKobo, recordedRevenueKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a settled dues payment.
+// It is best-effort and MUST NEVER affect the caller's outcome: a nil recorder is a
+// no-op, and any error is logged and swallowed so a profit-registry failure can never
+// fail or reverse the member's dues payment. The invoice id doubles as source ref +
+// idempotency key so retries and reconciliation sweeps never double-count. The
+// module's ACTUAL platform cut is the 5% Platform-fee line of the RevenueSplit, NOT a
+// flat 10% of the dues, so we record the EXACT platformKobo via RecordExact (grossKobo
+// = the full dues amount is passed for context/throughput).
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo, platformKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || platformKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordExact(ctx, category, service, subtype, grossKobo, platformKobo,
+		"association", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[association] commission record (source=%s gross=%d platform=%d) failed, continuing: %v", sourceRef, grossKobo, platformKobo, err)
+	}
+}
+
+// platformShareKobo extracts the platform-fee line (5%) from the dues RevenueSplit —
+// the exact amount actually credited to platform revenue — so profit recording uses
+// the realized cut rather than the whole dues amount.
+func platformShareKobo(amountKobo int64) int64 {
+	for _, line := range RevenueSplit(amountKobo) {
+		if line.Label == "Platform fee" {
+			return line.AmountKobo
+		}
+	}
+	return 0
 }
 
 // GetDues returns the caller's outstanding + paid dues for the current year.
@@ -149,6 +201,16 @@ func (s *Service) PayInvoice(ctx context.Context, userID, invoiceID string, req 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("association: commit: %w", err)
 	}
+
+	// Record realized Spotlight profit into the central Commission & Profit registry.
+	// This is the dues-settlement point: the RevenueSplit above realizes the platform
+	// fee (5% of the dues amount). We record that EXACT platform share (not the whole
+	// dues, not a flat 10%) as the profit; gross = the full dues amount is passed for
+	// throughput context. Best-effort + idempotent: the invoice id doubles as source
+	// ref + idempotency key, so retries / the early PAID return never double-count. A
+	// recorder failure is logged and swallowed — it must NEVER fail or reverse the dues
+	// payment above.
+	s.recordCommissionSafe(ctx, "Community", "Group Membership", "", amount, platformShareKobo(amount), invoiceID, &userID)
 
 	return &PayInvoiceResult{ReceiptID: "rcpt_" + invoiceID, Status: "SUCCESS"}, nil
 }

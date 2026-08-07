@@ -37,6 +37,7 @@ import (
 //	    WithdrawalConfirmed: {}, // terminal
 //	    WithdrawalFailed:    {}, // terminal
 //	}
+//
 // AML-gated flow (model_ext.go): requested → pending_review → approved →
 // broadcast → confirmed | failed. Money never leaves before an admin approval.
 var withdrawalTransitionsMirror = map[string]map[string]bool{
@@ -212,11 +213,11 @@ func TestNetworkFeeUnits_IsZeroPointZeroFivePercentFlooredAtOne(t *testing.T) {
 	cases := []struct {
 		units, wantFee int64
 	}{
-		{2000, 1},        // exactly 0.05% of 2000 = 1
+		{2000, 1}, // exactly 0.05% of 2000 = 1
 		{2_000_000, 1000},
-		{100, 1},  // floor at 1 even though 100/2000 = 0 (0.05)
-		{1, 1},    // floor at 1
-		{0, 1},    // degenerate: floor still applies (guarded by units<=0 upstream in QuoteWithdrawal/Withdraw)
+		{100, 1}, // floor at 1 even though 100/2000 = 0 (0.05)
+		{1, 1},   // floor at 1
+		{0, 1},   // degenerate: floor still applies (guarded by units<=0 upstream in QuoteWithdrawal/Withdraw)
 	}
 	for _, tc := range cases {
 		got := networkFeeUnitsMirror(tc.units)

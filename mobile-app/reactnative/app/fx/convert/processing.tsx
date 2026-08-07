@@ -33,8 +33,8 @@ export default function ConvertProcessingScreen() {
           params: {
             reference: res.reference,
             from, to,
-            source: String(res.source.amount),
-            dest: String(res.destination.amount),
+            source: String(res.source?.amount ?? 0),
+            dest: String(res.destination?.amount ?? 0),
             txId: res.transactionId,
           },
         });

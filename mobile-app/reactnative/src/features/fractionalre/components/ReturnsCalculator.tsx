@@ -6,6 +6,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { PAYOUT_FREQ_LABEL } from '../constants';
 import { calcReturns, formatNaira, formatYield } from '../utils';
+import { sanitizeMoneyInput } from '@/utils/money';
 import type { OfferingDetail, OfferingSummary } from '../types';
 
 interface Props {
@@ -36,8 +37,9 @@ export default function ReturnsCalculator({ offering, initialAmountKobo, editabl
             <Text style={styles.currency}>₦</Text>
             <TextInput
               value={naira}
-              onChangeText={(t) => setNaira(t.replace(/[^0-9.]/g, ''))}
-              keyboardType="numeric"
+              onChangeText={(t) => setNaira(sanitizeMoneyInput(t))}
+              keyboardType="decimal-pad"
+              maxLength={13}
               style={styles.input}
               placeholder="0"
               placeholderTextColor={Colors.onSurfaceVariant}

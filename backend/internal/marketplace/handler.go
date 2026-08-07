@@ -13,7 +13,7 @@ import (
 // in admin_handler.go; inbound webhooks in webhook_handler.go. All share this struct.
 type Handler struct {
 	svc           *Service
-	webhookSecret string       // HMAC secret for inbound logistics/payments webhooks
+	webhookSecret string        // HMAC secret for inbound logistics/payments webhooks
 	presigner     *r2.Presigner // optional; nil/unconfigured ⇒ media presign 503
 	presignBucket string        // R2 bucket echoed back in the presign response
 }
@@ -239,14 +239,15 @@ func (h *Handler) CreateOffer(c *gin.Context) {
 		return
 	}
 	var body struct {
-		ListingID      string `json:"listing_id"`
-		OfferPriceKobo int64  `json:"offer_price_kobo"`
+		ListingID      string `json:"listingId"`
+		OfferPriceKobo int64  `json:"priceKobo"`
+		Message        string `json:"message"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		fail(c, fieldErr(CodeValidation, err.Error(), ""))
 		return
 	}
-	o, err := h.svc.CreateOffer(c.Request.Context(), uid, body.ListingID, body.OfferPriceKobo)
+	o, err := h.svc.CreateOffer(c.Request.Context(), uid, body.ListingID, body.OfferPriceKobo, body.Message)
 	if err != nil {
 		fail(c, err)
 		return
@@ -275,7 +276,7 @@ func (h *Handler) CounterOffer(c *gin.Context) {
 		return
 	}
 	var body struct {
-		OfferPriceKobo int64 `json:"offer_price_kobo"`
+		OfferPriceKobo int64 `json:"priceKobo"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		fail(c, fieldErr(CodeValidation, err.Error(), ""))
@@ -301,6 +302,26 @@ func (h *Handler) DeclineOffer(c *gin.Context) {
 		return
 	}
 	respond(c, http.StatusOK, o)
+}
+
+// ListOffers GET /offers?listingId=… — negotiation history for a listing, scoped
+// to the caller: the listing's seller sees every offer; a buyer sees only their own.
+func (h *Handler) ListOffers(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	listingID := c.Query("listingId")
+	if listingID == "" {
+		fail(c, fieldErr(CodeValidation, "listingId is required", "listingId"))
+		return
+	}
+	offers, err := h.svc.ListOffersForListing(c.Request.Context(), uid, listingID)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, offers)
 }
 
 // ─── Orders/Disputes REMOVED (ADR-023 listings-and-connect pivot) ────────────

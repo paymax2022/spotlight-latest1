@@ -395,6 +395,16 @@ func TestLiveDB_Withdraw_ParksUnitsOnCreate_ReturnsOnProviderFailure(t *testing.
 		t.Errorf("holding decreased by %d, want exactly %d (units parked on withdrawal creation)", unitsBefore-unitsAfter, withdrawUnits)
 	}
 
+	// AML approval clears the gate: pending_review → approved → broadcast (mock provider
+	// accepts). Only after broadcast may the member confirm the on-chain transaction.
+	approved, err := svc.AdminDecideWithdrawal(ctx, "qa-aml-officer", w.ID, "approve", "aml cleared")
+	if err != nil {
+		t.Fatalf("AdminDecideWithdrawal(approve): %v", err)
+	}
+	if approved.Status != crypto.WithdrawalBroadcast {
+		t.Fatalf("status after admin approve = %s, want %s (mock provider always accepts)", approved.Status, crypto.WithdrawalBroadcast)
+	}
+
 	// Confirm the withdrawal — units remain burned (never returned).
 	confirmed, err := svc.ConfirmWithdrawal(ctx, userID, w.ID, "0xdeadbeef")
 	if err != nil {

@@ -49,13 +49,13 @@ var uploadKinds = map[string]string{
 // allowedUploadContentTypes restricts what a presigned PUT may upload (bound into
 // the signature, so the client must send exactly this Content-Type).
 var allowedUploadContentTypes = map[string]bool{
-	"image/png":  true,
-	"image/jpeg": true,
-	"image/webp": true,
+	"image/png":       true,
+	"image/jpeg":      true,
+	"image/webp":      true,
 	"application/pdf": true,
-	"audio/mpeg": true, // voice attachments
-	"audio/mp4":  true,
-	"audio/wav":  true,
+	"audio/mpeg":      true, // voice attachments
+	"audio/mp4":       true,
+	"audio/wav":       true,
 }
 
 // allowedUploadExt restricts the file extension we append to the derived key.

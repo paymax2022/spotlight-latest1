@@ -13,16 +13,16 @@ import "time"
 
 // Post is a feed post authored by a user or a company page.
 type Post struct {
-	ID               string    `json:"id"`
-	AuthorType       string    `json:"authorType"` // user | company_page
-	AuthorID         string    `json:"authorId"`
-	Body             string    `json:"body"`
-	MediaRefs        []string  `json:"mediaRefs"`
-	Hashtags         []string  `json:"hashtags"`
-	ReshareOfPostID  *string   `json:"reshareOfPostId,omitempty"`
-	LinkedOutcomeType *string  `json:"linkedOutcomeType,omitempty"` // booking | mentorship | assessment
-	Visible          bool      `json:"visible"`
-	CreatedAt        time.Time `json:"createdAt"`
+	ID                string    `json:"id"`
+	AuthorType        string    `json:"authorType"` // user | company_page
+	AuthorID          string    `json:"authorId"`
+	Body              string    `json:"body"`
+	MediaRefs         []string  `json:"mediaRefs"`
+	Hashtags          []string  `json:"hashtags"`
+	ReshareOfPostID   *string   `json:"reshareOfPostId,omitempty"`
+	LinkedOutcomeType *string   `json:"linkedOutcomeType,omitempty"` // booking | mentorship | assessment
+	Visible           bool      `json:"visible"`
+	CreatedAt         time.Time `json:"createdAt"`
 
 	// Aggregates (populated on read paths).
 	ReactionCount int `json:"reactionCount"`

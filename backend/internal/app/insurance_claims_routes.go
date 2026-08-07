@@ -38,7 +38,7 @@ import (
 // these routes inherit the same gate (mirrors RegisterInsurance). Money paths:
 //   - claim payout  : wallet.Credit, idempotent on claim.idempotency_key+":payout".
 //   - embedded bind : wallet.Debit hold + auto-release on failure, idempotent on
-//                     source_event_id; commission on the SEPARATE commission acct.
+//     source_event_id; commission on the SEPARATE commission acct.
 //   - commission    : reversal posts a balanced entry on ledger.AccountCommission.
 //
 // Provider credentials come from the environment (NEVER hard-coded / logged):
@@ -61,8 +61,8 @@ func RegisterInsuranceClaims(member *gin.RouterGroup, admin *gin.RouterGroup, we
 
 	// --- Provider adapters (sandbox keys from env; empty => sandbox defaults) ---
 	mycoverGW := mycover.New(
-		os.Getenv("INSURANCE_MYCOVER_API_KEY"),     // secret key
-		os.Getenv("INSURANCE_MYCOVER_PUBLIC_KEY"),  // publishable key
+		os.Getenv("INSURANCE_MYCOVER_API_KEY"),    // secret key
+		os.Getenv("INSURANCE_MYCOVER_PUBLIC_KEY"), // publishable key
 		os.Getenv("INSURANCE_MYCOVER_WEBHOOK_SECRET"),
 		os.Getenv("INSURANCE_MYCOVER_BASE_URL"),
 	)

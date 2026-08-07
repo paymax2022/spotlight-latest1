@@ -135,14 +135,14 @@ func TestPending_Estate_RentEscrowSettlement(t *testing.T) {
 
 func TestPending_Transport_RideSettlement(t *testing.T) {
 	const platformPct = 0.15 // 15% platform
-	const driverPct  = 0.70  // 70% driver (remaining 15% goes to rider incentive pool)
-	const riderPct   = 0.15  // 15% rider bonus (hasRider=true for pool; false for direct)
+	const driverPct = 0.70   // 70% driver (remaining 15% goes to rider incentive pool)
+	const riderPct = 0.15    // 15% rider bonus (hasRider=true for pool; false for direct)
 
 	cases := []struct {
-		name      string
-		fareKobo  int64
-		hasRider  bool   // true = 3-way split with rider bonus
-		scenario  string // "completed" | "cancelled"
+		name     string
+		fareKobo int64
+		hasRider bool   // true = 3-way split with rider bonus
+		scenario string // "completed" | "cancelled"
 	}{
 		{"short ride no rider bonus", 500_00, false, "completed"},
 		{"ride with rider bonus pool", 1_000_00, true, "completed"},
@@ -184,10 +184,10 @@ func TestPending_Transport_RideSettlement(t *testing.T) {
 // ── Restaurant ───────────────────────────────────────────────────────────────
 
 func TestPending_Restaurant_OrderSettlement(t *testing.T) {
-	const platformPct  = 0.10 // 10% platform
-	const merchantPct  = 0.90 // 90% merchant (no-rider case)
+	const platformPct = 0.10  // 10% platform
+	const merchantPct = 0.90  // 90% merchant (no-rider case)
 	const merchantPctR = 0.75 // 75% merchant (with rider)
-	const riderPct     = 0.15 // 15% rider (with rider)
+	const riderPct = 0.15     // 15% rider (with rider)
 
 	cases := []struct {
 		name      string

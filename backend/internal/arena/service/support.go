@@ -14,11 +14,11 @@ import (
 // (via LedgerPort) and tag the gift (via SupportRepo). Its awards are Support-fed
 // and can never influence the crown (arena.AwardFedByMeritOnly is false for them).
 type SupportService struct {
-	repo    SupportRepo
-	ledger  LedgerPort
-	tiers   TierPort
-	cfg     ConfigReader
-	audit   AuditRepo
+	repo   SupportRepo
+	ledger LedgerPort
+	tiers  TierPort
+	cfg    ConfigReader
+	audit  AuditRepo
 }
 
 // ConfigReader is the minimal config lookup the rails need (KYC gate, play-along

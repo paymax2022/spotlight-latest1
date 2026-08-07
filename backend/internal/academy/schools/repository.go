@@ -173,6 +173,27 @@ func (r *Repository) ListLicences(ctx context.Context, institutionID string) ([]
 	return out, rows.Err()
 }
 
+// ListAllLicences lists EVERY licence across all institutions (admin oversight read —
+// mirrors ListLicences without the institution_id filter).
+func (r *Repository) ListAllLicences(ctx context.Context) ([]Licence, error) {
+	const q = `SELECT id, institution_id, tier, seats, used_seats, price_minor, starts_at, expires_at, state, created_at
+	           FROM academy_licences ORDER BY created_at DESC`
+	rows, err := r.db.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Licence{}
+	for rows.Next() {
+		l, err := scanLicence(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *l)
+	}
+	return out, rows.Err()
+}
+
 // ActiveLicence returns the most-recent active licence for an institution, or ErrNoActiveLicence.
 func (r *Repository) ActiveLicence(ctx context.Context, institutionID string) (*Licence, error) {
 	const q = `SELECT id, institution_id, tier, seats, used_seats, price_minor, starts_at, expires_at, state, created_at
@@ -259,6 +280,27 @@ func (r *Repository) ListClassGroups(ctx context.Context, institutionID string) 
 	const q = `SELECT id, institution_id, name, class_code, teacher_user_id, created_at
 	           FROM academy_class_groups WHERE institution_id = $1 ORDER BY created_at DESC`
 	rows, err := r.db.Query(ctx, q, institutionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ClassGroup{}
+	for rows.Next() {
+		var g ClassGroup
+		if err := rows.Scan(&g.ID, &g.InstitutionID, &g.Name, &g.ClassCode, &g.TeacherUserID, &g.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// ListAllClassGroups lists EVERY class group across all institutions (admin oversight
+// read — mirrors ListClassGroups without the institution_id filter).
+func (r *Repository) ListAllClassGroups(ctx context.Context) ([]ClassGroup, error) {
+	const q = `SELECT id, institution_id, name, class_code, teacher_user_id, created_at
+	           FROM academy_class_groups ORDER BY created_at DESC`
+	rows, err := r.db.Query(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -401,6 +443,41 @@ func (r *Repository) CountEnrollmentsByState(ctx context.Context, institutionID 
 	return out, rows.Err()
 }
 
+// CountAllEnrollmentsByState returns enrolment counts by state ACROSS all institutions
+// (admin oversight read — mirrors CountEnrollmentsByState without the institution filter).
+func (r *Repository) CountAllEnrollmentsByState(ctx context.Context) (map[string]int, error) {
+	const q = `SELECT state, COUNT(*) FROM academy_enrollments GROUP BY state`
+	rows, err := r.db.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var st string
+		var n int
+		if err := rows.Scan(&st, &n); err != nil {
+			return nil, err
+		}
+		out[st] = n
+	}
+	return out, rows.Err()
+}
+
+// OverviewTotals returns platform-wide institution/licence/seat totals for the admin
+// overview aggregate. seatsTotal/seatsUsed sum over ACTIVE licences only (matching the
+// per-institution Overview seat maths in the service).
+func (r *Repository) OverviewTotals(ctx context.Context) (institutions, licences, activeLicences, seatsTotal, seatsUsed int, err error) {
+	const q = `SELECT
+	  (SELECT COUNT(*) FROM academy_institutions),
+	  (SELECT COUNT(*) FROM academy_licences),
+	  (SELECT COUNT(*) FROM academy_licences WHERE state = 'active'),
+	  (SELECT COALESCE(SUM(seats), 0) FROM academy_licences WHERE state = 'active'),
+	  (SELECT COALESCE(SUM(used_seats), 0) FROM academy_licences WHERE state = 'active')`
+	err = r.db.QueryRow(ctx, q).Scan(&institutions, &licences, &activeLicences, &seatsTotal, &seatsUsed)
+	return institutions, licences, activeLicences, seatsTotal, seatsUsed, err
+}
+
 // ── Billing ─────────────────────────────────────────────────────────────────────
 
 func (r *Repository) InsertBilling(ctx context.Context, institutionID, period string, amountMinor int64) (*Billing, error) {
@@ -427,6 +504,28 @@ func (r *Repository) GetBilling(ctx context.Context, id string) (*Billing, error
 		return nil, err
 	}
 	return &b, nil
+}
+
+// ListAllBilling lists EVERY institution billing line across all institutions (admin
+// oversight read — the charge path reads a single row via GetBilling; this backs the
+// admin-wide invoices list).
+func (r *Repository) ListAllBilling(ctx context.Context) ([]Billing, error) {
+	const q = `SELECT id, institution_id, period, amount_minor, state, payment_ref, created_at
+	           FROM academy_institution_billing ORDER BY created_at DESC`
+	rows, err := r.db.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Billing{}
+	for rows.Next() {
+		var b Billing
+		if err := rows.Scan(&b.ID, &b.InstitutionID, &b.Period, &b.AmountMinor, &b.State, &b.PaymentRef, &b.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }
 
 // SetBillingPaid flips a billing line open→paid atomically (WHERE state='open' guards a

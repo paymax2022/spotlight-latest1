@@ -32,6 +32,13 @@ api.interceptors.response.use(
       try { await createSupabaseClient().auth.signOut(); } catch { /* ignore */ }
       router.replace('/(auth)/login');
     }
+    // Surface the server-provided reason (e.g. "This feature requires KYC Tier 1…",
+    // insufficient-balance, tier-limit) instead of axios's generic "Request failed
+    // with status code 4xx", which hides the cause from onError alerts.
+    const serverMsg = error?.response?.data?.error ?? error?.response?.data?.message;
+    if (typeof serverMsg === 'string' && serverMsg.trim()) {
+      error.message = serverMsg;
+    }
     return Promise.reject(error);
   },
 );

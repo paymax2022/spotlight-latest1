@@ -4,16 +4,16 @@ import "time"
 
 // Product is a drug or health item listed in the marketplace.
 type Product struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Category    string    `json:"category"`
-	PriceKobo   int64     `json:"price_kobo"`
-	Unit        string    `json:"unit"`
-	IsBestseller bool     `json:"is_bestseller"`
-	IsEssential bool      `json:"is_essential"`
-	InStock     bool      `json:"in_stock"`
-	ImageURL    *string   `json:"image_url,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Category     string    `json:"category"`
+	PriceKobo    int64     `json:"price_kobo"`
+	Unit         string    `json:"unit"`
+	IsBestseller bool      `json:"is_bestseller"`
+	IsEssential  bool      `json:"is_essential"`
+	InStock      bool      `json:"in_stock"`
+	ImageURL     *string   `json:"image_url,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // CartItem represents a product in the user's shopping cart.

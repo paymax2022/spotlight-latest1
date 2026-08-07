@@ -45,8 +45,9 @@ func (h *Handler) Report(c *gin.Context) {
 		SubjectID:  req.SubjectID,
 		Type:       req.Type,
 		SourceRef:  req.SourceRef,
-		// Member reports default to normal; admin triage adjusts severity later.
-		Severity: "normal",
+		// TS-003 severity routing: child-safety / potential-CSAM / threat reports
+		// auto-escalate at intake (invariant 6); admin triage can adjust later.
+		Severity: SeverityForReport(req.Type),
 		Notes:    req.Notes,
 	})
 	if err != nil {

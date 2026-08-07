@@ -104,9 +104,9 @@ func (r DateRange) LOS() int { return len(r.Nights()) }
 type DerivedRateRule struct {
 	ParentRatePlanID string `json:"parent_rate_plan_id"`
 	ChildRatePlanID  string `json:"child_rate_plan_id"`
-	AdjustBps        int    `json:"adjust_bps"`  // e.g. -1000 = parent - 10%
-	FixedKobo        int64  `json:"fixed_kobo"`  // additive fixed kobo (e.g. breakfast cost)
-	FloorKobo        int64  `json:"floor_kobo"`  // never price below this (>=0)
+	AdjustBps        int    `json:"adjust_bps"` // e.g. -1000 = parent - 10%
+	FixedKobo        int64  `json:"fixed_kobo"` // additive fixed kobo (e.g. breakfast cost)
+	FloorKobo        int64  `json:"floor_kobo"` // never price below this (>=0)
 }
 
 // BulkEdit is a date-range edit applied to every date in [DateFrom, DateTo] for a

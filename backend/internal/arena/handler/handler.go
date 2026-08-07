@@ -126,11 +126,11 @@ func (h *Handler) Pot(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"pot_total_kobo":    total,
-		"peoples_champion":  pc,
-		"champion_tally":    ct,
-		"state_pride":       sp,
-		"state_tally":       st,
+		"pot_total_kobo":   total,
+		"peoples_champion": pc,
+		"champion_tally":   ct,
+		"state_pride":      sp,
+		"state_tally":      st,
 	})
 }
 

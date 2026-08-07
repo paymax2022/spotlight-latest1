@@ -49,8 +49,8 @@ type aiGenerator interface {
 // *Service (for the shared clinical-note write on accept) with an LLM generator.
 // This is additive: NewService is unchanged.
 type AIService struct {
-	svc       *Service
-	gen       aiGenerator
+	svc        *Service
+	gen        aiGenerator
 	ratePerMin int // 0 disables the per-minute window
 	ratePerDay int // 0 disables the per-day window
 }

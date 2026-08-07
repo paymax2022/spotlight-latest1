@@ -86,13 +86,13 @@ func (c *Client) GetQuote(ctx context.Context, req gateway.QuoteRequest) (gatewa
 
 func (c *Client) BindPolicy(ctx context.Context, req gateway.BindRequest) (gateway.Policy, error) {
 	body := map[string]any{
-		"product_code":    req.ProviderProductCode,
-		"quote_ref":       req.ProviderQuoteRef,
-		"currency":        req.Currency,
-		"sum_insured":     req.SumInsuredKobo,
-		"premium":         req.PremiumKobo,
+		"product_code":     req.ProviderProductCode,
+		"quote_ref":        req.ProviderQuoteRef,
+		"currency":         req.Currency,
+		"sum_insured":      req.SumInsuredKobo,
+		"premium":          req.PremiumKobo,
 		"policyholder_ref": req.PolicyholderRef,
-		"inputs":          req.Inputs,
+		"inputs":           req.Inputs,
 	}
 	var resp policyResponse
 	// Idempotency-Key header makes the provider bind idempotent — a retried bind

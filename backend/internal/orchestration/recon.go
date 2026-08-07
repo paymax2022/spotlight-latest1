@@ -9,12 +9,12 @@ import (
 // SettlementRecord is one line from a provider's settlement report (spec §8).
 // Amounts are minor units in the settled (source) currency.
 type SettlementRecord struct {
-	Reference    string
-	Provider     string
-	AmountMinor  int64
-	FeeMinor     int64
-	Currency     string
-	SettledAt    time.Time
+	Reference   string
+	Provider    string
+	AmountMinor int64
+	FeeMinor    int64
+	Currency    string
+	SettledAt   time.Time
 }
 
 // SettlementSource yields a provider's settlement report for reconciliation.
@@ -29,8 +29,8 @@ type ReconBreakKind string
 const (
 	BreakAmount  ReconBreakKind = "amount"
 	BreakFee     ReconBreakKind = "fee"
-	BreakMissing ReconBreakKind = "missing"   // in ledger, absent from settlement
-	BreakOrphan  ReconBreakKind = "orphan"    // in settlement, absent from ledger
+	BreakMissing ReconBreakKind = "missing" // in ledger, absent from settlement
+	BreakOrphan  ReconBreakKind = "orphan"  // in settlement, absent from ledger
 )
 
 // ReconBreak is a single reconciliation discrepancy surfaced to ops (spec §8/§13-I).
@@ -46,11 +46,11 @@ type ReconBreak struct {
 
 // ReconReport is the outcome of a reconciliation run.
 type ReconReport struct {
-	Provider  string       `json:"provider"`
-	RunAt     time.Time    `json:"run_at"`
-	Matched   int          `json:"matched"`
-	Breaks    []ReconBreak `json:"breaks"`
-	SpreadMinor int64      `json:"spread_minor"` // proven margin captured this run
+	Provider    string       `json:"provider"`
+	RunAt       time.Time    `json:"run_at"`
+	Matched     int          `json:"matched"`
+	Breaks      []ReconBreak `json:"breaks"`
+	SpreadMinor int64        `json:"spread_minor"` // proven margin captured this run
 }
 
 // ledgerSettlementSource derives settlement records from the unified ledger.
@@ -101,16 +101,16 @@ type ledgerLeg struct {
 func legFromConversion(c *Conversion) ledgerLeg {
 	return ledgerLeg{
 		reference: c.Reference, provider: c.Route.Provider, amount: c.Source.AmountMinor,
-		fee:       feeAmount(c.Fees, FeeProvider) + feeAmount(c.Fees, FeeRail),
-		currency:  c.Source.Currency, spread: feeAmount(c.Fees, FeeSpread),
+		fee:      feeAmount(c.Fees, FeeProvider) + feeAmount(c.Fees, FeeRail),
+		currency: c.Source.Currency, spread: feeAmount(c.Fees, FeeSpread),
 	}
 }
 
 func legFromTransfer(t *Transfer) ledgerLeg {
 	return ledgerLeg{
 		reference: t.Reference, provider: t.Route.Provider, amount: t.Source.AmountMinor,
-		fee:       feeAmount(t.Fees, FeeProvider) + feeAmount(t.Fees, FeeRail),
-		currency:  t.Source.Currency, spread: feeAmount(t.Fees, FeeSpread),
+		fee:      feeAmount(t.Fees, FeeProvider) + feeAmount(t.Fees, FeeRail),
+		currency: t.Source.Currency, spread: feeAmount(t.Fees, FeeSpread),
 	}
 }
 

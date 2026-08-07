@@ -25,8 +25,13 @@ type Product struct {
 	RequiredFields      map[string]any `json:"required_fields_schema_ref"`
 	SumInsuredRules     map[string]any `json:"sum_insured_rules"`
 	CancellationRef     string         `json:"cancellation_policy_ref"`
-	Version             int            `json:"version"`
-	Active              bool           `json:"active"`
+	// Indicative "from" premium (kobo) + cadence for browse cards. The REAL
+	// premium is computed at quote time by the provider adapter — these are
+	// display hints only.
+	IndicativePremiumKobo int64  `json:"indicative_premium_kobo"`
+	PremiumCadence        string `json:"premium_cadence"`
+	Version               int    `json:"version"`
+	Active                bool   `json:"active"`
 }
 
 // Service reads the versioned product catalog + routing table. All queries are
@@ -73,9 +78,9 @@ func (s *Service) Get(ctx context.Context, productCode string) (*Product, error)
 // product_line "context". Direct-only here; embedded products are bound by events.
 func (s *Service) ListForMember(ctx context.Context, kycTier int, line string) ([]Product, error) {
 	return s.list(ctx, listFilter{
-		onlyActive: true,
-		maxKYCTier: &kycTier,
-		line:       line,
+		onlyActive:  true,
+		maxKYCTier:  &kycTier,
+		line:        line,
 		bindingMode: "direct",
 	})
 }
@@ -101,6 +106,7 @@ func (s *Service) list(ctx context.Context, f listFilter) ([]Product, error) {
 		SELECT code, display_name, product_line, provider, provider_product_code,
 		       binding_mode, underwriter_display, premium_model, required_kyc_tier,
 		       required_fields_schema_ref, sum_insured_rules, cancellation_policy_ref,
+		       indicative_premium_kobo, premium_cadence,
 		       version, active
 		FROM public.insurance_products
 		WHERE 1=1`
@@ -141,7 +147,8 @@ func (s *Service) list(ctx context.Context, f listFilter) ([]Product, error) {
 		if err := rows.Scan(
 			&p.Code, &p.DisplayName, &p.ProductLine, &p.Provider, &p.ProviderProductCode,
 			&p.BindingMode, &p.UnderwriterDisplay, &p.PremiumModel, &p.RequiredKYCTier,
-			&reqFields, &sumRules, &p.CancellationRef, &p.Version, &p.Active,
+			&reqFields, &sumRules, &p.CancellationRef,
+			&p.IndicativePremiumKobo, &p.PremiumCadence, &p.Version, &p.Active,
 		); err != nil {
 			return nil, fmt.Errorf("catalog: scan: %w", err)
 		}

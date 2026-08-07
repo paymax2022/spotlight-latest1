@@ -35,8 +35,8 @@ func (f *fakeSessionService) RevokeAll(_, _, _ string) (int, error)           { 
 func (f *fakeSessionService) EvaluateLogin(string, string, services.LoginContext) ([]domain.SecurityEvent, error) {
 	return nil, nil
 }
-func (f *fakeSessionService) AdminForceLogout(_, _, _ string) (int, error)    { return 2, nil }
-func (f *fakeSessionService) AdminForcePasswordReset(_, _, _ string) error    { return nil }
+func (f *fakeSessionService) AdminForceLogout(_, _, _ string) (int, error) { return 2, nil }
+func (f *fakeSessionService) AdminForcePasswordReset(_, _, _ string) error { return nil }
 
 type noopAudit struct{}
 

@@ -142,9 +142,9 @@ export default function MerchantOnboardingDetailPage({ params }: { params: Promi
           {/* Documents */}
           <section style={card}>
             <h2 style={{ marginTop: 0 }}>Uploaded Documents</h2>
-            {app.documents.length === 0 ? <p style={{ opacity: 0.6 }}>No documents.</p> : null}
+            {(app.documents ?? []).length === 0 ? <p style={{ opacity: 0.6 }}>No documents.</p> : null}
             <div style={{ display: 'grid', gap: 8 }}>
-              {app.documents.map((d) => (
+              {(app.documents ?? []).map((d) => (
                 <div key={d.type} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, border: '1px solid #1c1c1c', padding: 8, borderRadius: 4 }}>
                   <div>
                     <strong>{d.label}</strong>

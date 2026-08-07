@@ -9,8 +9,8 @@ import (
 // testing + manual triggers.
 //
 //   - member/internal:
-//       POST /embedded/events   (trigger an embedded bind; idempotent on source_event_id)
-//       GET  /embedded/events   (list mapped event types)
+//     POST /embedded/events   (trigger an embedded bind; idempotent on source_event_id)
+//     GET  /embedded/events   (list mapped event types)
 func Register(member *gin.RouterGroup, h *Handler) {
 	g := member.Group("/embedded")
 	g.POST("/events", h.Trigger)

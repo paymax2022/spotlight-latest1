@@ -3,6 +3,7 @@ package creators
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,14 +43,15 @@ type AgeProvider interface {
 // structurally: every credit to a creator is payment for content/access, never a
 // revenue share or return.
 type Service struct {
-	db    *pgxpool.Pool
-	led   *ledger.Service
-	wal   *wallet.Service
-	tags  *cashtag.Service
-	sched *scheduler.Service
-	kyc   *kyc.Service
-	age   AgeProvider
-	audit Auditor
+	db         *pgxpool.Pool
+	led        *ledger.Service
+	wal        *wallet.Service
+	tags       *cashtag.Service
+	sched      *scheduler.Service
+	kyc        *kyc.Service
+	age        AgeProvider
+	audit      Auditor
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 }
 
 func NewService(db *pgxpool.Pool, led *ledger.Service, wal *wallet.Service, tags *cashtag.Service, sched *scheduler.Service, kycSvc *kyc.Service, age AgeProvider, audit Auditor) *Service {
@@ -58,6 +60,47 @@ func NewService(db *pgxpool.Pool, led *ledger.Service, wal *wallet.Service, tags
 		sched.RegisterJobType(JobTypeSubscriptionCharge, s.chargeSubscriptionJob)
 	}
 	return s
+}
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module (§ profit registry). app-wiring injects a thin adapter over the finance
+// commission service; when the commission feature is off (or no recorder is wired)
+// the field is nil and recording is a silent no-op. Modeled as a LOCAL interface so
+// creators never imports the commission package at compile time (mirrors transport's
+// CommissionRecorder seam) — the adapter, which lives in app-wiring, discards the
+// returned earning row and surfaces only the error.
+//
+// This records realized profit ONLY; it never moves money. Creators' own money
+// movements (creditCreator: wallet debit → creator credit → fee to Paymax revenue)
+// are unchanged, and the injected recorder is deliberately constructed WITHOUT a
+// ledger so RecordFor never re-posts to the ledger (no double count of the
+// commission revenue account) — it appends the immutable earning row used by profit
+// reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a completed creator
+// monetization event (tip, content sale, subscription charge). It is best-effort and
+// MUST NEVER affect the caller's outcome: a nil recorder is a no-op, and any error is
+// logged and swallowed so a profit-registry failure can never fail or reverse a
+// creator payout / earnings credit. The recorded breakdown is resolved server-side
+// from the central rate card; the monetization event reference doubles as the source
+// ref + idempotency key so retries and reconciliation sweeps never double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
+		"creators", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[creators] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
+	}
 }
 
 // ───────────────────────── Creator capability + storefront ─────────────────────
@@ -74,14 +117,14 @@ func (s *Service) Apply(ctx context.Context, userID, displayName, bio, handle st
 		}
 	}
 	p := &Profile{
-		UserID:      userID,
-		Handle:      cashtag.Normalize(handle),
-		DisplayName: displayName,
-		Bio:         bio,
-		State:       CreatorPending,
+		UserID:        userID,
+		Handle:        cashtag.Normalize(handle),
+		DisplayName:   displayName,
+		Bio:           bio,
+		State:         CreatorPending,
 		StorefrontURL: "/c/" + cashtag.Normalize(handle),
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
 	}
 	const ins = `
 		INSERT INTO creator_profiles (user_id, handle, display_name, bio, state, storefront_url)
@@ -605,6 +648,21 @@ func (s *Service) recordEarning(ctx context.Context, creatorID string, kind Earn
 	const ins = `INSERT INTO creator_earnings_ledger (id, creator_id, kind, gross_kobo, fee_kobo, net_kobo, reference)
 	             VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (reference) DO NOTHING`
 	_, _ = s.db.Exec(ctx, ins, uuid.New().String(), creatorID, string(kind), gross, fee, net, reference)
+
+	// Central Commission & Profit recording (§ profit registry). recordEarning is the
+	// single realization point for EVERY creator monetization event — it fires exactly
+	// once per tip, content sale, subscription first-charge, and recurring charge, right
+	// after creditCreator has posted the money (and the platform fee) through the finance
+	// ledger. gross = the amount the platform fee is computed on (the same basis applyFee
+	// uses: tip amount / content price / tier price). The unique per-event reference
+	// (tip:/content:/sub:) doubles as source ref + idempotency key so retries and the
+	// ON CONFLICT no-op above never double-count. Earning-row only: the injected recorder
+	// is built WITHOUT a ledger, so this never re-posts to the ledger (creditCreator's fee
+	// move already recognized the platform cut). Best-effort + nil-safe: when the
+	// commission feature is off no recorder is wired and this is a silent no-op — a
+	// registry failure can NEVER fail or reverse a creator earnings credit / payout.
+	cid := creatorID
+	s.recordCommissionSafe(ctx, "Lifestyle", "Creators", "", gross, reference, &cid)
 }
 
 func (s *Service) getContent(ctx context.Context, contentID string) (*Content, error) {

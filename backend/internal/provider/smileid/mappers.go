@@ -66,7 +66,7 @@ func sandboxPending(clientRef string) provider.KycCheckResult {
 // admin fraud queue can flag a reused ID.
 func mapCallback(raw []byte) (*provider.KycWebhookEvent, error) {
 	var cb struct {
-		SmileJobID   string          `json:"SmileJobID"`
+		SmileJobID    string `json:"SmileJobID"`
 		PartnerParams struct {
 			JobID  string `json:"job_id"`
 			UserID string `json:"user_id"`

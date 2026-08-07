@@ -290,6 +290,31 @@ func (r *Repository) ListPoolEntries(ctx context.Context, poolID string, limit i
 	return out, rows.Err()
 }
 
+// ListAllEntries returns the reward ledger across ALL pools, newest first (admin
+// global oversight report). Mirrors ListPoolEntries without the pool filter.
+func (r *Repository) ListAllEntries(ctx context.Context, limit int) ([]LedgerEntry, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	const q = `SELECT ` + entryCols + `
+		FROM public.academy_reward_ledger_entries
+		ORDER BY created_at DESC LIMIT $1`
+	rows, err := r.db.Query(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []LedgerEntry{}
+	for rows.Next() {
+		e, err := scanEntry(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *e)
+	}
+	return out, rows.Err()
+}
+
 // ── Redemption catalog (CRUD) ────────────────────────────────────────────────────
 
 const catalogCols = `id, sku, name, kind, cost_points, value_minor, status`

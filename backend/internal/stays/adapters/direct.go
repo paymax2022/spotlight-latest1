@@ -47,7 +47,8 @@ var ErrOversellBlocked = errors.New("direct: OVERSELL_BLOCKED")
 // adapter encodes into the book_token at Prebook time (room_type_id, stay dates,
 // rooms) so Book — whose normalised BookRequest carries no dates/room ref — can
 // perform the row-locked decrement without any signature change. Format:
-//   direct:v1:<room_type_id>:<check_in>:<check_out>:<rooms>:<nonce>
+//
+//	direct:v1:<room_type_id>:<check_in>:<check_out>:<rooms>:<nonce>
 const (
 	bookTokenPrefix  = "direct"
 	bookTokenVersion = "v1"

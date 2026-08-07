@@ -28,8 +28,8 @@ func (f fakeSessionSvc) ValidateAccess(string) (*domain.Session, error) {
 	return &domain.Session{ID: "s1"}, nil
 }
 func (f fakeSessionSvc) ListMySessions(string) ([]domain.Session, error) { return nil, nil }
-func (f fakeSessionSvc) RevokeOne(_, _, _, _ string) error              { return nil }
-func (f fakeSessionSvc) RevokeAll(_, _, _ string) (int, error)          { return 0, nil }
+func (f fakeSessionSvc) RevokeOne(_, _, _, _ string) error               { return nil }
+func (f fakeSessionSvc) RevokeAll(_, _, _ string) (int, error)           { return 0, nil }
 func (f fakeSessionSvc) EvaluateLogin(string, string, services.LoginContext) ([]domain.SecurityEvent, error) {
 	return nil, nil
 }

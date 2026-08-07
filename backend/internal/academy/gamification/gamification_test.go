@@ -27,9 +27,9 @@ func TestLevelForXP(t *testing.T) {
 		{-50, 1}, // negative clamps to 0 → level 1
 		{0, 1},
 		{99, 1},
-		{100, 2},  // exactly at the level-2 boundary
+		{100, 2}, // exactly at the level-2 boundary
 		{349, 2},
-		{350, 3},  // level-3 boundary
+		{350, 3}, // level-3 boundary
 	}
 	for _, c := range cases {
 		if got := levelForXP(c.xp, cfg); got != c.want {

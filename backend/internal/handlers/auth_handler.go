@@ -19,8 +19,8 @@ type AuthHandler struct {
 
 	// Optional session-hardening collaborators (#19). Nil unless wired and the
 	// feature flag is on; Login degrades gracefully when absent.
-	sessions          services.SessionService
-	sessionHardening  bool
+	sessions         services.SessionService
+	sessionHardening bool
 }
 
 func NewAuthHandler(auth services.AuthService, rbac services.RBACService, audit services.AuditService) *AuthHandler {

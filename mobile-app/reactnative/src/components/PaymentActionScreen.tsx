@@ -23,6 +23,8 @@ import {
 import { fetchBanks } from '@/features/transfers/api';
 import BankPicker from '@/features/transfers/components/BankPicker';
 import type { TransferRecipient, WalletTransfer, Beneficiary, BankTransferResult } from '@/types/wallet';
+import { showToast } from '@/store/toastStore';
+import { normalizeApiError } from '@/utils/errorMapper';
 import { sanitizeMoneyInput } from '@/utils/money';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -91,6 +93,46 @@ const ACTIONS: Record<ActionKind, ActionConfig> = {
 };
 
 const QUICK_AMOUNTS = ['1000', '2500', '5000', '10000'];
+
+/**
+ * Turn a money-path failure into toast copy the user can act on.
+ *
+ * The resolve endpoint answers 404 for "no Paymax account has this phone/email",
+ * which is a normal outcome of typing an unknown number — not a crash. Showing
+ * the raw axios "Request failed with status code 404" tells the user nothing,
+ * so the actionable cases get their own copy and everything else falls through
+ * to the server message.
+ */
+function showTransferError(error: unknown, fallbackTitle: string) {
+  const { message, status } = normalizeApiError(error);
+  const lower = message.toLowerCase();
+
+  if (status === 404) {
+    showToast({
+      variant: 'error',
+      title: 'Recipient not found',
+      message: 'No Paymax account matches that phone number or email. Check it and try again.',
+    });
+    return;
+  }
+  if (lower.includes('insufficient')) {
+    showToast({
+      variant: 'error',
+      title: 'Insufficient balance',
+      message: 'Add money to your wallet to complete this transfer.',
+    });
+    return;
+  }
+  if (lower.includes('limit')) {
+    showToast({
+      variant: 'error',
+      title: 'Daily limit reached',
+      message: 'Upgrade your KYC tier to raise your daily transfer limit.',
+    });
+    return;
+  }
+  showToast({ variant: 'error', title: fallbackTitle, message });
+}
 
 function DynamicIcon({ name, color, size = 24 }: { name: keyof typeof Icons; color: string; size?: number }) {
   const IconComponent = Icons[name] as unknown as Icons.LucideIcon | undefined;
@@ -204,12 +246,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
       setResolvedRecipient(data);
       setTransferStep('confirm');
     },
-    onError: (error) => {
-      Alert.alert(
-        'Recipient not found',
-        error instanceof Error ? error.message : 'No Paymax user found. Check the number or email.',
-      );
-    },
+    onError: (error) => showTransferError(error, 'Could not look up recipient'),
   });
 
   // ── Transfer: step 2 — execute transfer ────────────────────────────────────

@@ -7,7 +7,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/cashtag"
+	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/commission"
 	financeledger "spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/savings"
@@ -31,7 +33,7 @@ import (
 // sub-balance ledger; withdrawals/payouts reverse — Paymax never lends (NL-1),
 // never pays yield (NL-2), and Ajo is peer-rotation only (NL-7). Every money leg
 // is idempotent (NL-9). Auditing is nil-safe (the orchestrator may inject a sink).
-func RegisterSavings(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterSavings(member *gin.RouterGroup, adminGroup *gin.RouterGroup, cfg config.Config, pool *pgxpool.Pool, rbac services.RBACService) {
 	if pool == nil {
 		log.Println("[savings] nil pool — skipping savings routes")
 		return
@@ -44,6 +46,19 @@ func RegisterSavings(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool 
 	var auditor savings.Auditor = nil // optional immutable-audit sink (NL-12)
 
 	vaultSvc := savings.NewVaultService(pool, ledgerSvc, sched, auditor)
+
+	// Central Commission & Profit recording (§ profit registry). Nil-safe, gated on the
+	// flag, built WITHOUT a ledger (no double-post — the early-break penalty debit
+	// already moves money into ledger.AccountPaymaxRevenue). Records under
+	// Finance/Savings ONLY on the early-withdrawal penalty (the sole Spotlight-earned
+	// fee in savings; deposits, normal withdrawals, target & Ajo flows are all fee-free
+	// — NL-2, no yield — so AjoService/TargetService need no recorder). RATE NOTE: the
+	// actual fee is the caller-supplied penalty bps of the withdrawal, so the central
+	// 10% of the withdrawal principal over/under-states unless the penalty is 10%.
+	if cfg.FeatureCommissionEnabled {
+		vaultSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+		log.Println("[savings] commission recording wired → Finance/Savings (early-break penalty; earning-row only; no ledger re-post)")
+	}
 	ajoSvc := savings.NewAjoService(pool, ledgerSvc, sched, auditor)
 	targetSvc := savings.NewTargetService(pool, ledgerSvc, auditor)
 

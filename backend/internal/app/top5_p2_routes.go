@@ -9,8 +9,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/cashtag"
+	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/credential"
 	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/commission"
 	financeledger "spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/finance/tiers"
@@ -39,7 +41,7 @@ import (
 // MAIN wallet on close (NL-3); points/event-wallet never cash out (NL-4); vendor
 // payouts are KYC-gated (NL-10) and run net of fees through the ledger. Auditing is
 // nil-safe (the orchestrator may inject a sink).
-func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.Config, pool *pgxpool.Pool, rbac services.RBACService) {
 	if pool == nil {
 		log.Println("[top5events] nil pool — skipping events routes")
 		return
@@ -59,6 +61,19 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpo
 
 	var auditor top5events.Auditor = nil
 	svc := top5events.NewService(pool, ledgerSvc, walletSvc, settlementSvc, tiersSvc, credSvc, tags, auditor)
+
+	// ── Central Commission & Profit recording (§ profit registry) ──
+	// When the commission feature is on, inject a nil-safe recorder so realized
+	// ticket-sale profit lands in commission_earnings for the profit report. The
+	// recorder is built WITHOUT a ledger (nil ledgerService) on purpose: the ticket
+	// checkout debit already posts the money into escrow, so a second ledger post would
+	// double-count. RecordFor therefore appends the earning ROW only. Recording is
+	// best-effort and can never fail or reverse a ticket purchase (see
+	// recordCommissionSafe). Flag off ⇒ no recorder is set ⇒ the seam stays nil ⇒ no-op.
+	if cfg.FeatureCommissionEnabled {
+		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+		log.Println("[top5events] commission recording wired → Lifestyle/Event Tickets (earning-row only; no ledger re-post)")
+	}
 
 	// guard adapts the RBAC permission middleware to the module's GuardFunc type
 	// (func(permission string) gin.HandlerFunc).

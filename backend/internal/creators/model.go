@@ -30,14 +30,14 @@ const (
 // Profile is the creator capability + storefront. One per user (object-level authZ:
 // the owning user is the only writer; admin may moderate).
 type Profile struct {
-	UserID      string       `json:"user_id"` // FK auth.users(id)
-	Handle      string       `json:"handle"`  // cashtag handle used for tips/pay
-	DisplayName string       `json:"display_name"`
-	Bio         string       `json:"bio"`
-	State       CreatorState `json:"state"`
-	StorefrontURL string     `json:"storefront_url"`
-	CreatedAt   time.Time    `json:"created_at"`
-	UpdatedAt   time.Time    `json:"updated_at"`
+	UserID        string       `json:"user_id"` // FK auth.users(id)
+	Handle        string       `json:"handle"`  // cashtag handle used for tips/pay
+	DisplayName   string       `json:"display_name"`
+	Bio           string       `json:"bio"`
+	State         CreatorState `json:"state"`
+	StorefrontURL string       `json:"storefront_url"`
+	CreatedAt     time.Time    `json:"created_at"`
+	UpdatedAt     time.Time    `json:"updated_at"`
 }
 
 // ModerationState gates content visibility (NL-11). Content is PENDING until a
@@ -55,9 +55,9 @@ const (
 type AgeRating string
 
 const (
-	AgeAll    AgeRating = "ALL"  // general audience
-	Age13     AgeRating = "13+"  // teen
-	Age18     AgeRating = "18+"  // adult — strongest gate
+	AgeAll AgeRating = "ALL" // general audience
+	Age13  AgeRating = "13+" // teen
+	Age18  AgeRating = "18+" // adult — strongest gate
 )
 
 // minAgeFor maps a rating to a minimum age in years.
@@ -76,15 +76,15 @@ func minAgeFor(r AgeRating) int {
 // (moderation == APPROVED) AND (viewer age >= rating) AND (entitlement granted for
 // paid items). Price is in kobo (NL: minor units).
 type Content struct {
-	ID           string          `json:"id"`
-	CreatorID    string          `json:"creator_id"` // FK auth.users(id)
-	Title        string          `json:"title"`
-	Body         string          `json:"body"`         // or storage ref; gated server-side
-	PriceKobo    int64           `json:"price_kobo"`   // 0 = free
-	AgeRating    AgeRating       `json:"age_rating"`
-	Moderation   ModerationState `json:"moderation_state"`
-	Published    bool            `json:"published"`
-	CreatedAt    time.Time       `json:"created_at"`
+	ID         string          `json:"id"`
+	CreatorID  string          `json:"creator_id"` // FK auth.users(id)
+	Title      string          `json:"title"`
+	Body       string          `json:"body"`       // or storage ref; gated server-side
+	PriceKobo  int64           `json:"price_kobo"` // 0 = free
+	AgeRating  AgeRating       `json:"age_rating"`
+	Moderation ModerationState `json:"moderation_state"`
+	Published  bool            `json:"published"`
+	CreatedAt  time.Time       `json:"created_at"`
 }
 
 // EntitlementState tracks paid-content access. GRANTED on purchase; REVOKED on
@@ -99,7 +99,7 @@ const (
 // Entitlement is a viewer's access grant to a piece of paid content.
 type Entitlement struct {
 	ID        string           `json:"id"`
-	UserID    string           `json:"user_id"`    // viewer
+	UserID    string           `json:"user_id"` // viewer
 	ContentID string           `json:"content_id"`
 	State     EntitlementState `json:"state"`
 	GrantedAt time.Time        `json:"granted_at"`
@@ -131,14 +131,14 @@ type SubscriptionTier struct {
 // Subscription is a fan's enrolment in a creator tier. The scheduler drives the
 // recurring charge; this row carries the lifecycle state.
 type Subscription struct {
-	ID         string    `json:"id"`
-	SubscriberID string  `json:"subscriber_id"`
-	CreatorID  string    `json:"creator_id"`
-	TierID     string    `json:"tier_id"`
-	State      SubState  `json:"state"`
-	JobID      string    `json:"job_id"` // scheduler job driving the recurring charge
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	SubscriberID string    `json:"subscriber_id"`
+	CreatorID    string    `json:"creator_id"`
+	TierID       string    `json:"tier_id"`
+	State        SubState  `json:"state"`
+	JobID        string    `json:"job_id"` // scheduler job driving the recurring charge
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // Tip is a one-off creator tip (via cashtag/wallet). Idempotent on the key.
@@ -164,14 +164,14 @@ const (
 // Earning is an append-only creator earnings record (projection of the money that
 // already moved through the finance ledger). Net of platform fee.
 type Earning struct {
-	ID         string      `json:"id"`
-	CreatorID  string      `json:"creator_id"`
-	Kind       EarningKind `json:"kind"`
-	GrossKobo  int64       `json:"gross_kobo"`
-	FeeKobo    int64       `json:"fee_kobo"`
-	NetKobo    int64       `json:"net_kobo"`
-	Reference  string      `json:"reference"`
-	CreatedAt  time.Time   `json:"created_at"`
+	ID        string      `json:"id"`
+	CreatorID string      `json:"creator_id"`
+	Kind      EarningKind `json:"kind"`
+	GrossKobo int64       `json:"gross_kobo"`
+	FeeKobo   int64       `json:"fee_kobo"`
+	NetKobo   int64       `json:"net_kobo"`
+	Reference string      `json:"reference"`
+	CreatedAt time.Time   `json:"created_at"`
 }
 
 // PayoutState is the payout lifecycle.

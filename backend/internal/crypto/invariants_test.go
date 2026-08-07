@@ -240,13 +240,13 @@ func TestWithdrawalFSM_LegalTransitions(t *testing.T) {
 // AFTER a compliance approval — these are the transitions that enforce that.
 func TestWithdrawalFSM_IllegalSkipsRejected(t *testing.T) {
 	illegal := [][2]string{
-		{WithdrawalRequested, WithdrawalApproved},   // skips AML review
-		{WithdrawalRequested, WithdrawalBroadcast},  // skips review + approval (money out!)
-		{WithdrawalRequested, WithdrawalConfirmed},  // skips everything
+		{WithdrawalRequested, WithdrawalApproved},      // skips AML review
+		{WithdrawalRequested, WithdrawalBroadcast},     // skips review + approval (money out!)
+		{WithdrawalRequested, WithdrawalConfirmed},     // skips everything
 		{WithdrawalPendingReview, WithdrawalBroadcast}, // skips approval
 		{WithdrawalPendingReview, WithdrawalConfirmed},
-		{WithdrawalApproved, WithdrawalConfirmed},   // skips broadcast
-		{WithdrawalBroadcast, WithdrawalApproved},   // backwards
+		{WithdrawalApproved, WithdrawalConfirmed},      // skips broadcast
+		{WithdrawalBroadcast, WithdrawalApproved},      // backwards
 		{WithdrawalPendingReview, WithdrawalRequested}, // backwards
 	}
 	for _, e := range illegal {

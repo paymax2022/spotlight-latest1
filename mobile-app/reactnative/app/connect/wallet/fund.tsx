@@ -15,6 +15,7 @@ import TierLimitBar from '@/features/connect/components/TierLimitBar';
 import MoneyAmount from '@/features/connect/components/wallet-MoneyAmount';
 import { formatKobo } from '@/features/connect/constants/format';
 import { useWalletSummary, useFundWallet } from '@/features/connect/wallet/hooks';
+import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 
 // WL-02 — Fund the Connect wallet FROM the Paymax super-app wallet (the only
 // funding rail). Amount entered in Naira, converted to kobo for the mutation.
@@ -25,10 +26,7 @@ export default function FundWallet() {
   const fund = useFundWallet();
   const [naira, setNaira] = useState('');
 
-  const amountKobo = useMemo(() => {
-    const n = parseInt(naira.replace(/[^0-9]/g, ''), 10);
-    return Number.isFinite(n) ? n * 100 : 0;
-  }, [naira]);
+  const amountKobo = useMemo(() => nairaStringToKobo(naira), [naira]);
 
   if (summary.isLoading) {
     return (
@@ -76,10 +74,11 @@ export default function FundWallet() {
         <Text style={styles.label}>Amount (₦)</Text>
         <TextInputField
           value={naira}
-          onChangeText={(t) => setNaira(t.replace(/[^0-9]/g, ''))}
-          keyboardType="number-pad"
+          onChangeText={(t) => setNaira(sanitizeMoneyInput(t))}
+          keyboardType="decimal-pad"
           placeholder="0"
-          inputMode="numeric"
+          inputMode="decimal"
+          maxLength={13}
         />
 
         <View style={styles.presets}>

@@ -122,9 +122,9 @@ type LeaderboardEntry struct {
 type Config struct {
 	// XP curve: level n requires LevelBaseXP * n^LevelExponent cumulative XP.
 	// Kept as integers in the decision layer to avoid float drift.
-	LevelBaseXP   int64 // XP for level 2 boundary (level 1 = 0 XP)
-	LevelStepXP   int64 // additional XP per subsequent level (linear-with-base curve)
-	MaxLevel      int
+	LevelBaseXP int64 // XP for level 2 boundary (level 1 = 0 XP)
+	LevelStepXP int64 // additional XP per subsequent level (linear-with-base curve)
+	MaxLevel    int
 	// Streak rules.
 	FreezeMaxStored int // cap on freeze tokens a learner may hold
 }

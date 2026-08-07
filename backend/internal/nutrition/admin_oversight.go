@@ -53,20 +53,20 @@ import (
 // (the real review entity) onto the console's NutritionistConsult shape. The
 // person-shaped fields are honest placeholders (Placeholder=true flags this).
 type AdminConsult struct {
-	ID             string  `json:"id"`             // REAL — the dish/profile id (menu_item_id)
-	ClientName     string  `json:"clientName"`     // PLACEHOLDER — dish name stands in (no client entity)
-	ClientUserID   string  `json:"clientUserId"`   // PLACEHOLDER — restaurant_id stands in
-	NutritionistName string `json:"nutritionistName"` // PLACEHOLDER — constant (no nutritionist entity)
-	NutritionistID string  `json:"nutritionistId"` // PLACEHOLDER — constant
-	Topic          string  `json:"topic"`          // REAL — derived review topic
-	Channel        string  `json:"channel"`        // PLACEHOLDER — constant "async"
-	Status         string  `json:"status"`         // REAL — mapped review lifecycle
-	Priority       string  `json:"priority"`       // REAL — derived from confidence/status
-	Summary        string  `json:"summary"`        // REAL — why this profile needs review
-	ResolutionNote *string `json:"resolutionNote"` // REAL — set once resolved
-	CreatedAt      string  `json:"createdAt"`      // REAL
-	UpdatedAt      string  `json:"updatedAt"`      // REAL
-	ResolvedAt     *string `json:"resolvedAt"`     // REAL
+	ID               string  `json:"id"`               // REAL — the dish/profile id (menu_item_id)
+	ClientName       string  `json:"clientName"`       // PLACEHOLDER — dish name stands in (no client entity)
+	ClientUserID     string  `json:"clientUserId"`     // PLACEHOLDER — restaurant_id stands in
+	NutritionistName string  `json:"nutritionistName"` // PLACEHOLDER — constant (no nutritionist entity)
+	NutritionistID   string  `json:"nutritionistId"`   // PLACEHOLDER — constant
+	Topic            string  `json:"topic"`            // REAL — derived review topic
+	Channel          string  `json:"channel"`          // PLACEHOLDER — constant "async"
+	Status           string  `json:"status"`           // REAL — mapped review lifecycle
+	Priority         string  `json:"priority"`         // REAL — derived from confidence/status
+	Summary          string  `json:"summary"`          // REAL — why this profile needs review
+	ResolutionNote   *string `json:"resolutionNote"`   // REAL — set once resolved
+	CreatedAt        string  `json:"createdAt"`        // REAL
+	UpdatedAt        string  `json:"updatedAt"`        // REAL
+	ResolvedAt       *string `json:"resolvedAt"`       // REAL
 
 	// Placeholder is TRUE to signal that this row is a real dish-profile review
 	// mapped onto the consult shape (people fields are not backed by data).
@@ -208,10 +208,10 @@ func (s *Service) AdminListConsults(ctx context.Context, f AdminConsultFilters, 
 		updated := isoOrEmpty(rp.UpdatedAt)
 		c := AdminConsult{
 			ID:               rp.Profile.MenuItemID,
-			ClientName:       rp.DishName,               // placeholder: dish stands in for "client"
-			ClientUserID:     rp.Profile.RestaurantID,   // placeholder: restaurant stands in
-			NutritionistName: placeholderNutritionist,   // placeholder: no nutritionist entity
-			NutritionistID:   "auto",                    // placeholder
+			ClientName:       rp.DishName,             // placeholder: dish stands in for "client"
+			ClientUserID:     rp.Profile.RestaurantID, // placeholder: restaurant stands in
+			NutritionistName: placeholderNutritionist, // placeholder: no nutritionist entity
+			NutritionistID:   "auto",                  // placeholder
 			Topic:            topic,
 			Channel:          "async", // placeholder: no consult channel exists
 			Status:           status,

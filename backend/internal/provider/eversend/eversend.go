@@ -133,11 +133,11 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 
 // Quotation is an Eversend exchange quotation (amounts in major units).
 type Quotation struct {
-	Token       string  `json:"token"`
-	Rate        float64 `json:"rate"`
-	FromAmount  float64 `json:"sourceAmount"`
-	ToAmount    float64 `json:"destinationAmount"`
-	Fee         float64 `json:"fee"`
+	Token      string  `json:"token"`
+	Rate       float64 `json:"rate"`
+	FromAmount float64 `json:"sourceAmount"`
+	ToAmount   float64 `json:"destinationAmount"`
+	Fee        float64 `json:"fee"`
 }
 
 // CreateQuotation requests an exchange quotation (POST /exchanges/quotation).
@@ -145,7 +145,7 @@ func (c *Client) CreateQuotation(ctx context.Context, from, to string, amountMaj
 	body := map[string]any{"from": from, "to": to, "amount": amountMajor}
 	var resp struct {
 		Data struct {
-			Token     string `json:"token"`
+			Token     string    `json:"token"`
 			Quotation Quotation `json:"quotation"`
 		} `json:"data"`
 	}

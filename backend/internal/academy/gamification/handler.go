@@ -100,6 +100,21 @@ func (h *Handler) AdminListBadges(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"badges": b})
 }
 
+// AdminGetConfig returns the aggregate gamification config: configured badges +
+// challenges + leaderboards.
+func (h *Handler) AdminGetConfig(c *gin.Context) {
+	cfg, err := h.svc.AdminGetConfig(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"badges":       cfg.Badges,
+		"challenges":   cfg.Challenges,
+		"leaderboards": cfg.Leaderboards,
+	})
+}
+
 func (h *Handler) AdminUpsertBadge(c *gin.Context) {
 	var in UpsertBadgeRequest
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -163,6 +178,7 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard func(permission
 	mg.GET("/challenges", h.GetChallenges)
 
 	ag := admin.Group("/gamification")
+	ag.GET("/config", guard("academy.content"), h.AdminGetConfig)
 	ag.GET("/badges", guard("academy.content"), h.AdminListBadges)
 	ag.POST("/badges", guard("academy.content"), h.AdminUpsertBadge)
 	ag.POST("/challenges", guard("academy.sponsor"), h.AdminUpsertChallenge)

@@ -62,13 +62,13 @@ type Block struct {
 // NotificationPrefs mirrors mkt_notification_prefs (one row per user). Every
 // category defaults to true except promotional (opt-in). §33 per-category toggles.
 type NotificationPrefs struct {
-	UserID        string    `json:"user_id"`
-	NewOffer      bool      `json:"new_offer"`
-	PriceDrop     bool      `json:"price_drop"`
-	OrderStatus   bool      `json:"order_status"`
-	BoostExpiry   bool      `json:"boost_expiry"`
-	Promotional   bool      `json:"promotional"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	UserID      string    `json:"user_id"`
+	NewOffer    bool      `json:"new_offer"`
+	PriceDrop   bool      `json:"price_drop"`
+	OrderStatus bool      `json:"order_status"`
+	BoostExpiry bool      `json:"boost_expiry"`
+	Promotional bool      `json:"promotional"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // defaultNotificationPrefs returns the day-one defaults (all on except promotional).

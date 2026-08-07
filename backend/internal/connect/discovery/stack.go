@@ -15,13 +15,13 @@ import (
 // It is derived from the same internal Candidate the Phase-1 discovery/search
 // endpoints build, so ranking and privacy rules are shared, not re-implemented.
 type ProfileCard struct {
-	ProfileID     string   `json:"profileId"`
-	DisplayName   *string  `json:"displayName,omitempty"`
-	City          *string  `json:"city,omitempty"`
-	Verified      bool     `json:"verified"`
-	IntentTags    []string `json:"intentTags"`
-	DistanceLabel string   `json:"distanceLabel,omitempty"` // e.g. "within 25 km"
-	DistanceBucket int     `json:"distanceBucket,omitempty"` // coarse km bucket (nearby only)
+	ProfileID      string   `json:"profileId"`
+	DisplayName    *string  `json:"displayName,omitempty"`
+	City           *string  `json:"city,omitempty"`
+	Verified       bool     `json:"verified"`
+	IntentTags     []string `json:"intentTags"`
+	DistanceLabel  string   `json:"distanceLabel,omitempty"`  // e.g. "within 25 km"
+	DistanceBucket int      `json:"distanceBucket,omitempty"` // coarse km bucket (nearby only)
 }
 
 // SwipeResult is the minimal shape Swipe needs back from the like recorder — the
@@ -104,7 +104,7 @@ func (s *Service) Stack(ctx context.Context, userID string, f StackFilters) ([]P
 
 	// Reuse the shared candidate query (self / prior-like / existing-match excluded
 	// in SQL). Pull a larger pool so pass-filtering + ranking have room.
-	raws, err := s.candidateQuery(ctx, viewerProfile, mode, f.Intent, f.VerifiedOnly, f.Limit*3)
+	raws, err := s.candidateQuery(ctx, viewerProfile, userID, mode, f.Intent, f.VerifiedOnly, f.Limit*3)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (s *Service) Nearby(ctx context.Context, userID string, limit int) ([]Profi
 		return []ProfileCard{}, nil
 	}
 	buckets := s.cfg.distanceBuckets(ctx)
-	raws, err := s.candidateQuery(ctx, viewerProfile, "dating", "", false, limit*3)
+	raws, err := s.candidateQuery(ctx, viewerProfile, userID, "dating", "", false, limit*3)
 	if err != nil {
 		return nil, err
 	}

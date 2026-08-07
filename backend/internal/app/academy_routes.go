@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"log"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -32,7 +34,9 @@ import (
 	"spotlight/backend/internal/academy/identity"
 	"spotlight/backend/internal/academy/learner"
 	academylive "spotlight/backend/internal/academy/live"
+	"spotlight/backend/internal/academy/offlinesync"
 	"spotlight/backend/internal/academy/parent"
+	academyplatform "spotlight/backend/internal/academy/platform"
 	"spotlight/backend/internal/academy/progression"
 	"spotlight/backend/internal/academy/rewards"
 	"spotlight/backend/internal/academy/schools"
@@ -100,6 +104,7 @@ func (g academyApprovalGate) Authorize(ctx context.Context, userID, orderID stri
 // Member base (authenticated finance group):
 //   - identity/curriculum/commerce embed "/academy" in their own subpaths → base = finance.
 //   - gamification/rewards/assessment/exam use bare subpaths → base = finance/academy.
+//
 // Admin base (RBAC per-route via guard):
 //   - identity/curriculum/commerce embed "/academy" → base = /api.
 //   - gamification/rewards/assessment/exam → base = /api/academy/admin.
@@ -108,9 +113,31 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 		return
 	}
 
+	// Resolve EFFECTIVE phase flags from the runtime store (SU-10,
+	// public.academy_feature_flags), falling back FAIL-CLOSED to the compile-time
+	// defaults (env FEATURE_ACADEMY_*) passed in. A store read failure MUST NOT
+	// destabilize route registration: on error we log and keep every compile-time
+	// default; a flag with no stored row also keeps its default (never silently enabled).
+	{
+		flagCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		resolver, err := academyplatform.NewFlagResolver(flagCtx, academyplatform.NewRepo(pool))
+		cancel()
+		if err != nil {
+			log.Printf("[academy] feature-flag store read failed (%v) — using compile-time defaults", err)
+		}
+		examEnabled = resolver.Resolve(academyplatform.FlagExam, examEnabled)
+		spineEnabled = resolver.Resolve(academyplatform.FlagSpine, spineEnabled)
+		eduPayEnabled = resolver.Resolve(academyplatform.FlagEduPay, eduPayEnabled)
+		credentialsEnabled = resolver.Resolve(academyplatform.FlagCredentials, credentialsEnabled)
+		liveEnabled = resolver.Resolve(academyplatform.FlagLive, liveEnabled)
+		schoolsEnabled = resolver.Resolve(academyplatform.FlagSchools, schoolsEnabled)
+		tutorEnabled = resolver.Resolve(academyplatform.FlagTutor, tutorEnabled)
+		feesEnabled = resolver.Resolve(academyplatform.FlagFees, feesEnabled)
+	}
+
 	// Real Paymax-rail adapters (academy_rails.go), used where a backing service
 	// exists; nil falls back to each package's deterministic dev stub.
-	var payRail commerce.PaymentRail // commerce one-off charge → wallet ledger
+	var payRail commerce.PaymentRail   // commerce one-off charge → wallet ledger
 	var collectRail edupay.CollectRail // edupay collection → wallet ledger
 	if ledgerSvc != nil {
 		lr := academyLedgerRail{ledger: ledgerSvc}
@@ -120,9 +147,9 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 	if rtcIssuer != nil && rtcIssuer.Enabled(rtc.ProviderAgora) {
 		liveRooms = academyLiveRail{issuer: rtcIssuer}
 	}
-	memberFin := finance                    // → /api/finance/academy/...
-	memberAcad := finance.Group("/academy") // → /api/finance/academy/...
-	adminRoot := adminGroupTop5(r, "/api")              // identity/curriculum/commerce admin
+	memberFin := finance                                 // → /api/finance/academy/...
+	memberAcad := finance.Group("/academy")              // → /api/finance/academy/...
+	adminRoot := adminGroupTop5(r, "/api")               // identity/curriculum/commerce admin
 	adminAcad := adminGroupTop5(r, "/api/academy/admin") // bare-prefix admin packages
 
 	identity.RegisterAcademyIdentity(memberFin, adminRoot, pool, rbac)
@@ -142,6 +169,18 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 	learner.RegisterAcademyLearner(memberAcad, pool)
 	// Rewards credit the Paymax wallet ledger (golden rule 2/9): inject ledgerSvc.
 	rewards.RegisterAcademyRewards(memberAcad, adminAcad, pool, rbac, ledgerSvc, nil)
+
+	// Offline-sync reconciliation buffer (nfr.md §Offline): the mobile offlineQueue
+	// flushes queued progress/attempt/reward-eligible events here IDEMPOTENTLY. Thin
+	// ingest only — records events into academy_sync_events + academy_idempotency_keys
+	// (scope='sync'); NO ledger writes / reward posting (server reconciles downstream).
+	// Route: POST /api/finance/academy/sync (matches mobile ACADEMY_API_BASE + "/sync").
+	offlinesync.RegisterAcademySync(memberAcad, pool)
+
+	// Member Paymax wallet read (GET /api/finance/academy/wallet): thin PROXY over the
+	// EXISTING finance ledger balance projection (ledgerSvc.GetBalance) — reuse the rails,
+	// no parallel wallet. Read-only; returns {balanceKobo, currency} in integer kobo.
+	registerAcademyMemberWallet(memberAcad, ledgerSvc)
 
 	// Phase-2 curriculum spine (progression + content/CMS + parent layer), gated by
 	// FeatureAcademySpineEnabled.
@@ -241,14 +280,14 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 	}
 
 	// ── Group A: self-contained (member, admin, pool, rbac) — self-gate admin routes ──
-	feesschool.RegisterFeesSchool(member, admin, pool, rbac)         // /schools, admin verify (academy.fees.school.verify)
-	feessession.RegisterFeesSession(member, admin, pool, rbac)       // /schools/:schoolId/sessions|classes
-	feesschedule.RegisterFeesFeeSchedule(member, admin, pool, rbac)  // /fee-schedules (SF-1 immutability)
-	feesstudent.RegisterFeesStudent(member, admin, pool, rbac)       // /students, guardian links (reuses identity)
-	feesinvoice.RegisterFeesInvoice(member, admin, pool, rbac)       // /invoices (SF-2 derived balance)
-	feespromotion.RegisterFeesPromotion(member, admin, pool, rbac)   // /promotions (SF-3 two-approval)
-	feesroles.RegisterFeesRoles(admin, pool, rbac)                   // /schools/:schoolId/staff (RequireScopedPermission academy.fees.roles.assign)
-	feeshardship.RegisterFeesHardship(member, admin, pool, rbac)     // /invoices hardship review queue (SF-9, no money)
+	feesschool.RegisterFeesSchool(member, admin, pool, rbac)        // /schools, admin verify (academy.fees.school.verify)
+	feessession.RegisterFeesSession(member, admin, pool, rbac)      // /schools/:schoolId/sessions|classes
+	feesschedule.RegisterFeesFeeSchedule(member, admin, pool, rbac) // /fee-schedules (SF-1 immutability)
+	feesstudent.RegisterFeesStudent(member, admin, pool, rbac)      // /students, guardian links (reuses identity)
+	feesinvoice.RegisterFeesInvoice(member, admin, pool, rbac)      // /invoices (SF-2 derived balance)
+	feespromotion.RegisterFeesPromotion(member, admin, pool, rbac)  // /promotions (SF-3 two-approval)
+	feesroles.RegisterFeesRoles(admin, pool, rbac)                  // /schools/:schoolId/staff (RequireScopedPermission academy.fees.roles.assign)
+	feeshardship.RegisterFeesHardship(member, admin, pool, rbac)    // /invoices hardship review queue (SF-9, no money)
 
 	// Flat admin oversight surface for the school-admin console (SC-29…SC-40): read-heavy
 	// list/aggregate views ACROSS schools at /api/academy/admin/fees/* (distinct from the

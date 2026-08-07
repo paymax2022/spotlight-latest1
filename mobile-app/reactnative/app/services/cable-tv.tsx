@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
-import BillReviewSecurityPanel, { calculateBillReview, formatNaira } from '@/components/BillReviewSecurityPanel';
+import BillReviewSecurityPanel, { calculateBillReview, formatNaira, CONVENIENCE_FEE_NAIRA } from '@/components/BillReviewSecurityPanel';
 import PaymentMethodSelector, { type PaymentMethod } from '@/components/PaymentMethodSelector';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -122,7 +122,7 @@ export default function CableTvScreen() {
   const onConfirmWallet = async () => {
     if (!pendingForm || !selectedProvider || !selectedPackage) return;
     if (confirmInFlightRef.current || paying) return;
-    const review = calculateBillReview(selectedPackage.sellingPrice, wallet?.balance);
+    const review = calculateBillReview(selectedPackage.sellingPrice, wallet?.balance, CONVENIENCE_FEE_NAIRA);
     if (review.insufficient) {
       setPinError('Top up your wallet before confirming this payment.');
       return;
@@ -326,7 +326,8 @@ export default function CableTvScreen() {
           <SummaryRow label="Bouquet"   value={selectedPackage?.name ?? '—'} />
           <SummaryRow label="Customer"  value={validation?.customerName ?? '—'} />
           <SummaryRow label="Amount"    value={selectedPackage ? `₦${selectedPackage.sellingPrice.toLocaleString()}` : '—'} />
-          <SummaryRow label="Fee"       value={formatNaira(0)} />
+          <SummaryRow label="Convenience fee" value={formatNaira(CONVENIENCE_FEE_NAIRA)} />
+          <SummaryRow label="Total"     value={selectedPackage ? formatNaira(selectedPackage.sellingPrice + CONVENIENCE_FEE_NAIRA) : '—'} highlight />
           <PaymentMethodSelector
             selected={paymentMethod}
             onSelect={setPaymentMethod}
@@ -380,11 +381,14 @@ export default function CableTvScreen() {
               <SummaryRow label="Bouquet"   value={selectedPackage?.name ?? '—'} />
               <SummaryRow label="Card No."  value={pendingForm?.smartCardNumber} />
               <SummaryRow label="Customer"  value={validation?.customerName} />
-              <SummaryRow label="Amount"    value={selectedPackage ? formatNaira(selectedPackage.sellingPrice) : '—'} highlight />
+              <SummaryRow label="Amount"    value={selectedPackage ? formatNaira(selectedPackage.sellingPrice) : '—'} />
+              <SummaryRow label="Convenience fee" value={formatNaira(CONVENIENCE_FEE_NAIRA)} />
+              <SummaryRow label="Total"     value={selectedPackage ? formatNaira(selectedPackage.sellingPrice + CONVENIENCE_FEE_NAIRA) : '—'} highlight />
               <SummaryRow label="Payment"   value={paymentMethod === 'WALLET' ? 'Wallet' : 'Paystack'} />
               {paymentMethod === 'WALLET' ? (
                 <BillReviewSecurityPanel
                   amount={selectedPackage?.sellingPrice}
+                  fee={CONVENIENCE_FEE_NAIRA}
                   walletBalance={wallet?.balance}
                   pin={transactionPin}
                   onPinChange={(value) => { setTransactionPin(value); setPinError(''); }}
@@ -408,7 +412,7 @@ export default function CableTvScreen() {
                 label={paymentMethod === 'WALLET' ? 'Confirm & Pay' : 'Pay with Paystack'}
                 onPress={onConfirm}
                 loading={paying || paystackLoading}
-                disabled={paymentMethod === 'WALLET' && calculateBillReview(selectedPackage?.sellingPrice, wallet?.balance).insufficient}
+                disabled={paymentMethod === 'WALLET' && calculateBillReview(selectedPackage?.sellingPrice, wallet?.balance, CONVENIENCE_FEE_NAIRA).insufficient}
               />
               <PrimaryButton label="Cancel" variant="ghost" onPress={() => setShowConfirm(false)} disabled={paying || paystackLoading} />
             </View>

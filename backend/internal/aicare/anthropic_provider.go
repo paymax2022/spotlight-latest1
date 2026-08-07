@@ -27,17 +27,26 @@ func NewAnthropicProvider(apiKey string) *AnthropicProvider {
 	return &AnthropicProvider{apiKey: apiKey, client: &http.Client{Timeout: 30 * time.Second}}
 }
 
-type anthropicMsg      struct { Role string `json:"role"`; Content string `json:"content"` }
-type anthropicRequest  struct {
+type anthropicMsg struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+type anthropicRequest struct {
 	Model     string         `json:"model"`
 	MaxTokens int            `json:"max_tokens"`
 	System    string         `json:"system,omitempty"`
 	Messages  []anthropicMsg `json:"messages"`
 }
-type anthropicContent  struct { Type string `json:"type"`; Text string `json:"text"` }
+type anthropicContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
 type anthropicResponse struct {
 	Content []anthropicContent `json:"content"`
-	Error   *struct { Type string `json:"type"`; Message string `json:"message"` } `json:"error,omitempty"`
+	Error   *struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
 }
 
 func (p *AnthropicProvider) Reply(ctx context.Context, history []Message, userMessage string) (string, error) {

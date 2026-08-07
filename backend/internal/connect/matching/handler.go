@@ -35,6 +35,10 @@ func (h *Handler) Like(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "create your profile first"})
 		case errors.Is(err, ErrSelfLike):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "cannot like your own profile"})
+		case errors.Is(err, ErrNeedsCredits):
+			c.JSON(http.StatusPaymentRequired, gin.H{"error": "out of super-like credits", "upsell": "pass_super5"})
+		case errors.Is(err, ErrBlocked), errors.Is(err, ErrRestricted), errors.Is(err, ErrIneligibleTarget):
+			c.JSON(http.StatusForbidden, gin.H{"error": "not allowed"})
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		}

@@ -26,11 +26,11 @@ import "time"
 type ClaimState string
 
 const (
-	ClaimSubmitted    ClaimState = "claim_submitted"
-	ClaimUnderReview  ClaimState = "under_review"
+	ClaimSubmitted     ClaimState = "claim_submitted"
+	ClaimUnderReview   ClaimState = "under_review"
 	ClaimNeedsMoreInfo ClaimState = "needs_more_info"
-	ClaimVerified     ClaimState = "verified"
-	ClaimRejected     ClaimState = "rejected"
+	ClaimVerified      ClaimState = "verified"
+	ClaimRejected      ClaimState = "rejected"
 )
 
 // validClaimTransition guards the CompanyPageClaim state machine (deny-by-default).
@@ -126,12 +126,12 @@ func validAppTransition(from, to AppState) bool {
 type BountyState string
 
 const (
-	BountyReferred     BountyState = "referred"
-	BountyAppLinked    BountyState = "application_linked"
+	BountyReferred      BountyState = "referred"
+	BountyAppLinked     BountyState = "application_linked"
 	BountyHireConfirmed BountyState = "hire_confirmed"
-	BountyPayable      BountyState = "bounty_payable"
-	BountyPaid         BountyState = "paid"
-	BountyExpired      BountyState = "expired"
+	BountyPayable       BountyState = "bounty_payable"
+	BountyPaid          BountyState = "paid"
+	BountyExpired       BountyState = "expired"
 )
 
 func validBountyTransition(from, to BountyState) bool {

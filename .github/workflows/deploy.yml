@@ -1,23 +1,33 @@
-# Deploy — free-tier Render pipeline (see docs/adr/ADR-026-free-tier-hosting.md).
-# Flow on push to main: apply additive Supabase migrations → trigger Render deploy
-# hooks (Render builds the image from backend/Dockerfile + the Next apps) → smoke-test
-# the deployed health endpoint. Every step NO-OPS gracefully until its secret is set,
-# so this workflow is safe to merge before Render/Supabase are wired.
+# Deploy — TWO safe-by-default pipelines coexist in this workflow; each no-ops/skips
+# until its own secrets/vars are configured, so this file is safe to merge unwired.
 #
-# Required repo secrets (Settings → Secrets and variables → Actions):
-#   SUPABASE_DB_URL              postgres URL of the target DB (session pooler, sslmode=require)
-#   RENDER_DEPLOY_HOOK_BACKEND   Render deploy-hook URL for paymax-backend
-#   RENDER_DEPLOY_HOOK_WEB       Render deploy-hook URL for paymax-web
-#   RENDER_DEPLOY_HOOK_ADMIN     Render deploy-hook URL for paymax-admin
-#   BACKEND_URL                  public URL of paymax-backend (e.g. https://paymax-backend.onrender.com)
+# 1) Free-tier Render pipeline (see docs/adr/ADR-026-free-tier-hosting.md).
+#    Flow on push to main: apply additive Supabase migrations → trigger Render deploy
+#    hooks (Render builds the image from backend/Dockerfile + the Next apps) → smoke-test
+#    the deployed health endpoint. Every step NO-OPS gracefully until its secret is set.
+#    Required repo secrets (Settings → Secrets and variables → Actions):
+#      SUPABASE_DB_URL              postgres URL of the target DB (session pooler, sslmode=require)
+#      RENDER_DEPLOY_HOOK_BACKEND   Render deploy-hook URL for paymax-backend
+#      RENDER_DEPLOY_HOOK_WEB       Render deploy-hook URL for paymax-web
+#      RENDER_DEPLOY_HOOK_ADMIN     Render deploy-hook URL for paymax-admin
+#      BACKEND_URL                  public URL of paymax-backend (e.g. https://paymax-backend.onrender.com)
+#    Rollback: redeploy a prior commit from the Render dashboard.
 #
-# Rollback: redeploy a prior commit from the Render dashboard. Immutable
-# build-once→promote (with staging/prod gates) returns off the free tier — see the
-# ADR-026 graduation path.
+# 2) GCP Cloud Run build-once→promote pipeline (dev→staging→prod). SAFE-BY-DEFAULT:
+#    every job is gated `if: ${{ vars.GCP_PROJECT_ID != '' }}` and SKIPS (not fails)
+#    until GCP is configured. Auth to GCP via Workload Identity Federation (OIDC): no
+#    long-lived keys. Prod is human-gated (GitHub Environment "production" → required
+#    reviewers). Rollback = re-run with workflow_dispatch sha=<prior>, or shift Cloud
+#    Run traffic to the previous revision (see docs/launch blueprint §5).
+#    Required per-Environment config (see infra/terraform/README.md + BRANCH-PROTECTION.md):
+#      secrets:   GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_DEPLOY_SERVICE_ACCOUNT
+#      variables: GCP_PROJECT_ID, GCP_REGION, GCP_ARTIFACT_REGISTRY
 name: deploy
+
 on:
   push:
     branches: [main]
+    paths: ["backend/**", ".github/workflows/deploy.yml"]
   workflow_dispatch:
     inputs:
       migrate:
@@ -27,12 +37,18 @@ on:
 
 permissions:
   contents: read
+  id-token: write # OIDC — short-lived cloud creds (GCP pipeline)
 
 concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  SERVICE: paymax-backend
+  IMAGE_NAME: paymax/backend
+
 jobs:
+  # ═══ Pipeline 1 — free-tier Render (no-ops until Render/Supabase secrets set) ═══
   # ── 1. Migrations (additive, backward-compatible) ────────────────────────────
   migrate:
     runs-on: ubuntu-latest
@@ -106,3 +122,106 @@ jobs:
             sleep 15
           done
           echo "backend did not become healthy in time"; exit 1
+
+  # ═══ Pipeline 2 — GCP Cloud Run (skips until vars.GCP_PROJECT_ID is set) ═══════
+  build:
+    # Skip (not fail) until GCP is configured. `vars` is allowed in job-level if;
+    # set repo/Environment variable GCP_PROJECT_ID to activate the pipeline.
+    if: ${{ vars.GCP_PROJECT_ID != '' }}
+    runs-on: ubuntu-latest
+    environment: staging # build with staging identity; the image is env-agnostic
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.sha || github.sha }}
+      - id: meta
+        run: |
+          SHA="${{ github.event.inputs.sha || github.sha }}"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "image=${{ vars.GCP_ARTIFACT_REGISTRY }}/${IMAGE_NAME}:$SHA" >> "$GITHUB_OUTPUT"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+      - name: Build & push (immutable, SHA-tagged)
+        run: |
+          docker build -t "${{ steps.meta.outputs.image }}" backend
+          docker push "${{ steps.meta.outputs.image }}"
+
+  staging:
+    needs: build
+    if: ${{ vars.GCP_PROJECT_ID != '' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      # Migrations run expand-first, decoupled from code that needs them (§10).
+      # TODO(you): wire supabase migration apply against the STAGING DB here
+      # (service-role creds from the staging Environment), e.g. `supabase db push`
+      # with a staging DATABASE_URL, or a dedicated migrate job/image.
+      - name: Deploy to Cloud Run (staging)
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --region "${{ vars.GCP_REGION }}" \
+            --image "${{ needs.build.outputs.image }}" \
+            --quiet
+      - name: Smoke test (/healthz + /readyz)
+        run: |
+          URL=$(gcloud run services describe "$SERVICE" --project "${{ vars.GCP_PROJECT_ID }}" --region "${{ vars.GCP_REGION }}" --format='value(status.url)')
+          curl -fsS "$URL/healthz" >/dev/null && echo "healthz OK"
+          curl -fsS "$URL/readyz"  >/dev/null && echo "readyz OK"
+          # TODO(you): add a sandbox money-path round-trip (e.g. payout) and fail on red.
+
+  production:
+    needs: [build, staging]
+    if: ${{ vars.GCP_PROJECT_ID != '' }}
+    runs-on: ubuntu-latest
+    environment: production # protected: required reviewers = human gate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      # TODO(you): apply the (already staging-verified, additive) migrations to PROD
+      # BEFORE routing traffic to code that requires them.
+      - name: Deploy canary (no traffic yet)
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --region "${{ vars.GCP_REGION }}" \
+            --image "${{ needs.build.outputs.image }}" \
+            --no-traffic --tag "sha-${{ needs.build.outputs.sha }}" \
+            --quiet
+      - name: Shift 10% to canary
+        run: |
+          gcloud run services update-traffic "$SERVICE" \
+            --project "${{ vars.GCP_PROJECT_ID }}" --region "${{ vars.GCP_REGION }}" \
+            --to-tags "sha-${{ needs.build.outputs.sha }}=10" --quiet
+      - name: Watch canary golden signals
+        run: |
+          echo "TODO(you): query Cloud Monitoring for error-rate/latency on the canary revision"
+          echo "for ~5-10 min; fail this step to auto-halt promotion (traffic stays 90% on stable)."
+          sleep 30
+      - name: Promote to 100%
+        run: |
+          gcloud run services update-traffic "$SERVICE" \
+            --project "${{ vars.GCP_PROJECT_ID }}" --region "${{ vars.GCP_REGION }}" \
+            --to-latest --quiet
+      - name: Post-deploy health check
+        run: |
+          URL=$(gcloud run services describe "$SERVICE" --project "${{ vars.GCP_PROJECT_ID }}" --region "${{ vars.GCP_REGION }}" --format='value(status.url)')
+          curl -fsS "$URL/healthz" >/dev/null && echo "prod healthz OK"

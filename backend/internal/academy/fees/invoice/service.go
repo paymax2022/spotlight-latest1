@@ -264,6 +264,17 @@ func (s *Service) RecordPayment(ctx context.Context, actorID, invoiceID, guardia
 	}
 	// Only payable states accept NEW payments. Terminal (paid/waived/written_off) + draft reject.
 	if !isPayable(inv.Status) {
+		existing, lerr := s.store.GetPaymentByIdempotencyKey(ctx, idempotencyKey)
+		switch {
+		case lerr == nil && existing != nil && existing.InvoiceID == invoiceID:
+			hydrated, herr := s.hydrate(ctx, inv)
+			if herr != nil {
+				return nil, herr
+			}
+			return &RecordPaymentResult{Payment: existing, Invoice: hydrated, Replayed: true}, nil
+		case lerr != nil && !errors.Is(lerr, ErrNotFound):
+			return nil, lerr
+		}
 		return nil, ErrInvoiceNotPayable
 	}
 

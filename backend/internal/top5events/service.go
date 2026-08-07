@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +24,24 @@ type Auditor interface {
 	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
 }
 
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module (§ profit registry). app-wiring injects a thin adapter over the finance
+// commission service; when the commission feature is off (or no recorder is wired)
+// the field is nil and recording is a silent no-op. Modeled as a LOCAL interface so
+// top5events never imports the commission package at compile time (mirrors the
+// Auditor seam) — the adapter, which lives in app-wiring, discards the returned
+// earning row and surfaces only the error.
+//
+// This records realized profit ONLY; it never moves money. The ticket checkout debit
+// already posts the balanced double-entry into escrow, so the injected recorder is
+// deliberately constructed WITHOUT a ledger — RecordFor never re-posts to the ledger
+// (no double count of the revenue account); it appends the immutable earning row used
+// by profit reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
 // Service is the Event Ticketing + cashless Event Wallet core. It owns NO bespoke
 // money primitive: ticket checkout uses wallet.Debit; the cashless wallet is a
 // closed-loop sub-balance backed by the shared escrow standing account; vendor
@@ -37,10 +56,33 @@ type Service struct {
 	cred  *credential.Service
 	tags  *cashtag.Service
 	audit Auditor
+
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 }
 
 func NewService(db *pgxpool.Pool, led *ledger.Service, wal *wallet.Service, sett *settlement.Service, tiersSvc *tiers.Service, cred *credential.Service, tags *cashtag.Service, audit Auditor) *Service {
 	return &Service{db: db, led: led, wal: wal, sett: sett, tiers: tiersSvc, cred: cred, tags: tags, audit: audit}
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a settled ticket
+// purchase. It is best-effort and MUST NEVER affect the caller's outcome: a nil
+// recorder is a no-op, and any error is logged and swallowed so a profit-registry
+// failure can never fail or reverse the ticket purchase. The recorded breakdown is
+// resolved server-side from the central rate card; the order id doubles as the source
+// ref + idempotency key so retries / crash-resume / reconciliation never double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
+		"events", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[top5events] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
+	}
 }
 
 // ---------- Event CMS + approval workflow ----------
@@ -469,6 +511,11 @@ func (s *Service) finalizePurchase(ctx context.Context, o pendingOrder) (*Ticket
 	// persisted the ticket, return it rather than minting a second credential. This
 	// also recovers a PAID order whose ticket insert never ran before a crash.
 	if t, err := s.ticketByOrder(ctx, o.id); err == nil {
+		// Already-ticketed resume: the money moved and the ticket exists. Record the
+		// realized profit anyway (idempotent on the order id) so a crash between the
+		// ticket insert and the record on the first pass is still captured.
+		buyer := o.buyerID
+		s.recordCommissionSafe(ctx, "Lifestyle", "Event Tickets", "", o.payable, o.id, &buyer)
 		return t, nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
@@ -488,6 +535,17 @@ func (s *Service) finalizePurchase(ctx context.Context, o pendingOrder) (*Ticket
 		return nil, fmt.Errorf("events: insert ticket: %w", err)
 	}
 	s.log(o.buyerID, "events.purchase", o.id, map[string]any{"event": o.eventID, "tier": o.tierID, "kobo": o.payable})
+	// Record realized Spotlight profit into the central Commission & Profit registry.
+	// This is the ticket-purchase settlement point (money is durably in escrow, the
+	// order is PAID and the ticket issued). Shared by the live Purchase path AND the
+	// crash-recovery ReconcilePendingOrders re-drive. Best-effort + idempotent: the
+	// order id doubles as source ref + idempotency key, so retries / resume never
+	// double-count. gross = the full amount the buyer paid (order total_kobo, net of
+	// any promo). A recorder failure is logged and swallowed — it must NEVER fail or
+	// reverse the ticket the buyer already paid for (the ticket debit already posted
+	// the money into escrow; this appends the earning row only).
+	buyer := o.buyerID
+	s.recordCommissionSafe(ctx, "Lifestyle", "Event Tickets", "", o.payable, o.id, &buyer)
 	// Return the persisted ticket (handles the ON CONFLICT-skipped race where a
 	// concurrent resume issued it first).
 	return s.ticketByOrder(ctx, o.id)

@@ -74,7 +74,9 @@ func RegisterAcademyCredentials(member, admin *gin.RouterGroup, pool *pgxpool.Po
 	// ── Member ──
 	member.GET("/credentials", h.ListMine)
 	member.GET("/credentials/verify/:verificationId", h.Verify)
+	member.GET("/credentials/:id", h.GetOne)
 	member.GET("/earning/opportunities", h.ListEligible)
+	member.GET("/earning/opportunities/:id", h.GetOpportunity)
 	member.POST("/earning/apply", h.Apply)
 
 	// ── Admin (RBAC academy.credentials) ──
@@ -101,6 +103,24 @@ func (h *Handler) ListMine(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
+// GetOne returns a single credential the caller OWNS (same Credential shape as the
+// ListMine list item). Ownership is enforced in the service; a non-owned or missing
+// id returns 404. Registered as a param sibling of /credentials/verify/:verificationId
+// (Gin v1.10 routes the literal "verify" ahead of :id).
+func (h *Handler) GetOne(c *gin.Context) {
+	u := uid(c)
+	if u == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	out, err := h.svc.GetMine(c.Request.Context(), u, c.Param("id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
 // Verify is the public-ish verification lookup. It returns only the sanitized
 // registry record (no PII beyond holder display name) and does not require the caller
 // to own the credential.
@@ -120,6 +140,23 @@ func (h *Handler) ListEligible(c *gin.Context) {
 		return
 	}
 	out, err := h.svc.EvaluateBridge(c.Request.Context(), u)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// GetOpportunity returns a single earning opportunity the caller is eligible for
+// (same EarningOpportunity shape as the ListEligible list item). Eligibility is
+// enforced in the service; a non-eligible or missing id returns 404.
+func (h *Handler) GetOpportunity(c *gin.Context) {
+	u := uid(c)
+	if u == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	out, err := h.svc.GetEligibleOpportunity(c.Request.Context(), u, c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return

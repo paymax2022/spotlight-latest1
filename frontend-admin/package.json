@@ -9,9 +9,11 @@
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "check:mock-flags": "node scripts/check-mock-flags.mjs",
-    "check:mock-flags:ci": "node scripts/check-mock-flags.mjs --strict"
+    "check:mock-flags:ci": "node scripts/check-mock-flags.mjs --strict",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@sentry/nextjs": "^10.69.0",
     "@supabase/supabase-js": "^2.108.2",
     "next": "15.1.11",
     "react": "^19.2.0",
@@ -24,6 +26,7 @@
     "@types/react": "~19.2.10",
     "@types/react-dom": "~19.2.0",
     "@vitejs/plugin-react": "^6.0.3",
+    "jsdom": "^29.1.1",
     "typescript": "^5",
     "vitest": "^4.1.9"
   }

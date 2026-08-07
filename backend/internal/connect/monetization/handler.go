@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -128,7 +129,42 @@ func (h *Handler) book(c *gin.Context, kind string) {
 	c.JSON(http.StatusCreated, gin.H{"data": b})
 }
 
+// CancelSubscription — POST /api/v1/connect/subscriptions/cancel (member).
+// Body: {"immediate": bool}. Default end-of-period; immediate refunds unused time.
+func (h *Handler) CancelSubscription(c *gin.Context) {
+	uid := userID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	var body struct {
+		Immediate bool `json:"immediate"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	res, err := h.svc.CancelSubscription(c.Request.Context(), uid, body.Immediate)
+	if err != nil {
+		if errors.Is(err, ErrNoActiveSubscription) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "no active subscription"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "cancel failed"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": res})
+}
+
 // --- Admin ---
+
+// AdminRunRenewals — POST /api/connect/admin/subscriptions/run-renewals
+// (connect.payments.reconcile). Drives the auto-renew batch; a scheduler calls this.
+func (h *Handler) AdminRunRenewals(c *gin.Context) {
+	rep, err := h.svc.ProcessRenewals(c.Request.Context(), time.Now().UTC())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "partial": rep})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rep})
+}
 
 // AdminUpsertPlan — POST /api/connect/admin/plans (connect.plans.manage).
 func (h *Handler) AdminUpsertPlan(c *gin.Context) {
@@ -143,6 +179,28 @@ func (h *Handler) AdminUpsertPlan(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminRefund — POST /api/connect/admin/orders/:id/refund (connect.payments.refund).
+// Reverses a paid order safely and single (PAY-007). Idempotent.
+func (h *Handler) AdminRefund(c *gin.Context) {
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = c.ShouldBindJSON(&body) // reason optional
+	o, err := h.svc.Refund(c.Request.Context(), c.Param("id"), userID(c), body.Reason)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrOrderNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
+		case errors.Is(err, ErrNotRefundable):
+			c.JSON(http.StatusConflict, gin.H{"error": "order is not refundable"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "refund failed"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": o})
 }
 
 // AdminListOrders — GET /api/connect/admin/orders?user_id=&limit= (connect.payments.reconcile).

@@ -59,7 +59,7 @@ type fakeRepo struct {
 func (f fakeRepo) NearbyOwn(context.Context, string, Point, float64, int) ([]OwnEntity, error) {
 	return f.nearby, nil
 }
-func (f fakeRepo) InZone(context.Context, Point, string) (bool, error) { return f.inzone, nil }
+func (f fakeRepo) InZone(context.Context, Point, string) (bool, error)             { return f.inzone, nil }
 func (f fakeRepo) UpsertLocation(context.Context, OwnEntity, string, string) error { return nil }
 
 // testService builds a Service whose registry is all deterministic mocks, with

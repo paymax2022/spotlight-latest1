@@ -203,8 +203,10 @@ func TestDoubleEntry_ReversalPairNetsToZero(t *testing.T) {
 // TestReversalIsOppositeOfForward proves the reversal legs carry the OPPOSITE sign
 // of their forward counterparts, so a forward posting followed by its reversal
 // leaves every touched account exactly where it started (net zero per account):
-//   forward CREDIT (+) is undone by REVERSAL_CREDIT (-)
-//   forward DEBIT  (-) is undone by REVERSAL_DEBIT  (+)
+//
+//	forward CREDIT (+) is undone by REVERSAL_CREDIT (-)
+//	forward DEBIT  (-) is undone by REVERSAL_DEBIT  (+)
+//
 // This is the arithmetic guarantee behind "corrections = reversing entries only".
 func TestReversalIsOppositeOfForward(t *testing.T) {
 	if signOf(ledger.EntryCredit)+signOf(ledger.EntryReversalCredit) != 0 {

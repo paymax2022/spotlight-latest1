@@ -10,9 +10,9 @@ import (
 // proxied to the client; for stricter key hygiene point MapsTileStyleURL at a
 // self-hosted style and swap provider in config (no code change).
 type MapTiler struct {
-	apiKey      string
-	styleURL    string // optional explicit style override
-	defaultMap  string // MapTiler style id, e.g. "streets-v2"
+	apiKey     string
+	styleURL   string // optional explicit style override
+	defaultMap string // MapTiler style id, e.g. "streets-v2"
 }
 
 // NewMapTiler builds the adapter. styleOverride wins when set.

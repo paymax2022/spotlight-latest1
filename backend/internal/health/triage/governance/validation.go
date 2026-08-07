@@ -21,10 +21,10 @@ type Report struct {
 	TotalVignettes int `json:"total_vignettes"`
 
 	// ── Emergency sensitivity (recall on expected_emergency) — computed FIRST. ──
-	EmergencyTotal       int     `json:"emergency_total"`        // # vignettes expecting an emergency
-	EmergencyDetected    int     `json:"emergency_detected"`     // # of those the engine flagged emergency
-	EmergencyMissed      int     `json:"emergency_missed"`       // FALSE NEGATIVES — the dangerous misses
-	EmergencySensitivity float64 `json:"emergency_sensitivity"`  // detected / total (0..1); recall
+	EmergencyTotal       int      `json:"emergency_total"`        // # vignettes expecting an emergency
+	EmergencyDetected    int      `json:"emergency_detected"`     // # of those the engine flagged emergency
+	EmergencyMissed      int      `json:"emergency_missed"`       // FALSE NEGATIVES — the dangerous misses
+	EmergencySensitivity float64  `json:"emergency_sensitivity"`  // detected / total (0..1); recall
 	EmergencyMissedCodes []string `json:"emergency_missed_codes"` // which vignettes were missed
 
 	// ── Triage accuracy. ──
@@ -160,38 +160,38 @@ func (s *ValidationService) SeedVignettes(ctx context.Context) error {
 	seeds := []Vignette{
 		{
 			Code: "vg_malaria_fever_en", Language: "en", AgeYears: 28, Sex: "male", Region: "NG",
-			Evidence:           []triage.Evidence{sym("s_fever"), sym("s_headache"), sym("s_weakness")},
-			ExpectedLevel:      triage.LevelConsult24h, ExpectedEmergency: false,
+			Evidence:      []triage.Evidence{sym("s_fever"), sym("s_headache"), sym("s_weakness")},
+			ExpectedLevel: triage.LevelConsult24h, ExpectedEmergency: false,
 			ExpectedConditions: []string{"Malaria"},
 		},
 		{
 			Code: "vg_malaria_fever_pcm", Language: "pcm", AgeYears: 30, Sex: "female", Region: "NG",
-			Evidence:           []triage.Evidence{sym("s_fever"), sym("s_weakness")},
-			ExpectedLevel:      triage.LevelConsult, ExpectedEmergency: false,
+			Evidence:      []triage.Evidence{sym("s_fever"), sym("s_weakness")},
+			ExpectedLevel: triage.LevelConsult, ExpectedEmergency: false,
 			ExpectedConditions: []string{"Malaria"},
 		},
 		{
 			Code: "vg_paeds_infant_fever_en", Language: "en", AgeYears: 0, Sex: "female", Region: "NG",
-			Evidence:           []triage.Evidence{sym("s_fever")},
-			ExpectedLevel:      triage.LevelEmergencyUrgent, ExpectedEmergency: true, // SC-9 infant fever
+			Evidence:      []triage.Evidence{sym("s_fever")},
+			ExpectedLevel: triage.LevelEmergencyUrgent, ExpectedEmergency: true, // SC-9 infant fever
 			ExpectedConditions: []string{},
 		},
 		{
 			Code: "vg_maternal_bleeding_en", Language: "en", AgeYears: 26, Sex: "female", Region: "NG",
-			Evidence:           []triage.Evidence{sym("s_bleeding"), sym("s_weakness")},
-			ExpectedLevel:      triage.LevelEmergencyAmbulance, ExpectedEmergency: true, // pregnant set at run via region/age? handled by rule
+			Evidence:      []triage.Evidence{sym("s_bleeding"), sym("s_weakness")},
+			ExpectedLevel: triage.LevelEmergencyAmbulance, ExpectedEmergency: true, // pregnant set at run via region/age? handled by rule
 			ExpectedConditions: []string{},
 		},
 		{
 			Code: "vg_unconscious_emergency_en", Language: "en", AgeYears: 45, Sex: "male", Region: "NG",
-			Evidence:           []triage.Evidence{sym("s_unconscious")},
-			ExpectedLevel:      triage.LevelEmergencyAmbulance, ExpectedEmergency: true,
+			Evidence:      []triage.Evidence{sym("s_unconscious")},
+			ExpectedLevel: triage.LevelEmergencyAmbulance, ExpectedEmergency: true,
 			ExpectedConditions: []string{},
 		},
 		{
 			Code: "vg_self_care_mild_en", Language: "en", AgeYears: 22, Sex: "male", Region: "NG",
-			Evidence:           []triage.Evidence{sym("s_cough")},
-			ExpectedLevel:      triage.LevelSelfCare, ExpectedEmergency: false,
+			Evidence:      []triage.Evidence{sym("s_cough")},
+			ExpectedLevel: triage.LevelSelfCare, ExpectedEmergency: false,
 			ExpectedConditions: []string{"Common viral illness"},
 		},
 	}

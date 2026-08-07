@@ -38,11 +38,11 @@ type FlagInput struct {
 // FlagResult tells the caller what the shield did so the chat layer can mirror
 // the safety_state transition and surface the warning.
 type FlagResult struct {
-	FlagID       string
-	CaseOpened   bool
-	CaseID       string
-	Escalate     bool // conversation should move to under_review
-	TotalFlags   int
+	FlagID     string
+	CaseOpened bool
+	CaseID     string
+	Escalate   bool // conversation should move to under_review
+	TotalFlags int
 }
 
 // Flag stores a scam-shield flag, then evaluates config thresholds:

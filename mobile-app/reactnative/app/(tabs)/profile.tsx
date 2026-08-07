@@ -28,6 +28,7 @@ import {
   ChevronRight,
   LineChart,
   KeyRound,
+  Building2,
 } from 'lucide-react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import TextInputField from '@/components/TextInputField';
@@ -499,6 +500,7 @@ export default function ProfileScreen() {
                   onChange={(val) => {
                     setProfileValue('state', val);
                     setProfileValue('lga', '');
+                    setProfileValue('city', '');
                   }}
                 />
                 <SelectField
@@ -509,7 +511,14 @@ export default function ProfileScreen() {
                   onChange={(val) => setProfileValue('lga', val)}
                   disabled={!profileForm.state}
                 />
-                <TextInputField label="City" value={profileForm.city} onChangeText={(value) => setProfileValue('city', value)} autoCapitalize="words" />
+                <SelectField
+                  label="City"
+                  placeholder={profileForm.state ? 'Select city' : 'Select state first'}
+                  value={profileForm.city}
+                  options={getLGAsForState(profileForm.state)}
+                  onChange={(value) => setProfileValue('city', value)}
+                  disabled={!profileForm.state}
+                />
                 <TextInputField label="Residential address" value={profileForm.address} onChangeText={(value) => setProfileValue('address', value)} autoCapitalize="words" />
 
                 {profileError ? <Text style={styles.errorText}>{profileError}</Text> : null}
@@ -698,6 +707,22 @@ export default function ProfileScreen() {
               <Text style={styles.merchantSub}>Sell or offer services — keep your customer account</Text>
             </View>
             <ChevronRight size={18} color={Colors.onPrimary} strokeWidth={2} />
+          </Pressable>
+
+          <Pressable
+            onPress={() => router.push('/profile/business')}
+            style={({ pressed }) => [styles.settingsRow, shadow1, pressed && { opacity: 0.9 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Business and CAC registration"
+          >
+            <View style={styles.settingsIcon}>
+              <Building2 size={20} color={Colors.primary} strokeWidth={2} />
+            </View>
+            <View style={styles.merchantBody}>
+              <Text style={styles.settingsTitle}>Business / Merchant</Text>
+              <Text style={styles.settingsSub}>Register or verify your business with CAC</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
           </Pressable>
 
           <Pressable

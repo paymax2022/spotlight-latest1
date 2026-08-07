@@ -57,8 +57,8 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 
 	// --- Provider adapters (sandbox keys from env; empty => sandbox defaults) ---
 	mycoverGW := mycover.New(
-		os.Getenv("INSURANCE_MYCOVER_API_KEY"),     // secret key
-		os.Getenv("INSURANCE_MYCOVER_PUBLIC_KEY"),  // publishable key
+		os.Getenv("INSURANCE_MYCOVER_API_KEY"),    // secret key
+		os.Getenv("INSURANCE_MYCOVER_PUBLIC_KEY"), // publishable key
 		os.Getenv("INSURANCE_MYCOVER_WEBHOOK_SECRET"),
 		os.Getenv("INSURANCE_MYCOVER_BASE_URL"),
 	)

@@ -115,12 +115,13 @@ const (
 // Status machine — guarded, fail-closed (3 honesty states + STALE). Any edge not
 // listed is rejected.
 //
-//   AI_ESTIMATE          → RESTAURANT_CONFIRMED (approve / edit-then-approve)
-//                          | AI_ESTIMATE (self / no-op re-estimate)
-//                          | EXACT (a barcode appeared) | STALE
-//   RESTAURANT_CONFIRMED → STALE (name/photo/portion/version change) | EXACT (barcode)
-//   EXACT                → STALE (barcode changed) — otherwise terminal
-//   STALE                → AI_ESTIMATE | RESTAURANT_CONFIRMED | EXACT (re-estimate)
+//	AI_ESTIMATE          → RESTAURANT_CONFIRMED (approve / edit-then-approve)
+//	                       | AI_ESTIMATE (self / no-op re-estimate)
+//	                       | EXACT (a barcode appeared) | STALE
+//	RESTAURANT_CONFIRMED → STALE (name/photo/portion/version change) | EXACT (barcode)
+//	EXACT                → STALE (barcode changed) — otherwise terminal
+//	STALE                → AI_ESTIMATE | RESTAURANT_CONFIRMED | EXACT (re-estimate)
+//
 // ─────────────────────────────────────────────────────────────────────────────
 var statusTransitions = map[Status]map[Status]bool{
 	StatusAIEstimate: {
@@ -376,14 +377,14 @@ func portionFactor(label string) (float64, bool) {
 
 // AllergenDeclaration is a SAFETY-CRITICAL allergen claim on a dish.
 type AllergenDeclaration struct {
-	ID              string `json:"id"`
-	MenuItemID      string `json:"menu_item_id"`
-	RestaurantID    string `json:"restaurant_id"`
-	Allergen        string `json:"allergen"`
-	DeclarationType string `json:"declaration_type"` // CONTAINS | MAY_CONTAIN | FREE_FROM
-	Source          string `json:"source"`           // VENDOR | AI
+	ID              string  `json:"id"`
+	MenuItemID      string  `json:"menu_item_id"`
+	RestaurantID    string  `json:"restaurant_id"`
+	Allergen        string  `json:"allergen"`
+	DeclarationType string  `json:"declaration_type"` // CONTAINS | MAY_CONTAIN | FREE_FROM
+	Source          string  `json:"source"`           // VENDOR | AI
 	AttestedBy      *string `json:"attested_by,omitempty"`
-	CrossContamAck  bool   `json:"cross_contamination_ack"`
+	CrossContamAck  bool    `json:"cross_contamination_ack"`
 }
 
 // Allergen controlled vocabulary (mirrors the DB CHECK).
@@ -491,9 +492,10 @@ type trafficThresholds struct {
 }
 
 // trafficLightConfig — per-serving cut points (sensible Nigeria-burden defaults).
-//   sodium_mg : amber 600, red 1200  (WHO 2g/day sodium → ~600mg/meal moderate)
-//   sugar_g   : amber 15,  red 27
-//   sat_fat_g : amber 5,   red 9
+//
+//	sodium_mg : amber 600, red 1200  (WHO 2g/day sodium → ~600mg/meal moderate)
+//	sugar_g   : amber 15,  red 27
+//	sat_fat_g : amber 5,   red 9
 var trafficLightConfig = map[string]trafficThresholds{
 	NutSodium: {amber: 600, red: 1200},
 	NutSugar:  {amber: 15, red: 27},
@@ -531,10 +533,10 @@ func bandFor(kcal float64) EnergyBand {
 // NutrientDisplay is one nutrient's display block: the raw range, the precision-
 // formatted string, and (where applicable) its traffic light.
 type NutrientDisplay struct {
-	Nutrient   string       `json:"nutrient"`
-	Range      Range        `json:"range"`
-	Text       string       `json:"text"`
-	Light      TrafficLight `json:"traffic_light,omitempty"`
+	Nutrient string       `json:"nutrient"`
+	Range    Range        `json:"range"`
+	Text     string       `json:"text"`
+	Light    TrafficLight `json:"traffic_light,omitempty"`
 }
 
 // DisplayBlock is the buyer-facing presentation of a resolved profile. It NEVER
@@ -650,8 +652,8 @@ func BuildDisplay(p PerServing, g Grounding, conf Confidence, status Status) Dis
 
 // Sanity-bound constants.
 const (
-	minKcalPerGram      = 0.2 // water-heavy soups can be low, but not near-zero
-	maxKcalPerGram      = 9.0 // pure fat ≈ 9 kcal/g — nothing edible exceeds it
+	minKcalPerGram      = 0.2  // water-heavy soups can be low, but not near-zero
+	maxKcalPerGram      = 9.0  // pure fat ≈ 9 kcal/g — nothing edible exceeds it
 	atwaterTolerancePct = 0.30 // 30% tolerance on the 4/4/9 reconciliation
 )
 
@@ -659,9 +661,9 @@ const (
 // plausibility for the given portion. Pure. Returns nil when plausible, else an
 // error wrapping ErrSanityBounds describing the first failure.
 //
-//	1. kcal/gram within [0.2, 9.0]
-//	2. all macros + sodium non-negative
-//	3. Atwater reconciliation: 4*protein + 4*carb + 9*fat ≈ energy_kcal (±30%)
+//  1. kcal/gram within [0.2, 9.0]
+//  2. all macros + sodium non-negative
+//  3. Atwater reconciliation: 4*protein + 4*carb + 9*fat ≈ energy_kcal (±30%)
 func CheckSanity(p PerServing, portionG float64) error {
 	if portionG <= 0 {
 		return fmt.Errorf("%w: portion_size_g must be > 0", ErrSanityBounds)
@@ -782,9 +784,9 @@ func worstConfidence(cs []Confidence) Confidence {
 // libraryMatch scores a dish name against a library entry's name + aliases.
 // Returns a score in [0,1]; 0 means no match. The caller picks the highest.
 //
-//	- An exact (case-insensitive) name/alias equality scores 1.0.
-//	- A containment (name contains alias or alias contains name) scores 0.8.
-//	- Otherwise the Jaccard token overlap (shared tokens / union) is used.
+//   - An exact (case-insensitive) name/alias equality scores 1.0.
+//   - A containment (name contains alias or alias contains name) scores 0.8.
+//   - Otherwise the Jaccard token overlap (shared tokens / union) is used.
 func libraryMatch(dishName string, entry LibraryEntry) float64 {
 	want := normalize(dishName)
 	if want == "" {

@@ -40,8 +40,10 @@ func TestCreateQuoteComplianceEnforcement(t *testing.T) {
 			wantQuote: true,
 		},
 		{
-			name:     "blocked returns compliance_block with reason code",
-			screener: ScreenerFunc(func(_ context.Context, _, _ string, _ int64) (bool, string, error) { return false, "sanctions_hit", nil }),
+			name: "blocked returns compliance_block with reason code",
+			screener: ScreenerFunc(func(_ context.Context, _, _ string, _ int64) (bool, string, error) {
+				return false, "sanctions_hit", nil
+			}),
 			wantErr:  true,
 			wantType: ErrComplianceBlock,
 			wantCode: "sanctions_hit",
@@ -54,15 +56,19 @@ func TestCreateQuoteComplianceEnforcement(t *testing.T) {
 			wantCode: "compliance_block",
 		},
 		{
-			name:     "screener error fails closed",
-			screener: ScreenerFunc(func(_ context.Context, _, _ string, _ int64) (bool, string, error) { return false, "", errors.New("vendor timeout") }),
+			name: "screener error fails closed",
+			screener: ScreenerFunc(func(_ context.Context, _, _ string, _ int64) (bool, string, error) {
+				return false, "", errors.New("vendor timeout")
+			}),
 			wantErr:  true,
 			wantType: ErrComplianceBlock,
 			wantCode: "compliance_block",
 		},
 		{
-			name:     "screener error overrides an allowed=true (fail-closed)",
-			screener: ScreenerFunc(func(_ context.Context, _, _ string, _ int64) (bool, string, error) { return true, "", errors.New("vendor down") }),
+			name: "screener error overrides an allowed=true (fail-closed)",
+			screener: ScreenerFunc(func(_ context.Context, _, _ string, _ int64) (bool, string, error) {
+				return true, "", errors.New("vendor down")
+			}),
 			wantErr:  true,
 			wantType: ErrComplianceBlock,
 			wantCode: "compliance_block",

@@ -10,6 +10,7 @@ import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import StateView from '@/components/StateView';
 import { useUnitOfferings, useSaveUnitOfferings } from '@/features/realtor/hooks/useRealtorOwner';
 import { MODE_LABEL } from '@/features/realtor/constants/realtor.constants';
@@ -26,7 +27,7 @@ export default function OfferingModeScreen() {
 
   const toggle = (mode: string) => setModes((ms) => ms.map((m) => (m.mode === mode ? { ...m, enabled: !m.enabled } : m)));
   const setNaira = (mode: string, field: 'price' | 'nightlyPrice' | 'cautionDeposit', naira: string) =>
-    setModes((ms) => ms.map((m) => (m.mode === mode ? { ...m, [field]: (Number(naira.replace(/\D/g, '')) || 0) * 100 } : m)));
+    setModes((ms) => ms.map((m) => (m.mode === mode ? { ...m, [field]: (Number(naira.replace(/[^0-9.]/g, '')) || 0) * 100 } : m)));
 
   const submit = async () => {
     await save.mutateAsync(modes);
@@ -90,14 +91,14 @@ export default function OfferingModeScreen() {
             {m.enabled ? (
               <View style={styles.modeBody}>
                 {m.mode === 'short_stay' ? (
-                  <TextInputField label="Nightly price (₦)" placeholder="e.g. 75000" keyboardType="number-pad" value={naira(m.nightlyPrice)} onChangeText={(t) => setNaira(m.mode, 'nightlyPrice', t)} />
+                  <TextInputField label="Nightly price (₦)" placeholder="e.g. 75000" keyboardType="decimal-pad" inputMode="decimal" maxLength={13} value={naira(m.nightlyPrice)} onChangeText={(t) => setNaira(m.mode, 'nightlyPrice', sanitizeMoneyInput(t))} />
                 ) : m.mode === 'for_sale' ? (
-                  <TextInputField label="Sale price (₦)" placeholder="e.g. 85000000" keyboardType="number-pad" value={naira(m.price)} onChangeText={(t) => setNaira(m.mode, 'price', t)} />
+                  <TextInputField label="Sale price (₦)" placeholder="e.g. 85000000" keyboardType="decimal-pad" inputMode="decimal" maxLength={13} value={naira(m.price)} onChangeText={(t) => setNaira(m.mode, 'price', sanitizeMoneyInput(t))} />
                 ) : (
-                  <TextInputField label="Annual rent (₦)" placeholder="e.g. 6500000" keyboardType="number-pad" value={naira(m.price)} onChangeText={(t) => setNaira(m.mode, 'price', t)} />
+                  <TextInputField label="Annual rent (₦)" placeholder="e.g. 6500000" keyboardType="decimal-pad" inputMode="decimal" maxLength={13} value={naira(m.price)} onChangeText={(t) => setNaira(m.mode, 'price', sanitizeMoneyInput(t))} />
                 )}
                 {m.mode !== 'for_sale' ? (
-                  <TextInputField label="Caution deposit (₦, refundable)" placeholder="e.g. 650000" keyboardType="number-pad" value={naira(m.cautionDeposit)} onChangeText={(t) => setNaira(m.mode, 'cautionDeposit', t)} />
+                  <TextInputField label="Caution deposit (₦, refundable)" placeholder="e.g. 650000" keyboardType="decimal-pad" inputMode="decimal" maxLength={13} value={naira(m.cautionDeposit)} onChangeText={(t) => setNaira(m.mode, 'cautionDeposit', sanitizeMoneyInput(t))} />
                 ) : null}
               </View>
             ) : null}

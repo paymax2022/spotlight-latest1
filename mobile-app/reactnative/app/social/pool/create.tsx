@@ -11,6 +11,7 @@ import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useCreatePool } from '@/features/social/hooks';
 import { SocialColors, formatNaira } from '@/features/social/constants/social.constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 const PAYOUT_RULES = [
   'Organiser withdraws on the event date.',
@@ -44,7 +45,7 @@ export default function CreatePool() {
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <TextInputField label="Pool name" placeholder="e.g. Tunde's Birthday" value={title} onChangeText={setTitle} />
         <TextInputField label="Description (optional)" placeholder="What's this pool for?" value={desc} onChangeText={setDesc} multiline />
-        <TextInputField label="Goal amount (optional)" placeholder="0" keyboardType="numeric" value={goal} onChangeText={setGoal} />
+        <TextInputField label="Goal amount (optional)" placeholder="0" keyboardType="decimal-pad" maxLength={13} value={goal} onChangeText={(t) => setGoal(sanitizeMoneyInput(t))} />
 
         <Text style={styles.label}>Payout rule</Text>
         {PAYOUT_RULES.map((r) => (

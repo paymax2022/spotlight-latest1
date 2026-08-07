@@ -9,6 +9,7 @@ import { CheckCircle2, XCircle, Clock, ArrowLeft, Share2 } from 'lucide-react-na
 import { LinearGradient } from 'expo-linear-gradient';
 import PrimaryButton from '@/components/PrimaryButton';
 import { Colors } from '@/constants/colors';
+import { formatNaira } from '@/utils/money';
 import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
@@ -75,7 +76,7 @@ export default function ReceiptScreen() {
       `Paymax Receipt`,
       `Service: ${receipt.serviceType}`,
       `Status: ${receipt.status}`,
-      `Amount: ₦${receipt.amount.toLocaleString()}`,
+      `Amount: ${formatNaira(receipt.amount)}`,
       `Reference: ${receipt.reference}`,
       receipt.token ? `Token: ${receipt.token}` : null,
       `Date: ${new Date(receipt.createdAt).toLocaleString('en-NG')}`,
@@ -123,7 +124,7 @@ export default function ReceiptScreen() {
           >
             {meta.icon}
             <Text style={styles.bannerTitle}>{meta.label}</Text>
-            <Text style={styles.bannerAmount}>₦{receipt.totalAmount.toLocaleString('en-NG', { minimumFractionDigits: 2 })}</Text>
+            <Text style={styles.bannerAmount}>{formatNaira(receipt.totalAmount)}</Text>
             <Text style={styles.bannerRef}>Ref: {receipt.reference}</Text>
             <Text style={styles.bannerMessage}>{statusMessage(receipt.status, receipt.serviceType)}</Text>
           </LinearGradient>
@@ -148,9 +149,9 @@ export default function ReceiptScreen() {
             <Row label="Product"    value={receipt.productName} />
             <Row label="Customer"   value={receipt.customerName} />
             <Row label="Account"    value={receipt.customerIdentifier} />
-            <Row label="Amount"     value={`₦${receipt.amount.toLocaleString()}`} />
-            <Row label="Charges"    value={`₦${receipt.charges.toLocaleString()}`} />
-            <Row label="Total Paid" value={`₦${receipt.totalAmount.toLocaleString()}`} />
+            <Row label="Amount"     value={formatNaira(receipt.amount)} />
+            <Row label="Charges"    value={formatNaira(receipt.charges)} />
+            <Row label="Total Paid" value={formatNaira(receipt.totalAmount)} />
             <Row label="Status"     value={receipt.status} />
             <Row label="Date"       value={new Date(receipt.createdAt).toLocaleString('en-NG')} />
             <Row label="Reference"  value={receipt.reference} mono />

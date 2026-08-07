@@ -76,9 +76,9 @@ type Policy struct {
 	ID                string     `json:"id"`
 	PolicyholderID    string     `json:"policyholder_user_id"`
 	ProductCode       string     `json:"product_code"`
-	Provider          string     `json:"provider"`             // aggregator
-	ProviderPolicyRef *string    `json:"provider_policy_ref"`  // set after bind
-	Underwriter       string     `json:"underwriter"`          // disclosed from provider
+	Provider          string     `json:"provider"`            // aggregator
+	ProviderPolicyRef *string    `json:"provider_policy_ref"` // set after bind
+	Underwriter       string     `json:"underwriter"`         // disclosed from provider
 	BindingMode       string     `json:"binding_mode"`
 	State             State      `json:"state"`
 	SumInsuredKobo    int64      `json:"sum_insured_kobo"`

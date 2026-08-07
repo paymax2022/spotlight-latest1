@@ -20,6 +20,11 @@ import (
 type Service struct {
 	repo    Store
 	billing BillingRail
+	// reader is the concrete pgx repository, used ONLY by the additive admin-wide
+	// oversight reads (all licences / class groups / billing, overview aggregate) which
+	// need queries beyond the Store contract. nil in the test seam (newServiceWithStore),
+	// which never exercises those admin reads.
+	reader *Repository
 }
 
 // NewService wires the schools service from a pgx pool. A nil rail falls back to the
@@ -28,7 +33,8 @@ func NewService(db *pgxpool.Pool, billing BillingRail) *Service {
 	if billing == nil {
 		billing = StubBillingRail{}
 	}
-	return &Service{repo: NewRepository(db), billing: billing}
+	repo := NewRepository(db)
+	return &Service{repo: repo, billing: billing, reader: repo}
 }
 
 // newServiceWithStore is the test seam: inject a fake Store + rail (no DB).
@@ -85,6 +91,47 @@ func (s *Service) MyInstitutions(ctx context.Context, userID string) ([]Institut
 		return nil, ErrNotFound
 	}
 	return s.repo.ListInstitutionsByAdmin(ctx, userID)
+}
+
+// ── Admin-wide oversight reads (all institutions) ──────────────────────────────────
+
+// AdminOverview aggregates platform-wide institution/licence/seat/enrolment totals for
+// the admin console (composed from the additive all-institutions oversight queries).
+func (s *Service) AdminOverview(ctx context.Context) (*AdminOverview, error) {
+	institutions, licences, activeLicences, seatsTotal, seatsUsed, err := s.reader.OverviewTotals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	enrollments, err := s.reader.CountAllEnrollmentsByState(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if enrollments == nil {
+		enrollments = map[string]int{}
+	}
+	return &AdminOverview{
+		Institutions:   institutions,
+		Licences:       licences,
+		ActiveLicences: activeLicences,
+		SeatsTotal:     seatsTotal,
+		SeatsUsed:      seatsUsed,
+		Enrollments:    enrollments,
+	}, nil
+}
+
+// AdminListLicences lists ALL licences across every institution.
+func (s *Service) AdminListLicences(ctx context.Context) ([]Licence, error) {
+	return s.reader.ListAllLicences(ctx)
+}
+
+// AdminListClassGroups lists ALL class groups across every institution (flat list).
+func (s *Service) AdminListClassGroups(ctx context.Context) ([]ClassGroup, error) {
+	return s.reader.ListAllClassGroups(ctx)
+}
+
+// AdminListBilling lists ALL institution billing/invoice lines across every institution.
+func (s *Service) AdminListBilling(ctx context.Context) ([]Billing, error) {
+	return s.reader.ListAllBilling(ctx)
 }
 
 // ── Licences ──────────────────────────────────────────────────────────────────────

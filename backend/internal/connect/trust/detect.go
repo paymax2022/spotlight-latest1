@@ -9,9 +9,9 @@ import (
 type Category string
 
 const (
-	CategoryFinancial    Category = "financial_solicitation"
-	CategoryOffPlatform  Category = "off_platform"
-	CategoryHarassment   Category = "harassment"
+	CategoryFinancial     Category = "financial_solicitation"
+	CategoryOffPlatform   Category = "off_platform"
+	CategoryHarassment    Category = "harassment"
 	CategoryImpersonation Category = "impersonation"
 )
 

@@ -12,6 +12,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import { formatNaira, formatDate } from '@/features/academy/constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { useTutorEarnings, useTutorMe, useRequestPayout } from '@/features/academy/hooks';
 
 /**
@@ -77,7 +78,7 @@ export default function TutorEarnings() {
         {show && verified ? (
           <View style={[styles.composer, shadow1]}>
             <Text style={styles.composerTitle}>Withdraw</Text>
-            <TextInput style={styles.input} keyboardType="number-pad" placeholder={`Amount (min ${formatNaira(e.minPayoutKobo)})`} placeholderTextColor={Colors.onSurfaceVariant} value={amount} onChangeText={setAmount} />
+            <TextInput style={styles.input} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} placeholder={`Amount (min ${formatNaira(e.minPayoutKobo)})`} placeholderTextColor={Colors.onSurfaceVariant} value={amount} onChangeText={(v) => setAmount(sanitizeMoneyInput(v))} />
             <Text style={styles.fieldLabel}>To</Text>
             {methods.map((m) => {
               const on = defaultMethod === m.id;

@@ -190,6 +190,25 @@ func (s *Service) ListMine(ctx context.Context, userID string) ([]Credential, er
 	return s.repo.ListCredentialsByUser(ctx, userID)
 }
 
+// GetMine returns a single credential the caller OWNS. It reuses the owner-scoped
+// list query (ListCredentialsByUser) and filters by id, so a user can only fetch
+// their own credential; a non-owned or missing id yields ErrNotFound (no leak).
+func (s *Service) GetMine(ctx context.Context, userID, id string) (*Credential, error) {
+	if userID == "" || id == "" {
+		return nil, ErrInvalidInput
+	}
+	creds, err := s.repo.ListCredentialsByUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range creds {
+		if creds[i].ID == id {
+			return &creds[i], nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
 // ── Earning bridge ───────────────────────────────────────────────────────────────
 
 // EvaluateBridge computes the earning opportunities a user is eligible for from their
@@ -214,6 +233,26 @@ func (s *Service) EvaluateBridge(ctx context.Context, userID string) ([]EarningO
 		}
 	}
 	return out, nil
+}
+
+// GetEligibleOpportunity returns a single earning opportunity the caller is eligible
+// for. It reuses EvaluateBridge (the same eligibility filter the list handler applies)
+// and selects by id, so a user only sees opportunities they qualify for; a non-eligible
+// or missing id yields ErrNotFound (no leak).
+func (s *Service) GetEligibleOpportunity(ctx context.Context, userID, id string) (*EarningOpportunity, error) {
+	if userID == "" || id == "" {
+		return nil, ErrInvalidInput
+	}
+	opps, err := s.EvaluateBridge(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range opps {
+		if opps[i].ID == id {
+			return &opps[i], nil
+		}
+	}
+	return nil, ErrNotFound
 }
 
 // Apply routes a user's application for an earning opportunity into the EXISTING

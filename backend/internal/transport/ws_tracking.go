@@ -34,9 +34,9 @@ type PositionUpdate struct {
 
 // TrackPoint is one raw GPS sample streamed by the driver app.
 type TrackPoint struct {
-	Lat     float64  `json:"lat" binding:"required"`
-	Lng     float64  `json:"lng" binding:"required"`
-	Heading *float64 `json:"heading,omitempty"`
+	Lat      float64  `json:"lat" binding:"required"`
+	Lng      float64  `json:"lng" binding:"required"`
+	Heading  *float64 `json:"heading,omitempty"`
 	SpeedMPS *float64 `json:"speed_mps,omitempty"`
 }
 
@@ -53,8 +53,8 @@ type tripTrace struct {
 type TripTracker struct {
 	db    *pgxpool.Pool
 	hub   *ws.Hub
-	maps  maps.MapService            // optional; when nil, positions are sent un-snapped
-	redis *platformRedis.Client      // optional; when nil, fan-out is in-process only
+	maps  maps.MapService       // optional; when nil, positions are sent un-snapped
+	redis *platformRedis.Client // optional; when nil, fan-out is in-process only
 
 	mu     sync.Mutex
 	traces map[string]*tripTrace // tripID → recent points (for map-matching)

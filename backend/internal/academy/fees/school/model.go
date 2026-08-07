@@ -85,12 +85,12 @@ type VerifyRequest struct {
 // audit log) is owned by E8 (backend/internal/academy/fees/export/) and is NOT built
 // here. This is the lightweight, verified-school self-service read only.
 type SchoolExport struct {
-	SchoolID     string          `json:"schoolId"`
-	SchoolName   string          `json:"schoolName"`
+	SchoolID     string           `json:"schoolId"`
+	SchoolName   string           `json:"schoolName"`
 	Tier         VerificationTier `json:"verificationTier"`
-	GeneratedAt  time.Time       `json:"generatedAt"`
-	Roster       []ExportStudent `json:"roster"`
-	FeeSchedules []ExportFee     `json:"feeSchedules"`
+	GeneratedAt  time.Time        `json:"generatedAt"`
+	Roster       []ExportStudent  `json:"roster"`
+	FeeSchedules []ExportFee      `json:"feeSchedules"`
 }
 
 // ExportStudent is a roster line in a school export (PII-minimal; admission number +
@@ -115,11 +115,11 @@ type ExportFee struct {
 // ── Sentinel errors (mapped to snake_case codes by the handler) ──────────────────
 
 var (
-	ErrNotFound            = errors.New("not_found")
-	ErrForbidden           = errors.New("forbidden")
-	ErrInvalidTier         = errors.New("invalid_verification_tier")
-	ErrIllegalTierMove     = errors.New("illegal_verification_tier_transition")
-	ErrSchoolNotVerified   = errors.New("school_not_verified")
-	ErrMissingName         = errors.New("missing_name")
-	ErrUnauthenticated     = errors.New("unauthenticated")
+	ErrNotFound          = errors.New("not_found")
+	ErrForbidden         = errors.New("forbidden")
+	ErrInvalidTier       = errors.New("invalid_verification_tier")
+	ErrIllegalTierMove   = errors.New("illegal_verification_tier_transition")
+	ErrSchoolNotVerified = errors.New("school_not_verified")
+	ErrMissingName       = errors.New("missing_name")
+	ErrUnauthenticated   = errors.New("unauthenticated")
 )

@@ -133,15 +133,15 @@ func (s *sqlSecondaryStore) DeleteBeneficiary(ctx context.Context, customer, id 
 
 // RateAlert mirrors the mobile contract. triggeredAt is null until fired.
 type RateAlert struct {
-	ID          string   `json:"id"`
-	Pair        string   `json:"pair"`
-	From        string   `json:"from"`
-	To          string   `json:"to"`
-	Direction   string   `json:"direction"`
-	Target      float64  `json:"target"`
-	Active      bool     `json:"active"`
-	CreatedAt   string   `json:"createdAt"`
-	TriggeredAt *string  `json:"triggeredAt"`
+	ID          string  `json:"id"`
+	Pair        string  `json:"pair"`
+	From        string  `json:"from"`
+	To          string  `json:"to"`
+	Direction   string  `json:"direction"`
+	Target      float64 `json:"target"`
+	Active      bool    `json:"active"`
+	CreatedAt   string  `json:"createdAt"`
+	TriggeredAt *string `json:"triggeredAt"`
 }
 
 func (s *sqlSecondaryStore) ListRateAlerts(ctx context.Context, customer string) ([]RateAlert, error) {

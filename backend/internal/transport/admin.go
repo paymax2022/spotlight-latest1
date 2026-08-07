@@ -49,16 +49,16 @@ func (a *AdminService) Dashboard(ctx context.Context) (map[string]any, error) {
 		cancelRate = float64(cancelled) / float64(totalTrips)
 	}
 	out := map[string]any{
-		"total_trips":      totalTrips,
-		"completed_trips":  completed,
-		"cancelled_trips":  cancelled,
-		"gbv_kobo":         gbv,
-		"revenue_kobo":     revenue,
-		"driver_earnings_kobo": driverEarnings,
-		"completion_rate":  completionRate,
-		"cancel_rate":      cancelRate,
+		"total_trips":           totalTrips,
+		"completed_trips":       completed,
+		"cancelled_trips":       cancelled,
+		"gbv_kobo":              gbv,
+		"revenue_kobo":          revenue,
+		"driver_earnings_kobo":  driverEarnings,
+		"completion_rate":       completionRate,
+		"cancel_rate":           cancelRate,
 		"open_safety_incidents": openIncidents,
-		"active_drivers":   activeDrivers,
+		"active_drivers":        activeDrivers,
 	}
 	// Per-mode KPIs (parcel/bus/towing/movers/car-hire). Defensive: skip if the
 	// mode tables are absent (e.g. migration not yet applied).
@@ -85,13 +85,13 @@ func (a *AdminService) ReportsSummary(ctx context.Context) (map[string]any, erro
 		cancelRate = float64(cancelled) / float64(totalTrips)
 	}
 	return map[string]any{
-		"settled_trips":     settledCount,
+		"settled_trips":      settledCount,
 		"gross_revenue_kobo": totalKobo,
-		"commission_kobo":   feeKobo,
+		"commission_kobo":    feeKobo,
 		"driver_payout_kobo": providerKobo,
-		"total_trips":       totalTrips,
-		"cancelled_trips":   cancelled,
-		"cancel_rate":       cancelRate,
+		"total_trips":        totalTrips,
+		"cancelled_trips":    cancelled,
+		"cancel_rate":        cancelRate,
 	}, nil
 }
 
@@ -268,9 +268,9 @@ func (a *AdminService) DispatchLive(ctx context.Context) (map[string]any, error)
 	var sosCount int
 	a.svc.db.QueryRow(ctx, `SELECT COUNT(*) FROM trips WHERE safety_status<>'normal' AND phase NOT IN ('completed','cancelled')`).Scan(&sosCount)
 	return map[string]any{
-		"active_trips":  inflight,
+		"active_trips":   inflight,
 		"online_drivers": drivers,
-		"sos_flags":     sosCount,
+		"sos_flags":      sosCount,
 	}, nil
 }
 

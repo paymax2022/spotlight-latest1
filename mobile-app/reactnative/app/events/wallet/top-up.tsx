@@ -15,6 +15,7 @@ import TextInputField from '@/components/TextInputField';
 import { PaymentSheet, usePurchasePayment } from '@/features/payments';
 import { useEvent, useEventWallet, useOpenEventWallet, useTopUpEventWallet } from '@/features/events/hooks';
 import { EventColors, formatNaira, EVENT_WALLET_DISCLOSURE } from '@/features/events/constants/events.constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 const PRESETS = [200000, 500000, 1000000, 2000000];
 
@@ -81,7 +82,7 @@ export default function EventWalletTopUp() {
               </Pressable>
             ))}
           </View>
-          <TextInputField label="Custom amount (₦)" placeholder="0" keyboardType="numeric" value={amount} onChangeText={setAmount} leftIcon={<Wallet size={18} color={EventColors.muted} />} />
+          <TextInputField label="Custom amount (₦)" placeholder="0" keyboardType="decimal-pad" inputMode="decimal" maxLength={13} value={amount} onChangeText={(v) => setAmount(sanitizeMoneyInput(v))} leftIcon={<Wallet size={18} color={EventColors.muted} />} />
 
           <View style={styles.disclosure}>
             <Text style={styles.disclosureText}>{EVENT_WALLET_DISCLOSURE}</Text>

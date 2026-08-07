@@ -27,7 +27,7 @@ export default function VirtualAccountDetailScreen() {
   }
 
   const meta = CURRENCIES[account.currency];
-  const d = account.details;
+  const d = account.details ?? ({} as typeof account.details); // live payload may omit details
   const isIban = account.type === 'iban';
 
   const shareDetails = async () => {
@@ -43,8 +43,8 @@ export default function VirtualAccountDetailScreen() {
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
         <View style={styles.hero}>
-          <Text style={styles.flag}>{meta.flag}</Text>
-          <Text style={styles.heroTitle}>{meta.name}</Text>
+          <Text style={styles.flag}>{meta?.flag ?? ''}</Text>
+          <Text style={styles.heroTitle}>{meta?.name ?? account.currency}</Text>
           <View style={styles.activePill}>
             <CheckCircle2 size={13} color={Colors.tertiaryContainer} strokeWidth={2} />
             <Text style={styles.activeText}>Active</Text>

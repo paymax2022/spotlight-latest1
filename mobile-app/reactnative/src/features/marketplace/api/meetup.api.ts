@@ -21,6 +21,15 @@ export async function getSafeSpots(): Promise<M.SafeSpot[]> {
   }
 }
 
+// ── Mark met — POST /deals/:id/mark-met ──────────────────────────────────────
+// The ADR-023 "mark met" signal: a thread participant marks the deal met (they
+// transacted off-platform), unlocking review-writes. Idempotent on the backend
+// (first mark wins). Mock mode is a no-op — mock threads are unlocked locally.
+export async function markDealMet(dealId: string): Promise<void> {
+  if (MKT_USE_MOCK) return;
+  await mktPost<unknown>(`/deals/${dealId}/mark-met`);
+}
+
 // ── Reviews — POST /deals/:id/review {rating, tags, text} ────────────────────
 export async function submitReview(
   dealId: string,

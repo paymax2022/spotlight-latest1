@@ -3,6 +3,7 @@ package transfers
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -16,12 +17,54 @@ import (
 
 // Service handles wallet-to-wallet, wallet-to-bank, and bank-to-bank transfers.
 type Service struct {
-	db       *pgxpool.Pool
-	ledger   *ledger.Service
-	tiers    *tiers.Service
-	payment  provider.PaymentProvider
-	registry *disbursement.Registry // multi-provider payout (nil = bank routes degraded)
-	pins     *pinStore
+	db         *pgxpool.Pool
+	ledger     *ledger.Service
+	tiers      *tiers.Service
+	payment    provider.PaymentProvider
+	registry   *disbursement.Registry // multi-provider payout (nil = bank routes degraded)
+	pins       *pinStore
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+}
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module. app-wiring injects a thin adapter over the finance commission service;
+// when the commission feature is off (or no recorder is wired) the field is nil and
+// recording is a silent no-op. Modeled as a LOCAL interface so transfers never
+// imports the commission package at compile time (mirrors transport/service.go).
+//
+// This records realized profit ONLY; it never moves money. The transfer's own money
+// movements (the fee credit into paymax_revenue) are unchanged, and the injected
+// recorder is deliberately constructed WITHOUT a ledger so RecordFor never re-posts
+// to the ledger (no double count) — it appends the immutable earning row only.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+	RecordExact(ctx context.Context, category, service, subtype string, grossKobo, recordedRevenueKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a completed transfer.
+// It is best-effort and MUST NEVER affect the caller's outcome: a nil recorder is a
+// no-op, and any error is logged and swallowed so a profit-registry failure can
+// never fail or reverse a money movement. The transfer id doubles as the source ref
+// and idempotency key so retries / reconciliation never double-count. The module's
+// ACTUAL fee is a small fixed-kobo tier (see WalletTransferFee / BankTransferFee),
+// NOT a % of principal, so we record the EXACT feeKobo via RecordExact (grossKobo =
+// the transfer principal is passed for context only). Callers gate this on the real
+// fee being charged (fee > 0); a free transfer records nothing.
+func (s *Service) recordCommissionSafe(ctx context.Context, service string, grossKobo, feeKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || feeKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordExact(ctx, "Finance", service, "", grossKobo, feeKobo,
+		"transfers", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[transfers] commission record (source=%s gross=%d fee=%d) failed, continuing: %v", sourceRef, grossKobo, feeKobo, err)
+	}
 }
 
 // NewService builds the transfers service. registry may be nil (e.g. REST-only or
@@ -170,6 +213,14 @@ func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, r
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("transfers: commit: %w", err)
+	}
+	// Record realized Spotlight profit into the central Commission & Profit registry.
+	// ONLY when a fee was actually charged (small wallet transfers ≤ ₦5,000 are free
+	// ⇒ fee == 0 ⇒ nothing earned ⇒ record nothing, per the money-path rule). gross =
+	// the transfer principal; source ref + idempotency key = the transfer id. Best-
+	// effort + idempotent — a recorder failure can never fail/reverse the transfer.
+	if fee > 0 {
+		s.recordCommissionSafe(ctx, "Money Transfer", wt.AmountKobo, wt.FeeKobo, wt.ID, &wt.SenderID)
 	}
 	return wt, nil
 }
@@ -688,5 +739,13 @@ func (s *Service) settleTransfer(ctx context.Context, bt *BankTransfer, next Ban
 	}
 	bt.Status = next
 	s.audit(ctx, bt.UserID, "transfer.bank.settle."+string(next), bt.ID, bt.Reference)
+	// Record realized Spotlight profit ONLY on a SUCCESSFUL settlement where a fee was
+	// actually charged (bank transfers always carry a fixed-kobo fee; failed/reversed
+	// settlements refund the fee, so recording is gated to the success + fee>0 branch).
+	// gross = the transfer principal; source ref + idempotency key = the transfer id.
+	// Best-effort + idempotent — never fails or reverses the settlement.
+	if next == BankTransferSuccessful && bt.FeeKobo > 0 {
+		s.recordCommissionSafe(ctx, "Money Transfer", bt.AmountKobo, bt.FeeKobo, bt.ID, &bt.UserID)
+	}
 	return nil
 }

@@ -20,6 +20,55 @@ type PaymentProvider interface {
 	Name() string
 }
 
+// CardIssuer abstracts a card-issuing gateway (Maplerad, etc.). It covers the card
+// LIFECYCLE only — issue / reveal / freeze / terminate. Card FUNDING is NOT here:
+// funding stays on the internal double-entry ledger (orch_fx_card_txns). Any
+// provider-side settlement of card spend is treasury-level reconciliation and is
+// out of scope for this seam.
+//
+// Provider credentials are server-side only. Card secrets (PAN/CVV) live in the
+// provider's PCI-isolated vault and are fetched on demand via RevealCard.
+type CardIssuer interface {
+	// Name returns the provider identifier (e.g. "maplerad").
+	Name() string
+	// IssueCard provisions a virtual card at the provider and returns the
+	// provider card id plus the non-secret metadata (last4, expiry, brand).
+	IssueCard(ctx context.Context, req IssueCardRequest) (*IssuedCard, error)
+	// RevealCard fetches the sensitive PAN/CVV/expiry for a provider card id.
+	RevealCard(ctx context.Context, providerCardID string) (*CardSecrets, error)
+	// SetCardFrozen freezes (true) or unfreezes (false) a provider card.
+	SetCardFrozen(ctx context.Context, providerCardID string, frozen bool) error
+	// TerminateCard permanently deactivates a provider card.
+	TerminateCard(ctx context.Context, providerCardID string) error
+}
+
+// IssueCardRequest is the card-issuing request. Amounts (if any) are integer minor
+// units; this seam carries no funding amount (funding is ledger-side).
+type IssueCardRequest struct {
+	Customer       string
+	Currency       string
+	Brand          string
+	Label          string
+	CardholderName string
+}
+
+// IssuedCard is the non-secret result of issuing a card.
+type IssuedCard struct {
+	ProviderCardID string
+	Last4          string
+	Brand          string
+	ExpMonth       int
+	ExpYear        int
+}
+
+// CardSecrets is the sensitive card material fetched on demand from the provider
+// vault. Never logged, never persisted.
+type CardSecrets struct {
+	PAN    string
+	CVV    string
+	Expiry string
+}
+
 // DisbursementProvider abstracts a bank-payout gateway (Paystack, Monnify, …).
 // It is an ADDITIVE capability — kept separate from PaymentProvider so existing
 // adapters need not change. A single concrete client may satisfy both.
@@ -67,9 +116,9 @@ type InitializePaymentRequest struct {
 }
 
 type InitializePaymentResponse struct {
-	Reference      string
+	Reference        string
 	AuthorizationURL string
-	AccessCode     string
+	AccessCode       string
 }
 
 type PaymentStatus struct {
@@ -133,11 +182,11 @@ type PayoutStatus struct {
 
 // WebhookEvent is the normalized form of a provider transfer/collection webhook.
 type WebhookEvent struct {
-	Type       string // "transfer" | "collection" | "bill" | "unknown"
+	Type        string // "transfer" | "collection" | "bill" | "unknown"
 	ProviderRef string // provider transfer ref (routes to bank_transfers)
-	Reference  string // our reference echoed back, when present
-	Status     string // normalized: successful | failed | reversed | pending
-	AmountKobo int64
+	Reference   string // our reference echoed back, when present
+	Status      string // normalized: successful | failed | reversed | pending
+	AmountKobo  int64
 	// EventID is the provider-side unique event identifier used by the webhook
 	// pipeline to dedupe redeliveries (webhook_event unique key). Additive:
 	// providers that don't surface an event id leave this empty and the domain

@@ -39,9 +39,9 @@ func TestAmountsAreMinorUnits(t *testing.T) {
 // This catches float → integer truncation errors in the conversion math.
 func TestFXConversionRateConsistency(t *testing.T) {
 	cases := []struct {
-		sourceKobo  int64
-		rate        float64    // NGN per target-currency minor unit (e.g. 0.00625 NGN/kobo → USD/cent)
-		wantMinor   int64
+		sourceKobo int64
+		rate       float64 // NGN per target-currency minor unit (e.g. 0.00625 NGN/kobo → USD/cent)
+		wantMinor  int64
 	}{
 		// ₦10,000 (1,000,000 kobo) × 0.00625 = 6,250 cents = $62.50
 		{1_000_000, 0.00625, 6_250},

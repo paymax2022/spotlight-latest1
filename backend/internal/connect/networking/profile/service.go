@@ -7,13 +7,13 @@ import (
 )
 
 var (
-	ErrNotFound       = errors.New("connect: network profile record not found")
-	ErrInvalidInput   = errors.New("connect: invalid input")
-	ErrSelfReco       = errors.New("connect: cannot write a recommendation about yourself")
-	ErrNotSubject     = errors.New("connect: only the subject may accept or decline this recommendation")
-	ErrNotAuthor      = errors.New("connect: only the author may send this recommendation")
-	ErrBadTransition  = errors.New("connect: invalid recommendation state transition")
-	ErrSelfRequest    = errors.New("connect: cannot request a recommendation from yourself")
+	ErrNotFound      = errors.New("connect: network profile record not found")
+	ErrInvalidInput  = errors.New("connect: invalid input")
+	ErrSelfReco      = errors.New("connect: cannot write a recommendation about yourself")
+	ErrNotSubject    = errors.New("connect: only the subject may accept or decline this recommendation")
+	ErrNotAuthor     = errors.New("connect: only the author may send this recommendation")
+	ErrBadTransition = errors.New("connect: invalid recommendation state transition")
+	ErrSelfRequest   = errors.New("connect: cannot request a recommendation from yourself")
 )
 
 // Auditor mirrors the per-package Connect audit hook; every mutation flows through it.

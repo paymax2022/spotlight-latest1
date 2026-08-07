@@ -72,10 +72,10 @@ func TestHealthPremiumSpecialtiesPresent(t *testing.T) {
 // balanced integer kobo amounts across a range of real consultation fees.
 func TestTelemedicineSettlementSplitArithmetic(t *testing.T) {
 	cases := []struct {
-		label     string
-		feeKobo   int64
-		wantDoc   int64 // floor(fee * 0.85)
-		wantPlat  int64 // fee - wantDoc (remainder goes to platform)
+		label    string
+		feeKobo  int64
+		wantDoc  int64 // floor(fee * 0.85)
+		wantPlat int64 // fee - wantDoc (remainder goes to platform)
 	}{
 		{"₦5,000 (500_000 kobo)", 500_000, 425_000, 75_000},
 		{"₦10,000 (1_000_000 kobo)", 1_000_000, 850_000, 150_000},

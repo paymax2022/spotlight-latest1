@@ -34,14 +34,14 @@ func TestDescribeAnimation_Tiers(t *testing.T) {
 		wantStyle  string
 		wantInt    int
 	}{
-		{amountKobo: 0, wantStyle: "notes", wantInt: 1},          // Tip
-		{amountKobo: 49_99, wantStyle: "notes", wantInt: 1},      // just under ₦50
-		{amountKobo: 50_00, wantStyle: "notes", wantInt: 2},      // Spray floor
-		{amountKobo: 199_99, wantStyle: "notes", wantInt: 2},     // just under ₦200
-		{amountKobo: 200_00, wantStyle: "confetti", wantInt: 3},  // Generous floor
-		{amountKobo: 999_99, wantStyle: "confetti", wantInt: 3},  // just under ₦1,000
-		{amountKobo: 1_000_00, wantStyle: "rain", wantInt: 4},    // Money Rain floor
-		{amountKobo: 4_999_99, wantStyle: "rain", wantInt: 4},    // just under ₦5,000
+		{amountKobo: 0, wantStyle: "notes", wantInt: 1},            // Tip
+		{amountKobo: 49_99, wantStyle: "notes", wantInt: 1},        // just under ₦50
+		{amountKobo: 50_00, wantStyle: "notes", wantInt: 2},        // Spray floor
+		{amountKobo: 199_99, wantStyle: "notes", wantInt: 2},       // just under ₦200
+		{amountKobo: 200_00, wantStyle: "confetti", wantInt: 3},    // Generous floor
+		{amountKobo: 999_99, wantStyle: "confetti", wantInt: 3},    // just under ₦1,000
+		{amountKobo: 1_000_00, wantStyle: "rain", wantInt: 4},      // Money Rain floor
+		{amountKobo: 4_999_99, wantStyle: "rain", wantInt: 4},      // just under ₦5,000
 		{amountKobo: 5_000_00, wantStyle: "fireworks", wantInt: 5}, // Big Baller floor
 		{amountKobo: 1_000_000_00, wantStyle: "fireworks", wantInt: 5},
 	}

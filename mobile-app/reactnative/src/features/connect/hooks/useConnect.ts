@@ -79,6 +79,17 @@ export function useSubmitDob() {
   });
 }
 
+// Records the required consents (community guidelines / privacy / terms) server-side
+// via POST /onboarding/consent. Best-effort per kind (never rejects) so an accept
+// gates progress without a transient failure wedging onboarding.
+export function useAcceptConsents() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: connectApi.acceptOnboardingConsents,
+    onSuccess: () => qc.invalidateQueries({ queryKey: connectKeys.onboardingDraft() }),
+  });
+}
+
 export function useSubmitLiveness() {
   const qc = useQueryClient();
   return useMutation({

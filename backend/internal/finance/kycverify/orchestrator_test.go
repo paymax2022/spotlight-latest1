@@ -10,9 +10,9 @@ import (
 // fakeElevator records tier-elevation calls so a test can assert a tier is
 // raised ONLY when the full required set passed.
 type fakeElevator struct {
-	called   bool
-	userID   string
-	newTier  int
+	called  bool
+	userID  string
+	newTier int
 }
 
 func (f *fakeElevator) ElevateTier(_ context.Context, userID string, newTier int, _ *string) error {

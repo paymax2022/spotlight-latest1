@@ -26,11 +26,11 @@ func Register(member, admin *gin.RouterGroup, svc *Service, rbac services.RBACSe
 	h := NewHandler(svc, rbac)
 
 	mg := member.Group("/network")
-	mg.GET("/ambassador", h.MyAmbassador)        // ambassador dashboard
-	mg.POST("/ambassador/apply", h.Apply)        // ambassador application + disclosure
-	mg.GET("/teams", h.MyNetworks)               // team dashboard (networks I lead)
+	mg.GET("/ambassador", h.MyAmbassador) // ambassador dashboard
+	mg.POST("/ambassador/apply", h.Apply) // ambassador application + disclosure
+	mg.GET("/teams", h.MyNetworks)        // team dashboard (networks I lead)
 	mg.GET("/teams/:id/members", h.NetworkMembers)
-	mg.GET("/overrides", h.MyOverrides)          // override ledger
+	mg.GET("/overrides", h.MyOverrides) // override ledger
 
 	guard := func(p string) gin.HandlerFunc { return middleware.RequirePermission(rbac, p) }
 	ag := admin.Group("/network")

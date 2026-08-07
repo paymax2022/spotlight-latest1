@@ -81,6 +81,37 @@ type ClassTree struct {
 	Subjects []Subject `json:"subjects"`
 }
 
+// Lesson is one public.academy_edu_lessons row, read-only via the curriculum
+// bridge (topic → academy_learning_objectives → academy_edu_lessons). The column
+// set mirrors the content package that owns the table.
+type Lesson struct {
+	ID          string    `json:"id"`
+	ObjectiveID *string   `json:"objective_id,omitempty"`
+	Title       string    `json:"title"`
+	Type        string    `json:"type"`
+	VersionID   *string   `json:"version_id,omitempty"`
+	MediaRef    *string   `json:"media_ref,omitempty"`
+	Transcript  *string   `json:"transcript,omitempty"`
+	DurationS   int       `json:"duration_s"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// ClassSubjectsTree is a class plus its subjects (a node of the admin tree).
+type ClassSubjectsTree struct {
+	Class    Class     `json:"class"`
+	Subjects []Subject `json:"subjects"`
+}
+
+// VersionTree is a curriculum version plus its classes (each with subjects). It
+// is the aggregate returned by the admin curriculum-tree endpoint, composed from
+// the existing list queries (versions → classes → subjects).
+type VersionTree struct {
+	Version CurriculumVersion   `json:"version"`
+	Classes []ClassSubjectsTree `json:"classes"`
+}
+
 // ── Admin request DTOs ────────────────────────────────────────────────────────
 
 // CreateVersionRequest creates a curriculum version (status defaults to draft).
@@ -168,7 +199,7 @@ type UpdateObjectiveRequest struct {
 // VersionCodeNERDC2025 / VersionCodeLegacy are the two seeded version codes.
 const (
 	VersionCodeNERDC2025 = "NERDC-2025"
-	VersionCodeLegacy     = "LEGACY"
+	VersionCodeLegacy    = "LEGACY"
 )
 
 // nerdcEffectiveYear is the academic year from which the NERDC-2025 curriculum
@@ -190,21 +221,4 @@ func BindVersion(classCode string, entryYear int) string {
 		return VersionCodeNERDC2025
 	}
 	return VersionCodeLegacy
-}
-
-// Lesson is one public.academy_edu_lessons row, read-only via the curriculum
-// bridge (topic → academy_learning_objectives → academy_edu_lessons). The column
-// set mirrors the content package that owns the table.
-type Lesson struct {
-	ID          string    `json:"id"`
-	ObjectiveID *string   `json:"objective_id,omitempty"`
-	Title       string    `json:"title"`
-	Type        string    `json:"type"`
-	VersionID   *string   `json:"version_id,omitempty"`
-	MediaRef    *string   `json:"media_ref,omitempty"`
-	Transcript  *string   `json:"transcript,omitempty"`
-	DurationS   int       `json:"duration_s"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
 }

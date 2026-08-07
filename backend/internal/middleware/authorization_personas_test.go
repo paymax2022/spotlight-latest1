@@ -51,9 +51,11 @@ func (s *scopedRBAC) GetUserPermissions(string, string, string) ([]string, error
 func (s *scopedRBAC) ListRoles() ([]domain.Role, error)                           { return nil, nil }
 func (s *scopedRBAC) CreateRole(domain.Role) (domain.Role, error)                 { return domain.Role{}, nil }
 func (s *scopedRBAC) UpdateRole(string, domain.Role) (domain.Role, error)         { return domain.Role{}, nil }
-func (s *scopedRBAC) CloneRole(string, string, string) (domain.Role, error)       { return domain.Role{}, nil }
-func (s *scopedRBAC) DeleteRole(string) error                                     { return nil }
-func (s *scopedRBAC) ListPermissions() ([]domain.Permission, error)               { return nil, nil }
+func (s *scopedRBAC) CloneRole(string, string, string) (domain.Role, error) {
+	return domain.Role{}, nil
+}
+func (s *scopedRBAC) DeleteRole(string) error                       { return nil }
+func (s *scopedRBAC) ListPermissions() ([]domain.Permission, error) { return nil, nil }
 func (s *scopedRBAC) CreatePermission(domain.Permission) (domain.Permission, error) {
 	return domain.Permission{}, nil
 }

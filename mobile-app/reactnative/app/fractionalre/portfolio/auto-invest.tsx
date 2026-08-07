@@ -12,6 +12,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import SegmentedControl from '@/components/SegmentedControl';
 import { useAutoInvest, useCreateAutoInvest, usePauseAutoInvest } from '@/features/fractionalre/hooks';
 import { makeIdempotencyKey, formatNaira, relativeDate } from '@/features/fractionalre/utils';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { RISK_BAND_LABEL } from '@/features/fractionalre/constants';
 import type { RiskBand } from '@/features/fractionalre/types';
 
@@ -68,7 +69,7 @@ export default function AutoInvestScreen() {
         <Text style={styles.section}>New auto-invest</Text>
         <View style={styles.amountBox}>
           <Text style={styles.currency}>₦</Text>
-          <TextInput value={naira} onChangeText={(t) => setNaira(t.replace(/[^0-9.]/g, ''))} keyboardType="numeric" style={styles.amountInput} placeholder="Amount per run" placeholderTextColor={Colors.onSurfaceVariant} />
+          <TextInput value={naira} onChangeText={(t) => setNaira(sanitizeMoneyInput(t))} keyboardType="decimal-pad" maxLength={13} style={styles.amountInput} placeholder="Amount per run" placeholderTextColor={Colors.onSurfaceVariant} />
         </View>
 
         <Text style={styles.label}>Frequency</Text>

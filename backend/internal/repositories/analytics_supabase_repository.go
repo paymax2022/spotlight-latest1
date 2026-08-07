@@ -20,8 +20,14 @@ func (r *AnalyticsSupabaseRepository) GetChatAnalytics() (domain.ChatAnalytics, 
 	}
 
 	var err error
-	if out.SessionsTotal, err = r.client.Count("chat_sessions"); err != nil { return domain.ChatAnalytics{}, err }
-	if out.MessagesTotal, err = r.client.Count("chat_messages"); err != nil { return domain.ChatAnalytics{}, err }
-	if out.LeadsTotal, err = r.client.Count("lead_records"); err != nil { return domain.ChatAnalytics{}, err }
+	if out.SessionsTotal, err = r.client.Count("chat_sessions"); err != nil {
+		return domain.ChatAnalytics{}, err
+	}
+	if out.MessagesTotal, err = r.client.Count("chat_messages"); err != nil {
+		return domain.ChatAnalytics{}, err
+	}
+	if out.LeadsTotal, err = r.client.Count("lead_records"); err != nil {
+		return domain.ChatAnalytics{}, err
+	}
 	return out, nil
 }

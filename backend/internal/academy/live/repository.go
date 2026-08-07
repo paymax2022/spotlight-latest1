@@ -209,6 +209,29 @@ func (r *Repository) ListSessions(ctx context.Context, f SessionFilter) ([]LiveS
 	return out, rows.Err()
 }
 
+// ListAllSessions returns EVERY live session regardless of state (admin oversight read —
+// mirrors ListSessions without the view/state filter). Ordered newest-first.
+func (r *Repository) ListAllSessions(ctx context.Context, limit int) ([]LiveSession, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	q := `SELECT ` + sessionCols + ` FROM public.academy_live_sessions ORDER BY created_at DESC LIMIT $1`
+	rows, err := r.db.Query(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []LiveSession{}
+	for rows.Next() {
+		s, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *s)
+	}
+	return out, rows.Err()
+}
+
 // ── Participants ───────────────────────────────────────────────────────────────
 
 // JoinParticipant upserts a participant row (re-join clears left_at). UNIQUE
@@ -457,6 +480,59 @@ func (r *Repository) ListReports(ctx context.Context, state string, limit int) (
 		out = append(out, *m)
 	}
 	return out, rows.Err()
+}
+
+// TransitionReport runs a GUARDED moderation-report workflow transition (triage /
+// escalate) in ONE transaction, mirroring DecideReport's guarded pattern: it re-reads the
+// current state under FOR UPDATE, rejects (and audits) an illegal transition per
+// canReport, then flips state + stamps moderator_id. Unlike DecideReport it records no
+// action and no decided_at (these are pre-decision workflow steps, not final decisions).
+// auditAction is the audit-log action code (e.g. "moderation.triaged").
+//
+// NOTE: the academy_moderation_reports.state CHECK currently permits only
+// pending|actioned|dismissed — persisting 'triaged'/'escalated' requires an additive
+// migration widening that CHECK before this path succeeds at the DB layer.
+func (r *Repository) TransitionReport(ctx context.Context, moderatorID, reportID string, to ReportState, auditAction string) (*ModerationReport, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var curState ReportState
+	var entityType, entityID string
+	err = tx.QueryRow(ctx,
+		`SELECT state, entity_type, entity_id FROM public.academy_moderation_reports WHERE id = $1 FOR UPDATE`, reportID).
+		Scan(&curState, &entityType, &entityID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if !canReport(curState, to) {
+		_ = insertAuditTx(ctx, tx, moderatorID, auditAction+"_rejected", "academy_moderation_report", reportID,
+			map[string]any{"from": string(curState), "to": string(to), "reason": "illegal_transition"}, "warning")
+		_ = tx.Commit(ctx) // persist the rejection audit
+		return nil, fmt.Errorf("%w: report %s -> %s", ErrIllegalTransition, curState, to)
+	}
+
+	const upd = `
+		UPDATE public.academy_moderation_reports
+		SET state = $2, moderator_id = $3
+		WHERE id = $1 AND state = $4`
+	if _, err := tx.Exec(ctx, upd, reportID, string(to), moderatorID, string(curState)); err != nil {
+		return nil, err
+	}
+	if err := insertAuditTx(ctx, tx, moderatorID, auditAction, "academy_moderation_report", reportID,
+		map[string]any{"from": string(curState), "to": string(to), "entity_type": entityType, "entity_id": entityID}, "info"); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return r.GetReport(ctx, reportID)
 }
 
 // DecideReport resolves a pending report: sets state (actioned/dismissed), action,

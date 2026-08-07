@@ -194,7 +194,10 @@ func (s *Service) Reconcile(ctx context.Context, limit int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	type pend struct{ id, cid, gid string; w int64 }
+	type pend struct {
+		id, cid, gid string
+		w            int64
+	}
 	var batch []pend
 	for rows.Next() {
 		var p pend
@@ -270,7 +273,7 @@ func (s *Service) recentAccept(ctx context.Context, credentialID, gateID string,
 	const q = `SELECT EXISTS(
 		SELECT 1 FROM credential_validations
 		WHERE credential_id=$1 AND gate_id=$2 AND outcome='ACCEPTED'
-		  AND scanned_at >= now() - ($3 || ' seconds')::interval)`
+		  AND scanned_at >= now() - make_interval(secs => $3))`
 	var ok bool
 	err := s.db.QueryRow(ctx, q, credentialID, gateID, int64(window.Seconds())).Scan(&ok)
 	return ok, err

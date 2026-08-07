@@ -14,6 +14,7 @@ import (
 	connectmentor "spotlight/backend/internal/connect/networking/mentorship"
 	connectnetprofile "spotlight/backend/internal/connect/networking/profile"
 	connectsafety "spotlight/backend/internal/connect/safety"
+	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
@@ -70,14 +71,26 @@ func registerConnectNetworkRoutes(member, admin *gin.RouterGroup, cfg config.Con
 	// --- Standing ledger accounts the jobs money path posts against.
 	revenue := &networkRevenueResolver{ledger: ledgerSvc}
 
+	// --- Central Commission & Profit recording (§ profit registry). When the
+	// commission feature is on, build a nil-safe recorder so a paid job activation's
+	// realized profit lands in commission_earnings under Community/Job. Built WITHOUT a
+	// ledger (nil) on purpose: the paid-posting fee debit already books the full fee
+	// into paymax_revenue, so a second ledger post would double-count — RecordFor
+	// appends the earning ROW only. Flag off ⇒ the seam stays nil ⇒ silent no-op.
+	// Declared through the connectjobs.CommissionRecorder interface so the zero value
+	// is a true nil interface (avoids the typed-nil trap).
+	var jobsCommission connectjobs.CommissionRecorder
+	if cfg.FeatureCommissionEnabled {
+		jobsCommission = commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)}
+		log.Println("[connect-network] commission recording wired → Community/Job (earning-row only; no ledger re-post)")
+	}
+
 	// ── Register all five packages under the normalized /networking prefix ──────────
-	connectjobs.Register(member, admin, pool, rbac, walletSvc, ledgerSvc, revenue, loyaltyPort, audit)
+	connectjobs.Register(member, admin, pool, rbac, walletSvc, ledgerSvc, revenue, loyaltyPort, audit, jobsCommission)
 	connectfeed.Register(member, admin, pool, rbac, audit)
 	connectnetprofile.Register(member, admin, pool, rbac, audit)
 	connectassess.Register(member, admin, pool, rbac, loyaltyPort, audit)
 	connectmentor.Register(member, admin, pool, rbac, loyaltyPort, audit)
-
-	_ = cfg // reserved for future networking feature sub-flags
 
 	log.Println("[connect-network] routes registered — jobs/feed/profile/assessments/mentorship under /networking")
 }

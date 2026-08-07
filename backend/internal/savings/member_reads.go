@@ -89,6 +89,12 @@ func (s *VaultService) EarlyWithdraw(ctx context.Context, ownerID, vaultID strin
 		if err := s.led.Debit(ctx, ownerID, "savings:penalty:"+vaultID, idemKey+":penalty", revAcc.ID, penalty); err != nil {
 			return 0, 0, fmt.Errorf("savings: penalty debit: %w", err)
 		}
+		// Record realized Spotlight profit ONLY when a penalty was actually charged
+		// (a matured / FLEX / non-locked withdrawal is fee-free ⇒ penalty == 0 ⇒ record
+		// nothing, per the money-path rule). gross = the withdrawal principal the penalty
+		// bps applies to; source ref + idempotency key = the per-penalty idempotency
+		// token. Best-effort + nil-safe — can never fail/reverse the withdrawal.
+		s.recordCommissionSafe(ctx, amountKobo, penalty, idemKey+":penalty", &ownerID)
 	}
 	s.log(ownerID, "savings.vault.early_withdraw", "savings_vault", vaultID, nil,
 		map[string]any{"amount_kobo": amountKobo, "penalty_kobo": penalty})
@@ -99,12 +105,12 @@ func (s *VaultService) EarlyWithdraw(ctx context.Context, ownerID, vaultID strin
 // Summary aggregates the member's savings positions across vaults, circles and
 // group targets into a single dashboard read (savings GET /summary).
 type Summary struct {
-	VaultCount       int   `json:"vault_count"`
-	VaultBalanceKobo int64 `json:"vault_balance_kobo"`
-	CircleCount      int   `json:"circle_count"`
-	TargetCount      int   `json:"target_count"`
+	VaultCount        int   `json:"vault_count"`
+	VaultBalanceKobo  int64 `json:"vault_balance_kobo"`
+	CircleCount       int   `json:"circle_count"`
+	TargetCount       int   `json:"target_count"`
 	TargetBalanceKobo int64 `json:"target_balance_kobo"`
-	TotalSavedKobo   int64 `json:"total_saved_kobo"`
+	TotalSavedKobo    int64 `json:"total_saved_kobo"`
 }
 
 // BuildSummary computes the member's savings dashboard from the ledger-derived

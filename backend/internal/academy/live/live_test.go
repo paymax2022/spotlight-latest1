@@ -25,14 +25,14 @@ func TestCanSession_AllowedTransitions(t *testing.T) {
 
 func TestCanSession_IllegalTransitions(t *testing.T) {
 	illegal := [][2]SessionState{
-		{SessionScheduled, SessionEnded},   // skip live
-		{SessionLive, SessionScheduled},    // backwards
-		{SessionLive, SessionCancelled},    // cannot cancel a live session
-		{SessionEnded, SessionLive},        // terminal
-		{SessionEnded, SessionEnded},       // terminal self-loop
-		{SessionCancelled, SessionLive},    // terminal
+		{SessionScheduled, SessionEnded},     // skip live
+		{SessionLive, SessionScheduled},      // backwards
+		{SessionLive, SessionCancelled},      // cannot cancel a live session
+		{SessionEnded, SessionLive},          // terminal
+		{SessionEnded, SessionEnded},         // terminal self-loop
+		{SessionCancelled, SessionLive},      // terminal
 		{SessionScheduled, SessionScheduled}, // no-op not modelled as legal
-		{"bogus", SessionLive},             // unknown source
+		{"bogus", SessionLive},               // unknown source
 	}
 	for _, tr := range illegal {
 		if canSession(tr[0], tr[1]) {

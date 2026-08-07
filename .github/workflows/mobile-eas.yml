@@ -1,0 +1,73 @@
+# Mobile release via EAS (Expo Application Services).
+# - Tag `mobile-v*` → production build (+ optional store submit).
+# - workflow_dispatch → choose profile/platform, or push an OTA JS update.
+# OTA (eas update) ships JS-only fixes instantly on the matching channel; native
+# changes require a full build + store review.
+#
+# Prereqs (one-time, see docs/launch blueprint §14):
+#   - Real bundle IDs in app.json (replace com.anonymous.*), `eas init` (projectId)
+#   - Repo secret EXPO_TOKEN (Expo access token)
+#   - Store creds in EAS (Apple ASC API key / Play service account) for submit
+#   - Sentry source maps: SENTRY_ORG/SENTRY_PROJECT/SENTRY_AUTH_TOKEN as EAS secrets
+name: mobile-eas
+
+on:
+  push:
+    tags: ["mobile-v*"]
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "EAS build profile"
+        type: choice
+        options: [preview, production]
+        default: preview
+      platform:
+        description: "Platform"
+        type: choice
+        options: [all, ios, android]
+        default: all
+      ota_only:
+        description: "Publish an OTA JS update instead of a full build"
+        type: boolean
+        default: false
+
+defaults:
+  run:
+    working-directory: mobile-app/reactnative
+
+permissions:
+  contents: read
+
+jobs:
+  eas:
+    # Skip (not fail) until EAS is configured. Set repo variable EAS_ENABLED=true
+    # (and the EXPO_TOKEN secret) to activate.
+    if: ${{ vars.EAS_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile-app/reactnative/package-lock.json
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Install deps
+        run: npm ci
+
+      - name: OTA update (JS only)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.ota_only }}
+        run: eas update --branch ${{ inputs.profile }} --message "${{ github.sha }}" --non-interactive
+
+      - name: Build (+ submit on tag)
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.ota_only) }}
+        run: |
+          PROFILE="${{ github.event_name == 'push' && 'production' || inputs.profile }}"
+          PLATFORM="${{ github.event_name == 'workflow_dispatch' && inputs.platform || 'all' }}"
+          # Full build; on a production tag also auto-submit to the stores.
+          SUBMIT_FLAG=""
+          if [ "${{ github.event_name }}" = "push" ]; then SUBMIT_FLAG="--auto-submit"; fi
+          eas build --platform "$PLATFORM" --profile "$PROFILE" --non-interactive --no-wait $SUBMIT_FLAG

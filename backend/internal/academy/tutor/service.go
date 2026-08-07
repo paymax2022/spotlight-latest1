@@ -47,6 +47,11 @@ type Service struct {
 	repo   tutorStore
 	kyc    KYCChecker
 	payout PayoutRail
+	// reader is the concrete pgx repository, used ONLY by the additive reads that need
+	// queries beyond the tutorStore contract (admin list-all-tutors, owner-scoped cohorts
+	// and submissions). nil in the unit-test seam (which injects a fake tutorStore and
+	// never exercises those reads).
+	reader *Repository
 }
 
 // NewService wires the tutor service. nil deps fall back to deterministic dev stubs so
@@ -59,7 +64,8 @@ func NewService(db *pgxpool.Pool, kyc KYCChecker, payout PayoutRail) *Service {
 	if payout == nil {
 		payout = stubPayoutRail{}
 	}
-	return &Service{repo: NewRepository(db), kyc: kyc, payout: payout}
+	repo := NewRepository(db)
+	return &Service{repo: repo, kyc: kyc, payout: payout, reader: repo}
 }
 
 // MinVerifyTier is the minimum KYC tier required to verify a tutor (screens.md T1).
@@ -144,6 +150,50 @@ func (s *Service) GetMyTutor(ctx context.Context, userID string) (*Tutor, error)
 		return nil, ErrInvalidInput
 	}
 	return s.repo.GetTutorByUser(ctx, userID)
+}
+
+// AdminListTutors lists ALL tutors regardless of status (admin oversight read).
+func (s *Service) AdminListTutors(ctx context.Context) ([]Tutor, error) {
+	return s.reader.ListAllTutors(ctx)
+}
+
+// ListMyCohorts lists the class groups the caller (a tutor) teaches (owner-scoped,
+// derived from their assignments).
+func (s *Service) ListMyCohorts(ctx context.Context, userID string) ([]Cohort, error) {
+	if userID == "" {
+		return nil, ErrInvalidInput
+	}
+	t, err := s.repo.GetTutorByUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return s.reader.ListCohortsByTutor(ctx, t.ID)
+}
+
+// ListMyAssignments lists the caller's OWN assignments (owner-scoped). Reuses the
+// existing ListAssignmentsByTutor read after resolving the caller's tutor profile.
+func (s *Service) ListMyAssignments(ctx context.Context, userID string) ([]Assignment, error) {
+	if userID == "" {
+		return nil, ErrInvalidInput
+	}
+	t, err := s.repo.GetTutorByUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.ListAssignmentsByTutor(ctx, t.ID)
+}
+
+// ListMySubmissions lists the graded submissions across the caller's OWN assignments
+// (owner-scoped).
+func (s *Service) ListMySubmissions(ctx context.Context, userID string) ([]Grade, error) {
+	if userID == "" {
+		return nil, ErrInvalidInput
+	}
+	t, err := s.repo.GetTutorByUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return s.reader.ListGradesByTutor(ctx, t.ID)
 }
 
 // ── Assignments / grading ──────────────────────────────────────────────────────────

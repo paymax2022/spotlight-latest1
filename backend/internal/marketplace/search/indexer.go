@@ -22,11 +22,11 @@ const outboxBatchSize = 200
 // without importing package marketplace — this package must stay import-cycle
 // free and buildable even before Agent A's package compiles.
 type outboxRow struct {
-	ID         int64
-	ListingID  string
-	Op         string // "upsert" | "delete"
-	Payload    json.RawMessage
-	CreatedAt  time.Time
+	ID        int64
+	ListingID string
+	Op        string // "upsert" | "delete"
+	Payload   json.RawMessage
+	CreatedAt time.Time
 }
 
 // Indexer drains mkt_listings_outbox (written by package marketplace on every

@@ -189,15 +189,15 @@ func TestMajorityThreshold(t *testing.T) {
 		total, approved int
 		want            bool
 	}{
-		{total: 0, approved: 0, want: false},  // empty group never releases
-		{total: 1, approved: 0, want: false},  // solo, no approval
-		{total: 1, approved: 1, want: true},   // solo self-approve is a majority
-		{total: 2, approved: 1, want: false},  // tie is NOT a majority
-		{total: 2, approved: 2, want: true},   // unanimous
-		{total: 3, approved: 1, want: false},  // 1/3
-		{total: 3, approved: 2, want: true},   // 2/3 > half
-		{total: 4, approved: 2, want: false},  // exactly half is NOT majority
-		{total: 4, approved: 3, want: true},   // 3/4
+		{total: 0, approved: 0, want: false},    // empty group never releases
+		{total: 1, approved: 0, want: false},    // solo, no approval
+		{total: 1, approved: 1, want: true},     // solo self-approve is a majority
+		{total: 2, approved: 1, want: false},    // tie is NOT a majority
+		{total: 2, approved: 2, want: true},     // unanimous
+		{total: 3, approved: 1, want: false},    // 1/3
+		{total: 3, approved: 2, want: true},     // 2/3 > half
+		{total: 4, approved: 2, want: false},    // exactly half is NOT majority
+		{total: 4, approved: 3, want: true},     // 3/4
 		{total: 100, approved: 50, want: false}, // 50/100 tie
 		{total: 100, approved: 51, want: true},  // 51/100
 	}

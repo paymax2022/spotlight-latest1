@@ -149,6 +149,7 @@ type Config struct {
 	FeatureTierLimitsEnabled      bool
 	FeatureFXEnabled              bool
 	FeatureFXOrchestrationEnabled bool // normalized /v1 FX orchestration API
+	FeatureRealtimeEnabled        bool // SSE server-push (marketplace chat etc.)
 	PaymaxWebhookOutURL           string
 	PaymaxWebhookSecret           string
 	FeatureGroupsEnabled          bool
@@ -168,10 +169,10 @@ type Config struct {
 	// scheduled* + admin /api/finance/admin/transport/scheduled* routes and the
 	// transport-scheduler worker. No flag, no scheduled dispatch.
 	FeatureTransportSchedulingEnabled bool
-	FeatureAICareEnabled          bool
-	FeatureDisputesEnabled        bool
-	FeatureRatingsEnabled         bool
-	FeaturePharmacyEnabled        bool
+	FeatureAICareEnabled              bool
+	FeatureDisputesEnabled            bool
+	FeatureRatingsEnabled             bool
+	FeaturePharmacyEnabled            bool
 	// Symptom-based medication search (term → concept → condition cluster →
 	// therapeutic class → live SKUs, triage tiers T1–T4). DEFAULT OFF. Gates
 	// /pharmacy/symptom-search, /pharmacy/classes/{id}/skus and the
@@ -179,9 +180,9 @@ type Config struct {
 	// FeaturePharmacyEnabled — symptom search never runs without the base
 	// pharmacy module.
 	FeaturePharmacySymptomSearchEnabled bool
-	FeatureOnboardingEnabled      bool
-	FeatureInvestEnabled          bool // stock-trading (Paymax Invest) module
-	FeatureInvestPINDevBypass     bool // dev only: accept any well-formed PIN
+	FeatureOnboardingEnabled            bool
+	FeatureInvestEnabled                bool // stock-trading (Paymax Invest) module
+	FeatureInvestPINDevBypass           bool // dev only: accept any well-formed PIN
 	// Invest provider adapters — when a base URL is set the real HTTP adapter is
 	// used; otherwise the deterministic mock is used (mock-first, real last).
 	InvestMarketDataBaseURL   string
@@ -230,14 +231,17 @@ type Config struct {
 	TradingFeeBps         int
 	TradingHurdleBps      int
 
-	// Business registry (CAC business-name verification + registration). DEFAULT
-	// OFF. Gates the /api/business[/admin] surface (internal/business): CAC-VAS
-	// lookup/registration via provider/cac, with a fee charged through the
-	// finance ledger. CACVAS* are the provider credentials (sandbox by default).
+	// ── Business Registry (CAC business-name verification + registration) ─────
+	// Gates the member /api/finance/business/* + admin /api/business/admin/*
+	// surface (internal/business). The CAC registration fee is a real idempotent
+	// wallet debit → paymax_revenue. DEFAULT OFF — no flag, no registration path.
 	FeatureBusinessRegistryEnabled bool
-	CACVASBaseURL                  string
-	CACVASApiKey                   string
-	CACVASConsumerSecret           string
+	// CAC VAS provider credentials (server-side ONLY; never shipped to a client).
+	// When the base URL AND api key are set the real HTTP adapter is used; otherwise
+	// the deterministic sandbox adapter keeps dev/CI offline-functional.
+	CACVASBaseURL        string // e.g. https://vas.cac.gov.ng/api
+	CACVASApiKey         string // Bearer / consumer key
+	CACVASConsumerSecret string // HMAC request-signing secret
 
 	// Stricter SECOND gate over the AI decision surface inside internal/trading.
 	// DEFAULT OFF and independent of FeatureTradingEnabled: the paper Module-KYC +
@@ -309,11 +313,12 @@ type Config struct {
 	// Top-5 expansion modules (no-new-licence; ride existing wallet/ledger rails).
 	// DEFAULT OFF. Each gates /api/finance/<mod> + /api/<mod>/admin (internal/<mod>).
 	// (FeatureEventsEnabled is declared once above with the other module flags.)
-	FeatureSocialPayEnabled bool // Social Payments & P2P Escrow
-	FeatureP2PMarketEnabled bool // P2P Marketplace
-	FeatureSavingsEnabled   bool // Group & Goal Savings (Ajo/Esusu)
-	FeatureCreatorsEnabled  bool // Creator & Talent Monetisation
-	FeatureLoyaltyEnabled   bool // Unified Loyalty & Paymax Black
+	FeatureSocialPayEnabled  bool // Social Payments & P2P Escrow
+	FeatureP2PMarketEnabled  bool // P2P Marketplace
+	FeatureSavingsEnabled    bool // Group & Goal Savings (Ajo/Esusu)
+	FeatureCreatorsEnabled   bool // Creator & Talent Monetisation
+	FeatureLoyaltyEnabled    bool // Unified Loyalty & Paymax Black
+	FeatureCommissionEnabled bool // Central Commission & Profit management
 
 	// Health verticals (marketplace; licensed partners deliver care). DEFAULT OFF.
 	// FeatureHealthEnabled gates the shared platform (internal/health/*); the
@@ -570,21 +575,22 @@ func Load() Config {
 		KYCRouteDocument:          getEnv("KYC_ROUTE_DOCUMENT", "dojah,smileid"),
 		KYCRouteAML:               getEnv("KYC_ROUTE_AML", "dojah,youverify"),
 
-		FeatureWalletEnabled:                  getEnvBool("FEATURE_WALLET_ENABLED", false),
-		FeatureKYCEnabled:                     getEnvBool("FEATURE_KYC_ENABLED", false),
-		FeatureVirtualAccountsEnabled:         getEnvBool("FEATURE_VIRTUAL_ACCOUNTS_ENABLED", false),
-		FeatureTransfersEnabled:               getEnvBool("FEATURE_TRANSFERS_ENABLED", false),
-		FeatureWalletTransfersEnabled:         getEnvBool("FEATURE_WALLET_TRANSFERS_ENABLED", false),
-		FeatureBankTransfersEnabled:           getEnvBool("FEATURE_BANK_TRANSFERS_ENABLED", false),
-		FeatureReferralsEnabled:               getEnvBool("FEATURE_REFERRALS_ENABLED", false),
-		FeatureReferralRewardsEnabled:         getEnvBool("FEATURE_REFERRAL_REWARDS_ENABLED", false),
-		ReferralRewardsInternalSecret:         getEnv("REFERRAL_REWARDS_INTERNAL_SECRET", ""),
+		FeatureWalletEnabled:          getEnvBool("FEATURE_WALLET_ENABLED", false),
+		FeatureKYCEnabled:             getEnvBool("FEATURE_KYC_ENABLED", false),
+		FeatureVirtualAccountsEnabled: getEnvBool("FEATURE_VIRTUAL_ACCOUNTS_ENABLED", false),
+		FeatureTransfersEnabled:       getEnvBool("FEATURE_TRANSFERS_ENABLED", false),
+		FeatureWalletTransfersEnabled: getEnvBool("FEATURE_WALLET_TRANSFERS_ENABLED", false),
+		FeatureBankTransfersEnabled:   getEnvBool("FEATURE_BANK_TRANSFERS_ENABLED", false),
+		FeatureReferralsEnabled:       getEnvBool("FEATURE_REFERRALS_ENABLED", false),
+		FeatureReferralRewardsEnabled: getEnvBool("FEATURE_REFERRAL_REWARDS_ENABLED", false),
+		ReferralRewardsInternalSecret: getEnv("REFERRAL_REWARDS_INTERNAL_SECRET", ""),
 		// Iron Rule: every money mutation must pass tier-limit checks fail-closed.
 		// Defaults TRUE so limits are enforced by default; set FEATURE_TIER_LIMITS_ENABLED=false
 		// only for explicit local/dev opt-out. (docs/go-live-readiness.md blocker #1)
 		FeatureTierLimitsEnabled:              getEnvBool("FEATURE_TIER_LIMITS_ENABLED", true),
 		FeatureFXEnabled:                      getEnvBool("FEATURE_FX_ENABLED", false),
 		FeatureFXOrchestrationEnabled:         getEnvBool("FEATURE_FX_ORCHESTRATION_ENABLED", false),
+		FeatureRealtimeEnabled:                getEnvBool("FEATURE_REALTIME_ENABLED", false),
 		PaymaxWebhookOutURL:                   getEnv("PAYMAX_WEBHOOK_OUT_URL", ""),
 		PaymaxWebhookSecret:                   getEnv("PAYMAX_WEBHOOK_SECRET", ""),
 		FeatureGroupsEnabled:                  getEnvBool("FEATURE_GROUPS_ENABLED", false),
@@ -654,6 +660,7 @@ func Load() Config {
 		FeatureSavingsEnabled:                 getEnvBool("FEATURE_SAVINGS_ENABLED", false),
 		FeatureCreatorsEnabled:                getEnvBool("FEATURE_CREATORS_ENABLED", false),
 		FeatureLoyaltyEnabled:                 getEnvBool("FEATURE_LOYALTY_ENABLED", false),
+		FeatureCommissionEnabled:              getEnvBool("FEATURE_COMMISSION_ENABLED", false),
 		FeatureHealthEnabled:                  getEnvBool("FEATURE_HEALTH_ENABLED", false),
 		FeatureHealthPharmacyEnabled:          getEnvBool("FEATURE_HEALTH_PHARMACY_ENABLED", false),
 		FeatureHealthLabEnabled:               getEnvBool("FEATURE_HEALTH_LAB_ENABLED", false),

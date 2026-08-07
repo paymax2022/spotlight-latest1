@@ -20,7 +20,7 @@ func TestVerificationStateMachine(t *testing.T) {
 		}
 	}
 	bad := [][2]string{
-		{StatusNone, StatusL1Passed},   // cannot skip straight to verified
+		{StatusNone, StatusL1Passed},     // cannot skip straight to verified
 		{StatusL1Passed, StatusL0Passed}, // no downgrade
 		{StatusRejected, StatusPending},  // rejected is terminal
 		{StatusL0Passed, StatusNone},     // cannot regress to none

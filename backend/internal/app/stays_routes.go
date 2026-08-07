@@ -6,12 +6,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/internal/config"
+	"spotlight/backend/internal/finance/commission"
 	financeledger "spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
-	staysadmin "spotlight/backend/internal/stays/admin"
 	"spotlight/backend/internal/stays/adapters"
+	staysadmin "spotlight/backend/internal/stays/admin"
 	staysagent "spotlight/backend/internal/stays/agent"
 	"spotlight/backend/internal/stays/consent"
 	"spotlight/backend/internal/stays/dedup"
@@ -37,7 +39,7 @@ import (
 // BOOK_FAILED. Supply is own-inventory only: Spotlight owns all stays supply via
 // the Direct Rail-B adapter (adapters.NewDirect, on-platform inventory). The
 // third-party bedbank aggregator rail is retired and no longer wired.
-func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config) {
 	if pool == nil {
 		log.Println("[stays] nil pool — skipping stays routes")
 		return
@@ -85,6 +87,23 @@ func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *p
 		// Notifier / Auditor are optional (nil-safe); the orchestrator may inject
 		// the real notifications + audit sinks.
 	})
+
+	// ── Central Commission & Profit recording (§ profit registry) ──
+	// When the commission feature is on, inject a nil-safe recorder so realized
+	// stays profit (the CONFIRMED booking's charge/settle point) lands in
+	// commission_earnings for the profit report under Property/Hotel (seeded 10%).
+	// The recorder is built WITHOUT a ledger (nil) on purpose: stays' own settle
+	// split already posts the commission cut to ledger.AccountCommission, so a second
+	// ledger post would double-count — RecordFor therefore appends the earning ROW
+	// only. Recording is best-effort + idempotent (reservation id as key) and can
+	// never fail or reverse a booking/payout (see reservation.recordCommissionSafe).
+	// Flag off ⇒ no recorder is set ⇒ the seam stays nil ⇒ silent no-op ⇒ stays
+	// unchanged. Reuses the shared commissionRecorderAdapter (marketplace_routes.go).
+	if cfg.FeatureCommissionEnabled {
+		staysCommission := commission.NewService(commission.NewRepository(pool), nil)
+		reservationSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: staysCommission})
+		log.Println("[stays] commission recording wired → Property/Hotel (earning-row only; no ledger re-post)")
+	}
 
 	searchHandler := search.NewHandler(searchSvc)
 	consentHandler := consent.NewHandler(consentSvc)

@@ -31,7 +31,7 @@ const (
 // QuestionItem is one academy_question_items row.
 type QuestionItem struct {
 	ID             string         `json:"id"`
-	Type           string         `json:"type"`           // mcq, etc.
+	Type           string         `json:"type"` // mcq, etc.
 	Stem           string         `json:"stem"`
 	Options        []any          `json:"options"`        // jsonb array
 	Answer         map[string]any `json:"answer"`         // jsonb object; correct key(s)
@@ -121,14 +121,14 @@ type CreateItemRequest struct {
 // UpdateItemRequest — admin PUT /academy/question-bank/items/:id (content/tags only;
 // status changes go through the dedicated transition endpoint).
 type UpdateItemRequest struct {
-	Stem           *string         `json:"stem,omitempty"`
-	Options        []any           `json:"options,omitempty"`
-	Answer         map[string]any  `json:"answer,omitempty"`
-	Difficulty     *float64        `json:"difficulty,omitempty"`
-	Discrimination *float64        `json:"discrimination,omitempty"`
-	ObjectiveID    *string         `json:"objective_id,omitempty"`
-	SubjectID      *string         `json:"subject_id,omitempty"`
-	Tags           []string        `json:"tags,omitempty"`
+	Stem           *string        `json:"stem,omitempty"`
+	Options        []any          `json:"options,omitempty"`
+	Answer         map[string]any `json:"answer,omitempty"`
+	Difficulty     *float64       `json:"difficulty,omitempty"`
+	Discrimination *float64       `json:"discrimination,omitempty"`
+	ObjectiveID    *string        `json:"objective_id,omitempty"`
+	SubjectID      *string        `json:"subject_id,omitempty"`
+	Tags           []string       `json:"tags,omitempty"`
 }
 
 // ReviewItemRequest — admin POST /academy/question-bank/items/:id/transition.
@@ -151,7 +151,7 @@ type ItemFilter struct {
 // answers for a set of approved items tied to one LearningObjective; the service
 // scores them and runs the mastery state machine.
 type PracticeSubmitRequest struct {
-	ObjectiveID string          `json:"objective_id" binding:"required"`
+	ObjectiveID string           `json:"objective_id" binding:"required"`
 	Answers     []PracticeAnswer `json:"answers" binding:"required"`
 }
 

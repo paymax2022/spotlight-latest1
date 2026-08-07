@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   getBusOperators, getBusRoutes, getBusSchedules, getBusManifest,
-  approveBusRouteFare, approveBusScheduleFare,
+  approveBusRouteFare, approveBusScheduleFare, setBusProviderVerification,
 } from '@/services/mobilityModesAdminService';
 import type { BusOperator, BusRoute, BusSchedule, BusManifestRow } from '@/types/mobilityModes';
 import {
@@ -32,6 +32,11 @@ export default function MobilityBusPage() {
   const [approve, setApprove] = useState<{ kind: 'route' | 'schedule'; id: string; label: string } | null>(null);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // operator verification modal
+  const [verify, setVerify] = useState<{ id: string; label: string; status: 'verified' | 'suspended' | 'pending' } | null>(null);
+  const [verifyReason, setVerifyReason] = useState('');
+  const [verifyBusy, setVerifyBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -64,6 +69,18 @@ export default function MobilityBusPage() {
     finally { setBusy(false); }
   };
 
+  const submitVerify = async () => {
+    if (!verify) return;
+    if (verify.status === 'suspended' && !verifyReason.trim()) { setError('A reason is required to suspend an operator.'); return; }
+    setVerifyBusy(true); setError(null); setMessage('');
+    try {
+      await setBusProviderVerification(verify.id, verify.status, verifyReason.trim());
+      setMessage(`${verify.label} set to ${verify.status} (audited).`);
+      setVerify(null); setVerifyReason(''); await load();
+    } catch (e) { setError(`Verification update failed: ${String(e)}`); }
+    finally { setVerifyBusy(false); }
+  };
+
   const pendingFares = routes.filter((r) => !r.fareApproved).length + schedules.filter((s) => !s.fareApproved).length;
 
   return (
@@ -92,14 +109,38 @@ export default function MobilityBusPage() {
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <thead><tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>Operator</th><th style={th()}>Zone</th><th style={th()}>Status</th><th style={th()}>Routes</th><th style={th()}>Fleet</th>
+                <th style={th()}>Operator</th><th style={th()}>Base state</th><th style={th()}>Verification</th><th style={th()}>Operational</th><th style={th()}>Routes</th><th style={th()}>Rating</th><th style={th()}></th>
               </tr></thead>
               <tbody>
                 {operators.map((o) => (
                   <tr key={o.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={td()}><strong>{o.name}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af', fontFamily: 'monospace' }}>{o.id}</div></td>
-                    <td style={td()}>{o.zone}</td><td style={td()}><Badge status={o.status} /></td>
-                    <td style={td()}>{o.routes}</td><td style={td()}>{o.fleetSize}</td>
+                    <td style={td()}><strong>{o.businessName}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af', fontFamily: 'monospace' }}>{o.id}</div></td>
+                    <td style={td()}>{o.baseState ?? '—'}</td>
+                    <td style={td()}><Badge status={o.verificationStatus} /></td>
+                    <td style={td()}><Badge status={o.status} /></td>
+                    <td style={td()}>{o.routeCount}</td>
+                    <td style={td()}>{o.ratingAvg.toFixed(1)}⭐ <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>({o.ratingCount})</span></td>
+                    <td style={td()}>
+                      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                        <button
+                          disabled={!canManage || o.verificationStatus === 'verified'}
+                          style={canManage && o.verificationStatus !== 'verified' ? btnPrimary('#16a34a') : btnDisabled()}
+                          onClick={() => { setVerify({ id: o.id, label: o.businessName, status: 'verified' }); setVerifyReason(''); }}
+                        >Verify</button>
+                        <button
+                          disabled={!canManage || o.verificationStatus === 'suspended'}
+                          style={canManage && o.verificationStatus !== 'suspended' ? btnPrimary('#dc2626') : btnDisabled()}
+                          onClick={() => { setVerify({ id: o.id, label: o.businessName, status: 'suspended' }); setVerifyReason(''); }}
+                        >Suspend</button>
+                        {o.verificationStatus !== 'pending' && (
+                          <button
+                            disabled={!canManage}
+                            style={canManage ? btn() : btnDisabled()}
+                            onClick={() => { setVerify({ id: o.id, label: o.businessName, status: 'pending' }); setVerifyReason(''); }}
+                          >Re-pend</button>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -207,6 +248,34 @@ export default function MobilityBusPage() {
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
               <button style={btn()} disabled={busy} onClick={() => setApprove(null)}>Cancel</button>
               <button style={busy || !reason.trim() ? btnDisabled() : btnPrimary('#16a34a')} disabled={busy || !reason.trim()} onClick={submitApprove}>{busy ? 'Approving…' : 'Confirm approval'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Operator verification modal */}
+      {verify && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }} onClick={() => !verifyBusy && setVerify(null)}>
+          <div style={{ background: '#fff', borderRadius: '0.5rem', padding: '1.25rem', width: 'min(440px, 92vw)' }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem', fontWeight: 700 }}>
+              {verify.status === 'verified' ? 'Verify operator' : verify.status === 'suspended' ? 'Suspend operator' : 'Move operator to pending'}
+            </h2>
+            <p style={{ fontSize: '0.85rem', color: '#6b7280', margin: '0 0 0.75rem' }}>{verify.label}</p>
+            <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>
+              {verify.status === 'suspended' ? 'Reason (required — written to audit log)' : 'Reason (optional — written to audit log)'}
+            </label>
+            <textarea value={verifyReason} onChange={(e) => setVerifyReason(e.target.value)} rows={3} placeholder={verify.status === 'suspended' ? 'e.g. Failed compliance review / safety complaint.' : 'e.g. KYB documents verified.'} style={{ ...input(), marginTop: 4, fontFamily: 'inherit' }} />
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button style={btn()} disabled={verifyBusy} onClick={() => setVerify(null)}>Cancel</button>
+              {(() => {
+                const blocked = verifyBusy || (verify.status === 'suspended' && !verifyReason.trim());
+                const accent = verify.status === 'suspended' ? '#dc2626' : '#16a34a';
+                return (
+                  <button style={blocked ? btnDisabled() : btnPrimary(accent)} disabled={blocked} onClick={submitVerify}>
+                    {verifyBusy ? 'Saving…' : verify.status === 'verified' ? 'Confirm verify' : verify.status === 'suspended' ? 'Confirm suspend' : 'Confirm'}
+                  </button>
+                );
+              })()}
             </div>
           </div>
         </div>

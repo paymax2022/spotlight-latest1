@@ -16,6 +16,7 @@ import AmlBanner from '@/features/social/components/AmlBanner';
 import { useMyCashtag, useSendMoney, resolveCashtag } from '@/features/social/hooks';
 import { SocialColors, formatNaira, amlMessageFor, normalizeHandle } from '@/features/social/constants/social.constants';
 import type { Cashtag } from '@/features/social/types';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 export default function SendMoney() {
   const { handle } = useLocalSearchParams<{ handle?: string }>();
@@ -87,7 +88,7 @@ export default function SendMoney() {
           )}
         </View>
 
-        <TextInputField label="Amount" placeholder="0" keyboardType="numeric" value={amount} onChangeText={setAmount} />
+        <TextInputField label="Amount" placeholder="0" keyboardType="decimal-pad" maxLength={13} value={amount} onChangeText={(t) => setAmount(sanitizeMoneyInput(t))} />
         <TextInputField label="Note (optional)" placeholder="What's it for?" value={note} onChangeText={setNote} maxLength={80} />
 
         <AmlBanner remainingKobo={remaining} blockedMessage={amlMsg} />

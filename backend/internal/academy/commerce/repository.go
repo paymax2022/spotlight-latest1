@@ -324,6 +324,59 @@ func (r *Repository) InsertCard(ctx context.Context, batch, serial, pinHash, gra
 	return id, nil
 }
 
+// ListAccessCards returns access-card rows for the admin console, newest first,
+// optionally filtered by batch. pin_hash is NEVER selected/serialised.
+func (r *Repository) ListAccessCards(ctx context.Context, batch string, limit int) ([]AccessCard, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	const cols = `id, batch, serial, grant_kind, grant_ref_id, state, agent_id, activated_by, activated_at, created_at`
+	var rows pgx.Rows
+	var err error
+	if batch != "" {
+		rows, err = r.db.Query(ctx, `SELECT `+cols+` FROM academy_access_cards WHERE batch = $1 ORDER BY created_at DESC LIMIT $2`, batch, limit)
+	} else {
+		rows, err = r.db.Query(ctx, `SELECT `+cols+` FROM academy_access_cards ORDER BY created_at DESC LIMIT $1`, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AccessCard{}
+	for rows.Next() {
+		var ac AccessCard
+		if err := rows.Scan(&ac.ID, &ac.Batch, &ac.Serial, &ac.GrantKind, &ac.GrantRefID,
+			&ac.State, &ac.AgentID, &ac.ActivatedBy, &ac.ActivatedAt, &ac.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, ac)
+	}
+	return out, rows.Err()
+}
+
+// OrdersOverview aggregates academy_orders by state (count + summed amount_minor)
+// for the admin payments console. Read-only; no money moves.
+func (r *Repository) OrdersOverview(ctx context.Context) (*OrdersOverview, error) {
+	const q = `SELECT state, COUNT(*), COALESCE(SUM(amount_minor),0)
+	           FROM academy_orders GROUP BY state ORDER BY state`
+	rows, err := r.db.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ov := &OrdersOverview{ByState: []OrderStateSummary{}}
+	for rows.Next() {
+		var s OrderStateSummary
+		if err := rows.Scan(&s.State, &s.Count, &s.AmountMinor); err != nil {
+			return nil, err
+		}
+		ov.ByState = append(ov.ByState, s)
+		ov.TotalOrders += s.Count
+		ov.TotalAmountMinor += s.AmountMinor
+	}
+	return ov, rows.Err()
+}
+
 func (r *Repository) AllocateCards(ctx context.Context, agentID, batch string, serials []string) (int64, error) {
 	if batch != "" {
 		const upd = `UPDATE academy_access_cards SET agent_id = $1, state = 'allocated'

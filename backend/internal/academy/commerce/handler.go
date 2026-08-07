@@ -3,6 +3,7 @@ package commerce
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -101,6 +102,7 @@ func RegisterAcademyCommerce(member, admin *gin.RouterGroup, pool *pgxpool.Pool,
 		mg := member.Group("/academy/commerce")
 		mg.GET("/plans", h.ListPlans)
 		mg.GET("/bundles", h.ListBundles)
+		mg.GET("/bundles/:id", h.GetBundle)
 		mg.GET("/bundles/:id/manifest", h.BundleManifest)
 		mg.POST("/orders", h.CreateOrder)
 		mg.POST("/orders/:id/pay", h.PayNow)
@@ -117,6 +119,8 @@ func RegisterAcademyCommerce(member, admin *gin.RouterGroup, pool *pgxpool.Pool,
 		ag.POST("/orders/:id/refund", h.AdminRefund)
 		ag.POST("/access-cards/generate", h.AdminGenerateCards)
 		ag.POST("/access-cards/allocate", h.AdminAllocateCards)
+		ag.GET("/access-cards", h.AdminListAccessCards)
+		ag.GET("/payments/overview", h.AdminPaymentsOverview)
 		// Catalog CRUD (plans/bundles): list under the same RBAC for admin tooling.
 		ag.GET("/plans", h.ListPlans)
 		ag.GET("/bundles", h.ListBundles)
@@ -136,6 +140,17 @@ func (h *Handler) ListPlans(c *gin.Context) {
 
 func (h *Handler) ListBundles(c *gin.Context) {
 	out, err := h.svc.ListBundles(c.Request.Context(), c.Query("arena"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// GetBundle returns a single exam bundle by id (public catalog read; same ExamBundle
+// shape as the ListBundles list item).
+func (h *Handler) GetBundle(c *gin.Context) {
+	out, err := h.svc.GetBundle(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -273,6 +288,28 @@ func (h *Handler) AdminGenerateCards(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": out})
+}
+
+// AdminListAccessCards lists access-card batches/cards (admin console read).
+// ?batch= filters to one batch; ?limit= caps the page (newest first).
+func (h *Handler) AdminListAccessCards(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	out, err := h.svc.ListAccessCards(c.Request.Context(), c.Query("batch"), limit)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AdminPaymentsOverview aggregates orders by state/amount for the payments console.
+func (h *Handler) AdminPaymentsOverview(c *gin.Context) {
+	out, err := h.svc.PaymentsOverview(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
 func (h *Handler) AdminAllocateCards(c *gin.Context) {

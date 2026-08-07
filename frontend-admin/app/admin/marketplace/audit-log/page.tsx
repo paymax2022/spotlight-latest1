@@ -50,7 +50,7 @@ export default function AuditLogPage() {
       <FilterBar>
         <div style={{ minWidth: 160 }}>
           <label style={lbl()}>Target type</label>
-          <input style={input()} placeholder="listing, dispute, flag…" value={targetType} onChange={(e) => setTargetType(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
+          <input style={input()} placeholder="listing, flag, boost…" value={targetType} onChange={(e) => setTargetType(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
         </div>
         <div style={{ minWidth: 200 }}>
           <label style={lbl()}>Target id</label>

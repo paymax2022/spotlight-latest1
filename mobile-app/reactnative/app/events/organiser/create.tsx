@@ -14,6 +14,7 @@ import StateView from '@/components/StateView';
 import { useCreateEvent } from '@/features/events/hooks';
 import { EventColors, EVENT_CATEGORIES } from '@/features/events/constants/events.constants';
 import type { CreateEventInput, EventCategory } from '@/features/events/types';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 // Schema-driven wizard: steps are declared as data; the renderer maps each
 // field config to a control. Adding a field/step = editing this schema only.
@@ -150,7 +151,7 @@ export default function CreateEvent() {
                   ) : null}
                 </View>
                 <TextInputField label="Name" placeholder="e.g. VIP" value={t.name} onChangeText={(v) => setTiers((a) => a.map((x, j) => j === i ? { ...x, name: v } : x))} error={errors[`tier_${i}_name`]} />
-                <TextInputField label="Price (₦, 0 = free)" placeholder="5000" keyboardType="numeric" value={t.price} onChangeText={(v) => setTiers((a) => a.map((x, j) => j === i ? { ...x, price: v } : x))} error={errors[`tier_${i}_price`]} />
+                <TextInputField label="Price (₦, 0 = free)" placeholder="5000" keyboardType="decimal-pad" inputMode="decimal" maxLength={13} value={t.price} onChangeText={(v) => setTiers((a) => a.map((x, j) => j === i ? { ...x, price: sanitizeMoneyInput(v) } : x))} error={errors[`tier_${i}_price`]} />
                 <TextInputField label="Quantity (blank = 100,000)" placeholder="500" keyboardType="numeric" value={t.qty} onChangeText={(v) => setTiers((a) => a.map((x, j) => j === i ? { ...x, qty: v } : x))} />
               </View>
             ))}

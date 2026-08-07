@@ -10,6 +10,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import CaptureRow from '@/features/connect/components/wallet-CaptureRow';
 import { useSubmitTier3 } from '@/features/connect/wallet/hooks';
+import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 
 // WL-15 — Tier 3: liveness check + enhanced due diligence (EDD). Unlocks the
 // highest gifting & withdrawal ceilings.
@@ -20,10 +21,7 @@ export default function Tier3LivenessEdd() {
   const [occupation, setOccupation] = useState('');
   const [volumeNaira, setVolumeNaira] = useState('');
 
-  const volumeKobo = useMemo(() => {
-    const n = parseInt(volumeNaira.replace(/[^0-9]/g, ''), 10);
-    return Number.isFinite(n) ? n * 100 : 0;
-  }, [volumeNaira]);
+  const volumeKobo = useMemo(() => nairaStringToKobo(volumeNaira), [volumeNaira]);
 
   const valid = !!livenessUri && !!sourceOfFunds && !!occupation && volumeKobo > 0;
 
@@ -56,8 +54,8 @@ export default function Tier3LivenessEdd() {
           placeholder="e.g. Salary, business income" />
         <TextInputField label="Occupation" value={occupation} onChangeText={setOccupation} placeholder="Your occupation" />
         <TextInputField label="Expected monthly volume (₦)" value={volumeNaira}
-          onChangeText={(t) => setVolumeNaira(t.replace(/[^0-9]/g, ''))} keyboardType="number-pad"
-          placeholder="0" inputMode="numeric" />
+          onChangeText={(t) => setVolumeNaira(sanitizeMoneyInput(t))} keyboardType="decimal-pad"
+          placeholder="0" inputMode="decimal" maxLength={13} />
       </ScrollView>
 
       <View style={styles.footer}>

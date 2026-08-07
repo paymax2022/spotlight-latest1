@@ -8,7 +8,7 @@
 // searchListings() catches that (err.isSearchNotWired) and falls back to the mock
 // result set so Results/Map never dead-end while search is being provisioned.
 
-import { MKT_USE_MOCK, MktApiError, mktGet, mktPost, mktDelete, mktPatch } from './client';
+import { MKT_USE_MOCK, MktApiError, mktGet, mktPost, mktDelete, mktPatch, arr } from './client';
 import * as M from './discovery.mock';
 import type {
   Category,
@@ -79,7 +79,7 @@ export async function getHomeRails(coords?: { lat: number; lng: number }): Promi
   if (MKT_USE_MOCK) return M.mockHomeRails();
   const safe = async (p: SearchParams): Promise<ListingSummary[]> => {
     try {
-      return (await searchListings(p)).results;
+      return arr((await searchListings(p)).results);
     } catch {
       return [];
     }
@@ -95,7 +95,7 @@ export async function getHomeRails(coords?: { lat: number; lng: number }): Promi
 
 export async function getCategories(): Promise<Category[]> {
   if (MKT_USE_MOCK) return M.mockCategories();
-  return mktGet<Category[]>('/categories');
+  return arr(await mktGet<Category[]>('/categories'));
 }
 
 export async function getCategory(id: string): Promise<Category> {
@@ -112,12 +112,12 @@ export async function getSellerProfile(id: string): Promise<SellerProfile> {
 
 export async function getSellerListings(id: string): Promise<ListingSummary[]> {
   if (MKT_USE_MOCK) return M.mockSellerListings(id);
-  return mktGet<ListingSummary[]>(`/sellers/${id}/listings`);
+  return arr(await mktGet<ListingSummary[]>(`/sellers/${id}/listings`));
 }
 
 export async function getSellerReviews(id: string): Promise<Review[]> {
   if (MKT_USE_MOCK) return M.mockSellerReviews(id);
-  return mktGet<Review[]>(`/sellers/${id}/reviews`);
+  return arr(await mktGet<Review[]>(`/sellers/${id}/reviews`));
 }
 
 // ── Saved items (wishlist) ───────────────────────────────────────────────────
@@ -138,7 +138,7 @@ interface SavedItemRow {
 
 export async function getSavedItems(): Promise<SavedItem[]> {
   if (MKT_USE_MOCK) return M.mockSavedItems();
-  const rows = await mktGet<SavedItemRow[]>('/saved-items');
+  const rows = arr(await mktGet<SavedItemRow[]>('/saved-items'));
   return rows
     .filter((r): r is SavedItemRow & { listing: Listing } => Boolean(r.listing))
     .map((r) => ({
@@ -152,7 +152,7 @@ export async function getSavedItems(): Promise<SavedItem[]> {
 
 export async function listSavedSearches(): Promise<SavedSearch[]> {
   if (MKT_USE_MOCK) return M.mockListSavedSearches();
-  return mktGet<SavedSearch[]>('/saved-searches');
+  return arr(await mktGet<SavedSearch[]>('/saved-searches'));
 }
 
 export async function createSavedSearch(query: string | undefined, filters: Record<string, unknown>): Promise<SavedSearch> {

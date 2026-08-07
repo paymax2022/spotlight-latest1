@@ -160,8 +160,10 @@ func (f *fakeLedger) Credit(_ context.Context, userID, ref, idemKey, debitAccoun
 
 type fakeAccounts struct{}
 
-func (fakeAccounts) RevenueAccountID(context.Context) (string, error)         { return "acct-revenue", nil }
-func (fakeAccounts) ReferralExpenseAccountID(context.Context) (string, error) { return "acct-ref-exp", nil }
+func (fakeAccounts) RevenueAccountID(context.Context) (string, error) { return "acct-revenue", nil }
+func (fakeAccounts) ReferralExpenseAccountID(context.Context) (string, error) {
+	return "acct-ref-exp", nil
+}
 
 type awardCall struct{ userID, module, trigger, ref string }
 type fakeLoyalty struct{ awards []awardCall }

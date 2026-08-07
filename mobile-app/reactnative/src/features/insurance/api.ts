@@ -15,6 +15,7 @@ import {
   MOCK_POLICIES,
   MOCK_PRODUCTS,
 } from './api/insurance.mock';
+import { mapCatalogList, unwrapList, unwrapOne } from './normalize';
 import type {
   Beneficiary,
   BindResult,
@@ -47,10 +48,11 @@ export async function getProducts(line?: ProductLine): Promise<InsuranceProduct[
     const all = MOCK_PRODUCTS.filter((p) => p.active);
     return line ? all.filter((p) => p.productLine === line) : all;
   }
-  const { data } = await api.get<InsuranceProduct[]>(`${INSURANCE_API_BASE}/products`, {
+  const { data } = await api.get(`${INSURANCE_API_BASE}/products`, {
     params: line ? { line } : undefined,
   });
-  return data;
+  // Go returns `{ data: [...] }` snake_case rows — normalise at this boundary.
+  return mapCatalogList(data);
 }
 
 export async function getProduct(code: string): Promise<InsuranceProduct> {
@@ -63,8 +65,8 @@ export async function getProduct(code: string): Promise<InsuranceProduct> {
   // GAP: Go only exposes GET /products?line= (catalog/handler.go ListProducts) —
   // there is no GET /products/:code. Fetch the filtered list and find the code
   // client-side rather than calling a route that doesn't exist.
-  const { data } = await api.get<InsuranceProduct[]>(`${INSURANCE_API_BASE}/products`);
-  const found = data.find((p) => p.code === code);
+  const { data } = await api.get(`${INSURANCE_API_BASE}/products`);
+  const found = mapCatalogList(data).find((p) => p.code === code);
   if (!found) throw new Error('Product not found');
   return found;
 }
@@ -252,8 +254,10 @@ export async function getPolicies(): Promise<Policy[]> {
     await delay();
     return mockPolicies;
   }
-  const { data } = await api.get<Policy[]>(`${INSURANCE_API_BASE}/policies`);
-  return data;
+  // Envelope-unwrap only; a fresh member has no policies (empty list). Full
+  // snake→camel Policy mapping lands when the live bind path is exercised.
+  const { data } = await api.get(`${INSURANCE_API_BASE}/policies`);
+  return unwrapList<Policy>(data);
 }
 
 export async function getPolicy(id: string): Promise<Policy> {
@@ -263,8 +267,8 @@ export async function getPolicy(id: string): Promise<Policy> {
     if (!found) throw new Error('Policy not found');
     return found;
   }
-  const { data } = await api.get<Policy>(`${INSURANCE_API_BASE}/policies/${id}`);
-  return data;
+  const { data } = await api.get(`${INSURANCE_API_BASE}/policies/${id}`);
+  return unwrapOne<Policy>(data);
 }
 
 export async function getCertificateUrl(id: string): Promise<{ url: string; expiresAt: string }> {

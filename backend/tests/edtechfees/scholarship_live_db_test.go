@@ -89,15 +89,16 @@ func cleanupPledge(t *testing.T, pool *pgxpool.Pool, pledgeID string) {
 
 // TestLiveDB_Scholarship_PledgeFund_Idempotent_Audited_ThenApplyDocumentsGap
 // proves the funded scholarship money path end-to-end:
-//   (a) CreatePledge persists a pledged row;
-//   (b) FundPledge debits the sponsor wallet by the pledged amount via the REAL
-//       ledger (balanced double-entry) and flips pledged → funded, stamping the
-//       ledger reference and writing an audit row;
-//   (c) a FundPledge REPLAY posts NO second ledger move and leaves the sponsor
-//       balance + funded state unchanged (idempotent);
-//   (d) ApplyAward is exercised and its CURRENT live-schema behaviour DOCUMENTED
-//       (see the schema-gap note at the top of this file): it must error today,
-//       and must NOT have recorded an invoice payment when it does.
+//
+//	(a) CreatePledge persists a pledged row;
+//	(b) FundPledge debits the sponsor wallet by the pledged amount via the REAL
+//	    ledger (balanced double-entry) and flips pledged → funded, stamping the
+//	    ledger reference and writing an audit row;
+//	(c) a FundPledge REPLAY posts NO second ledger move and leaves the sponsor
+//	    balance + funded state unchanged (idempotent);
+//	(d) ApplyAward is exercised and its CURRENT live-schema behaviour DOCUMENTED
+//	    (see the schema-gap note at the top of this file): it must error today,
+//	    and must NOT have recorded an invoice payment when it does.
 func TestLiveDB_Scholarship_PledgeFund_Idempotent_Audited_ThenApplyDocumentsGap(t *testing.T) {
 	pool := liveDBPool(t)
 	defer pool.Close()

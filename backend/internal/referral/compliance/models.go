@@ -49,14 +49,14 @@ type DisclosureInput struct {
 
 // Consent is an NDPC consent record (member-captured).
 type Consent struct {
-	ID            string    `json:"id"`
-	UserID        string    `json:"user_id"`
-	DisclosureID  string    `json:"disclosure_id,omitempty"`
-	ConsentType   string    `json:"consent_type"`
-	Granted       bool      `json:"granted"`
-	Version       int       `json:"version,omitempty"`
-	Source        string    `json:"source,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	UserID       string    `json:"user_id"`
+	DisclosureID string    `json:"disclosure_id,omitempty"`
+	ConsentType  string    `json:"consent_type"`
+	Granted      bool      `json:"granted"`
+	Version      int       `json:"version,omitempty"`
+	Source       string    `json:"source,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // ConsentInput records a member's consent decision.
@@ -92,11 +92,11 @@ type AMLFlagInput struct {
 
 // Policy is the singleton structural policy (anti-pyramid / tier cap / jurisdiction).
 type Policy struct {
-	MaxPyramidDepth      int      `json:"max_pyramid_depth"`
-	TierCapKobo          int64    `json:"tier_cap_kobo"`
-	RequireActivity      bool     `json:"require_activity"`
-	AllowedJurisdictions []string `json:"allowed_jurisdictions"`
-	UpdatedBy            string   `json:"updated_by,omitempty"`
+	MaxPyramidDepth      int       `json:"max_pyramid_depth"`
+	TierCapKobo          int64     `json:"tier_cap_kobo"`
+	RequireActivity      bool      `json:"require_activity"`
+	AllowedJurisdictions []string  `json:"allowed_jurisdictions"`
+	UpdatedBy            string    `json:"updated_by,omitempty"`
 	UpdatedAt            time.Time `json:"updated_at"`
 }
 

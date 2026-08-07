@@ -95,8 +95,8 @@ func TestSplitKoboCalculation(t *testing.T) {
 		providerPct float64
 		platformPct float64
 	}{
-		{100_000, 0.80, 0.10},  // ₦1,000: ₦800 provider + ₦100 platform + ₦100 rider
-		{500_000, 0.90, 0.10},  // ₦5,000: ₦4,500 provider + ₦500 platform
+		{100_000, 0.80, 0.10},   // ₦1,000: ₦800 provider + ₦100 platform + ₦100 rider
+		{500_000, 0.90, 0.10},   // ₦5,000: ₦4,500 provider + ₦500 platform
 		{1_000_000, 0.85, 0.15}, // ₦10,000: ₦8,500 + ₦1,500
 	}
 	for _, tc := range cases {

@@ -12,6 +12,7 @@ import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useCampaignDraft } from '@/features/crowdfunding/store/campaignDraftStore';
 import { formatNaira } from '@/features/crowdfunding/utils/crowdfundingFormatters';
+import { sanitizeMoneyInput } from '@/utils/money';
 import type { DisbursementModel } from '@/features/crowdfunding/types/crowdfunding.types';
 
 const DEADLINES = [
@@ -50,7 +51,7 @@ export default function CreateFundingScreen() {
           <Text style={styles.label}>Goal amount</Text>
           <View style={styles.amountWrap}>
             <Text style={styles.naira}>₦</Text>
-            <TextInput style={styles.amountInput} placeholder="0" placeholderTextColor={Colors.outline} keyboardType="number-pad" value={goalText} onChangeText={onGoal} />
+            <TextInput style={styles.amountInput} placeholder="0" placeholderTextColor={Colors.outline} keyboardType="decimal-pad" maxLength={13} value={goalText} onChangeText={(t) => onGoal(sanitizeMoneyInput(t))} />
             <View style={styles.currency}><Text style={styles.currencyText}>NGN</Text></View>
           </View>
           {draft.goalKobo > 0 && draft.goalKobo < 100_000 && <Text style={styles.err}>Minimum goal is ₦1,000.</Text>}

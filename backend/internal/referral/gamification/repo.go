@@ -237,9 +237,9 @@ func (r *Repository) ListBadges(ctx context.Context) ([]Badge, error) {
 	var out []Badge
 	for rows.Next() {
 		var (
-			b               Badge
-			desc, icon      *string
-			raw             []byte
+			b          Badge
+			desc, icon *string
+			raw        []byte
 		)
 		if err := rows.Scan(&b.ID, &b.Slug, &b.Name, &desc, &icon, &raw); err != nil {
 			return nil, err

@@ -31,7 +31,6 @@ export default function VehicleClassCard({ label, meta, selected, onPress, onVie
   return (
     <Pressable
       onPress={onPress}
-      accessibilityRole="button"
       accessibilityState={{ selected }}
       accessibilityLabel={`${label} — from ${formatNairaWhole(meta.fromHourlyKobo)} per hour`}
       style={[styles.card, selected && styles.cardSelected]}

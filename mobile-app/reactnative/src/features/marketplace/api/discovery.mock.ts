@@ -179,13 +179,14 @@ export const MOCK_CATEGORIES: Category[] = [
 ];
 
 export function toSummary(l: Listing, boosted = false): ListingSummary {
+  const media = l.media ?? [];
   return {
     id: l.id,
     title: l.title,
     priceKobo: l.priceKobo,
     condition: l.condition,
-    thumbUrl: l.media[0]?.urlThumb ?? '',
-    blurhash: l.media[0]?.blurhash ?? '',
+    thumbUrl: media[0]?.urlThumb ?? '',
+    blurhash: media[0]?.blurhash ?? '',
     state: l.state,
     lga: l.lga,
     sellerTrustScore: l.seller?.trustScore ?? 0,

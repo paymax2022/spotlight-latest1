@@ -9,9 +9,12 @@ import (
 
 // Handler exposes the normalized FX API over Gin.
 type Handler struct {
-	svc *Service
-	sec SecondaryStore // beneficiaries + rate alerts; nil → handlers fall back to stubs
-	biz BusinessStore  // FX business-admin console; nil → handlers fall back to honest defaults
+	svc   *Service
+	sec   SecondaryStore  // beneficiaries + rate alerts; nil → handlers fall back to stubs
+	biz   BusinessStore   // FX business-admin console; nil → handlers fall back to honest defaults
+	cards CardStore         // FX virtual cards; nil → handlers fall back to stubs
+	coll  CollectionStore   // FX collections / virtual accounts; nil → handlers fall back to stubs
+	verif VerificationStore // FX customer KYC verification; nil → handlers fall back to stubs
 }
 
 // NewHandler builds the orchestration HTTP handler.
@@ -26,6 +29,20 @@ func (h *Handler) WithSecondary(s SecondaryStore) *Handler { h.sec = s; return h
 // Returns the handler for chaining. When nil, those handlers fall back to honest
 // contract-shaped defaults so the app still renders in a DB-less dev setup.
 func (h *Handler) WithBusiness(s BusinessStore) *Handler { h.biz = s; return h }
+
+// WithCards attaches the persistence store for FX virtual cards. Returns the
+// handler for chaining. When nil, the card handlers stay in stub mode.
+func (h *Handler) WithCards(s CardStore) *Handler { h.cards = s; return h }
+
+// WithCollections attaches the persistence store for FX collections / virtual
+// accounts. Returns the handler for chaining. When nil, those list handlers fall
+// back to empty-slice stubs.
+func (h *Handler) WithCollections(s CollectionStore) *Handler { h.coll = s; return h }
+
+// WithVerification attaches the persistence store for FX customer KYC verification.
+// Returns the handler for chaining. When nil, the verification handlers fall back to
+// the contract-shaped stub (submissions are echoed but not persisted).
+func (h *Handler) WithVerification(s VerificationStore) *Handler { h.verif = s; return h }
 
 func customerID(c *gin.Context) string { return c.GetString("user_id") }
 

@@ -8,6 +8,7 @@ import { Typography } from '@/constants/typography';
 import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SoapSection, SectionCard } from '@/features/doctor/components';
 import { useCreateDispute } from '@/features/doctor/hooks';
@@ -112,7 +113,7 @@ export default function NewDisputeScreen() {
               <>
                 <TextInputField label={REF_LABEL[kind]} placeholder="Optional reference" value={referenceValue} onChangeText={setReferenceValue} />
                 {SHOWS_AMOUNT[kind] && (
-                  <TextInputField label="Disputed amount (₦)" placeholder="0.00" value={amountNaira} onChangeText={setAmountNaira} keyboardType="decimal-pad" />
+                  <TextInputField label="Disputed amount (₦)" placeholder="0.00" value={amountNaira} onChangeText={(v) => setAmountNaira(sanitizeMoneyInput(v))} keyboardType="decimal-pad" maxLength={13} />
                 )}
               </>
             )}

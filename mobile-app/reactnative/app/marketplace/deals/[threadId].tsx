@@ -5,11 +5,11 @@
 // scam-language warning banner, and a "continue safely" bridge shown once.
 // Connect model: no escrow — an accepted offer just agrees a price for the
 // off-platform meetup. Chat text is local (TODO(messaging) in offers.mock.ts).
-import React, { useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, FlatList, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, FlatList, TextInput, KeyboardAvoidingView, Platform, Alert, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Send, HandCoins, Handshake } from 'lucide-react-native';
+import { ArrowLeft, Send, HandCoins, Handshake, CheckCircle2, Star } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -26,22 +26,32 @@ import {
   useCounterOffer,
   useAcceptOffer,
   useDeclineOffer,
+  useCurrentUserId,
+  useMarkDealMet,
+  useSubmitReview,
+  useReviewForDeal,
 } from '@/features/marketplace/api/transact.hooks';
 import type { MockMessage } from '@/features/marketplace/api/offers.api';
 import { MOCK_ME } from '@/features/marketplace/api/offers.mock';
-import OfferBubble from '../_components/OfferBubble';
-import PriceOfferSheet from '../_components/PriceOfferSheet';
-import ScamWarningBanner from '../_components/ScamWarningBanner';
-import MeetupModeSheet from '../_components/MeetupModeSheet';
-import { detectScamHint } from '../_components/transact.constants';
+import OfferBubble from '@/features/marketplace/components/OfferBubble';
+import PriceOfferSheet from '@/features/marketplace/components/PriceOfferSheet';
+import ScamWarningBanner from '@/features/marketplace/components/ScamWarningBanner';
+import MeetupModeSheet from '@/features/marketplace/components/MeetupModeSheet';
+import { detectScamHint } from '@/features/marketplace/transact.constants';
 
 type Item = { kind: 'msg'; msg: MockMessage } | { kind: 'offer'; offer: Offer };
 
 export default function DealRoom() {
-  const { threadId } = useLocalSearchParams<{ threadId: string }>();
+  const { threadId, offer } = useLocalSearchParams<{ threadId: string; offer?: string }>();
   const threadQ = useThread(threadId ?? '');
   const thread = threadQ.data;
   const listingId = thread?.listingId ?? '';
+
+  // Own-vs-counterparty bubble rendering: compare senderId/buyerId to the REAL
+  // current user id in live mode; fall back to MOCK_ME when signed-out (mock/
+  // offline), where the mock data authors own messages/offers as MOCK_ME.
+  const currentUserId = useCurrentUserId();
+  const meId = currentUserId ?? MOCK_ME;
 
   const messagesQ = useMessages(threadId ?? '');
   const offersQ = useOffers(listingId);
@@ -54,6 +64,41 @@ export default function DealRoom() {
   const [draft, setDraft] = useState('');
   const [offerSheet, setOfferSheet] = useState<'make' | { counterOf: string } | null>(null);
   const [meetupOpen, setMeetupOpen] = useState(false);
+
+  // ── ADR-023 "mark met" → review flow ────────────────────────────────────────
+  const markMet = useMarkDealMet(threadId ?? '');
+  const submitReview = useSubmitReview(threadId ?? '');
+  const existingReviewQ = useReviewForDeal(threadId ?? '');
+  const met = thread?.met ?? false;
+  const alreadyReviewed = !!existingReviewQ.data;
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewText, setReviewText] = useState('');
+
+  const handleMarkMet = () => {
+    Alert.alert(
+      'Mark deal as met?',
+      'Confirm you met and completed this deal. Both of you will then be able to leave a review.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Mark as met', onPress: () => markMet.mutate() },
+      ],
+    );
+  };
+
+  const handleSubmitReview = () => {
+    if (reviewRating < 1) return;
+    submitReview.mutate(
+      { rating: reviewRating, tags: [], text: reviewText.trim() || undefined },
+      {
+        onSuccess: () => {
+          setReviewOpen(false);
+          setReviewRating(0);
+          setReviewText('');
+        },
+      },
+    );
+  };
   // Scam banner: fire on any matching message; bridge shows once banner has shown.
   const [scamHint, setScamHint] = useState<string | null>(null);
   const [bridgeUnlocked, setBridgeUnlocked] = useState(false);
@@ -78,6 +123,16 @@ export default function DealRoom() {
 
   const acceptedOffer = (offersQ.data ?? []).find((o) => o.status === 'accepted') ?? null;
   const listRef = useRef<FlatList<Item>>(null);
+
+  // Deep-linked "Make Offer" (offer=1 from Listing Detail): auto-open the offer
+  // composer once the thread is ready. Guarded so it fires only on first load.
+  const autoOffered = useRef(false);
+  useEffect(() => {
+    if (offer === '1' && thread && !autoOffered.current) {
+      autoOffered.current = true;
+      setOfferSheet('make');
+    }
+  }, [offer, thread]);
 
   const handleSend = () => {
     const text = draft.trim();
@@ -130,6 +185,36 @@ export default function DealRoom() {
         </Pressable>
       </View>
 
+      {/* ── Mark-met → review CTA (ADR-023). Before the deal is marked met, a
+          participant can mark it met; once met, either party can leave one review. ── */}
+      <View style={styles.metRow}>
+        {!met ? (
+          <Pressable
+            style={styles.metBtn}
+            onPress={handleMarkMet}
+            disabled={markMet.isPending}
+            accessibilityRole="button"
+          >
+            <CheckCircle2 size={16} color={MarketColors.brand} />
+            <Text style={styles.metBtnText}>{markMet.isPending ? 'Marking…' : 'Mark as met'}</Text>
+          </Pressable>
+        ) : alreadyReviewed ? (
+          <View style={styles.metDone}>
+            <Star size={16} color={MarketColors.muted} />
+            <Text style={styles.metDoneText}>You reviewed this deal</Text>
+          </View>
+        ) : (
+          <Pressable
+            style={styles.metBtn}
+            onPress={() => setReviewOpen(true)}
+            accessibilityRole="button"
+          >
+            <Star size={16} color={MarketColors.brand} />
+            <Text style={styles.metBtnText}>Leave a review</Text>
+          </Pressable>
+        )}
+      </View>
+
       {effectiveScamHint ? (
         <View style={styles.bannerWrap}>
           <ScamWarningBanner
@@ -149,7 +234,7 @@ export default function DealRoom() {
           onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
           renderItem={({ item }) => {
             if (item.kind === 'msg') {
-              const mine = item.msg.senderId === MOCK_ME;
+              const mine = item.msg.senderId === meId;
               return (
                 <View style={[styles.msgRow, mine ? styles.msgMine : styles.msgTheirs]}>
                   <View style={[styles.msgBubble, mine ? styles.msgBubbleMine : styles.msgBubbleTheirs]}>
@@ -159,7 +244,7 @@ export default function DealRoom() {
               );
             }
             const o = item.offer;
-            const mine = o.buyerId === MOCK_ME;
+            const mine = o.buyerId === meId;
             // The counterparty (seller, when I'm buying) can act on my pending offer.
             // In this buyer-centric demo, the "act" affordance appears for seller role.
             const canAct = thread.myRole === 'seller';
@@ -232,6 +317,47 @@ export default function DealRoom() {
         dealId={thread.id}
         onClose={() => setMeetupOpen(false)}
       />
+
+      {/* Minimal inline review composer (no dedicated ReviewComposerSheet exists). */}
+      <Modal visible={reviewOpen} transparent animationType="slide" onRequestClose={() => setReviewOpen(false)}>
+        <View style={styles.reviewBackdrop}>
+          <View style={styles.reviewSheet}>
+            <Text style={styles.reviewTitle}>Review {thread.counterpartyName ?? 'this deal'}</Text>
+            <Text style={styles.reviewSub}>How did the meet-up go? Tap to rate.</Text>
+            <View style={styles.starRow}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <Pressable key={n} onPress={() => setReviewRating(n)} hitSlop={6} accessibilityLabel={`${n} star`}>
+                  <Star
+                    size={32}
+                    color={n <= reviewRating ? MarketColors.brand : MarketColors.border}
+                    fill={n <= reviewRating ? MarketColors.brand : 'transparent'}
+                  />
+                </Pressable>
+              ))}
+            </View>
+            <TextInput
+              style={styles.reviewInput}
+              value={reviewText}
+              onChangeText={setReviewText}
+              placeholder="Add a comment (optional)"
+              placeholderTextColor={MarketColors.muted}
+              multiline
+            />
+            <View style={styles.reviewActions}>
+              <Pressable style={styles.reviewCancel} onPress={() => setReviewOpen(false)}>
+                <Text style={styles.reviewCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.reviewSubmit, (reviewRating < 1 || submitReview.isPending) && styles.reviewSubmitOff]}
+                onPress={handleSubmitReview}
+                disabled={reviewRating < 1 || submitReview.isPending}
+              >
+                <Text style={styles.reviewSubmitText}>{submitReview.isPending ? 'Sending…' : 'Submit review'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -277,4 +403,23 @@ const styles = StyleSheet.create({
   input: { flex: 1, ...Typography.bodyMd, color: Colors.onSurface, maxHeight: 100, minHeight: 44, borderWidth: 1, borderColor: MarketColors.border, borderRadius: Radius.lg, paddingHorizontal: Spacing.md, paddingTop: 11, paddingBottom: 11, backgroundColor: MarketColors.surface },
   sendBtn: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: MarketColors.brand, alignItems: 'center', justifyContent: 'center' },
   sendBtnOff: { opacity: 0.4 },
+  // Mark-met → review CTA row (below the pinned meetup card).
+  metRow: { flexDirection: 'row', marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.sm },
+  metBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', backgroundColor: MarketColors.surfaceAlt, borderWidth: 1, borderColor: MarketColors.brand, borderRadius: Radius.md, paddingHorizontal: Spacing.md, paddingVertical: 8 },
+  metBtnText: { ...Typography.labelMd, color: MarketColors.brand, fontWeight: '700' },
+  metDone: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', paddingVertical: 4 },
+  metDoneText: { ...Typography.bodySm, color: MarketColors.muted },
+  // Inline review composer modal.
+  reviewBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  reviewSheet: { backgroundColor: Colors.background, borderTopLeftRadius: Radius.lg, borderTopRightRadius: Radius.lg, padding: Spacing.containerMargin, gap: Spacing.sm },
+  reviewTitle: { ...Typography.titleLg, color: Colors.onSurface },
+  reviewSub: { ...Typography.bodySm, color: MarketColors.muted },
+  starRow: { flexDirection: 'row', gap: Spacing.sm, marginVertical: Spacing.sm },
+  reviewInput: { ...Typography.bodyMd, color: Colors.onSurface, minHeight: 72, borderWidth: 1, borderColor: MarketColors.border, borderRadius: Radius.md, padding: Spacing.md, textAlignVertical: 'top', backgroundColor: MarketColors.surface },
+  reviewActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: Spacing.sm, marginTop: Spacing.sm },
+  reviewCancel: { paddingHorizontal: Spacing.md, paddingVertical: 10 },
+  reviewCancelText: { ...Typography.labelMd, color: MarketColors.muted, fontWeight: '700' },
+  reviewSubmit: { backgroundColor: MarketColors.brand, borderRadius: Radius.md, paddingHorizontal: Spacing.lg, paddingVertical: 10 },
+  reviewSubmitOff: { opacity: 0.4 },
+  reviewSubmitText: { ...Typography.labelMd, color: MarketColors.surface, fontWeight: '800' },
 });

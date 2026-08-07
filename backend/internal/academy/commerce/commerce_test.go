@@ -32,14 +32,14 @@ func TestCanOrder_AllowedTransitions(t *testing.T) {
 
 func TestCanOrder_IllegalTransitions(t *testing.T) {
 	illegal := [][2]string{
-		{OrderCart, OrderPaid},        // skip checkout
-		{OrderCart, OrderEntitled},    // skip everything
+		{OrderCart, OrderPaid},         // skip checkout
+		{OrderCart, OrderEntitled},     // skip everything
 		{OrderCheckout, OrderEntitled}, // skip payment
-		{OrderPaid, OrderBNPLActive},  // cannot switch rail after paying
+		{OrderPaid, OrderBNPLActive},   // cannot switch rail after paying
 		{OrderRefunded, OrderEntitled}, // terminal
 		{OrderRefunded, OrderRefunded}, // terminal self-loop
-		{OrderEntitled, OrderPaid},    // backwards
-		{"bogus", OrderCheckout},      // unknown source
+		{OrderEntitled, OrderPaid},     // backwards
+		{"bogus", OrderCheckout},       // unknown source
 	}
 	for _, tr := range illegal {
 		if canOrder(tr[0], tr[1]) {
@@ -196,9 +196,9 @@ func TestClassifySync_KnownAndUnknown(t *testing.T) {
 // splitHash edge cases (verifyPIN relies on it).
 func TestSplitHash(t *testing.T) {
 	cases := []struct {
-		in         string
-		salt, dig  string
-		ok         bool
+		in        string
+		salt, dig string
+		ok        bool
 	}{
 		{"ab:cd", "ab", "cd", true},
 		{":cd", "", "cd", false},

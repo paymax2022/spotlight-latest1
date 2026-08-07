@@ -17,8 +17,8 @@ import (
 // admin routes are RBAC-gated by health.triage.review (applied at registration).
 // The actor is the authenticated reviewer (the licensed clinician signing off).
 type Handler struct {
-	gov   *GovernanceService
-	val   *ValidationService
+	gov    *GovernanceService
+	val    *ValidationService
 	engine triage.EngineProvider
 }
 

@@ -32,7 +32,7 @@ func (s *spyAudit) LogAction(actorUserID, targetUserID, action, module, resource
 	s.actions = append(s.actions, spyAuditEntry{Action: action, Module: module, ResourceType: resourceType, Severity: severity})
 }
 func (s *spyAudit) LogLogin(string, string, string, string, string, string, map[string]any) {}
-func (s *spyAudit) ListAuditLogs(domain.AuditFilter) ([]map[string]any, error)               { return nil, nil }
+func (s *spyAudit) ListAuditLogs(domain.AuditFilter) ([]map[string]any, error)              { return nil, nil }
 func (s *spyAudit) ListLoginActivity(domain.AuditFilter) ([]map[string]any, error) {
 	return nil, nil
 }
@@ -110,68 +110,68 @@ func TestStemMutationsEmitAudit(t *testing.T) {
 	}{
 		{
 			name: "school create", method: http.MethodPost, route: "/schools", path: "/schools",
-			body: `{"schoolName":"Acme High","state":"Lagos"}`,
-			bind: func(h *StemHandler) gin.HandlerFunc { return h.CreateSchool },
+			body:       `{"schoolName":"Acme High","state":"Lagos"}`,
+			bind:       func(h *StemHandler) gin.HandlerFunc { return h.CreateSchool },
 			wantAction: "stem.school.create", wantSeverity: "medium",
 		},
 		{
 			name: "school verification transition", method: http.MethodPatch, route: "/schools/:id/verification", path: "/schools/s1/verification",
-			body: `{"status":"APPROVED","reason":"ok"}`,
-			bind: func(h *StemHandler) gin.HandlerFunc { return h.UpdateSchoolVerification },
+			body:       `{"status":"APPROVED","reason":"ok"}`,
+			bind:       func(h *StemHandler) gin.HandlerFunc { return h.UpdateSchoolVerification },
 			wantAction: "stem.school.verification", wantSeverity: "high",
 		},
 		{
 			name: "contest create", method: http.MethodPost, route: "/contests", path: "/contests",
-			body: `{"name":"Robotics","slug":"robotics"}`,
-			bind: func(h *StemHandler) gin.HandlerFunc { return h.CreateContest },
+			body:       `{"name":"Robotics","slug":"robotics"}`,
+			bind:       func(h *StemHandler) gin.HandlerFunc { return h.CreateContest },
 			wantAction: "stem.contest.create", wantSeverity: "high",
 		},
 		{
 			name: "submission status transition", method: http.MethodPatch, route: "/submissions/:id/status", path: "/submissions/sub1/status",
-			body: `{"status":"approved"}`,
-			bind: func(h *StemHandler) gin.HandlerFunc { return h.UpdateSubmissionStatus },
+			body:       `{"status":"approved"}`,
+			bind:       func(h *StemHandler) gin.HandlerFunc { return h.UpdateSubmissionStatus },
 			wantAction: "stem.submission.status", wantSeverity: "high",
 		},
 		{
 			name: "judging score upsert", method: http.MethodPost, route: "/scores", path: "/scores",
-			body: `{"applicationId":"app1"}`,
-			bind: func(h *StemHandler) gin.HandlerFunc { return h.CreateJudgingScore },
+			body:       `{"applicationId":"app1"}`,
+			bind:       func(h *StemHandler) gin.HandlerFunc { return h.CreateJudgingScore },
 			wantAction: "stem.judging.score.upsert", wantSeverity: "high",
 		},
 		{
 			name: "judging score review state", method: http.MethodPatch, route: "/scores/:id/review-state", path: "/scores/sc1/review-state",
-			body: `{"reviewStatus":"approved"}`,
-			bind: func(h *StemHandler) gin.HandlerFunc { return h.UpdateJudgingScoreReviewState },
+			body:       `{"reviewStatus":"approved"}`,
+			bind:       func(h *StemHandler) gin.HandlerFunc { return h.UpdateJudgingScoreReviewState },
 			wantAction: "stem.judging.score.review_state", wantSeverity: "high",
 		},
 		{
 			name: "judge assignment create", method: http.MethodPost, route: "/assignments", path: "/assignments",
-			body: `{"contestId":"c1","applicationId":"a1","judgeUserId":"j1"}`,
-			bind: func(h *StemHandler) gin.HandlerFunc { return h.CreateJudgeAssignment },
+			body:       `{"contestId":"c1","applicationId":"a1","judgeUserId":"j1"}`,
+			bind:       func(h *StemHandler) gin.HandlerFunc { return h.CreateJudgeAssignment },
 			wantAction: "stem.judging.assignment.create", wantSeverity: "high",
 		},
 		{
 			name: "judge assignment conflict", method: http.MethodPatch, route: "/assignments/:id/conflict", path: "/assignments/as1/conflict",
-			body: `{"hasConflict":true,"conflictReason":"relative"}`,
-			bind: func(h *StemHandler) gin.HandlerFunc { return h.UpdateJudgeAssignmentConflict },
+			body:       `{"hasConflict":true,"conflictReason":"relative"}`,
+			bind:       func(h *StemHandler) gin.HandlerFunc { return h.UpdateJudgeAssignmentConflict },
 			wantAction: "stem.judging.assignment.conflict", wantSeverity: "high",
 		},
 		{
 			name: "award badge", method: http.MethodPost, route: "/badge-awards", path: "/badge-awards",
-			body: `{"badgeId":"b1"}`,
-			bind: func(h *StemHandler) gin.HandlerFunc { return h.AwardBadge },
+			body:       `{"badgeId":"b1"}`,
+			bind:       func(h *StemHandler) gin.HandlerFunc { return h.AwardBadge },
 			wantAction: "stem.award.badge.grant", wantSeverity: "high",
 		},
 		{
 			name: "create certificate", method: http.MethodPost, route: "/certificates", path: "/certificates",
-			body: `{"certificateType":"winner","certificateNumber":"CN-1"}`,
-			bind: func(h *StemHandler) gin.HandlerFunc { return h.CreateCertificate },
+			body:       `{"certificateType":"winner","certificateNumber":"CN-1"}`,
+			bind:       func(h *StemHandler) gin.HandlerFunc { return h.CreateCertificate },
 			wantAction: "stem.award.certificate.create", wantSeverity: "high",
 		},
 		{
 			name: "vote transaction create", method: http.MethodPost, route: "/vote-transactions", path: "/vote-transactions",
-			body: `{"contestId":"c1","voterRef":"v1"}`,
-			bind: func(h *StemHandler) gin.HandlerFunc { return h.CreateVoteTransaction },
+			body:       `{"contestId":"c1","voterRef":"v1"}`,
+			bind:       func(h *StemHandler) gin.HandlerFunc { return h.CreateVoteTransaction },
 			wantAction: "stem.voting.transaction.create", wantSeverity: "high",
 		},
 	}

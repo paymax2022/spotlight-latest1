@@ -7,6 +7,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -118,8 +119,9 @@ function Field({ field, value, error, onChange }: { field: FieldSchema; value: s
         value={value}
         error={error}
         placeholder={field.placeholder}
-        onChangeText={onChange}
-        keyboardType={field.type === 'number' || field.type === 'currency' ? 'numeric' : 'default'}
+        onChangeText={(v) => onChange(field.type === 'currency' ? sanitizeMoneyInput(v) : v)}
+        keyboardType={field.type === 'currency' ? 'decimal-pad' : field.type === 'number' ? 'numeric' : 'default'}
+        maxLength={field.type === 'currency' ? 13 : undefined}
       />
       {field.helper ? <Text style={styles.helper}>{field.helper}</Text> : null}
     </>

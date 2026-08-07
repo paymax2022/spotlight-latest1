@@ -136,10 +136,10 @@ func (r *CompetitionRepo) PublishConfig(ctx context.Context, competitionID, publ
 // CurrentConfig returns the latest published config for a competition.
 func (r *CompetitionRepo) CurrentConfig(ctx context.Context, competitionID string) (*service.Config, error) {
 	var (
-		version    int
-		railsRaw   []byte
-		awardsRaw  []byte
-		rubricRaw  []byte
+		version   int
+		railsRaw  []byte
+		awardsRaw []byte
+		rubricRaw []byte
 	)
 	err := r.pool.QueryRow(ctx, `
 		SELECT version, rails, awards, rubric_versions

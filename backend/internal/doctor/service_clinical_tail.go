@@ -102,7 +102,20 @@ func (s *Service) StartAppointment(ctx context.Context, userID, appointmentID st
 }
 
 func (s *Service) EndAppointment(ctx context.Context, userID, appointmentID string, raw json.RawMessage) (*Appointment, error) {
-	return s.repo.TransitionAppointment(ctx, userID, appointmentID, "completed", nil, raw)
+	appt, err := s.repo.TransitionAppointment(ctx, userID, appointmentID, "completed", nil, raw)
+	if err != nil {
+		return nil, err
+	}
+	// Consult settlement point: a completed consultation realizes Spotlight's
+	// commission. Record realized profit into the central Commission & Profit
+	// registry — best-effort + idempotent (the appointment id doubles as source ref +
+	// idempotency key, so retries never double-count). gross = the consult fee the
+	// appointment is billed at (the same basis the doctor's own per-consult commission
+	// is withheld on). A recorder failure is logged and swallowed — it must NEVER fail
+	// or reverse the consult completion. Nil recorder ⇒ no-op (commission feature off).
+	uid := userID
+	s.recordCommissionSafe(ctx, "Health", "Doctor", "", appt.FeeKobo, appointmentID, &uid)
+	return appt, nil
 }
 
 func (s *Service) CancelAppointment(ctx context.Context, userID, appointmentID string, raw json.RawMessage) (*Appointment, error) {

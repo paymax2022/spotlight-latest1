@@ -129,9 +129,7 @@ export async function createFeesSchool(input: FeesSchoolInput): Promise<FeesScho
 }
 export async function listFeesSessions(schoolId?: string): Promise<FeesSession[]> {
   if (USE_MOCK) { await delay(); return SESSIONS.filter((s) => !schoolId || s.school_id === schoolId).map((s) => ({ ...s })); }
-  // TODO(no backend route): sessions are MEMBER-only
-  // (GET /api/finance/academy/schools/:schoolId/sessions). No admin-group mount;
-  // adminBase() (/api/academy) cannot reach the /api/finance/academy member routes.
+  // backend: GET /admin/fees/sessions?school_id= (feesadminapi.ListSessions, academy.fees.setup).
   return getJson<FeesSession[]>(`/admin/fees/sessions${schoolId ? `?school_id=${schoolId}` : ''}`);
 }
 export async function createFeesSession(input: FeesSessionInput): Promise<FeesSession> {
@@ -142,8 +140,7 @@ export async function createFeesSession(input: FeesSessionInput): Promise<FeesSe
 }
 export async function listFeesClasses(sessionId?: string): Promise<FeesClass[]> {
   if (USE_MOCK) { await delay(); return CLASSES.filter((c) => !sessionId || c.session_id === sessionId).map((c) => ({ ...c })); }
-  // TODO(no backend route): classes are MEMBER-only
-  // (GET /api/finance/academy/schools/:schoolId/classes?session=…); no admin-group mount.
+  // backend: GET /admin/fees/classes?session_id= (feesadminapi.ListClasses, academy.fees.setup).
   return getJson<FeesClass[]>(`/admin/fees/classes${sessionId ? `?session_id=${sessionId}` : ''}`);
 }
 export async function createFeesClass(input: FeesClassInput): Promise<FeesClass> {
@@ -154,8 +151,7 @@ export async function createFeesClass(input: FeesClassInput): Promise<FeesClass>
 }
 export async function listFeeSchedules(classId?: string): Promise<FeeSchedule[]> {
   if (USE_MOCK) { await delay(); return FEE_SCHEDULES.filter((f) => !classId || f.class_id === classId).map((f) => ({ ...f, fee_items: f.fee_items.map((i) => ({ ...i })) })); }
-  // TODO(no backend route): fee-schedule listing is MEMBER-only + keyed by school, not class
-  // (GET /api/finance/academy/schools/:schoolId/fee-schedules?class=…); no admin-group mount.
+  // backend: GET /admin/fees/schedules?class_id= (feesadminapi.ListFeeSchedules, academy.fees.setup).
   return getJson<FeeSchedule[]>(`/admin/fees/schedules${classId ? `?class_id=${classId}` : ''}`);
 }
 export async function createFeeSchedule(input: FeeScheduleInput): Promise<FeeSchedule> {
@@ -168,15 +164,13 @@ export async function createFeeSchedule(input: FeeScheduleInput): Promise<FeeSch
       installment_policy: input.installment_policy, issued_at: null,
     };
   }
-  // TODO(no backend route): fee-schedule creation is MEMBER-only
-  // (POST /api/finance/academy/schools/:schoolId/fee-schedules); no admin-group mount.
+  // backend: POST /admin/fees/schedules (feesadminapi.CreateFeeSchedule — creates a draft, academy.fees.setup).
   return sendJson<FeeSchedule>('POST', '/admin/fees/schedules', input);
 }
 // SF-1: issuing a schedule freezes it — once issued (an Invoice can reference it) it is immutable.
 export async function issueFeeSchedule(scheduleId: string): Promise<FeeScheduleIssueResult> {
   if (USE_MOCK) { await delay(); return { id: scheduleId, status: 'issued', issued_at: new Date().toISOString(), immutable: true }; }
-  // TODO(no backend route): the backend has POST /api/finance/academy/fee-schedules/:id/lock
-  // (MEMBER-only), not an admin "/issue" endpoint; adminBase() cannot reach the member mount.
+  // backend: POST /admin/fees/schedules/:id/issue (feesadminapi.IssueFeeSchedule — SF-1 lock/issue, academy.fees.setup).
   return sendJson<FeeScheduleIssueResult>('POST', `/admin/fees/schedules/${scheduleId}/issue`, {});
 }
 
@@ -253,16 +247,12 @@ const INVOICES: InvoiceRow[] = [
 
 export async function getCollectionsOverview(): Promise<CollectionsOverview> {
   if (USE_MOCK) { await delay(); return { ...COLLECTIONS }; }
-  // TODO(no backend route): no collections-overview endpoint exists on the fees backend.
-  // Invoices are MEMBER-only (GET /api/finance/academy/invoices/:id,
-  // /students/:studentId/invoices) with no aggregate/admin surface.
+  // backend: GET /admin/fees/collections/overview?school_id= (feesadminapi.Collections, academy.fees.collections).
   return getJson<CollectionsOverview>('/admin/fees/collections/overview');
 }
 export async function listInvoices(): Promise<InvoiceRow[]> {
   if (USE_MOCK) { await delay(); return INVOICES.map((i) => ({ ...i })); }
-  // TODO(no backend route): invoices are MEMBER-only and per-student/per-id
-  // (GET /api/finance/academy/students/:studentId/invoices); there is no admin
-  // list-all-invoices route, and adminBase() cannot reach the member mount.
+  // backend: GET /admin/fees/invoices?school_id=&status= (feesadminapi.ListInvoices, academy.fees.collections).
   return getJson<InvoiceRow[]>('/admin/fees/invoices');
 }
 
@@ -311,9 +301,7 @@ const PROMOTIONS: PromotionBatch[] = [
 
 export async function listPromotions(): Promise<PromotionBatch[]> {
   if (USE_MOCK) { await delay(); return PROMOTIONS.map((p) => ({ ...p })); }
-  // TODO(no backend route): promotions are MEMBER-only and per-promotion
-  // (GET /api/finance/academy/schools/:schoolId/promotions/:promotionId); there is no
-  // admin list endpoint, and adminBase() cannot reach the /api/finance/academy mount.
+  // backend: GET /admin/fees/promotions?school_id= (feesadminapi.ListPromotions, academy.fees.promotion.approve).
   return getJson<PromotionBatch[]>('/admin/fees/promotions');
 }
 // The state machine advances ONE step per approval. A single approval NEVER reaches `applied`.
@@ -361,14 +349,13 @@ const REGISTRATIONS: CompetitionRegistration[] = [
 
 export async function listCompetitions(): Promise<Competition[]> {
   if (USE_MOCK) { await delay(); return COMPETITIONS.map((c) => ({ ...c })); }
-  // TODO(no backend route): feescompetition exposes only CreateCompetition (POST) +
-  // transition/register/scores (admin) and a member leaderboard GET — there is NO
-  // list-competitions endpoint on the backend.
+  // backend: GET /admin/fees/competitions (feesadminapi.ListCompetitions, academy.fees.competition.manage).
   return getJson<Competition[]>('/admin/fees/competitions');
 }
 export async function listCompetitionRegistrations(): Promise<CompetitionRegistration[]> {
   if (USE_MOCK) { await delay(); return REGISTRATIONS.map((r) => ({ ...r })); }
-  // TODO(no backend route): there is no list-registrations endpoint on feescompetition.
+  // backend: GET /admin/fees/competitions/registrations?competition_id= (feesadminapi.ListCompetitionRegistrations,
+  // academy.fees.competition.manage).
   return getJson<CompetitionRegistration[]>('/admin/fees/competitions/registrations');
 }
 export async function registerForCompetition(input: CompetitionRegisterInput): Promise<CompetitionRegistration> {
@@ -402,13 +389,12 @@ const COMPLIANCE_EXPORTS: ComplianceExport[] = [
 
 export async function listGovOptIns(schoolId?: string): Promise<GovExportOptIn[]> {
   if (USE_MOCK) { await delay(); return OPT_INS.filter((o) => !schoolId || o.school_id === schoolId).map((o) => ({ ...o })); }
-  // TODO(no backend route): the feesexport admin surface exposes only compliance +
-  // school-data export; there is no per-category opt-in list endpoint.
+  // backend: GET /admin/fees/gov-export/opt-ins?school_id= (feesadminapi.ListGovOptIns, academy.fees.export.run).
   return getJson<GovExportOptIn[]>(`/admin/fees/gov-export/opt-ins${schoolId ? `?school_id=${schoolId}` : ''}`);
 }
 export async function setGovOptIn(input: GovExportOptInInput): Promise<GovExportOptIn> {
   if (USE_MOCK) { await delay(); return { school_id: input.school_id, category: input.category, opted_in: input.opted_in, updated_at: new Date().toISOString() }; }
-  // TODO(no backend route): no opt-in mutation endpoint exists on feesexport.
+  // backend: PATCH /admin/fees/gov-export/opt-ins (feesadminapi.SetGovOptIn, academy.fees.export.run).
   return sendJson<GovExportOptIn>('PATCH', '/admin/fees/gov-export/opt-ins', input);
 }
 export async function listComplianceExports(schoolId?: string): Promise<ComplianceExport[]> {
@@ -454,20 +440,20 @@ export async function listRoleGrants(schoolId?: string): Promise<SchoolRoleGrant
   // feesroles admin: GET /schools/:schoolId/staff (school-scoped, RequireScopedPermission).
   // adminBase()=/api/academy + /admin ⇒ /admin/schools/:schoolId/staff. Envelope {data}.
   if (!schoolId) {
-    // TODO(no backend route): staff listing is school-scoped and requires a schoolId path
-    // param — there is no cross-school role-grants list endpoint on the backend.
+    // backend: GET /admin/fees/roles (feesadminapi.ListRoleGrants — cross-school grants list,
+    // academy.fees.roles.assign). The school-scoped variant below hits feesroles directly.
     return getJson<SchoolRoleGrant[]>('/admin/fees/roles');
   }
   return getJson<SchoolRoleGrant[]>(`/admin/schools/${schoolId}/staff`);
 }
 export async function assignRole(input: RoleAssignInput): Promise<SchoolRoleGrant> {
   if (USE_MOCK) { await delay(); return { id: `gr_${Date.now()}`, school_id: input.school_id, user_email: input.user_email, role: input.role, granted_by: 'you', granted_at: new Date().toISOString(), status: 'active' }; }
-  // feesroles admin: POST /schools/:schoolId/staff {userId, role}.
+  // feesroles admin: POST /schools/:schoolId/staff {userId, role} (feesroles.Assign).
   // adminBase()=/api/academy + /admin ⇒ /admin/schools/:schoolId/staff. Envelope {data}.
-  // NOTE(payload): the backend expects {userId, role}; RoleAssignInput carries user_email
-  // (not a user id) — the caller/UI must resolve the identity before this succeeds. Path +
-  // envelope are aligned here; the body-field mismatch is a types-owned follow-up.
-  return sendJson<SchoolRoleGrant>('POST', `/admin/schools/${input.school_id}/staff`, input);
+  // Body is remapped to the backend's field names {userId, role}.
+  // NOTE(value): RoleAssignInput.user_email is an email, not a user id — the caller/UI must
+  // resolve the identity to a real user id before this succeeds (a types-owned follow-up).
+  return sendJson<SchoolRoleGrant>('POST', `/admin/schools/${input.school_id}/staff`, { userId: input.user_email, role: input.role });
 }
 export async function revokeRole(input: RoleRevokeInput): Promise<SchoolRoleGrant> {
   if (USE_MOCK) {

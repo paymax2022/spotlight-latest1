@@ -4,6 +4,7 @@ import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
+import { formatNaira } from '@/utils/money';
 import * as Icons from 'lucide-react-native';
 
 export interface Activity {
@@ -37,7 +38,7 @@ export default function RecentActivityCard({ activity }: Props) {
       </View>
       <View style={styles.right}>
         <Text style={[styles.amount, isCredit ? styles.credit : styles.debit]}>
-          {isCredit ? '+' : '-'}₦{Math.abs(activity.amount).toLocaleString('en-NG')}
+          {isCredit ? '+' : '-'}{formatNaira(Math.abs(activity.amount))}
         </Text>
         <Text style={styles.date}>{activity.date}</Text>
       </View>

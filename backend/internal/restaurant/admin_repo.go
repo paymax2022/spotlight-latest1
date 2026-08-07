@@ -22,33 +22,33 @@ import (
 // `drivers` pool (the same pool auto-dispatch offers deliveries to), plus the
 // rider's currently-active food order (if any) so ops can see who is mid-delivery.
 type AdminRider struct {
-	ID             string     `json:"id"`   // drivers.user_id (the rider_id used on orders)
-	Name           string     `json:"name"` // drivers.name
-	Phone          *string    `json:"phone,omitempty"`
-	Vehicle        string     `json:"vehicle"` // bike|car|foot (from drivers.vehicle_type)
-	Status         string     `json:"status"` // available|on_delivery|offline|suspended
-	ActiveOrderID  *string    `json:"active_order_id,omitempty"`
-	Lat            *float64   `json:"lat,omitempty"`
-	Lng            *float64   `json:"lng,omitempty"`
-	Rating         *float64   `json:"rating,omitempty"`
-	LastSeenAt     *time.Time `json:"last_seen_at,omitempty"`
+	ID            string     `json:"id"`   // drivers.user_id (the rider_id used on orders)
+	Name          string     `json:"name"` // drivers.name
+	Phone         *string    `json:"phone,omitempty"`
+	Vehicle       string     `json:"vehicle"` // bike|car|foot (from drivers.vehicle_type)
+	Status        string     `json:"status"`  // available|on_delivery|offline|suspended
+	ActiveOrderID *string    `json:"active_order_id,omitempty"`
+	Lat           *float64   `json:"lat,omitempty"`
+	Lng           *float64   `json:"lng,omitempty"`
+	Rating        *float64   `json:"rating,omitempty"`
+	LastSeenAt    *time.Time `json:"last_seen_at,omitempty"`
 }
 
 // AdminDispatchOrder is an order needing dispatch attention: ready/searching for a
 // rider, assigned, or picked_up but not yet delivered. Joined to its restaurant.
 type AdminDispatchOrder struct {
-	ID             string     `json:"id"`
-	RestaurantID   string     `json:"restaurant_id"`
-	RestaurantName string     `json:"restaurant_name"`
-	Status         string     `json:"status"`
-	RiderID        *string    `json:"rider_id,omitempty"`
-	RiderName      *string    `json:"rider_name,omitempty"`
-	DeliveryAddr   string     `json:"delivery_address"`
-	TotalKobo      int64      `json:"total_kobo"`
-	DeliveryFeeKobo int64     `json:"delivery_fee_kobo"`
-	ReadyAt        *time.Time `json:"ready_at,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	WaitingMinutes int        `json:"waiting_minutes"`
+	ID              string     `json:"id"`
+	RestaurantID    string     `json:"restaurant_id"`
+	RestaurantName  string     `json:"restaurant_name"`
+	Status          string     `json:"status"`
+	RiderID         *string    `json:"rider_id,omitempty"`
+	RiderName       *string    `json:"rider_name,omitempty"`
+	DeliveryAddr    string     `json:"delivery_address"`
+	TotalKobo       int64      `json:"total_kobo"`
+	DeliveryFeeKobo int64      `json:"delivery_fee_kobo"`
+	ReadyAt         *time.Time `json:"ready_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	WaitingMinutes  int        `json:"waiting_minutes"`
 	// Dispatch SLA (time-to-assign) surface for ops.
 	AssignedAt       *time.Time `json:"assigned_at,omitempty"`
 	FirstOfferedAt   *time.Time `json:"first_offered_at,omitempty"`
@@ -63,14 +63,14 @@ type AdminDispatchOrder struct {
 // status is derived from is_open (no separate KYC column exists on `restaurants`
 // yet — see report; a richer KYC record would live on onb_application).
 type AdminApplication struct {
-	ID           string    `json:"id"`
-	RestaurantName string  `json:"restaurant_name"`
-	OwnerID      string    `json:"owner_id"`
-	Address      string    `json:"address,omitempty"`
-	Status       string    `json:"status"` // pending|approved (derived from is_open)
-	Documents    []any     `json:"documents"` // empty: no KYC doc store on restaurants yet
-	SubmittedAt  time.Time `json:"submitted_at"`
-	ReviewNote   *string   `json:"review_note,omitempty"`
+	ID             string    `json:"id"`
+	RestaurantName string    `json:"restaurant_name"`
+	OwnerID        string    `json:"owner_id"`
+	Address        string    `json:"address,omitempty"`
+	Status         string    `json:"status"`    // pending|approved (derived from is_open)
+	Documents      []any     `json:"documents"` // empty: no KYC doc store on restaurants yet
+	SubmittedAt    time.Time `json:"submitted_at"`
+	ReviewNote     *string   `json:"review_note,omitempty"`
 }
 
 // AdminPayoutRun is a READ-ONLY reconciliation view of settled food-delivery

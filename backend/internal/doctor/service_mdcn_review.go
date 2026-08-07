@@ -75,10 +75,10 @@ const docSignTTL = 5 * time.Minute
 // allowedDoctorVerif guards the ops review transitions on doctor_verifications.
 // (Resubmit needs_info→pending is the doctor's own SubmitVerification path.)
 var allowedDoctorVerif = map[string]map[string]bool{
-	"pending":   {"approved": true, "needs_info": true, "rejected": true},
+	"pending":    {"approved": true, "needs_info": true, "rejected": true},
 	"needs_info": {"approved": true, "rejected": true},
-	"approved":  {},
-	"rejected":  {},
+	"approved":   {},
+	"rejected":   {},
 }
 
 func canDoctorVerif(from, to string) bool {

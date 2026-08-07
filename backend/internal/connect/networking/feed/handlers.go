@@ -105,7 +105,7 @@ func (h *Handler) Comment(c *gin.Context) {
 // feed. Namespaced under /posts so it does not collide with the people-discovery
 // feed at /networking/feed (Phases 1–5), which returns profiles, not posts.
 func (h *Handler) Feed(c *gin.Context) {
-	out, err := h.svc.Feed(c.Request.Context(), parseLimit(c))
+	out, err := h.svc.Feed(c.Request.Context(), uid(c), parseLimit(c))
 	if err != nil {
 		fail(c, err)
 		return
@@ -115,7 +115,7 @@ func (h *Handler) Feed(c *gin.Context) {
 
 // HashtagFeed — GET /networking/topics/:tag?limit= (member). PN-3-ranked, filtered.
 func (h *Handler) HashtagFeed(c *gin.Context) {
-	out, err := h.svc.HashtagFeed(c.Request.Context(), c.Param("tag"), parseLimit(c))
+	out, err := h.svc.HashtagFeed(c.Request.Context(), uid(c), c.Param("tag"), parseLimit(c))
 	if err != nil {
 		fail(c, err)
 		return
@@ -146,12 +146,12 @@ func Register(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.
 	h := NewHandler(svc)
 
 	g := member.Group("/networking")
-	g.POST("/posts", h.Compose)                    // Idempotency-Key required
+	g.POST("/posts", h.Compose) // Idempotency-Key required
 	g.GET("/posts/:id", h.PostDetail)
-	g.POST("/posts/:id/reactions", h.React)        // Idempotency-Key required
-	g.POST("/posts/:id/comments", h.Comment)       // Idempotency-Key required
-	g.GET("/posts/feed", h.Feed)                    // main ranked CONTENT feed (PN-3); distinct from people-discovery /networking/feed
-	g.GET("/topics/:tag", h.HashtagFeed)            // hashtag/topic feed (PN-3)
+	g.POST("/posts/:id/reactions", h.React)  // Idempotency-Key required
+	g.POST("/posts/:id/comments", h.Comment) // Idempotency-Key required
+	g.GET("/posts/feed", h.Feed)             // main ranked CONTENT feed (PN-3); distinct from people-discovery /networking/feed
+	g.GET("/topics/:tag", h.HashtagFeed)     // hashtag/topic feed (PN-3)
 
 	ag := admin.Group("/networking")
 	ag.POST("/posts/:id/moderation",

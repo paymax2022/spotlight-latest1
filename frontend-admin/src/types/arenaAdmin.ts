@@ -225,6 +225,7 @@ export interface QuizQuestion {
   stage: QuizStage;
   category: string; // e.g. 'road_signs', 'hazard_perception'
   prompt: string;
+  imageUrl?: string; // optional illustration shown with the question
   options: string[]; // exactly 4
   correctIndex: number; // 0..3
   correctAnswer: string;

@@ -10,6 +10,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"spotlight/backend/internal/config"
+	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/ledger"
 	// referrals is retained ONLY for the RegisterMarketplace signature: router.go
 	// still passes referralRewardsSvc, but the escrow settle/refund emit was removed
@@ -20,6 +21,7 @@ import (
 	"spotlight/backend/internal/marketplace/search"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/platform/r2"
+	"spotlight/backend/internal/platform/realtime"
 	"spotlight/backend/internal/services"
 )
 
@@ -116,6 +118,32 @@ func toSearchRequest(req any) search.SearchRequest {
 	return sr
 }
 
+// commissionRecorderAdapter bridges marketplace's type-decoupled CommissionRecorder
+// seam (RecordFor(...) error) to the finance commission service's RecordFor, which
+// returns (*commission.Earning, error). This is the ONE place that imports both
+// packages (no import cycle: commission never imports marketplace). The returned
+// earning row is discarded — marketplace only needs the recording to succeed-or-log.
+type commissionRecorderAdapter struct{ svc *commission.Service }
+
+func (a commissionRecorderAdapter) RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceModule, sourceRef string, userID *string, idempotencyKey string) error {
+	_, err := a.svc.RecordFor(ctx, category, service, subtype, grossKobo, sourceModule, sourceRef, userID, idempotencyKey)
+	return err
+}
+
+// RecordExact bridges the exact-fee seam (RecordExact(...) error) used by the
+// fixed-fee / spread modules (transfers, fx, jobs, association, savings) to the
+// commission service's RecordExact, which returns (*commission.Earning, error). The
+// caller passes its ACTUAL realized fee (recordedRevenueKobo) so recorded profit is
+// exact, not config% × gross. The earning row is discarded — callers only need
+// success-or-log. This is the SAME adapter as RecordFor: one struct satisfies every
+// module's local CommissionRecorder interface (both methods).
+func (a commissionRecorderAdapter) RecordExact(ctx context.Context, category, service, subtype string, grossKobo, recordedRevenueKobo int64,
+	sourceModule, sourceRef string, userID *string, idempotencyKey string) error {
+	_, err := a.svc.RecordExact(ctx, category, service, subtype, grossKobo, recordedRevenueKobo, sourceModule, sourceRef, userID, idempotencyKey)
+	return err
+}
+
 // RegisterMarketplace wires the Paymax Marketplace module (§ integration contract).
 // It mirrors RegisterPlacement: a member group (auth), an admin group (per-route
 // RBAC guard "marketplace.admin.*"), and a PUBLIC webhook group (HMAC-verified, no
@@ -148,6 +176,29 @@ func RegisterMarketplace(
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), redis)
 
 	svc := marketplace.NewService(pool, ledgerSvc, redis)
+
+	// ── Realtime (SSE) live-push seam for chat. The hub fans events across backend
+	// instances via Redis pub/sub (in-process when redis is nil). Best-effort + nil-safe:
+	// a missed push is caught by the clients' polling fallback. The SSE stream route is
+	// registered below behind FEATURE_REALTIME_ENABLED.
+	rtHub := realtime.NewHub(redis)
+	svc.WithRealtime(rtHub)
+
+	// ── Central Commission & Profit recording (§ profit registry) ──
+	// When the commission feature is on, inject a nil-safe recorder so realized
+	// marketplace profit (the boost purchase — the live revenue-capture point after
+	// ADR-023 retired escrow settlement) lands in commission_earnings for the profit
+	// report. The recorder is built WITHOUT a ledger (nil ledgerService) on purpose:
+	// the boost charge already posts the money into ledger.AccountCommission, so a
+	// second ledger post would double-count the commission revenue account. RecordFor
+	// therefore appends the earning ROW only. Recording is best-effort and can never
+	// fail or reverse a boost (see marketplace.recordCommissionSafe). Flag off ⇒ no
+	// recorder is set ⇒ the seam stays nil ⇒ silent no-op.
+	if cfg.FeatureCommissionEnabled {
+		commissionSvc := commission.NewService(commission.NewRepository(pool), nil)
+		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: commissionSvc})
+		log.Println("[marketplace] commission recording wired → Lifestyle/Marketplace (earning-row only; no ledger re-post)")
+	}
 
 	// referralRewards is intentionally unused: the escrow settle/refund referral emit
 	// was removed in the listings-and-connect pivot (ADR-023) because the marketplace
@@ -187,6 +238,17 @@ func RegisterMarketplace(
 	auth := func() gin.HandlerFunc { return middleware.RequireAuthContext(supabase, rbac) }
 	guard := func(permission string) gin.HandlerFunc { return middleware.RequirePermission(rbac, permission) }
 
+	// ── Shared realtime SSE stream (marketplace chat is the first consumer). Mounted
+	// at /api/v1/realtime/stream, authed, gated by FEATURE_REALTIME_ENABLED. The
+	// mobile connects here (via the Next.js streaming proxy) and falls back to polling
+	// when the flag is off or the stream drops.
+	if cfg.FeatureRealtimeEnabled {
+		rtGroup := r.Group("/api/v1/realtime")
+		rtGroup.Use(auth())
+		rtGroup.GET("/stream", rtHub.StreamHandler("user_id"))
+		log.Println("[realtime] SSE stream registered at /api/v1/realtime/stream")
+	}
+
 	base := r.Group("/v1/marketplace")
 
 	// ── Escrow webhooks REMOVED (ADR-023 listings-and-connect pivot) ──
@@ -221,6 +283,7 @@ func RegisterMarketplace(
 	m.DELETE("/listings/:id", h.DeleteListing)
 
 	// Offers
+	m.GET("/offers", h.ListOffers) // ?listingId= — negotiation history (participant-scoped)
 	m.POST("/offers", h.CreateOffer)
 	m.POST("/offers/:id/accept", h.AcceptOffer)
 	m.POST("/offers/:id/counter", h.CounterOffer)
@@ -245,6 +308,24 @@ func RegisterMarketplace(
 	// Boosts
 	m.POST("/boosts", h.CreateBoost)
 	m.GET("/boosts/:id", h.GetBoost)
+
+	// Messaging (ADR-023 listings-and-connect "connect" model; non-money metadata).
+	// Persistent 1:1 buyer↔seller threads about a listing — replaces the mobile's
+	// mock-only chat. Every route is participant-scoped in the service layer (a
+	// non-participant gets THREAD_NOT_FOUND; no Idempotency-Key — messaging is metadata).
+	m.POST("/threads", h.CreateThread)
+	m.GET("/threads", h.ListThreads)
+	m.GET("/threads/:id", h.GetThread)
+	m.GET("/threads/:id/messages", h.ListThreadMessages)
+	m.POST("/threads/:id/messages", h.SendThreadMessage)
+
+	// Deal reviews (ADR-023: thread-keyed reviews behind the "mark met" signal;
+	// non-money metadata). :id is the THREAD id. A participant marks the deal met,
+	// after which EITHER participant may review the other once. Every route is
+	// participant-scoped in the service (a non-participant gets THREAD_NOT_FOUND).
+	m.POST("/deals/:id/mark-met", h.MarkDealMet)
+	m.POST("/deals/:id/review", h.SubmitDealReview)
+	m.GET("/deals/:id/review", h.GetDealReview)
 
 	// Saved searches
 	m.POST("/saved-searches", h.CreateSavedSearch)
@@ -296,6 +377,9 @@ func RegisterMarketplace(
 	a.GET("/flags", guard("marketplace.admin.flags.action"), h.AdminFlags)
 	a.POST("/flags/:id/action", guard("marketplace.admin.flags.action"), h.AdminActionFlag)
 	a.GET("/audit-log", guard("marketplace.admin.audit.read"), h.AdminAuditLog)
+	// Boost moderation — the SOLE live marketplace money path (§2.4). GET lists boosts
+	// platform-wide (read-scoped marketplace.admin.moderation); POST rejects+auto-refunds.
+	a.GET("/boosts", guard("marketplace.admin.moderation"), h.AdminListBoosts)
 	a.POST("/boosts/:id/reject", guard("marketplace.admin.reject"), h.AdminRejectBoost)
 
 	log.Println("[marketplace] routes registered — listings/offers/boosts + trust/account + admin moderation (listings-and-connect; no escrow)")

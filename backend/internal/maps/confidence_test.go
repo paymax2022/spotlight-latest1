@@ -15,17 +15,17 @@ func almostEqual(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
 func TestGoogleConfidence(t *testing.T) {
 	cases := []struct {
-		name     string
-		locType  string
-		partial  bool
-		want     Confidence
+		name    string
+		locType string
+		partial bool
+		want    Confidence
 	}{
 		{"rooftop", "ROOFTOP", false, 1.0},
 		{"range_interpolated", "RANGE_INTERPOLATED", false, 0.8},
 		{"geometric_center", "GEOMETRIC_CENTER", false, 0.6},
 		{"approximate", "APPROXIMATE", false, 0.4},
 		{"unknown_defaults_low", "SOMETHING_ELSE", false, 0.4},
-		{"rooftop_partial", "ROOFTOP", true, 0.7},                 // 1.0 * 0.7
+		{"rooftop_partial", "ROOFTOP", true, 0.7},                    // 1.0 * 0.7
 		{"geometric_center_partial", "GEOMETRIC_CENTER", true, 0.42}, // 0.6 * 0.7
 	}
 	for _, c := range cases {

@@ -38,7 +38,7 @@ type TopupResponse struct {
 // Transaction is a user-facing view of one ledger entry.
 type Transaction struct {
 	ID         string    `json:"id"`
-	Type       string    `json:"type"`        // credit | debit
+	Type       string    `json:"type"` // credit | debit
 	AmountKobo int64     `json:"amount_kobo"`
 	Reference  string    `json:"reference"`
 	CreatedAt  time.Time `json:"created_at"`

@@ -55,11 +55,11 @@ type RouteDeps struct {
 	RateLimitPerMin int
 
 	// --- MapService v2 (MAPSERVICE.md): coverage-aware resolution chain ---
-	V2Enabled     bool             // FEATURE_MAPS_V2_ENABLED — turns on the orchestrator
-	V2ConfigPath  string           // optional JSON override for thresholds/order/budgets
-	HereKey       string           // HERE API key (accuracy fallback); mock when empty
-	GazetteerKey  string           // 32-byte AES key for gazetteer PII (NDPA); Noop when empty
-	DailyBudgets  map[string]int64 // per-provider daily caps; circuit-break when exceeded
+	V2Enabled    bool             // FEATURE_MAPS_V2_ENABLED — turns on the orchestrator
+	V2ConfigPath string           // optional JSON override for thresholds/order/budgets
+	HereKey      string           // HERE API key (accuracy fallback); mock when empty
+	GazetteerKey string           // 32-byte AES key for gazetteer PII (NDPA); Noop when empty
+	DailyBudgets map[string]int64 // per-provider daily caps; circuit-break when exceeded
 }
 
 // buildRegistry constructs the adapter registry from config. When a real key is
@@ -139,8 +139,8 @@ func buildRegistry(d RouteDeps) *Registry {
 		g := NewGoogle(d.GoogleKey, "ng")
 		reg.AddAutocompleter(g)
 		reg.AddPlaceSearcher(g)
-		reg.AddGeocoder(g)  // Google geocoding (never cached)
-		reg.AddMatrixer(g)  // Google Distance Matrix → delivery-fee driving distance/ETA
+		reg.AddGeocoder(g) // Google geocoding (never cached)
+		reg.AddMatrixer(g) // Google Distance Matrix → delivery-fee driving distance/ETA
 	} else {
 		// Mock stands in under the "google" name but carries SourceGoogle so the
 		// no-cache + license-coherence guards behave identically in dev/CI.

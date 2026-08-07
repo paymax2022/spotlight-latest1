@@ -18,6 +18,7 @@ import { CADENCE_OPTIONS, MEMBERSHIP_CATEGORY_OPTIONS } from '@/features/associa
 import { CADENCE_LABEL } from '@/features/association/constants/association.constants';
 import { formatNaira } from '@/features/association/utils/associationFormatters';
 import type { DuesCadence } from '@/features/association/types/association.types';
+import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 
 export default function WizardMembership() {
   const { draft, addCategory, removeCategory } = useOrgDraft();
@@ -33,8 +34,7 @@ export default function WizardMembership() {
 
   const onAdd = () => {
     if (!effectiveLabel) return;
-    const naira = parseInt(dues.replace(/[^0-9]/g, ''), 10) || 0;
-    addCategory({ id: `cat_${Date.now()}`, label: effectiveLabel, duesKobo: naira * 100, cadence });
+    addCategory({ id: `cat_${Date.now()}`, label: effectiveLabel, duesKobo: nairaStringToKobo(dues), cadence });
     setCategory(''); setCustomLabel(''); setDues('');
   };
   const next = () => { setTouched(true); if (valid) router.push('/association/create/access'); };
@@ -75,7 +75,7 @@ export default function WizardMembership() {
           {category === 'Other' ? (
             <TextInputField placeholder="Enter category name" value={customLabel} onChangeText={setCustomLabel} />
           ) : null}
-          <TextInputField placeholder="Dues amount (₦)" value={dues} onChangeText={setDues} keyboardType="number-pad" />
+          <TextInputField placeholder="Dues amount (₦)" value={dues} onChangeText={(t) => setDues(sanitizeMoneyInput(t))} keyboardType="decimal-pad" maxLength={13} />
           <SelectField
             value={CADENCE_LABEL[cadence]}
             options={CADENCE_OPTIONS.map((c) => CADENCE_LABEL[c])}

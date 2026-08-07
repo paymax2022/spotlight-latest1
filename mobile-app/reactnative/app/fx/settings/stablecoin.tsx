@@ -59,10 +59,10 @@ export default function StablecoinAddressesScreen() {
               </View>
             ) : null}
 
-            {data.stablecoinAddresses.length === 0 && !adding ? (
+            {(data.stablecoinAddresses ?? []).length === 0 && !adding ? (
               <StateView kind="empty" icon="Coins" title="No linked addresses" message="Link a stablecoin wallet to receive or settle in USDC/USDT." actionLabel="Add address" onAction={() => setAdding(true)} compact />
             ) : (
-              data.stablecoinAddresses.map((a) => (
+              (data.stablecoinAddresses ?? []).map((a) => (
                 <View key={a.id} style={styles.card}>
                   <View style={styles.cardHead}>
                     <View style={styles.assetRow}>

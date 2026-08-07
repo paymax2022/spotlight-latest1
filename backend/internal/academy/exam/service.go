@@ -110,6 +110,11 @@ func (s *Service) ListBlueprints(ctx context.Context, arenaID string) ([]CBTBlue
 	return s.repo.ListBlueprintsForArena(ctx, arenaID)
 }
 
+// ListAllBlueprints returns every blueprint across all arenas (admin flat list).
+func (s *Service) ListAllBlueprints(ctx context.Context) ([]CBTBlueprint, error) {
+	return s.repo.ListAllBlueprints(ctx)
+}
+
 func (s *Service) CreateCombination(ctx context.Context, actor string, req CombinationRequest) (*SubjectCombinationRule, error) {
 	if req.ArenaID == "" || req.Course == "" {
 		return nil, ErrInvalidInput
@@ -207,32 +212,6 @@ func (s *Service) AttemptQuestions(ctx context.Context, userID, attemptID string
 		out = append(out, qs...)
 	}
 	return out, nil
-}
-
-// GetAttemptResult returns the stored score/readiness/predicted projection for a
-// submitted/scored attempt the caller owns. 404 until the attempt is submitted.
-func (s *Service) GetAttemptResult(ctx context.Context, userID, attemptID string) (map[string]any, error) {
-	att, err := s.ownedAttempt(ctx, userID, attemptID)
-	if err != nil {
-		return nil, err
-	}
-	switch att.State {
-	case AttemptSubmitted, AttemptScored, AttemptReviewed:
-		// result is available
-	default:
-		return nil, ErrNotFound // not yet submitted → no result projection
-	}
-	res := map[string]any{}
-	for k, v := range att.Score { // subjects, overall, grade, late
-		res[k] = v
-	}
-	if att.Readiness != nil {
-		res["readiness"] = *att.Readiness
-	}
-	if att.Predicted != nil {
-		res["predicted"] = att.Predicted
-	}
-	return res, nil
 }
 
 // sectionCount coerces a jsonb section count (float64 from JSON, or int/string)
@@ -437,6 +416,37 @@ func (s *Service) Review(ctx context.Context, userID, attemptID string) (*Attemp
 // GetAttempt returns an attempt the user owns.
 func (s *Service) GetAttempt(ctx context.Context, userID, attemptID string) (*Attempt, error) {
 	return s.ownedAttempt(ctx, userID, attemptID)
+}
+
+// GetAttemptResult returns the stored score/result projection for an attempt the user
+// OWNS — the same ScoreResult the submit path persists (subjects/overall/grade/late
+// from the score jsonb, plus readiness + predicted). It NEVER re-scores: it reads the
+// values frozen at submit time. Ownership is enforced (defence in depth on RLS); a
+// non-owned or missing attempt is ErrNotFound (no leak). The projection is returned
+// only once the attempt is in a submitted/scored/reviewed state; otherwise ErrNotFound
+// (no result exists yet).
+func (s *Service) GetAttemptResult(ctx context.Context, userID, attemptID string) (map[string]any, error) {
+	att, err := s.ownedAttempt(ctx, userID, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	switch att.State {
+	case AttemptSubmitted, AttemptScored, AttemptReviewed:
+		// result is available
+	default:
+		return nil, ErrNotFound // not yet submitted → no result projection
+	}
+	res := map[string]any{}
+	for k, v := range att.Score { // subjects, overall, grade, late
+		res[k] = v
+	}
+	if att.Readiness != nil {
+		res["readiness"] = *att.Readiness
+	}
+	if att.Predicted != nil {
+		res["predicted"] = att.Predicted
+	}
+	return res, nil
 }
 
 // ownedAttempt loads the attempt and enforces ownership (defence in depth on RLS).

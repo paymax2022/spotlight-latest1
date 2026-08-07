@@ -6,24 +6,24 @@ import "time"
 type CurrencyWallet struct {
 	ID           string    `json:"id"`
 	UserID       string    `json:"user_id"`
-	Currency     string    `json:"currency"` // ISO 4217: "USD", "GBP", "EUR"
+	Currency     string    `json:"currency"`      // ISO 4217: "USD", "GBP", "EUR"
 	BalanceMinor int64     `json:"balance_minor"` // cents/pence/cents in minor units
 	CreatedAt    time.Time `json:"created_at"`
 }
 
 // FXQuote holds a Maplerad rate quote that is Redis-reserved with a TTL.
 type FXQuote struct {
-	ID              string    `json:"id"`
-	UserID          string    `json:"user_id"`
-	ProviderQuoteID string    `json:"provider_quote_id"`
-	SourceCurrency  string    `json:"source_currency"`
-	TargetCurrency  string    `json:"target_currency"`
-	SourceAmountKobo int64    `json:"source_amount_kobo"`
-	TargetAmountMinor int64   `json:"target_amount_minor"`
-	Rate            float64   `json:"rate"`
-	FeeKobo         int64     `json:"fee_kobo"`
-	ExpiresAt       time.Time `json:"expires_at"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID                string    `json:"id"`
+	UserID            string    `json:"user_id"`
+	ProviderQuoteID   string    `json:"provider_quote_id"`
+	SourceCurrency    string    `json:"source_currency"`
+	TargetCurrency    string    `json:"target_currency"`
+	SourceAmountKobo  int64     `json:"source_amount_kobo"`
+	TargetAmountMinor int64     `json:"target_amount_minor"`
+	Rate              float64   `json:"rate"`
+	FeeKobo           int64     `json:"fee_kobo"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 // FXConversion is the executed record of a currency exchange.

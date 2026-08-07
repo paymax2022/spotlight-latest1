@@ -7,6 +7,7 @@ import { router } from 'expo-router';
 import { ArrowLeft } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
+import { formatNaira } from '@/utils/money';
 import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
@@ -54,7 +55,7 @@ function TxCard({ tx, onPress }: { tx: Transaction; onPress: () => void }) {
       </View>
       <View style={styles.txRight}>
         <Text style={[styles.txAmount, { color: isDebit ? Colors.onSurface : Colors.teal }]}>
-          {isDebit ? '-' : '+'}₦{tx.totalAmount.toLocaleString()}
+          {isDebit ? '-' : '+'}{formatNaira(tx.totalAmount)}
         </Text>
         <Text style={styles.txDate}>{new Date(tx.createdAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' })}</Text>
       </View>

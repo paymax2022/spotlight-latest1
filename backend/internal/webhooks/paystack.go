@@ -24,10 +24,10 @@ type PaystackEvent struct {
 
 // chargeData covers charge.success events.
 type chargeData struct {
-	Reference  string `json:"reference"`
-	Amount     int64  `json:"amount"` // kobo
-	Channel    string `json:"channel"`
-	Customer   struct {
+	Reference string `json:"reference"`
+	Amount    int64  `json:"amount"` // kobo
+	Channel   string `json:"channel"`
+	Customer  struct {
 		Email string `json:"email"`
 	} `json:"customer"`
 	Metadata map[string]any `json:"metadata"`
@@ -63,10 +63,10 @@ const FeesReferencePrefix = "feespay:"
 // PaystackHandler dispatches inbound Paystack webhooks to the appropriate
 // finance sub-handlers.
 type PaystackHandler struct {
-	payment      provider.PaymentProvider
-	vaSvc        *va.Service
-	xferSvc      *transfers.Service
-	walletSvc    *wallet.Service
+	payment       provider.PaymentProvider
+	vaSvc         *va.Service
+	xferSvc       *transfers.Service
+	walletSvc     *wallet.Service
 	feesConfirmer FeesChargeConfirmer // optional; nil ⇒ fees module off (no-op)
 }
 

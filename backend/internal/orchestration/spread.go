@@ -6,12 +6,12 @@ import "strings"
 // Spread is expressed in basis points over the provider all-in rate, with an
 // optional fixed component and min/max guards.
 type SpreadRule struct {
-	Corridor string // "" matches any corridor (default rule)
-	Tier     string // "" matches any tier
-	BPS      int
+	Corridor   string // "" matches any corridor (default rule)
+	Tier       string // "" matches any tier
+	BPS        int
 	FixedMinor int64
-	MinBPS   int
-	MaxBPS   int
+	MinBPS     int
+	MaxBPS     int
 }
 
 // SpreadEngine resolves the effective spread for a corridor/tier and applies it.
