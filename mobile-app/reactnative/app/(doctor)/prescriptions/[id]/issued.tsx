@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Alert, Modal } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Share2, History, XCircle, Pill, ChevronRight, X, Check } from 'lucide-react-native';
@@ -25,6 +25,7 @@ import {
   FOOD_TIMING_OPTIONS,
 } from '@/features/doctor/constants';
 import type { RxLifecycleStatus, RxFulfilmentOption } from '@/types/doctor.batch3';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 // ── Section K — Issued prescription detail ────────────────────────────────────
 // NEW screen: QrCodeView + verification code (K29), share (K34), send-to-pharmacy
@@ -54,9 +55,9 @@ export default function IssuedPrescriptionScreen() {
   const handleShare = async () => {
     try {
       await share.mutateAsync({ prescriptionId, channel: 'link' });
-      Alert.alert('Shared', 'A secure link has been shared with the patient.');
+      alertAsync({ title: 'Shared', message: 'A secure link has been shared with the patient.' });
     } catch {
-      Alert.alert('Failed', 'Could not share the prescription. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not share the prescription. Please try again.' });
     }
   };
 
@@ -65,15 +66,18 @@ export default function IssuedPrescriptionScreen() {
       await send.mutateAsync({ prescriptionId, option });
       setSendOpen(false);
       if (option === 'send_to_pharmacy' || option === 'patient_choice') {
-        Alert.alert('Sent', 'The prescription has been sent for fulfilment.', [
-          { text: 'View pharmacy', onPress: () => router.push('/(doctor)/pharmacy') },
-          { text: 'OK' },
-        ]);
+        const ok = await confirmAsync({
+          title: 'Sent',
+          message: 'The prescription has been sent for fulfilment.',
+          confirmLabel: 'View pharmacy',
+          cancelLabel: 'OK',
+        });
+        if (ok) router.push('/(doctor)/pharmacy');
       } else {
-        Alert.alert('Done', `${RX_FULFILMENT_OPTION_LABELS[option]} completed.`);
+        alertAsync({ title: 'Done', message: `${RX_FULFILMENT_OPTION_LABELS[option]} completed.` });
       }
     } catch {
-      Alert.alert('Failed', 'Could not send the prescription. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not send the prescription. Please try again.' });
     }
   };
 
@@ -81,9 +85,10 @@ export default function IssuedPrescriptionScreen() {
     try {
       await cancel.mutateAsync({ prescriptionId, reason });
       setCancelOpen(false);
-      Alert.alert('Cancelled', 'The prescription has been cancelled.', [{ text: 'OK', onPress: () => router.back() }]);
+      await alertAsync({ title: 'Cancelled', message: 'The prescription has been cancelled.' });
+      router.back();
     } catch {
-      Alert.alert('Failed', 'Could not cancel the prescription. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not cancel the prescription. Please try again.' });
     }
   };
 

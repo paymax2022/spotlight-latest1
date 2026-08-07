@@ -4,21 +4,16 @@ import { useEffect, useState } from 'react';
 import { listKyc, decideKyc } from '@/services/staysAdminService';
 import type { KycCase, KycStatus } from '@/types/staysAdmin';
 import {
-  PageHeader,
   StaysTabs,
   Badge,
   StateBlock,
   FilterBar,
   DisclosureNote,
-  btn,
-  btnPrimary,
-  btnDanger,
-  th,
-  td,
   label,
   select,
   timeAgo,
 } from '../_ui';
+import { Page, PageHeader, Button, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUSES: KycStatus[] = ['pending', 'approved', 'rejected', 'needs_info'];
 
@@ -50,11 +45,11 @@ export default function StaysKycPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Hotelier KYC & verification"
         subtitle="Review business registration, CAC and bank verification for direct-rail hoteliers before they can list inventory and receive Naira payouts."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" sm onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="trust" />
 
@@ -77,16 +72,16 @@ export default function StaysKycPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
-              <th style={th()}>Business</th>
-              <th style={th()}>Hotelier</th>
-              <th style={th()}>City</th>
-              <th style={th()}>CAC</th>
-              <th style={th()}>Docs</th>
-              <th style={th()}>Bank</th>
-              <th style={th()}>Risk flags</th>
-              <th style={th()}>Status</th>
-              <th style={th()}>Submitted</th>
-              <th style={th()}>Actions</th>
+              <th style={thCell}>Business</th>
+              <th style={thCell}>Hotelier</th>
+              <th style={thCell}>City</th>
+              <th style={thCell}>CAC</th>
+              <th style={thCell}>Docs</th>
+              <th style={thCell}>Bank</th>
+              <th style={thCell}>Risk flags</th>
+              <th style={thCell}>Status</th>
+              <th style={thCell}>Submitted</th>
+              <th style={thCell}>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -94,29 +89,29 @@ export default function StaysKycPage() {
               const flagged = r.risk_flags.length > 0;
               const busy = busyId === r.id;
               return (
-                <tr key={r.id} style={flagged ? { background: '#fef2f2' } : undefined}>
-                  <td style={td()}>{r.business_name}</td>
-                  <td style={td()}>{r.hotelier_masked}</td>
-                  <td style={td()}>{r.city}</td>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{r.cac_number_masked}</code></td>
-                  <td style={td()}>
+                <tr key={r.id} style={flagged ? { background: tint(colors.danger, 0.08) } : undefined}>
+                  <td style={tdCell}>{r.business_name}</td>
+                  <td style={tdCell}>{r.hotelier_masked}</td>
+                  <td style={tdCell}>{r.city}</td>
+                  <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{r.cac_number_masked}</code></td>
+                  <td style={tdCell}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
                       {r.doc_types.length === 0 ? '—' : r.doc_types.map((d) => <Badge key={d} status={d} label={d.replace(/_/g, ' ')} />)}
                     </div>
                   </td>
-                  <td style={td()}><Badge status={r.bank_verified ? 'bank_verified' : 'pending'} label={r.bank_verified ? 'Verified' : 'Unverified'} /></td>
-                  <td style={td()}>
+                  <td style={tdCell}><Badge status={r.bank_verified ? 'bank_verified' : 'pending'} label={r.bank_verified ? 'Verified' : 'Unverified'} /></td>
+                  <td style={tdCell}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
                       {flagged ? r.risk_flags.map((f) => <Badge key={f} status="high" label={f.replace(/_/g, ' ')} />) : '—'}
                     </div>
                   </td>
-                  <td style={td()}><Badge status={r.status} /></td>
-                  <td style={td()}>{timeAgo(r.submitted_at)}</td>
-                  <td style={td()}>
+                  <td style={tdCell}><Badge status={r.status} /></td>
+                  <td style={tdCell}>{timeAgo(r.submitted_at)}</td>
+                  <td style={tdCell}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
-                      <button style={btnPrimary()} disabled={busy} onClick={() => decide(r.id, 'approved')}>Approve</button>
-                      <button style={btnDanger()} disabled={busy} onClick={() => decide(r.id, 'rejected')}>Reject</button>
-                      <button style={btn()} disabled={busy} onClick={() => decide(r.id, 'needs_info')}>Needs info</button>
+                      <Button variant="primary" sm disabled={busy} onClick={() => decide(r.id, 'approved')}>Approve</Button>
+                      <Button variant="danger" sm disabled={busy} onClick={() => decide(r.id, 'rejected')}>Reject</Button>
+                      <Button variant="outline" sm disabled={busy} onClick={() => decide(r.id, 'needs_info')}>Needs info</Button>
                     </div>
                   </td>
                 </tr>
@@ -125,6 +120,6 @@ export default function StaysKycPage() {
           </tbody>
         </table>
       </StateBlock>
-    </div>
+    </Page>
   );
 }

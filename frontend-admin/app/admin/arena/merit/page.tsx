@@ -9,9 +9,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { listCompetitions, listMerit, verifyMerit } from '@/services/arenaAdminService';
 import type { Competition, MeritEntry, MeritVerifyResult, MeritStage } from '@/types/arenaAdmin';
 import { MERIT_STAGE_LABELS } from '@/types/arenaAdmin';
+import { Page, PageHeader, Card, Button, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 import {
-  PageHeader, Card, btn, btnPrimary, th, td, selectStyle, mono,
-  timeAgo, Pill, PermissionBanner, ARENA_PERMS, useArenaPermission,
+  mono, timeAgo, PermissionBanner, ARENA_PERMS, useArenaPermission,
 } from '../_ui';
 
 export default function ArenaMeritPage() {
@@ -71,51 +71,51 @@ export default function ArenaMeritPage() {
   }, [filtered, competitionId]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Arena — Merit Ledger & Integrity (A6)"
         subtitle="Append-only, signed, hash-chained Merit entries — the anti-rigging trust surface. READ-ONLY. RBAC: arena.auditor.read."
-        action={
+        actions={
           <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <select value={competitionId} onChange={(e) => setCompetitionId(e.target.value)} style={selectStyle()}>
+            <select value={competitionId} onChange={(e) => setCompetitionId(e.target.value)}>
               {competitions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <button onClick={() => void load()} style={btn()}>Refresh</button>
+            <Button variant="outline" onClick={() => void load()}>Refresh</Button>
           </div>
         }
       />
 
       {!allowed && <PermissionBanner permission={ARENA_PERMS.auditor} />}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
-      <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#1e40af', marginBottom: '1.25rem' }}>
+      <div style={{ background: tint(colors.info, 0.12), border: `1px solid ${tint(colors.info, 0.35)}`, borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.info, marginBottom: '1.25rem' }}>
         Every entry is signed by an authorized ScoringGateway adapter (NDC-2) and chained by <code>entry_hash</code> to its predecessor per contestant, so the ledger is tamper-evident. Corrections are append-only compensating entries — never edits.
       </div>
 
-      <Card title="Filters & actions">
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: '#6b7280' }}>
+      <Card title="Filters & actions" style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 14 }}>
+          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: colors.muted }}>
             Contestant
-            <select value={contestantFilter} onChange={(e) => setContestantFilter(e.target.value)} style={selectStyle()}>
+            <select value={contestantFilter} onChange={(e) => setContestantFilter(e.target.value)}>
               <option value="">All</option>
               {contestants.map((cid) => <option key={cid} value={cid}>{cid}</option>)}
             </select>
           </label>
-          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: '#6b7280' }}>
+          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: colors.muted }}>
             Stage
-            <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value as MeritStage | '')} style={selectStyle()}>
+            <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value as MeritStage | '')}>
               <option value="">All</option>
               {(Object.keys(MERIT_STAGE_LABELS) as MeritStage[]).map((s) => <option key={s} value={s}>{MERIT_STAGE_LABELS[s]}</option>)}
             </select>
           </label>
-          <button onClick={() => void runVerify()} style={btnPrimary('#15803d')} disabled={verifying}>
+          <Button variant="primary" onClick={() => void runVerify()} disabled={verifying}>
             {verifying ? 'Verifying…' : 'Verify integrity'}
-          </button>
-          <button onClick={exportCsv} style={btn()} disabled={!filtered.length}>Export CSV</button>
+          </Button>
+          <Button variant="outline" onClick={exportCsv} disabled={!filtered.length}>Export CSV</Button>
         </div>
 
         {verifyResult && (
-          <div style={{ marginTop: '0.9rem', padding: '0.7rem 0.9rem', borderRadius: '0.5rem', background: verifyResult.chain_valid && verifyResult.signatures_valid ? '#f0fdf4' : '#fef2f2', border: `1px solid ${verifyResult.chain_valid && verifyResult.signatures_valid ? '#bbf7d0' : '#fca5a5'}`, fontSize: '0.85rem', color: verifyResult.chain_valid && verifyResult.signatures_valid ? '#166534' : '#b91c1c' }}>
+          <div style={{ marginTop: '0.9rem', padding: '0.7rem 0.9rem', borderRadius: '0.5rem', background: verifyResult.chain_valid && verifyResult.signatures_valid ? tint(colors.success, 0.12) : tint(colors.danger, 0.12), border: `1px solid ${verifyResult.chain_valid && verifyResult.signatures_valid ? tint(colors.success, 0.35) : tint(colors.danger, 0.35)}`, fontSize: '0.85rem', color: verifyResult.chain_valid && verifyResult.signatures_valid ? colors.success : colors.danger }}>
             <strong>{verifyResult.chain_valid && verifyResult.signatures_valid ? '✓ Integrity proof valid' : '✗ Integrity check failed'}</strong>
             {' — '}{verifyResult.entries_checked} entr{verifyResult.entries_checked === 1 ? 'y' : 'ies'} checked
             {verifyResult.contestant_id ? ` for ${verifyResult.contestant_id}` : ' (all contestants)'}.
@@ -127,39 +127,39 @@ export default function ArenaMeritPage() {
 
       <Card title="Merit entries">
         {loading ? (
-          <p style={{ color: '#6b7280' }}>Loading ledger…</p>
+          <p style={{ color: colors.muted }}>Loading ledger…</p>
         ) : filtered.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No Merit entries for this filter.</p>
+          <p style={{ color: colors.muted }}>No Merit entries for this filter.</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>Contestant</th>
-                  <th style={th()}>Stage</th>
-                  <th style={th()}>Source</th>
-                  <th style={th()}>Norm. score</th>
-                  <th style={th()}>Rubric</th>
-                  <th style={th()}>Signature</th>
-                  <th style={th()}>Chain (prev → entry)</th>
-                  <th style={th()}>Signed</th>
+                  <th style={thCell}>Contestant</th>
+                  <th style={thCell}>Stage</th>
+                  <th style={thCell}>Source</th>
+                  <th style={thCell}>Norm. score</th>
+                  <th style={thCell}>Rubric</th>
+                  <th style={thCell}>Signature</th>
+                  <th style={thCell}>Chain (prev → entry)</th>
+                  <th style={thCell}>Signed</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((e) => (
                   <tr key={e.id}>
-                    <td style={{ ...td(), ...mono() }}>{e.contestant_id}</td>
-                    <td style={td()}><Pill fg="#374151" bg="#f3f4f6">{MERIT_STAGE_LABELS[e.stage] ?? e.stage}</Pill></td>
-                    <td style={td()}>{e.source_type}</td>
-                    <td style={{ ...td(), fontWeight: 600 }}>{e.normalized_score.toFixed(1)}</td>
-                    <td style={{ ...td(), ...mono() }}>{e.rubric_version ?? '—'}</td>
-                    <td style={{ ...td(), ...mono(), color: '#15803d' }} title={e.signature}>🔏 {truncate(e.signature)}</td>
-                    <td style={{ ...td(), ...mono() }}>
-                      <span style={{ color: '#9ca3af' }}>{e.prev_hash ? truncate(e.prev_hash) : 'genesis'}</span>
+                    <td style={{ ...tdCell, ...mono() }}>{e.contestant_id}</td>
+                    <td style={tdCell}><Badge text={MERIT_STAGE_LABELS[e.stage] ?? e.stage} color={colors.secondary} /></td>
+                    <td style={tdCell}>{e.source_type}</td>
+                    <td style={{ ...tdCell, fontWeight: 600 }}>{e.normalized_score.toFixed(1)}</td>
+                    <td style={{ ...tdCell, ...mono() }}>{e.rubric_version ?? '—'}</td>
+                    <td style={{ ...tdCell, ...mono(), color: colors.success }} title={e.signature}>🔏 {truncate(e.signature)}</td>
+                    <td style={{ ...tdCell, ...mono() }}>
+                      <span style={{ color: colors.muted }}>{e.prev_hash ? truncate(e.prev_hash) : 'genesis'}</span>
                       {' → '}
                       <span>{truncate(e.entry_hash)}</span>
                     </td>
-                    <td style={td()}>{timeAgo(e.signed_at)}</td>
+                    <td style={tdCell}>{timeAgo(e.signed_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -167,7 +167,7 @@ export default function ArenaMeritPage() {
           </div>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }
 

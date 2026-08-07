@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { getFeeConfig, updateFeeConfig, formatNaira } from '@/services/creatorsAdminService';
 import type { CreatorFeeConfig, CreatorKycTier } from '@/types/creatorsAdmin';
 import { PageHeader, CreatorsTabs, Card, DisclosureNote, StateBlock, AuditNote, btn, btnPrimary, input, label, select, bps, fmtDate } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function CreatorFeesPage() {
   const [cfg, setCfg] = useState<CreatorFeeConfig | null>(null);
@@ -53,7 +54,7 @@ export default function CreatorFeesPage() {
 
       <StateBlock loading={loading} error={error} empty={!cfg} emptyText="No fee config available.">
         {cfg && (
-          <Card title="Fee schedule" right={<span style={{ fontSize: '0.75rem', color: '#6b7280' }}>Last updated {fmtDate(cfg.updated_at)} by {cfg.updated_by_masked}</span>}>
+          <Card title="Fee schedule" right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>Last updated {fmtDate(cfg.updated_at)} by {cfg.updated_by_masked}</span>}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '1rem' }}>
               <div>
                 <label style={label()}>Tip fee — {bps(Number(form.tip_fee_bps ?? cfg.tip_fee_bps))}</label>

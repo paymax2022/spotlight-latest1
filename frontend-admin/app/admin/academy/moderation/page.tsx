@@ -5,7 +5,22 @@ import {
   listModerationReports, triageModerationReport, decideModerationReport, escalateModerationReport,
 } from '@/services/academyAdminService';
 import type { ModerationReport, ReportEntityType, ReportState, ModerationDecision } from '@/types/academyAdmin';
-import { PageHeader, AcademyTabs, Card, Badge, Kpi, StateBlock, AuditNote, DisclosureNote, FilterBar, btn, btnPrimary, btnDanger, th, td, label, select, timeAgo } from '../_ui';
+import { AcademyTabs, Kpi, StateBlock, AuditNote, DisclosureNote, FilterBar, label, select, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  const s = status.toLowerCase();
+  if (['active', 'approved', 'published', 'funded', 'paid', 'completed', 'allocated', 'live', 'reconciled', 'disbursed', 'collected', 'released', 'core', 'issued', 'routed', 'ready', 'eligible', 'actioned', 'verified', 'resolved', 'plan_published', 'badge_earned', 'pool_funded', 'item_approved'].includes(s)) return colors.success;
+  if (['pending', 'in_review', 'under_review', 'needs_info', 'scheduled', 'low_balance', 'review', 'in_translation', 'funding', 'fee_due', 'onboarding', 'frequent', 'packaged', 'matured', 'paused', 'processing', 'triaged', 'investigating', 'hide', 'warn', 'high', 'medium'].includes(s)) return colors.warning;
+  if (['draft', 'authoring', 'open', 'upcoming', 'generated', 'partial', 'submitted', 'trial', 'requested', 'applied', 'cards_generated', 'exam_opened', 'campaign_launched'].includes(s)) return colors.info;
+  if (['rejected', 'failed', 'suspended', 'blocked', 'unfunded', 'expired', 'duplicate', 'revoked', 'escalated', 'ban', 'critical', 'overdue', 'item_rejected'].includes(s)) return colors.danger;
+  if (['refunded', 'reversed', 'redeemed', 'reward_redeemed'].includes(s)) return colors.primary;
+  return colors.secondary;
+}
+
+function StatusBadge({ status, label: lbl }: { status: string; label?: string }) {
+  return <Badge text={lbl ?? status.replace(/_/g, ' ')} color={statusColor(status)} />;
+}
 
 const ENTITY_TYPES: ReportEntityType[] = ['content', 'comment', 'profile', 'live_chat', 'question'];
 const STATES: ReportState[] = ['open', 'triaged', 'actioned', 'dismissed', 'escalated'];
@@ -62,8 +77,8 @@ export default function ModerationPage() {
   const escalatedCount = reports.filter((r) => r.state === 'escalated').length;
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Moderation & trust/safety" subtitle="Content &amp; community report queue with triage and decisions (hide / warn / ban / dismiss); child-safety controls and escalation." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Moderation & trust/safety" subtitle="Content &amp; community report queue with triage and decisions (hide / warn / ban / dismiss); child-safety controls and escalation." actions={<Button onClick={load} variant="outline" sm>Refresh</Button>} />
       <AcademyTabs active="moderation" />
       <DisclosureNote>
         Requires <code>academy.moderation</code>. Report lifecycle: <strong>open → triaged → actioned | dismissed | escalated</strong>. <strong>Child-safety (CSAE) reports are escalated to the dedicated safety desk</strong> and routed to the statutory reporting pipeline — never resolved inline. All decisions are recorded to the immutable audit log.
@@ -71,9 +86,9 @@ export default function ModerationPage() {
 
       <StateBlock loading={loading} error={error} empty={false}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-          <Kpi label="Open reports" value={openCount.toString()} accent={openCount > 0 ? '#9a3412' : undefined} />
-          <Kpi label="Child-safety active" value={childSafety.toString()} accent={childSafety > 0 ? '#b91c1c' : undefined} />
-          <Kpi label="Escalated" value={escalatedCount.toString()} accent={escalatedCount > 0 ? '#b91c1c' : undefined} />
+          <Kpi label="Open reports" value={openCount.toString()} accent={openCount > 0 ? colors.warning : undefined} />
+          <Kpi label="Child-safety active" value={childSafety.toString()} accent={childSafety > 0 ? colors.danger : undefined} />
+          <Kpi label="Escalated" value={escalatedCount.toString()} accent={escalatedCount > 0 ? colors.danger : undefined} />
           <Kpi label="Total reports" value={reports.length.toString()} />
         </div>
 
@@ -84,35 +99,35 @@ export default function ModerationPage() {
             <div><label style={label()}>Child-safety</label><select style={select()} value={fChild} onChange={(e) => setFChild(e.target.value)}><option value="all">All</option><option value="yes">Child-safety only</option><option value="no">Exclude</option></select></div>
           </FilterBar>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Subject</th><th style={th()}>Type</th><th style={th()}>Reason</th><th style={th()}>Severity</th><th style={th()}>State</th><th style={th()}>Assignee</th><th style={th()}>Reported</th><th style={th()}>Triage / Decide</th></tr></thead>
+            <thead><tr><th style={thCell}>Subject</th><th style={thCell}>Type</th><th style={thCell}>Reason</th><th style={thCell}>Severity</th><th style={thCell}>State</th><th style={thCell}>Assignee</th><th style={thCell}>Reported</th><th style={thCell}>Triage / Decide</th></tr></thead>
             <tbody>
               {filtered.map((r) => {
                 const terminal = r.state === 'actioned' || r.state === 'dismissed';
                 return (
                   <tr key={r.id}>
-                    <td style={td()}>
+                    <td style={tdCell}>
                       <strong>{r.entity_label}</strong>
-                      <div style={{ color: '#9ca3af', fontSize: '0.72rem' }}><code>{r.entity_ref}</code></div>
-                      {r.child_safety ? <span style={{ display: 'inline-block', marginTop: '0.2rem' }}><Badge status="critical" label="child-safety" /></span> : null}
-                      {r.notes ? <div style={{ color: '#6b7280', fontSize: '0.72rem', marginTop: '0.2rem' }}>{r.notes}</div> : null}
+                      <div style={{ color: colors.muted, fontSize: '0.72rem' }}><code>{r.entity_ref}</code></div>
+                      {r.child_safety ? <span style={{ display: 'inline-block', marginTop: '0.2rem' }}><StatusBadge status="critical" label="child-safety" /></span> : null}
+                      {r.notes ? <div style={{ color: colors.muted, fontSize: '0.72rem', marginTop: '0.2rem' }}>{r.notes}</div> : null}
                     </td>
-                    <td style={td()}>{r.entity_type.replace(/_/g, ' ')}</td>
-                    <td style={td()}>{r.reason.replace(/_/g, ' ')}</td>
-                    <td style={td()}><Badge status={r.severity} /></td>
-                    <td style={td()}><Badge status={r.state} />{r.decision ? <div style={{ marginTop: '0.2rem' }}><Badge status={r.decision} label={r.decision} /></div> : null}</td>
-                    <td style={td()}>{r.assignee ?? '—'}</td>
-                    <td style={td()}>{timeAgo(r.created_at)}</td>
-                    <td style={td()}>
-                      {terminal ? <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>resolved</span> : r.state === 'escalated' ? <span style={{ color: '#b91c1c', fontSize: '0.8rem' }}>at safety desk</span> : (
+                    <td style={tdCell}>{r.entity_type.replace(/_/g, ' ')}</td>
+                    <td style={tdCell}>{r.reason.replace(/_/g, ' ')}</td>
+                    <td style={tdCell}><StatusBadge status={r.severity} /></td>
+                    <td style={tdCell}><StatusBadge status={r.state} />{r.decision ? <div style={{ marginTop: '0.2rem' }}><StatusBadge status={r.decision} label={r.decision} /></div> : null}</td>
+                    <td style={tdCell}>{r.assignee ?? '—'}</td>
+                    <td style={tdCell}>{timeAgo(r.created_at)}</td>
+                    <td style={tdCell}>
+                      {terminal ? <span style={{ color: colors.muted, fontSize: '0.8rem' }}>resolved</span> : r.state === 'escalated' ? <span style={{ color: colors.danger, fontSize: '0.8rem' }}>at safety desk</span> : (
                         <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                          {r.state === 'open' ? <button onClick={() => triage(r)} disabled={busy === r.id} style={btn()}>Triage</button> : null}
+                          {r.state === 'open' ? <Button onClick={() => triage(r)} disabled={busy === r.id} variant="outline" sm>Triage</Button> : null}
                           {r.child_safety ? (
-                            <button onClick={() => escalate(r)} disabled={busy === r.id} style={btnDanger()}>Escalate</button>
+                            <Button onClick={() => escalate(r)} disabled={busy === r.id} variant="danger" sm>Escalate</Button>
                           ) : (
                             <>
                               <select style={{ ...select(), width: 90 }} value={decisionSel[r.id] ?? 'hide'} onChange={(e) => setDecisionSel({ ...decisionSel, [r.id]: e.target.value as ModerationDecision })}>{DECISIONS.map((d) => <option key={d} value={d}>{d}</option>)}</select>
-                              <button onClick={() => decide(r)} disabled={busy === r.id} style={btnPrimary()}>Decide</button>
-                              <button onClick={() => escalate(r)} disabled={busy === r.id} style={btn()}>Escalate</button>
+                              <Button onClick={() => decide(r)} disabled={busy === r.id} variant="primary" sm>Decide</Button>
+                              <Button onClick={() => escalate(r)} disabled={busy === r.id} variant="outline" sm>Escalate</Button>
                             </>
                           )}
                         </div>
@@ -123,11 +138,11 @@ export default function ModerationPage() {
               })}
             </tbody>
           </table>
-          {filtered.length === 0 ? <p style={{ color: '#6b7280', marginTop: '0.75rem' }}>No reports match the current filters.</p> : null}
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {filtered.length === 0 ? <p style={{ color: colors.muted, marginTop: '0.75rem' }}>No reports match the current filters.</p> : null}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.text, marginTop: '0.6rem' }}>{notice}</p>}
           <AuditNote>Triage, moderation decisions (hide / warn / ban / dismiss) and escalations are recorded to the immutable audit log. Child-safety reports route to the statutory reporting pipeline.</AuditNote>
         </Card>
       </StateBlock>
-    </div>
+    </Page>
   );
 }

@@ -13,9 +13,10 @@ import type {
 } from '@/types/mobilityModes';
 import {
   PageHeader, MobilityTabs, Card, Badge, StateNote, AuditedNotice, Kpi,
-  btn, btnPrimary, btnDisabled, th, td, input, nairaFull,
+  btn, btnPrimary, btnDisabled, input, nairaFull,
   useMobilityPermissions, MOBILITY_PERMS,
 } from '../_ui';
+import { colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const DELIVERY_FILTER: Array<DeliveryStatus | ''> = ['', 'created', 'assigned', 'picked_up', 'delivered', 'failed', 'cancelled'];
 const DELIVERY_OPTIONS: DeliveryStatus[] = ['created', 'assigned', 'picked_up', 'delivered', 'failed', 'cancelled'];
@@ -124,9 +125,9 @@ export default function MobilityBusinessPage() {
       {error && <StateNote kind="error">{error}</StateNote>}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-        <Kpi label="Active accounts" value={String(activeAccounts)} accent="#16a34a" />
-        <Kpi label="In-flight deliveries" value={String(inFlight)} accent="#1d4ed8" />
-        <Kpi label="Unpaid invoices" value={String(unpaidInvoices)} accent={unpaidInvoices ? '#dc2626' : '#16a34a'} />
+        <Kpi label="Active accounts" value={String(activeAccounts)} accent={colors.success} />
+        <Kpi label="In-flight deliveries" value={String(inFlight)} accent={colors.info} />
+        <Kpi label="Unpaid invoices" value={String(unpaidInvoices)} accent={unpaidInvoices ? colors.danger : colors.success} />
       </div>
 
       {/* ── Accounts ── */}
@@ -136,19 +137,19 @@ export default function MobilityBusinessPage() {
           : accounts.length === 0 ? <StateNote kind="empty">No business accounts.</StateNote>
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-              <thead><tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>Account</th><th style={th()}>Billing</th><th style={th()}>COD</th><th style={th()}>Status</th><th style={th()}>Wallet</th><th style={th()}>Vol/mo</th><th style={th()}></th>
+              <thead><tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                <th style={thCell}>Account</th><th style={thCell}>Billing</th><th style={thCell}>COD</th><th style={thCell}>Status</th><th style={thCell}>Wallet</th><th style={thCell}>Vol/mo</th><th style={thCell}></th>
               </tr></thead>
               <tbody>
                 {accounts.map((a) => (
-                  <tr key={a.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={td()}><strong>{a.name}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{a.ownerName} · {a.accountType}</div></td>
-                    <td style={td()}><Badge status={a.billingMode === 'prepaid' ? 'active' : 'pending'} label={a.billingMode} /></td>
-                    <td style={td()}>{a.codEnabled ? 'Yes' : 'No'}</td>
-                    <td style={td()}><Badge status={a.status} /></td>
-                    <td style={td()}>{a.billingMode === 'prepaid' ? nairaFull(a.walletBalanceKobo) : <span style={{ color: '#9ca3af' }}>invoice</span>}</td>
-                    <td style={td()}>{a.monthlyVolume.toLocaleString()}</td>
-                    <td style={td()}><button style={btn()} onClick={() => openAcct(a)}>{canManage ? 'Manage' : 'View'}</button></td>
+                  <tr key={a.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <td style={tdCell}><strong>{a.name}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{a.ownerName} · {a.accountType}</div></td>
+                    <td style={tdCell}><Badge status={a.billingMode === 'prepaid' ? 'active' : 'pending'} label={a.billingMode} /></td>
+                    <td style={tdCell}>{a.codEnabled ? 'Yes' : 'No'}</td>
+                    <td style={tdCell}><Badge status={a.status} /></td>
+                    <td style={tdCell}>{a.billingMode === 'prepaid' ? nairaFull(a.walletBalanceKobo) : <span style={{ color: colors.muted }}>invoice</span>}</td>
+                    <td style={tdCell}>{a.monthlyVolume.toLocaleString()}</td>
+                    <td style={tdCell}><button style={btn()} onClick={() => openAcct(a)}>{canManage ? 'Manage' : 'View'}</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -170,19 +171,19 @@ export default function MobilityBusinessPage() {
           : deliveries.length === 0 ? <StateNote kind="empty">No deliveries match this filter.</StateNote>
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-              <thead><tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>Delivery</th><th style={th()}>Route</th><th style={th()}>Status</th><th style={th()}>Courier</th><th style={th()}>Fare / COD</th><th style={th()}>Escrow</th><th style={th()}></th>
+              <thead><tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                <th style={thCell}>Delivery</th><th style={thCell}>Route</th><th style={thCell}>Status</th><th style={thCell}>Courier</th><th style={thCell}>Fare / COD</th><th style={thCell}>Escrow</th><th style={thCell}></th>
               </tr></thead>
               <tbody>
                 {deliveries.map((d) => (
-                  <tr key={d.id} style={{ borderBottom: '1px solid #f3f4f6', background: d.status === 'failed' ? '#fef2f2' : undefined }}>
-                    <td style={td()}><strong>{d.id}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{d.accountName} · {d.size}{d.batchId ? ` · batch ${d.batchId}` : ''}</div></td>
-                    <td style={td()}>{d.pickupAddress}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>→ {d.dropoffAddress} · {d.receiverName}</div></td>
-                    <td style={td()}><Badge status={d.status} /></td>
-                    <td style={td()}>{d.courierName ?? <span style={{ color: '#9ca3af' }}>unassigned</span>}</td>
-                    <td style={td()}>{nairaFull(d.fareKobo)}{d.codKobo > 0 ? <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>COD {nairaFull(d.codKobo)}</div> : null}</td>
-                    <td style={td()}><Badge status={d.escrowStatus} /></td>
-                    <td style={td()}><button style={btn()} onClick={() => openDelivery(d)}>{canManage ? 'Manage' : 'View'}</button></td>
+                  <tr key={d.id} style={{ borderBottom: `1px solid ${colors.border}`, background: d.status === 'failed' ? tint(colors.danger, 0.08) : undefined }}>
+                    <td style={tdCell}><strong>{d.id}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{d.accountName} · {d.size}{d.batchId ? ` · batch ${d.batchId}` : ''}</div></td>
+                    <td style={tdCell}>{d.pickupAddress}<div style={{ fontSize: '0.72rem', color: colors.muted }}>→ {d.dropoffAddress} · {d.receiverName}</div></td>
+                    <td style={tdCell}><Badge status={d.status} /></td>
+                    <td style={tdCell}>{d.courierName ?? <span style={{ color: colors.muted }}>unassigned</span>}</td>
+                    <td style={tdCell}>{nairaFull(d.fareKobo)}{d.codKobo > 0 ? <div style={{ fontSize: '0.72rem', color: colors.muted }}>COD {nairaFull(d.codKobo)}</div> : null}</td>
+                    <td style={tdCell}><Badge status={d.escrowStatus} /></td>
+                    <td style={tdCell}><button style={btn()} onClick={() => openDelivery(d)}>{canManage ? 'Manage' : 'View'}</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -197,25 +198,25 @@ export default function MobilityBusinessPage() {
           : invoices.length === 0 ? <StateNote kind="empty">No invoices.</StateNote>
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-              <thead><tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>Invoice</th><th style={th()}>Account</th><th style={th()}>Period</th><th style={th()}>Deliveries</th><th style={th()}>Amount</th><th style={th()}>Status</th><th style={th()}></th>
+              <thead><tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                <th style={thCell}>Invoice</th><th style={thCell}>Account</th><th style={thCell}>Period</th><th style={thCell}>Deliveries</th><th style={thCell}>Amount</th><th style={thCell}>Status</th><th style={thCell}></th>
               </tr></thead>
               <tbody>
                 {invoices.map((inv) => (
-                  <tr key={inv.id} style={{ borderBottom: '1px solid #f3f4f6', background: inv.status === 'overdue' ? '#fef2f2' : undefined }}>
-                    <td style={td()}><strong>{inv.id}</strong></td>
-                    <td style={td()}>{inv.accountName}</td>
-                    <td style={td()}>{inv.periodLabel}</td>
-                    <td style={td()}>{inv.deliveryCount.toLocaleString()}</td>
-                    <td style={td()}>{nairaFull(inv.amountKobo)}</td>
-                    <td style={td()}><Badge status={inv.status} /></td>
-                    <td style={td()}>
+                  <tr key={inv.id} style={{ borderBottom: `1px solid ${colors.border}`, background: inv.status === 'overdue' ? tint(colors.danger, 0.08) : undefined }}>
+                    <td style={tdCell}><strong>{inv.id}</strong></td>
+                    <td style={tdCell}>{inv.accountName}</td>
+                    <td style={tdCell}>{inv.periodLabel}</td>
+                    <td style={tdCell}>{inv.deliveryCount.toLocaleString()}</td>
+                    <td style={tdCell}>{nairaFull(inv.amountKobo)}</td>
+                    <td style={tdCell}><Badge status={inv.status} /></td>
+                    <td style={tdCell}>
                       <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                         {inv.status === 'open' && (
                           <button disabled={!canManage} style={canManage ? btnPrimary() : btnDisabled()} onClick={() => { setInvoiceAction({ inv, kind: 'issue' }); setInvReason(''); }}>Issue</button>
                         )}
                         {(inv.status === 'issued' || inv.status === 'overdue') && (
-                          <button disabled={!canManage} style={canManage ? btnPrimary('#16a34a') : btnDisabled()} onClick={() => { setInvoiceAction({ inv, kind: 'paid' }); setInvReason(''); }}>Mark paid</button>
+                          <button disabled={!canManage} style={canManage ? btnPrimary(colors.success) : btnDisabled()} onClick={() => { setInvoiceAction({ inv, kind: 'paid' }); setInvReason(''); }}>Mark paid</button>
                         )}
                       </div>
                     </td>
@@ -229,12 +230,12 @@ export default function MobilityBusinessPage() {
       {/* Account status modal */}
       {acct && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }} onClick={() => !busy && setAcct(null)}>
-          <div style={{ background: '#fff', borderRadius: '0.5rem', padding: '1.25rem', width: 'min(480px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: colors.card, borderRadius: '0.5rem', padding: '1.25rem', width: 'min(480px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: '0.5rem' }}>
               <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>{acct.name}</h2>
               <Badge status={acct.status} />
             </div>
-            <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0 0 1rem' }}>{acct.ownerName} · {acct.accountType} · {acct.billingMode} · COD {acct.codEnabled ? 'on' : 'off'}</p>
+            <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 1rem' }}>{acct.ownerName} · {acct.accountType} · {acct.billingMode} · COD {acct.codEnabled ? 'on' : 'off'}</p>
             {!canManage ? (
               <StateNote kind="restricted">Read-only — your role cannot update accounts.</StateNote>
             ) : (
@@ -261,17 +262,17 @@ export default function MobilityBusinessPage() {
       {/* Delivery status modal */}
       {delivery && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }} onClick={() => !busy && setDelivery(null)}>
-          <div style={{ background: '#fff', borderRadius: '0.5rem', padding: '1.25rem', width: 'min(560px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: colors.card, borderRadius: '0.5rem', padding: '1.25rem', width: 'min(560px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: '0.5rem' }}>
               <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>{delivery.id}</h2>
               <Badge status={delivery.status} /><Badge status={delivery.escrowStatus} />
             </div>
-            <p style={{ fontSize: '0.82rem', color: '#374151', margin: '0 0 0.25rem' }}>{delivery.accountName} · {delivery.size} · {delivery.zone}</p>
-            <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0 0 0.5rem' }}>{delivery.pickupAddress} → {delivery.dropoffAddress} · {delivery.receiverName}</p>
-            <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0 0 1rem' }}>Fare {nairaFull(delivery.fareKobo)} · COD {nairaFull(delivery.codKobo)} · Courier {delivery.courierName ?? '—'}{delivery.failureReason ? ` · Failure: ${delivery.failureReason}` : ''}</p>
+            <p style={{ fontSize: '0.82rem', color: colors.text, margin: '0 0 0.25rem' }}>{delivery.accountName} · {delivery.size} · {delivery.zone}</p>
+            <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 0.5rem' }}>{delivery.pickupAddress} → {delivery.dropoffAddress} · {delivery.receiverName}</p>
+            <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 1rem' }}>Fare {nairaFull(delivery.fareKobo)} · COD {nairaFull(delivery.codKobo)} · Courier {delivery.courierName ?? '—'}{delivery.failureReason ? ` · Failure: ${delivery.failureReason}` : ''}</p>
             {delivery.podProofUrl
               ? <p style={{ fontSize: '0.8rem', margin: '0 0 0.75rem' }}><a href={delivery.podProofUrl} target="_blank" rel="noreferrer">View POD proof →</a></p>
-              : <p style={{ fontSize: '0.8rem', color: '#9ca3af', margin: '0 0 0.75rem' }}>No proof submitted yet.</p>}
+              : <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 0.75rem' }}>No proof submitted yet.</p>}
             {!canManage ? (
               <StateNote kind="restricted">Read-only — your role cannot update deliveries.</StateNote>
             ) : (
@@ -298,14 +299,14 @@ export default function MobilityBusinessPage() {
       {/* Invoice action modal */}
       {invoiceAction && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }} onClick={() => !busy && setInvoiceAction(null)}>
-          <div style={{ background: '#fff', borderRadius: '0.5rem', padding: '1.25rem', width: 'min(440px, 92vw)' }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: colors.card, borderRadius: '0.5rem', padding: '1.25rem', width: 'min(440px, 92vw)' }} onClick={(e) => e.stopPropagation()}>
             <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.1rem', fontWeight: 700 }}>{invoiceAction.kind === 'issue' ? 'Issue invoice' : 'Mark invoice paid'}</h2>
-            <p style={{ fontSize: '0.85rem', color: '#6b7280', margin: '0 0 0.75rem' }}>{invoiceAction.inv.accountName} · {invoiceAction.inv.periodLabel} · {nairaFull(invoiceAction.inv.amountKobo)}</p>
+            <p style={{ fontSize: '0.85rem', color: colors.muted, margin: '0 0 0.75rem' }}>{invoiceAction.inv.accountName} · {invoiceAction.inv.periodLabel} · {nairaFull(invoiceAction.inv.amountKobo)}</p>
             <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Reason (required — written to audit log)</label>
             <textarea value={invReason} onChange={(e) => setInvReason(e.target.value)} rows={3} placeholder={invoiceAction.kind === 'issue' ? 'e.g. Period closed, charges reconciled.' : 'e.g. Bank transfer confirmed, ref #...'} style={{ ...input(), marginTop: 4, fontFamily: 'inherit' }} />
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
               <button style={btn()} disabled={busy} onClick={() => setInvoiceAction(null)}>Cancel</button>
-              <button style={busy || !invReason.trim() ? btnDisabled() : btnPrimary(invoiceAction.kind === 'paid' ? '#16a34a' : '#1d4ed8')} disabled={busy || !invReason.trim()} onClick={submitInvoice}>{busy ? 'Saving…' : 'Confirm (audited)'}</button>
+              <button style={busy || !invReason.trim() ? btnDisabled() : btnPrimary(invoiceAction.kind === 'paid' ? colors.success : colors.info)} disabled={busy || !invReason.trim()} onClick={submitInvoice}>{busy ? 'Saving…' : 'Confirm (audited)'}</button>
             </div>
           </div>
         </div>

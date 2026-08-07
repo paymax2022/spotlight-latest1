@@ -21,7 +21,7 @@ type sqlStore struct {
 func NewSQLStore(db *pgxpool.Pool) Store { return &sqlStore{db: db} }
 
 // jsonb columns are written as strings (pgx encodes []byte as bytea, not jsonb).
-func feesJSON(fees []Fee) string { b, _ := json.Marshal(fees); return string(b) }
+func feesJSON(fees []Fee) string         { b, _ := json.Marshal(fees); return string(b) }
 func historyJSON(h []StatusEvent) string { b, _ := json.Marshal(h); return string(b) }
 
 func (s *sqlStore) Balance(ctx context.Context, customer, currency string) (int64, error) {

@@ -5,9 +5,10 @@ import { getIncidents, updateIncident } from '@/services/mobilityAdminService';
 import type { SafetyIncidentRow, IncidentStatus } from '@/types/mobility';
 import {
   PageHeader, MobilityTabs, Card, Badge, StateNote, AuditedNotice, Kpi,
-  btn, btnPrimary, btnDisabled, th, td, input,
+  btn, btnPrimary, btnDisabled, input,
   useMobilityPermissions, MOBILITY_PERMS,
 } from '../_ui';
+import { colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUS_FILTER: Array<IncidentStatus | ''> = ['', 'open', 'investigating', 'resolved', 'escalated'];
 const STATUS_OPTIONS: IncidentStatus[] = ['open', 'investigating', 'resolved', 'escalated'];
@@ -71,8 +72,8 @@ export default function MobilitySafetyPage() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
         <Kpi label="Total incidents" value={String(rows.length)} />
-        <Kpi label="Open" value={String(openCount)} accent={openCount ? '#dc2626' : '#16a34a'} />
-        <Kpi label="Critical" value={String(criticalCount)} accent={criticalCount ? '#dc2626' : '#6b7280'} />
+        <Kpi label="Open" value={String(openCount)} accent={openCount ? colors.danger : colors.success} />
+        <Kpi label="Critical" value={String(criticalCount)} accent={criticalCount ? colors.danger : colors.muted} />
       </div>
 
       <Card
@@ -88,20 +89,20 @@ export default function MobilitySafetyPage() {
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <thead>
-                <tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                  <th style={th()}>Incident</th><th style={th()}>Type</th><th style={th()}>Severity</th><th style={th()}>Status</th><th style={th()}>Trip / Parties</th><th style={th()}>Assigned</th><th style={th()}></th>
+                <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                  <th style={thCell}>Incident</th><th style={thCell}>Type</th><th style={thCell}>Severity</th><th style={thCell}>Status</th><th style={thCell}>Trip / Parties</th><th style={thCell}>Assigned</th><th style={thCell}></th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((i) => (
-                  <tr key={i.id} style={{ borderBottom: '1px solid #f3f4f6', background: i.severity === 'critical' && i.status === 'open' ? '#fef2f2' : undefined }}>
-                    <td style={td()}><strong>{i.id}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{new Date(i.createdAt).toLocaleString()}</div></td>
-                    <td style={td()}><Badge status={i.type} /></td>
-                    <td style={td()}><Badge status={i.severity} /></td>
-                    <td style={td()}><Badge status={i.status} /></td>
-                    <td style={td()}>{i.tripId ?? '—'}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{i.riderName}{i.driverName ? ` ↔ ${i.driverName}` : ''}</div></td>
-                    <td style={td()}>{i.assignedAdmin ?? <span style={{ color: '#9ca3af' }}>unassigned</span>}</td>
-                    <td style={td()}><button style={btn()} onClick={() => openDetail(i)}>{canManage ? 'Manage' : 'View'}</button></td>
+                  <tr key={i.id} style={{ borderBottom: `1px solid ${colors.border}`, background: i.severity === 'critical' && i.status === 'open' ? tint(colors.danger, 0.08) : undefined }}>
+                    <td style={tdCell}><strong>{i.id}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{new Date(i.createdAt).toLocaleString()}</div></td>
+                    <td style={tdCell}><Badge status={i.type} /></td>
+                    <td style={tdCell}><Badge status={i.severity} /></td>
+                    <td style={tdCell}><Badge status={i.status} /></td>
+                    <td style={tdCell}>{i.tripId ?? '—'}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{i.riderName}{i.driverName ? ` ↔ ${i.driverName}` : ''}</div></td>
+                    <td style={tdCell}>{i.assignedAdmin ?? <span style={{ color: colors.muted }}>unassigned</span>}</td>
+                    <td style={tdCell}><button style={btn()} onClick={() => openDetail(i)}>{canManage ? 'Manage' : 'View'}</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -111,13 +112,13 @@ export default function MobilitySafetyPage() {
 
       {selected && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }} onClick={() => !busy && setSelected(null)}>
-          <div style={{ background: '#fff', borderRadius: '0.5rem', padding: '1.25rem', width: 'min(520px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: colors.card, borderRadius: '0.5rem', padding: '1.25rem', width: 'min(520px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: '0.5rem' }}>
               <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>{selected.id}</h2>
               <Badge status={selected.type} /><Badge status={selected.severity} />
             </div>
-            <p style={{ fontSize: '0.85rem', color: '#374151', margin: '0 0 0.5rem' }}>{selected.description}</p>
-            <p style={{ fontSize: '0.78rem', color: '#6b7280', margin: '0 0 1rem' }}>
+            <p style={{ fontSize: '0.85rem', color: colors.text, margin: '0 0 0.5rem' }}>{selected.description}</p>
+            <p style={{ fontSize: '0.78rem', color: colors.muted, margin: '0 0 1rem' }}>
               {selected.riderName}{selected.driverName ? ` ↔ ${selected.driverName}` : ''} · {selected.zone}
               {selected.lat != null && selected.lng != null ? ` · ${selected.lat.toFixed(4)}, ${selected.lng.toFixed(4)}` : ''}
             </p>

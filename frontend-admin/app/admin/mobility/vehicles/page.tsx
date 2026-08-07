@@ -5,9 +5,10 @@ import { getVehicles, setVehicleStatus } from '@/services/mobilityAdminService';
 import type { VehicleComplianceRow, VehicleStatus, ComplianceStatus } from '@/types/mobility';
 import {
   PageHeader, MobilityTabs, Card, Badge, StateNote, AuditedNotice,
-  btn, btnPrimary, btnDisabled, th, td, input,
+  btn, btnPrimary, btnDisabled, input,
   useMobilityPermissions, MOBILITY_PERMS,
 } from '../_ui';
+import { colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUS_FILTER: Array<VehicleStatus | ''> = ['', 'active', 'inactive', 'suspended'];
 const VEHICLE_STATUSES: VehicleStatus[] = ['active', 'inactive', 'suspended'];
@@ -80,20 +81,20 @@ export default function MobilityVehiclesPage() {
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <thead>
-                <tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                  <th style={th()}>Plate</th><th style={th()}>Vehicle</th><th style={th()}>Driver</th><th style={th()}>Status</th><th style={th()}>Inspection</th><th style={th()}>Insurance</th><th style={th()}></th>
+                <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                  <th style={thCell}>Plate</th><th style={thCell}>Vehicle</th><th style={thCell}>Driver</th><th style={thCell}>Status</th><th style={thCell}>Inspection</th><th style={thCell}>Insurance</th><th style={thCell}></th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((v) => (
-                  <tr key={v.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={td()}><strong>{v.plateNumber}</strong></td>
-                    <td style={td()}>{v.make} {v.model} ({v.year}) · {v.category}</td>
-                    <td style={td()}>{v.driverName}</td>
-                    <td style={td()}><Badge status={v.status} /></td>
-                    <td style={td()}><Badge status={v.inspectionStatus} />{v.inspectionExpiry ? <div style={{ fontSize: '0.7rem', color: '#9ca3af' }}>{new Date(v.inspectionExpiry).toLocaleDateString()}</div> : null}</td>
-                    <td style={td()}><Badge status={v.insuranceStatus} />{v.insuranceExpiry ? <div style={{ fontSize: '0.7rem', color: '#9ca3af' }}>{new Date(v.insuranceExpiry).toLocaleDateString()}</div> : null}</td>
-                    <td style={td()}><button disabled={!canManage} style={canManage ? btn() : btnDisabled()} onClick={() => openEdit(v)}>Update</button></td>
+                  <tr key={v.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <td style={tdCell}><strong>{v.plateNumber}</strong></td>
+                    <td style={tdCell}>{v.make} {v.model} ({v.year}) · {v.category}</td>
+                    <td style={tdCell}>{v.driverName}</td>
+                    <td style={tdCell}><Badge status={v.status} /></td>
+                    <td style={tdCell}><Badge status={v.inspectionStatus} />{v.inspectionExpiry ? <div style={{ fontSize: '0.7rem', color: colors.muted }}>{new Date(v.inspectionExpiry).toLocaleDateString()}</div> : null}</td>
+                    <td style={tdCell}><Badge status={v.insuranceStatus} />{v.insuranceExpiry ? <div style={{ fontSize: '0.7rem', color: colors.muted }}>{new Date(v.insuranceExpiry).toLocaleDateString()}</div> : null}</td>
+                    <td style={tdCell}><button disabled={!canManage} style={canManage ? btn() : btnDisabled()} onClick={() => openEdit(v)}>Update</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -104,7 +105,7 @@ export default function MobilityVehiclesPage() {
 
       {edit && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }} onClick={() => !busy && setEdit(null)}>
-          <div style={{ background: '#fff', borderRadius: '0.5rem', padding: '1.25rem', width: 'min(460px, 92vw)' }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: colors.card, borderRadius: '0.5rem', padding: '1.25rem', width: 'min(460px, 92vw)' }} onClick={(e) => e.stopPropagation()}>
             <h2 style={{ margin: '0 0 0.75rem', fontSize: '1.1rem', fontWeight: 700 }}>Update {edit.plateNumber}</h2>
             <div style={{ display: 'grid', gap: '0.75rem' }}>
               <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Vehicle status

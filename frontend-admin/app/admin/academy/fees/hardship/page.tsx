@@ -12,6 +12,7 @@ import {
   btn, btnPrimary, btnDanger, th, td, input, formatNaira, fmtDate, timeAgo,
 } from '../../_ui';
 import { FeesTabs, FeesGuard } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function FeesHardshipPage() {
   const [requests, setRequests] = useState<HardshipRequest[]>([]);
@@ -56,11 +57,11 @@ export default function FeesHardshipPage() {
 
         <Card title="Hardship & freeze requests">
           {requests.length === 0 ? <p style={{ color: '#6b7280' }}>No hardship requests.</p> : requests.map((r) => (
-            <div key={r.id} style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.85rem', marginBottom: '0.75rem' }}>
+            <div key={r.id} style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.85rem', marginBottom: '0.75rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.75rem', flexWrap: 'wrap' }}>
                 <div style={{ flex: 1, minWidth: 260 }}>
                   <div><strong>{r.student_name}</strong> <span style={{ color: '#6b7280', fontSize: '0.85rem' }}>· {r.class_name} · {r.guardian_email}</span></div>
-                  <div style={{ fontSize: '0.85rem', color: '#374151', margin: '0.35rem 0' }}>{r.reason}</div>
+                  <div style={{ fontSize: '0.85rem', color: colors.muted, margin: '0.35rem 0' }}>{r.reason}</div>
                   <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>Invoice <code>{r.invoice_id}</code> · outstanding <strong>{formatNaira(r.outstanding_kobo)}</strong> · requested {timeAgo(r.requested_at)} ({fmtDate(r.requested_at)})</div>
                 </div>
                 <Badge status={r.status === 'pending' ? 'pending' : r.status === 'approved' ? 'approved' : 'rejected'} label={r.status} />
@@ -74,11 +75,11 @@ export default function FeesHardshipPage() {
                   </div>
                 </div>
               ) : (
-                <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#374151' }}>Reviewer note: {r.reviewer_note || '—'} {r.reviewed_at ? `· ${fmtDate(r.reviewed_at)}` : ''}</div>
+                <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: colors.muted }}>Reviewer note: {r.reviewer_note || '—'} {r.reviewed_at ? `· ${fmtDate(r.reviewed_at)}` : ''}</div>
               )}
             </div>
           ))}
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: '0.6rem' }}>{notice}</p>}
           <AuditNote>Every hardship decision (approve/deny) and its reviewer note is written to the immutable audit log (module <code>academy.fees</code>).</AuditNote>
         </Card>
       </StateBlock>

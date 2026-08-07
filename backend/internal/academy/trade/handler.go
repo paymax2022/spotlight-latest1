@@ -70,10 +70,13 @@ func RegisterAcademyTrade(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rb
 
 	// ── Member (learner) ──
 	member.GET("/trade/hub", h.GetHub)
+	member.GET("/trade/tracks", h.GetTracks)
 	member.GET("/trade/modules/:id", h.GetModule)
+	member.GET("/trade/projects/:id", h.GetProject)
 	member.POST("/trade/projects/:id/submit", h.SubmitProject)
 	member.GET("/trade/submissions", h.ListMySubmissions)
 	member.GET("/trade/assessments", h.ListAssessments)
+	member.GET("/trade/assessments/:id", h.GetAssessment)
 	member.POST("/trade/assessments/:id/take", h.TakeAssessment)
 	member.GET("/trade/mentors", h.ListMentors)
 	member.POST("/trade/mentors/:id/request", h.RequestMentor)
@@ -131,6 +134,28 @@ func (h *Handler) GetModule(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
+// GetTracks lists the seeded trade-track catalog (public read; mirrors GetHub's
+// envelope). Mobile getTradeTracks maps this list.
+func (h *Handler) GetTracks(c *gin.Context) {
+	out, err := h.svc.ListTracks(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// GetProject returns a single trade project by id (public catalog read; same
+// TradeProject shape used inside GetHub/GetModule).
+func (h *Handler) GetProject(c *gin.Context) {
+	out, err := h.svc.GetProject(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
 func (h *Handler) SubmitProject(c *gin.Context) {
 	u := uid(c)
 	if u == "" {
@@ -166,6 +191,17 @@ func (h *Handler) ListMySubmissions(c *gin.Context) {
 
 func (h *Handler) ListAssessments(c *gin.Context) {
 	out, err := h.svc.ListSkillAssessments(c.Request.Context(), c.Query("track"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// GetAssessment returns a single skill assessment by id (public catalog read; same
+// SkillAssessment shape as the ListAssessments list item).
+func (h *Handler) GetAssessment(c *gin.Context) {
+	out, err := h.svc.GetSkillAssessment(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		h.fail(c, err)
 		return

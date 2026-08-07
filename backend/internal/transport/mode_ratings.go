@@ -21,6 +21,16 @@ import (
 // recomputes the provider's aggregate rating. providerUserID must be the
 // provider's auth.users id (resolved from drivers.user_id by the caller).
 func (s *Service) rateMode(ctx context.Context, mode, jobID, raterID, providerUserID string, req RateRequest) (*TripRating, error) {
+	return s.rateModeCore(ctx, mode, jobID, raterID, providerUserID, req, func(ctx context.Context) {
+		s.recomputeModeRating(ctx, providerUserID)
+	})
+}
+
+// rateModeCore is the shared rating money path for every provider type. The
+// `recompute` callback updates the provider-type-specific aggregate (drivers.rating
+// for driver modes, bus_providers.rating_avg for bus) — it runs BEFORE the optional
+// tip so the rating persists independently of the tip's money path.
+func (s *Service) rateModeCore(ctx context.Context, mode, jobID, raterID, providerUserID string, req RateRequest, recompute func(context.Context)) (*TripRating, error) {
 	if providerUserID == "" {
 		return nil, codedErr(http.StatusConflict, CodeInvalidState, "no provider to rate")
 	}
@@ -44,7 +54,7 @@ func (s *Service) rateMode(ctx context.Context, mode, jobID, raterID, providerUs
 
 	// The rating is durably persisted above; recompute the aggregate first so the
 	// rating always succeeds independently of the tip money path.
-	s.recomputeModeRating(ctx, providerUserID)
+	recompute(ctx)
 
 	// Tip: escrow from rater, settle 100% to the provider (no commission on tips).
 	// This is a MONEY MUTATION — do not swallow errors, and gate it fail-closed on
@@ -137,6 +147,49 @@ func (s *Service) RateMover(ctx context.Context, id, raterID string, req RateReq
 		return nil, codedErr(http.StatusConflict, CodeInvalidState, "no provider to rate")
 	}
 	return s.rateMode(ctx, "mover", id, raterID, s.providerUserID(ctx, *m.ProviderID), req)
+}
+
+// RateBusTrip: a passenger rates the bus operator after a completed/boarded trip.
+// Keyed on the ticket (one rating per ticket per rater). The operator is resolved
+// ticket→schedule→route→provider; the rating recomputes the operator's aggregate
+// bus_providers.rating_avg / rating_count (which drives the trust/verified surface).
+func (s *Service) RateBusTrip(ctx context.Context, ticketID, raterID string, req RateRequest) (*TripRating, error) {
+	var userID, scheduleID, status string
+	if err := s.db.QueryRow(ctx,
+		`SELECT user_id, schedule_id, status FROM bus_tickets WHERE id=$1`, ticketID).
+		Scan(&userID, &scheduleID, &status); err != nil {
+		return nil, codedErr(http.StatusNotFound, CodeNotFound, "ticket not found")
+	}
+	if userID != raterID {
+		return nil, codedErr(http.StatusForbidden, CodeForbidden, "not your ticket")
+	}
+	if status != "completed" && status != "boarded" {
+		return nil, codedErr(http.StatusConflict, CodeInvalidState, "trip not completed")
+	}
+	var providerID, ownerUserID string
+	if err := s.db.QueryRow(ctx, `
+		SELECT p.id, p.owner_user_id
+		FROM bus_schedules s
+		JOIN bus_routes r    ON r.id = s.route_id
+		JOIN bus_providers p ON p.id = r.provider_id
+		WHERE s.id=$1`, scheduleID).Scan(&providerID, &ownerUserID); err != nil {
+		return nil, codedErr(http.StatusConflict, CodeInvalidState, "no operator to rate")
+	}
+	return s.rateModeCore(ctx, "bus", ticketID, raterID, ownerUserID, req, func(ctx context.Context) {
+		s.recomputeBusRating(ctx, providerID, ownerUserID)
+	})
+}
+
+// recomputeBusRating recalculates a bus operator's aggregate rating_avg + rating_count
+// from all received 'bus' mode_ratings (ratee = the operator's owner user id).
+func (s *Service) recomputeBusRating(ctx context.Context, providerID, ownerUserID string) {
+	var avg float64
+	var cnt int
+	s.db.QueryRow(ctx,
+		`SELECT COALESCE(AVG(stars),0), COUNT(*) FROM mode_ratings WHERE ratee_id=$1 AND mode='bus'`,
+		ownerUserID).Scan(&avg, &cnt)
+	s.db.Exec(ctx, `UPDATE bus_providers SET rating_avg=$1, rating_count=$2, updated_at=NOW() WHERE id=$3`,
+		avg, cnt, providerID)
 }
 
 // BusSeatMap returns the seat map for a schedule: total seats plus the set of

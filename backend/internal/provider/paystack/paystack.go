@@ -26,7 +26,7 @@ type Client struct {
 // New creates a Paystack client.
 func New(secretKey string) *Client {
 	return &Client{
-		secretKey: secretKey,
+		secretKey:  secretKey,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -43,7 +43,7 @@ func (c *Client) InitializePayment(ctx context.Context, req provider.InitializeP
 		"callback_url": req.CallbackURL,
 	}
 	var resp struct {
-		Status bool   `json:"status"`
+		Status bool `json:"status"`
 		Data   struct {
 			AuthorizationURL string `json:"authorization_url"`
 			AccessCode       string `json:"access_code"`
@@ -68,11 +68,11 @@ func (c *Client) VerifyPayment(ctx context.Context, reference string) (*provider
 	var resp struct {
 		Status bool `json:"status"`
 		Data   struct {
-			Status     string `json:"status"`
-			Reference  string `json:"reference"`
-			Amount     int64  `json:"amount"`
-			Channel    string `json:"channel"`
-			PaidAt     string `json:"paid_at"`
+			Status    string `json:"status"`
+			Reference string `json:"reference"`
+			Amount    int64  `json:"amount"`
+			Channel   string `json:"channel"`
+			PaidAt    string `json:"paid_at"`
 		} `json:"data"`
 		Message string `json:"message"`
 	}
@@ -97,14 +97,14 @@ func (c *Client) VerifyPayment(ctx context.Context, reference string) (*provider
 
 func (c *Client) InitiatePayout(ctx context.Context, req provider.PayoutRequest) (*provider.PayoutResponse, error) {
 	body := map[string]any{
-		"source":        "balance",
-		"recipient":     req.RecipientCode,
-		"amount":        req.AmountKobo,
-		"reference":     req.Reference,
-		"reason":        req.Narration,
+		"source":    "balance",
+		"recipient": req.RecipientCode,
+		"amount":    req.AmountKobo,
+		"reference": req.Reference,
+		"reason":    req.Narration,
 	}
 	var resp struct {
-		Status bool   `json:"status"`
+		Status bool `json:"status"`
 		Data   struct {
 			TransferCode string `json:"transfer_code"`
 			Status       string `json:"status"`
@@ -269,15 +269,15 @@ func (c *Client) VerifyWebhookSignature(payload []byte, signature string) bool {
 
 func (c *Client) ProvisionVirtualAccount(ctx context.Context, req provider.ProvisionVARequest) (*provider.VirtualAccount, error) {
 	body := map[string]any{
-		"email":        req.Email,
-		"first_name":   req.FirstName,
-		"last_name":    req.LastName,
-		"phone":        req.PhoneNumber,
+		"email":          req.Email,
+		"first_name":     req.FirstName,
+		"last_name":      req.LastName,
+		"phone":          req.PhoneNumber,
 		"preferred_bank": "wema-bank",
-		"bvn":          req.BVN,
+		"bvn":            req.BVN,
 	}
 	var resp struct {
-		Status bool   `json:"status"`
+		Status bool `json:"status"`
 		Data   struct {
 			AccountNumber string `json:"account_number"`
 			AccountName   string `json:"account_name"`

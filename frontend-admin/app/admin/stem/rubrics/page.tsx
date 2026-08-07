@@ -10,6 +10,7 @@ import {
   updateStemJudgeAssignmentConflict,
 } from '@/services/stemService';
 import type { StemJudgeAssignment, StemJudgingRubric } from '@/types/stem';
+import { Page, PageHeader, Card, Button, Input, colors } from '@/components/ui/vuexy';
 
 export default function AdminStemRubricsPage() {
   const [contestId, setContestId] = useState('');
@@ -73,84 +74,78 @@ export default function AdminStemRubricsPage() {
   }, []);
 
   return (
-    <section>
-      <h1>STEM Rubrics and Judge Assignments</h1>
+    <Page>
+      <PageHeader title="STEM Rubrics and Judge Assignments" subtitle="Rubric template setup and assignment tracking for STEM judging workflows." />
       <StemModuleLinks />
-      <p>Rubric template setup and assignment tracking for STEM judging workflows.</p>
 
-      <div style={{ marginTop: 12, border: '1px solid #2a2a2a', padding: 12 }}>
-        <h3 style={{ marginTop: 0 }}>Create Rubric</h3>
-        <input placeholder="Contest ID" value={contestId} onChange={(e) => setContestId(e.target.value)} />
-        <input
-          style={{ marginLeft: 8 }}
-          placeholder="Rubric Name"
-          value={rubricName}
-          onChange={(e) => setRubricName(e.target.value)}
-        />
-        <button type="button" style={{ marginLeft: 8 }} onClick={() => void createRubricQuick()}>
-          Create Default Rubric
-        </button>
-        <button type="button" style={{ marginLeft: 8 }} onClick={() => void loadRubrics()}>
-          Refresh Rubrics
-        </button>
-      </div>
+      <Card title="Create Rubric" style={{ marginTop: 16 }}>
+        <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Input placeholder="Contest ID" value={contestId} onChange={(e) => setContestId(e.target.value)} />
+          <Input placeholder="Rubric Name" value={rubricName} onChange={(e) => setRubricName(e.target.value)} />
+          <Button variant="primary" onClick={() => void createRubricQuick()}>
+            Create Default Rubric
+          </Button>
+          <Button variant="outline" onClick={() => void loadRubrics()}>
+            Refresh Rubrics
+          </Button>
+        </div>
+      </Card>
 
-      <div style={{ marginTop: 12 }}>
-        {rows.length === 0 ? <p>No rubrics yet.</p> : null}
+      <div style={{ marginTop: 16 }}>
+        {rows.length === 0 ? <p style={{ color: colors.muted }}>No rubrics yet.</p> : null}
         {rows.map((r) => (
-          <article key={r.id || `${r.contestId}-${r.name}`} style={{ border: '1px solid #2a2a2a', padding: 10, marginBottom: 8 }}>
+          <Card key={r.id || `${r.contestId}-${r.name}`} style={{ marginBottom: 8 }}>
             <strong>{r.name}</strong> ({r.status})<br />
-            <small>contest: {r.contestId}</small>
+            <small style={{ color: colors.muted }}>contest: {r.contestId}</small>
             {r.description ? <p style={{ margin: '6px 0 0' }}>{r.description}</p> : null}
-          </article>
+          </Card>
         ))}
       </div>
 
-      <div style={{ marginTop: 16, border: '1px solid #2a2a2a', padding: 12 }}>
-        <h3 style={{ marginTop: 0 }}>Create Judge Assignment</h3>
-        <input
-          placeholder="Contest ID"
-          value={assignment.contestId}
-          onChange={(e) => setAssignment((prev) => ({ ...prev, contestId: e.target.value }))}
-        />
-        <input
-          style={{ marginLeft: 8 }}
-          placeholder="Application ID"
-          value={assignment.applicationId}
-          onChange={(e) => setAssignment((prev) => ({ ...prev, applicationId: e.target.value }))}
-        />
-        <input
-          style={{ marginLeft: 8 }}
-          placeholder="Judge User ID"
-          value={assignment.judgeUserId}
-          onChange={(e) => setAssignment((prev) => ({ ...prev, judgeUserId: e.target.value }))}
-        />
-        <button type="button" style={{ marginLeft: 8 }} onClick={() => void createAssignmentQuick()}>
-          Assign Judge
-        </button>
-        <button type="button" style={{ marginLeft: 8 }} onClick={() => void loadAssignments()}>
-          Refresh Assignments
-        </button>
-      </div>
+      <Card title="Create Judge Assignment" style={{ marginTop: 16 }}>
+        <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Input
+            placeholder="Contest ID"
+            value={assignment.contestId}
+            onChange={(e) => setAssignment((prev) => ({ ...prev, contestId: e.target.value }))}
+          />
+          <Input
+            placeholder="Application ID"
+            value={assignment.applicationId}
+            onChange={(e) => setAssignment((prev) => ({ ...prev, applicationId: e.target.value }))}
+          />
+          <Input
+            placeholder="Judge User ID"
+            value={assignment.judgeUserId}
+            onChange={(e) => setAssignment((prev) => ({ ...prev, judgeUserId: e.target.value }))}
+          />
+          <Button variant="primary" onClick={() => void createAssignmentQuick()}>
+            Assign Judge
+          </Button>
+          <Button variant="outline" onClick={() => void loadAssignments()}>
+            Refresh Assignments
+          </Button>
+        </div>
+      </Card>
 
-      <div style={{ marginTop: 12 }}>
-        {assignments.length === 0 ? <p>No assignments yet.</p> : null}
+      <div style={{ marginTop: 16 }}>
+        {assignments.length === 0 ? <p style={{ color: colors.muted }}>No assignments yet.</p> : null}
         {assignments.map((a) => (
-          <article key={a.id || `${a.contestId}-${a.applicationId}-${a.judgeUserId}`} style={{ border: '1px solid #2a2a2a', padding: 10, marginBottom: 8 }}>
+          <Card key={a.id || `${a.contestId}-${a.applicationId}-${a.judgeUserId}`} style={{ marginBottom: 8 }}>
             <strong>{a.status}</strong><br />
-            <small>contest: {a.contestId}</small><br />
-            <small>application: {a.applicationId}</small><br />
-            <small>judge: {a.judgeUserId}</small><br />
-            <small>conflict: {a.hasConflict ? 'yes' : 'no'}</small>
+            <small style={{ color: colors.muted }}>contest: {a.contestId}</small><br />
+            <small style={{ color: colors.muted }}>application: {a.applicationId}</small><br />
+            <small style={{ color: colors.muted }}>judge: {a.judgeUserId}</small><br />
+            <small style={{ color: colors.muted }}>conflict: {a.hasConflict ? 'yes' : 'no'}</small>
             {a.id ? (
-              <p style={{ margin: '8px 0 0 0' }}>
-                <button type="button" onClick={() => void toggleConflict(a.id as string, true)}>Flag Conflict</button>
-                <button type="button" onClick={() => void toggleConflict(a.id as string, false)} style={{ marginLeft: 8 }}>Clear Conflict</button>
-              </p>
+              <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                <Button variant="outline" sm onClick={() => void toggleConflict(a.id as string, true)}>Flag Conflict</Button>
+                <Button variant="outline" sm onClick={() => void toggleConflict(a.id as string, false)}>Clear Conflict</Button>
+              </div>
             ) : null}
-          </article>
+          </Card>
         ))}
       </div>
-    </section>
+    </Page>
   );
 }

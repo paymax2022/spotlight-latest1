@@ -4,28 +4,22 @@ import { useEffect, useState } from 'react';
 import { listReviews, moderateReview } from '@/services/staysAdminService';
 import type { Review, ReviewStatus } from '@/types/staysAdmin';
 import {
-  PageHeader,
   StaysTabs,
-  Card,
   Badge,
   FilterBar,
   StateBlock,
-  btn,
-  btnPrimary,
-  btnDanger,
-  th,
-  td,
   select,
   label,
   timeAgo,
 } from '../_ui';
+import { Page, PageHeader, Card, Button, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 function Stars({ rating }: { rating: number }) {
   const r = Math.max(0, Math.min(5, Math.round(rating)));
   return (
-    <span style={{ color: '#f59e0b', whiteSpace: 'nowrap' }} title={`${rating}/5`}>
+    <span style={{ color: colors.warning, whiteSpace: 'nowrap' }} title={`${rating}/5`}>
       {'★'.repeat(r)}
-      <span style={{ color: '#d1d5db' }}>{'★'.repeat(5 - r)}</span>
+      <span style={{ color: colors.border }}>{'★'.repeat(5 - r)}</span>
     </span>
   );
 }
@@ -53,11 +47,11 @@ export default function StaysReviewsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Reviews moderation"
         subtitle="Moderate guest reviews — publish, reject or flag. Flagged reviews are highlighted for review."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="growth" />
 
@@ -79,40 +73,40 @@ export default function StaysReviewsPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th style={th()}>Property</th>
-                <th style={th()}>Author</th>
-                <th style={th()}>Rating</th>
-                <th style={th()}>Review</th>
-                <th style={th()}>Flags</th>
-                <th style={th()}>Response</th>
-                <th style={th()}>Status</th>
-                <th style={th()}>When</th>
-                <th style={th()}>Actions</th>
+                <th style={thCell}>Property</th>
+                <th style={thCell}>Author</th>
+                <th style={thCell}>Rating</th>
+                <th style={thCell}>Review</th>
+                <th style={thCell}>Flags</th>
+                <th style={thCell}>Response</th>
+                <th style={thCell}>Status</th>
+                <th style={thCell}>When</th>
+                <th style={thCell}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} style={r.status === 'flagged' ? { background: '#fffbeb' } : undefined}>
-                  <td style={td()}>{r.property_name}</td>
-                  <td style={td()}>{r.author_masked}</td>
-                  <td style={td()}><Stars rating={r.rating} /></td>
-                  <td style={{ ...td(), maxWidth: 280 }}>
+                <tr key={r.id} style={r.status === 'flagged' ? { background: tint(colors.warning, 0.08) } : undefined}>
+                  <td style={tdCell}>{r.property_name}</td>
+                  <td style={tdCell}>{r.author_masked}</td>
+                  <td style={tdCell}><Stars rating={r.rating} /></td>
+                  <td style={{ ...tdCell, maxWidth: 280 }}>
                     <strong>{r.title}</strong>
-                    <div style={{ color: '#6b7280', fontSize: '0.8rem', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{r.body}</div>
+                    <div style={{ color: colors.muted, fontSize: '0.8rem', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{r.body}</div>
                   </td>
-                  <td style={td()}>
+                  <td style={tdCell}>
                     <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
-                      {r.flags.length === 0 ? <span style={{ color: '#9ca3af' }}>—</span> : r.flags.map((f) => <Badge key={f} status="flagged" label={f.replace(/_/g, ' ')} />)}
+                      {r.flags.length === 0 ? <span style={{ color: colors.muted }}>—</span> : r.flags.map((f) => <Badge key={f} status="flagged" label={f.replace(/_/g, ' ')} />)}
                     </div>
                   </td>
-                  <td style={td()}><Badge status={r.has_response ? 'published' : 'draft'} label={r.has_response ? 'Responded' : 'None'} /></td>
-                  <td style={td()}><Badge status={r.status} /></td>
-                  <td style={td()}>{timeAgo(r.created_at)}</td>
-                  <td style={td()}>
+                  <td style={tdCell}><Badge status={r.has_response ? 'published' : 'draft'} label={r.has_response ? 'Responded' : 'None'} /></td>
+                  <td style={tdCell}><Badge status={r.status} /></td>
+                  <td style={tdCell}>{timeAgo(r.created_at)}</td>
+                  <td style={tdCell}>
                     <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                      <button style={btnPrimary()} disabled={busy === r.id} onClick={() => moderate(r.id, 'published')}>Publish</button>
-                      <button style={btnDanger()} disabled={busy === r.id} onClick={() => moderate(r.id, 'rejected')}>Reject</button>
-                      <button style={btn()} disabled={busy === r.id} onClick={() => moderate(r.id, 'flagged')}>Flag</button>
+                      <Button variant="primary" sm disabled={busy === r.id} onClick={() => moderate(r.id, 'published')}>Publish</Button>
+                      <Button variant="danger" sm disabled={busy === r.id} onClick={() => moderate(r.id, 'rejected')}>Reject</Button>
+                      <Button variant="outline" sm disabled={busy === r.id} onClick={() => moderate(r.id, 'flagged')}>Flag</Button>
                     </div>
                   </td>
                 </tr>
@@ -121,6 +115,6 @@ export default function StaysReviewsPage() {
           </table>
         </Card>
       </StateBlock>
-    </div>
+    </Page>
   );
 }

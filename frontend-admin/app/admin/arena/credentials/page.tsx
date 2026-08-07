@@ -8,9 +8,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { listCompetitions, listCredentials, listCredentialVerifyLogs, issueCredential, revokeCredential } from '@/services/arenaAdminService';
 import type { Competition, Credential, CredentialVerifyLog, CredentialType } from '@/types/arenaAdmin';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 import {
-  PageHeader, Card, btn, btnPrimary, btnDisabled, th, td, inputStyle, selectStyle, mono,
-  CredentialBadge, timeAgo, Pill, AuditNote, PermissionBanner, ARENA_PERMS, useArenaPermission,
+  mono, CredentialBadge, timeAgo, AuditNote, PermissionBanner, ARENA_PERMS, useArenaPermission,
 } from '../_ui';
 
 const CREDENTIAL_TYPES: { value: CredentialType; label: string; note: string }[] = [
@@ -75,91 +75,91 @@ export default function ArenaCredentialsPage() {
   }, [revokeReason, competitionId, load]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Arena — Credentials (A9)"
         subtitle="Issue (from Merit-derived state) / revoke (reason) / verification logs. Credentials are the durable, verifiable asset — independently revocable (NDC-7). RBAC: arena.admin.manage."
-        action={
+        actions={
           <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <select value={competitionId} onChange={(e) => setCompetitionId(e.target.value)} style={selectStyle()}>
+            <select value={competitionId} onChange={(e) => setCompetitionId(e.target.value)}>
               {competitions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <button onClick={() => void load()} style={btn()}>Refresh</button>
+            <Button variant="outline" onClick={() => void load()}>Refresh</Button>
           </div>
         }
       />
 
       {!allowed && <PermissionBanner permission={ARENA_PERMS.admin} />}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-      {notice && <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#166534', marginBottom: '1.25rem' }}>{notice}</div>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      {notice && <div style={{ background: tint(colors.success, 0.12), border: `1px solid ${tint(colors.success, 0.35)}`, borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.success, marginBottom: '1.25rem' }}>{notice}</div>}
 
-      <Card title="Issue credential">
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: '#6b7280' }}>
+      <Card title="Issue credential" style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 14 }}>
+          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: colors.muted }}>
             User ID
-            <input value={issueUser} onChange={(e) => setIssueUser(e.target.value)} placeholder="usr_…" style={{ ...inputStyle(), minWidth: 200 }} disabled={!allowed} />
+            <Input value={issueUser} onChange={(e) => setIssueUser(e.target.value)} placeholder="usr_…" style={{ minWidth: 200 }} disabled={!allowed} />
           </label>
-          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: '#6b7280' }}>
+          <label style={{ display: 'grid', gap: 4, fontSize: '0.8rem', color: colors.muted }}>
             Type
-            <select value={issueType} onChange={(e) => setIssueType(e.target.value as CredentialType)} style={selectStyle()} disabled={!allowed}>
+            <select value={issueType} onChange={(e) => setIssueType(e.target.value as CredentialType)} disabled={!allowed}>
               {CREDENTIAL_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
           </label>
-          <button onClick={() => void issue()} style={allowed && issueUser.trim() && !busy ? btnPrimary() : btnDisabled()} disabled={!allowed || !issueUser.trim() || busy}>
+          <Button variant="primary" onClick={() => void issue()} disabled={!allowed || !issueUser.trim() || busy}>
             {busy ? 'Issuing…' : 'Issue'}
-          </button>
+          </Button>
         </div>
         <AuditNote>Issuance is only valid from Merit-derived state — the backend rejects issuing a credential a contestant hasn&apos;t earned. Auto-issuance also fires on qualifying transitions (A5).</AuditNote>
       </Card>
 
-      <Card title="Credential registry">
+      <Card title="Credential registry" style={{ marginBottom: 20 }}>
         {loading ? (
-          <p style={{ color: '#6b7280' }}>Loading credentials…</p>
+          <p style={{ color: colors.muted }}>Loading credentials…</p>
         ) : creds.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No credentials issued.</p>
+          <p style={{ color: colors.muted }}>No credentials issued.</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>User</th>
-                  <th style={th()}>Type</th>
-                  <th style={th()}>Status</th>
-                  <th style={th()}>Verifiable hash</th>
-                  <th style={th()}>Issued</th>
-                  <th style={th()}>Revoke</th>
+                  <th style={thCell}>User</th>
+                  <th style={thCell}>Type</th>
+                  <th style={thCell}>Status</th>
+                  <th style={thCell}>Verifiable hash</th>
+                  <th style={thCell}>Issued</th>
+                  <th style={thCell}>Revoke</th>
                 </tr>
               </thead>
               <tbody>
                 {creds.map((c) => (
                   <tr key={c.id}>
-                    <td style={{ ...td(), ...mono() }}>{c.user_id}</td>
-                    <td style={td()}>{c.type.replace(/_/g, ' ')}</td>
-                    <td style={td()}>
+                    <td style={{ ...tdCell, ...mono() }}>{c.user_id}</td>
+                    <td style={tdCell}>{c.type.replace(/_/g, ' ')}</td>
+                    <td style={tdCell}>
                       <CredentialBadge status={c.status} />
-                      {c.status === 'REVOKED' && c.revoke_reason ? <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{c.revoke_reason}</div> : null}
+                      {c.status === 'REVOKED' && c.revoke_reason ? <div style={{ fontSize: '0.72rem', color: colors.muted }}>{c.revoke_reason}</div> : null}
                     </td>
-                    <td style={{ ...td(), ...mono(), color: '#15803d' }} title={c.verifiable_hash}>{c.verifiable_hash}</td>
-                    <td style={td()}>{timeAgo(c.issued_at)}</td>
-                    <td style={td()}>
+                    <td style={{ ...tdCell, ...mono(), color: colors.success }} title={c.verifiable_hash}>{c.verifiable_hash}</td>
+                    <td style={tdCell}>{timeAgo(c.issued_at)}</td>
+                    <td style={tdCell}>
                       {c.status === 'REVOKED' ? (
-                        <span style={{ color: '#9ca3af' }}>—</span>
+                        <span style={{ color: colors.muted }}>—</span>
                       ) : (
                         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                          <input
+                          <Input
                             value={revokeReason[c.id] ?? ''}
                             onChange={(e) => setRevokeReason((r) => ({ ...r, [c.id]: e.target.value }))}
                             placeholder="Reason"
-                            style={{ ...inputStyle(), minWidth: 160 }}
+                            style={{ minWidth: 160 }}
                             disabled={!allowed}
                           />
-                          <button
+                          <Button
+                            variant="danger"
                             onClick={() => void revoke(c)}
-                            style={allowed && (revokeReason[c.id] ?? '').trim() && !busy ? btnPrimary('#b91c1c') : btnDisabled()}
                             disabled={!allowed || !(revokeReason[c.id] ?? '').trim() || busy}
                           >
                             Revoke
-                          </button>
+                          </Button>
                         </div>
                       )}
                     </td>
@@ -173,27 +173,27 @@ export default function ArenaCredentialsPage() {
 
       <Card title="Verification logs">
         {logs.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No verification activity.</p>
+          <p style={{ color: colors.muted }}>No verification activity.</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>Credential</th>
-                  <th style={th()}>Verifier</th>
-                  <th style={th()}>Result</th>
-                  <th style={th()}>When</th>
+                  <th style={thCell}>Credential</th>
+                  <th style={thCell}>Verifier</th>
+                  <th style={thCell}>Result</th>
+                  <th style={thCell}>When</th>
                 </tr>
               </thead>
               <tbody>
                 {logs.map((l) => (
                   <tr key={l.id}>
-                    <td style={{ ...td(), ...mono() }}>{l.credential_id}</td>
-                    <td style={td()}>{l.verifier ?? 'public'}</td>
-                    <td style={td()}>
-                      <Pill fg={l.result === 'valid' ? '#15803d' : l.result === 'revoked' ? '#b91c1c' : '#6b7280'} bg={l.result === 'valid' ? '#dcfce7' : l.result === 'revoked' ? '#fee2e2' : '#f3f4f6'}>{l.result}</Pill>
+                    <td style={{ ...tdCell, ...mono() }}>{l.credential_id}</td>
+                    <td style={tdCell}>{l.verifier ?? 'public'}</td>
+                    <td style={tdCell}>
+                      <Badge text={l.result} color={l.result === 'valid' ? colors.success : l.result === 'revoked' ? colors.danger : colors.secondary} />
                     </td>
-                    <td style={td()}>{timeAgo(l.verified_at)}</td>
+                    <td style={tdCell}>{timeAgo(l.verified_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -201,6 +201,6 @@ export default function ArenaCredentialsPage() {
           </div>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

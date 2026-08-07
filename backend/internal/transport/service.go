@@ -31,6 +31,7 @@ type Service struct {
 	settlement *settlement.Service
 	tiers      tierLimiter // fail-closed KYC-tier / daily-spend gate on rider money moves
 	maps       MapsAdapter
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 }
 
 // NewService wires the transport service. A MockMaps adapter is used when none
@@ -67,6 +68,46 @@ func (s *Service) enforceTierLimit(ctx context.Context, riderID string, amountKo
 func (s *Service) WithMaps(m MapsAdapter) *Service {
 	s.maps = m
 	return s
+}
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module (§ profit registry). app-wiring injects a thin adapter over the finance
+// commission service; when the commission feature is off (or no recorder is wired)
+// the field is nil and recording is a silent no-op. Modeled as a LOCAL interface so
+// transport never imports the commission package at compile time (mirrors the
+// tierLimiter / MapsAdapter seams) — the adapter, which lives in app-wiring, discards
+// the returned earning row and surfaces only the error.
+//
+// This records realized profit ONLY; it never moves money. Transport's own money
+// movements (the settlement split into the provider/platform wallets) are unchanged,
+// and the injected recorder is deliberately constructed WITHOUT a ledger so RecordFor
+// never re-posts to the ledger (no double count of the commission revenue account) —
+// it appends the immutable earning row used by profit reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a completed transport
+// settlement. It is best-effort and MUST NEVER affect the caller's outcome: a nil
+// recorder is a no-op, and any error is logged and swallowed so a profit-registry
+// failure can never fail or reverse the fare split / payout. The recorded breakdown
+// is resolved server-side from the central rate card; the source ref (the trip /
+// booking id) doubles as the idempotency key so retries and reconciliation sweeps
+// never double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
+		"transport", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[transport] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
+	}
 }
 
 // ─── Legacy driver/trip methods (kept for back-compat) ───────────────────────
@@ -319,6 +360,22 @@ func (s *Service) settleTrip(ctx context.Context, t *tripRow) error {
 			return fmt.Errorf("transport: settle %s: %w", id, err)
 		}
 	}
+	// Record realized Spotlight profit into the central Commission & Profit registry.
+	// This is the ride-hailing settlement point (shared by CompleteTrip, the legacy
+	// UpdateTripStatus path, and the reconciler re-drive). Best-effort + idempotent:
+	// the trip id doubles as source ref + idempotency key, so retries / reconciliation
+	// never double-count. gross = the full fare the rider paid (final fare when
+	// materialized, else the estimate). A recorder failure is logged and swallowed —
+	// it must NEVER fail the fare split above (transport's own settlement already
+	// posted the platform cut to the ledger; this appends the earning row only).
+	gross := int64(0)
+	if t.FinalFare != nil {
+		gross = *t.FinalFare
+	} else if t.FareEstimate != nil {
+		gross = *t.FareEstimate
+	}
+	riderID := t.RiderID
+	s.recordCommissionSafe(ctx, "Lifestyle", "Taxi - Ride Hailing", "", gross, t.ID, &riderID)
 	return nil
 }
 

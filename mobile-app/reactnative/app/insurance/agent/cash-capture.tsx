@@ -7,6 +7,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -92,9 +93,10 @@ export default function CashCapture() {
         <TextInputField
           label="Cash amount (₦)"
           value={naira}
-          onChangeText={setNaira}
+          onChangeText={(v) => setNaira(sanitizeMoneyInput(v))}
           placeholder="0"
-          keyboardType="numeric"
+          keyboardType="decimal-pad"
+          maxLength={13}
         />
         {error ? <Text style={styles.err}>{error}</Text> : null}
 

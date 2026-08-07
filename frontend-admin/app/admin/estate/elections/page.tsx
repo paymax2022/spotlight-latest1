@@ -9,10 +9,10 @@ import {
   listOversightElections, getElectionResults, getElectionAudit,
 } from '@/services/estateAdminService';
 import type { OversightElection, ElectionResultRow, ElectionAudit } from '@/types/estateAdmin';
-import {
-  PageHeader, EstateOversightTabs, Card, Badge, btn, th, td, timeAgo,
-  useEstatePermissions, ESTATE_ADMIN_PERMS, Restricted,
-} from '../_ui';
+import { EstateOversightTabs, Restricted, useEstatePermissions, ESTATE_ADMIN_PERMS, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const cap = (s: string) => s.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
 
 export default function ElectionIntegrityPage() {
   const { can } = useEstatePermissions();
@@ -47,26 +47,26 @@ export default function ElectionIntegrityPage() {
   const totalVotes = results.reduce((s, r) => s + r.votes, 0);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Election integrity" subtitle="Election results tally and integrity audit. One ballot per resident is enforced at the DB layer." action={<button onClick={() => void load()} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Election integrity" subtitle="Election results tally and integrity audit. One ballot per resident is enforced at the DB layer." actions={<Button variant="outline" sm onClick={() => void load()}>Refresh</Button>} />
       <EstateOversightTabs active="elections" />
       {!canView ? <Restricted perm="estate.admin.election" /> : (
         <>
-          {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-          {loading ? <p style={{ color: '#6b7280' }}>Loading elections…</p> : (
+          {error && <p style={{ color: colors.danger }}>{error}</p>}
+          {loading ? <p style={{ color: colors.muted }}>Loading elections…</p> : (
             <>
-              <Card title="Elections">
-                {elections.length === 0 ? <p style={{ color: '#6b7280' }}>No elections.</p> : (
+              <Card title="Elections" style={{ marginBottom: '1.25rem' }}>
+                {elections.length === 0 ? <p style={{ color: colors.muted }}>No elections.</p> : (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead><tr><th style={th()}>Estate</th><th style={th()}>Title</th><th style={th()}>Status</th><th style={th()}>Created</th><th style={th()} /></tr></thead>
+                    <thead><tr><th style={thCell}>Estate</th><th style={thCell}>Title</th><th style={thCell}>Status</th><th style={thCell}>Created</th><th style={thCell} /></tr></thead>
                     <tbody>
                       {elections.map((e) => (
                         <tr key={e.id}>
-                          <td style={td()}>{e.estateId}</td>
-                          <td style={td()}><strong>{e.title}</strong></td>
-                          <td style={td()}><Badge status={e.status === 'tallied' ? 'resolved' : e.status === 'open' ? 'active' : e.status === 'draft' ? 'pending' : 'low'} label={e.status} /></td>
-                          <td style={td()}>{timeAgo(e.createdAt)}</td>
-                          <td style={td()}><button onClick={() => void openElection(e.id)} style={btn()}>Audit →</button></td>
+                          <td style={tdCell}>{e.estateId}</td>
+                          <td style={tdCell}><strong>{e.title}</strong></td>
+                          <td style={tdCell}><Badge text={cap(e.status)} color={e.status === 'tallied' ? colors.success : e.status === 'open' ? colors.info : e.status === 'draft' ? colors.warning : colors.secondary} /></td>
+                          <td style={tdCell}>{timeAgo(e.createdAt)}</td>
+                          <td style={tdCell}><Button variant="outline" sm onClick={() => void openElection(e.id)}>Audit →</Button></td>
                         </tr>
                       ))}
                     </tbody>
@@ -76,7 +76,7 @@ export default function ElectionIntegrityPage() {
 
               {selected && (
                 <Card title={`Integrity — ${elections.find((e) => e.id === selected)?.title ?? selected}`}>
-                  {drillLoading ? <p style={{ color: '#6b7280' }}>Loading tally…</p> : (
+                  {drillLoading ? <p style={{ color: colors.muted }}>Loading tally…</p> : (
                     <>
                       {audit && (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.6rem', marginBottom: '1rem' }}>
@@ -87,20 +87,20 @@ export default function ElectionIntegrityPage() {
                         </div>
                       )}
                       {audit?.doubleVoteDetected && (
-                        <p style={{ color: '#b91c1c', fontSize: '0.85rem', marginTop: 0 }}>
+                        <p style={{ color: colors.danger, fontSize: '0.85rem', marginTop: 0 }}>
                           Double-vote detected: ballots_cast ≠ distinct_voters. This should be impossible (UNIQUE constraint) — investigate data integrity.
                         </p>
                       )}
-                      {results.length === 0 ? <p style={{ color: '#6b7280' }}>No candidates.</p> : (
+                      {results.length === 0 ? <p style={{ color: colors.muted }}>No candidates.</p> : (
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                          <thead><tr><th style={th()}>Candidate</th><th style={th()}>Bio</th><th style={th()}>Votes</th><th style={th()}>Share</th></tr></thead>
+                          <thead><tr><th style={thCell}>Candidate</th><th style={thCell}>Bio</th><th style={thCell}>Votes</th><th style={thCell}>Share</th></tr></thead>
                           <tbody>
                             {results.map((r) => (
                               <tr key={r.candidateId}>
-                                <td style={td()}><strong>{r.name}</strong></td>
-                                <td style={td()}>{r.bio || '—'}</td>
-                                <td style={td()}>{r.votes}</td>
-                                <td style={td()}>{totalVotes > 0 ? `${Math.round((r.votes / totalVotes) * 100)}%` : '0%'}</td>
+                                <td style={tdCell}><strong>{r.name}</strong></td>
+                                <td style={tdCell}>{r.bio || '—'}</td>
+                                <td style={tdCell}>{r.votes}</td>
+                                <td style={tdCell}>{totalVotes > 0 ? `${Math.round((r.votes / totalVotes) * 100)}%` : '0%'}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -114,15 +114,15 @@ export default function ElectionIntegrityPage() {
           )}
         </>
       )}
-    </div>
+    </Page>
   );
 }
 
 function Stat({ label, value, bad }: { label: string; value: string; bad?: boolean }) {
   return (
-    <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.7rem 0.9rem', background: '#fff', borderLeft: `3px solid ${bad ? '#dc2626' : '#7c3aed'}` }}>
-      <div style={{ fontSize: '0.72rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
-      <div style={{ fontSize: '1.25rem', fontWeight: 700, marginTop: 4, color: bad ? '#b91c1c' : '#111827' }}>{value}</div>
+    <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.7rem 0.9rem', background: colors.card, borderLeft: `3px solid ${bad ? colors.danger : colors.primary}` }}>
+      <div style={{ fontSize: '0.72rem', color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ fontSize: '1.25rem', fontWeight: 700, marginTop: 4, color: bad ? colors.danger : colors.text }}>{value}</div>
     </div>
   );
 }

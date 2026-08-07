@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -48,14 +49,30 @@ type Auditor interface {
 	WriteAudit(ctx context.Context, action, actorID, entityType, entityID string, newValue map[string]any) error
 }
 
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module. app-wiring injects a thin adapter over the finance commission service; when
+// the commission feature is off (or no recorder is wired) the field is nil and
+// recording is a silent no-op. Modeled as a LOCAL interface so this package never
+// imports the commission package at compile time (mirrors transport/service.go). It
+// records realized profit ONLY; it never moves money. The injected recorder is built
+// WITHOUT a ledger so RecordFor never re-posts (the paid-posting fee debit above
+// already books the full fee into paymax_revenue) — it appends the immutable earning
+// row used by profit reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+	RecordExact(ctx context.Context, category, service, subtype string, grossKobo, recordedRevenueKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
 // ── Sentinel errors ─────────────────────────────────────────────────────────
 var (
-	ErrMissingIdem       = errors.New("connect: Idempotency-Key required")
-	ErrInvalidAmount     = errors.New("connect: amount must be positive kobo")
+	ErrMissingIdem        = errors.New("connect: Idempotency-Key required")
+	ErrInvalidAmount      = errors.New("connect: amount must be positive kobo")
 	ErrCompanyNotVerified = errors.New("connect: company page must be verified to post paid jobs")
-	ErrIllegalTransition = errors.New("connect: illegal state transition")
-	ErrForbidden         = errors.New("connect: not authorized for this company page")
-	ErrJobNotActive      = errors.New("connect: job is not open for applications")
+	ErrIllegalTransition  = errors.New("connect: illegal state transition")
+	ErrForbidden          = errors.New("connect: not authorized for this company page")
+	ErrJobNotActive       = errors.New("connect: job is not open for applications")
 )
 
 // Service orchestrates the jobs / company-page / referral-bounty flows. It owns NO
@@ -63,12 +80,13 @@ var (
 // to the ledger. State transitions are guarded (validTransition helpers) and every
 // mutation writes an audit event.
 type Service struct {
-	repo     *Repository
-	wallet   WalletDebiter
-	ledger   LedgerCrediter
-	accounts RevenueResolver
-	loyalty  LoyaltyAwarder
-	audit    Auditor
+	repo       *Repository
+	wallet     WalletDebiter
+	ledger     LedgerCrediter
+	accounts   RevenueResolver
+	loyalty    LoyaltyAwarder
+	audit      Auditor
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 
 	// Overridable seams so the money/state paths are unit-testable without a live DB
 	// (mirrors connect/monetization's planLookup). Default to the repository.
@@ -89,6 +107,28 @@ func NewService(repo *Repository, wallet WalletDebiter, ledger LedgerCrediter, a
 	s.hasGrantFn = repo.HasCompanyGrant
 	s.now = func() time.Time { return time.Now().UTC() }
 	return s
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a paid job activation.
+// It is best-effort and MUST NEVER affect the caller's outcome: a nil recorder is a
+// no-op, and any error is logged and swallowed so a profit-registry failure can never
+// fail or reverse the paid-posting fee. The job id doubles as source ref + idempotency
+// key so retries / re-activations never double-count. The module's ACTUAL take is 100%
+// of the paid-posting fee (the full fee booked into paymax_revenue), NOT a % of it, so
+// we record the EXACT earnedKobo via RecordExact (grossKobo is passed for context).
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo, earnedKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || earnedKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordExact(ctx, category, service, subtype, grossKobo, earnedKobo,
+		"connect_jobs", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[connect-jobs] commission record (source=%s gross=%d earned=%d) failed, continuing: %v", sourceRef, grossKobo, earnedKobo, err)
+	}
 }
 
 func (s *Service) writeAudit(ctx context.Context, action, actorID, entityType, entityID string, v map[string]any) {
@@ -243,6 +283,14 @@ func (s *Service) ActivateJob(ctx context.Context, actorID, companyPageID, jobID
 	}
 	s.writeAudit(ctx, "connect.job.activate", actorID, "connect_job", jobID,
 		map[string]any{"company_page_id": companyPageID, "fee_kobo": job.FeeKobo, "idempotency_key": idemKey})
+	// Record realized Spotlight profit into the central Commission & Profit registry.
+	// This is the paid-posting settlement point (the fee debit above booked the full
+	// fee into paymax_revenue). Best-effort + idempotent: the job id doubles as source
+	// ref + idempotency key. gross = the fee the poster paid (job.FeeKobo). A free post
+	// (FeeKobo==0) is skipped inside recordCommissionSafe (grossKobo<=0 guard), so no
+	// fabricated profit is recorded. A recorder failure is logged and swallowed — it
+	// must NEVER fail or reverse the activation above.
+	s.recordCommissionSafe(ctx, "Community", "Job", "", job.FeeKobo, job.FeeKobo, jobID, &actorID)
 	return s.repo.GetJob(ctx, jobID)
 }
 

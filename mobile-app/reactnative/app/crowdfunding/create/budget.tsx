@@ -11,6 +11,7 @@ import WizardHeader from '@/features/crowdfunding/components/WizardHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useCampaignDraft } from '@/features/crowdfunding/store/campaignDraftStore';
 import { formatNaira } from '@/features/crowdfunding/utils/crowdfundingFormatters';
+import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 
 export default function CreateBudgetScreen() {
   const { draft, addBudgetItem, removeBudgetItem, addMilestone, removeMilestone, addRewardTier, removeRewardTier, budgetTotalKobo } = useCampaignDraft();
@@ -21,7 +22,7 @@ export default function CreateBudgetScreen() {
   const overGoal = total > draft.goalKobo && draft.goalKobo > 0;
 
   const add = () => {
-    const kobo = amount ? Number(amount.replace(/[^0-9]/g, '')) * 100 : 0;
+    const kobo = amount ? nairaStringToKobo(amount) : 0;
     if (!label.trim() || kobo <= 0) return;
     addBudgetItem({ id: `b${Date.now()}`, label: label.trim(), amountKobo: kobo });
     setLabel(''); setAmount('');
@@ -56,7 +57,7 @@ export default function CreateBudgetScreen() {
             <TextInput style={styles.addLabel} placeholder="Item (e.g. Surgery deposit)" placeholderTextColor={Colors.outline} value={label} onChangeText={setLabel} />
             <View style={styles.addAmountWrap}>
               <Text style={styles.naira}>₦</Text>
-              <TextInput style={styles.addAmount} placeholder="0" placeholderTextColor={Colors.outline} keyboardType="number-pad" value={amount} onChangeText={setAmount} />
+              <TextInput style={styles.addAmount} placeholder="0" placeholderTextColor={Colors.outline} keyboardType="decimal-pad" maxLength={13} value={amount} onChangeText={(t) => setAmount(sanitizeMoneyInput(t))} />
             </View>
             <Pressable style={styles.addBtn} onPress={add} accessibilityLabel="Add budget item"><Plus size={20} color={Colors.onPrimary} strokeWidth={2.4} /></Pressable>
           </View>
@@ -110,7 +111,7 @@ function InlineAdder({ icon, title, hint, items, onRemove, onAdd, placeholder }:
   const [text, setText] = useState('');
   const [amt, setAmt] = useState('');
   const add = () => {
-    const kobo = amt ? Number(amt.replace(/[^0-9]/g, '')) * 100 : 0;
+    const kobo = amt ? nairaStringToKobo(amt) : 0;
     if (!text.trim() || kobo <= 0) return;
     onAdd(text.trim(), kobo); setText(''); setAmt('');
   };
@@ -131,7 +132,7 @@ function InlineAdder({ icon, title, hint, items, onRemove, onAdd, placeholder }:
         <TextInput style={styles.addLabel} placeholder={placeholder} placeholderTextColor={Colors.outline} value={text} onChangeText={setText} />
         <View style={styles.addAmountWrap}>
           <Text style={styles.naira}>₦</Text>
-          <TextInput style={styles.addAmount} placeholder="0" placeholderTextColor={Colors.outline} keyboardType="number-pad" value={amt} onChangeText={setAmt} />
+          <TextInput style={styles.addAmount} placeholder="0" placeholderTextColor={Colors.outline} keyboardType="decimal-pad" maxLength={13} value={amt} onChangeText={(t) => setAmt(sanitizeMoneyInput(t))} />
         </View>
         <Pressable style={styles.addBtn} onPress={add} accessibilityLabel={`Add ${title}`}><Plus size={20} color={Colors.onPrimary} strokeWidth={2.4} /></Pressable>
       </View>

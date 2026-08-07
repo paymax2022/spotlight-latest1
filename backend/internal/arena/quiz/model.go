@@ -36,10 +36,11 @@ type Question struct {
 	Stage           int      `json:"stage"`      // 1|2|3
 	Category        string   `json:"category"`
 	Prompt          string   `json:"prompt"`
-	Options         []string `json:"options"`      // exactly 4
-	CorrectIndex    int      `json:"correctIndex"` // 0..3 (admin-only)
-	CorrectAnswer   string   `json:"correctAnswer"`// admin-only
-	Explanation     string   `json:"explanation"`  // admin-only (revealed post-answer)
+	ImageURL        string   `json:"imageUrl,omitempty"` // optional illustration (e.g. a road sign)
+	Options         []string `json:"options"`            // exactly 4
+	CorrectIndex    int      `json:"correctIndex"`       // 0..3 (admin-only)
+	CorrectAnswer   string   `json:"correctAnswer"`      // admin-only
+	Explanation     string   `json:"explanation"`        // admin-only (revealed post-answer)
 	TimeLimitSecs   int      `json:"timeLimitSeconds"`
 	PassMarkPercent int      `json:"passMarkPercent"`
 }
@@ -102,6 +103,7 @@ type QuestionView struct {
 	ID            string       `json:"id"` // external_id (public handle)
 	Category      string       `json:"category"`
 	Prompt        string       `json:"prompt"`
+	ImageURL      string       `json:"imageUrl,omitempty"` // optional illustration shown with the question
 	Options       []OptionView `json:"options"`
 	TimeLimitSecs int          `json:"timeLimitSecs"`
 }
@@ -131,21 +133,21 @@ type Response struct {
 // Reveal is the per-question teaching-moment payload returned after a Play-Along
 // attempt (correct option + explanation + whether the taker got it right).
 type Reveal struct {
-	QuestionID       string `json:"questionId"`       // external_id
-	CorrectOptionID  string `json:"correctOptionId"`  // "0".."3"
-	Explanation      string `json:"explanation"`
-	Correct          bool   `json:"correct"`
+	QuestionID      string `json:"questionId"`      // external_id
+	CorrectOptionID string `json:"correctOptionId"` // "0".."3"
+	Explanation     string `json:"explanation"`
+	Correct         bool   `json:"correct"`
 }
 
 // PlayAlongResult merges local scoring with the engagement rail's outcome.
 type PlayAlongResult struct {
-	Score          int      `json:"score"`
-	Total          int      `json:"total"`
-	Passed         bool     `json:"passed"`
-	PerQuestion    []Reveal `json:"perQuestion"`
-	CredentialIssued bool   `json:"credentialIssued"`
-	CredentialHash string   `json:"credentialHash,omitempty"`
-	CashbackKobo   int64    `json:"cashbackKobo,omitempty"`
+	Score            int      `json:"score"`
+	Total            int      `json:"total"`
+	Passed           bool     `json:"passed"`
+	PerQuestion      []Reveal `json:"perQuestion"`
+	CredentialIssued bool     `json:"credentialIssued"`
+	CredentialHash   string   `json:"credentialHash,omitempty"`
+	CashbackKobo     int64    `json:"cashbackKobo,omitempty"`
 }
 
 // ExamResult is the exam-submit outcome (no merit — see NDC-2).

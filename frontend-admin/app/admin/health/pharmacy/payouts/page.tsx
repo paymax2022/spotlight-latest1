@@ -3,7 +3,20 @@
 import { useEffect, useState } from 'react';
 import { listPayouts, decidePayout, formatNaira } from '@/services/healthPharmacyAdminService';
 import type { PayoutRecord, PayoutDecision } from '@/types/healthAdmin';
-import { PageHeader, PharmacyTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnPrimary, btnDanger, th, td, input, label, select } from '../../_ui';
+import { PharmacyTabs, DisclosureNote, StateBlock, FilterBar, AuditNote } from '../../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  const v = status.toLowerCase();
+  if (v === 'tier0') return colors.danger;
+  if (v === 'tier1') return colors.warning;
+  if (v === 'tier2') return colors.info;
+  if (v === 'tier3') return colors.success;
+  if (/(reject|fail|block|kyc_hold|hold|flag)/.test(v)) return colors.danger;
+  if (/(pending|warn)/.test(v)) return colors.warning;
+  if (/(approve|paid|verified|active|complete|ok)/.test(v)) return colors.success;
+  return colors.secondary;
+}
 
 export default function PayoutsPage() {
   const [rows, setRows] = useState<PayoutRecord[]>([]);
@@ -35,8 +48,8 @@ export default function PayoutsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Provider payouts" subtitle="Settle released order revenue to pharmacies. Payouts are KYC-gated and AML-checked; insufficient KYC or an AML flag holds the payout fail-closed." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Provider payouts" subtitle="Settle released order revenue to pharmacies. Payouts are KYC-gated and AML-checked; insufficient KYC or an AML flag holds the payout fail-closed." actions={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <PharmacyTabs active="payouts" />
       <DisclosureNote>Provider payouts require the correct KYC tier; AML checks run on every settlement (HL-10). Approving an under-KYC or AML-flagged pharmacy is blocked and stays fail-closed until cleared. Money settled here is revenue already RELEASED from escrow on delivery/pickup (HL-9). Every decision posts an immutable audit event (HL-12).</DisclosureNote>
 
@@ -44,49 +57,51 @@ export default function PayoutsPage() {
 
       <FilterBar>
         <div style={{ minWidth: 240 }}>
-          <label style={label()}>Search</label>
-          <input style={input()} placeholder="Pharmacy or payout id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
+          <label>Search</label>
+          <Input placeholder="Pharmacy or payout id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
         </div>
         <div>
-          <label style={label()}>Payout status</label>
-          <select style={select()} value={payoutStatus} onChange={(e) => setPayoutStatus(e.target.value)}>
+          <label>Payout status</label>
+          <select value={payoutStatus} onChange={(e) => setPayoutStatus(e.target.value)}>
             <option value="">All</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="paid">Paid</option><option value="kyc_hold">KYC hold</option><option value="rejected">Rejected</option>
           </select>
         </div>
-        <button style={btn()} onClick={load}>Apply</button>
+        <Button variant="outline" onClick={load}>Apply</Button>
       </FilterBar>
 
-      <Card>
-        <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No payouts match.">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>
-              <th style={th()}>Pharmacy</th><th style={th()}>KYC tier</th><th style={th()}>Collected</th><th style={th()}>Fees</th>
-              <th style={th()}>Net payable</th><th style={th()}>AML</th><th style={th()}>Status</th><th style={th()}>Actions</th>
-            </tr></thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td style={td()}>{r.pharmacy_masked}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.id}</div></td>
-                  <td style={td()}><Badge status={r.kyc_tier} />{!r.kyc_verified && <div style={{ marginTop: 4 }}><Badge status="kyc_hold" label="unverified" /></div>}</td>
-                  <td style={td()}>{formatNaira(r.collected_kobo)}</td>
-                  <td style={td()}>{formatNaira(r.fees_kobo)}</td>
-                  <td style={td()}>{formatNaira(r.net_payable_kobo)}</td>
-                  <td style={td()}>{r.aml_flag ? <Badge status="flagged" label="AML flag" /> : <Badge status="ok" label="clear" />}</td>
-                  <td style={td()}><Badge status={r.payout_status} /></td>
-                  <td style={td()}>
-                    {(r.payout_status === 'pending' || r.payout_status === 'kyc_hold') ? (
-                      <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                        <button style={btnPrimary()} disabled={busy === r.id} onClick={() => decide(r, 'approve')}>{busy === r.id ? '…' : 'Approve'}</button>
-                        <button style={btnDanger()} disabled={busy === r.id} onClick={() => decide(r, 'reject')}>Reject</button>
-                      </div>
-                    ) : <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>—</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </StateBlock>
+      <Card style={{ padding: 0, overflow: 'auto' }}>
+        <div style={{ padding: rows.length === 0 || loading || error ? 14 : 0 }}>
+          <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No payouts match.">
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr>
+                <th style={thCell}>Pharmacy</th><th style={thCell}>KYC tier</th><th style={thCell}>Collected</th><th style={thCell}>Fees</th>
+                <th style={thCell}>Net payable</th><th style={thCell}>AML</th><th style={thCell}>Status</th><th style={thCell}>Actions</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id}>
+                    <td style={tdCell}>{r.pharmacy_masked}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.id}</div></td>
+                    <td style={tdCell}><Badge text={r.kyc_tier} color={statusColor(r.kyc_tier)} />{!r.kyc_verified && <div style={{ marginTop: 4 }}><Badge text="unverified" color={colors.danger} /></div>}</td>
+                    <td style={tdCell}>{formatNaira(r.collected_kobo)}</td>
+                    <td style={tdCell}>{formatNaira(r.fees_kobo)}</td>
+                    <td style={tdCell}>{formatNaira(r.net_payable_kobo)}</td>
+                    <td style={tdCell}>{r.aml_flag ? <Badge text="AML flag" color={colors.danger} /> : <Badge text="clear" color={colors.success} />}</td>
+                    <td style={tdCell}><Badge text={r.payout_status.replace(/_/g, ' ')} color={statusColor(r.payout_status)} /></td>
+                    <td style={tdCell}>
+                      {(r.payout_status === 'pending' || r.payout_status === 'kyc_hold') ? (
+                        <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                          <Button variant="primary" sm disabled={busy === r.id} onClick={() => decide(r, 'approve')}>{busy === r.id ? '…' : 'Approve'}</Button>
+                          <Button variant="danger" sm disabled={busy === r.id} onClick={() => decide(r, 'reject')}>Reject</Button>
+                        </div>
+                      ) : <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </StateBlock>
+        </div>
       </Card>
-    </div>
+    </Page>
   );
 }

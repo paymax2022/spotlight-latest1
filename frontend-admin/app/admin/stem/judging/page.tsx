@@ -8,6 +8,7 @@ import {
   updateStemJudgingScoreReviewState,
 } from '@/services/stemService';
 import type { StemJudgingScore } from '@/types/stem';
+import { Page, PageHeader, Card, Button, Input, colors } from '@/components/ui/vuexy';
 
 export default function StemJudgingPage() {
   const [applicationId, setApplicationId] = useState('');
@@ -45,33 +46,35 @@ export default function StemJudgingPage() {
   }
 
   return (
-    <section>
-      <h1>STEM Judging</h1>
+    <Page>
+      <PageHeader title="STEM Judging" />
       <StemModuleLinks />
-      <div style={{ marginTop: 8 }}>
-        <input placeholder="Application ID" value={applicationId} onChange={(e) => setApplicationId(e.target.value)} />
-        <button type="button" onClick={() => void load()} style={{ marginLeft: 8 }}>Load Scores</button>
-        <button type="button" onClick={() => void createQuickScore()} style={{ marginLeft: 8 }}>Create Quick Score</button>
-      </div>
-      <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+      <Card style={{ marginTop: 16 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Input placeholder="Application ID" value={applicationId} onChange={(e) => setApplicationId(e.target.value)} />
+          <Button variant="outline" onClick={() => void load()}>Load Scores</Button>
+          <Button variant="primary" onClick={() => void createQuickScore()}>Create Quick Score</Button>
+        </div>
+      </Card>
+      <div style={{ marginTop: 16, display: 'grid', gap: 8 }}>
         {rows.map((r) => (
-          <article key={r.id || `${r.applicationId}-${r.overallScore}`} style={{ border: '1px solid #2a2a2a', padding: 10 }}>
+          <Card key={r.id || `${r.applicationId}-${r.overallScore}`}>
             <p style={{ margin: 0, fontWeight: 700 }}>Overall: {r.overallScore}</p>
-            <p style={{ margin: '4px 0 0 0', fontSize: 12 }}>Innovation {r.innovationScore} · Technical {r.technicalDepthScore} · Impact {r.impactScore}</p>
-            <p style={{ margin: '4px 0 0 0', fontSize: 12 }}>
+            <p style={{ margin: '4px 0 0 0', fontSize: 12, color: colors.muted }}>Innovation {r.innovationScore} · Technical {r.technicalDepthScore} · Impact {r.impactScore}</p>
+            <p style={{ margin: '4px 0 0 0', fontSize: 12, color: colors.muted }}>
               Review: {r.reviewStatus || 'submitted'} · Locked: {r.isLocked ? 'yes' : 'no'} · Conflict: {r.hasConflict ? 'yes' : 'no'}
             </p>
             {r.id ? (
-              <p style={{ margin: '8px 0 0 0' }}>
-                <button type="button" onClick={() => void setState(r.id as string, 'in_review', false)}>Set In Review</button>
-                <button type="button" onClick={() => void setState(r.id as string, 'locked', true)} style={{ marginLeft: 8 }}>Lock</button>
-                <button type="button" onClick={() => void setState(r.id as string, 'reopened', false)} style={{ marginLeft: 8 }}>Reopen</button>
-              </p>
+              <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                <Button variant="outline" sm onClick={() => void setState(r.id as string, 'in_review', false)}>Set In Review</Button>
+                <Button variant="outline" sm onClick={() => void setState(r.id as string, 'locked', true)}>Lock</Button>
+                <Button variant="outline" sm onClick={() => void setState(r.id as string, 'reopened', false)}>Reopen</Button>
+              </div>
             ) : null}
-          </article>
+          </Card>
         ))}
-        {rows.length === 0 ? <p>No judging scores found.</p> : null}
+        {rows.length === 0 ? <p style={{ color: colors.muted }}>No judging scores found.</p> : null}
       </div>
-    </section>
+    </Page>
   );
 }

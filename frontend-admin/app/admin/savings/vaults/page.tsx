@@ -3,7 +3,29 @@
 import { useEffect, useState } from 'react';
 import { listVaults, forceUnlock, formatNaira } from '@/services/savingsAdminService';
 import type { VaultRecord } from '@/types/savingsAdmin';
-import { PageHeader, SavingsTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnDanger, th, td, input, label, select, fmtDate } from '../_ui';
+import { SavingsTabs, DisclosureNote, StateBlock, FilterBar, AuditNote, fmtDate } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const SUCCESS_STATUSES = new Set(['active', 'open', 'matured', 'completed', 'settled', 'reconciled', 'resolved', 'paid', 'healthy', 'approved', 'on_track', 'recovered', 'cleared', 'balanced', 'verified', 'contribution']);
+const DANGER_STATUSES = new Set(['rejected', 'failed', 'defaulted', 'blocked', 'high', 'critical', 'breached', 'suspended', 'impersonation', 'abuse']);
+const WARNING_STATUSES = new Set(['pending', 'forming', 'scheduled', 'queued', 'flagged', 'degraded', 'at_risk', 'locked', 'grace', 'review', 'under_review', 'late', 'medium', 'debit', 'hold']);
+const INFO_STATUSES = new Set(['investigating', 'processing', 'collecting', 'flex', 'normal', 'invited', 'payment', 'split', 'payout']);
+const PRIMARY_STATUSES = new Set(['refunded', 'reversed', 'reversal', 'make_good', 'pool', 'request']);
+
+function badgeColor(status: string): string {
+  const s = status.toLowerCase();
+  if (SUCCESS_STATUSES.has(s)) return colors.success;
+  if (DANGER_STATUSES.has(s)) return colors.danger;
+  if (WARNING_STATUSES.has(s)) return colors.warning;
+  if (INFO_STATUSES.has(s)) return colors.info;
+  if (PRIMARY_STATUSES.has(s)) return colors.primary;
+  return colors.secondary;
+}
+
+function badgeText(status: string, label?: string): string {
+  const t = (label ?? status.replace(/_/g, ' ')).toLowerCase();
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
 
 export default function VaultsPage() {
   const [rows, setRows] = useState<VaultRecord[]>([]);
@@ -35,8 +57,8 @@ export default function VaultsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Vault oversight" subtitle="Goal-vault book oversight with audited force-unlock for hardship / dispute cases." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Vault oversight" subtitle="Goal-vault book oversight with audited force-unlock for hardship / dispute cases." actions={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <SavingsTabs active="vaults" />
       <DisclosureNote>NL-2 — vaults accrue <strong>zero yield</strong>; force-unlock returns principal only. Every force-unlock posts a balanced reversing ledger entry and an immutable audit event (NL-8 / NL-12).</DisclosureNote>
 
@@ -44,12 +66,12 @@ export default function VaultsPage() {
 
       <FilterBar>
         <div style={{ minWidth: 200 }}>
-          <label style={label()}>Search</label>
-          <input style={input()} placeholder="Name, owner or vault id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
+          <label>Search</label>
+          <Input placeholder="Name, owner or vault id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
         </div>
         <div>
-          <label style={label()}>Status</label>
-          <select style={select()} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <label>Status</label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All</option>
             <option value="open">Open</option>
             <option value="locked">Locked</option>
@@ -58,33 +80,33 @@ export default function VaultsPage() {
             <option value="closed">Closed</option>
           </select>
         </div>
-        <button style={btn()} onClick={load}>Apply</button>
+        <Button variant="outline" onClick={load}>Apply</Button>
       </FilterBar>
 
-      <Card>
+      <Card style={{ overflowX: 'auto' }}>
         <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No vaults match.">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>
-              <th style={th()}>Vault</th><th style={th()}>Owner</th><th style={th()}>Type</th><th style={th()}>Status</th>
-              <th style={th()}>Balance</th><th style={th()}>Target</th><th style={th()}>Yield</th><th style={th()}>Auto-save</th>
-              <th style={th()}>Locked until</th><th style={th()}>Action</th>
+              <th style={thCell}>Vault</th><th style={thCell}>Owner</th><th style={thCell}>Type</th><th style={thCell}>Status</th>
+              <th style={thCell}>Balance</th><th style={thCell}>Target</th><th style={thCell}>Yield</th><th style={thCell}>Auto-save</th>
+              <th style={thCell}>Locked until</th><th style={thCell}>Action</th>
             </tr></thead>
             <tbody>
               {rows.map((v) => (
                 <tr key={v.id}>
-                  <td style={td()}>{v.name}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{v.id}</div></td>
-                  <td style={td()}>{v.owner_masked}</td>
-                  <td style={td()}><Badge status={v.lock_type === 'LOCKED' ? 'locked' : 'flex'} label={v.lock_type} /></td>
-                  <td style={td()}><Badge status={v.status} />{v.early_break_requested && <div style={{ marginTop: 4 }}><Badge status="flagged" label="break requested" /></div>}</td>
-                  <td style={td()}>{formatNaira(v.balance_kobo)}</td>
-                  <td style={td()}>{v.target_kobo ? formatNaira(v.target_kobo) : '—'}</td>
-                  <td style={td()}><span style={{ color: '#15803d', fontWeight: 600 }}>{formatNaira(v.yield_kobo)}</span></td>
-                  <td style={td()}>{v.auto_save_enabled ? `${formatNaira(v.auto_save_amount_kobo)} / ${v.auto_save_frequency}` : 'off'}</td>
-                  <td style={td()}>{fmtDate(v.locked_until)}</td>
-                  <td style={td()}>
+                  <td style={tdCell}>{v.name}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{v.id}</div></td>
+                  <td style={tdCell}>{v.owner_masked}</td>
+                  <td style={tdCell}><Badge text={badgeText(v.lock_type === 'LOCKED' ? 'locked' : 'flex', v.lock_type)} color={badgeColor(v.lock_type === 'LOCKED' ? 'locked' : 'flex')} /></td>
+                  <td style={tdCell}><Badge text={badgeText(v.status)} color={badgeColor(v.status)} />{v.early_break_requested && <div style={{ marginTop: 4 }}><Badge text="Break requested" color={badgeColor('flagged')} /></div>}</td>
+                  <td style={tdCell}>{formatNaira(v.balance_kobo)}</td>
+                  <td style={tdCell}>{v.target_kobo ? formatNaira(v.target_kobo) : '—'}</td>
+                  <td style={tdCell}><span style={{ color: colors.success, fontWeight: 600 }}>{formatNaira(v.yield_kobo)}</span></td>
+                  <td style={tdCell}>{v.auto_save_enabled ? `${formatNaira(v.auto_save_amount_kobo)} / ${v.auto_save_frequency}` : 'off'}</td>
+                  <td style={tdCell}>{fmtDate(v.locked_until)}</td>
+                  <td style={tdCell}>
                     {v.status === 'locked'
-                      ? <button style={btnDanger()} disabled={busy === v.id} onClick={() => onForceUnlock(v)}>{busy === v.id ? '…' : 'Force-unlock'}</button>
-                      : <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>—</span>}
+                      ? <Button variant="danger" sm disabled={busy === v.id} onClick={() => onForceUnlock(v)}>{busy === v.id ? '…' : 'Force-unlock'}</Button>
+                      : <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span>}
                   </td>
                 </tr>
               ))}
@@ -92,6 +114,6 @@ export default function VaultsPage() {
           </table>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

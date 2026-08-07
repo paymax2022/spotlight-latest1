@@ -201,7 +201,8 @@ func custodyWebhookGuard() gin.HandlerFunc {
 // POST /api/v1/crypto/internal/onchain-balance
 // Header: X-Crypto-Custody-Secret: <shared secret>
 // Body:   {"asset":"BTC","onchain_units":123456789,"source":"fireblocks","as_of":"2026-07-09T00:00:00Z"}
-//         (asset may be a symbol or the asset UUID; as_of is optional → defaults to now)
+//
+//	(asset may be a symbol or the asset UUID; as_of is optional → defaults to now)
 func (h *Handler) CustodyOnchainBalance(c *gin.Context) {
 	var req struct {
 		Asset        string     `json:"asset"`

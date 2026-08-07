@@ -3,6 +3,7 @@ import { View, Text, ScrollView, StyleSheet, Pressable, RefreshControl } from 'r
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Store, ChevronRight, Sparkles } from 'lucide-react-native';
+import { useQuery } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -14,12 +15,36 @@ import StateView from '@/components/StateView';
 import { CapabilityRow } from '@/features/merchant/components';
 import { useCapabilities } from '@/features/merchant/hooks/useMerchant';
 import { APP_STATUS_DISPLAY, PROFILE_STATUS_DISPLAY } from '@/features/merchant/constants/statusDisplay';
+import { getMyBusinesses, isBusinessActive } from '@/api/business.api';
+import { confirmAsync } from '@/lib/confirm';
 
 // Screen: Capabilities dashboard + context switcher (PRD §6.3, FR-25/FR-26).
 // One identity, many capabilities — Customer is always present; each approved
 // merchant profile and each in-flight application is listed with its status.
 export default function CapabilitiesScreen() {
   const { data, isLoading, isError, refetch, isRefetching } = useCapabilities();
+
+  // Business-registry gate (customer → merchant upgrade). A user cannot become a
+  // merchant/provider until they have a verified or registered business with CAC.
+  // We fail OPEN on load/error so a business-API outage never blocks the flow.
+  const businessQuery = useQuery({ queryKey: ['business', 'me'], queryFn: getMyBusinesses });
+
+  const handleUpgrade = async () => {
+    const businesses = businessQuery.data;
+    const hasActiveBusiness = !businesses || businesses.some(isBusinessActive);
+    if (hasActiveBusiness) {
+      router.push('/(merchant)/modules');
+      return;
+    }
+    const ok = await confirmAsync({
+      title: 'Business required',
+      message: 'Becoming a merchant or service provider requires a CAC-registered or verified business. Set one up first — it only takes a few minutes.',
+      confirmLabel: 'Set up business',
+      cancelLabel: 'Not now',
+    });
+    if (!ok) return;
+    router.push('/profile/business');
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -37,7 +62,7 @@ export default function CapabilitiesScreen() {
         >
           {/* Upgrade CTA — persistent entry point (FR-4) */}
           <Pressable
-            onPress={() => router.push('/(merchant)/modules')}
+            onPress={handleUpgrade}
             style={({ pressed }) => [styles.cta, shadow1, pressed && styles.pressed]}
             accessibilityRole="button"
             accessibilityLabel="Become a merchant or service provider"

@@ -2,7 +2,7 @@
 // Moves cash from the base Paymax wallet into the fund, minting units at the
 // current NAV. Shows the unit price and units-to-mint before confirming.
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ArrowLeft, Info } from 'lucide-react-native';
@@ -13,6 +13,7 @@ import { Radius } from '@/constants/radius';
 import PrimaryButton from '@/components/PrimaryButton';
 import { usePosition, useSubscribe } from '@/features/aitrading/hooks';
 import { formatNaira, formatUnits, UNIT_SCALE } from '@/features/aitrading/api';
+import { alertAsync } from '@/lib/confirm';
 
 export default function FundScreen() {
   const pos = usePosition();
@@ -28,9 +29,10 @@ export default function FundScreen() {
     if (!valid) return;
     try {
       const r = await subscribe.mutateAsync(kobo);
-      Alert.alert('Funded', `${formatUnits(r.unitsMinted)} units added at ${formatNaira(r.navPerUnitKobo)} each.`, [{ text: 'Done', onPress: () => router.back() }]);
+      await alertAsync({ title: 'Funded', message: `${formatUnits(r.unitsMinted)} units added at ${formatNaira(r.navPerUnitKobo)} each.`, buttonLabel: 'Done' });
+      router.back();
     } catch (e) {
-      Alert.alert('Could not fund', e instanceof Error ? e.message : 'Please try again.');
+      alertAsync({ title: 'Could not fund', message: e instanceof Error ? e.message : 'Please try again.' });
     }
   }
 

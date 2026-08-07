@@ -185,6 +185,26 @@ func (r *Repository) ListTutors(ctx context.Context, subject string) ([]Tutor, e
 	return out, rows.Err()
 }
 
+// ListAllTutors lists EVERY tutor regardless of status (admin oversight read — mirrors
+// ListTutors without the verified-only filter).
+func (r *Repository) ListAllTutors(ctx context.Context) ([]Tutor, error) {
+	q := `SELECT ` + tutorCols + ` FROM public.academy_tutors ORDER BY created_at DESC`
+	rows, err := r.db.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Tutor{}
+	for rows.Next() {
+		t, err := scanTutor(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *t)
+	}
+	return out, rows.Err()
+}
+
 // SetTutorStatus performs a vetting transition (verify / suspend) and records the kyc
 // state in the same write. Audited inside the tx. tier is recorded for verifications.
 func (r *Repository) SetTutorStatus(ctx context.Context, actor, tutorID string, to TutorStatus, kycState string, detail map[string]any) (*Tutor, error) {
@@ -277,6 +297,31 @@ func (r *Repository) ListAssignmentsByTutor(ctx context.Context, tutorID string)
 	return out, rows.Err()
 }
 
+// ListCohortsByTutor returns the distinct class groups the tutor teaches, derived from
+// the tutor's assignments (owner-scoped). Assignments with no class_group_id (single-
+// learner only) are excluded. Ordered by assignment count desc.
+func (r *Repository) ListCohortsByTutor(ctx context.Context, tutorID string) ([]Cohort, error) {
+	const q = `SELECT class_group_id, COUNT(*) AS assignment_count
+	           FROM public.academy_tutor_assignments
+	           WHERE tutor_id = $1 AND class_group_id IS NOT NULL
+	           GROUP BY class_group_id
+	           ORDER BY assignment_count DESC, class_group_id ASC`
+	rows, err := r.db.Query(ctx, q, tutorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Cohort{}
+	for rows.Next() {
+		var c Cohort
+		if err := rows.Scan(&c.ClassGroupID, &c.AssignmentCount); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // ── Grades (insert + grade) ──────────────────────────────────────────────────────
 
 const gradeCols = `id, assignment_id, learner_id, score, feedback, state, created_at, graded_at`
@@ -299,6 +344,31 @@ func scanGrade(row rowScanner) (*Grade, error) {
 func (r *Repository) GetGrade(ctx context.Context, id string) (*Grade, error) {
 	q := `SELECT ` + gradeCols + ` FROM public.academy_tutor_grades WHERE id = $1`
 	return scanGrade(r.db.QueryRow(ctx, q, id))
+}
+
+// ListGradesByTutor lists the graded submissions across ALL of a tutor's assignments
+// (owner-scoped via the assignment → tutor join). Grade rows are the per-learner
+// submissions for the tutor's assignments. Ordered newest-first.
+func (r *Repository) ListGradesByTutor(ctx context.Context, tutorID string) ([]Grade, error) {
+	const q = `SELECT g.id, g.assignment_id, g.learner_id, g.score, g.feedback, g.state, g.created_at, g.graded_at
+	           FROM public.academy_tutor_grades g
+	           JOIN public.academy_tutor_assignments a ON a.id = g.assignment_id
+	           WHERE a.tutor_id = $1
+	           ORDER BY g.created_at DESC`
+	rows, err := r.db.Query(ctx, q, tutorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Grade{}
+	for rows.Next() {
+		g, err := scanGrade(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *g)
+	}
+	return out, rows.Err()
 }
 
 // GradeAssignment inserts a graded record (state='graded', graded_at=now) for a learner's

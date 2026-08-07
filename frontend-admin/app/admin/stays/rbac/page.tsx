@@ -4,20 +4,16 @@ import { useEffect, useState } from 'react';
 import { listUsers } from '@/services/staysAdminService';
 import type { AdminUserRole } from '@/types/staysAdmin';
 import {
-  PageHeader,
   StaysTabs,
-  Card,
   Badge,
   DisclosureNote,
   StateBlock,
   FilterBar,
-  btn,
-  th,
-  td,
   label,
   select,
   timeAgo,
 } from '../_ui';
+import { Page, PageHeader, Card, Button, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function StaysRbacPage() {
   const [rows, setRows] = useState<AdminUserRole[]>([]);
@@ -34,11 +30,11 @@ export default function StaysRbacPage() {
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [status]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Users & roles"
         subtitle="Read-only view of admin users holding stays.admin.* grants — roles, permissions and last activity across the Paymax Stays ops console."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="platform" />
 
@@ -64,37 +60,37 @@ export default function StaysRbacPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th style={th()}>User</th>
-                <th style={th()}>Email</th>
-                <th style={th()}>Roles</th>
-                <th style={th()}>Permissions</th>
-                <th style={th()}>Last active</th>
-                <th style={th()}>Status</th>
+                <th style={thCell}>User</th>
+                <th style={thCell}>Email</th>
+                <th style={thCell}>Roles</th>
+                <th style={thCell}>Permissions</th>
+                <th style={thCell}>Last active</th>
+                <th style={thCell}>Status</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((u) => (
                 <tr key={u.id}>
-                  <td style={td()}>{u.user_masked}</td>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{u.email_masked}</code></td>
-                  <td style={td()}>
+                  <td style={tdCell}>{u.user_masked}</td>
+                  <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{u.email_masked}</code></td>
+                  <td style={tdCell}>
                     <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
                       {u.roles.length === 0 ? '—' : u.roles.map((r) => <Badge key={r} status={r} label={r} />)}
                     </div>
                   </td>
-                  <td style={td()}>
+                  <td style={tdCell}>
                     <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', maxWidth: 360 }}>
                       {u.permissions.length === 0 ? '—' : u.permissions.map((p) => <Badge key={p} status={p} label={p} />)}
                     </div>
                   </td>
-                  <td style={td()}>{timeAgo(u.last_active)}</td>
-                  <td style={td()}><Badge status={u.status} /></td>
+                  <td style={tdCell}>{timeAgo(u.last_active)}</td>
+                  <td style={tdCell}><Badge status={u.status} /></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

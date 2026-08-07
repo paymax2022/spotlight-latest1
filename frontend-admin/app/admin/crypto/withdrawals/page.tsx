@@ -4,12 +4,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { adminListWithdrawals, adminDecideWithdrawal, formatKobo } from '@/services/cryptoAdminService';
 import type { CryptoWithdrawal } from '@/types/cryptoAdmin';
 import {
-  PageHeader, CryptoTabs, Card, StatusBadge, RiskBadge, FlagPill, DisclosureNote, StateBlock,
-  AuditNote, PermissionBanner, btn, btnPrimary, btnDisabled, th, td, mono, fmtDate, fmtUnits,
-  FilterBar, label as lbl, select,
+  CryptoTabs, StatusBadge, RiskBadge, FlagPill, DisclosureNote, StateBlock,
+  AuditNote, PermissionBanner, mono, fmtDate, fmtUnits,
+  FilterBar, label as lbl, select, textarea,
   CRYPTO_PERMS, useCryptoPermission,
 } from '../_ui';
-import { ConfirmDialog } from '@/components/rbac/ConfirmDialog';
+import { Page, PageHeader, Card, Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const PAGE_SIZE = 50;
 
@@ -29,7 +29,7 @@ export default function CryptoWithdrawalsPage() {
   // Decision drawer state.
   const [active, setActive] = useState<CryptoWithdrawal | null>(null);
   const [decision, setDecision] = useState<'approve' | 'reject'>('approve');
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async (off: number, status: string) => {
@@ -42,19 +42,18 @@ export default function CryptoWithdrawalsPage() {
   useEffect(() => { void load(offset, statusFilter); }, [offset, statusFilter, load]);
 
   function openDecision(w: CryptoWithdrawal, d: 'approve' | 'reject') {
-    setActive(w); setDecision(d); setConfirmOpen(false); setError(null); setMsg(null);
+    setActive(w); setDecision(d); setNote(''); setError(null); setMsg(null);
   }
 
-  // Confirm gate: the high-impact decision runs only after the operator reaffirms
-  // it in the ConfirmDialog. The typed reason is passed straight through as the
-  // audited operator note (adminDecideWithdrawal already accepts `note`).
-  async function confirmDecision(reason: string) {
+  const noteMissing = !note.trim();
+
+  async function submit() {
     if (!active) return;
+    if (noteMissing) { setError('An operator note is required.'); return; }
     setBusy(true); setError(null); setMsg(null);
     try {
-      const r = await adminDecideWithdrawal(active.id, { decision, note: reason });
-      setMsg(`Withdrawal ${r.id} ${decision === 'approve' ? 'approved → pending broadcast' : 'rejected → failed (parked units returned)'}. Note: "${reason}"`);
-      setConfirmOpen(false);
+      const r = await adminDecideWithdrawal(active.id, { decision, note: note.trim() });
+      setMsg(`Withdrawal ${r.id} ${decision === 'approve' ? 'approved → pending broadcast' : 'rejected → failed (parked units returned)'}. Note: "${note.trim()}"`);
       setActive(null);
       await load(offset, statusFilter);
     } catch (e) { setError(String(e)); }
@@ -64,11 +63,11 @@ export default function CryptoWithdrawalsPage() {
   const pending = rows.filter((w) => w.status === 'pending_review');
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Crypto — Withdrawals / AML"
         subtitle="AML review queue for outbound crypto withdrawals. Approve moves pending_review → approved (accepted for broadcast); reject moves pending_review → failed and returns the parked holding units. Funds never leave before approval. Both transitions are audited."
-        action={<button onClick={() => void load(offset, statusFilter)} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={() => void load(offset, statusFilter)}>Refresh</Button>}
       />
       <CryptoTabs active="withdrawals" />
       <DisclosureNote>
@@ -80,23 +79,23 @@ export default function CryptoWithdrawalsPage() {
       </DisclosureNote>
 
       {!canAdmin && <PermissionBanner permission={CRYPTO_PERMS.admin} />}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
       {msg && <AuditNote>{msg}</AuditNote>}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-        <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.85rem 1rem', background: '#fff' }}>
-          <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: '#6b7280', fontWeight: 600 }}>Awaiting decision</div>
-          <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: pending.length ? '#9a3412' : '#111827' }}>{pending.length}</div>
-        </div>
-        <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.85rem 1rem', background: '#fff' }}>
-          <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: '#6b7280', fontWeight: 600 }}>High-risk (score ≥ 70)</div>
-          <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: '#b91c1c' }}>{rows.filter((w) => (w.aml_score ?? 0) >= 70).length}</div>
-        </div>
+        <Card style={{ padding: '0.85rem 1rem' }}>
+          <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 600 }}>Awaiting decision</div>
+          <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: pending.length ? colors.warning : colors.text }}>{pending.length}</div>
+        </Card>
+        <Card style={{ padding: '0.85rem 1rem' }}>
+          <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 600 }}>High-risk (score ≥ 70)</div>
+          <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: colors.danger }}>{rows.filter((w) => (w.aml_score ?? 0) >= 70).length}</div>
+        </Card>
       </div>
 
       {active && (
-        <Card title={`${decision === 'approve' ? 'Approve' : 'Reject'} withdrawal ${active.id}`}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.5rem', fontSize: '0.82rem', marginBottom: '0.75rem' }}>
+        <Card title={`${decision === 'approve' ? 'Approve' : 'Reject'} withdrawal ${active.id}`} style={{ marginBottom: '1.25rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.5rem', fontSize: '0.82rem', marginBottom: '0.75rem', marginTop: 12 }}>
             <div><strong>User:</strong> <span style={mono()}>{active.user_id}</span></div>
             <div><strong>Asset:</strong> {active.symbol ?? active.asset_id}</div>
             <div><strong>Amount:</strong> {fmtUnits(active.units, SCALE[active.symbol ?? ''] ?? 0, active.symbol)}</div>
@@ -104,105 +103,91 @@ export default function CryptoWithdrawalsPage() {
             <div style={{ gridColumn: '1 / -1' }}><strong>Destination:</strong> <span style={mono()}>{active.address}</span> ({active.network})</div>
             <div style={{ gridColumn: '1 / -1' }}><strong>AML score:</strong> <RiskBadge score={active.aml_score} /> {(active.aml_flags ?? []).map((f) => <FlagPill key={f}>{f}</FlagPill>)}</div>
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
-            <button
-              style={canAdmin && !busy ? btnPrimary() : btnDisabled()}
-              disabled={!canAdmin || busy}
-              onClick={() => setConfirmOpen(true)}
-            >{busy ? '…' : decision === 'approve' ? 'Confirm approve' : 'Confirm reject'}</button>
-            <button style={btn()} disabled={busy} onClick={() => setActive(null)}>Cancel</button>
+          <div>
+            <label style={lbl()}>Operator note (mandatory — rationale for this decision)</label>
+            <textarea
+              style={textarea()}
+              placeholder={decision === 'approve' ? 'e.g. AML review passed, destination whitelisted, ref AML-2026-...' : 'e.g. Sanctioned-address hit; escalated to compliance, ticket AML-2026-...'}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
           </div>
-          <p style={{ color: '#9ca3af', fontSize: '0.75rem', marginTop: '0.4rem' }}>A final confirmation with a mandatory operator note is required before the decision is applied.</p>
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+            <Button
+              variant="primary"
+              disabled={!canAdmin || noteMissing || busy}
+              onClick={() => void submit()}
+            >{busy ? '…' : decision === 'approve' ? 'Confirm approve' : 'Confirm reject'}</Button>
+            <Button variant="outline" onClick={() => setActive(null)}>Cancel</Button>
+          </div>
+          {noteMissing && <p style={{ color: colors.muted, fontSize: '0.75rem', marginTop: '0.4rem' }}>Submit is disabled until an operator note is entered.</p>}
         </Card>
       )}
 
-      <Card>
-        <FilterBar>
-          <div>
-            <label style={lbl()}>Status</label>
-            <select style={select()} value={statusFilter} onChange={(e) => { setOffset(0); setStatusFilter(e.target.value); }}>
-              <option value="">All</option>
-              <option value="pending_review">Pending review (awaiting AML decision)</option>
-              <option value="approved">Approved (accepted for broadcast)</option>
-              <option value="requested">Requested (legacy)</option>
-              <option value="broadcast">Broadcast</option>
-              <option value="confirmed">Confirmed</option>
-              <option value="failed">Failed</option>
-            </select>
-          </div>
-        </FilterBar>
+      <Card style={{ padding: 0, overflow: 'auto' }}>
+        <div style={{ padding: 14 }}>
+          <FilterBar>
+            <div>
+              <label style={lbl()}>Status</label>
+              <select style={select()} value={statusFilter} onChange={(e) => { setOffset(0); setStatusFilter(e.target.value); }}>
+                <option value="">All</option>
+                <option value="pending_review">Pending review (awaiting AML decision)</option>
+                <option value="approved">Approved (accepted for broadcast)</option>
+                <option value="requested">Requested (legacy)</option>
+                <option value="broadcast">Broadcast</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="failed">Failed</option>
+              </select>
+            </div>
+          </FilterBar>
+        </div>
 
-        <StateBlock loading={loading} error={null} empty={rows.length === 0} emptyText="No withdrawals match this filter.">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>
-              <th style={th()}>Withdrawal</th><th style={th()}>User</th><th style={th()}>Asset</th>
-              <th style={th()}>Amount</th><th style={th()}>Cash equiv</th><th style={th()}>Destination</th>
-              <th style={th()}>Risk</th><th style={th()}>Flags</th><th style={th()}>Status</th>
-              <th style={th()}>Requested</th><th style={th()}>Action</th>
-            </tr></thead>
-            <tbody>
-              {rows.map((w) => {
-                const scale = SCALE[w.symbol ?? ''] ?? 0;
-                const decidable = w.status === 'pending_review';
-                return (
-                  <tr key={w.id}>
-                    <td style={{ ...td(), ...mono() }}>{w.id}</td>
-                    <td style={{ ...td(), ...mono() }}>{w.user_id}</td>
-                    <td style={td()}>{w.symbol ?? w.asset_id}</td>
-                    <td style={td()}>{fmtUnits(w.units, scale, w.symbol)}</td>
-                    <td style={td()}>{formatKobo(w.value_kobo)}</td>
-                    <td style={{ ...td(), ...mono(), maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={w.address}>{w.address ?? '—'}</td>
-                    <td style={td()}><RiskBadge score={w.aml_score} /></td>
-                    <td style={{ ...td(), maxWidth: 200 }}>{(w.aml_flags ?? []).length ? (w.aml_flags ?? []).map((f) => <FlagPill key={f}>{f}</FlagPill>) : <span style={{ color: '#9ca3af' }}>—</span>}</td>
-                    <td style={td()}><StatusBadge status={w.status} /></td>
-                    <td style={td()}>{fmtDate(w.created_at)}</td>
-                    <td style={{ ...td(), whiteSpace: 'nowrap' }}>
-                      {decidable ? (
-                        <>
-                          <button style={{ ...(canAdmin ? btn() : btnDisabled()), marginRight: 6 }} disabled={!canAdmin} onClick={() => openDecision(w, 'approve')}>Approve</button>
-                          <button style={canAdmin ? btn() : btnDisabled()} disabled={!canAdmin} onClick={() => openDecision(w, 'reject')}>Reject</button>
-                        </>
-                      ) : <span style={{ color: '#9ca3af' }}>—</span>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </StateBlock>
+        <div style={{ padding: rows.length === 0 || loading ? '0 14px 14px' : 0 }}>
+          <StateBlock loading={loading} error={null} empty={rows.length === 0} emptyText="No withdrawals match this filter.">
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr>
+                <th style={thCell}>Withdrawal</th><th style={thCell}>User</th><th style={thCell}>Asset</th>
+                <th style={thCell}>Amount</th><th style={thCell}>Cash equiv</th><th style={thCell}>Destination</th>
+                <th style={thCell}>Risk</th><th style={thCell}>Flags</th><th style={thCell}>Status</th>
+                <th style={thCell}>Requested</th><th style={thCell}>Action</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((w) => {
+                  const scale = SCALE[w.symbol ?? ''] ?? 0;
+                  const decidable = w.status === 'pending_review';
+                  return (
+                    <tr key={w.id}>
+                      <td style={{ ...tdCell, ...mono() }}>{w.id}</td>
+                      <td style={{ ...tdCell, ...mono() }}>{w.user_id}</td>
+                      <td style={tdCell}>{w.symbol ?? w.asset_id}</td>
+                      <td style={tdCell}>{fmtUnits(w.units, scale, w.symbol)}</td>
+                      <td style={tdCell}>{formatKobo(w.value_kobo)}</td>
+                      <td style={{ ...tdCell, ...mono(), maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={w.address}>{w.address ?? '—'}</td>
+                      <td style={tdCell}><RiskBadge score={w.aml_score} /></td>
+                      <td style={{ ...tdCell, maxWidth: 200 }}>{(w.aml_flags ?? []).length ? (w.aml_flags ?? []).map((f) => <FlagPill key={f}>{f}</FlagPill>) : <span style={{ color: colors.muted }}>—</span>}</td>
+                      <td style={tdCell}><StatusBadge status={w.status} /></td>
+                      <td style={tdCell}>{fmtDate(w.created_at)}</td>
+                      <td style={{ ...tdCell, whiteSpace: 'nowrap' }}>
+                        {decidable ? (
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <Button variant="outline" sm disabled={!canAdmin} onClick={() => openDecision(w, 'approve')}>Approve</Button>
+                            <Button variant="outline" sm disabled={!canAdmin} onClick={() => openDecision(w, 'reject')}>Reject</Button>
+                          </div>
+                        ) : <span style={{ color: colors.muted }}>—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </StateBlock>
+        </div>
 
-        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem', justifyContent: 'flex-end' }}>
-          <button style={btn()} disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>Previous</button>
-          <button style={btn()} disabled={rows.length < PAGE_SIZE} onClick={() => setOffset(offset + PAGE_SIZE)}>Next</button>
+        <div style={{ display: 'flex', gap: '0.5rem', padding: '0 14px 14px', justifyContent: 'flex-end' }}>
+          <Button variant="outline" sm disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>Previous</Button>
+          <Button variant="outline" sm disabled={rows.length < PAGE_SIZE} onClick={() => setOffset(offset + PAGE_SIZE)}>Next</Button>
         </div>
       </Card>
-
-      {active && confirmOpen ? (
-        <ConfirmDialog
-          open
-          level="critical"
-          title={decision === 'approve' ? `Approve withdrawal ${active.id}` : `Reject withdrawal ${active.id}`}
-          description={`${active.symbol ?? active.asset_id} · ${formatKobo(active.value_kobo)} → ${active.address ?? '—'}`}
-          reasons={
-            decision === 'approve'
-              ? [
-                  'Approves an outbound crypto withdrawal — units are accepted for broadcast and leave the platform. Funds do not return automatically.',
-                  'Recorded in the audit log with your name, reason and timestamp.',
-                ]
-              : [
-                  'Rejects the withdrawal — it moves to failed and the parked holding units are returned to the member.',
-                  'Recorded in the audit log with your name, reason and timestamp.',
-                ]
-          }
-          requireReason
-          reasonLabel="Operator note (mandatory — rationale for this decision)"
-          reasonPlaceholder={decision === 'approve' ? 'e.g. AML review passed, destination whitelisted, ref AML-2026-...' : 'e.g. Sanctioned-address hit; escalated to compliance, ticket AML-2026-...'}
-          busy={busy}
-          confirmLabel={decision === 'approve' ? 'Approve withdrawal' : 'Reject withdrawal'}
-          onConfirm={confirmDecision}
-          onCancel={() => { if (!busy) setConfirmOpen(false); }}
-        />
-      ) : null}
-    </div>
+    </Page>
   );
 }

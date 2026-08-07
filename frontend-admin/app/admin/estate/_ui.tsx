@@ -4,34 +4,35 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
+import { colors, tint } from '@/components/ui/vuexy';
 
-// Shared presentational helpers for the Estate console — matches the Realtor
-// console light-card inline-style convention (see realtor/_ui.tsx).
+// Shared presentational helpers for the Estate console — restyled to the
+// shared Vuexy light-card convention (see @/components/ui/vuexy).
 
-export const card = (): CSSProperties => ({ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem', background: '#fff' });
-export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: '0.85rem' });
-export const btnPrimary = (bg = '#1d4ed8'): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: 'none', background: bg, color: '#fff', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600 });
-export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: '#6b7280', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3 });
-export const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: '#374151', fontSize: '0.85rem', borderTop: '1px solid #f3f4f6' });
+export const card = (): CSSProperties => ({ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card });
+export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: `1px solid ${colors.inputBorder}`, background: colors.card, cursor: 'pointer', fontSize: '0.85rem' });
+export const btnPrimary = (bg = colors.primary): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: 'none', background: bg, color: '#fff', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600 });
+export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: colors.muted, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3 });
+export const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: colors.text, fontSize: '0.85rem', borderTop: `1px solid ${colors.border}` });
 
 const STATUS_COLORS: Record<string, { fg: string; bg: string }> = {
-  active: { fg: '#15803d', bg: '#dcfce7' }, paid: { fg: '#15803d', bg: '#dcfce7' }, verified: { fg: '#15803d', bg: '#dcfce7' }, online: { fg: '#15803d', bg: '#dcfce7' }, on_duty: { fg: '#15803d', bg: '#dcfce7' }, resolved: { fg: '#15803d', bg: '#dcfce7' }, completed: { fg: '#15803d', bg: '#dcfce7' },
-  pending: { fg: '#9a3412', bg: '#ffedd5' }, scheduled: { fg: '#9a3412', bg: '#ffedd5' }, investigating: { fg: '#9a3412', bg: '#ffedd5' }, maintenance: { fg: '#9a3412', bg: '#ffedd5' }, medium: { fg: '#9a3412', bg: '#ffedd5' },
-  overdue: { fg: '#b91c1c', bg: '#fee2e2' }, banned: { fg: '#b91c1c', bg: '#fee2e2' }, restricted: { fg: '#b91c1c', bg: '#fee2e2' }, rejected: { fg: '#b91c1c', bg: '#fee2e2' }, suspended: { fg: '#b91c1c', bg: '#fee2e2' }, offline: { fg: '#b91c1c', bg: '#fee2e2' }, open: { fg: '#b91c1c', bg: '#fee2e2' }, missed: { fg: '#b91c1c', bg: '#fee2e2' }, high: { fg: '#b91c1c', bg: '#fee2e2' }, critical: { fg: '#b91c1c', bg: '#fee2e2' },
-  low: { fg: '#1d4ed8', bg: '#dbeafe' }, owner: { fg: '#1d4ed8', bg: '#dbeafe' }, tenant: { fg: '#6b21a8', bg: '#f3e8ff' },
+  active: { fg: colors.success, bg: tint(colors.success, 0.12) }, paid: { fg: colors.success, bg: tint(colors.success, 0.12) }, verified: { fg: colors.success, bg: tint(colors.success, 0.12) }, online: { fg: colors.success, bg: tint(colors.success, 0.12) }, on_duty: { fg: colors.success, bg: tint(colors.success, 0.12) }, resolved: { fg: colors.success, bg: tint(colors.success, 0.12) }, completed: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  pending: { fg: colors.warning, bg: tint(colors.warning, 0.14) }, scheduled: { fg: colors.warning, bg: tint(colors.warning, 0.14) }, investigating: { fg: colors.warning, bg: tint(colors.warning, 0.14) }, maintenance: { fg: colors.warning, bg: tint(colors.warning, 0.14) }, medium: { fg: colors.warning, bg: tint(colors.warning, 0.14) },
+  overdue: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, banned: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, restricted: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, rejected: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, suspended: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, offline: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, open: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, missed: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, high: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, critical: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
+  low: { fg: colors.info, bg: tint(colors.info, 0.12) }, owner: { fg: colors.info, bg: tint(colors.info, 0.12) }, tenant: { fg: colors.primary, bg: tint(colors.primary, 0.12) },
 };
 
 export function Badge({ status, label }: { status: string; label?: string }) {
-  const c = STATUS_COLORS[status] ?? { fg: '#374151', bg: '#f3f4f6' };
+  const c = STATUS_COLORS[status] ?? { fg: colors.muted, bg: colors.headBg };
   return <span style={{ display: 'inline-block', padding: '0.1rem 0.5rem', borderRadius: 9999, fontSize: '0.72rem', fontWeight: 600, color: c.fg, background: c.bg, textTransform: 'capitalize' }}>{label ?? status.replace(/_/g, ' ')}</span>;
 }
 
 export function Kpi({ label, value, accent, sub }: { label: string; value: string; accent?: string; sub?: string }) {
   return (
-    <div style={{ ...card(), padding: '0.9rem 1rem', borderLeft: `3px solid ${accent ?? '#e5e7eb'}` }}>
-      <div style={{ fontSize: '0.75rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
-      <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: 4, color: '#111827' }}>{value}</div>
-      {sub ? <div style={{ fontSize: '0.72rem', color: '#6b7280', marginTop: 2 }}>{sub}</div> : null}
+    <div style={{ ...card(), padding: '0.9rem 1rem', borderLeft: `3px solid ${accent ?? colors.border}` }}>
+      <div style={{ fontSize: '0.75rem', color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: 4, color: colors.text }}>{value}</div>
+      {sub ? <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 2 }}>{sub}</div> : null}
     </div>
   );
 }
@@ -41,7 +42,7 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', gap: '1rem', flexWrap: 'wrap' }}>
       <div>
         <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>{title}</h1>
-        {subtitle ? <p style={{ color: '#6b7280', margin: '0.25rem 0 0', fontSize: '0.85rem' }}>{subtitle}</p> : null}
+        {subtitle ? <p style={{ color: colors.muted, margin: '0.25rem 0 0', fontSize: '0.85rem' }}>{subtitle}</p> : null}
       </div>
       {action}
     </div>
@@ -71,9 +72,9 @@ export function EstateTabs({ active }: { active: string }) {
     { href: '/admin/estate/vendors', label: 'Vendors', key: 'vendors' },
   ];
   return (
-    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>
+    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: `1px solid ${colors.border}`, paddingBottom: '0.5rem' }}>
       {tabs.map((t) => (
-        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : '#374151', background: active === t.key ? '#1d4ed8' : '#f3f4f6' }}>{t.label}</Link>
+        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : colors.text, background: active === t.key ? colors.primary : colors.headBg }}>{t.label}</Link>
       ))}
     </div>
   );
@@ -137,9 +138,9 @@ export function EstateOversightTabs({ active }: { active: string }) {
     { href: '/admin/estate/elections', label: 'Election Integrity', key: 'elections' },
   ];
   return (
-    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>
+    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: `1px solid ${colors.border}`, paddingBottom: '0.5rem' }}>
       {tabs.map((t) => (
-        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : '#374151', background: active === t.key ? '#7c3aed' : '#f3f4f6' }}>{t.label}</Link>
+        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : colors.text, background: active === t.key ? colors.primary : colors.headBg }}>{t.label}</Link>
       ))}
     </div>
   );
@@ -148,7 +149,7 @@ export function EstateOversightTabs({ active }: { active: string }) {
 // Shown when the caller lacks the required estate.admin.* permission.
 export function Restricted({ perm }: { perm: string }) {
   return (
-    <div style={{ ...card(), background: '#fffbeb', borderColor: '#fde68a', color: '#92400e', fontSize: '0.85rem' }}>
+    <div style={{ ...card(), background: tint(colors.warning, 0.1), borderColor: tint(colors.warning, 0.4), color: colors.warning, fontSize: '0.85rem' }}>
       You do not have <code>{perm}</code> — this oversight view is unavailable for your role.
     </div>
   );

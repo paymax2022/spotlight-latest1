@@ -2,70 +2,71 @@
 
 import Link from 'next/link';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
+import { colors, tint } from '@/components/ui/vuexy';
 
 // Shared presentational helpers for the Paymax Savings + Social Pay ops consoles.
-// Matches the Connect / Insurance / Stays admin light-card inline-style convention
-// (copied from stays/_ui.tsx). Both app/admin/savings/* and app/admin/social/*
-// import from this single file via relative path.
+// Matches the Vuexy light-theme kit (see @/components/ui/vuexy, app/admin/roles/page.tsx).
+// Both app/admin/savings/* and app/admin/social/* import from this single file via
+// relative path.
 
-export const card = (): CSSProperties => ({ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem', background: '#fff' });
-export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: '0.85rem' });
-export const btnPrimary = (): CSSProperties => ({ ...btn(), border: '1px solid #340075', background: '#340075', color: '#fff', fontWeight: 600 });
-export const btnDanger = (): CSSProperties => ({ ...btn(), border: '1px solid #b91c1c', background: '#fff', color: '#b91c1c', fontWeight: 600 });
-export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: '#6b7280', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3 });
-export const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: '#374151', fontSize: '0.85rem', borderTop: '1px solid #f3f4f6', verticalAlign: 'top' });
-export const input = (): CSSProperties => ({ padding: '0.4rem 0.55rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem', width: '100%', boxSizing: 'border-box' });
-export const label = (): CSSProperties => ({ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#374151', marginBottom: '0.25rem' });
-export const select = (): CSSProperties => ({ ...input(), background: '#fff', cursor: 'pointer' });
+export const card = (): CSSProperties => ({ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card });
+export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: `1px solid ${colors.inputBorder}`, background: colors.card, cursor: 'pointer', fontSize: '0.85rem' });
+export const btnPrimary = (): CSSProperties => ({ ...btn(), border: `1px solid ${colors.primary}`, background: colors.primary, color: '#fff', fontWeight: 600 });
+export const btnDanger = (): CSSProperties => ({ ...btn(), border: `1px solid ${colors.danger}`, background: colors.card, color: colors.danger, fontWeight: 600 });
+export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: colors.muted, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3 });
+export const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: colors.text, fontSize: '0.85rem', borderTop: `1px solid ${colors.border}`, verticalAlign: 'top' });
+export const input = (): CSSProperties => ({ padding: '0.4rem 0.55rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem', fontSize: '0.85rem', width: '100%', boxSizing: 'border-box' });
+export const label = (): CSSProperties => ({ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' });
+export const select = (): CSSProperties => ({ ...input(), background: colors.card, cursor: 'pointer' });
 
 const STATUS_COLORS: Record<string, { fg: string; bg: string }> = {
   // success / terminal-good
-  active: { fg: '#15803d', bg: '#dcfce7' }, open: { fg: '#15803d', bg: '#dcfce7' },
-  matured: { fg: '#15803d', bg: '#dcfce7' }, completed: { fg: '#15803d', bg: '#dcfce7' },
-  settled: { fg: '#15803d', bg: '#dcfce7' }, reconciled: { fg: '#15803d', bg: '#dcfce7' },
-  resolved: { fg: '#15803d', bg: '#dcfce7' }, paid: { fg: '#15803d', bg: '#dcfce7' },
-  healthy: { fg: '#15803d', bg: '#dcfce7' }, approved: { fg: '#15803d', bg: '#dcfce7' },
-  on_track: { fg: '#15803d', bg: '#dcfce7' }, recovered: { fg: '#15803d', bg: '#dcfce7' },
-  cleared: { fg: '#15803d', bg: '#dcfce7' }, balanced: { fg: '#15803d', bg: '#dcfce7' },
+  active: { fg: colors.success, bg: tint(colors.success, 0.12) }, open: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  matured: { fg: colors.success, bg: tint(colors.success, 0.12) }, completed: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  settled: { fg: colors.success, bg: tint(colors.success, 0.12) }, reconciled: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  resolved: { fg: colors.success, bg: tint(colors.success, 0.12) }, paid: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  healthy: { fg: colors.success, bg: tint(colors.success, 0.12) }, approved: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  on_track: { fg: colors.success, bg: tint(colors.success, 0.12) }, recovered: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  cleared: { fg: colors.success, bg: tint(colors.success, 0.12) }, balanced: { fg: colors.success, bg: tint(colors.success, 0.12) },
   // pending / warn
-  pending: { fg: '#9a3412', bg: '#ffedd5' }, forming: { fg: '#9a3412', bg: '#ffedd5' },
-  scheduled: { fg: '#9a3412', bg: '#ffedd5' }, queued: { fg: '#9a3412', bg: '#ffedd5' },
-  flagged: { fg: '#9a3412', bg: '#ffedd5' }, degraded: { fg: '#9a3412', bg: '#ffedd5' },
-  at_risk: { fg: '#9a3412', bg: '#ffedd5' }, locked: { fg: '#9a3412', bg: '#ffedd5' },
-  grace: { fg: '#9a3412', bg: '#ffedd5' }, review: { fg: '#9a3412', bg: '#ffedd5' },
-  under_review: { fg: '#9a3412', bg: '#ffedd5' }, late: { fg: '#9a3412', bg: '#ffedd5' },
+  pending: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, forming: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  scheduled: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, queued: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  flagged: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, degraded: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  at_risk: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, locked: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  grace: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, review: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  under_review: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, late: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
   // in-progress / info (blue)
-  investigating: { fg: '#1d4ed8', bg: '#dbeafe' }, processing: { fg: '#1d4ed8', bg: '#dbeafe' },
-  collecting: { fg: '#1d4ed8', bg: '#dbeafe' }, flex: { fg: '#1d4ed8', bg: '#dbeafe' },
-  normal: { fg: '#1d4ed8', bg: '#dbeafe' }, invited: { fg: '#1d4ed8', bg: '#dbeafe' },
+  investigating: { fg: colors.info, bg: tint(colors.info, 0.12) }, processing: { fg: colors.info, bg: tint(colors.info, 0.12) },
+  collecting: { fg: colors.info, bg: tint(colors.info, 0.12) }, flex: { fg: colors.info, bg: tint(colors.info, 0.12) },
+  normal: { fg: colors.info, bg: tint(colors.info, 0.12) }, invited: { fg: colors.info, bg: tint(colors.info, 0.12) },
   // neutral / muted
-  draft: { fg: '#6b7280', bg: '#f3f4f6' }, expired: { fg: '#6b7280', bg: '#f3f4f6' },
-  closed: { fg: '#6b7280', bg: '#f3f4f6' }, ignored: { fg: '#6b7280', bg: '#f3f4f6' },
-  exited: { fg: '#6b7280', bg: '#f3f4f6' }, low: { fg: '#6b7280', bg: '#f3f4f6' },
-  disabled: { fg: '#6b7280', bg: '#f3f4f6' }, dismissed: { fg: '#6b7280', bg: '#f3f4f6' },
+  draft: { fg: colors.muted, bg: colors.bg }, expired: { fg: colors.muted, bg: colors.bg },
+  closed: { fg: colors.muted, bg: colors.bg }, ignored: { fg: colors.muted, bg: colors.bg },
+  exited: { fg: colors.muted, bg: colors.bg }, low: { fg: colors.muted, bg: colors.bg },
+  disabled: { fg: colors.muted, bg: colors.bg }, dismissed: { fg: colors.muted, bg: colors.bg },
   // danger / terminal-bad
-  rejected: { fg: '#b91c1c', bg: '#fee2e2' }, failed: { fg: '#b91c1c', bg: '#fee2e2' },
-  defaulted: { fg: '#b91c1c', bg: '#fee2e2' }, blocked: { fg: '#b91c1c', bg: '#fee2e2' },
-  high: { fg: '#b91c1c', bg: '#fee2e2' }, critical: { fg: '#b91c1c', bg: '#fee2e2' },
-  breached: { fg: '#b91c1c', bg: '#fee2e2' }, suspended: { fg: '#b91c1c', bg: '#fee2e2' },
-  impersonation: { fg: '#b91c1c', bg: '#fee2e2' }, abuse: { fg: '#b91c1c', bg: '#fee2e2' },
+  rejected: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, failed: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
+  defaulted: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, blocked: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
+  high: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, critical: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
+  breached: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, suspended: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
+  impersonation: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, abuse: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
   // refund / reversal (purple)
-  refunded: { fg: '#7c3aed', bg: '#ede9fe' }, reversed: { fg: '#7c3aed', bg: '#ede9fe' },
-  reversal: { fg: '#7c3aed', bg: '#ede9fe' }, make_good: { fg: '#7c3aed', bg: '#ede9fe' },
+  refunded: { fg: colors.primary, bg: tint(colors.primary, 0.12) }, reversed: { fg: colors.primary, bg: tint(colors.primary, 0.12) },
+  reversal: { fg: colors.primary, bg: tint(colors.primary, 0.12) }, make_good: { fg: colors.primary, bg: tint(colors.primary, 0.12) },
   // severity / grade
-  medium: { fg: '#9a3412', bg: '#ffedd5' },
+  medium: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
   // ledger kinds
-  CREDIT: { fg: '#15803d', bg: '#dcfce7' }, DEBIT: { fg: '#9a3412', bg: '#ffedd5' },
-  HOLD: { fg: '#9a3412', bg: '#ffedd5' }, RELEASE: { fg: '#6b7280', bg: '#f3f4f6' },
-  PAYOUT: { fg: '#1d4ed8', bg: '#dbeafe' }, CONTRIBUTION: { fg: '#15803d', bg: '#dcfce7' },
+  CREDIT: { fg: colors.success, bg: tint(colors.success, 0.12) }, DEBIT: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  HOLD: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, RELEASE: { fg: colors.muted, bg: colors.bg },
+  PAYOUT: { fg: colors.info, bg: tint(colors.info, 0.12) }, CONTRIBUTION: { fg: colors.success, bg: tint(colors.success, 0.12) },
   // dispute / cashtag kinds
-  payment: { fg: '#1d4ed8', bg: '#dbeafe' }, request: { fg: '#7c3aed', bg: '#ede9fe' },
-  split: { fg: '#1d4ed8', bg: '#dbeafe' }, pool: { fg: '#7c3aed', bg: '#ede9fe' },
-  reserved: { fg: '#6b7280', bg: '#f3f4f6' }, verified: { fg: '#15803d', bg: '#dcfce7' },
+  payment: { fg: colors.info, bg: tint(colors.info, 0.12) }, request: { fg: colors.primary, bg: tint(colors.primary, 0.12) },
+  split: { fg: colors.info, bg: tint(colors.info, 0.12) }, pool: { fg: colors.primary, bg: tint(colors.primary, 0.12) },
+  reserved: { fg: colors.muted, bg: colors.bg }, verified: { fg: colors.success, bg: tint(colors.success, 0.12) },
 };
 
 export function Badge({ status, label: lbl }: { status: string; label?: string }) {
-  const c = STATUS_COLORS[status] ?? { fg: '#374151', bg: '#f3f4f6' };
+  const c = STATUS_COLORS[status] ?? { fg: colors.text, bg: colors.bg };
   return <span style={{ display: 'inline-block', padding: '0.1rem 0.5rem', borderRadius: 9999, fontSize: '0.72rem', fontWeight: 600, color: c.fg, background: c.bg, textTransform: 'capitalize', whiteSpace: 'nowrap' }}>{lbl ?? status.replace(/_/g, ' ')}</span>;
 }
 
@@ -73,8 +74,8 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', gap: '1rem', flexWrap: 'wrap' }}>
       <div>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>{title}</h1>
-        {subtitle ? <p style={{ color: '#6b7280', margin: '0.25rem 0 0', fontSize: '0.85rem', maxWidth: 820 }}>{subtitle}</p> : null}
+        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: colors.text }}>{title}</h1>
+        {subtitle ? <p style={{ color: colors.muted, margin: '0.25rem 0 0', fontSize: '0.85rem', maxWidth: 820 }}>{subtitle}</p> : null}
       </div>
       {action}
     </div>
@@ -86,7 +87,7 @@ export function Card({ title, children, right }: PropsWithChildren<{ title?: str
     <div style={{ ...card(), marginBottom: '1.25rem' }}>
       {title ? (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>{title}</h2>
+          <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, color: colors.text }}>{title}</h2>
           {right}
         </div>
       ) : null}
@@ -97,10 +98,10 @@ export function Card({ title, children, right }: PropsWithChildren<{ title?: str
 
 export function Kpi({ label: lbl, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
   return (
-    <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.85rem 1rem', background: '#fff' }}>
-      <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: '#6b7280', fontWeight: 600 }}>{lbl}</div>
-      <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: accent ?? '#111827' }}>{value}</div>
-      {sub ? <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.15rem' }}>{sub}</div> : null}
+    <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.85rem 1rem', background: colors.card }}>
+      <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 600 }}>{lbl}</div>
+      <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: accent ?? colors.text }}>{value}</div>
+      {sub ? <div style={{ fontSize: '0.75rem', color: colors.muted, marginTop: '0.15rem' }}>{sub}</div> : null}
     </div>
   );
 }
@@ -109,9 +110,9 @@ type Tab = { href: string; label: string; key: string };
 
 function Tabs({ active, tabs }: { active: string; tabs: Tab[] }) {
   return (
-    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>
+    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: `1px solid ${colors.border}`, paddingBottom: '0.5rem' }}>
       {tabs.map((t) => (
-        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : '#374151', background: active === t.key ? '#340075' : '#f3f4f6' }}>{t.label}</Link>
+        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : colors.text, background: active === t.key ? colors.primary : colors.bg }}>{t.label}</Link>
       ))}
     </div>
   );

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listCreatorBilling, formatNaira } from '@/services/creatorsAdminService';
 import type { CreatorBillingItem } from '@/types/creatorsAdmin';
 import { PageHeader, CreatorsTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, btn, th, td, input, label, select, fmtDate, timeAgo } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function CreatorBillingPage() {
   const [rows, setRows] = useState<CreatorBillingItem[]>([]);
@@ -55,15 +56,15 @@ export default function CreatorBillingPage() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{r.id}</code><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>since {fmtDate(r.started_at)}</div></td>
+                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{r.id}</code><div style={{ fontSize: '0.72rem', color: colors.muted }}>since {fmtDate(r.started_at)}</div></td>
                   <td style={td()}>{r.subscriber_masked}</td>
                   <td style={td()}>{r.creator_handle_masked}</td>
                   <td style={td()}>{r.tier_name}</td>
                   <td style={td()}>{formatNaira(r.amount_kobo)}</td>
                   <td style={td()}><Badge status={r.cycle} /></td>
-                  <td style={td()}><span style={{ color: r.retries >= r.max_retries ? '#b91c1c' : r.retries > 0 ? '#9a3412' : '#9ca3af', fontWeight: r.retries > 0 ? 700 : 400 }}>{r.retries}/{r.max_retries}</span></td>
-                  <td style={td()}>{r.next_attempt_at ? timeAgo(r.next_attempt_at) : <span style={{ color: '#9ca3af' }}>—</span>}</td>
-                  <td style={td()}>{r.last_failure_reason ? <span style={{ color: '#b91c1c', fontSize: '0.78rem' }}>{r.last_failure_reason}</span> : <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                  <td style={td()}><span style={{ color: r.retries >= r.max_retries ? colors.danger : r.retries > 0 ? colors.warning : colors.muted, fontWeight: r.retries > 0 ? 700 : 400 }}>{r.retries}/{r.max_retries}</span></td>
+                  <td style={td()}>{r.next_attempt_at ? timeAgo(r.next_attempt_at) : <span style={{ color: colors.muted }}>—</span>}</td>
+                  <td style={td()}>{r.last_failure_reason ? <span style={{ color: colors.danger, fontSize: '0.78rem' }}>{r.last_failure_reason}</span> : <span style={{ color: colors.muted }}>—</span>}</td>
                   <td style={td()}><Badge status={r.status} /></td>
                 </tr>
               ))}

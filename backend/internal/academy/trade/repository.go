@@ -108,6 +108,28 @@ func (r *Repository) withTx(ctx context.Context, fn func(tx pgx.Tx) error) error
 	return tx.Commit(ctx)
 }
 
+// ── Trade tracks ──────────────────────────────────────────────────────────────
+
+// ListTracks returns the Phase-0 seeded trade-track catalog, ordered for display.
+// Public catalog read (no owner scope), mirroring the other catalog list queries.
+func (r *Repository) ListTracks(ctx context.Context) ([]TradeTrack, error) {
+	const q = `SELECT id, code, name, status FROM public.academy_trade_tracks ORDER BY name ASC`
+	rows, err := r.db.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []TradeTrack{}
+	for rows.Next() {
+		t := TradeTrack{}
+		if err := rows.Scan(&t.ID, &t.Code, &t.Name, &t.Status); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // ── Modules ───────────────────────────────────────────────────────────────────
 
 func (r *Repository) InsertModule(ctx context.Context, actor string, req CreateModuleRequest) (*TradeModule, error) {

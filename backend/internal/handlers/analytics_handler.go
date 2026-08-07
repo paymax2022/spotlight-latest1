@@ -7,7 +7,7 @@ import (
 	"spotlight/backend/internal/services"
 )
 
-type AnalyticsHandler struct { service services.AnalyticsService }
+type AnalyticsHandler struct{ service services.AnalyticsService }
 
 func NewAnalyticsHandler(service services.AnalyticsService) *AnalyticsHandler {
 	return &AnalyticsHandler{service: service}

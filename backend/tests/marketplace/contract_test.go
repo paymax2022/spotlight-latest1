@@ -11,6 +11,15 @@ package marketplace_test
 //
 // All assertions here run with NO DB, NO Redis, and NO network — pure Go value
 // checks against the exported package surface, so this file always runs in CI.
+//
+// ADR-023 SCOPE NOTE: the OrderStatus / DisputeStatus enum subtests and
+// Order.TotalPayableKobo below lock RETAINED-BUT-UNUSED types. The escrow order /
+// dispute money-path was removed in the listings-and-connect pivot (ADR-023), but
+// per that ADR the enums, the Order struct + its TotalPayableKobo helper, and the
+// mkt_orders/mkt_disputes tables are kept (additive-only; not physically dropped).
+// So these remain valid shape-locks for the retained code — they are NOT testing
+// live behavior. The FSM-behavior mirrors for order/dispute (which DID test deleted
+// code) live in fsm_invariant_test.go and are now t.Skip'd (see ADR-023 there).
 // ---------------------------------------------------------------------------
 
 import (
@@ -130,8 +139,8 @@ func TestErrorCodes_AreNonEmptyAndDistinct(t *testing.T) {
 // wrong, a direct trust/compliance issue).
 func TestOrder_TotalPayableKobo(t *testing.T) {
 	cases := []struct {
-		name                                             string
-		amount, escrowFee, deliveryFee, wantTotal        int64
+		name                                      string
+		amount, escrowFee, deliveryFee, wantTotal int64
 	}{
 		{"no delivery fee (pickup)", 100_000, 2_000, 0, 102_000},
 		{"with delivery fee (rider)", 100_000, 2_000, 1_500, 103_500},

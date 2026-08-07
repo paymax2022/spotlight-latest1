@@ -52,6 +52,9 @@ export interface DiscoveryProfile {
   occupation?: string;
   company?: string;
   mutualConnections?: number;
+  // Which discovery personas this profile surfaces in (date / network / discover).
+  // Absent ⇒ treated as all modes (back-compat).
+  modes?: DiscoveryMode[];
 }
 
 export interface DiscoveryFilters {

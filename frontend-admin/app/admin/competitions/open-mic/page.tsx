@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { createOpenMicCompetition, listOpenMicCompetitions } from '@/services/competitionsService';
 import type { OpenMicCompetition } from '@/types/competitions';
+import { Page, PageHeader, Card, Button, Input, colors } from '@/components/ui/vuexy';
 
 function formatDate(value?: string | null) {
   if (!value) return '-';
@@ -73,19 +74,17 @@ export default function AdminOpenMicCompetitionsPage() {
   };
 
   return (
-    <div>
-      <h1>Open Mic Editions</h1>
-      <p>Monthly One-Beat One-Verse competition editions.</p>
-      <p style={{ marginTop: 8 }}>
+    <Page>
+      <PageHeader title="Open Mic Editions" subtitle="Monthly One-Beat One-Verse competition editions." />
+      <p style={{ marginBottom: 8 }}>
         <Link href="/admin/competitions">Back to Competitions Overview</Link>
       </p>
-      {error ? <p style={{ marginTop: 8, color: '#fda4af' }}>{error}</p> : null}
+      {error ? <p style={{ marginTop: 8, color: colors.danger }}>{error}</p> : null}
 
-      <section style={{ border: '1px solid #2a2a2a', padding: 12, marginTop: 12 }}>
-        <h2 style={{ marginTop: 0 }}>Create New Edition</h2>
-        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Edition name" />
-          <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="Slug (optional)" />
+      <Card title="Create New Edition" style={{ marginTop: 12 }}>
+        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', marginTop: 14 }}>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Edition name" />
+          <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="Slug (optional)" />
           <select value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="upcoming">upcoming</option>
             <option value="active">active</option>
@@ -98,27 +97,22 @@ export default function AdminOpenMicCompetitionsPage() {
           </label>
           <input type="datetime-local" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           <input type="datetime-local" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-          <input value={entryFee} onChange={(e) => setEntryFee(e.target.value)} placeholder="Entry fee NGN" />
-          <input value={votePrice} onChange={(e) => setVotePrice(e.target.value)} placeholder="Vote price NGN" />
+          <Input value={entryFee} onChange={(e) => setEntryFee(e.target.value)} placeholder="Entry fee NGN" />
+          <Input value={votePrice} onChange={(e) => setVotePrice(e.target.value)} placeholder="Vote price NGN" />
         </div>
-        <button
-          type="button"
-          onClick={() => void onCreate()}
-          disabled={saving}
-          style={{ marginTop: 10, border: '1px solid #2a2a2a', padding: '6px 12px' }}
-        >
+        <Button variant="primary" style={{ marginTop: 10 }} onClick={() => void onCreate()} disabled={saving}>
           {saving ? 'Creating...' : 'Create Edition'}
-        </button>
-      </section>
+        </Button>
+      </Card>
 
-      {loading ? <p style={{ marginTop: 16 }}>Loading editions...</p> : null}
+      {loading ? <p style={{ marginTop: 16, color: colors.muted }}>Loading editions...</p> : null}
 
       <div style={{ display: 'grid', gap: 10, marginTop: 16 }}>
-        {!loading && rows.length === 0 ? <p>No Open Mic editions found.</p> : null}
+        {!loading && rows.length === 0 ? <p style={{ color: colors.muted }}>No Open Mic editions found.</p> : null}
         {rows.map((item) => (
-          <article key={item.id} style={{ border: '1px solid #2a2a2a', padding: 12 }}>
+          <Card key={item.id} style={{ padding: 12 }}>
             <p style={{ margin: 0, fontWeight: 600 }}>{item.name || 'Open Mic Edition'}</p>
-            <p style={{ margin: '6px 0 0 0', fontSize: 12, opacity: 0.85 }}>
+            <p style={{ margin: '6px 0 0 0', fontSize: 12, color: colors.muted }}>
               slug: <code>{item.slug || '-'}</code>
             </p>
             <p style={{ margin: '6px 0 0 0', fontSize: 12 }}>
@@ -128,12 +122,12 @@ export default function AdminOpenMicCompetitionsPage() {
             <p style={{ margin: '6px 0 0 0', fontSize: 12 }}>
               {formatDate(item.start_date)} - {formatDate(item.end_date)}
             </p>
-            <p style={{ margin: '6px 0 0 0', fontSize: 11, opacity: 0.7 }}>
+            <p style={{ margin: '6px 0 0 0', fontSize: 11, color: colors.muted }}>
               created: {formatDate(item.created_at)}
             </p>
-          </article>
+          </Card>
         ))}
       </div>
-    </div>
+    </Page>
   );
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Alert, Modal } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { router, useLocalSearchParams } from 'expo-router';
 import {
   Check, ClipboardList, FlaskConical, Sparkles, Search, Lock, Eye, Share2, X, Plus, AlertTriangle, Stethoscope,
@@ -107,29 +108,26 @@ export default function ConsultNotesScreen() {
   const handleSaveDraft = async () => {
     try {
       await saveDraft.mutateAsync({ note: buildDraft() });
-      Alert.alert('Draft saved', 'Your clinical note draft has been saved.');
-    } catch { Alert.alert('Save failed', 'Please try again.'); }
+      alertAsync({ title: 'Draft saved', message: 'Your clinical note draft has been saved.' });
+    } catch { alertAsync({ title: 'Save failed', message: 'Please try again.' }); }
   };
 
   const handleFinalize = async () => {
-    Alert.alert('Finalize note', 'Finalizing locks the note — it can no longer be edited. Continue?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Finalize', style: 'destructive', onPress: async () => {
-        try {
-          await saveDraft.mutateAsync({ note: buildDraft() });
-          await finalize.mutateAsync({ noteId });
-          Alert.alert('Note finalized', 'The clinical note is now locked.');
-        } catch { Alert.alert('Failed', 'Please try again.'); }
-      } },
-    ]);
+    const ok = await confirmAsync({ title: 'Finalize note', message: 'Finalizing locks the note — it can no longer be edited. Continue?', confirmLabel: 'Finalize', destructive: true });
+    if (!ok) return;
+    try {
+      await saveDraft.mutateAsync({ note: buildDraft() });
+      await finalize.mutateAsync({ noteId });
+      alertAsync({ title: 'Note finalized', message: 'The clinical note is now locked.' });
+    } catch { alertAsync({ title: 'Failed', message: 'Please try again.' }); }
   };
 
   const handleShare = async () => {
     try {
       await shareSummary.mutateAsync({ noteId });
       setPreviewOpen(false);
-      Alert.alert('Summary shared', `The consultation summary has been shared with ${patientName}.`);
-    } catch { Alert.alert('Failed', 'Please try again.'); }
+      alertAsync({ title: 'Summary shared', message: `The consultation summary has been shared with ${patientName}.` });
+    } catch { alertAsync({ title: 'Failed', message: 'Please try again.' }); }
   };
 
   return (

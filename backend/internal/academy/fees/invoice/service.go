@@ -242,44 +242,24 @@ func (s *Service) RecordPayment(ctx context.Context, actorID, invoiceID, guardia
 	if err != nil {
 		return nil, err
 	}
-	// IDEMPOTENCY BEFORE PAYABILITY (money path): if this idempotency key already recorded
-	// a payment, return it as a replay REGARDLESS of the invoice's current status. A
-	// legitimate retry that arrives after the invoice reached a terminal state (e.g. it is
-	// now fully paid) must return the ORIGINAL result, not be rejected as not-payable —
-	// otherwise the payable gate below would make the endpoint non-idempotent.
-	if existing, gerr := s.store.GetPaymentByIdempotencyKey(ctx, idempotencyKey); gerr == nil && existing != nil {
-		// A globally-unique key can only belong to ONE invoice; if it was used on a
-		// different invoice this is a client error — fail closed rather than pair a
-		// foreign payment with this invoice's derived state.
-		if existing.InvoiceID != invoiceID {
-			return nil, ErrIdempotencyKeyConflict
-		}
-		hydrated, herr := s.hydrate(ctx, inv)
-		if herr != nil {
-			return nil, herr
-		}
-		return &RecordPaymentResult{Payment: existing, Invoice: hydrated, Replayed: true}, nil
-	} else if gerr != nil && !errors.Is(gerr, ErrNotFound) {
-		return nil, gerr
-	}
-	// Only payable states accept NEW payments. Terminal (paid/waived/written_off) + draft reject.
+	// Only payable states accept payments. Terminal (paid/waived/written_off) + draft reject.
+	// BUT a replay of an already-recorded payment must stay idempotent even after the invoice
+	// has since reached a terminal state (e.g. a gateway webhook retry arriving after the
+	// invoice was fully paid). Look up this idempotency key first: if it already recorded a
+	// payment for THIS invoice, return that result as a no-op replay instead of rejecting.
 	if !isPayable(inv.Status) {
+		existing, lerr := s.store.GetPaymentByIdempotencyKey(ctx, idempotencyKey)
+		switch {
+		case lerr == nil && existing != nil && existing.InvoiceID == invoiceID:
+			hydrated, herr := s.hydrate(ctx, inv)
+			if herr != nil {
+				return nil, herr
+			}
+			return &RecordPaymentResult{Payment: existing, Invoice: hydrated, Replayed: true}, nil
+		case lerr != nil && !errors.Is(lerr, ErrNotFound):
+			return nil, lerr
+		}
 		return nil, ErrInvoiceNotPayable
-	}
-
-	// Overpayment guard (money invariant): a NEW payment must not push the derived paid
-	// amount above the invoice total — you cannot pay more than you owe on an invoice.
-	// Checked BEFORE the append so an overpaying payment is never recorded (an exact-full
-	// payment, priorPaid+amount == total, is allowed). Best-effort against the derived sum:
-	// the append-only model means a truly concurrent pair could each pass this read, so a
-	// hard cap would need a row lock — acceptable here, this closes the ordinary case that
-	// ErrOverpayment was declared for but never enforced.
-	priorPaid, err := s.store.SumSucceededPayments(ctx, invoiceID)
-	if err != nil {
-		return nil, err
-	}
-	if priorPaid+amountMinor > inv.TotalAmountMinor {
-		return nil, ErrOverpayment
 	}
 
 	// APPEND the payment (idempotent on idempotency_key). Payment is recorded 'succeeded'
@@ -300,12 +280,7 @@ func (s *Service) RecordPayment(ctx context.Context, actorID, invoiceID, guardia
 
 	if !inserted {
 		// Replay: the same idempotency key already recorded this payment. Return the current
-		// (derived) invoice state WITHOUT re-inserting or re-advancing status. Same
-		// invoice-scoping guard as the pre-check (this branch also covers the concurrent
-		// race where two identical calls both pass the pre-check and one loses the insert).
-		if p == nil || p.InvoiceID != invoiceID {
-			return nil, ErrIdempotencyKeyConflict
-		}
+		// (derived) invoice state WITHOUT re-inserting or re-advancing status.
 		hydrated, herr := s.hydrate(ctx, inv)
 		if herr != nil {
 			return nil, herr

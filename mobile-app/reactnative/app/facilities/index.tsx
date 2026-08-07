@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, FlatList, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, FlatList, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { confirmAsync } from '@/lib/confirm';
 import * as Icons from 'lucide-react-native';
 import { Users, X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -24,9 +25,10 @@ export default function FacilitiesScreen() {
   const myBookings = useMyBookings();
   const cancel = useCancelBooking();
 
-  const onCancel = (b: FacilityBooking) => Alert.alert('Cancel booking?', `${b.facilityName}`, [
-    { text: 'Keep', style: 'cancel' }, { text: 'Cancel booking', style: 'destructive', onPress: () => cancel.mutate(b.id) },
-  ]);
+  const onCancel = async (b: FacilityBooking) => {
+    const ok = await confirmAsync({ title: 'Cancel booking?', message: `${b.facilityName}`, confirmLabel: 'Cancel booking', cancelLabel: 'Keep', destructive: true });
+    if (ok) cancel.mutate(b.id);
+  };
 
   const renderFacility = ({ item }: { item: Facility }) => {
     const meta = KIND_META[item.kind];

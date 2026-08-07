@@ -62,7 +62,7 @@ type Notifier interface {
 // NopNotifier is the default no-op notifier.
 type NopNotifier struct{}
 
-func (NopNotifier) RewardIssued(ctx context.Context, e LedgerEntry)              {}
+func (NopNotifier) RewardIssued(ctx context.Context, e LedgerEntry)                   {}
 func (NopNotifier) RewardRejected(ctx context.Context, userID, poolID, reason string) {}
 
 // ── Domain types (mirror migration columns exactly) ─────────────────────────────
@@ -90,10 +90,10 @@ const (
 type IssueState string
 
 const (
-	StateTriggered         IssueState = "triggered"
+	StateTriggered          IssueState = "triggered"
 	StateEligibilityChecked IssueState = "eligibility_checked"
-	StateCredited          IssueState = "credited"
-	StateRejected          IssueState = "rejected"
+	StateCredited           IssueState = "credited"
+	StateRejected           IssueState = "rejected"
 )
 
 // RewardPool mirrors public.academy_reward_pools.
@@ -159,8 +159,8 @@ type Redemption struct {
 type IssueInput struct {
 	UserID         string
 	PoolID         string
-	Points         int    // optional informational points value
-	AmountMinor    int64  // value to credit (minor units); if 0, derived from Points*conversion_rate
+	Points         int   // optional informational points value
+	AmountMinor    int64 // value to credit (minor units); if 0, derived from Points*conversion_rate
 	Reason         string
 	SourceEvent    string // e.g. "mock_completed:attempt123"
 	IdempotencyKey string

@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { listLeads, updateLeadStatus } from '@/services/leadsService';
 import type { Lead } from '@/types/leads';
+import { Page, PageHeader, Card, colors } from '@/components/ui/vuexy';
 
 export default function AdminLeadsPage() {
   const searchParams = useSearchParams();
@@ -29,33 +30,32 @@ export default function AdminLeadsPage() {
   };
 
   return (
-    <div>
-      <h1>Chat Leads</h1>
-      <p>Manage applicant, sponsor, and support leads captured by chatbot.</p>
-      <div style={{ marginTop: 8 }}>
+    <Page>
+      <PageHeader title="Chat Leads" subtitle="Manage applicant, sponsor, and support leads captured by chatbot." />
+      <div style={{ marginBottom: 12 }}>
         {sessionIdFilter ? (
           <>
-            <p style={{ margin: 0, fontSize: 12, fontFamily: 'monospace' }}>
+            <p style={{ margin: 0, fontSize: 12, fontFamily: 'monospace', color: colors.muted }}>
               Filtered by session: {sessionIdFilter}
             </p>
-            <Link href="/admin/leads">Clear Filter</Link>
+            <Link href="/admin/leads" style={{ color: colors.primary }}>Clear Filter</Link>
           </>
         ) : (
-          <p style={{ margin: 0, fontSize: 12 }}>Showing all sessions</p>
+          <p style={{ margin: 0, fontSize: 12, color: colors.muted }}>Showing all sessions</p>
         )}
       </div>
-      {loading ? <p>Loading...</p> : null}
-      <div style={{ display: 'grid', gap: 10, marginTop: 16 }}>
+      {loading ? <p style={{ color: colors.muted }}>Loading...</p> : null}
+      <div style={{ display: 'grid', gap: 10 }}>
         {leads.map((lead) => (
-          <article key={lead.id} style={{ border: '1px solid #2a2a2a', padding: 12 }}>
+          <Card key={lead.id} style={{ padding: 12 }}>
             <p style={{ margin: 0, fontWeight: 600 }}>{lead.name || 'Unnamed lead'}</p>
-            <p style={{ margin: '6px 0 0 0', fontSize: 12, opacity: 0.8 }}>
+            <p style={{ margin: '6px 0 0 0', fontSize: 12, color: colors.muted }}>
               {lead.email || '-'} · {lead.phone || '-'} · {lead.leadType || '-'}
             </p>
-            <p style={{ margin: '6px 0 0 0', fontSize: 12, fontFamily: 'monospace' }}>
+            <p style={{ margin: '6px 0 0 0', fontSize: 12, fontFamily: 'monospace', color: colors.muted }}>
               Session: {lead.sessionId || '-'}
             </p>
-            <p style={{ margin: '6px 0 0 0', fontSize: 12 }}>
+            <p style={{ margin: '6px 0 0 0', fontSize: 12, color: colors.muted }}>
               Score: {lead.score ?? 0} · Created:{' '}
               {lead.createdAt ? new Date(lead.createdAt).toLocaleString() : '-'}
             </p>
@@ -63,7 +63,6 @@ export default function AdminLeadsPage() {
               <select
                 value={lead.status || 'new'}
                 onChange={(e) => void onUpdate(lead.id, e.target.value)}
-                style={{ border: '1px solid #2a2a2a', padding: '4px 8px', background: 'transparent' }}
               >
                 <option value="new">new</option>
                 <option value="in_review">in_review</option>
@@ -71,13 +70,13 @@ export default function AdminLeadsPage() {
                 <option value="closed">closed</option>
               </select>
               {lead.sessionId ? (
-                <Link href={`/admin/chatbot/${encodeURIComponent(lead.sessionId)}`}>Open Transcript</Link>
+                <Link href={`/admin/chatbot/${encodeURIComponent(lead.sessionId)}`} style={{ color: colors.primary }}>Open Transcript</Link>
               ) : null}
             </div>
             <p style={{ margin: '8px 0 0 0', fontSize: 12 }}>{lead.notes || lead.transcriptExcerpt || '-'}</p>
-          </article>
+          </Card>
         ))}
       </div>
-    </div>
+    </Page>
   );
 }

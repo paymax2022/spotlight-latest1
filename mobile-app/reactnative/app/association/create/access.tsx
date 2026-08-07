@@ -15,6 +15,7 @@ import WizardProgress from '@/features/association/components/WizardProgress';
 import { useOrgDraft } from '@/features/association/store/orgDraftStore';
 import { GROUP_RULE_OPTIONS } from '@/features/association/constants/orgWizard.constants';
 import type { RestrictionConfig } from '@/features/association/types/orgDraft.types';
+import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 
 const TOGGLES: { key: keyof Omit<RestrictionConfig, 'graceDays'>; label: string; help: string }[] = [
   { key: 'disableVoting', label: 'Disable voting', help: 'Unpaid members cannot vote in elections.' },
@@ -43,8 +44,7 @@ export default function WizardAccess() {
   };
 
   const next = () => {
-    const naira = parseInt(fee.replace(/[^0-9]/g, ''), 10) || 0;
-    patch({ registrationFeeKobo: naira * 100 });
+    patch({ registrationFeeKobo: nairaStringToKobo(fee) });
     router.push('/association/create/preview');
   };
 
@@ -55,7 +55,7 @@ export default function WizardAccess() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <Text style={styles.label}>Registration fee</Text>
         <Text style={styles.help}>One-off fee charged when a member joins. Leave blank for free.</Text>
-        <TextInputField placeholder="₦0" value={fee} onChangeText={setFee} keyboardType="number-pad" />
+        <TextInputField placeholder="₦0" value={fee} onChangeText={(t) => setFee(sanitizeMoneyInput(t))} keyboardType="decimal-pad" maxLength={13} />
 
         <Text style={[styles.label, styles.sectionGap]}>Grace period</Text>
         <Text style={styles.help}>Days after dues are due before restrictions apply.</Text>

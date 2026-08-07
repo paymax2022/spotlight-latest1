@@ -13,6 +13,7 @@ import StateView from '@/components/StateView';
 import { useCampaign } from '@/features/crowdfunding/hooks/useCrowdfunding';
 import { SUGGESTED_AMOUNTS_KOBO, MIN_CONTRIBUTION_KOBO } from '@/features/crowdfunding/constants/crowdfunding.constants';
 import { formatNaira } from '@/features/crowdfunding/utils/crowdfundingFormatters';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 export default function ContributeAmountScreen() {
   const { id, rewardTierId } = useLocalSearchParams<{ id: string; rewardTierId?: string }>();
@@ -86,9 +87,10 @@ export default function ContributeAmountScreen() {
               style={styles.customInput}
               placeholder="0"
               placeholderTextColor={Colors.outline}
-              keyboardType="number-pad"
+              keyboardType="decimal-pad"
+              maxLength={13}
               value={customText}
-              onChangeText={onCustom}
+              onChangeText={(t) => onCustom(sanitizeMoneyInput(t))}
             />
           </View>
           {belowMin && (

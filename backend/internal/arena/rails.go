@@ -7,19 +7,19 @@ package arena
 type Rail string
 
 const (
-	RailMerit    Rail = "MERIT"     // signed judging → Merit ledger (the crown)
-	RailSupport  Rail = "SUPPORT"   // real-Naira gifting → wallet ledger + pot
+	RailMerit     Rail = "MERIT"     // signed judging → Merit ledger (the crown)
+	RailSupport   Rail = "SUPPORT"   // real-Naira gifting → wallet ledger + pot
 	RailPlayAlong Rail = "PLAYALONG" // free quiz → engagement ledger + credential
-	RailSponsor  Rail = "SPONSOR"   // branded → engagement + Featured Placement
+	RailSponsor   Rail = "SPONSOR"   // branded → engagement + Featured Placement
 )
 
 // WriteTarget names where a rail is permitted to write.
 type WriteTarget string
 
 const (
-	TargetMeritLedger      WriteTarget = "merit_ledger"
-	TargetWalletLedger     WriteTarget = "wallet_ledger"
-	TargetEngagementLedger WriteTarget = "engagement_ledger"
+	TargetMeritLedger       WriteTarget = "merit_ledger"
+	TargetWalletLedger      WriteTarget = "wallet_ledger"
+	TargetEngagementLedger  WriteTarget = "engagement_ledger"
 	TargetFeaturedPlacement WriteTarget = "featured_placement"
 )
 

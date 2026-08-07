@@ -34,12 +34,12 @@ type Quote struct {
 
 // Candle is one OHLC bar for charts.
 type Candle struct {
-	T          int64 `json:"t"` // unix seconds
-	OpenKobo   int64 `json:"o"`
-	HighKobo   int64 `json:"h"`
-	LowKobo    int64 `json:"l"`
-	CloseKobo  int64 `json:"c"`
-	Volume     int64 `json:"v"`
+	T         int64 `json:"t"` // unix seconds
+	OpenKobo  int64 `json:"o"`
+	HighKobo  int64 `json:"h"`
+	LowKobo   int64 `json:"l"`
+	CloseKobo int64 `json:"c"`
+	Volume    int64 `json:"v"`
 }
 
 // BrokerOrderResult is the normalized broker response to an order submission.
@@ -96,7 +96,7 @@ func seedFor(symbol string) int64 {
 	h := sha1.Sum([]byte(strings.ToUpper(symbol)))
 	n := binary.BigEndian.Uint32(h[:4])
 	// Base price between ₦50.00 and ₦1,050.00 (in kobo).
-	return int64(5_000 + (n%100_000))
+	return int64(5_000 + (n % 100_000))
 }
 
 func (m *MockMarketData) GetQuote(ctx context.Context, providerSymbol string) (Quote, error) {

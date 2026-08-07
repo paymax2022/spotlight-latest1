@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listAppointments, getAppointment, formatNaira } from '@/services/healthVetAdminService';
 import type { VetAppointment, VetAppointmentDetail } from '@/types/healthVetAdmin';
 import { PageHeader, VetTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, btn, btnPrimary, th, td, input, select, label, fmtDate } from '../../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 const STATUSES = ['', 'requested', 'accepted', 'confirmed', 'in_progress', 'completed', 'rescheduled', 'cancelled', 'no_show'];
 const MODES = ['', 'tele', 'home', 'clinic'];
@@ -84,8 +85,8 @@ export default function VetAppointmentsPage() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><strong>{r.pet_name}</strong> <span style={{ color: '#9ca3af', fontSize: '0.72rem' }}>({r.pet_species})</span><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.owner_masked} · {r.id}</div></td>
-                  <td style={td()}>{r.vet_masked}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.clinic_masked}</div></td>
+                  <td style={td()}><strong>{r.pet_name}</strong> <span style={{ color: colors.muted, fontSize: '0.72rem' }}>({r.pet_species})</span><div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.owner_masked} · {r.id}</div></td>
+                  <td style={td()}>{r.vet_masked}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.clinic_masked}</div></td>
                   <td style={td()}><Badge status={r.mode} />{r.is_emergency ? <div style={{ marginTop: 3 }}><Badge status="emergency" label="SOS" /></div> : null}</td>
                   <td style={td()}>{r.service_summary}</td>
                   <td style={td()}>{formatNaira(r.fee_kobo)}</td>
@@ -102,21 +103,21 @@ export default function VetAppointmentsPage() {
 
       {(detailBusy || detail) && (
         <Card title={detail ? `Appointment ${detail.id} — ${detail.pet_name}` : 'Loading…'} right={detail ? <button style={btn()} onClick={() => setDetail(null)}>Close</button> : null}>
-          {detailBusy && <p style={{ color: '#6b7280' }}>Loading…</p>}
+          {detailBusy && <p style={{ color: colors.muted }}>Loading…</p>}
           {detail && (
             <>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.6rem', marginBottom: '1rem', fontSize: '0.85rem' }}>
-                <div><span style={{ color: '#6b7280' }}>Owner:</span> {detail.owner_masked}</div>
-                <div><span style={{ color: '#6b7280' }}>Vet:</span> {detail.vet_masked}</div>
-                <div><span style={{ color: '#6b7280' }}>Mode:</span> <Badge status={detail.mode} /></div>
-                <div><span style={{ color: '#6b7280' }}>Payment:</span> <Badge status={detail.payment_state} /> {formatNaira(detail.fee_kobo)}</div>
-                <div><span style={{ color: '#6b7280' }}>SOAP note:</span> {detail.consult_note_present ? 'present' : '—'}</div>
-                <div><span style={{ color: '#6b7280' }}>e-Rx:</span> {detail.eprescription_ref ? <code>{detail.eprescription_ref}</code> : '—'}</div>
-                <div><span style={{ color: '#6b7280' }}>Lab order:</span> {detail.lab_order_ref ? <code>{detail.lab_order_ref}</code> : '—'}</div>
-                <div><span style={{ color: '#6b7280' }}>NDPA consent:</span> <Badge status={detail.consent_on_file ? 'verified' : 'pending'} label={detail.consent_on_file ? 'on file' : 'missing'} /></div>
+                <div><span style={{ color: colors.muted }}>Owner:</span> {detail.owner_masked}</div>
+                <div><span style={{ color: colors.muted }}>Vet:</span> {detail.vet_masked}</div>
+                <div><span style={{ color: colors.muted }}>Mode:</span> <Badge status={detail.mode} /></div>
+                <div><span style={{ color: colors.muted }}>Payment:</span> <Badge status={detail.payment_state} /> {formatNaira(detail.fee_kobo)}</div>
+                <div><span style={{ color: colors.muted }}>SOAP note:</span> {detail.consult_note_present ? 'present' : '—'}</div>
+                <div><span style={{ color: colors.muted }}>e-Rx:</span> {detail.eprescription_ref ? <code>{detail.eprescription_ref}</code> : '—'}</div>
+                <div><span style={{ color: colors.muted }}>Lab order:</span> {detail.lab_order_ref ? <code>{detail.lab_order_ref}</code> : '—'}</div>
+                <div><span style={{ color: colors.muted }}>NDPA consent:</span> <Badge status={detail.consent_on_file ? 'verified' : 'pending'} label={detail.consent_on_file ? 'on file' : 'missing'} /></div>
               </div>
               {detail.triage_summary && (
-                <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.375rem', padding: '0.6rem 0.8rem', fontSize: '0.82rem', marginBottom: '1rem', background: '#f9fafb' }}>
+                <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.375rem', padding: '0.6rem 0.8rem', fontSize: '0.82rem', marginBottom: '1rem', background: colors.headBg }}>
                   <strong>Triage intake:</strong> {detail.triage_summary}
                 </div>
               )}

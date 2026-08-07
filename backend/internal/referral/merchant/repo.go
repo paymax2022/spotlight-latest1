@@ -22,7 +22,7 @@ const merchantCols = `id, owner_user_id, name, slug, status, funding_wallet_user
 
 func scanMerchant(row pgx.Row) (*Merchant, error) {
 	var (
-		m            Merchant
+		m             Merchant
 		owner, wallet *string
 	)
 	if err := row.Scan(&m.ID, &owner, &m.Name, &m.Slug, &m.Status, &wallet, &m.CreatedAt); err != nil {

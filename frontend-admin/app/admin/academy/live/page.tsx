@@ -3,7 +3,22 @@
 import { useEffect, useState } from 'react';
 import { listLiveSessions, scheduleLiveSession, listLiveReplays } from '@/services/academyAdminService';
 import type { LiveSession, LiveReplay } from '@/types/academyAdmin';
-import { PageHeader, AcademyTabs, Card, Badge, Kpi, StateBlock, AuditNote, DisclosureNote, btn, btnPrimary, th, td, input, label, select, fmtDate, timeAgo } from '../_ui';
+import { AcademyTabs, Kpi, StateBlock, AuditNote, DisclosureNote, label, select, fmtDate, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  const s = status.toLowerCase();
+  if (['active', 'approved', 'published', 'funded', 'paid', 'completed', 'allocated', 'live', 'reconciled', 'disbursed', 'collected', 'released', 'core', 'issued', 'routed', 'ready', 'eligible', 'actioned', 'verified', 'resolved', 'plan_published', 'badge_earned', 'pool_funded', 'item_approved'].includes(s)) return colors.success;
+  if (['pending', 'in_review', 'under_review', 'needs_info', 'scheduled', 'low_balance', 'review', 'in_translation', 'funding', 'fee_due', 'onboarding', 'frequent', 'packaged', 'matured', 'paused', 'processing', 'triaged', 'investigating', 'hide', 'warn', 'high', 'medium'].includes(s)) return colors.warning;
+  if (['draft', 'authoring', 'open', 'upcoming', 'generated', 'partial', 'submitted', 'trial', 'requested', 'applied', 'cards_generated', 'exam_opened', 'campaign_launched'].includes(s)) return colors.info;
+  if (['rejected', 'failed', 'suspended', 'blocked', 'unfunded', 'expired', 'duplicate', 'revoked', 'escalated', 'ban', 'critical', 'overdue', 'item_rejected'].includes(s)) return colors.danger;
+  if (['refunded', 'reversed', 'redeemed', 'reward_redeemed'].includes(s)) return colors.primary;
+  return colors.secondary;
+}
+
+function StatusBadge({ status, label: lbl }: { status: string; label?: string }) {
+  return <Badge text={lbl ?? status.replace(/_/g, ' ')} color={statusColor(status)} />;
+}
 
 export default function LivePage() {
   const [sessions, setSessions] = useState<LiveSession[]>([]);
@@ -42,8 +57,8 @@ export default function LivePage() {
   const replaysReady = replays.filter((r) => r.status === 'ready').length;
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Live & events" subtitle="Schedule live classes, configure streaming, monitor live sessions and manage replays." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Live & events" subtitle="Schedule live classes, configure streaming, monitor live sessions and manage replays." actions={<Button onClick={load} variant="outline" sm>Refresh</Button>} />
       <AcademyTabs active="live" />
       <DisclosureNote>
         Requires <code>academy.live</code>. Session lifecycle: <strong>scheduled → live → ended</strong>. Ingest endpoints are masked; streaming is provider-routed (HLS / WebRTC / RTMP). Replays are processed asynchronously and published once ready.
@@ -51,28 +66,28 @@ export default function LivePage() {
 
       <StateBlock loading={loading} error={error} empty={false}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-          <Kpi label="Live now" value={liveNow.toString()} accent={liveNow > 0 ? '#15803d' : undefined} />
-          <Kpi label="Scheduled" value={scheduled.toString()} accent="#340075" />
+          <Kpi label="Live now" value={liveNow.toString()} accent={liveNow > 0 ? colors.success : undefined} />
+          <Kpi label="Scheduled" value={scheduled.toString()} accent={colors.primary} />
           <Kpi label="Total registered" value={sessions.reduce((s, x) => s + x.registered, 0).toLocaleString('en-NG')} />
           <Kpi label="Replays ready" value={replaysReady.toString()} sub={`${replays.length} total`} />
         </div>
 
         <Card title="Sessions">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Session</th><th style={th()}>Subject</th><th style={th()}>Host</th><th style={th()}>Starts</th><th style={th()}>Duration</th><th style={th()}>Registered</th><th style={th()}>Peak</th><th style={th()}>Provider</th><th style={th()}>Status</th><th style={th()}>Replay</th></tr></thead>
+            <thead><tr><th style={thCell}>Session</th><th style={thCell}>Subject</th><th style={thCell}>Host</th><th style={thCell}>Starts</th><th style={thCell}>Duration</th><th style={thCell}>Registered</th><th style={thCell}>Peak</th><th style={thCell}>Provider</th><th style={thCell}>Status</th><th style={thCell}>Replay</th></tr></thead>
             <tbody>
               {sessions.map((s) => (
                 <tr key={s.id}>
-                  <td style={td()}><strong>{s.title}</strong></td>
-                  <td style={td()}>{s.subject}</td>
-                  <td style={td()}>{s.host}</td>
-                  <td style={td()}>{timeAgo(s.starts_at)}<div style={{ color: '#9ca3af', fontSize: '0.72rem' }}>{fmtDate(s.starts_at)}</div></td>
-                  <td style={td()}>{s.duration_min}m</td>
-                  <td style={td()}>{s.registered.toLocaleString('en-NG')}</td>
-                  <td style={td()}>{s.peak_viewers === null ? '—' : s.peak_viewers.toLocaleString('en-NG')}</td>
-                  <td style={td()}><span style={{ textTransform: 'uppercase', fontSize: '0.72rem', color: '#6b7280' }}>{s.stream_provider}</span></td>
-                  <td style={td()}><Badge status={s.status} /></td>
-                  <td style={td()}><Badge status={s.replay_status} label={s.replay_status === 'none' ? '—' : s.replay_status} /></td>
+                  <td style={tdCell}><strong>{s.title}</strong></td>
+                  <td style={tdCell}>{s.subject}</td>
+                  <td style={tdCell}>{s.host}</td>
+                  <td style={tdCell}>{timeAgo(s.starts_at)}<div style={{ color: colors.muted, fontSize: '0.72rem' }}>{fmtDate(s.starts_at)}</div></td>
+                  <td style={tdCell}>{s.duration_min}m</td>
+                  <td style={tdCell}>{s.registered.toLocaleString('en-NG')}</td>
+                  <td style={tdCell}>{s.peak_viewers === null ? '—' : s.peak_viewers.toLocaleString('en-NG')}</td>
+                  <td style={tdCell}><span style={{ textTransform: 'uppercase', fontSize: '0.72rem', color: colors.muted }}>{s.stream_provider}</span></td>
+                  <td style={tdCell}><StatusBadge status={s.status} /></td>
+                  <td style={tdCell}><StatusBadge status={s.replay_status} label={s.replay_status === 'none' ? '—' : s.replay_status} /></td>
                 </tr>
               ))}
             </tbody>
@@ -81,40 +96,40 @@ export default function LivePage() {
 
         <Card title="Schedule a live session">
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem', alignItems: 'end' }}>
-            <div><label style={label()}>Title</label><input style={input()} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
-            <div><label style={label()}>Subject</label><input style={input()} value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} /></div>
-            <div><label style={label()}>Host</label><input style={input()} value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} /></div>
-            <div><label style={label()}>Starts at</label><input type="datetime-local" style={input()} value={form.starts_at} onChange={(e) => setForm({ ...form, starts_at: e.target.value })} /></div>
-            <div><label style={label()}>Duration (min)</label><input type="number" style={input()} value={form.duration} onChange={(e) => setForm({ ...form, duration: e.target.value })} /></div>
+            <div><label style={label()}>Title</label><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
+            <div><label style={label()}>Subject</label><Input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} /></div>
+            <div><label style={label()}>Host</label><Input value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} /></div>
+            <div><label style={label()}>Starts at</label><Input type="datetime-local" value={form.starts_at} onChange={(e) => setForm({ ...form, starts_at: e.target.value })} /></div>
+            <div><label style={label()}>Duration (min)</label><Input type="number" value={form.duration} onChange={(e) => setForm({ ...form, duration: e.target.value })} /></div>
             <div><label style={label()}>Stream provider</label><select style={select()} value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })}><option value="hls">HLS</option><option value="webrtc">WebRTC</option><option value="rtmp">RTMP</option></select></div>
-            <div><button onClick={schedule} disabled={busy} style={btnPrimary()}>Schedule</button></div>
+            <div><Button onClick={schedule} disabled={busy} variant="primary" sm>Schedule</Button></div>
           </div>
-          <div style={{ border: '1px solid #e5e7eb', background: '#f9fafb', borderRadius: '0.375rem', padding: '0.5rem 0.7rem', fontSize: '0.75rem', color: '#6b7280', marginTop: '0.6rem' }}>
+          <div style={{ border: `1px solid ${colors.border}`, background: colors.headBg, borderRadius: '0.375rem', padding: '0.5rem 0.7rem', fontSize: '0.75rem', color: colors.muted, marginTop: '0.6rem' }}>
             Streaming config: a masked ingest URL is provisioned per session on schedule. HLS for large audiences (low cost), WebRTC for low-latency interactive solves, RTMP for studio encoders. Configure CDN/keys in the streaming provider console.
           </div>
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.text, marginTop: '0.6rem' }}>{notice}</p>}
           <AuditNote>Scheduling, going live, ending sessions and publishing replays are recorded to the immutable audit log.</AuditNote>
         </Card>
 
         <Card title="Replays">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Replay</th><th style={th()}>Status</th><th style={th()}>Duration</th><th style={th()}>Size</th><th style={th()}>Views</th><th style={th()}>Published</th><th style={th()}>Created</th></tr></thead>
+            <thead><tr><th style={thCell}>Replay</th><th style={thCell}>Status</th><th style={thCell}>Duration</th><th style={thCell}>Size</th><th style={thCell}>Views</th><th style={thCell}>Published</th><th style={thCell}>Created</th></tr></thead>
             <tbody>
               {replays.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><strong>{r.title}</strong></td>
-                  <td style={td()}><Badge status={r.status} /></td>
-                  <td style={td()}>{r.duration_min}m</td>
-                  <td style={td()}>{r.size_mb > 0 ? `${r.size_mb} MB` : '—'}</td>
-                  <td style={td()}>{r.views.toLocaleString('en-NG')}</td>
-                  <td style={td()}>{r.published ? <Badge status="published" /> : <Badge status="draft" label="unpublished" />}</td>
-                  <td style={td()}>{timeAgo(r.created_at)}</td>
+                  <td style={tdCell}><strong>{r.title}</strong></td>
+                  <td style={tdCell}><StatusBadge status={r.status} /></td>
+                  <td style={tdCell}>{r.duration_min}m</td>
+                  <td style={tdCell}>{r.size_mb > 0 ? `${r.size_mb} MB` : '—'}</td>
+                  <td style={tdCell}>{r.views.toLocaleString('en-NG')}</td>
+                  <td style={tdCell}>{r.published ? <StatusBadge status="published" /> : <StatusBadge status="draft" label="unpublished" />}</td>
+                  <td style={tdCell}>{timeAgo(r.created_at)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </Card>
       </StateBlock>
-    </div>
+    </Page>
   );
 }

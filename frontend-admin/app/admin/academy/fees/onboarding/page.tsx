@@ -14,6 +14,7 @@ import {
   btn, btnPrimary, btnDanger, th, td, input, fmtDate,
 } from '../../_ui';
 import { FeesTabs, FeesGuard } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 const SAMPLE_CSV = `student_name,guardian_email,class_name,admission_no
 Chidera Obi,obi.parent@example.com,JSS 1A,BS-2601
@@ -100,12 +101,12 @@ export default function FeesOnboardingPage() {
 
         <Card title="2 · Approval queue">
           {batches.length === 0 ? <p style={{ color: '#6b7280' }}>No import batches yet.</p> : batches.map((b) => (
-            <div key={b.id} style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.75rem', marginBottom: '0.75rem' }}>
+            <div key={b.id} style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.75rem', marginBottom: '0.75rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                 <div>
                   <strong>{b.filename}</strong>
                   <span style={{ marginLeft: '0.6rem', fontSize: '0.8rem', color: '#6b7280' }}>by {b.uploaded_by} · {fmtDate(b.uploaded_at)}</span>
-                  <div style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.25rem' }}>{b.total} rows · <span style={{ color: '#15803d' }}>{b.valid} valid</span> · <span style={{ color: '#b91c1c' }}>{b.errors} error(s)</span></div>
+                  <div style={{ fontSize: '0.8rem', color: colors.muted, marginTop: '0.25rem' }}>{b.total} rows · <span style={{ color: '#15803d' }}>{b.valid} valid</span> · <span style={{ color: '#b91c1c' }}>{b.errors} error(s)</span></div>
                 </div>
                 <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
                   <Badge status={b.status === 'pending_review' ? 'pending' : b.status === 'approved' ? 'approved' : 'rejected'} label={b.status.replace(/_/g, ' ')} />
@@ -123,7 +124,7 @@ export default function FeesOnboardingPage() {
               </table>
             </div>
           ))}
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: '0.6rem' }}>{notice}</p>}
           <AuditNote>Batch approvals/rejections and the resulting student/guardian records are written to the immutable audit log (module <code>academy.fees</code>). Invoices for onboarded students appear in the Collections dashboard.</AuditNote>
         </Card>
       </StateBlock>

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { listClinicians, formatNaira, type ClinicianRecord } from '@/services/telemedicineAdminService';
 import { PageHeader, TelemedTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, btn, th, td, input, label, select, fmtDate } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function CliniciansPage() {
   const [rows, setRows] = useState<ClinicianRecord[]>([]);
@@ -52,7 +53,7 @@ export default function CliniciansPage() {
             <tbody>
               {rows.map((c) => (
                 <tr key={c.id}>
-                  <td style={td()}>{c.name}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{c.id}</div></td>
+                  <td style={td()}>{c.name}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{c.id}</div></td>
                   <td style={td()}>{c.specialty}</td>
                   <td style={td()}><Badge status={c.status} /></td>
                   <td style={td()}><code style={{ fontSize: '0.78rem' }}>{c.mdcn_number}</code></td>

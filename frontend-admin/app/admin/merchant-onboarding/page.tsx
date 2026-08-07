@@ -5,6 +5,7 @@ import { useEffect, useState, useCallback } from 'react';
 import type { OnboardingQueueRow, OnboardingQueueFilters } from '@/types/onboarding';
 import { listReviewQueue, ageFromNow, slaBreached } from '@/services/onboardingService';
 import { StatusBadge, RiskBadge } from './statusBadge';
+import { Page, PageHeader, Card, Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUS_OPTIONS = ['', 'SUBMITTED', 'UNDER_REVIEW', 'NEEDS_MORE_INFO', 'APPROVED', 'REJECTED'];
 const MODULE_OPTIONS = [
@@ -55,12 +56,14 @@ export default function MerchantOnboardingQueuePage() {
   }, [load]);
 
   return (
-    <div>
-      <h1>Merchant Onboarding</h1>
-      <p>Review queue for merchant onboarding applications across modules.</p>
-      {error ? <p style={{ color: 'salmon' }}>{error}</p> : null}
+    <Page>
+      <PageHeader
+        title="Merchant Onboarding"
+        subtitle="Review queue for merchant onboarding applications across modules."
+      />
+      {error ? <p style={{ color: colors.danger }}>{error}</p> : null}
 
-      <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(4, minmax(0,1fr))', marginTop: 12 }}>
+      <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(4, minmax(0,1fr))', marginBottom: 10 }}>
         <select value={filters.module} onChange={(e) => setFilters((f) => ({ ...f, module: e.target.value }))}>
           {MODULE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
@@ -75,54 +78,56 @@ export default function MerchantOnboardingQueuePage() {
         </select>
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
-        <button onClick={() => void load()} disabled={loading}>{loading ? 'Loading…' : 'Apply Filters'}</button>
-        <button onClick={() => setFilters(defaultFilters)} disabled={loading}>Reset</button>
-        <span style={{ fontSize: 12, opacity: 0.7 }}>{rows.length} application(s)</span>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+        <Button variant="outline" sm onClick={() => void load()} disabled={loading}>{loading ? 'Loading…' : 'Apply Filters'}</Button>
+        <Button variant="secondary" sm onClick={() => setFilters(defaultFilters)} disabled={loading}>Reset</Button>
+        <span style={{ fontSize: 12, color: colors.muted }}>{rows.length} application(s)</span>
       </div>
 
       {!loading && rows.length === 0 ? (
-        <p style={{ opacity: 0.6, marginTop: 24 }}>No applications match the current filters.</p>
+        <p style={{ color: colors.muted, marginTop: 24 }}>No applications match the current filters.</p>
       ) : null}
 
       {rows.length > 0 ? (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 16 }}>
-          <thead>
-            <tr style={{ borderBottom: '1px solid #2a2a2a', textAlign: 'left' }}>
-              {['Applicant', 'Module', 'Merchant Type', 'Status', 'Age / SLA', 'Risk', ''].map((h) => (
-                <th key={h} style={{ padding: '8px 6px', fontWeight: 600, opacity: 0.8 }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const ref = r.submittedAt ?? r.createdAt;
-              const breached = slaBreached(r.submittedAt);
-              return (
-                <tr key={r.id} style={{ borderBottom: '1px solid #1c1c1c' }}>
-                  <td style={{ padding: '8px 6px' }}>
-                    <Link href={`/admin/merchant-onboarding/${r.id}`}>
-                      <strong>{r.applicantName}</strong>
-                    </Link>
-                    <div style={{ fontSize: 11, opacity: 0.5, fontFamily: 'monospace' }}>{r.id}</div>
-                  </td>
-                  <td style={{ padding: '8px 6px' }}>{r.moduleName}</td>
-                  <td style={{ padding: '8px 6px' }}>{r.merchantTypeName}</td>
-                  <td style={{ padding: '8px 6px' }}><StatusBadge status={r.status} /></td>
-                  <td style={{ padding: '8px 6px' }}>
-                    {ageFromNow(ref)}
-                    {breached ? <span style={{ color: '#fca5a5', marginLeft: 6, fontSize: 11 }}>● SLA breach</span> : null}
-                  </td>
-                  <td style={{ padding: '8px 6px' }}><RiskBadge level={r.riskLevel} /></td>
-                  <td style={{ padding: '8px 6px' }}>
-                    <Link href={`/admin/merchant-onboarding/${r.id}`}>Review →</Link>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <Card style={{ padding: 0, overflow: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr>
+                {['Applicant', 'Module', 'Merchant Type', 'Status', 'Age / SLA', 'Risk', ''].map((h) => (
+                  <th key={h} style={thCell}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const ref = r.submittedAt ?? r.createdAt;
+                const breached = slaBreached(r.submittedAt);
+                return (
+                  <tr key={r.id}>
+                    <td style={tdCell}>
+                      <Link href={`/admin/merchant-onboarding/${r.id}`}>
+                        <strong>{r.applicantName}</strong>
+                      </Link>
+                      <div style={{ fontSize: 11, color: colors.muted, fontFamily: 'monospace' }}>{r.id}</div>
+                    </td>
+                    <td style={tdCell}>{r.moduleName}</td>
+                    <td style={tdCell}>{r.merchantTypeName}</td>
+                    <td style={tdCell}><StatusBadge status={r.status} /></td>
+                    <td style={tdCell}>
+                      {ageFromNow(ref)}
+                      {breached ? <span style={{ color: colors.danger, marginLeft: 6, fontSize: 11 }}>● SLA breach</span> : null}
+                    </td>
+                    <td style={tdCell}><RiskBadge level={r.riskLevel} /></td>
+                    <td style={tdCell}>
+                      <Link href={`/admin/merchant-onboarding/${r.id}`}>Review →</Link>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </Card>
       ) : null}
-    </div>
+    </Page>
   );
 }

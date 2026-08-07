@@ -17,6 +17,7 @@ import {
   type FilterChip,
   type SortState,
 } from '@/components/rbac';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const PAGE_SIZE = 15;
 
@@ -134,7 +135,7 @@ export default function AdminPermissionsPage() {
   };
 
   return (
-    <div>
+    <Page>
       <ToastStack toasts={toasts} onDismiss={dismiss} />
       <ConfirmDialog
         open={Boolean(pendingDelete)}
@@ -148,62 +149,66 @@ export default function AdminPermissionsPage() {
         onConfirm={() => void confirmDelete()}
         onCancel={() => setPendingDelete(null)}
       />
-      <h1>Permissions Management</h1>
-      <p>Create, edit, and delete permissions. System permissions are protected by backend policy.</p>
 
-      <section style={{ border: '1px solid #2a2a2a', padding: 12, marginTop: 12 }}>
-        <h2 style={{ marginTop: 0 }}>Create Permission</h2>
-        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
-          <input placeholder="name" value={draft.name || ''} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} />
-          <input placeholder="slug" value={draft.slug || ''} onChange={(e) => setDraft((d) => ({ ...d, slug: e.target.value }))} />
-          <input placeholder="module" value={draft.module || ''} onChange={(e) => setDraft((d) => ({ ...d, module: e.target.value }))} />
-          <input placeholder="resource" value={draft.resource || ''} onChange={(e) => setDraft((d) => ({ ...d, resource: e.target.value }))} />
-          <input placeholder="action" value={draft.action || ''} onChange={(e) => setDraft((d) => ({ ...d, action: e.target.value }))} />
-          <input placeholder="description" value={draft.description || ''} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} />
+      <PageHeader
+        title="Permissions Management"
+        subtitle="Create, edit, and delete permissions. System permissions are protected by backend policy."
+      />
+
+      <Card title="Create Permission" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(3,minmax(0,1fr))', marginTop: 14 }}>
+          <Input placeholder="Name" value={draft.name || ''} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} />
+          <Input placeholder="Slug" value={draft.slug || ''} onChange={(e) => setDraft((d) => ({ ...d, slug: e.target.value }))} />
+          <Input placeholder="Module" value={draft.module || ''} onChange={(e) => setDraft((d) => ({ ...d, module: e.target.value }))} />
+          <Input placeholder="Resource" value={draft.resource || ''} onChange={(e) => setDraft((d) => ({ ...d, resource: e.target.value }))} />
+          <Input placeholder="Action" value={draft.action || ''} onChange={(e) => setDraft((d) => ({ ...d, action: e.target.value }))} />
+          <Input placeholder="Description" value={draft.description || ''} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} />
         </div>
         {draft.slug && isCriticalPermissionSlug(draft.slug) ? (
-          <p style={{ color: '#f59e0b', fontSize: 12, margin: '8px 0 0' }}>Heads up: this slug pattern is treated as a critical permission.</p>
+          <p style={{ color: colors.warning, fontSize: 12, margin: '10px 0 0' }}>Heads up: this slug pattern is treated as a critical permission.</p>
         ) : null}
-        <button style={{ marginTop: 8 }} onClick={() => void onCreate()} disabled={saving}>{saving ? 'Saving...' : 'Create Permission'}</button>
-      </section>
+        <Button variant="primary" style={{ marginTop: 14 }} onClick={() => void onCreate()} disabled={saving}>{saving ? 'Saving…' : 'Create Permission'}</Button>
+      </Card>
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <input placeholder="filter permissions" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') applySearch(); }} />
-        <button onClick={applySearch}>Filter</button>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 10, maxWidth: 460 }}>
+        <Input placeholder="Filter permissions" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') applySearch(); }} />
+        <Button variant="outline" style={{ whiteSpace: 'nowrap' }} onClick={applySearch}>Filter</Button>
       </div>
       <FilterChips chips={chips} onClear={clearSearch} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 16, marginTop: 16 }}>
-        <section>
-          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16, marginTop: 16, alignItems: 'start' }}>
+        <Card style={{ padding: 0, overflow: 'hidden' }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%' }}>
             <thead>
               <tr>
-                <th style={th()}><SortHeaderButton label="Name" active={sort?.key === 'name'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('name')} /></th>
-                <th style={th()}><SortHeaderButton label="Slug" active={sort?.key === 'slug'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('slug')} /></th>
-                <th style={th()}><SortHeaderButton label="Module" active={sort?.key === 'module'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('module')} /></th>
-                <th style={th()}>Actions</th>
+                <th style={thCell}><SortHeaderButton label="Name" active={sort?.key === 'name'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('name')} /></th>
+                <th style={thCell}><SortHeaderButton label="Slug" active={sort?.key === 'slug'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('slug')} /></th>
+                <th style={thCell}><SortHeaderButton label="Module" active={sort?.key === 'module'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('module')} /></th>
+                <th style={thCell}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td style={td()} colSpan={4}>Loading…</td></tr>
+                <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={4}>Loading…</td></tr>
               ) : errored ? (
-                <tr><td style={td()} colSpan={4}><button onClick={() => void load()}>Retry</button> — failed to load.</td></tr>
+                <tr><td style={tdCell} colSpan={4}><Button variant="outline" sm onClick={() => void load()}>Retry</Button> <span style={{ color: colors.danger }}>— failed to load.</span></td></tr>
               ) : slice.length === 0 ? (
-                <tr><td style={td()} colSpan={4}>No permissions to display.</td></tr>
+                <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={4}>No permissions to display.</td></tr>
               ) : (
                 slice.map((p) => (
-                  <tr key={p.id} style={{ background: selected?.id === p.id ? '#1f1f1f' : 'transparent' }}>
-                    <td style={td()}>
-                      <strong>{p.name}</strong>
-                      {isCriticalPermissionSlug(p.slug) ? <span title="Critical permission" style={{ marginLeft: 6, color: '#f59e0b', fontSize: 11 }}>● critical</span> : null}
+                  <tr key={p.id} style={{ background: selected?.id === p.id ? tint(colors.primary, 0.08) : 'transparent' }}>
+                    <td style={tdCell}>
+                      <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+                        <strong>{p.name}</strong>
+                        {isCriticalPermissionSlug(p.slug) ? <Badge text="critical" color={colors.warning} /> : null}
+                      </span>
                     </td>
-                    <td style={td()}><span style={{ fontSize: 12 }}>{p.slug}</span></td>
-                    <td style={td()}><span style={{ fontSize: 12 }}>{p.module}.{p.resource}.{p.action}</span></td>
-                    <td style={td()}>
+                    <td style={{ ...tdCell, color: colors.muted, fontSize: 12 }}>{p.slug}</td>
+                    <td style={{ ...tdCell, color: colors.muted, fontSize: 12 }}>{p.module}.{p.resource}.{p.action}</td>
+                    <td style={tdCell}>
                       <div style={{ display: 'flex', gap: 8 }}>
-                        <button onClick={() => setSelected(p)}>Edit</button>
-                        <button onClick={() => setPendingDelete(p)} disabled={Boolean(p.isSystemPermission) || saving}>Delete</button>
+                        <Button variant="outline" sm onClick={() => setSelected(p)}>Edit</Button>
+                        <Button variant="danger" sm onClick={() => setPendingDelete(p)} disabled={Boolean(p.isSystemPermission) || saving}>Delete</Button>
                       </div>
                     </td>
                   </tr>
@@ -211,31 +216,25 @@ export default function AdminPermissionsPage() {
               )}
             </tbody>
           </table>
-          <Pagination page={safePage} pageCount={pageCount} total={total} pageSize={PAGE_SIZE} onPage={setPage} />
-        </section>
+          <div style={{ padding: '10px 14px' }}>
+            <Pagination page={safePage} pageCount={pageCount} total={total} pageSize={PAGE_SIZE} onPage={setPage} />
+          </div>
+        </Card>
 
-        <section style={{ border: '1px solid #2a2a2a', padding: 12 }}>
-          <h2 style={{ marginTop: 0 }}>Permission Detail</h2>
-          {!selected ? <p>Select a permission to edit.</p> : null}
+        <Card title="Permission Detail">
+          {!selected ? <p style={{ color: colors.muted, fontSize: 13, marginTop: 12 }}>Select a permission to edit.</p> : null}
           {selected ? (
-            <div style={{ display: 'grid', gap: 8 }}>
-              <input value={selected.name || ''} onChange={(e) => setSelected((s) => (s ? { ...s, name: e.target.value } : s))} placeholder="name" />
-              <input value={selected.module || ''} onChange={(e) => setSelected((s) => (s ? { ...s, module: e.target.value } : s))} placeholder="module" />
-              <input value={selected.resource || ''} onChange={(e) => setSelected((s) => (s ? { ...s, resource: e.target.value } : s))} placeholder="resource" />
-              <input value={selected.action || ''} onChange={(e) => setSelected((s) => (s ? { ...s, action: e.target.value } : s))} placeholder="action" />
-              <input value={selected.description || ''} onChange={(e) => setSelected((s) => (s ? { ...s, description: e.target.value } : s))} placeholder="description" />
-              <button onClick={() => void onUpdate()} disabled={saving || Boolean(selected.isSystemPermission)}>{saving ? 'Saving...' : 'Save Permission'}</button>
+            <div style={{ display: 'grid', gap: 10, marginTop: 14 }}>
+              <Input value={selected.name || ''} onChange={(e) => setSelected((s) => (s ? { ...s, name: e.target.value } : s))} placeholder="Name" />
+              <Input value={selected.module || ''} onChange={(e) => setSelected((s) => (s ? { ...s, module: e.target.value } : s))} placeholder="Module" />
+              <Input value={selected.resource || ''} onChange={(e) => setSelected((s) => (s ? { ...s, resource: e.target.value } : s))} placeholder="Resource" />
+              <Input value={selected.action || ''} onChange={(e) => setSelected((s) => (s ? { ...s, action: e.target.value } : s))} placeholder="Action" />
+              <Input value={selected.description || ''} onChange={(e) => setSelected((s) => (s ? { ...s, description: e.target.value } : s))} placeholder="Description" />
+              <Button variant="primary" onClick={() => void onUpdate()} disabled={saving || Boolean(selected.isSystemPermission)}>{saving ? 'Saving…' : 'Save Permission'}</Button>
             </div>
           ) : null}
-        </section>
+        </Card>
       </div>
-    </div>
+    </Page>
   );
-}
-
-function th(): React.CSSProperties {
-  return { textAlign: 'left', borderBottom: '1px solid #2a2a2a', padding: 8 };
-}
-function td(): React.CSSProperties {
-  return { borderBottom: '1px solid #1f1f1f', padding: 8 };
 }

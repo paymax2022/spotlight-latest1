@@ -4,10 +4,23 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { listReferralUsers, formatNaira } from '@/services/referralAdminOpsService';
 import type { ReferralUserSummary } from '@/types/referralAdminOps';
-import { PageHeader, Card, Badge, btn, input, th, td, timeAgo, StateBlock } from '../_ui';
+import { timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const ROLES = ['all', 'referrer', 'ambassador', 'agent', 'merchant'];
 const STATUSES = ['all', 'active', 'restricted', 'suspended'];
+
+function statusBadgeColor(status: string): string {
+  if (status === 'active') return colors.success;
+  if (status === 'suspended') return colors.danger;
+  return colors.warning;
+}
+
+function riskBadgeColor(score: number): string {
+  if (score >= 70) return colors.danger;
+  if (score >= 40) return colors.warning;
+  return colors.info;
+}
 
 export default function ReferralUsersPage() {
   const [rows, setRows] = useState<ReferralUserSummary[] | null>(null);
@@ -26,46 +39,55 @@ export default function ReferralUsersPage() {
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [role, status, q]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Users & Graph — User 360 (referral)"
         subtitle="All referral roles, earnings, referral counts and risk scores (A-USR-01). Open a user for manual intervention & support tools (A-USR-03/04)."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
 
-      <Card title="Referral users" right={
-        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-          <input style={{ ...input(), width: 180 }} placeholder="Search name / id" value={q} onChange={(e) => setQ(e.target.value)} />
-          <select value={role} onChange={(e) => setRole(e.target.value)} style={{ ...btn(), cursor: 'pointer' }}>
-            {ROLES.map((r) => <option key={r} value={r}>{r === 'all' ? 'All roles' : r}</option>)}
-          </select>
-          <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ ...btn(), cursor: 'pointer' }}>
-            {STATUSES.map((s) => <option key={s} value={s}>{s === 'all' ? 'All statuses' : s}</option>)}
-          </select>
+      <Card style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '14px 14px 0', flexWrap: 'wrap' }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Referral users</h2>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Input style={{ width: 180 }} placeholder="Search name / id" value={q} onChange={(e) => setQ(e.target.value)} />
+            <select value={role} onChange={(e) => setRole(e.target.value)}>
+              {ROLES.map((r) => <option key={r} value={r}>{r === 'all' ? 'All roles' : r}</option>)}
+            </select>
+            <select value={status} onChange={(e) => setStatus(e.target.value)}>
+              {STATUSES.map((s) => <option key={s} value={s}>{s === 'all' ? 'All statuses' : s}</option>)}
+            </select>
+          </div>
         </div>
-      }>
-        <StateBlock loading={loading} error={error} empty={!rows || rows.length === 0} emptyText="No users match.">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>
-              <th style={th()}>User</th><th style={th()}>Roles</th><th style={th()}>Status</th>
-              <th style={th()}>Earned</th><th style={th()}>Referrals</th><th style={th()}>Risk</th><th style={th()}>Joined</th>
-            </tr></thead>
-            <tbody>
-              {(rows ?? []).map((u) => (
-                <tr key={u.id}>
-                  <td style={td()}><Link href={`/admin/referral/users/${u.id}`} style={{ color: '#340075', fontWeight: 600 }}>{u.name}</Link><br /><code style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{u.id}</code></td>
-                  <td style={td()}>{u.roles.join(', ')}</td>
-                  <td style={td()}><Badge status={u.status === 'active' ? 'active' : u.status === 'suspended' ? 'critical' : 'high'} label={u.status} /></td>
-                  <td style={td()}>{formatNaira(u.total_earned_kobo)}</td>
-                  <td style={td()}>{u.referrals_count}</td>
-                  <td style={td()}><Badge status={u.risk_score >= 70 ? 'critical' : u.risk_score >= 40 ? 'high' : 'normal'} label={`${u.risk_score}`} /></td>
-                  <td style={td()}>{timeAgo(u.created_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </StateBlock>
+        <div style={{ padding: 14 }}>
+          {loading ? <p style={{ color: colors.muted }}>Loading…</p>
+            : error ? <p style={{ color: colors.danger }}>{error}</p>
+            : (!rows || rows.length === 0) ? <p style={{ color: colors.muted }}>No users match.</p>
+            : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr>
+                    <th style={thCell}>User</th><th style={thCell}>Roles</th><th style={thCell}>Status</th>
+                    <th style={thCell}>Earned</th><th style={thCell}>Referrals</th><th style={thCell}>Risk</th><th style={thCell}>Joined</th>
+                  </tr></thead>
+                  <tbody>
+                    {rows.map((u) => (
+                      <tr key={u.id}>
+                        <td style={tdCell}><Link href={`/admin/referral/users/${u.id}`} style={{ fontWeight: 600 }}>{u.name}</Link><br /><code style={{ fontSize: 12, color: colors.muted }}>{u.id}</code></td>
+                        <td style={tdCell}>{u.roles.join(', ')}</td>
+                        <td style={tdCell}><Badge text={u.status} color={statusBadgeColor(u.status)} /></td>
+                        <td style={tdCell}>{formatNaira(u.total_earned_kobo)}</td>
+                        <td style={tdCell}>{u.referrals_count}</td>
+                        <td style={tdCell}><Badge text={`${u.risk_score}`} color={riskBadgeColor(u.risk_score)} /></td>
+                        <td style={tdCell}>{timeAgo(u.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+        </div>
       </Card>
-    </div>
+    </Page>
   );
 }

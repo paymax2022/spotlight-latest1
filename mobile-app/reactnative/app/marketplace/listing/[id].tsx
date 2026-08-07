@@ -5,11 +5,11 @@
 // funds), and CTAs: Contact seller (opens the Deal Room) with Make Offer as a
 // non-binding price proposal, plus tertiary tap-to-reveal Call. Sold/expired
 // shows a banner over a dimmed gallery, never a 404.
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, Image, Dimensions, Share } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, ScrollView, Image, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Heart, Flag, Share2, ShieldAlert, Phone, ChevronRight } from 'lucide-react-native';
+import { ArrowLeft, Heart, Flag, ShieldAlert, Phone, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -18,7 +18,8 @@ import { shadow1 } from '@/constants/shadows';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { MarketColors, formatNaira, conditionLabel, fairPriceVerdict, FAIR_PRICE_LABEL, MEETUP_SAFETY_NUDGE } from '@/features/marketplace';
-import { useListing, useSaveListing, useUnsaveListing } from '@/features/marketplace/hooks';
+import { useListing } from '@/features/marketplace/hooks';
+import * as accountApi from '@/features/marketplace/api/account.api';
 import SellerTrustCard from '@/features/marketplace/components/SellerTrustCard';
 
 const { width } = Dimensions.get('window');
@@ -26,10 +27,15 @@ const { width } = Dimensions.get('window');
 export default function ListingDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const listing = useListing(id!);
-  const save = useSaveListing();
-  const unsave = useUnsaveListing();
+  const [saved, setSaved] = useState(false);
   const [callRevealed, setCallRevealed] = useState(false);
   const [gallery, setGallery] = useState(0);
+
+  // Reflect the server's saved state once the listing loads (hook stays above the
+  // early returns so it runs unconditionally).
+  useEffect(() => {
+    if (listing.data) setSaved(Boolean(listing.data.savedByMe));
+  }, [listing.data?.id]);
 
   if (listing.isLoading && !listing.data) {
     return (
@@ -48,9 +54,28 @@ export default function ListingDetail() {
   }
 
   const l = listing.data;
+  const media = l.media ?? [];
   const unavailable = l.status === 'sold' || l.status === 'expired' || l.status === 'removed_policy' || l.status === 'removed_user';
   const verdict = fairPriceVerdict(l.priceKobo, l.fairPriceBand);
   const attrs = Object.entries(l.attrs ?? {});
+
+  // Wishlist toggle — optimistic local state, backed by the account API, reverts
+  // on error so the heart never lies about the server outcome.
+  const toggleSave = async () => {
+    const next = !saved;
+    setSaved(next);
+    try {
+      if (next) await accountApi.saveListing(l.id);
+      else await accountApi.unsaveListing(l.id);
+    } catch {
+      setSaved(!next);
+    }
+  };
+
+  const openReport = () =>
+    router.push(
+      `/marketplace/account/report?targetType=listing&targetId=${l.id}&targetName=${encodeURIComponent(l.title)}&sellerId=${l.sellerId}` as never,
+    );
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -58,42 +83,27 @@ export default function ListingDetail() {
       <View style={styles.topBar}>
         <Pressable style={styles.roundBtn} onPress={() => router.back()} hitSlop={8} accessibilityLabel="Back"><ArrowLeft size={20} color={Colors.onSurface} /></Pressable>
         <View style={styles.topBarRight}>
-          <Pressable
-            style={styles.roundBtn}
-            onPress={() => (l.savedByMe ? unsave.mutate(l.id) : save.mutate(l.id))}
-            disabled={save.isPending || unsave.isPending}
-            hitSlop={8}
-            accessibilityLabel={l.savedByMe ? 'Remove from saved' : 'Save listing'}
-          >
-            <Heart size={18} color={l.savedByMe ? MarketColors.danger : Colors.onSurface} fill={l.savedByMe ? MarketColors.danger : 'transparent'} />
+          <Pressable style={styles.roundBtn} onPress={toggleSave} hitSlop={8} accessibilityLabel="Save listing">
+            <Heart size={18} color={saved ? MarketColors.danger : Colors.onSurface} fill={saved ? MarketColors.danger : 'transparent'} />
           </Pressable>
-          <Pressable
-            style={styles.roundBtn}
-            hitSlop={8}
-            accessibilityLabel="Share listing"
-            onPress={() => Share.share({
-              title: l.title,
-              message: `${l.title} — ${formatNaira(l.priceKobo)} on Paymax Marketplace\nhttps://paymax.ng/marketplace/listing/${l.id}`,
-            })}
-          ><Share2 size={18} color={Colors.onSurface} /></Pressable>
-          <Pressable style={styles.roundBtn} hitSlop={8} accessibilityLabel="Report listing" onPress={() => router.push(`/marketplace/account/report?targetType=listing&targetId=${l.id}&targetName=${encodeURIComponent(l.title)}&sellerId=${l.sellerId}` as never)}><Flag size={18} color={Colors.onSurface} /></Pressable>
+          <Pressable style={styles.roundBtn} onPress={openReport} hitSlop={8} accessibilityLabel="Report listing"><Flag size={18} color={Colors.onSurface} /></Pressable>
         </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Gallery */}
         <View style={[styles.gallery, unavailable && styles.galleryDimmed]}>
-          {l.media.length > 0 ? (
+          {media.length > 0 ? (
             <>
               <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onMomentumScrollEnd={(e) => setGallery(Math.round(e.nativeEvent.contentOffset.x / width))}>
-                {l.media.map((m) => (
+                {media.map((m) => (
                   <View key={m.id} style={styles.slide}>
                     {m.urlFull ? <Image source={{ uri: m.urlFull }} style={StyleSheet.absoluteFill} /> : <View style={styles.slidePlaceholder} />}
                   </View>
                 ))}
               </ScrollView>
-              {l.media.length > 1 ? (
-                <View style={styles.dots}>{l.media.map((_, i) => <View key={i} style={[styles.dot, i === gallery && styles.dotActive]} />)}</View>
+              {media.length > 1 ? (
+                <View style={styles.dots}>{media.map((_, i) => <View key={i} style={[styles.dot, i === gallery && styles.dotActive]} />)}</View>
               ) : null}
             </>
           ) : (

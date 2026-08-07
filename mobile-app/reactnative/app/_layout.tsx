@@ -5,6 +5,8 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useRef } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import ToastHost from '@/components/ToastHost';
+import ConfirmHost from '@/components/ConfirmHost';
 import { Colors } from '@/constants/colors';
 import { useAuthStore } from '@/store/authStore';
 import { getPinStatus } from '@/features/transfers/api';
@@ -195,9 +197,14 @@ function RootLayout() {
             <Stack.Screen name="reports" />
             <Stack.Screen name="estate-settings" />
             <Stack.Screen name="(merchant)" />
+            <Stack.Screen name="profile" />
             <Stack.Screen name="featured" />
           </Stack>
         </AuthGate>
+        {/* Overlay sits above the navigator so toasts survive screen changes. */}
+        <ToastHost />
+        {/* Web renderer for confirmAsync/alertAsync (no-op on native). */}
+        <ConfirmHost />
       </SafeAreaProvider>
     </QueryClientProvider>
   );

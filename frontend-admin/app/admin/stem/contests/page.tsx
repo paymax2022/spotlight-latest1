@@ -8,6 +8,7 @@ import {
   listStemContests,
 } from '@/services/stemService';
 import type { StemContest, StemEligibilityResult } from '@/types/stem';
+import { Page, PageHeader, Card, Button, Input, colors } from '@/components/ui/vuexy';
 
 const defaultLifecycle = [
   'REGISTRATION_INITIATED',
@@ -90,69 +91,66 @@ export default function StemContestsPage() {
   }
 
   return (
-    <section>
-      <h1>STEM Contests</h1>
+    <Page>
+      <PageHeader title="STEM Contests" subtitle="Configure contest channel eligibility and stage foundations." />
       <StemModuleLinks />
-      <p>Configure contest channel eligibility and stage foundations.</p>
 
-      <div style={{ border: '1px solid #2a2a2a', padding: 12, marginTop: 12 }}>
-        <h2 style={{ marginTop: 0 }}>Create Contest</h2>
-        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Contest name" />
-          <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="Contest slug" />
-          <input value={participantTypes} onChange={(e) => setParticipantTypes(e.target.value)} placeholder="Participant types CSV" />
-          <input value={states} onChange={(e) => setStates(e.target.value)} placeholder="Eligible states CSV" />
-          <input value={levels} onChange={(e) => setLevels(e.target.value)} placeholder="School levels CSV" />
-          <input value={rankingFormula} onChange={(e) => setRankingFormula(e.target.value)} placeholder="Ranking formula" />
+      <Card title="Create Contest" style={{ marginTop: 16 }}>
+        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', marginTop: 14 }}>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Contest name" />
+          <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="Contest slug" />
+          <Input value={participantTypes} onChange={(e) => setParticipantTypes(e.target.value)} placeholder="Participant types CSV" />
+          <Input value={states} onChange={(e) => setStates(e.target.value)} placeholder="Eligible states CSV" />
+          <Input value={levels} onChange={(e) => setLevels(e.target.value)} placeholder="School levels CSV" />
+          <Input value={rankingFormula} onChange={(e) => setRankingFormula(e.target.value)} placeholder="Ranking formula" />
           <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <input type="checkbox" checked={allowMixedChannels} onChange={(e) => setAllowMixedChannels(e.target.checked)} />
             Allow mixed channels
           </label>
         </div>
-        <button type="button" onClick={() => void onCreate()} style={{ marginTop: 10 }}>Create Contest</button>
-      </div>
+        <Button variant="primary" style={{ marginTop: 10 }} onClick={() => void onCreate()}>Create Contest</Button>
+      </Card>
 
-      <div style={{ border: '1px solid #2a2a2a', padding: 12, marginTop: 12 }}>
-        <h2 style={{ marginTop: 0 }}>Eligibility Checker</h2>
-        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-          <input value={checkContestId} onChange={(e) => setCheckContestId(e.target.value)} placeholder="Contest ID" />
-          <input value={checkParticipantType} onChange={(e) => setCheckParticipantType(e.target.value)} placeholder="Participant type" />
-          <input value={checkState} onChange={(e) => setCheckState(e.target.value)} placeholder="State" />
-          <input value={checkLevel} onChange={(e) => setCheckLevel(e.target.value)} placeholder="School level" />
+      <Card title="Eligibility Checker" style={{ marginTop: 16 }}>
+        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', marginTop: 14 }}>
+          <Input value={checkContestId} onChange={(e) => setCheckContestId(e.target.value)} placeholder="Contest ID" />
+          <Input value={checkParticipantType} onChange={(e) => setCheckParticipantType(e.target.value)} placeholder="Participant type" />
+          <Input value={checkState} onChange={(e) => setCheckState(e.target.value)} placeholder="State" />
+          <Input value={checkLevel} onChange={(e) => setCheckLevel(e.target.value)} placeholder="School level" />
           <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <input type="checkbox" checked={checkVerified} onChange={(e) => setCheckVerified(e.target.checked)} />
             School verified
           </label>
         </div>
-        <button type="button" onClick={() => void onCheckEligibility()} style={{ marginTop: 10 }}>Run Check</button>
+        <Button variant="primary" style={{ marginTop: 10 }} onClick={() => void onCheckEligibility()}>Run Check</Button>
         {checkResult ? (
-          <p style={{ marginTop: 10 }}>
+          <p style={{ marginTop: 10, fontSize: 13 }}>
             Eligible: <strong>{String(checkResult.eligible)}</strong>
             {checkResult.reasons?.length ? ` | Reasons: ${checkResult.reasons.join('; ')}` : ''}
           </p>
         ) : null}
-      </div>
+      </Card>
 
-      <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+      <div style={{ marginTop: 16, display: 'grid', gap: 8 }}>
         {rows.map((row) => (
-          <article key={row.id || row.slug} style={{ border: '1px solid #2a2a2a', padding: 10 }}>
+          <Card key={row.id || row.slug}>
             <p style={{ margin: 0, fontWeight: 700 }}>{row.name}</p>
-            <p style={{ margin: '4px 0 0 0', fontSize: 12 }}>
+            <p style={{ margin: '4px 0 0 0', fontSize: 12, color: colors.muted }}>
               {row.slug} · {row.contestMode} · {row.status}
             </p>
-            <p style={{ margin: '4px 0 0 0', fontSize: 12 }}>
+            <p style={{ margin: '4px 0 0 0', fontSize: 12, color: colors.muted }}>
               Participants: {(row.eligibleParticipantTypes || []).join(', ') || '-'}
             </p>
-            <p style={{ margin: '4px 0 0 0', fontSize: 12 }}>
+            <p style={{ margin: '4px 0 0 0', fontSize: 12, color: colors.muted }}>
               Mixed channels: {String(row.allowMixedChannels)} · Formula: {row.rankingFormula || '-'}
             </p>
-            <p style={{ margin: '4px 0 0 0', fontSize: 12 }}>
+            <p style={{ margin: '4px 0 0 0', fontSize: 12, color: colors.muted }}>
               Lifecycle stages: {(row.stageLifecycle || []).length}
             </p>
-          </article>
+          </Card>
         ))}
-        {rows.length === 0 ? <p>No contests found yet.</p> : null}
+        {rows.length === 0 ? <p style={{ color: colors.muted }}>No contests found yet.</p> : null}
       </div>
-    </section>
+    </Page>
   );
 }

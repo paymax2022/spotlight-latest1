@@ -51,12 +51,11 @@ func (h *Handler) fail(c *gin.Context, err error) {
 // with middleware.RequirePermission(rbac, perm).
 //
 //	member: /academy/practice, /academy/practice/submit, /academy/mastery, /academy/progress
+//	         /academy/mock-exams/* (mock exam system)
 //	admin : /academy/question-bank/* under RBAC academy.assessment[.review]
-func RegisterAcademyAssessment(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, gamifier Gamifier) {
+//	        /academy/mock-exams/* (admin endpoints)
+func RegisterAcademyAssessment(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
 	svc := NewService(pool)
-	if gamifier != nil {
-		svc = svc.WithGamifier(gamifier)
-	}
 	h := NewHandler(svc)
 
 	// ── Member (learner) ──
@@ -74,6 +73,9 @@ func RegisterAcademyAssessment(member, admin *gin.RouterGroup, pool *pgxpool.Poo
 	qb.PUT("/items/:id", guard("academy.assessment"), h.AdminUpdateItem)
 	qb.POST("/items/:id/transition", guard("academy.assessment.review"), h.AdminTransitionItem)
 	qb.GET("/item-analysis", guard("academy.assessment"), h.AdminItemAnalysis)
+
+	// ── Mock Exam Routes ──
+	RegisterMockExamRoutes(member, admin, pool, rbac)
 }
 
 // ── Member handlers ─────────────────────────────────────────────────────────────

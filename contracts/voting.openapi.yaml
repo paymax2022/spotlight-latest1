@@ -138,6 +138,58 @@ components:
         success: { type: boolean }
         voteId: { type: string }
         reversedQuantity: { type: integer }
+    # ── Contest stages & eviction ────────────────────────────────────────────
+    EvictionRequest:
+      type: object
+      required: [stage_number]
+      properties:
+        stage_number: { type: integer, minimum: 1, description: Stage number to trigger evictions for }
+        eviction_percentage: { type: integer, minimum: 1, maximum: 99, default: 20, description: Bottom percentage to evict }
+        grace_period_hours: { type: integer, minimum: 1, default: 24, description: Hours before eviction is finalized }
+    EvictionResponse:
+      type: object
+      properties:
+        contestant_id: { type: string }
+        vote_count: { type: integer }
+        eviction_rank: { type: integer }
+        eviction_id: { type: string }
+        evicted_at: { type: string, format: date-time }
+        grace_period_end: { type: string, format: date-time }
+    SaveRequest:
+      type: object
+      required: [eviction_id]
+      properties:
+        eviction_id: { type: string }
+        reason: { type: string, description: Reason for saving the contestant }
+    SaveResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        message: { type: string }
+        save_record_id: { type: string }
+    ExtendGracePeriodRequest:
+      type: object
+      required: [eviction_id]
+      properties:
+        eviction_id: { type: string }
+        additional_hours: { type: integer, minimum: 1, default: 24, description: Additional hours to extend }
+    StageContestant:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        photo_url: { type: string }
+        vote_count: { type: integer }
+        eviction_status: { type: string, enum: [none, pending, saved] }
+        eviction_template: { type: string, enum: [normal, evicted, saved] }
+        eviction_id: { type: string, nullable: true }
+        grace_period_end: { type: string, format: date-time, nullable: true }
+    AdminVoteRequest:
+      type: object
+      required: [contestant_id, vote_quantity]
+      properties:
+        contestant_id: { type: string }
+        vote_quantity: { type: integer, minimum: 1, description: Number of votes to cast (admin unlimited) }
 
 paths:
   # ── Wallet-paid votes (in-app wallet debit, no Paystack redirect) ──────────
@@ -282,3 +334,240 @@ paths:
         '401': { description: Not authenticated }
         '403': { description: Missing votes:manage permission }
         '404': { description: Vote not found }
+  # ── Contest stage eviction management ──────────────────────────────────────
+  /v1/connect/contests/{id}/stages/{stageNum}/evict:
+    post:
+      summary: Trigger evictions for a stage (admin only)
+      description: >
+        Marks the bottom N% (default 20%) of contestants for eviction based on vote count.
+        Contestants are given a grace period (default 24 hours) before eviction is finalized.
+        Judges/admins can save contestants during the grace period.
+        Requires `contests:manage` permission.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Contest ID
+        - name: stageNum
+          in: path
+          required: true
+          schema: { type: integer }
+          description: Stage number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EvictionRequest' }
+      responses:
+        '200':
+          description: Evictions triggered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/EvictionResponse' }
+                  message: { type: string }
+        '400':
+          description: Invalid stage number or eviction percentage
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { description: Not authenticated }
+        '403': { description: Missing contests:manage permission }
+        '404': { description: Contest or stage not found }
+  /v1/connect/contests/{id}/save:
+    post:
+      summary: Save a contestant from eviction (judge/admin)
+      description: >
+        Saves a contestant marked for eviction during the grace period.
+        Judges can save one contestant per stage; admins can save unlimited.
+        Requires `contests:manage` or `contests:judge` permission.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Contest ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveRequest' }
+      responses:
+        '200':
+          description: Contestant saved successfully
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SaveResponse' }
+        '400':
+          description: Judge already saved one contestant this stage, or eviction not found
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { description: Not authenticated }
+        '403': { description: Missing judge/manage permission }
+  /v1/connect/contests/{id}/extend-grace-period:
+    post:
+      summary: Extend grace period for evictions (admin only)
+      description: >
+        Extends the grace period for evictions before finalization.
+        Only admins can extend grace periods.
+        Requires `contests:manage` permission.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Contest ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExtendGracePeriodRequest' }
+      responses:
+        '200':
+          description: Grace period extended
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SaveResponse' }
+        '400':
+          description: Eviction not found or already resolved
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { description: Not authenticated }
+        '403': { description: Missing contests:manage permission }
+  /v1/connect/contests/{id}/stages/{stageNum}/finalize-evictions:
+    post:
+      summary: Finalize evictions after grace period (admin only)
+      description: >
+        Finalizes evictions for a stage after the grace period has ended.
+        Removes unsaved contestants from the stage.
+        Requires `contests:manage` permission.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Contest ID
+        - name: stageNum
+          in: path
+          required: true
+          schema: { type: integer }
+          description: Stage number
+      responses:
+        '200':
+          description: Evictions finalized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SaveResponse' }
+        '401': { description: Not authenticated }
+        '403': { description: Missing contests:manage permission }
+        '404': { description: Contest or stage not found }
+  /v1/connect/contests/{id}/stages/{stageNum}/contestants:
+    get:
+      summary: Get contestants in a stage with eviction status (public)
+      description: >
+        Lists all contestants in a specific stage, including eviction status
+        and visual template information. Public endpoint.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Contest ID
+        - name: stageNum
+          in: path
+          required: true
+          schema: { type: integer }
+          description: Stage number
+      responses:
+        '200':
+          description: List of contestants in the stage
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/StageContestant' }
+        '404': { description: Contest or stage not found }
+  /v1/connect/contests/{id}/evictions:
+    get:
+      summary: Get pending evictions for a contest (admin/judge)
+      description: >
+        Lists all pending evictions for a contest, optionally filtered by stage.
+        Requires `contests:manage` or `contests:judge` permission.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Contest ID
+        - name: stage
+          in: query
+          schema: { type: integer }
+          description: Optional stage number filter
+      responses:
+        '200':
+          description: List of pending evictions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        contestant_id: { type: string }
+                        contestant_name: { type: string }
+                        stage_number: { type: integer }
+                        vote_count: { type: integer }
+                        eviction_rank: { type: integer }
+                        grace_period_ends_at: { type: string, format: date-time }
+                        status: { type: string, enum: [pending, saved, finalized] }
+                        save_count: { type: integer }
+                        can_be_saved: { type: boolean }
+        '401': { description: Not authenticated }
+        '403': { description: Missing judge/manage permission }
+        '404': { description: Contest not found }
+  /v1/connect/contests/{id}/admin-vote:
+    post:
+      summary: Cast unlimited admin votes (admin only)
+      description: >
+        Allows admins to cast unlimited votes without payment for contestants.
+        Votes are recorded without ledger entries or payment processing.
+        Requires `contests:manage` permission.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Contest ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminVoteRequest' }
+      responses:
+        '201':
+          description: Admin vote cast successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      contest_id: { type: string }
+                      voter_id: { type: string }
+                      contestant_id: { type: string }
+                      quantity: { type: integer }
+                      created_at: { type: string, format: date-time }
+        '401': { description: Not authenticated }
+        '403': { description: Missing contests:manage permission }
+        '404': { description: Contest not found }

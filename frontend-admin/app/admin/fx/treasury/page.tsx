@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { getFloats, getRebalances, rebalanceNow } from '@/services/fxAdminService';
 import type { FloatBucket, RebalanceEvent } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Badge, btn, btnPrimary, th, td, moneyFull } from '../_ui';
+import { PageHeader, FxTabs, Card, Badge, moneyFull } from '../_ui';
+import { Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function FxTreasuryPage() {
   const [floats, setFloats] = useState<FloatBucket[]>([]);
@@ -26,15 +27,15 @@ export default function FxTreasuryPage() {
 
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Treasury & Liquidity" subtitle="Float buckets, thresholds and rebalancing." action={<button onClick={load} style={btn()}>Refresh</button>} />
+      <PageHeader title="Treasury & Liquidity" subtitle="Float buckets, thresholds and rebalancing." action={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <FxTabs active="treasury" />
 
       <Card title="Float buckets">
-        {loading ? <p style={{ color: '#6b7280' }}>Loading…</p> : (
+        {loading ? <p style={{ color: colors.muted }}>Loading…</p> : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
-              <tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>Provider</th><th style={th()}>Currency</th><th style={th()}>Balance</th><th style={th()}>Low / High water</th><th style={th()}>Status</th><th style={th()}></th>
+              <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                <th style={thCell}>Provider</th><th style={thCell}>Currency</th><th style={thCell}>Balance</th><th style={thCell}>Low / High water</th><th style={thCell}>Status</th><th style={thCell}></th>
               </tr>
             </thead>
             <tbody>
@@ -42,19 +43,19 @@ export default function FxTreasuryPage() {
                 const key = `${b.provider}-${b.currency}`;
                 const needsRebalance = b.status === 'low' || b.status === 'critical';
                 return (
-                  <tr key={key} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={{ ...td(), textTransform: 'capitalize' }}><strong>{b.provider}</strong></td>
-                    <td style={td()}>{b.currency}</td>
-                    <td style={td()}>{moneyFull(b.balanceMinor, b.currency)}</td>
-                    <td style={{ ...td(), color: '#6b7280' }}>{moneyFull(b.lowWaterMinor, b.currency)} / {moneyFull(b.highWaterMinor, b.currency)}</td>
-                    <td style={td()}><Badge status={b.status} /></td>
-                    <td style={{ ...td(), textAlign: 'right' }}>
+                  <tr key={key} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <td style={{ ...tdCell, textTransform: 'capitalize' }}><strong>{b.provider}</strong></td>
+                    <td style={tdCell}>{b.currency}</td>
+                    <td style={tdCell}>{moneyFull(b.balanceMinor, b.currency)}</td>
+                    <td style={{ ...tdCell, color: colors.muted }}>{moneyFull(b.lowWaterMinor, b.currency)} / {moneyFull(b.highWaterMinor, b.currency)}</td>
+                    <td style={tdCell}><Badge status={b.status} /></td>
+                    <td style={{ ...tdCell, textAlign: 'right' }}>
                       {needsRebalance ? (
                         <div style={{ display: 'inline-flex', gap: '0.4rem' }}>
-                          <button disabled={busy === key} onClick={() => rebalance(b, 'stablecoin')} style={btnPrimary('#1d4ed8')}>Rebalance (stablecoin)</button>
-                          <button disabled={busy === key} onClick={() => rebalance(b, 'fiat')} style={btn()}>Fiat</button>
+                          <Button variant="primary" sm onClick={() => rebalance(b, 'stablecoin')} disabled={busy === key}>Rebalance (stablecoin)</Button>
+                          <Button variant="outline" sm onClick={() => rebalance(b, 'fiat')} disabled={busy === key}>Fiat</Button>
                         </div>
-                      ) : <span style={{ color: '#9ca3af' }}>—</span>}
+                      ) : <span style={{ color: colors.muted }}>—</span>}
                     </td>
                   </tr>
                 );
@@ -62,24 +63,24 @@ export default function FxTreasuryPage() {
             </tbody>
           </table>
         )}
-        <p style={{ fontSize: '0.78rem', color: '#6b7280', marginTop: '0.75rem' }}>Stablecoin rebalancing (USDC/USDT) is usually faster than fiat between providers. All rebalances are audit-logged.</p>
+        <p style={{ fontSize: '0.78rem', color: colors.muted, marginTop: '0.75rem' }}>Stablecoin rebalancing (USDC/USDT) is usually faster than fiat between providers. All rebalances are audit-logged.</p>
       </Card>
 
       <Card title="Rebalance history">
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
           <thead>
-            <tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-              <th style={th()}>When</th><th style={th()}>From → To</th><th style={th()}>Amount</th><th style={th()}>Path</th><th style={th()}>Status</th>
+            <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+              <th style={thCell}>When</th><th style={thCell}>From → To</th><th style={thCell}>Amount</th><th style={thCell}>Path</th><th style={thCell}>Status</th>
             </tr>
           </thead>
           <tbody>
             {rebalances.map((r) => (
-              <tr key={r.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                <td style={{ ...td(), color: '#6b7280' }}>{new Date(r.createdAt).toLocaleString('en-NG')}</td>
-                <td style={{ ...td(), textTransform: 'capitalize' }}>{r.from} → {r.to}</td>
-                <td style={td()}>{moneyFull(r.amountMinor, r.currency)}</td>
-                <td style={{ ...td(), textTransform: 'capitalize' }}>{r.path}</td>
-                <td style={td()}><Badge status={r.status} /></td>
+              <tr key={r.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                <td style={{ ...tdCell, color: colors.muted }}>{new Date(r.createdAt).toLocaleString('en-NG')}</td>
+                <td style={{ ...tdCell, textTransform: 'capitalize' }}>{r.from} → {r.to}</td>
+                <td style={tdCell}>{moneyFull(r.amountMinor, r.currency)}</td>
+                <td style={{ ...tdCell, textTransform: 'capitalize' }}>{r.path}</td>
+                <td style={tdCell}><Badge status={r.status} /></td>
               </tr>
             ))}
           </tbody>

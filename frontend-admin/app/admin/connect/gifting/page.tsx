@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { listGifts, formatNaira } from '@/services/connectAdminService';
 import type { GiftTransaction } from '@/types/connectAdmin';
-import { PageHeader, ConnectTabs, Card, Badge, btn, th, td, timeAgo } from '../_ui';
+import { ConnectTabs, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUSES = ['all', 'successful', 'pending', 'reversed', 'failed'];
 const LIMITS = ['all', 'within', 'near_limit', 'blocked'];
@@ -29,8 +30,8 @@ export default function ConnectGiftingPage() {
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [opts]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Gift transactions" subtitle="Gifts are real wallet-to-wallet transfers (§11.5). Tier & limit context shown; amounts in kobo → Naira." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Gift transactions" subtitle="Gifts are real wallet-to-wallet transfers (§11.5). Tier & limit context shown; amounts in kobo → Naira." actions={<Button variant="outline" sm onClick={load}>Refresh</Button>} />
       <ConnectTabs active="overview" />
 
       <Card>
@@ -40,40 +41,40 @@ export default function ConnectGiftingPage() {
         </div>
       </Card>
 
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
       <Card>
-        {loading ? <p style={{ color: '#6b7280' }}>Loading gifts…</p> : rows.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No gift transactions match these filters.</p>
+        {loading ? <p style={{ color: colors.muted }}>Loading gifts…</p> : rows.length === 0 ? (
+          <p style={{ color: colors.muted }}>No gift transactions match these filters.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Reference</th><th style={th()}>Gift</th><th style={th()}>Sender → Recipient</th><th style={th()}>Amount</th><th style={th()}>Fee</th><th style={th()}>Tier</th><th style={th()}>Limit</th><th style={th()}>Status</th><th style={th()}>When</th></tr></thead>
+            <thead><tr><th style={thCell}>Reference</th><th style={thCell}>Gift</th><th style={thCell}>Sender → Recipient</th><th style={thCell}>Amount</th><th style={thCell}>Fee</th><th style={thCell}>Tier</th><th style={thCell}>Limit</th><th style={thCell}>Status</th><th style={thCell}>When</th></tr></thead>
             <tbody>
               {rows.map((g) => (
                 <tr key={g.id}>
-                  <td style={td()}><strong>{g.reference}</strong></td>
-                  <td style={td()}>{g.gift_label}</td>
-                  <td style={td()}>{g.sender_id} → {g.recipient_id}</td>
-                  <td style={td()}>{formatNaira(g.amount_kobo)}</td>
-                  <td style={td()}>{formatNaira(g.fee_kobo)}</td>
-                  <td style={td()}>T{g.tier_at_send}</td>
-                  <td style={td()}><Badge status={g.limit_state === 'within' ? 'resolved' : g.limit_state === 'blocked' ? 'critical' : 'high'} label={g.limit_state.replace(/_/g, ' ')} /></td>
-                  <td style={td()}><Badge status={g.status === 'successful' ? 'resolved' : g.status === 'failed' ? 'critical' : g.status === 'reversed' ? 'closed' : 'open'} label={g.status} /></td>
-                  <td style={td()}>{timeAgo(g.created_at)}</td>
+                  <td style={tdCell}><strong>{g.reference}</strong></td>
+                  <td style={tdCell}>{g.gift_label}</td>
+                  <td style={tdCell}>{g.sender_id} → {g.recipient_id}</td>
+                  <td style={tdCell}>{formatNaira(g.amount_kobo)}</td>
+                  <td style={tdCell}>{formatNaira(g.fee_kobo)}</td>
+                  <td style={tdCell}>T{g.tier_at_send}</td>
+                  <td style={tdCell}><Badge text={g.limit_state.replace(/_/g, ' ')} color={g.limit_state === 'within' ? colors.success : g.limit_state === 'blocked' ? colors.danger : colors.warning} /></td>
+                  <td style={tdCell}><Badge text={g.status} color={g.status === 'successful' ? colors.success : g.status === 'failed' ? colors.danger : g.status === 'reversed' ? colors.secondary : colors.warning} /></td>
+                  <td style={tdCell}>{timeAgo(g.created_at)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }
 
 function Select({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (v: string) => void }) {
   return (
-    <label style={{ fontSize: '0.8rem', color: '#374151', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+    <label style={{ fontSize: '0.8rem', color: colors.text, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
       {label}
-      <select value={value} onChange={(e) => onChange(e.target.value)} style={{ padding: '0.35rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem', textTransform: 'capitalize' }}>
+      <select value={value} onChange={(e) => onChange(e.target.value)} style={{ textTransform: 'capitalize' }}>
         {options.map((o) => <option key={o} value={o}>{o.replace(/_/g, ' ')}</option>)}
       </select>
     </label>

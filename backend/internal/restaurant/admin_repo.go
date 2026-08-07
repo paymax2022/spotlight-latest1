@@ -22,39 +22,33 @@ import (
 // `drivers` pool (the same pool auto-dispatch offers deliveries to), plus the
 // rider's currently-active food order (if any) so ops can see who is mid-delivery.
 type AdminRider struct {
-	ID             string     `json:"id"`   // drivers.user_id (the rider_id used on orders)
-	Name           string     `json:"name"` // drivers.name
-	Phone          *string    `json:"phone,omitempty"`
-	Vehicle        string     `json:"vehicle"` // bike|car|foot (from drivers.vehicle_type)
-	Status         string     `json:"status"` // available|on_delivery|offline|suspended
-	ActiveOrderID  *string    `json:"active_order_id,omitempty"`
-	Lat            *float64   `json:"lat,omitempty"`
-	Lng            *float64   `json:"lng,omitempty"`
-	Rating         *float64   `json:"rating,omitempty"`
-	LastSeenAt     *time.Time `json:"last_seen_at,omitempty"`
+	ID            string     `json:"id"`   // drivers.user_id (the rider_id used on orders)
+	Name          string     `json:"name"` // drivers.name
+	Phone         *string    `json:"phone,omitempty"`
+	Vehicle       string     `json:"vehicle"` // bike|car|foot (from drivers.vehicle_type)
+	Status        string     `json:"status"`  // available|on_delivery|offline|suspended
+	ActiveOrderID *string    `json:"active_order_id,omitempty"`
+	Lat           *float64   `json:"lat,omitempty"`
+	Lng           *float64   `json:"lng,omitempty"`
+	Rating        *float64   `json:"rating,omitempty"`
+	LastSeenAt    *time.Time `json:"last_seen_at,omitempty"`
 }
 
 // AdminDispatchOrder is an order needing dispatch attention: ready/searching for a
 // rider, assigned, or picked_up but not yet delivered. Joined to its restaurant.
 type AdminDispatchOrder struct {
-	ID             string     `json:"id"`
-	RestaurantID   string     `json:"restaurant_id"`
-	RestaurantName string     `json:"restaurant_name"`
-	Status         string     `json:"status"`
-	RiderID        *string    `json:"rider_id,omitempty"`
-	RiderName      *string    `json:"rider_name,omitempty"`
-	DeliveryAddr   string     `json:"delivery_address"`
-	TotalKobo      int64      `json:"total_kobo"`
-	DeliveryFeeKobo int64     `json:"delivery_fee_kobo"`
-	ReadyAt        *time.Time `json:"ready_at,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	WaitingMinutes int        `json:"waiting_minutes"`
-	// Dispatch SLA (time-to-assign) surface for ops.
-	AssignedAt       *time.Time `json:"assigned_at,omitempty"`
-	FirstOfferedAt   *time.Time `json:"first_offered_at,omitempty"`
-	DispatchAttempts int        `json:"dispatch_attempts"`
-	SLAStatus        string     `json:"sla_status"`       // on_time | at_risk | breached
-	SLAElapsedSecs   int        `json:"sla_elapsed_secs"` // realized time-to-assign, or ticking if unassigned
+	ID              string     `json:"id"`
+	RestaurantID    string     `json:"restaurant_id"`
+	RestaurantName  string     `json:"restaurant_name"`
+	Status          string     `json:"status"`
+	RiderID         *string    `json:"rider_id,omitempty"`
+	RiderName       *string    `json:"rider_name,omitempty"`
+	DeliveryAddr    string     `json:"delivery_address"`
+	TotalKobo       int64      `json:"total_kobo"`
+	DeliveryFeeKobo int64      `json:"delivery_fee_kobo"`
+	ReadyAt         *time.Time `json:"ready_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	WaitingMinutes  int        `json:"waiting_minutes"`
 }
 
 // AdminApplication mirrors the restaurant merchant record for the onboarding/KYC
@@ -63,14 +57,14 @@ type AdminDispatchOrder struct {
 // status is derived from is_open (no separate KYC column exists on `restaurants`
 // yet — see report; a richer KYC record would live on onb_application).
 type AdminApplication struct {
-	ID           string    `json:"id"`
-	RestaurantName string  `json:"restaurant_name"`
-	OwnerID      string    `json:"owner_id"`
-	Address      string    `json:"address,omitempty"`
-	Status       string    `json:"status"` // pending|approved (derived from is_open)
-	Documents    []any     `json:"documents"` // empty: no KYC doc store on restaurants yet
-	SubmittedAt  time.Time `json:"submitted_at"`
-	ReviewNote   *string   `json:"review_note,omitempty"`
+	ID             string    `json:"id"`
+	RestaurantName string    `json:"restaurant_name"`
+	OwnerID        string    `json:"owner_id"`
+	Address        string    `json:"address,omitempty"`
+	Status         string    `json:"status"`    // pending|approved (derived from is_open)
+	Documents      []any     `json:"documents"` // empty: no KYC doc store on restaurants yet
+	SubmittedAt    time.Time `json:"submitted_at"`
+	ReviewNote     *string   `json:"review_note,omitempty"`
 }
 
 // AdminPayoutRun is a READ-ONLY reconciliation view of settled food-delivery
@@ -194,8 +188,7 @@ func (s *Service) AdminDispatchQueue(ctx context.Context) ([]AdminDispatchOrder,
 	const q = `
 		SELECT o.id, o.restaurant_id, r.name, o.status, o.rider_id,
 		       (SELECT d.name FROM drivers d WHERE d.user_id = o.rider_id) AS rider_name,
-		       o.delivery_address, o.total_kobo, o.delivery_kobo, o.ready_at, o.created_at,
-		       o.assigned_at, o.first_offered_at, o.dispatch_attempts
+		       o.delivery_address, o.total_kobo, o.delivery_kobo, o.ready_at, o.created_at
 		FROM orders o
 		JOIN restaurants r ON r.id = o.restaurant_id
 		WHERE o.status IN ('ready','picked_up')
@@ -211,8 +204,7 @@ func (s *Service) AdminDispatchQueue(ctx context.Context) ([]AdminDispatchOrder,
 	for rows.Next() {
 		var d AdminDispatchOrder
 		if err := rows.Scan(&d.ID, &d.RestaurantID, &d.RestaurantName, &d.Status, &d.RiderID,
-			&d.RiderName, &d.DeliveryAddr, &d.TotalKobo, &d.DeliveryFeeKobo, &d.ReadyAt, &d.CreatedAt,
-			&d.AssignedAt, &d.FirstOfferedAt, &d.DispatchAttempts); err != nil {
+			&d.RiderName, &d.DeliveryAddr, &d.TotalKobo, &d.DeliveryFeeKobo, &d.ReadyAt, &d.CreatedAt); err != nil {
 			return nil, err
 		}
 		since := d.CreatedAt
@@ -222,10 +214,6 @@ func (s *Service) AdminDispatchQueue(ctx context.Context) ([]AdminDispatchOrder,
 		if mins := int(now.Sub(since).Minutes()); mins > 0 {
 			d.WaitingMinutes = mins
 		}
-		// Dispatch SLA: time-to-assign from ready→assigned (or ready→now while searching).
-		st, elapsed := dispatchSLAStatus(d.ReadyAt, d.AssignedAt, now, dispatchSLATarget, dispatchSLABreach)
-		d.SLAStatus = string(st)
-		d.SLAElapsedSecs = int(elapsed.Seconds())
 		out = append(out, d)
 	}
 	return out, rows.Err()
@@ -233,19 +221,14 @@ func (s *Service) AdminDispatchQueue(ctx context.Context) ([]AdminDispatchOrder,
 
 // ── Onboarding review queue ───────────────────────────────────────────────────
 
-// AdminListApplications lists restaurant merchant records for the onboarding/KYB
-// review queue. When a merchant has submitted KYB, the row reflects the real KYB
-// status, decision reason, and uploaded document types; otherwise it falls back to the
-// legacy is_open-derived status (approved/pending). `status` filters on the resolved
-// status. Empty status returns all.
+// AdminListApplications lists restaurant merchant records for the onboarding/KYC
+// review queue. status filters the derived onboarding status: an open restaurant
+// is 'approved', a closed one is 'pending'. Empty status returns all.
 func (s *Service) AdminListApplications(ctx context.Context, status string) ([]AdminApplication, error) {
 	const q = `
-		SELECT r.id, r.name, r.owner_id, COALESCE(r.address,''), r.is_open, r.created_at,
-		       k.status, k.decision_reason, k.submitted_at,
-		       COALESCE((SELECT array_agg(d.doc_type) FROM restaurant_kyb_documents d WHERE d.restaurant_id = r.id), '{}') AS doc_types
+		SELECT r.id, r.name, r.owner_id, COALESCE(r.address,''), r.is_open, r.created_at
 		FROM restaurants r
-		LEFT JOIN restaurant_kyb k ON k.restaurant_id = r.id
-		ORDER BY COALESCE(k.submitted_at, r.created_at) DESC`
+		ORDER BY r.created_at DESC`
 	rows, err := s.db.Query(ctx, q)
 	if err != nil {
 		return nil, err
@@ -255,28 +238,17 @@ func (s *Service) AdminListApplications(ctx context.Context, status string) ([]A
 	for rows.Next() {
 		var a AdminApplication
 		var isOpen bool
-		var kybStatus, decisionReason *string
-		var submittedAt *time.Time
-		var docTypes []string
-		if err := rows.Scan(&a.ID, &a.RestaurantName, &a.OwnerID, &a.Address, &isOpen, &a.SubmittedAt,
-			&kybStatus, &decisionReason, &submittedAt, &docTypes); err != nil {
+		if err := rows.Scan(&a.ID, &a.RestaurantName, &a.OwnerID, &a.Address, &isOpen, &a.SubmittedAt); err != nil {
 			return nil, err
 		}
-		if kybStatus != nil {
-			a.Status = *kybStatus // real KYB status when a submission exists
-			a.ReviewNote = decisionReason
-			if submittedAt != nil {
-				a.SubmittedAt = *submittedAt
-			}
-		} else if isOpen {
+		if isOpen {
 			a.Status = "approved"
 		} else {
 			a.Status = "pending"
 		}
-		a.Documents = make([]any, 0, len(docTypes))
-		for _, d := range docTypes {
-			a.Documents = append(a.Documents, d)
-		}
+		// No KYC review-note column exists on `restaurants` yet (see report); the
+		// review note supplied on reject is delivered to the owner, not persisted.
+		a.Documents = []any{}
 		if status != "" && a.Status != status {
 			continue
 		}
@@ -298,65 +270,22 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 	if !exists {
 		return fmt.Errorf("restaurant: application not found")
 	}
-	// Resolve the KYB record (if the merchant submitted one) so the decision drives the
-	// KYB state machine + snapshot. Legacy restaurants with no KYB row keep the original
-	// direct-toggle behavior (back-compat).
-	kyb, hasKYB, err := s.loadKYB(ctx, restaurantID)
-	if err != nil {
-		return err
-	}
 	switch decision {
 	case "approve":
-		if hasKYB && !kybCanTransition(kyb.Status, KYBApproved) {
-			return fmt.Errorf("restaurant: KYB is %s — it must be submitted before approval", kyb.Status)
-		}
-		if hasKYB {
-			if _, err := s.db.Exec(ctx,
-				`UPDATE restaurant_kyb SET status='approved', decision_reason=NULLIF($2,''), reviewed_by=$3, decided_at=now(), updated_at=now() WHERE restaurant_id=$1`,
-				restaurantID, note, adminID); err != nil {
-				return err
-			}
-		}
-		// Approval is what takes a restaurant live.
 		if _, err := s.db.Exec(ctx,
-			`UPDATE restaurants SET is_open=true, kyb_status=CASE WHEN $2 THEN 'approved' ELSE kyb_status END, updated_at=now() WHERE id=$1`,
-			restaurantID, hasKYB); err != nil {
+			`UPDATE restaurants SET is_open=true, updated_at=now() WHERE id=$1`, restaurantID); err != nil {
 			return err
 		}
 	case "reject":
 		if note == "" {
 			return fmt.Errorf("restaurant: a reviewer note is required to reject")
 		}
-		if hasKYB {
-			if _, err := s.db.Exec(ctx,
-				`UPDATE restaurant_kyb SET status='rejected', decision_reason=$2, reviewed_by=$3, decided_at=now(), updated_at=now() WHERE restaurant_id=$1`,
-				restaurantID, note, adminID); err != nil {
-				return err
-			}
-		}
 		if _, err := s.db.Exec(ctx,
-			`UPDATE restaurants SET is_open=false, kyb_status=CASE WHEN $2 THEN 'rejected' ELSE kyb_status END, updated_at=now() WHERE id=$1`,
-			restaurantID, hasKYB); err != nil {
+			`UPDATE restaurants SET is_open=false, updated_at=now() WHERE id=$1`, restaurantID); err != nil {
 			return err
 		}
-	case "needs_info":
-		if note == "" {
-			return fmt.Errorf("restaurant: a reviewer note is required to request more info")
-		}
-		if !hasKYB {
-			return fmt.Errorf("restaurant: no KYB submission to return")
-		}
-		if !kybCanTransition(kyb.Status, KYBNeedsInfo) {
-			return fmt.Errorf("restaurant: KYB is %s — cannot request more info", kyb.Status)
-		}
-		if _, err := s.db.Exec(ctx,
-			`UPDATE restaurant_kyb SET status='needs_more_info', decision_reason=$2, reviewed_by=$3, decided_at=now(), updated_at=now() WHERE restaurant_id=$1`,
-			restaurantID, note, adminID); err != nil {
-			return err
-		}
-		_, _ = s.db.Exec(ctx, `UPDATE restaurants SET kyb_status='needs_more_info', updated_at=now() WHERE id=$1`, restaurantID)
 	default:
-		return fmt.Errorf("restaurant: invalid decision %q (want approve|reject|needs_info)", decision)
+		return fmt.Errorf("restaurant: invalid decision %q (want approve|reject)", decision)
 	}
 	// Best-effort audit via the shared notifier (owner is informed of the decision).
 	var owner string

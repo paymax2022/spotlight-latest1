@@ -8,7 +8,7 @@ import {
   formatNaira,
   type FinanceVideo, type Challenge, type Campaign, type SpotlightTopic, type ChallengeKind,
 } from '@/services/spotlightAdminService';
-import { PageHeader, Card, Badge, StateBlock, btn, btnPrimary, btnDanger, th, td, input, label, select } from '../association/_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const TOPICS: SpotlightTopic[] = ['budgeting', 'investing-basics', 'crypto', 'stocks', 'saving', 'mindset'];
 const CHALLENGE_KINDS: ChallengeKind[] = ['literacy', 'quiz', 'savings'];
@@ -16,6 +16,10 @@ const CHALLENGE_KINDS: ChallengeKind[] = ['literacy', 'quiz', 'savings'];
 const emptyVideoForm = { id: '', title: '', creator: '', thumbnailColor: '', durationMins: 5, topic: 'budgeting' as SpotlightTopic, sortOrder: 0, published: true };
 const emptyChallengeForm = { id: '', title: '', description: '', rewardNaira: 0, currency: 'NGN', endsAt: '', kind: 'literacy' as ChallengeKind, published: true };
 const emptyCampaignForm = { id: '', title: '', description: '', iconColor: '', cta: '', sortOrder: 0, published: true };
+
+function fieldLabel(): React.CSSProperties {
+  return { display: 'block', fontSize: '0.78rem', color: colors.muted, marginBottom: '0.25rem', fontWeight: 600 };
+}
 
 export default function SpotlightAdminPage() {
   const [videos, setVideos] = useState<FinanceVideo[]>([]);
@@ -161,185 +165,197 @@ export default function SpotlightAdminPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Spotlight Wealth content"
         subtitle="Author creator-education videos, learn-and-earn challenges (wallet-credit rewards, never a guaranteed return) and campaigns for the Spotlight Wealth surface."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button onClick={load}>Refresh</Button>}
       />
 
-      {actionError ? <p style={{ color: '#dc2626', fontSize: '0.85rem' }}>{actionError}</p> : null}
+      {actionError ? <p style={{ color: colors.danger, fontSize: '0.85rem' }}>{actionError}</p> : null}
 
-      <StateBlock loading={loading} error={error} empty={false}>
-        {/* ── Videos ───────────────────────────────────────────────────── */}
-        <Card title={editingVideoId ? `Edit video — ${editingVideoId}` : 'Create video'}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
-            <div>
-              <label style={label()}>Title</label>
-              <input style={input()} value={videoForm.title} onChange={(e) => setVideoForm({ ...videoForm, title: e.target.value })} />
+      {loading ? (
+        <p style={{ color: colors.muted }}>Loading…</p>
+      ) : error ? (
+        <p style={{ color: colors.danger }}>{error}</p>
+      ) : (
+        <>
+          {/* ── Videos ───────────────────────────────────────────────────── */}
+          <Card title={editingVideoId ? `Edit video — ${editingVideoId}` : 'Create video'} style={{ marginBottom: '1.25rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem', marginTop: '0.75rem' }}>
+              <div>
+                <label style={fieldLabel()}>Title</label>
+                <Input value={videoForm.title} onChange={(e) => setVideoForm({ ...videoForm, title: e.target.value })} />
+              </div>
+              <div>
+                <label style={fieldLabel()}>Creator</label>
+                <Input value={videoForm.creator} onChange={(e) => setVideoForm({ ...videoForm, creator: e.target.value })} />
+              </div>
+              <div>
+                <label style={fieldLabel()}>Topic</label>
+                <select style={{ width: '100%' }} value={videoForm.topic} onChange={(e) => setVideoForm({ ...videoForm, topic: e.target.value as SpotlightTopic })}>
+                  {TOPICS.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={fieldLabel()}>Duration (mins)</label>
+                <Input type="number" value={videoForm.durationMins} onChange={(e) => setVideoForm({ ...videoForm, durationMins: Number(e.target.value) })} />
+              </div>
+              <div>
+                <label style={fieldLabel()}>Thumbnail color</label>
+                <Input value={videoForm.thumbnailColor} onChange={(e) => setVideoForm({ ...videoForm, thumbnailColor: e.target.value })} placeholder="#340075" />
+              </div>
+              <div>
+                <label style={fieldLabel()}>Sort order</label>
+                <Input type="number" value={videoForm.sortOrder} onChange={(e) => setVideoForm({ ...videoForm, sortOrder: Number(e.target.value) })} />
+              </div>
             </div>
-            <div>
-              <label style={label()}>Creator</label>
-              <input style={input()} value={videoForm.creator} onChange={(e) => setVideoForm({ ...videoForm, creator: e.target.value })} />
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+              <Button variant="primary" disabled={busy || !videoForm.title || !videoForm.creator} onClick={submitVideo}>{editingVideoId ? 'Save video' : 'Create video'}</Button>
+              {editingVideoId ? <Button onClick={resetVideoForm}>Cancel</Button> : null}
             </div>
-            <div>
-              <label style={label()}>Topic</label>
-              <select style={select()} value={videoForm.topic} onChange={(e) => setVideoForm({ ...videoForm, topic: e.target.value as SpotlightTopic })}>
-                {TOPICS.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={label()}>Duration (mins)</label>
-              <input style={input()} type="number" value={videoForm.durationMins} onChange={(e) => setVideoForm({ ...videoForm, durationMins: Number(e.target.value) })} />
-            </div>
-            <div>
-              <label style={label()}>Thumbnail color</label>
-              <input style={input()} value={videoForm.thumbnailColor} onChange={(e) => setVideoForm({ ...videoForm, thumbnailColor: e.target.value })} placeholder="#340075" />
-            </div>
-            <div>
-              <label style={label()}>Sort order</label>
-              <input style={input()} type="number" value={videoForm.sortOrder} onChange={(e) => setVideoForm({ ...videoForm, sortOrder: Number(e.target.value) })} />
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
-            <button style={btnPrimary()} disabled={busy || !videoForm.title || !videoForm.creator} onClick={submitVideo}>{editingVideoId ? 'Save video' : 'Create video'}</button>
-            {editingVideoId ? <button style={btn()} onClick={resetVideoForm}>Cancel</button> : null}
-          </div>
-        </Card>
+          </Card>
 
-        <Card title={`Videos (${videos.length})`}>
-          {videos.length === 0 ? <p style={{ color: '#6b7280' }}>No videos yet.</p> : (
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr><th style={th()}>Title</th><th style={th()}>Creator</th><th style={th()}>Topic</th><th style={th()}>Duration</th><th style={th()}>Actions</th></tr></thead>
-              <tbody>
-                {videos.map((v) => (
-                  <tr key={v.id}>
-                    <td style={td()}>{v.title}</td>
-                    <td style={td()}>{v.creator}</td>
-                    <td style={td()}><Badge status={v.topic} /></td>
-                    <td style={td()}>{v.durationMins}m</td>
-                    <td style={td()}>
-                      <div style={{ display: 'flex', gap: '0.4rem' }}>
-                        <button style={btn()} onClick={() => editVideo(v)}>Edit</button>
-                        <button style={btnDanger()} onClick={() => removeVideo(v.id)}>Delete</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Card>
+          <Card title={`Videos (${videos.length})`} style={{ marginBottom: '1.25rem' }}>
+            {videos.length === 0 ? <p style={{ color: colors.muted, marginTop: '0.75rem' }}>No videos yet.</p> : (
+              <div style={{ overflowX: 'auto', marginTop: '0.75rem' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={thCell}>Title</th><th style={thCell}>Creator</th><th style={thCell}>Topic</th><th style={thCell}>Duration</th><th style={thCell}>Actions</th></tr></thead>
+                  <tbody>
+                    {videos.map((v) => (
+                      <tr key={v.id}>
+                        <td style={tdCell}>{v.title}</td>
+                        <td style={tdCell}>{v.creator}</td>
+                        <td style={tdCell}><Badge text={v.topic} color={colors.info} /></td>
+                        <td style={tdCell}>{v.durationMins}m</td>
+                        <td style={tdCell}>
+                          <div style={{ display: 'flex', gap: '0.4rem' }}>
+                            <Button sm onClick={() => editVideo(v)}>Edit</Button>
+                            <Button sm variant="danger" onClick={() => removeVideo(v.id)}>Delete</Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
 
-        {/* ── Challenges ───────────────────────────────────────────────── */}
-        <Card title={editingChallengeId ? `Edit challenge — ${editingChallengeId}` : 'Create challenge'}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
-            <div>
-              <label style={label()}>Title</label>
-              <input style={input()} value={challengeForm.title} onChange={(e) => setChallengeForm({ ...challengeForm, title: e.target.value })} />
+          {/* ── Challenges ───────────────────────────────────────────────── */}
+          <Card title={editingChallengeId ? `Edit challenge — ${editingChallengeId}` : 'Create challenge'} style={{ marginBottom: '1.25rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem', marginTop: '0.75rem' }}>
+              <div>
+                <label style={fieldLabel()}>Title</label>
+                <Input value={challengeForm.title} onChange={(e) => setChallengeForm({ ...challengeForm, title: e.target.value })} />
+              </div>
+              <div>
+                <label style={fieldLabel()}>Kind</label>
+                <select style={{ width: '100%' }} value={challengeForm.kind} onChange={(e) => setChallengeForm({ ...challengeForm, kind: e.target.value as ChallengeKind })}>
+                  {CHALLENGE_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={fieldLabel()}>Reward (₦)</label>
+                <Input type="number" min={0} step="0.01" value={challengeForm.rewardNaira} onChange={(e) => setChallengeForm({ ...challengeForm, rewardNaira: Number(e.target.value) })} />
+              </div>
+              <div>
+                <label style={fieldLabel()}>Ends at</label>
+                <Input type="datetime-local" value={challengeForm.endsAt} onChange={(e) => setChallengeForm({ ...challengeForm, endsAt: e.target.value })} />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={fieldLabel()}>Description</label>
+                <Input value={challengeForm.description} onChange={(e) => setChallengeForm({ ...challengeForm, description: e.target.value })} />
+              </div>
             </div>
-            <div>
-              <label style={label()}>Kind</label>
-              <select style={select()} value={challengeForm.kind} onChange={(e) => setChallengeForm({ ...challengeForm, kind: e.target.value as ChallengeKind })}>
-                {CHALLENGE_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
-              </select>
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+              <Button variant="primary" disabled={busy || !challengeForm.title || !challengeForm.endsAt} onClick={submitChallenge}>{editingChallengeId ? 'Save challenge' : 'Create challenge'}</Button>
+              {editingChallengeId ? <Button onClick={resetChallengeForm}>Cancel</Button> : null}
             </div>
-            <div>
-              <label style={label()}>Reward (₦)</label>
-              <input style={input()} type="number" min={0} step="0.01" value={challengeForm.rewardNaira} onChange={(e) => setChallengeForm({ ...challengeForm, rewardNaira: Number(e.target.value) })} />
-            </div>
-            <div>
-              <label style={label()}>Ends at</label>
-              <input style={input()} type="datetime-local" value={challengeForm.endsAt} onChange={(e) => setChallengeForm({ ...challengeForm, endsAt: e.target.value })} />
-            </div>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <label style={label()}>Description</label>
-              <input style={input()} value={challengeForm.description} onChange={(e) => setChallengeForm({ ...challengeForm, description: e.target.value })} />
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
-            <button style={btnPrimary()} disabled={busy || !challengeForm.title || !challengeForm.endsAt} onClick={submitChallenge}>{editingChallengeId ? 'Save challenge' : 'Create challenge'}</button>
-            {editingChallengeId ? <button style={btn()} onClick={resetChallengeForm}>Cancel</button> : null}
-          </div>
-        </Card>
+          </Card>
 
-        <Card title={`Challenges (${challenges.length})`}>
-          {challenges.length === 0 ? <p style={{ color: '#6b7280' }}>No challenges yet.</p> : (
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr><th style={th()}>Title</th><th style={th()}>Kind</th><th style={th()}>Reward</th><th style={th()}>Ends</th><th style={th()}>Actions</th></tr></thead>
-              <tbody>
-                {challenges.map((c) => (
-                  <tr key={c.id}>
-                    <td style={td()}>{c.title}</td>
-                    <td style={td()}><Badge status={c.kind} /></td>
-                    <td style={td()}>{formatNaira(Math.round(c.reward.amount * 100))}</td>
-                    <td style={td()}>{c.endsAt ? new Date(c.endsAt).toLocaleString('en-NG') : '—'}</td>
-                    <td style={td()}>
-                      <div style={{ display: 'flex', gap: '0.4rem' }}>
-                        <button style={btn()} onClick={() => editChallenge(c)}>Edit</button>
-                        <button style={btnDanger()} onClick={() => removeChallenge(c.id)}>Delete</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Card>
+          <Card title={`Challenges (${challenges.length})`} style={{ marginBottom: '1.25rem' }}>
+            {challenges.length === 0 ? <p style={{ color: colors.muted, marginTop: '0.75rem' }}>No challenges yet.</p> : (
+              <div style={{ overflowX: 'auto', marginTop: '0.75rem' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={thCell}>Title</th><th style={thCell}>Kind</th><th style={thCell}>Reward</th><th style={thCell}>Ends</th><th style={thCell}>Actions</th></tr></thead>
+                  <tbody>
+                    {challenges.map((c) => (
+                      <tr key={c.id}>
+                        <td style={tdCell}>{c.title}</td>
+                        <td style={tdCell}><Badge text={c.kind} color={colors.warning} /></td>
+                        <td style={tdCell}>{formatNaira(Math.round(c.reward.amount * 100))}</td>
+                        <td style={tdCell}>{c.endsAt ? new Date(c.endsAt).toLocaleString('en-NG') : '—'}</td>
+                        <td style={tdCell}>
+                          <div style={{ display: 'flex', gap: '0.4rem' }}>
+                            <Button sm onClick={() => editChallenge(c)}>Edit</Button>
+                            <Button sm variant="danger" onClick={() => removeChallenge(c.id)}>Delete</Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
 
-        {/* ── Campaigns ────────────────────────────────────────────────── */}
-        <Card title={editingCampaignId ? `Edit campaign — ${editingCampaignId}` : 'Create campaign'}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
-            <div>
-              <label style={label()}>Title</label>
-              <input style={input()} value={campaignForm.title} onChange={(e) => setCampaignForm({ ...campaignForm, title: e.target.value })} />
+          {/* ── Campaigns ────────────────────────────────────────────────── */}
+          <Card title={editingCampaignId ? `Edit campaign — ${editingCampaignId}` : 'Create campaign'} style={{ marginBottom: '1.25rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem', marginTop: '0.75rem' }}>
+              <div>
+                <label style={fieldLabel()}>Title</label>
+                <Input value={campaignForm.title} onChange={(e) => setCampaignForm({ ...campaignForm, title: e.target.value })} />
+              </div>
+              <div>
+                <label style={fieldLabel()}>CTA</label>
+                <Input value={campaignForm.cta} onChange={(e) => setCampaignForm({ ...campaignForm, cta: e.target.value })} />
+              </div>
+              <div>
+                <label style={fieldLabel()}>Icon color</label>
+                <Input value={campaignForm.iconColor} onChange={(e) => setCampaignForm({ ...campaignForm, iconColor: e.target.value })} placeholder="#340075" />
+              </div>
+              <div>
+                <label style={fieldLabel()}>Sort order</label>
+                <Input type="number" value={campaignForm.sortOrder} onChange={(e) => setCampaignForm({ ...campaignForm, sortOrder: Number(e.target.value) })} />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={fieldLabel()}>Description</label>
+                <Input value={campaignForm.description} onChange={(e) => setCampaignForm({ ...campaignForm, description: e.target.value })} />
+              </div>
             </div>
-            <div>
-              <label style={label()}>CTA</label>
-              <input style={input()} value={campaignForm.cta} onChange={(e) => setCampaignForm({ ...campaignForm, cta: e.target.value })} />
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+              <Button variant="primary" disabled={busy || !campaignForm.title} onClick={submitCampaign}>{editingCampaignId ? 'Save campaign' : 'Create campaign'}</Button>
+              {editingCampaignId ? <Button onClick={resetCampaignForm}>Cancel</Button> : null}
             </div>
-            <div>
-              <label style={label()}>Icon color</label>
-              <input style={input()} value={campaignForm.iconColor} onChange={(e) => setCampaignForm({ ...campaignForm, iconColor: e.target.value })} placeholder="#340075" />
-            </div>
-            <div>
-              <label style={label()}>Sort order</label>
-              <input style={input()} type="number" value={campaignForm.sortOrder} onChange={(e) => setCampaignForm({ ...campaignForm, sortOrder: Number(e.target.value) })} />
-            </div>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <label style={label()}>Description</label>
-              <input style={input()} value={campaignForm.description} onChange={(e) => setCampaignForm({ ...campaignForm, description: e.target.value })} />
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
-            <button style={btnPrimary()} disabled={busy || !campaignForm.title} onClick={submitCampaign}>{editingCampaignId ? 'Save campaign' : 'Create campaign'}</button>
-            {editingCampaignId ? <button style={btn()} onClick={resetCampaignForm}>Cancel</button> : null}
-          </div>
-        </Card>
+          </Card>
 
-        <Card title={`Campaigns (${campaigns.length})`}>
-          {campaigns.length === 0 ? <p style={{ color: '#6b7280' }}>No campaigns yet.</p> : (
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr><th style={th()}>Title</th><th style={th()}>CTA</th><th style={th()}>Description</th><th style={th()}>Actions</th></tr></thead>
-              <tbody>
-                {campaigns.map((c) => (
-                  <tr key={c.id}>
-                    <td style={td()}>{c.title}</td>
-                    <td style={td()}>{c.cta}</td>
-                    <td style={td()}>{c.description}</td>
-                    <td style={td()}>
-                      <div style={{ display: 'flex', gap: '0.4rem' }}>
-                        <button style={btn()} onClick={() => editCampaign(c)}>Edit</button>
-                        <button style={btnDanger()} onClick={() => removeCampaign(c.id)}>Delete</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Card>
-      </StateBlock>
-    </div>
+          <Card title={`Campaigns (${campaigns.length})`}>
+            {campaigns.length === 0 ? <p style={{ color: colors.muted, marginTop: '0.75rem' }}>No campaigns yet.</p> : (
+              <div style={{ overflowX: 'auto', marginTop: '0.75rem' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={thCell}>Title</th><th style={thCell}>CTA</th><th style={thCell}>Description</th><th style={thCell}>Actions</th></tr></thead>
+                  <tbody>
+                    {campaigns.map((c) => (
+                      <tr key={c.id}>
+                        <td style={tdCell}>{c.title}</td>
+                        <td style={tdCell}>{c.cta}</td>
+                        <td style={tdCell}>{c.description}</td>
+                        <td style={tdCell}>
+                          <div style={{ display: 'flex', gap: '0.4rem' }}>
+                            <Button sm onClick={() => editCampaign(c)}>Edit</Button>
+                            <Button sm variant="danger" onClick={() => removeCampaign(c.id)}>Delete</Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </>
+      )}
+    </Page>
   );
 }

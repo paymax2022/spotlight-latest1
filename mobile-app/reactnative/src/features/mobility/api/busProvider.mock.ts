@@ -20,6 +20,8 @@ import type {
   BusRouteCreateRequest,
   BusRouteUpdateRequest,
   BusScheduleCreateRequest,
+  BusDepartureTemplate,
+  BusTemplateCreateRequest,
 } from '../types/busProvider.types';
 
 const now = () => Date.now();
@@ -55,6 +57,18 @@ interface StoreSchedule {
   seatsAvailable: number;
   fareKobo: number;
 }
+interface StoreTemplate {
+  id: string;
+  providerId: string;
+  routeId: string;
+  daysOfWeek: number[];
+  departTime: string;
+  totalSeats: number;
+  fareKobo: number;
+  horizonDays: number;
+  active: boolean;
+  createdAt: string;
+}
 
 // The signed-in operator (provider dashboard) uses this fixed id in mock mode.
 const ME_ID = 'prov_me';
@@ -85,6 +99,24 @@ const schedules: StoreSchedule[] = [
   { id: 'sch_city_1a', routeId: 'rt_city_1', departureTime: isoAhead(2 * H), totalSeats: 14, seatsAvailable: 9, fareKobo: 2_500_00 },
   { id: 'sch_city_2a', routeId: 'rt_city_2', departureTime: isoAhead(3 * H), totalSeats: 14, seatsAvailable: 6, fareKobo: 3_000_00 },
   { id: 'sch_abc_intra_a', routeId: 'rt_abc_intra', departureTime: isoAhead(5 * H), totalSeats: 18, seatsAvailable: 15, fareKobo: 1_800_00 },
+];
+
+// Recurring departure templates (provider-defined patterns). Seed one so the
+// provider templates screen has content offline. Backend materialises real
+// departures from these over a rolling horizon.
+const templates: StoreTemplate[] = [
+  {
+    id: 'tpl_gig_1',
+    providerId: 'prov_gig',
+    routeId: 'rt_gig_1',
+    daysOfWeek: [1, 3, 5],       // Mon, Wed, Fri
+    departTime: '07:30',
+    totalSeats: 30,
+    fareKobo: 18_500_00,
+    horizonDays: 14,
+    active: true,
+    createdAt: isoAhead(-48 * H),
+  },
 ];
 
 const manifests: Record<string, BusManifestEntry[]> = {
@@ -302,4 +334,51 @@ export function mockAddSchedule(routeId: string, req: BusScheduleCreateRequest):
 
 export function mockManifest(scheduleId: string): BusManifestEntry[] {
   return manifests[scheduleId] ?? [];
+}
+
+// ─── Recurring departure templates ─────────────────────────────────────────────
+const toTemplate = (t: StoreTemplate): BusDepartureTemplate => ({
+  id: t.id,
+  providerId: t.providerId,
+  routeId: t.routeId,
+  daysOfWeek: t.daysOfWeek,
+  departTime: t.departTime,
+  totalSeats: t.totalSeats,
+  fareKobo: t.fareKobo,
+  horizonDays: t.horizonDays,
+  active: t.active,
+  createdAt: t.createdAt,
+});
+
+export function mockListTemplates(): BusDepartureTemplate[] {
+  return templates.map(toTemplate);
+}
+
+export function mockCreateTemplate(req: BusTemplateCreateRequest): BusDepartureTemplate {
+  const template: StoreTemplate = {
+    id: `tpl_me_${now()}`,
+    providerId: ME_ID,
+    routeId: req.routeId,
+    daysOfWeek: req.daysOfWeek,
+    departTime: req.departTime,
+    totalSeats: req.totalSeats,
+    fareKobo: req.fareKobo,
+    horizonDays: req.horizonDays ?? 14,
+    active: true,
+    createdAt: new Date(now()).toISOString(),
+  };
+  templates.push(template);
+  return toTemplate(template);
+}
+
+export function mockSetTemplateActive(id: string, active: boolean): BusDepartureTemplate {
+  const t = templates.find((x) => x.id === id);
+  if (!t) throw new Error('Template not found');
+  t.active = active;
+  return toTemplate(t);
+}
+
+export function mockDeleteTemplate(id: string): void {
+  const idx = templates.findIndex((x) => x.id === id);
+  if (idx >= 0) templates.splice(idx, 1);
 }

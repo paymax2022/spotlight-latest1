@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Icons from 'lucide-react-native';
@@ -14,9 +14,11 @@ import StateView from '@/components/StateView';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { formatNaira } from '@/features/academy/constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { PAYMENT_METHODS } from '@/features/academy/fees/constants';
 import { useInvoice, usePayInvoice } from '@/features/academy/fees/hooks';
 import type { PayMethod } from '@/features/academy/fees/types';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 /** PA-05 — Pay now: amount (full or partial) + method, wired to the idempotent pay mutation. */
 export default function PayInvoice() {
@@ -55,19 +57,15 @@ export default function PayInvoice() {
     pay.mutate(
       { invoiceId: inv.id, amountKobo: chargeKobo, method },
       {
-        onSuccess: (res) => {
+        onSuccess: async (res) => {
           if (res.status === 'paid') {
-            Alert.alert('Payment successful', `${formatNaira(res.amountKobo)} paid. New balance: ${formatNaira(res.newBalanceKobo)}.`, [
-              { text: 'View receipt', onPress: () => router.replace('/learn/academy/fees/receipts') },
-              { text: 'Done', onPress: () => router.replace(`/learn/academy/fees/invoice/${inv.id}`), style: 'cancel' },
-            ]);
+            const ok = await confirmAsync({ title: 'Payment successful', message: `${formatNaira(res.amountKobo)} paid. New balance: ${formatNaira(res.newBalanceKobo)}.`, confirmLabel: 'View receipt', cancelLabel: 'Done' });
+            if (ok) { router.replace('/learn/academy/fees/receipts'); } else { router.replace(`/learn/academy/fees/invoice/${inv.id}`); }
           } else {
-            Alert.alert('Complete payment', 'You will be redirected to secure checkout to finish this payment.', [
-              { text: 'OK', onPress: () => router.replace(`/learn/academy/fees/invoice/${inv.id}`) },
-            ]);
+            alertAsync({ title: 'Complete payment', message: 'You will be redirected to secure checkout to finish this payment.' }).then(() => router.replace(`/learn/academy/fees/invoice/${inv.id}`));
           }
         },
-        onError: (e) => Alert.alert('Payment failed', (e as Error).message),
+        onError: (e) => alertAsync({ title: 'Payment failed', message: (e as Error).message }),
       },
     );
   };
@@ -88,8 +86,10 @@ export default function PayInvoice() {
         <TextInputField
           placeholder={`Full balance (${formatNaira(outstanding)})`}
           value={amountNaira}
-          onChangeText={setAmountNaira}
-          keyboardType="numeric"
+          onChangeText={(v) => setAmountNaira(sanitizeMoneyInput(v))}
+          keyboardType="decimal-pad"
+          inputMode="decimal"
+          maxLength={13}
           leftIcon={<Text style={styles.naira}>₦</Text>}
         />
         <View style={styles.chipRow}>

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Check } from 'lucide-react-native';
@@ -13,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { IntakeField } from '@/features/health/components';
 import { useIntakeSchema, useIntakeDraft, useSaveIntakeDraft, useSubmitIntake } from '@/features/health/hooks';
 import { validateIntake } from '@/features/health/utils';
+import { alertAsync } from '@/lib/confirm';
 import type { IntakeErrors, IntakeResponseValues, IntakeValue } from '@/features/health/types';
 
 /**
@@ -61,18 +62,16 @@ export default function IntakeRendererScreen() {
     const found = validateIntake(schema, values);
     setErrors(found);
     if (Object.keys(found).length > 0) {
-      Alert.alert('Please review', 'Some required answers are missing or invalid.');
+      alertAsync({ title: 'Please review', message: 'Some required answers are missing or invalid.' });
       return;
     }
     submit.mutate(
       { schemaId: schema.id, schemaVersion: schema.version, values, subjectId },
       {
         onSuccess: () => {
-          Alert.alert('Submitted', 'Your responses were sent to your provider.', [
-            { text: 'Done', onPress: () => router.back() },
-          ]);
+          alertAsync({ title: 'Submitted', message: 'Your responses were sent to your provider.', buttonLabel: 'Done' }).then(() => router.back());
         },
-        onError: () => Alert.alert('Could not submit', 'Please try again.'),
+        onError: () => alertAsync({ title: 'Could not submit', message: 'Please try again.' }),
       },
     );
   };

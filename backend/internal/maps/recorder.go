@@ -207,10 +207,10 @@ type TierDeflection struct {
 
 // DeflectionStats is the dashboard cost rollup over a time window.
 type DeflectionStats struct {
-	Paid           int64                          `json:"paid"`
-	Deflected      int64                          `json:"deflected"`
+	Paid           int64                           `json:"paid"`
+	Deflected      int64                           `json:"deflected"`
 	ByCoverageTier map[CoverageTier]TierDeflection `json:"by_coverage_tier"`
-	BySource       map[string]int64               `json:"by_source"`
+	BySource       map[string]int64                `json:"by_source"`
 }
 
 // DeflectionRate is the share of resolutions served without a paid provider call.

@@ -28,13 +28,13 @@ type InvestLedger struct {
 }
 
 const (
-	AcctCash             = "invest_cash"
-	AcctLockedCash       = "invest_locked_cash"
-	AcctSettlement       = "invest_settlement_suspense"
-	AcctBrokerClearing   = "broker_clearing"
-	AcctFeeIncome        = "invest_fee_income"
-	AcctExternalFunding  = "invest_external_funding"
-	AcctDividendSource   = "invest_dividend_source"
+	AcctCash            = "invest_cash"
+	AcctLockedCash      = "invest_locked_cash"
+	AcctSettlement      = "invest_settlement_suspense"
+	AcctBrokerClearing  = "broker_clearing"
+	AcctFeeIncome       = "invest_fee_income"
+	AcctExternalFunding = "invest_external_funding"
+	AcctDividendSource  = "invest_dividend_source"
 )
 
 func NewInvestLedger(db *pgxpool.Pool) *InvestLedger { return &InvestLedger{db: db} }

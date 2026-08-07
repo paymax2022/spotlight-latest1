@@ -9,6 +9,7 @@ import {
   PageHeader, TriageTabs, Card, Badge, DisclosureNote, StateBlock, AuditNote, FilterBar,
   btn, btnPrimary, th, td, select, input, label, timeAgo,
 } from '../../_ui';
+import { colors, tint } from '@/components/ui/vuexy';
 
 export default function TriageEscalationsPage() {
   const [rows, setRows] = useState<EscalationCase[]>([]);
@@ -58,7 +59,7 @@ export default function TriageEscalationsPage() {
         / resolve writes to the immutable audit (SC-12).
       </DisclosureNote>
 
-      {result ? <div style={{ border: '1px solid #ddd6fe', background: '#f5f3ff', color: '#5b21b6', borderRadius: '0.5rem', padding: '0.6rem 0.8rem', fontSize: '0.82rem', marginBottom: '1rem' }}>{result}</div> : null}
+      {result ? <div style={{ border: `1px solid ${tint(colors.primary, 0.24)}`, background: tint(colors.primary, 0.08), color: colors.primary, borderRadius: '0.5rem', padding: '0.6rem 0.8rem', fontSize: '0.82rem', marginBottom: '1rem' }}>{result}</div> : null}
 
       <Card title={`Cases · ${open} open`}>
         <FilterBar>
@@ -82,7 +83,7 @@ export default function TriageEscalationsPage() {
               const canAck = r.state === 'raised' || r.state === 'notified';
               const canResolve = r.state === 'acknowledged' || r.state === 'notified';
               return (
-                <div key={r.id} style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.85rem 1rem', background: r.state === 'resolved' ? '#fafafa' : '#fff' }}>
+                <div key={r.id} style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.85rem 1rem', background: r.state === 'resolved' ? colors.headBg : colors.card }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                       <code style={{ fontSize: '0.8rem' }}>{r.id}</code>
@@ -90,11 +91,11 @@ export default function TriageEscalationsPage() {
                       <Badge status={r.disposition_level} label={DISPOSITION_LABELS[r.disposition_level]} />
                       {r.profile_kind === 'child' ? <Badge status="high" label="Paediatric (SC-9)" /> : null}
                     </div>
-                    <span style={{ fontSize: '0.72rem', color: '#9ca3af' }}>raised {timeAgo(r.raised_at)}</span>
+                    <span style={{ fontSize: '0.72rem', color: colors.muted }}>raised {timeAgo(r.raised_at)}</span>
                   </div>
 
-                  <p style={{ margin: '0.6rem 0 0.4rem', fontSize: '0.85rem', color: '#374151' }}>{r.red_flag_summary}</p>
-                  <div style={{ fontSize: '0.74rem', color: '#6b7280', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                  <p style={{ margin: '0.6rem 0 0.4rem', fontSize: '0.85rem', color: colors.text }}>{r.red_flag_summary}</p>
+                  <div style={{ fontSize: '0.74rem', color: colors.muted, display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
                     <span>Session <code>{r.session_id}</code></span>
                     <span>Rule {r.red_flag_rule_id ? <code>{r.red_flag_rule_id}</code> : '—'}</span>
                     <span>Patient {r.patient_masked}</span>
@@ -102,7 +103,7 @@ export default function TriageEscalationsPage() {
                   </div>
 
                   {r.handoff_note ? (
-                    <div style={{ marginTop: '0.6rem', fontSize: '0.78rem', color: '#374151', background: '#f9fafb', border: '1px solid #f3f4f6', borderRadius: '0.375rem', padding: '0.5rem 0.6rem' }}>
+                    <div style={{ marginTop: '0.6rem', fontSize: '0.78rem', color: colors.text, background: colors.headBg, border: `1px solid ${colors.border}`, borderRadius: '0.375rem', padding: '0.5rem 0.6rem' }}>
                       <strong>Clinician hand-off note{r.acknowledged_by ? ` · ${r.acknowledged_by}` : ''}:</strong> {r.handoff_note}
                     </div>
                   ) : null}

@@ -139,7 +139,7 @@ const alertCols = `id, subject_id, rule_code, reason_code, severity, reward_id,
 
 func scanAlert(row pgx.Row) (*Alert, error) {
 	var (
-		a                                       Alert
+		a                                        Alert
 		subj, reward, attrib, ident, dev, caseID *string
 	)
 	if err := row.Scan(&a.ID, &subj, &a.RuleCode, &a.ReasonCode, &a.Severity,
@@ -360,8 +360,8 @@ const blCols = `id, list_type, entry_type, entry_value, reason, added_by, active
 
 func scanBlocklist(row pgx.Row) (*BlocklistEntry, error) {
 	var (
-		b              BlocklistEntry
-		reason, addBy  *string
+		b             BlocklistEntry
+		reason, addBy *string
 	)
 	if err := row.Scan(&b.ID, &b.ListType, &b.EntryType, &b.EntryValue, &reason, &addBy, &b.Active, &b.CreatedAt); err != nil {
 		return nil, err

@@ -66,13 +66,7 @@ func RegisterReferral(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgx
 	inviteHandler := invite.NewHandler(pool)
 
 	// --- Member routes (/api/finance/referral) ---
-	// `member` is already the /api/finance/referral group (see finance_routes.go
-	// and the sibling RegisterReferralEcon/Trust, which mount on it directly).
-	// Adding another "/referral" here doubled the prefix to
-	// /api/finance/referral/referral/* — which the frontend-web proxy
-	// (/api/v1/referral/<sub> → /api/finance/referral/<sub>) never hits, so
-	// my-rewards/withdraw-eligible/etc. 404'd. Mount on `member` directly.
-	mg := member.Group("")
+	mg := member.Group("/referral")
 	mg.GET("/config", cfgHandler.Get)                      // config-read
 	mg.GET("/my-attribution", attribHandler.MyAttribution) // M-ONB-10 result
 	mg.POST("/claim-code", attribHandler.ClaimCode)        // M-INV-10 late claim

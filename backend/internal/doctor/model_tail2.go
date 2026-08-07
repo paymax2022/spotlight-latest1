@@ -114,7 +114,7 @@ type TaxVatReport struct {
 // table. Money is int64 kobo.
 type DashboardSummary struct {
 	AppointmentCounts   map[string]int64 `json:"appointmentCounts"`
-	UnreadNotifications  int64            `json:"unreadNotifications"`
+	UnreadNotifications int64            `json:"unreadNotifications"`
 	WalletBalanceKobo   int64            `json:"walletBalanceKobo"`
 	Currency            string           `json:"currency"`
 }

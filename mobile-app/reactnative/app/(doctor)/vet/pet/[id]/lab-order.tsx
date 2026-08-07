@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { FlaskConical, ChevronRight } from 'lucide-react-native';
@@ -15,6 +15,7 @@ import { usePetProfile, useCreatePetLabOrder, usePetLabOrders, usePetLabCatalogu
 import { PET_LAB_CATEGORY_LABELS, PET_LAB_PACKAGES } from '@/features/doctor/constants';
 import { formatKobo } from '@/api/doctor.phase3.api';
 import type { PetLabOrder, LabTest, PetLabCategory } from '@/types/doctor.phase3';
+import { alertAsync } from '@/lib/confirm';
 
 const PRIORITIES: PetLabOrder['priority'][] = ['routine', 'urgent'];
 const CATEGORIES: PetLabCategory[] = ['blood', 'stool', 'imaging', 'urine', 'skin'];
@@ -52,14 +53,15 @@ export default function PetLabOrderScreen() {
 
   const handleSubmit = async () => {
     if (!canSubmit) {
-      Alert.alert('Select tests', 'Choose at least one test to order.');
+      alertAsync({ title: 'Select tests', message: 'Choose at least one test to order.' });
       return;
     }
     try {
       const result = await create.mutateAsync({ petId, testIds, clinicalNote, priority });
-      Alert.alert('Lab order created', `${result.ref} has been sent to the lab.`, [{ text: 'Done', onPress: () => router.back() }]);
+      await alertAsync({ title: 'Lab order created', message: `${result.ref} has been sent to the lab.`, buttonLabel: 'Done' });
+      router.back();
     } catch {
-      Alert.alert('Failed', 'Could not create the lab order. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not create the lab order. Please try again.' });
     }
   };
 

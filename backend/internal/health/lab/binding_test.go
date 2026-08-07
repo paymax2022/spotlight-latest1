@@ -43,11 +43,11 @@ func TestVerifyBarcodeScanEmpty(t *testing.T) {
 func TestAuthorizeOrderAccess(t *testing.T) {
 	const patient, lab = "patient1", "lab_owner1"
 	cases := []struct {
-		name      string
-		requester string
-		isAdmin   bool
-		labOwner  string
-		want      bool
+		name             string
+		requester        string
+		isAdmin          bool
+		labOwner         string
+		want             bool
 	}{
 		{"patient reads own", patient, false, lab, true},
 		{"lab owner reads", lab, false, lab, true},

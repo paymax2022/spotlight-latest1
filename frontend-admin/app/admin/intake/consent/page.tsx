@@ -1,9 +1,21 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { ConsentVersion } from '@/types/intakeAdmin';
 import { listConsentVersions, addConsentVersion } from '@/services/intakeAdminService';
-import { BackLink, PageHeader, Notice, card, th, td, btn, btnPrimary, input, ActiveBadge, useIntakePermissions, INTAKE_PERMS } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
+import { useIntakePermissions, INTAKE_PERMS } from '../_ui';
+
+function Notice({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ background: tint(colors.info, 0.12), border: `1px solid ${tint(colors.info, 0.3)}`, color: colors.text, padding: '10px 12px', borderRadius: 8, fontSize: 13, marginTop: 14, display: 'flex', gap: 8 }}>
+      <span aria-hidden>ℹ︎</span>
+      <span>{children}</span>
+    </div>
+  );
+}
 
 export default function ConsentPage() {
   const { can } = useIntakePermissions();
@@ -48,55 +60,59 @@ export default function ConsentPage() {
   };
 
   return (
-    <div>
-      <BackLink />
+    <Page>
+      <div style={{ marginBottom: 14 }}>
+        <Link href="/admin/intake" style={{ fontSize: 13, color: colors.primary }}>← Intake console</Link>
+      </div>
       <PageHeader
         title="A4 · Consent Versions"
         subtitle="Author and version the consent text patients accept before sharing intake with their assigned doctor. Each patient's accepted version is tracked."
-        action={
-          <button style={canManage ? btnPrimary : { ...btn, opacity: 0.5, cursor: 'not-allowed' }} disabled={!canManage} title={!canManage ? 'Requires health.admin.intake' : 'Author a new version'} onClick={() => setShowForm((s) => !s)}>
+        actions={
+          <Button variant="primary" disabled={!canManage} title={!canManage ? 'Requires health.admin.intake' : 'Author a new version'} onClick={() => setShowForm((s) => !s)}>
             {showForm ? 'Close' : '+ New version'}
-          </button>
+          </Button>
         }
       />
-      <Notice kind="info">Publishing a new version does not retroactively re-consent patients — it applies to consent accepted going forward.</Notice>
+      <Notice>Publishing a new version does not retroactively re-consent patients — it applies to consent accepted going forward.</Notice>
 
-      {message ? <p style={{ color: 'lightgreen' }}>{message}</p> : null}
-      {error ? <p style={{ color: 'salmon' }}>{error}</p> : null}
+      {message ? <p style={{ color: colors.success }}>{message}</p> : null}
+      {error ? <p style={{ color: colors.danger }}>{error}</p> : null}
 
       {showForm ? (
-        <div style={{ ...card, marginTop: 14, display: 'grid', gap: 10, gridTemplateColumns: 'repeat(3, minmax(0,1fr))' }}>
-          <label style={{ fontSize: 12 }}>consent_key<input style={{ ...input, width: '100%' }} value={form.consent_key} onChange={(e) => setForm((f) => ({ ...f, consent_key: e.target.value }))} /></label>
-          <label style={{ fontSize: 12 }}>version<input type="number" min={1} style={{ ...input, width: '100%' }} value={form.version} onChange={(e) => setForm((f) => ({ ...f, version: Number(e.target.value) }))} /></label>
-          <label style={{ fontSize: 12 }}>locale<input style={{ ...input, width: '100%' }} value={form.locale} onChange={(e) => setForm((f) => ({ ...f, locale: e.target.value }))} /></label>
-          <label style={{ fontSize: 12, gridColumn: 'span 3' }}>body<textarea style={{ ...input, width: '100%', height: 120 }} value={form.body} onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))} /></label>
+        <Card style={{ marginTop: 14, display: 'grid', gap: 10, gridTemplateColumns: 'repeat(3, minmax(0,1fr))' }}>
+          <label style={{ fontSize: 12 }}>consent_key<Input style={{ width: '100%' }} value={form.consent_key} onChange={(e) => setForm((f) => ({ ...f, consent_key: e.target.value }))} /></label>
+          <label style={{ fontSize: 12 }}>version<Input type="number" min={1} style={{ width: '100%' }} value={form.version} onChange={(e) => setForm((f) => ({ ...f, version: Number(e.target.value) }))} /></label>
+          <label style={{ fontSize: 12 }}>locale<Input style={{ width: '100%' }} value={form.locale} onChange={(e) => setForm((f) => ({ ...f, locale: e.target.value }))} /></label>
+          <label style={{ fontSize: 12, gridColumn: 'span 3' }}>body<textarea className="vx-input" style={{ width: '100%', height: 120 }} value={form.body} onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))} /></label>
           <div style={{ gridColumn: 'span 3' }}>
-            <button style={btnPrimary} disabled={busy || !canManage} onClick={() => void onAuthor()}>{busy ? 'Saving…' : 'Author version'}</button>
-            <span style={{ fontSize: 11, opacity: 0.5, marginLeft: 8 }}>New version is published active; prior versions are retained.</span>
+            <Button variant="primary" disabled={busy || !canManage} onClick={() => void onAuthor()}>{busy ? 'Saving…' : 'Author version'}</Button>
+            <span style={{ fontSize: 11, color: colors.muted, marginLeft: 8 }}>New version is published active; prior versions are retained.</span>
           </div>
-        </div>
+        </Card>
       ) : null}
 
-      {loading ? <p style={{ opacity: 0.6, marginTop: 16 }}>Loading…</p> : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 16 }}>
-          <thead>
-            <tr style={{ borderBottom: '1px solid #2a2a2a', textAlign: 'left' }}>
-              {['Key', 'Version', 'Locale', 'Body', 'Active'].map((h) => <th key={h} style={th}>{h}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {versions.map((v) => (
-              <tr key={`${v.consent_key}-${v.version}-${v.locale}`} style={{ borderBottom: '1px solid #1c1c1c' }}>
-                <td style={{ ...td, fontFamily: 'monospace', fontSize: 11 }}>{v.consent_key}</td>
-                <td style={td}>v{v.version}</td>
-                <td style={td}>{v.locale}</td>
-                <td style={{ ...td, maxWidth: 520, opacity: 0.8, fontSize: 12 }}>{v.body}</td>
-                <td style={td}><ActiveBadge active={v.active} /></td>
+      {loading ? <p style={{ color: colors.muted, marginTop: 16 }}>Loading…</p> : (
+        <Card style={{ padding: 0, overflow: 'hidden', marginTop: 16 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                {['Key', 'Version', 'Locale', 'Body', 'Active'].map((h) => <th key={h} style={thCell}>{h}</th>)}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {versions.map((v) => (
+                <tr key={`${v.consent_key}-${v.version}-${v.locale}`}>
+                  <td style={{ ...tdCell, fontFamily: 'monospace', fontSize: 11 }}>{v.consent_key}</td>
+                  <td style={tdCell}>v{v.version}</td>
+                  <td style={tdCell}>{v.locale}</td>
+                  <td style={{ ...tdCell, maxWidth: 520, color: colors.muted, fontSize: 12 }}>{v.body}</td>
+                  <td style={tdCell}><Badge text={v.active ? 'active' : 'inactive'} color={v.active ? colors.success : colors.secondary} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
       )}
-    </div>
+    </Page>
   );
 }

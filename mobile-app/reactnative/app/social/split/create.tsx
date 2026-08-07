@@ -13,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import SegmentedControl from '@/components/SegmentedControl';
 import { useCreateSplit } from '@/features/social/hooks';
 import { SocialColors, formatNaira, normalizeHandle, CASHTAG_REGEX } from '@/features/social/constants/social.constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 type Mode = 'equal' | 'custom';
 
@@ -53,7 +54,7 @@ export default function CreateSplit() {
       <ScreenHeader title="Split a bill" />
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <TextInputField label="What's it for?" placeholder="e.g. Dinner @ Nok" value={title} onChangeText={setTitle} />
-        <TextInputField label="Total amount" placeholder="0" keyboardType="numeric" value={total} onChangeText={setTotal} />
+        <TextInputField label="Total amount" placeholder="0" keyboardType="decimal-pad" maxLength={13} value={total} onChangeText={(t) => setTotal(sanitizeMoneyInput(t))} />
 
         <Text style={styles.label}>How to split</Text>
         <SegmentedControl<Mode> options={[{ value: 'equal', label: 'Equally' }, { value: 'custom', label: 'Custom' }]} value={mode} onChange={setMode} />

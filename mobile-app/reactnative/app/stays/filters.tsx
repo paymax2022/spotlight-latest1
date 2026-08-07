@@ -11,6 +11,7 @@ import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { useStaysStore } from '@/features/stays/store';
 import { AMENITIES, STAR_OPTIONS, PROPERTY_TYPES, formatNaira } from '@/features/stays/constants/stays.constants';
 import type { PropertyType, StaysFilter } from '@/features/stays/types';
@@ -68,18 +69,22 @@ export default function FiltersScreen() {
             <View style={{ flex: 1 }}>
               <TextInputField
                 label="Min"
-                keyboardType="number-pad"
+                keyboardType="decimal-pad"
+                inputMode="decimal"
+                maxLength={13}
                 value={local.minPriceKobo != null ? String(local.minPriceKobo / 100) : ''}
-                onChangeText={(t) => patch({ minPriceKobo: t ? Number(t) * 100 : undefined })}
+                onChangeText={(t) => { const s = sanitizeMoneyInput(t); patch({ minPriceKobo: s ? Number(s) * 100 : undefined }); }}
                 placeholder="0"
               />
             </View>
             <View style={{ flex: 1 }}>
               <TextInputField
                 label="Max"
-                keyboardType="number-pad"
+                keyboardType="decimal-pad"
+                inputMode="decimal"
+                maxLength={13}
                 value={local.maxPriceKobo != null ? String(local.maxPriceKobo / 100) : ''}
-                onChangeText={(t) => patch({ maxPriceKobo: t ? Number(t) * 100 : undefined })}
+                onChangeText={(t) => { const s = sanitizeMoneyInput(t); patch({ maxPriceKobo: s ? Number(s) * 100 : undefined }); }}
                 placeholder="Any"
               />
             </View>

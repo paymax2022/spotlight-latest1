@@ -12,6 +12,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import SegmentedControl from '@/components/SegmentedControl';
 import { useSubmitSuitability } from '@/features/fractionalre/hooks';
+import { sanitizeMoneyInput } from '@/utils/money';
 import type { SuitabilityInput } from '@/features/fractionalre/types';
 
 export default function SuitabilityScreen() {
@@ -48,8 +49,8 @@ export default function SuitabilityScreen() {
       <ScreenHeader title="Suitability" subtitle="Helps us match you to suitable offerings" />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <Text style={styles.section}>Financial declaration</Text>
-        <TextInputField label="Annual income (₦)" value={income} onChangeText={(t) => setIncome(t.replace(/[^0-9.]/g, ''))} keyboardType="numeric" placeholder="e.g. 5,000,000" />
-        <TextInputField label="Net worth (₦)" value={netWorth} onChangeText={(t) => setNetWorth(t.replace(/[^0-9.]/g, ''))} keyboardType="numeric" placeholder="e.g. 20,000,000" />
+        <TextInputField label="Annual income (₦)" value={income} onChangeText={(t) => setIncome(sanitizeMoneyInput(t))} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} placeholder="e.g. 5,000,000" />
+        <TextInputField label="Net worth (₦)" value={netWorth} onChangeText={(t) => setNetWorth(sanitizeMoneyInput(t))} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} placeholder="e.g. 20,000,000" />
 
         <Text style={styles.section}>Investment horizon</Text>
         <SegmentedControl

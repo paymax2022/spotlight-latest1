@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Platform, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { CalendarDays, MessageSquare, Wallet, Bell, Mail, MessageCircle, Eye, Zap } from 'lucide-react-native';
@@ -12,6 +12,7 @@ import { TeleHeader, DoctorAvatar, RatingStars } from '@/features/telemedicine/c
 import { SectionCard, ToggleRow, InfoRow, StateView } from '@/features/doctor/components';
 import { useDoctorProfile, useSettings, useUpdateSettings, useLogout } from '@/features/doctor/hooks';
 import type { DoctorSettings } from '@/types/doctor';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 // ── Section AC — Settings hub (AC.1-16) ───────────────────────────────────────
 // EXTENDED into the full settings hub. Quick notification/channel/availability
@@ -29,22 +30,20 @@ export default function DoctorSettingsScreen() {
 
   const set = (patch: Partial<DoctorSettings>) => update.mutate({ settings: patch });
 
-  const handleLogout = () => {
-    Alert.alert('Log out?', 'You will need to sign in again to access your account.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Log out',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await logout.mutateAsync(undefined);
-            router.replace('/(doctor)/account-status/session-expired');
-          } catch {
-            Alert.alert('Failed', 'Could not log out. Please try again.');
-          }
-        },
-      },
-    ]);
+  const handleLogout = async () => {
+    const ok = await confirmAsync({
+      title: 'Log out?',
+      message: 'You will need to sign in again to access your account.',
+      confirmLabel: 'Log out',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await logout.mutateAsync(undefined);
+      router.replace('/(doctor)/account-status/session-expired');
+    } catch {
+      await alertAsync({ title: 'Failed', message: 'Could not log out. Please try again.' });
+    }
   };
 
   if ((isLoading || profileLoading) && !settings) {

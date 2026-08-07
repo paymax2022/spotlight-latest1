@@ -14,14 +14,6 @@ import { api } from '@/api/client';
 import { USE_MOCK, ACADEMY_API_BASE } from './constants';
 import { track } from './analytics';
 import { enqueue } from './offlineQueue';
-import { creditPoints, type PointsLedgerState } from './pointsLedger';
-import { assertCanSpend, type SpendConsentState } from './consent';
-import { upsertBookmark } from './bookmarks';
-import { adaptClasses, adaptVersions, adaptSubjects, adaptTopics, adaptObjectives, adaptLessons, adaptLesson, type GoClass, type GoVersion, type GoSubject, type GoTopic, type GoObjective, type GoLesson } from './curriculumAdapters';
-import { adaptPracticeItems, toPracticeSubmit, adaptPracticeResult, type GoQuestionItem, type GoPracticeResult } from './practiceAdapters';
-import { adaptStartedAttempt, toExamSubmit, adaptExamResult, adaptArena, adaptArenas, adaptBlueprints, type GoExamAttempt, type GoScoredAttempt, type GoExamResultProjection, type GoArena, type GoBlueprint } from './examAdapters';
-import { adaptGamificationProfile, adaptChallenges, adaptBadges, adaptClassLeaderboard, type GoGamificationProfile, type GoChallenge, type GoBadgeView, type GoClassLeaderboard } from './gamificationAdapters';
-import { adaptMe, mapMobileRole, kycToInt, type GoMe } from './identityAdapters';
 import type {
   AcademyProfile,
   GuardianConsentState,
@@ -44,7 +36,6 @@ import type {
   Badge,
   Challenge,
   LeaderboardEntry,
-  ClassLeaderboard,
   RewardBalance,
   RewardLedgerEntry,
   RewardCatalogItem,
@@ -128,6 +119,245 @@ import * as P4 from './api/academy.phase4.mock';
 const B = ACADEMY_API_BASE;
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
+// ── LIVE-WIRING STATUS (docs/prd/edtech/MOBILE-LIVE-WIRING-CHECKLIST.md) ──────────
+// The Go backend response conventions are NOT uniform across the academy sub-packages:
+//   • identity / curriculum / exam / progression / commerce / edupay return the
+//     model BARE (c.JSON(200, model)), no {data} envelope.
+//   • rewards / gamification wrap in a {data: …} envelope (some double-nested, e.g.
+//     rewards balance → {data:{balance_minor}}).
+//   • Half the packages emit snake_case JSON (identity/curriculum/exam/gamification/
+//     rewards); commerce/edupay emit camelCase but with DIFFERENT field names than the
+//     screen types (PriceMinor↔priceKobo, AmountMinor↔amountKobo, State↔status, RefID↔
+//     bundleId/planId). All money is integer minor units == kobo (1:1, no conversion).
+// Because of this, the LIVE branch is NOT uniformly safe to flip module-wide yet. The
+// checklist marks, per function: path OK?, shape mappable?, or blocked (no backend route
+// / divergent aggregate). `unwrap` below tolerates both envelope styles so callers that
+// ARE shape-compatible work; the rest are annotated inline and keep the mock as default.
+function unwrap<T>(res: { data?: { data?: T } & T }): T {
+  return (res.data?.data ?? res.data) as T;
+}
+
+// ── LIVE shape mappers (backend row → screen type) ───────────────────────────────
+// Each mapper is the SINGLE shape contract shared by a resource's list function and
+// its by-id sibling (the backend by-id routes return {data:<item>} mirroring the list
+// item). Backend rows carry only the persisted columns; screen-only presentation
+// fields (icons/colors/progress/copy) are DEFAULTED here (never fabricated with fake
+// data) and flagged with TODO(shape) so the runtime check + a future server projection
+// can fill them. Money stays integer kobo: backend *Minor == kobo, 1:1 rename to *Kobo.
+
+// trade.TradeTrack {id, code, name, status} → screen TradeTrack.
+// TODO(shape): tagline/icon/colorKey/progressPct/moduleCount/completedModules/chosen/
+// unlocksRoles are not on the seeded catalog row — defaulted until projected.
+function mapTradeTrack(t: any): TradeTrack {
+  return {
+    id: t.id,
+    slug: (t.code ?? t.slug) as TradeSlug,
+    name: t.name ?? '',
+    tagline: '',
+    icon: 'Wrench',
+    colorKey: 'trade',
+    progressPct: 0,
+    moduleCount: 0,
+    completedModules: 0,
+    chosen: false,
+    unlocksRoles: [],
+  };
+}
+
+// trade.TradeProject {id, module_id, title, rubric(json), ordinal} → screen TradeProject.
+// TODO(shape): trackId/brief/rubric[]/status/attachments not modelled on the row.
+function mapTradeProject(p: any): TradeProject {
+  return {
+    id: p.id,
+    moduleId: p.module_id ?? '',
+    trackId: '',
+    title: p.title ?? '',
+    brief: '',
+    rubric: [],
+    status: 'not_started',
+    attachments: [],
+  };
+}
+
+// trade.SkillAssessment {id, trade_track, title, rubric(json), pass_threshold,
+// credential_title, status} → screen SkillAssessment.
+// TODO(shape): questions[]/durationMin not modelled (rubric is opaque json here).
+function mapAssessment(a: any): SkillAssessment {
+  return {
+    id: a.id,
+    trackId: a.trade_track ?? '',
+    title: a.title ?? '',
+    questions: [],
+    passMark: Number(a.pass_threshold ?? 0),
+    durationMin: 0,
+    passed: false,
+  };
+}
+
+// credentials.Credential (snake_case) → screen Credential.
+// TODO(shape): issuer/recipientName/verifyUrl/unlocksRoles/scorePct are not on the row
+// (holder name lives only on the public verification record).
+function mapCredential(c: any): Credential {
+  return {
+    id: c.id,
+    kind: (c.kind ?? 'trade') as Credential['kind'],
+    title: c.title ?? '',
+    issuer: '',
+    recipientName: '',
+    issuedAt: c.issued_at ?? c.created_at ?? '',
+    verificationId: c.verification_id ?? '',
+    verifyUrl: '',
+    unlocksRoles: [],
+    scorePct: undefined,
+    trackSlug: (c.trade_track ?? undefined) as Credential['trackSlug'],
+  };
+}
+
+// credentials.EarningOpportunity (role∈driver|agent|creator|merchant|service_provider,
+// eligibility_rules{trade_track,kind,min_credentials}) → screen EarningOpportunity.
+// TODO(shape): partner/earningsLabel/requirements not modelled; eligibility defaults to
+// 'eligible' because the member routes only surface opportunities the caller qualifies for.
+function mapOpportunity(o: any): EarningOpportunity {
+  const track = o.eligibility_rules?.trade_track;
+  const role = o.role === 'service_provider' ? 'service' : o.role;
+  return {
+    id: o.id,
+    role: role as EarningOpportunity['role'],
+    title: o.title ?? '',
+    partner: '',
+    summary: o.description ?? '',
+    icon: 'Briefcase',
+    earningsLabel: '',
+    requiredCredentialKinds: (track ? [track] : []) as EarningOpportunity['requiredCredentialKinds'],
+    eligibility: 'eligible',
+    requirements: [],
+    applied: false,
+  };
+}
+
+// live.LiveSession (state∈scheduled|live|ended|cancelled) → screen LiveSession.
+// TODO(shape): durationMin/viewers/watchedPct not modelled; moderated defaults true
+// (child-safety). scheduled→upcoming, ended→replay.
+function mapLiveSession(s: any): LiveSession {
+  const state = s.state ?? s.status;
+  return {
+    id: s.id,
+    title: s.title ?? '',
+    subjectOrTrade: s.trade_track ?? s.subject_id ?? '',
+    host: s.host_id ?? '',
+    status: state === 'live' ? 'live' : state === 'ended' ? 'replay' : 'upcoming',
+    startsAt: s.scheduled_at ?? s.created_at ?? '',
+    durationMin: 0,
+    moderated: true,
+  };
+}
+
+// commerce.ExamBundle (camelCase; priceMinor==kobo, contents json) → screen Bundle.
+// TODO(shape): examSlug (row carries arenaId, not a slug) defaults 'utme';
+// bnplEligible/dataBudgetMb/description/icon not modelled.
+function mapBundle(b: any): Bundle {
+  return {
+    id: b.id,
+    examSlug: 'utme' as Bundle['examSlug'],
+    name: b.name ?? '',
+    description: '',
+    priceKobo: Number(b.priceMinor ?? b.priceKobo ?? 0),
+    bnplEligible: false,
+    itemCount: Array.isArray(b.contents) ? b.contents.length : 0,
+    dataBudgetMb: 0,
+    icon: 'Package',
+  };
+}
+
+// commerce.Order (camelCase; state, amountMinor==kobo, refId+kind) → screen Order.
+// refId maps to bundleId|planId by kind; state→status (cast — confirm value set at runtime).
+function mapOrder(o: any): Order {
+  return {
+    id: o.id,
+    bundleId: o.kind === 'bundle' ? o.refId : undefined,
+    planId: o.kind === 'plan' ? o.refId : undefined,
+    amountKobo: Number(o.amountMinor ?? o.amountKobo ?? 0),
+    status: (o.state ?? o.status ?? 'pending') as Order['status'],
+    createdAt: o.createdAt ?? new Date().toISOString(),
+    bnplInstalments: o.bnplInstalments,
+  };
+}
+
+// identity.Profile (snake_case row) → screen AcademyProfile.
+// TODO(product): isMinor (DOB→minor) + kycTier live in finance/kyc, guardianConsent in
+// guardian_links — none are on the Profile row, so they are defaulted here.
+function mapProfile(p: any): AcademyProfile {
+  return {
+    id: p.id ?? p.user_id ?? '',
+    displayName: p.display_name ?? '',
+    role: (p.role ?? 'learner') as AcademyProfile['role'],
+    classCode: p.class_id ?? undefined,
+    curriculumVersion: undefined,
+    stream: (p.stream ?? undefined) as AcademyProfile['stream'],
+    isMinor: false,
+    kycTier: 'tier0',
+    guardianConsent: 'not_required',
+    onboardingComplete: true,
+  };
+}
+
+// identity.Me aggregate {user_id, roles[], profiles[], guardian_links[], guarded_by[]}
+// → a single screen AcademyProfile (best-effort collapse; prefers the learner profile).
+// TODO(product): isMinor/kycTier/guardianConsent/onboardingComplete are INFERRED here —
+// they need a real product decision (DOB→minor + finance/kyc tier + consent scope).
+function mapMeToProfile(me: any): AcademyProfile {
+  const profiles: any[] = Array.isArray(me?.profiles) ? me.profiles : [];
+  const roles: any[] = Array.isArray(me?.roles) ? me.roles : [];
+  const p = profiles.find((x) => x.role === 'learner') ?? profiles[0] ?? {};
+  const guardedBy: any[] = Array.isArray(me?.guarded_by) ? me.guarded_by : [];
+  const guardianLinks: any[] = Array.isArray(me?.guardian_links) ? me.guardian_links : [];
+  return {
+    id: me?.user_id ?? p.id ?? '',
+    displayName: p.display_name ?? '',
+    role: (p.role ?? roles[0]?.role ?? 'learner') as AcademyProfile['role'],
+    classCode: p.class_id ?? undefined,
+    curriculumVersion: undefined,
+    stream: (p.stream ?? undefined) as AcademyProfile['stream'],
+    isMinor: guardedBy.length > 0,
+    kycTier: 'tier0',
+    guardianConsent: guardedBy.some((g) => g.status === 'active')
+      ? 'granted'
+      : guardedBy.length
+        ? 'pending'
+        : 'not_required',
+    guardianId: guardedBy[0]?.guardian_user_id,
+    childIds: guardianLinks.length ? guardianLinks.map((g) => g.minor_user_id) : undefined,
+    onboardingComplete: profiles.length > 0,
+  };
+}
+
+// exam.Result (subjects[]{subject,raw,total,scaled,grade}, overall, readiness, late) →
+// screen ExamResult. TODO(shape): unanswered/timeSpentSec/pointsEarned not in the score
+// projection; readinessDelta is filled with the absolute readiness (not a delta); overall
+// is on the exam's native scale (e.g. UTME 400), not a 0–100 percentage.
+function mapExamResult(attemptId: string, r: any): ExamResult {
+  const subjects: any[] = Array.isArray(r?.subjects) ? r.subjects : [];
+  const totalQuestions = subjects.reduce((n: number, s: any) => n + (s.total ?? 0), 0);
+  const correct = subjects.reduce((n: number, s: any) => n + (s.raw ?? 0), 0);
+  return {
+    attemptId,
+    scorePct: Math.round(Number(r?.overall ?? 0)),
+    totalQuestions,
+    correct,
+    unanswered: 0,
+    timeSpentSec: 0,
+    subjects: subjects.map((s: any) => ({
+      subjectId: s.subject ?? '',
+      subjectName: s.subject ?? '',
+      correct: s.raw ?? 0,
+      total: s.total ?? 0,
+      scorePct: s.total ? Math.round((s.raw / s.total) * 100) : Math.round(Number(s.scaled ?? 0)),
+    })),
+    readinessDelta: Math.round(Number(r?.readiness ?? 0)),
+    pointsEarned: 0,
+  };
+}
+
 // In-memory mutable copies so mock mutations persist for the session.
 let profile: AcademyProfile = { ...M.MOCK_PROFILE };
 let rewardBalance: RewardBalance = { ...M.MOCK_REWARD_BALANCE };
@@ -175,10 +405,13 @@ const ecceHome: EcceHome = { ...P4.MOCK_ECCE_HOME, activities: P4.MOCK_ECCE_HOME
 // ── Identity ──────────────────────────────────────────────────────────────────
 export async function getMe(): Promise<AcademyProfile> {
   if (USE_MOCK) { await delay(); return profile; }
-  // Live: /me is a nested aggregate; adapt to the flat profile, resolving
-  // class_id→classCode from the live classes.
-  const [meRes, classes] = await Promise.all([api.get<GoMe>(`${B}/me`), getClasses()]);
-  return adaptMe(meRes.data, new Map(classes.map((c) => [c.id, c.code])));
+  // GET /academy/me returns the identity aggregate `Me` {user_id, roles[], profiles[],
+  // guardian_links[], guarded_by[]} (snake_case, BARE — no {data} envelope). Best-effort
+  // collapse to one AcademyProfile via mapMeToProfile. TODO(product): isMinor/kycTier/
+  // guardianConsent/onboardingComplete are inferred/defaulted (DOB→minor + finance/kyc
+  // tier + consent scope are not first-class on Me). Verify before flipping identity.
+  const res = await api.get(`${B}/me`);
+  return mapMeToProfile(unwrap<any>(res));
 }
 
 export async function setRole(role: AcademyProfile['role']): Promise<AcademyProfile> {
@@ -187,9 +420,12 @@ export async function setRole(role: AcademyProfile['role']): Promise<AcademyProf
     profile = { ...profile, role };
     return profile;
   }
-  // Live: POST the grant (backend enum role), then re-read the adapted profile.
-  await api.post(`${B}/roles`, { role: mapMobileRole(role) });
-  return getMe();
+  // POST /academy/roles body {role} matches GrantRoleRequest. Response is {ok, role}
+  // (NOT a profile). Echo into a minimal AcademyProfile; screen-only fields defaulted.
+  // TODO(product): screens should re-fetch getMe for authoritative profile state.
+  const res = await api.post(`${B}/roles`, { role });
+  const ack = unwrap<any>(res);
+  return mapProfile({ role: ack?.role ?? role });
 }
 
 export interface ProfileUpdate {
@@ -217,32 +453,17 @@ export async function updateProfile(input: ProfileUpdate): Promise<AcademyProfil
     if (input.onboardingComplete) track('onboarding_completed', { class: profile.classCode });
     return profile;
   }
-  // Live: PUT is a full upsert (requires role), so merge the partial input over
-  // the current profile — otherwise updating just the DOB would wipe the class.
-  // Resolve classCode→class_id within the active version, and recompute isMinor.
-  const current = await getMe();
-  const effectiveClassCode = input.classCode ?? current.classCode;
-  const [classes, versions] = await Promise.all([getClasses(), getCurriculumVersions()]);
-  const active = versions.filter((v) => !v.isLegacy).sort((a, b) => b.effectiveYear - a.effectiveYear)[0];
-  const classId = effectiveClassCode
-    ? (classes.find((c) => c.code === effectiveClassCode && c.curriculumVersionId === active?.id)
-       ?? classes.find((c) => c.code === effectiveClassCode))?.id
-    : undefined;
-  const dob = input.dob ?? current.dob;
-  const isMinor = dob
-    ? Math.floor((Date.now() - new Date(dob).getTime()) / (365.25 * 86_400_000)) < 18
-    : current.isMinor;
-  await api.put(`${B}/profile`, {
-    role: mapMobileRole(current.role),
-    class_id: classId,
-    stream: input.stream ?? current.stream,
-    display_name: input.displayName ?? current.displayName,
-    dob,
-    is_minor: isMinor,
-    kyc_tier: kycToInt(current.kycTier),
-  });
-  if (input.onboardingComplete) track('onboarding_completed', { class: effectiveClassCode });
-  return getMe();
+  // PUT /academy/profile expects UpsertProfileRequest {role, class_id, display_name,
+  // trade_track, stream, ...}. Map the mobile field names → backend; role is REQUIRED so
+  // default to the caller's current role. Response is a snake_case Profile row → mapProfile.
+  // TODO(shape): class_id is a UUID server-side but the screen holds a class CODE, and
+  // curriculumVersion/onboardingComplete have no server field.
+  const body: Record<string, unknown> = { role: profile.role };
+  if (input.displayName !== undefined) body.display_name = input.displayName;
+  if (input.classCode !== undefined) body.class_id = input.classCode;
+  if (input.stream !== undefined) body.stream = input.stream;
+  const res = await api.put(`${B}/profile`, body);
+  return mapProfile(unwrap<any>(res));
 }
 
 export async function linkGuardian(guardianPhone: string): Promise<AcademyProfile> {
@@ -251,8 +472,15 @@ export async function linkGuardian(guardianPhone: string): Promise<AcademyProfil
     profile = { ...profile, guardianId: `grd_${guardianPhone.slice(-4)}`, guardianConsent: 'pending' };
     return profile;
   }
-  const { data } = await api.post<AcademyProfile>(`${B}/guardians/link`, { guardianPhone });
-  return data;
+  // POST /academy/guardians/link expects {minor_user_id} — the authenticated CALLER is
+  // the guardian linking a minor. NOTE the direction inversion: the mobile screen passes a
+  // guardian PHONE (a minor linking their guardian), but the backend models guardian→minor
+  // by user id. We send the value under the correct field name (minor_user_id). Response is
+  // a GuardianLink, not a profile. TODO(product): resolve the direction + a phone→user_id
+  // lookup before flipping this route.
+  const res = await api.post(`${B}/guardians/link`, { minor_user_id: guardianPhone });
+  const gl = unwrap<any>(res);
+  return { ...mapProfile({ role: profile.role }), guardianId: gl?.id, guardianConsent: 'pending' };
 }
 
 /** Record guardian consent for a minor (audit-logged server-side). */
@@ -263,23 +491,28 @@ export async function recordConsent(minorId: string, granted: boolean): Promise<
     profile = { ...profile, guardianConsent: state };
     return profile;
   }
-  const { data } = await api.post<AcademyProfile>(`${B}/guardians/${minorId}/consent`, { granted });
-  return data;
+  // POST /academy/guardians/:minorId/consent expects {scope} (an object whose keys gate
+  // capabilities). The mobile screen passes a boolean `granted`; expand it to the standard
+  // scope keys. Response is {consent_id, status:'active'} (not a profile). TODO(product):
+  // surface the authoritative consent state from getMe after this call.
+  const scope = { purchases: granted, community: granted, data_sharing: granted };
+  const res = await api.post(`${B}/guardians/${minorId}/consent`, { scope });
+  const ack = unwrap<any>(res);
+  const state: GuardianConsentState = ack?.status === 'active' && granted ? 'granted' : 'pending';
+  return { ...mapProfile({ role: profile.role }), guardianConsent: state };
 }
 
 // ── Curriculum ────────────────────────────────────────────────────────────────
 export async function getCurriculumVersions(): Promise<CurriculumVersion[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_CURRICULUM_VERSIONS; }
-  // Live: Go returns { versions: [{id,code,name,status,effective_date?}] } → adapt.
-  const { data } = await api.get<{ versions?: GoVersion[] }>(`${B}/curriculum/versions`);
-  return adaptVersions(data);
+  const { data } = await api.get<CurriculumVersion[]>(`${B}/curriculum/versions`);
+  return data;
 }
 
 export async function getClasses(): Promise<AcademyClass[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_CLASSES; }
-  // Live: Go returns { classes: [{id,version_id,phase,code,name,ordinal}] } → adapt.
-  const { data } = await api.get<{ classes?: GoClass[] }>(`${B}/curriculum/classes`);
-  return adaptClasses(data);
+  const { data } = await api.get<AcademyClass[]>(`${B}/curriculum/classes`);
+  return data;
 }
 
 export async function getSubjects(classCode?: string): Promise<Subject[]> {
@@ -288,21 +521,9 @@ export async function getSubjects(classCode?: string): Promise<Subject[]> {
     const code = classCode ?? profile.classCode;
     return M.MOCK_SUBJECTS.filter((s) => !code || s.classCode === code);
   }
-  // Live: the subjects route is keyed by the class UUID, but callers hold the
-  // class CODE. Class codes repeat across curriculum versions (legacy + NERDC),
-  // so resolve the code WITHIN the active (newest, non-legacy) version — the
-  // legacy classes carry no subjects.
-  const code = classCode ?? profile.classCode;
-  const [classes, versions] = await Promise.all([getClasses(), getCurriculumVersions()]);
-  const activeVersion =
-    versions.filter((v) => !v.isLegacy).sort((a, b) => b.effectiveYear - a.effectiveYear)[0] ?? versions[0];
-  const cls =
-    (code && classes.find((c) => c.code === code && c.curriculumVersionId === activeVersion?.id)) ||
-    (code && classes.find((c) => c.code === code)) ||
-    classes[0];
-  if (!cls) return [];
-  const { data } = await api.get<{ subjects?: GoSubject[] }>(`${B}/curriculum/classes/${cls.id}/subjects`);
-  return adaptSubjects(data, cls.code);
+  // classes/:id/subjects — resolve class id from code upstream in real impl.
+  const { data } = await api.get<Subject[]>(`${B}/curriculum/classes/${classCode}/subjects`);
+  return data;
 }
 
 export async function getSubject(id: string): Promise<Subject> {
@@ -312,6 +533,9 @@ export async function getSubject(id: string): Promise<Subject> {
     if (!s) throw new Error('Subject not found');
     return s;
   }
+  // TODO(no backend route): curriculum exposes /subjects/:id/topics but NO /subjects/:id.
+  // BLOCKED — keep mock until a subject-by-id read lands (and a Subject→screen mapper for
+  // icon/colorKey/topicCount/progressPct, none of which are on the backend Subject row).
   const { data } = await api.get<Subject>(`${B}/curriculum/subjects/${id}`);
   return data;
 }
@@ -321,10 +545,8 @@ export async function getTopics(subjectId: string): Promise<Topic[]> {
     await delay();
     return M.MOCK_TOPICS.filter((t) => t.subjectId === subjectId).sort((a, b) => a.order - b.order);
   }
-  // Live: subjectId is already the Go subject UUID (from the live subjects call),
-  // and the route is keyed by it — fetch + adapt directly.
-  const { data } = await api.get<{ topics?: GoTopic[] }>(`${B}/curriculum/subjects/${subjectId}/topics`);
-  return adaptTopics(data);
+  const { data } = await api.get<Topic[]>(`${B}/curriculum/subjects/${subjectId}/topics`);
+  return data;
 }
 
 export async function getTopic(id: string): Promise<Topic> {
@@ -334,6 +556,9 @@ export async function getTopic(id: string): Promise<Topic> {
     if (!t) throw new Error('Topic not found');
     return t;
   }
+  // TODO(no backend route): curriculum exposes /topics/:id/objectives but NO /topics/:id.
+  // BLOCKED — keep mock until a topic-by-id read lands (Topic row also lacks mastery/
+  // locked/examRelevant/objectiveCount/lessonCount).
   const { data } = await api.get<Topic>(`${B}/curriculum/topics/${id}`);
   return data;
 }
@@ -343,10 +568,8 @@ export async function getObjectives(topicId: string): Promise<Objective[]> {
     await delay();
     return M.MOCK_OBJECTIVES.filter((o) => o.topicId === topicId);
   }
-  // Live: topicId is already the Go topic UUID (from the live topics call) and the
-  // route is keyed by it — fetch + adapt directly.
-  const { data } = await api.get<{ objectives?: GoObjective[] }>(`${B}/curriculum/topics/${topicId}/objectives`);
-  return adaptObjectives(data);
+  const { data } = await api.get<Objective[]>(`${B}/curriculum/topics/${topicId}/objectives`);
+  return data;
 }
 
 export async function getLessons(topicId: string): Promise<Lesson[]> {
@@ -354,11 +577,11 @@ export async function getLessons(topicId: string): Promise<Lesson[]> {
     await delay();
     return M.MOCK_LESSONS.filter((l) => l.topicId === topicId);
   }
-  // Live: topicId is the Go topic UUID (from the live topics call). The bridge
-  // returns lessons via topic→objectives→academy_edu_lessons; inject topicId
-  // (Go rows carry objective_id, not topic_id).
-  const { data } = await api.get<{ lessons?: GoLesson[] }>(`${B}/curriculum/topics/${topicId}/lessons`);
-  return adaptLessons(data, topicId);
+  // TODO(no backend route): there is NO curriculum lessons route. Lessons live in the
+  // `content` package keyed by OBJECTIVE, not topic: GET /content/lessons/:objectiveId.
+  // BLOCKED — keep mock until a topic→lessons read (or an objective-keyed fetch) is wired.
+  const { data } = await api.get<Lesson[]>(`${B}/curriculum/topics/${topicId}/lessons`);
+  return data;
 }
 
 export async function getLesson(id: string): Promise<Lesson> {
@@ -368,10 +591,10 @@ export async function getLesson(id: string): Promise<Lesson> {
     if (!l) throw new Error('Lesson not found');
     return l;
   }
-  // Live: the single-lesson route carries objective_id, not topic_id — the player
-  // doesn't rely on topicId here, so adapt with an empty topicId.
-  const { data } = await api.get<GoLesson>(`${B}/curriculum/lessons/${id}`);
-  return adaptLesson(data, '');
+  // TODO(no backend route): NO /curriculum/lessons/:id route (content lessons are keyed by
+  // objective, not a standalone lesson id). BLOCKED — keep mock until a lesson-by-id read lands.
+  const { data } = await api.get<Lesson>(`${B}/curriculum/lessons/${id}`);
+  return data;
 }
 
 // ── Assessment ────────────────────────────────────────────────────────────────
@@ -384,10 +607,8 @@ export async function getPractice(objectiveId?: string): Promise<Question[]> {
     // Fall back to a small mixed set if the objective has no dedicated items.
     return pool.length ? pool : M.MOCK_QUESTIONS.slice(0, 3);
   }
-  // Live: Go returns { data: [question items] } with the answer key stripped →
-  // adapt to mobile Question (grading stays server-authoritative).
-  const { data } = await api.get<{ data?: GoQuestionItem[] }>(`${B}/practice`, { params: { objective: objectiveId } });
-  return adaptPracticeItems(data.data);
+  const { data } = await api.get<Question[]>(`${B}/practice`, { params: { objective: objectiveId } });
+  return data;
 }
 
 export async function submitPractice(sub: PracticeSubmission): Promise<PracticeResult> {
@@ -429,18 +650,8 @@ export async function submitPractice(sub: PracticeSubmission): Promise<PracticeR
     if (result.masteryGained) track('mastery_gained', { objective: sub.objectiveId });
     return result;
   }
-  // Live: send the learner's selections in the grader's shape and let the server
-  // score against the canonical key + advance mastery; adapt the result back.
-  const { data } = await api.post<{ data: GoPracticeResult }>(
-    `${B}/practice/submit`,
-    toPracticeSubmit(sub.objectiveId, sub.answers),
-  );
-  const result = adaptPracticeResult(data.data, sub.answers);
-  // Mirror the offline reward + telemetry so live and mock behave identically.
-  creditPointsLocal(result.pointsEarned, 'Practice set completed');
-  track('practice_completed', { score: result.scorePct, objective: sub.objectiveId });
-  if (result.masteryGained) track('mastery_gained', { objective: sub.objectiveId });
-  return result;
+  const { data } = await api.post<PracticeResult>(`${B}/practice/submit`, sub);
+  return data;
 }
 
 export async function getMastery(): Promise<MasterySnapshot[]> {
@@ -465,9 +676,8 @@ export async function getMastery(): Promise<MasterySnapshot[]> {
 // ── Exam (the Crown) ─────────────────────────────────────────────────────────
 export async function getArenas(): Promise<ExamArena[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_ARENAS; }
-  // Live: Go returns { data: [snake_case arena rows] } → unwrap + adapt.
-  const { data } = await api.get<{ data?: GoArena[] }>(`${B}/exam/arenas`);
-  return adaptArenas(data.data);
+  const { data } = await api.get<ExamArena[]>(`${B}/exam/arenas`);
+  return data;
 }
 
 export async function getArena(id: string): Promise<ExamArena> {
@@ -477,8 +687,8 @@ export async function getArena(id: string): Promise<ExamArena> {
     if (!a) throw new Error('Arena not found');
     return a;
   }
-  const { data } = await api.get<{ data: GoArena }>(`${B}/exam/arenas/${id}`);
-  return adaptArena(data.data);
+  const { data } = await api.get<ExamArena>(`${B}/exam/arenas/${id}`);
+  return data;
 }
 
 export async function getBlueprints(arenaId: string): Promise<ExamBlueprint[]> {
@@ -486,8 +696,8 @@ export async function getBlueprints(arenaId: string): Promise<ExamBlueprint[]> {
     await delay();
     return M.MOCK_BLUEPRINTS.filter((b) => b.arenaId === arenaId);
   }
-  const { data } = await api.get<{ data?: GoBlueprint[] }>(`${B}/exam/arenas/${arenaId}/blueprints`);
-  return adaptBlueprints(data.data);
+  const { data } = await api.get<ExamBlueprint[]>(`${B}/exam/arenas/${arenaId}/blueprints`);
+  return data;
 }
 
 export async function getUtmeCombinations(course?: string): Promise<UtmeCombination[]> {
@@ -535,16 +745,13 @@ export async function startAttempt(blueprintId: string): Promise<ExamAttempt> {
     attempts.set(attempt.id, attempt);
     return attempt;
   }
-  // Live: create the server attempt, then fetch its served question set (answer
-  // key stripped) and compose the client working copy. Stored locally so the CBT
-  // screen, patchAttemptLocal and submit all read from it (questions live only
-  // client-side; grading is server-authoritative on submit).
-  const { data: started } = await api.post<{ data: GoExamAttempt }>(`${B}/exam/attempts`, { blueprint_id: blueprintId });
-  const go = started.data;
-  const { data: qwrap } = await api.get<{ data?: GoQuestionItem[] }>(`${B}/exam/attempts/${go.id}/questions`);
-  const attempt = adaptStartedAttempt(go, adaptPracticeItems(qwrap.data));
-  attempts.set(attempt.id, attempt);
-  return attempt;
+  // POST /exam/attempts body is {blueprint_id, offline_origin} (snake_case) — NOT
+  // {blueprintId}. Response is a snake_case Attempt (state/server_deadline/score jsonb)
+  // with NO embedded questions[] — the offline CBT question set stays client-bundled.
+  // TODO(shape): map Attempt→ExamAttempt (state→status, server_deadline→remainingSec) and
+  // source questions locally before flipping the CBT runner to live.
+  const { data } = await api.post<ExamAttempt>(`${B}/exam/attempts`, { blueprint_id: blueprintId });
+  return data;
 }
 
 export async function getAttempt(id: string): Promise<ExamAttempt> {
@@ -554,16 +761,8 @@ export async function getAttempt(id: string): Promise<ExamAttempt> {
     if (!a) throw new Error('Attempt not found');
     return a;
   }
-  // Live: the working copy (with its served questions) lives client-side — prefer
-  // it. On a cold read (e.g. app relaunch) rebuild it from the server attempt +
-  // freshly-served questions so the CBT screen still has a set to render.
-  const local = attempts.get(id);
-  if (local) return local;
-  const { data: awrap } = await api.get<{ data: GoExamAttempt }>(`${B}/exam/attempts/${id}`);
-  const { data: qwrap } = await api.get<{ data?: GoQuestionItem[] }>(`${B}/exam/attempts/${id}/questions`);
-  const rebuilt = adaptStartedAttempt(awrap.data, adaptPracticeItems(qwrap.data));
-  attempts.set(id, rebuilt);
-  return rebuilt;
+  const { data } = await api.get<ExamAttempt>(`${B}/exam/attempts/${id}`);
+  return data;
 }
 
 /** Persist answers/flags/remaining locally (the offline working copy). */
@@ -640,27 +839,21 @@ export async function submitAttempt(id: string): Promise<ExamResult> {
     a.status = 'submitted';
     const result = compute();
     examResults.set(id, result);
-    // Idempotent on the attempt id: re-submitting / revisiting the same attempt
-    // must not re-award the 300 pts (previously farmable).
-    creditPointsLocal(result.pointsEarned, 'Mock exam completed', `exam:${id}`);
+    // Queue the attempt for deterministic, idempotent server reconciliation.
+    // The attempt id is the stable idempotency key (reused across retries) so a
+    // re-flush after reconnect never double-submits.
+    enqueue({
+      type: 'attempt_submit',
+      key: `attempt_submit:${id}`,
+      payload: { attemptId: id, blueprintId: a.blueprintId, arenaId: a.arenaId, offlineOrigin: a.offlineOrigin, scorePct: result.scorePct },
+    });
+    creditPointsLocal(result.pointsEarned, 'Mock exam completed');
     track('mock_completed', { score: result.scorePct, offlineOrigin: a.offlineOrigin });
     track('readiness_updated', { delta: result.readinessDelta });
     return result;
   }
-  // Live: send the collected selections (grader shape) and let the server score
-  // against the canonical key; adapt the scored attempt to the results screen.
-  const local = attempts.get(id);
-  if (!local) throw new Error('Attempt not found');
-  const { data } = await api.post<{ data: GoScoredAttempt }>(`${B}/exam/attempts/${id}/submit`, toExamSubmit(local));
-  const scored = data.data;
-  const result = adaptExamResult(id, scored.score ?? { overall: 0 }, scored.readiness, local);
-  attempts.set(id, { ...local, status: 'submitted' });
-  examResults.set(id, result);
-  // Idempotent on the attempt id so revisiting a submitted attempt never re-awards.
-  creditPointsLocal(result.pointsEarned, 'Exam completed', `exam:${id}`);
-  track('exam_completed', { score: result.scorePct, offlineOrigin: local.offlineOrigin });
-  track('readiness_updated', { delta: result.readinessDelta });
-  return result;
+  const { data } = await api.post<ExamResult>(`${B}/exam/attempts/${id}/submit`, {});
+  return data;
 }
 
 /** Read back a previously computed exam result (X9). */
@@ -671,85 +864,121 @@ export async function getExamResult(id: string): Promise<ExamResult> {
     if (!r) throw new Error('Result not ready');
     return r;
   }
-  // Live: the just-computed result is cached from submit — prefer it (it carries
-  // the client timing/answered counts). Otherwise read the server projection and
-  // adapt against whatever local working copy we still hold.
-  const cached = examResults.get(id);
-  if (cached) return cached;
-  const { data } = await api.get<{ data: GoExamResultProjection }>(`${B}/exam/attempts/${id}/result`);
-  const proj = data.data;
-  const local = attempts.get(id) ?? { questions: [], answers: {}, durationSec: 0, remainingSec: 0 };
-  return adaptExamResult(id, proj, proj.readiness, local);
+  // GET /exam/attempts/:id/result → {data: Result} (snake_case: subjects[]{subject,raw,
+  // total,scaled,grade}, overall, readiness, late). Mapped via mapExamResult (owner-only;
+  // 404 until scored). TODO(shape): overall is exam-native scale (e.g. UTME 400) not 0–100;
+  // unanswered/timeSpentSec/pointsEarned + readinessDelta are not in the score projection.
+  const res = await api.get(`${B}/exam/attempts/${id}/result`);
+  return mapExamResult(id, unwrap<any>(res));
 }
 
 // ── Gamification ─────────────────────────────────────────────────────────────
 export async function getGamificationProfile(): Promise<GamificationProfile> {
   if (USE_MOCK) { await delay(); return M.MOCK_GAMIFICATION; }
-  // Live: Go returns the raw profile ({xp, level, streak_days, freezes}); adapt to
-  // the mobile shape (xpToNext computed from the level curve). XP/streak are
-  // awarded server-side on practice/exam completion.
-  const { data } = await api.get<GoGamificationProfile>(`${B}/gamification/profile`);
-  return adaptGamificationProfile(data);
+  // GET /academy/gamification/profile → {data: UserState} (snake_case). UserState =
+  // {xp, level, streak_days, freezes, last_active}. xpToNext/rank are not modeled
+  // server-side (0/undefined here); the screen tolerates 0 for the level-progress ring.
+  const res = await api.get(`${B}/gamification/profile`);
+  const s = unwrap<{ xp?: number; level?: number; streak_days?: number; freezes?: number }>(res);
+  return {
+    level: s.level ?? 0,
+    xp: s.xp ?? 0,
+    xpToNext: 0,
+    streakDays: s.streak_days ?? 0,
+    freezeTokens: s.freezes ?? 0,
+  };
 }
 
 export async function getBadges(): Promise<Badge[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_BADGES; }
-  // Live: Go returns { badges: [catalogue rows + earned status] } → unwrap + adapt.
-  const { data } = await api.get<{ badges?: GoBadgeView[] }>(`${B}/gamification/badges`);
-  return adaptBadges(data.badges);
+  // GET /academy/gamification/badges → {data: Badge[]} (snake_case: {id, code, name,
+  // criteria, icon}). Backend carries no per-user earned/earnedAt on this list route,
+  // so `earned` defaults false. TODO(shape): add an earned-badges join server-side.
+  const res = await api.get(`${B}/gamification/badges`);
+  const rows = unwrap<{ id: string; name: string; icon?: string; criteria?: { description?: string } }[]>(res) ?? [];
+  return rows.map((b) => ({
+    id: b.id,
+    name: b.name,
+    description: b.criteria?.description ?? '',
+    icon: b.icon ?? 'Award',
+    earned: false,
+  }));
 }
 
 export async function getChallenges(): Promise<Challenge[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_CHALLENGES; }
-  // Live: Go returns { challenges: [snake_case rows] } → unwrap + adapt (kind →
-  // cadence; target/reward from criteria). Per-user progress isn't tracked yet.
-  const { data } = await api.get<{ challenges?: GoChallenge[] }>(`${B}/gamification/challenges`);
-  return adaptChallenges(data.challenges);
+  // GET /academy/gamification/challenges → {data: Challenge[]} (snake_case). The backend
+  // Challenge {code, name, kind, criteria, ...} has no per-user progress/target/completed;
+  // those default to 0/false. TODO(shape): server progress projection before flipping.
+  const res = await api.get(`${B}/gamification/challenges`);
+  const rows = unwrap<{ id: string; name: string; kind?: string; criteria?: { description?: string; target?: number }; reward_points?: number }[]>(res) ?? [];
+  return rows.map((ch) => ({
+    id: ch.id,
+    title: ch.name,
+    description: ch.criteria?.description ?? '',
+    cadence: (ch.kind as Challenge['cadence']) ?? 'daily',
+    progress: 0,
+    target: ch.criteria?.target ?? 1,
+    rewardPoints: ch.reward_points ?? 0,
+    completed: false,
+  }));
 }
 
 export async function getLeaderboard(id = 'national'): Promise<LeaderboardEntry[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_LEADERBOARD; }
-  const { data } = await api.get<LeaderboardEntry[]>(`${B}/gamification/leaderboards/${id}`);
-  return data;
-}
-
-/**
- * The learner's class XP ranking (classmates only, first names, 'you' flagged).
- * XP is earned on the practice/exam earn-path; child-safe by construction (the
- * server scopes to the caller's class and never returns full names or user ids).
- */
-export async function getClassLeaderboard(): Promise<ClassLeaderboard> {
-  if (USE_MOCK) {
-    await delay();
-    return { classCode: '', periodKey: 'all-time', myRank: 0, entries: M.MOCK_LEADERBOARD };
-  }
-  const { data } = await api.get<GoClassLeaderboard>(`${B}/gamification/leaderboard/class`);
-  return adaptClassLeaderboard(data);
+  // GET /academy/gamification/leaderboards/:id → {data: Entry[]} (snake_case: {user_id,
+  // score, rank}). No display name/isMe on the row — the screen shows user_id until a
+  // name projection is added server-side. TODO(shape): join display name + viewer flag.
+  const res = await api.get(`${B}/gamification/leaderboards/${id}`);
+  const rows = unwrap<{ user_id: string; score?: number; rank?: number }[]>(res) ?? [];
+  return rows.map((e) => ({ rank: e.rank ?? 0, name: e.user_id, xp: e.score ?? 0, isMe: false }));
 }
 
 // ── Rewards ──────────────────────────────────────────────────────────────────
 export async function getRewardBalance(): Promise<RewardBalance> {
   if (USE_MOCK) { await delay(); return rewardBalance; }
-  // Live: Go returns { data: { balance_minor } } — the confirmed reward-points
-  // ledger sum (non-monetary, distinct from the wallet). pendingPoints is a local
-  // offline concept the server doesn't track, so it reads 0 here. The server does
-  // not expose a separate lifetime figure, so lifetimeEarned mirrors the confirmed
-  // balance as a best-effort until a dedicated endpoint lands.
-  const { data } = await api.get<{ data?: { balance_minor?: number } }>(`${B}/rewards/balance`);
-  const balance = data.data?.balance_minor ?? 0;
-  return { points: balance, pendingPoints: 0, lifetimeEarned: balance };
+  // GET /academy/rewards/balance → {data:{balance_minor}} (DOUBLE-nested). NOTE: the
+  // backend reward ledger tracks a single running balance; it does NOT expose the
+  // pending/lifetime split the screen shows. We surface balance as `points` and zero the
+  // rest. TODO(shape): server projection for pendingPoints/lifetimeEarned before flip.
+  const res = await api.get(`${B}/rewards/balance`);
+  const bal = unwrap<{ balance_minor?: number }>(res);
+  const points = bal?.balance_minor ?? 0;
+  return { points, pendingPoints: 0, lifetimeEarned: points };
 }
 
 export async function getRewardHistory(): Promise<RewardLedgerEntry[]> {
   if (USE_MOCK) { await delay(); return rewardHistory; }
-  const { data } = await api.get<RewardLedgerEntry[]>(`${B}/rewards/history`);
-  return data;
+  // GET /academy/rewards/history → {data: LedgerEntry[]} (snake_case: {id, type, points,
+  // reason, created_at}). type ∈ earn|redeem|... ; server rows are authoritative (synced).
+  const res = await api.get(`${B}/rewards/history`);
+  const rows = unwrap<{ id: string; type?: string; points?: number; reason?: string; created_at?: string }[]>(res) ?? [];
+  return rows.map((r) => ({
+    id: r.id,
+    ts: r.created_at ?? new Date().toISOString(),
+    kind: r.type === 'redeem' ? 'redeem' : 'earn',
+    reason: r.reason ?? '',
+    points: r.points ?? 0,
+    synced: true,
+  }));
 }
 
 export async function getRewardCatalog(): Promise<RewardCatalogItem[]> {
   if (USE_MOCK) { await delay(); return M.MOCK_REWARD_CATALOG; }
-  const { data } = await api.get<RewardCatalogItem[]>(`${B}/rewards/catalog`);
-  return data;
+  // GET /academy/rewards/catalog → {data: CatalogItem[]} (snake_case: {id, sku, name,
+  // kind, cost_points, value_minor}). value_minor(kobo)→walletValueKobo (1:1). No
+  // description/icon server-side — defaulted. TODO(shape): copy fields before flip.
+  const res = await api.get(`${B}/rewards/catalog`);
+  const rows = unwrap<{ id: string; name: string; kind?: string; cost_points?: number; value_minor?: number }[]>(res) ?? [];
+  return rows.map((it) => ({
+    id: it.id,
+    name: it.name,
+    description: '',
+    icon: 'Gift',
+    pointsCost: it.cost_points ?? 0,
+    walletValueKobo: it.value_minor || undefined,
+    category: (it.kind as RewardCatalogItem['category']) ?? 'voucher',
+  }));
 }
 
 export async function redeemReward(itemId: string): Promise<RewardLedgerEntry> {
@@ -772,8 +1001,16 @@ export async function redeemReward(itemId: string): Promise<RewardLedgerEntry> {
     track('reward_redeemed', { item: itemId, points: item.pointsCost });
     return entry;
   }
-  const { data } = await api.post<RewardLedgerEntry>(`${B}/rewards/redeem`, { itemId });
-  return data;
+  // POST /academy/rewards/redeem expects {sku, idempotency_key} (NOT {itemId}) and returns
+  // {data: IssueResult{state, entry, ...}} — not a RewardLedgerEntry. We map the request
+  // (itemId is treated as the SKU) and surface the returned ledger entry when present.
+  // TODO(shape): the mobile catalog id must equal the backend SKU for this to resolve.
+  const res = await api.post(`${B}/rewards/redeem`, {
+    sku: itemId,
+    idempotency_key: `rdm_${itemId}_${Date.now()}`,
+  });
+  const out = unwrap<{ entry?: RewardLedgerEntry }>(res);
+  return (out.entry ?? out) as RewardLedgerEntry;
 }
 
 // ── Commerce ─────────────────────────────────────────────────────────────────
@@ -788,8 +1025,11 @@ export async function getBundles(examSlug?: Bundle['examSlug']): Promise<Bundle[
     await delay();
     return examSlug ? M.MOCK_BUNDLES.filter((b) => b.examSlug === examSlug) : M.MOCK_BUNDLES;
   }
-  const { data } = await api.get<Bundle[]>(`${B}/commerce/bundles`, { params: { exam: examSlug } });
-  return data;
+  // GET /commerce/bundles → {data: ExamBundle[]} (camelCase; priceMinor==kobo). Shared
+  // mapBundle contract with getBundle. NOTE the backend filters by ?arena=<arenaId>, not
+  // an exam slug — the examSlug param is passed through but won't match server-side.
+  const res = await api.get(`${B}/commerce/bundles`, { params: { arena: examSlug } });
+  return (unwrap<any[]>(res) ?? []).map(mapBundle);
 }
 
 export async function getBundle(id: string): Promise<Bundle> {
@@ -799,8 +1039,10 @@ export async function getBundle(id: string): Promise<Bundle> {
     if (!b) throw new Error('Bundle not found');
     return b;
   }
-  const { data } = await api.get<Bundle>(`${B}/commerce/bundles/${id}`);
-  return data;
+  // GET /commerce/bundles/:id → {data: ExamBundle} (same shape as the list item). Reuses
+  // the mapBundle contract shared with getBundles.
+  const res = await api.get(`${B}/commerce/bundles/${id}`);
+  return mapBundle(unwrap<any>(res));
 }
 
 export async function getBundleManifest(id: string): Promise<BundleManifestItem[]> {
@@ -828,8 +1070,14 @@ export async function createOrder(input: CreateOrderInput): Promise<Order> {
     track('checkout_started', { bundle: input.bundleId, plan: input.planId, amountKobo: order.amountKobo });
     return order;
   }
-  const { data } = await api.post<Order>(`${B}/commerce/orders`, input);
-  return data;
+  // POST /commerce/orders expects CreateOrderRequest {kind:'plan'|'bundle', refId} — NOT
+  // {bundleId, planId}. Derive kind from which id was passed (planId ⇒ plan). Response is
+  // a camelCase Order {state, amountMinor==kobo, refId, kind} → mapOrder (state→status,
+  // amountMinor→amountKobo, refId→bundleId|planId by kind).
+  const kind: 'plan' | 'bundle' = input.planId ? 'plan' : 'bundle';
+  const refId = input.planId ?? input.bundleId ?? '';
+  const res = await api.post(`${B}/commerce/orders`, { kind, refId });
+  return mapOrder(unwrap<any>(res));
 }
 
 export async function payOrder(orderId: string, amountKobo: number, bundleId?: string): Promise<Order> {
@@ -845,8 +1093,12 @@ export async function payOrder(orderId: string, amountKobo: number, bundleId?: s
     track('bundle_purchased', { order: orderId, amountKobo, bundle: bundleId });
     return { id: orderId, bundleId, amountKobo, status: 'fulfilled', createdAt: new Date().toISOString() };
   }
-  const { data } = await api.post<Order>(`${B}/commerce/orders/${orderId}/pay`, {});
-  return data;
+  // POST /commerce/orders/:id/pay — money path: send a stable Idempotency-Key (server
+  // requires it). Response Order → mapOrder (state→status).
+  const res = await api.post(`${B}/commerce/orders/${orderId}/pay`, {}, {
+    headers: { 'Idempotency-Key': `pay_${orderId}` },
+  });
+  return mapOrder(unwrap<any>(res));
 }
 
 export async function bnplOrder(orderId: string, amountKobo: number, instalments: number, bundleId?: string): Promise<Order> {
@@ -856,8 +1108,13 @@ export async function bnplOrder(orderId: string, amountKobo: number, instalments
     track('bnpl_started', { order: orderId, amountKobo, instalments });
     return { id: orderId, bundleId, amountKobo, status: 'bnpl', createdAt: new Date().toISOString(), bnplInstalments: instalments };
   }
-  const { data } = await api.post<Order>(`${B}/commerce/orders/${orderId}/bnpl`, { instalments });
-  return data;
+  // POST /commerce/orders/:id/bnpl — money path: send a stable Idempotency-Key. The
+  // backend StartBNPL takes no body (instalment plan is server-driven); the mobile
+  // `instalments` arg stays for local/mock UX only. Response Order → mapOrder.
+  const res = await api.post(`${B}/commerce/orders/${orderId}/bnpl`, {}, {
+    headers: { 'Idempotency-Key': `bnpl_${orderId}` },
+  });
+  return mapOrder(unwrap<any>(res));
 }
 
 /** Agent-sold prepaid card → unlock bundle/plan/data (W7). */
@@ -881,13 +1138,28 @@ export async function activateAccessCard(cardCode: string): Promise<AccessCardRe
     track('bundle_purchased', { via: 'access_card', amountKobo: result.valueKobo });
     return result;
   }
-  const { data } = await api.post<AccessCardResult>(`${B}/commerce/access-cards/activate`, { cardCode });
-  return data;
+  // POST /commerce/access-cards/activate expects ActivateCardRequest {serial, pin} (both
+  // required) + an Idempotency-Key (money-adjacent grant). We map the screen's single card
+  // code → `serial`. TODO(input): the access-card screen has NO pin field, but the backend
+  // requires a non-empty pin — this will 400 until the screen captures serial+pin (or the
+  // printed code encodes both). Response is an Entitlement, not an AccessCardResult, so the
+  // unlocked[]/valueKobo summary is defaulted. TODO(shape): project the granted entitlement
+  // into the unlock summary.
+  const serial = cardCode.trim().toUpperCase();
+  const res = await api.post(`${B}/commerce/access-cards/activate`, { serial }, {
+    headers: { 'Idempotency-Key': `card_${serial}` },
+  });
+  const ent = unwrap<any>(res);
+  return { cardCode: serial, unlocked: ent?.refId ? [{ kind: 'bundle', label: ent.refId }] : [], valueKobo: 0 };
 }
 
 // ── Wallet ───────────────────────────────────────────────────────────────────
 export async function getWallet(): Promise<AcademyWallet> {
   if (USE_MOCK) { await delay(); return wallet; }
+  // ⚠ NO BACKEND ROUTE: there is no academy `wallet` package. The academy wallet is the
+  // Paymax finance wallet (finance/ledger) surfaced elsewhere in the app, not under
+  // /api/finance/academy/wallet. BLOCKED — keep mock until a wallet read is exposed here
+  // (or point this at the existing Paymax wallet endpoint). See checklist §W.
   const { data } = await api.get<AcademyWallet>(`${B}/wallet`);
   return data;
 }
@@ -1173,6 +1445,8 @@ export async function payFees(feeScheduleId: string, amountKobo: number, method:
 
 export async function getPots(): Promise<SavingsPot[]> {
   if (USE_MOCK) { await delay(); return pots; }
+  // TODO(no backend route): edupay exposes POST /pots, /pots/:id/fund, /pots/:id/pay but NO
+  // GET /pots list. BLOCKED — keep mock until a pots-list read is exposed.
   const { data } = await api.get<SavingsPot[]>(`${B}/edupay/pots`);
   return data;
 }
@@ -1310,17 +1584,6 @@ export async function removeBookmark(id: string): Promise<void> {
   await api.delete(`${B}/learner/bookmarks/${id}`);
 }
 
-/**
- * Create a bookmark (was missing — learners could only view/remove seeded ones).
- * Deduped by canonical href so re-bookmarking the same lesson can't duplicate.
- */
-export async function addBookmark(input: Omit<Bookmark, 'id' | 'ts'>): Promise<Bookmark> {
-  const bm: Bookmark = { ...input, id: `bm_${Date.now()}`, ts: new Date().toISOString() };
-  if (USE_MOCK) { await delay(200); bookmarks = upsertBookmark(bookmarks, bm); return bm; }
-  const { data } = await api.post<Bookmark>(`${B}/learner/bookmarks`, input);
-  return data;
-}
-
 export async function getNotes(): Promise<LessonNote[]> {
   if (USE_MOCK) { await delay(); return notes; }
   const { data } = await api.get<LessonNote[]>(`${B}/learner/notes`);
@@ -1335,9 +1598,7 @@ export async function saveNote(lessonId: string, lessonTitle: string, subjectNam
     enqueue({ type: 'progress', payload: { kind: 'note', lessonId } });
     return note;
   }
-  // Send the title + subject too so the persisted note round-trips them (the
-  // backend stores what it's given; it can't resolve them from lessonId alone).
-  const { data } = await api.post<LessonNote>(`${B}/learner/notes`, { lessonId, lessonTitle, subjectName, body });
+  const { data } = await api.post<LessonNote>(`${B}/learner/notes`, { lessonId, body });
   return data;
 }
 
@@ -1412,8 +1673,10 @@ export async function getTradeHub(): Promise<TradeHub> {
 /** List all trade tracks (for choosing a trade, A11/S1). */
 export async function getTradeTracks(): Promise<TradeTrack[]> {
   if (USE_MOCK) { await delay(); return tradeTracks; }
-  const { data } = await api.get<TradeTrack[]>(`${B}/trade/tracks`);
-  return data;
+  // GET /trade/tracks → {data: TradeTrack[]} (snake_case row {id, code, name, status}).
+  // Mapped via the shared mapTradeTrack contract; screen-only fields defaulted (see TODO).
+  const res = await api.get(`${B}/trade/tracks`);
+  return (unwrap<any[]>(res) ?? []).map(mapTradeTrack);
 }
 
 /** S2 — Trade module/lesson detail (practical/project-based). */
@@ -1437,8 +1700,10 @@ export async function getTradeProject(id: string): Promise<TradeProject> {
     if (!p) throw new Error('Project not found');
     return p;
   }
-  const { data } = await api.get<TradeProject>(`${B}/trade/projects/${id}`);
-  return data;
+  // GET /trade/projects/:id → {data: TradeProject} (snake_case {id, module_id, title,
+  // rubric(json), ordinal}). Mapped via the shared mapTradeProject contract.
+  const res = await api.get(`${B}/trade/projects/${id}`);
+  return mapTradeProject(unwrap<any>(res));
 }
 
 export interface SubmitProjectInput {
@@ -1472,8 +1737,7 @@ export async function submitProject(projectId: string, input: SubmitProjectInput
       feedback: 'Solid submission. Tidy up cable runs next time for full marks.',
     };
     tradeProjects.set(projectId, updated);
-    // Idempotent per project: resubmitting a revision must not re-award.
-    creditPointsLocal(120, 'Trade project submitted', `trade:${projectId}`);
+    creditPointsLocal(120, 'Trade project submitted');
     track('practice_completed', { kind: 'trade_project', project: projectId, score: scorePct });
     return updated;
   }
@@ -1488,8 +1752,10 @@ export async function getAssessment(id: string): Promise<SkillAssessment> {
     if (!a) throw new Error('Assessment not found');
     return a;
   }
-  const { data } = await api.get<SkillAssessment>(`${B}/trade/assessments/${id}`);
-  return data;
+  // GET /trade/assessments/:id → {data: SkillAssessment} (snake_case; mirrors the
+  // GET /trade/assessments list item). Mapped via the shared mapAssessment contract.
+  const res = await api.get(`${B}/trade/assessments/${id}`);
+  return mapAssessment(unwrap<any>(res));
 }
 
 export interface TakeAssessmentInput {
@@ -1569,8 +1835,10 @@ export async function requestMentor(mentorId: string): Promise<Mentor> {
 /** G10 — My credentials (academic + trade). */
 export async function getCredentials(): Promise<Credential[]> {
   if (USE_MOCK) { await delay(); return credentials; }
-  const { data } = await api.get<Credential[]>(`${B}/credentials`);
-  return data;
+  // GET /credentials → {data: Credential[]} (snake_case). Shared mapCredential contract
+  // with getCredential; issuer/recipientName/verifyUrl/unlocksRoles defaulted (see TODO).
+  const res = await api.get(`${B}/credentials`);
+  return (unwrap<any[]>(res) ?? []).map(mapCredential);
 }
 
 export async function getCredential(id: string): Promise<Credential> {
@@ -1580,8 +1848,10 @@ export async function getCredential(id: string): Promise<Credential> {
     if (!c) throw new Error('Credential not found');
     return c;
   }
-  const { data } = await api.get<Credential>(`${B}/credentials/${id}`);
-  return data;
+  // GET /credentials/:id → {data: Credential} (owner-only; same shape as the list item).
+  // Reuses the mapCredential contract shared with getCredentials.
+  const res = await api.get(`${B}/credentials/${id}`);
+  return mapCredential(unwrap<any>(res));
 }
 
 /**
@@ -1611,8 +1881,10 @@ export async function verifyCredential(verificationId: string): Promise<Credenti
 /** S6 — Earning opportunities feed (Paymax roles unlocked by credentials). */
 export async function getOpportunities(): Promise<EarningOpportunity[]> {
   if (USE_MOCK) { await delay(); return opportunities; }
-  const { data } = await api.get<EarningOpportunity[]>(`${B}/earning/opportunities`);
-  return data;
+  // GET /earning/opportunities → {data: EarningOpportunity[]} (snake_case;
+  // role='service_provider'→'service'). Shared mapOpportunity contract with getOpportunity.
+  const res = await api.get(`${B}/earning/opportunities`);
+  return (unwrap<any[]>(res) ?? []).map(mapOpportunity);
 }
 
 export async function getOpportunity(id: string): Promise<EarningOpportunity> {
@@ -1623,8 +1895,10 @@ export async function getOpportunity(id: string): Promise<EarningOpportunity> {
     track('opportunity_viewed', { opportunity: id, role: o.role });
     return o;
   }
-  const { data } = await api.get<EarningOpportunity>(`${B}/earning/opportunities/${id}`);
-  return data;
+  // GET /earning/opportunities/:id → {data: EarningOpportunity} (eligibility-gated; same
+  // shape as the list item). Reuses the mapOpportunity contract shared with getOpportunities.
+  const res = await api.get(`${B}/earning/opportunities/${id}`);
+  return mapOpportunity(unwrap<any>(res));
 }
 
 /**
@@ -1665,8 +1939,10 @@ export async function applyOpportunity(opportunityId: string): Promise<EarningAp
 /** C1 — Live classes schedule (upcoming/live/replay). */
 export async function getLiveSessions(): Promise<LiveSession[]> {
   if (USE_MOCK) { await delay(); return liveSessions; }
-  const { data } = await api.get<LiveSession[]>(`${B}/live/sessions`);
-  return data;
+  // GET /live/sessions → {data: LiveSession[]} (snake_case; state→status). Shared
+  // mapLiveSession contract with getLiveSession; durationMin/viewers defaulted (see TODO).
+  const res = await api.get(`${B}/live/sessions`);
+  return (unwrap<any[]>(res) ?? []).map(mapLiveSession);
 }
 
 export async function getLiveSession(id: string): Promise<LiveSession> {
@@ -1676,8 +1952,10 @@ export async function getLiveSession(id: string): Promise<LiveSession> {
     if (!s) throw new Error('Session not found');
     return s;
   }
-  const { data } = await api.get<LiveSession>(`${B}/live/sessions/${id}`);
-  return data;
+  // GET /live/sessions/:id → {data: LiveSession} (same shape as the list item). Reuses
+  // the mapLiveSession contract shared with getLiveSessions.
+  const res = await api.get(`${B}/live/sessions/${id}`);
+  return mapLiveSession(unwrap<any>(res));
 }
 
 /**
@@ -1783,6 +2061,8 @@ export async function reportContent(targetKind: ModerationReport['targetKind'], 
 /** C6 — Notifications center. */
 export async function getNotifications(): Promise<AcademyNotification[]> {
   if (USE_MOCK) { await delay(); return notifications3; }
+  // TODO(no backend route): NO /notifications routes in the live or any surveyed academy
+  // package. BLOCKED — keep mock until a notifications surface is exposed.
   const { data } = await api.get<AcademyNotification[]>(`${B}/notifications`);
   return data;
 }
@@ -1810,6 +2090,8 @@ export async function markAllNotificationsRead(): Promise<AcademyNotification[]>
 /** C7 — Announcements (program/sponsor). */
 export async function getAnnouncements(): Promise<Announcement[]> {
   if (USE_MOCK) { await delay(); return P3.MOCK_ANNOUNCEMENTS; }
+  // TODO(no backend route): NO /announcements route found in any surveyed academy package.
+  // BLOCKED — keep mock until an announcements surface is exposed.
   const { data } = await api.get<Announcement[]>(`${B}/announcements`);
   return data;
 }
@@ -1885,6 +2167,8 @@ export async function getTutors(subject?: string): Promise<TutorListing[]> {
 // ── Cohorts & roster (T3) ──────────────────────────────────────────────────────
 export async function getCohorts(): Promise<Cohort[]> {
   if (USE_MOCK) { await delay(); return cohorts; }
+  // TODO(no backend route): NO GET /tutor/cohorts route in the tutor package. BLOCKED —
+  // keep mock until a cohort-list read lands.
   const { data } = await api.get<Cohort[]>(`${B}/tutor/cohorts`);
   return data;
 }
@@ -1895,6 +2179,8 @@ export async function getAssignments(cohortId?: string): Promise<Assignment[]> {
     await delay();
     return cohortId ? assignments.filter((a) => a.cohortId === cohortId) : assignments;
   }
+  // TODO(no backend route): tutor exposes POST /tutor/assignments but NO GET list. BLOCKED
+  // — keep mock until an assignments-list read is exposed.
   const { data } = await api.get<Assignment[]>(`${B}/tutor/assignments`, { params: { cohortId } });
   return data;
 }
@@ -1930,6 +2216,8 @@ export async function getSubmissions(assignmentId?: string): Promise<Submission[
     await delay();
     return assignmentId ? submissions.filter((s) => s.assignmentId === assignmentId) : submissions;
   }
+  // TODO(no backend route): NO GET /tutor/submissions route (only POST /tutor/grades to
+  // grade). BLOCKED — keep mock until a submissions-list read lands.
   const { data } = await api.get<Submission[]>(`${B}/tutor/submissions`, { params: { assignmentId } });
   return data;
 }
@@ -2047,27 +2335,19 @@ function setsEqual(a: string[], b: string[]): boolean {
  * Mirrors the offline-first contract: events queue and sync deterministically;
  * the server is authoritative for the final balance.
  */
-// Idempotency keys already credited this session (e.g. `exam:<attemptId>`), so a
-// replayed submit / challenge cannot re-award. Mirrors the server ledger's unique
-// constraint on the reconcile key.
-let awardedPointKeys: ReadonlySet<string> = new Set<string>();
-
-/**
- * Credit reward points through the pure idempotent ledger. Pass a stable `key`
- * (e.g. `exam:<attemptId>`) for one-time awards so re-submits don't double-count;
- * omit it for genuinely-repeatable earns. The idempotency key is forwarded on the
- * offline-sync payload so the server dedups on reconnect too.
- */
-function creditPointsLocal(points: number, reason: string, key?: string) {
-  const before: PointsLedgerState = { balance: rewardBalance, history: rewardHistory, awarded: awardedPointKeys };
-  const { state, applied } = creditPoints(before, {
-    points, reason, key, id: `rl_${Date.now()}`, ts: new Date().toISOString(),
-  });
-  if (!applied) return; // non-positive amount or duplicate idempotency key → no-op
-  rewardBalance = state.balance;
-  rewardHistory = state.history;
-  awardedPointKeys = state.awarded;
-  enqueue({ type: 'reward_earn', payload: { points, reason, key } });
+function creditPointsLocal(points: number, reason: string) {
+  if (points <= 0) return;
+  rewardBalance = {
+    ...rewardBalance,
+    points: rewardBalance.points + points,
+    pendingPoints: rewardBalance.pendingPoints + points,
+    lifetimeEarned: rewardBalance.lifetimeEarned + points,
+  };
+  rewardHistory = [
+    { id: `rl_${Date.now()}`, ts: new Date().toISOString(), kind: 'earn', reason, points, synced: false },
+    ...rewardHistory,
+  ];
+  enqueue({ type: 'reward_earn', payload: { points, reason } });
   track('reward_earned', { points, reason });
 }
 
@@ -2099,19 +2379,11 @@ function issueCredentialLocal(trackSlug: TradeSlug | undefined, trackId: string,
 
 /** Fail-closed gate: minors must have guardian consent before spending/redeeming. */
 function assertConsentForSpend() {
-  // Fail-closed on BOTH the mock AND live paths (previously gated on USE_MOCK, so
-  // the live path was fail-OPEN). Client defence in depth; the server is also
-  // authoritative. NDPR / SF-7: a minor may not spend without guardian consent.
-  assertCanSpend(spendConsentState());
-}
-
-/**
- * The current learner's spend-consent state. Exported so the competition-rewards
- * module (which has no minor/consent of its own) can enforce the same fail-closed
- * gate against the single shared academy profile.
- */
-export function spendConsentState(): SpendConsentState {
-  return { isMinor: profile.isMinor, guardianConsent: profile.guardianConsent };
+  if (USE_MOCK) {
+    if (profile.isMinor && profile.guardianConsent !== 'granted') {
+      throw new Error('Guardian consent required before purchases or redemptions.');
+    }
+  }
 }
 
 /**

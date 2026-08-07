@@ -47,12 +47,12 @@ type BusProviderUpdateRequest struct {
 
 // BusProviderRouteRequest is POST /bus/provider/routes.
 type BusProviderRouteRequest struct {
-	FromState    string `json:"from_state" binding:"required"`
-	ToState      string `json:"to_state" binding:"required"`
-	FromCity     string `json:"from_city"`
-	ToCity       string `json:"to_city"`
-	BusType      string `json:"bus_type"`
-	BaseFareKobo int64  `json:"base_fare_kobo" binding:"required,min=0"`
+	FromState    string   `json:"from_state" binding:"required"`
+	ToState      string   `json:"to_state" binding:"required"`
+	FromCity     string   `json:"from_city"`
+	ToCity       string   `json:"to_city"`
+	BusType      string   `json:"bus_type"`
+	BaseFareKobo int64    `json:"base_fare_kobo" binding:"required,min=0"`
 	Amenities    []string `json:"amenities"`
 }
 
@@ -116,11 +116,11 @@ func (s *Service) busProviderRow(ctx context.Context, id string) (map[string]any
 		       description, base_state, verification_status, status, rating_avg, rating_count, created_at
 		FROM bus_providers WHERE id=$1`
 	var (
-		pid, ownerID, name, verStatus, status                 string
-		slug, phone, email, logo, descr, baseState            *string
-		ratingAvg                                             float64
-		ratingCount                                           int
-		createdAt                                             time.Time
+		pid, ownerID, name, verStatus, status      string
+		slug, phone, email, logo, descr, baseState *string
+		ratingAvg                                  float64
+		ratingCount                                int
+		createdAt                                  time.Time
 	)
 	if err := s.db.QueryRow(ctx, q, id).Scan(
 		&pid, &ownerID, &name, &slug, &phone, &email, &logo,
@@ -372,6 +372,7 @@ func (s *Service) SearchBusTrips(ctx context.Context, fromState, toState, provid
 		JOIN bus_routes r    ON r.id = s.route_id
 		JOIN bus_providers p ON p.id = r.provider_id
 		WHERE r.active = TRUE AND p.status = 'active'
+		  AND p.verification_status = 'verified'
 		  AND s.fare_approved = TRUE AND s.status = 'scheduled'
 		  AND s.departure_time >= NOW()`
 	args := []any{}
@@ -436,7 +437,7 @@ func (s *Service) ListBusProviders(ctx context.Context, state, query string) ([]
 		SELECT p.id, p.business_name, p.base_state, p.verification_status, p.rating_avg,
 		       COALESCE((SELECT COUNT(*) FROM bus_routes r WHERE r.provider_id = p.id AND r.active = TRUE), 0) AS route_count
 		FROM bus_providers p
-		WHERE p.status = 'active'`
+		WHERE p.status = 'active' AND p.verification_status = 'verified'`
 	args := []any{}
 	i := 1
 	if state != "" {
@@ -500,11 +501,11 @@ func (s *Service) providerRouteRow(ctx context.Context, routeID string) (map[str
 		SELECT id, provider_id, from_state, to_state, from_city, to_city, category, base_fare_kobo, amenities, active, status
 		FROM bus_routes WHERE id=$1`
 	var (
-		id, category, status                 string
-		provID, fromSt, toSt, fromC, toC     *string
-		baseFare                             *int64
-		amenitiesRaw                         []byte
-		active                               bool
+		id, category, status             string
+		provID, fromSt, toSt, fromC, toC *string
+		baseFare                         *int64
+		amenitiesRaw                     []byte
+		active                           bool
 	)
 	if err := s.db.QueryRow(ctx, q, routeID).Scan(
 		&id, &provID, &fromSt, &toSt, &fromC, &toC, &category, &baseFare, &amenitiesRaw, &active, &status,

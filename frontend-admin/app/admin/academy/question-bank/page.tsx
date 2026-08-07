@@ -3,7 +3,22 @@
 import { useEffect, useState } from 'react';
 import { listQuestionItems, createQuestionItem, reviewQuestionItem } from '@/services/academyAdminService';
 import type { QuestionItem, QuestionItemInput, QuestionReviewInput } from '@/types/academyAdmin';
-import { PageHeader, AcademyTabs, Card, Badge, StateBlock, AuditNote, DisclosureNote, btn, btnPrimary, btnDanger, th, td, input, label, select, FilterBar } from '../_ui';
+import { AcademyTabs, StateBlock, AuditNote, DisclosureNote, label, select, FilterBar } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  const s = status.toLowerCase();
+  if (['active', 'approved', 'published', 'funded', 'paid', 'completed', 'allocated', 'live', 'reconciled', 'disbursed', 'collected', 'released', 'core', 'issued', 'routed', 'ready', 'eligible', 'actioned', 'verified', 'resolved', 'plan_published', 'badge_earned', 'pool_funded', 'item_approved'].includes(s)) return colors.success;
+  if (['pending', 'in_review', 'under_review', 'needs_info', 'scheduled', 'low_balance', 'review', 'in_translation', 'funding', 'fee_due', 'onboarding', 'frequent', 'packaged', 'matured', 'paused', 'processing', 'triaged', 'investigating', 'hide', 'warn', 'high', 'medium'].includes(s)) return colors.warning;
+  if (['draft', 'authoring', 'open', 'upcoming', 'generated', 'partial', 'submitted', 'trial', 'requested', 'applied', 'cards_generated', 'exam_opened', 'campaign_launched'].includes(s)) return colors.info;
+  if (['rejected', 'failed', 'suspended', 'blocked', 'unfunded', 'expired', 'duplicate', 'revoked', 'escalated', 'ban', 'critical', 'overdue', 'item_rejected'].includes(s)) return colors.danger;
+  if (['refunded', 'reversed', 'redeemed', 'reward_redeemed'].includes(s)) return colors.primary;
+  return colors.secondary;
+}
+
+function StatusBadge({ status, label: lbl }: { status: string; label?: string }) {
+  return <Badge text={lbl ?? status.replace(/_/g, ' ')} color={statusColor(status)} />;
+}
 
 const EMPTY: QuestionItemInput = { stem: '', type: 'mcq', subject: '', topic: '', difficulty: 'medium', objective: '', options: ['', '', '', ''], answer_key: '' };
 
@@ -44,46 +59,46 @@ export default function QuestionBankPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Question bank" subtitle="Item authoring (MCQ + rich types); tag by subject/topic/difficulty/objective; review workflow; duplicate detection; item analysis (difficulty, discrimination)." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Question bank" subtitle="Item authoring (MCQ + rich types); tag by subject/topic/difficulty/objective; review workflow; duplicate detection; item analysis (difficulty, discrimination)." actions={<Button onClick={load} variant="outline" sm>Refresh</Button>} />
       <AcademyTabs active="question-bank" />
       <DisclosureNote>Requires <code>academy.assessment</code>. Items enter as drafts and must pass review before they are eligible for blueprints. Suspected duplicates are flagged, not deleted.</DisclosureNote>
 
       <Card title="Author new item">
         <div style={{ display: 'grid', gap: '0.6rem' }}>
-          <div><label style={label()}>Stem (question text)</label><input style={input()} value={form.stem} onChange={(e) => setForm({ ...form, stem: e.target.value })} placeholder="Enter the question…" /></div>
+          <div><label style={label()}>Stem (question text)</label><Input value={form.stem} onChange={(e) => setForm({ ...form, stem: e.target.value })} placeholder="Enter the question…" /></div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem' }}>
             <div><label style={label()}>Type</label>
               <select style={select()} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as QuestionItemInput['type'] })}>
                 <option value="mcq">MCQ</option><option value="multi_select">Multi-select</option><option value="numeric">Numeric</option><option value="short_text">Short text</option>
               </select>
             </div>
-            <div><label style={label()}>Subject</label><input style={input()} value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder="Physics" /></div>
-            <div><label style={label()}>Topic</label><input style={input()} value={form.topic} onChange={(e) => setForm({ ...form, topic: e.target.value })} placeholder="Motion" /></div>
+            <div><label style={label()}>Subject</label><Input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder="Physics" /></div>
+            <div><label style={label()}>Topic</label><Input value={form.topic} onChange={(e) => setForm({ ...form, topic: e.target.value })} placeholder="Motion" /></div>
             <div><label style={label()}>Difficulty</label>
               <select style={select()} value={form.difficulty} onChange={(e) => setForm({ ...form, difficulty: e.target.value as QuestionItemInput['difficulty'] })}>
                 <option value="easy">easy</option><option value="medium">medium</option><option value="hard">hard</option>
               </select>
             </div>
-            <div><label style={label()}>Objective</label><input style={input()} value={form.objective ?? ''} onChange={(e) => setForm({ ...form, objective: e.target.value })} placeholder="Optional" /></div>
+            <div><label style={label()}>Objective</label><Input value={form.objective ?? ''} onChange={(e) => setForm({ ...form, objective: e.target.value })} placeholder="Optional" /></div>
           </div>
           {(form.type === 'mcq' || form.type === 'multi_select') && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.6rem' }}>
               {form.options.map((opt, idx) => (
-                <div key={idx}><label style={label()}>Option {idx + 1}</label><input style={input()} value={opt} onChange={(e) => { const next = [...form.options]; next[idx] = e.target.value; setForm({ ...form, options: next }); }} /></div>
+                <div key={idx}><label style={label()}>Option {idx + 1}</label><Input value={opt} onChange={(e) => { const next = [...form.options]; next[idx] = e.target.value; setForm({ ...form, options: next }); }} /></div>
               ))}
             </div>
           )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.6rem', alignItems: 'end' }}>
-            <div><label style={label()}>Answer key</label><input style={input()} value={form.answer_key} onChange={(e) => setForm({ ...form, answer_key: e.target.value })} placeholder="Correct answer (comma-separate for multi-select)" /></div>
-            <button onClick={submit} disabled={saving} style={btnPrimary()}>{saving ? 'Saving…' : 'Create item'}</button>
+            <div><label style={label()}>Answer key</label><Input value={form.answer_key} onChange={(e) => setForm({ ...form, answer_key: e.target.value })} placeholder="Correct answer (comma-separate for multi-select)" /></div>
+            <Button onClick={submit} disabled={saving} variant="primary" sm>{saving ? 'Saving…' : 'Create item'}</Button>
           </div>
         </div>
-        {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+        {notice && <p style={{ fontSize: '0.8rem', color: colors.text, marginTop: '0.6rem' }}>{notice}</p>}
         <AuditNote>Authoring and review decisions are recorded to the immutable audit log.</AuditNote>
       </Card>
 
-      <Card title="Items" right={
+      <Card title="Items">
         <FilterBar>
           <div><label style={label()}>Review status</label>
             <select style={select()} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
@@ -91,26 +106,25 @@ export default function QuestionBankPage() {
             </select>
           </div>
         </FilterBar>
-      }>
         <StateBlock loading={loading} error={error} empty={filtered.length === 0} emptyText="No items match.">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Stem</th><th style={th()}>Subject / Topic</th><th style={th()}>Difficulty</th><th style={th()}>p / r</th><th style={th()}>Status</th><th style={th()}>Actions</th></tr></thead>
+            <thead><tr><th style={thCell}>Stem</th><th style={thCell}>Subject / Topic</th><th style={thCell}>Difficulty</th><th style={thCell}>p / r</th><th style={thCell}>Status</th><th style={thCell}>Actions</th></tr></thead>
             <tbody>
               {filtered.map((q) => (
                 <tr key={q.id}>
-                  <td style={{ ...td(), maxWidth: 320 }}>{q.stem}</td>
-                  <td style={td()}>{q.subject}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{q.topic}</div></td>
-                  <td style={td()}><Badge status={q.difficulty} /></td>
-                  <td style={td()}>{q.difficulty_index !== null ? q.difficulty_index.toFixed(2) : '—'} / {q.discrimination !== null ? q.discrimination.toFixed(2) : '—'}</td>
-                  <td style={td()}><Badge status={q.review_status} /></td>
-                  <td style={td()}>
+                  <td style={{ ...tdCell, maxWidth: 320 }}>{q.stem}</td>
+                  <td style={tdCell}>{q.subject}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{q.topic}</div></td>
+                  <td style={tdCell}><StatusBadge status={q.difficulty} /></td>
+                  <td style={tdCell}>{q.difficulty_index !== null ? q.difficulty_index.toFixed(2) : '—'} / {q.discrimination !== null ? q.discrimination.toFixed(2) : '—'}</td>
+                  <td style={tdCell}><StatusBadge status={q.review_status} /></td>
+                  <td style={tdCell}>
                     {(q.review_status === 'in_review' || q.review_status === 'draft') ? (
                       <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                        <button onClick={() => review(q.id, 'approve')} style={btnPrimary()}>Approve</button>
-                        <button onClick={() => review(q.id, 'reject')} style={btnDanger()}>Reject</button>
-                        <button onClick={() => review(q.id, 'flag_duplicate')} style={btn()}>Duplicate</button>
+                        <Button onClick={() => review(q.id, 'approve')} variant="primary" sm>Approve</Button>
+                        <Button onClick={() => review(q.id, 'reject')} variant="danger" sm>Reject</Button>
+                        <Button onClick={() => review(q.id, 'flag_duplicate')} variant="outline" sm>Duplicate</Button>
                       </div>
-                    ) : <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>—</span>}
+                    ) : <span style={{ color: colors.muted, fontSize: '0.8rem' }}>—</span>}
                   </td>
                 </tr>
               ))}
@@ -118,6 +132,6 @@ export default function QuestionBankPage() {
           </table>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

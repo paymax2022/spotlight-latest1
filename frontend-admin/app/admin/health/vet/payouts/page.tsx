@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listPayouts, decidePayout, formatNaira } from '@/services/healthVetAdminService';
 import type { VetPayoutRecord, VetPayoutDecision } from '@/types/healthVetAdmin';
 import { PageHeader, VetTabs, Card, Badge, DisclosureNote, AuditNote, StateBlock, FilterBar, btn, btnPrimary, btnDanger, th, td, input, select, label, fmtDate } from '../../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 const STATUSES = ['', 'pending', 'approved', 'paid', 'kyc_hold', 'rejected'];
 
@@ -69,8 +70,8 @@ export default function VetPayoutsPage() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><strong>{r.vet_masked}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.clinic_masked} · {r.id}</div></td>
-                  <td style={td()}><Badge status={r.kyc_tier} />{r.kyc_verified ? null : <div style={{ fontSize: '0.7rem', color: '#b91c1c' }}>unverified</div>}</td>
+                  <td style={td()}><strong>{r.vet_masked}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.clinic_masked} · {r.id}</div></td>
+                  <td style={td()}><Badge status={r.kyc_tier} />{r.kyc_verified ? null : <div style={{ fontSize: '0.7rem', color: colors.danger }}>unverified</div>}</td>
                   <td style={td()}>{r.aml_flag ? <Badge status="flagged" label="AML flag" /> : <Badge status="ok" label="clear" />}</td>
                   <td style={td()}>{formatNaira(r.released_kobo)}</td>
                   <td style={td()}>{formatNaira(r.fees_kobo)}</td>
@@ -83,7 +84,7 @@ export default function VetPayoutsPage() {
                         <button disabled={busy} style={btnPrimary()} onClick={() => decide(r.id, 'approve')}>Approve</button>
                         <button disabled={busy} style={btnDanger()} onClick={() => decide(r.id, 'reject')}>Reject</button>
                       </div>
-                    ) : <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>—</span>}
+                    ) : <span style={{ color: colors.muted, fontSize: '0.8rem' }}>—</span>}
                   </td>
                 </tr>
               ))}

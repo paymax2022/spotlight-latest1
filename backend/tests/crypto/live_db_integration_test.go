@@ -369,21 +369,10 @@ func TestLiveDB_Withdraw_ParksUnitsOnCreate_ReturnsOnProviderFailure(t *testing.
 	if err != nil {
 		t.Fatalf("Withdraw: %v", err)
 	}
-	// The member create path PARKS the withdrawal at pending_review (the AML gate) with
-	// the units already held — it never dispatches to the provider directly.
+	// Member path stops at the AML gate: requested → pending_review (units parked, NO
+	// provider dispatch). A compliance officer must approve before anything can broadcast.
 	if w.Status != crypto.WithdrawalPendingReview {
-		t.Fatalf("withdrawal status = %s, want %s (member create parks for AML review)", w.Status, crypto.WithdrawalPendingReview)
-	}
-	// A compliance officer approves → the AML gate clears and, since the mock provider
-	// always accepts, the withdrawal broadcasts (approved → broadcast). This is the ONLY
-	// path that dispatches to the provider.
-	adminID := seedUser(t, ctx, pool)
-	decided, err := svc.AdminDecideWithdrawal(ctx, adminID, w.ID, "approve", "aml cleared")
-	if err != nil {
-		t.Fatalf("AdminDecideWithdrawal(approve): %v", err)
-	}
-	if decided.Status != crypto.WithdrawalBroadcast {
-		t.Fatalf("withdrawal status after approve = %s, want %s (mock provider always accepts)", decided.Status, crypto.WithdrawalBroadcast)
+		t.Fatalf("withdrawal status = %s, want %s (member path stops at the AML gate)", w.Status, crypto.WithdrawalPendingReview)
 	}
 
 	holdingsAfter, err := svc.Holdings(ctx, userID)
@@ -393,6 +382,16 @@ func TestLiveDB_Withdraw_ParksUnitsOnCreate_ReturnsOnProviderFailure(t *testing.
 	unitsAfter := findHoldingUnits(holdingsAfter, fromAssetID)
 	if unitsBefore-unitsAfter != withdrawUnits {
 		t.Errorf("holding decreased by %d, want exactly %d (units parked on withdrawal creation)", unitsBefore-unitsAfter, withdrawUnits)
+	}
+
+	// AML approval clears the gate: pending_review → approved → broadcast (mock provider
+	// accepts). Only after broadcast may the member confirm the on-chain transaction.
+	approved, err := svc.AdminDecideWithdrawal(ctx, "qa-aml-officer", w.ID, "approve", "aml cleared")
+	if err != nil {
+		t.Fatalf("AdminDecideWithdrawal(approve): %v", err)
+	}
+	if approved.Status != crypto.WithdrawalBroadcast {
+		t.Fatalf("status after admin approve = %s, want %s (mock provider always accepts)", approved.Status, crypto.WithdrawalBroadcast)
 	}
 
 	// Confirm the withdrawal — units remain burned (never returned).

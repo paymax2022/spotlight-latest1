@@ -14,6 +14,7 @@ import DisclosureBanner from '@/features/savings/components/DisclosureBanner';
 import { useCreateGroupTarget } from '@/features/savings/hooks';
 import { SavingsColors, GROUP_TARGET_DISCLOSURE, formatNaira } from '@/features/savings/constants/savings.constants';
 import type { WithdrawalRule } from '@/features/savings/types';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 const RULES: { value: WithdrawalRule; title: string; desc: string }[] = [
   { value: 'on-date', title: 'On target date', desc: 'Funds release automatically on the deadline.' },
@@ -47,7 +48,7 @@ export default function CreateGroupTarget() {
       <ScreenHeader title="Create group target" />
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <TextInputField label="Target name" placeholder="e.g. Detty December Trip" value={name} onChangeText={setName} />
-        <TextInputField label="Target amount" placeholder="0" keyboardType="numeric" value={amount} onChangeText={setAmount} leftIcon={<Users size={18} color={SavingsColors.muted} />} />
+        <TextInputField label="Target amount" placeholder="0" keyboardType="decimal-pad" maxLength={13} value={amount} onChangeText={(t) => setAmount(sanitizeMoneyInput(t))} leftIcon={<Users size={18} color={SavingsColors.muted} />} />
         <TextInputField label="Days to reach goal" placeholder="60" keyboardType="numeric" value={days} onChangeText={setDays} leftIcon={<Calendar size={18} color={SavingsColors.muted} />} />
 
         <Text style={styles.label}>Withdrawal rule</Text>

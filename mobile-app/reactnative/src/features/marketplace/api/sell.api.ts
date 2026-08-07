@@ -23,7 +23,7 @@
 //   POST /boosts                   (money — wallet debit; Idempotency-Key)
 //   GET  /boosts/:id
 
-import { MKT_USE_MOCK, mktGet, mktPost, mktPut, mktDelete } from './client';
+import { MKT_USE_MOCK, mktGet, mktPost, mktPut, mktDelete, arr } from './client';
 import * as S from './sell.mock';
 import type {
   Boost,
@@ -155,14 +155,14 @@ export async function deleteListing(id: string): Promise<{ ok: boolean }> {
 export async function getMyListings(sellerId: string | null): Promise<Listing[]> {
   if (MKT_USE_MOCK) return S.mockMyListings();
   if (!sellerId) return [];
-  return mktGet<Listing[]>(`/sellers/${sellerId}/listings`, { mine: 1 });
+  return arr(await mktGet<Listing[]>(`/sellers/${sellerId}/listings`, { mine: 1 }));
 }
 
 // ─── Boosts (money path — POST /boosts carries an Idempotency-Key) ───────────
 
 export async function getBoostTiers(): Promise<BoostTier[]> {
   if (MKT_USE_MOCK) return S.mockBoostTiers();
-  return mktGet<BoostTier[]>('/boosts/tiers');
+  return arr(await mktGet<BoostTier[]>('/boosts/tiers'));
 }
 
 export async function createBoost(input: CreateBoostInput, idempotencyKey: string): Promise<Boost> {

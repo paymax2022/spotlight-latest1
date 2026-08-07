@@ -10,6 +10,7 @@ import type {
   EarningOpportunity, EarningApplication,
 } from '@/types/academyAdmin';
 import { PageHeader, AcademyTabs, Card, Badge, Kpi, StateBlock, AuditNote, DisclosureNote, FilterBar, btn, btnPrimary, btnDanger, th, td, input, label, select, fmtDate, timeAgo } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function CredentialsPage() {
   const [templates, setTemplates] = useState<CredentialTemplate[]>([]);
@@ -149,11 +150,11 @@ export default function CredentialsPage() {
                 <tr key={c.id}>
                   <td style={td()}><code style={{ fontSize: '0.78rem' }}>{c.serial}</code></td>
                   <td style={td()}>{c.template_name}</td>
-                  <td style={td()}>{c.learner_name}<div style={{ color: '#9ca3af', fontSize: '0.75rem' }}>{c.learner_id}</div></td>
+                  <td style={td()}>{c.learner_name}<div style={{ color: colors.muted, fontSize: '0.75rem' }}>{c.learner_id}</div></td>
                   <td style={td()}>{fmtDate(c.issued_at)}</td>
                   <td style={td()}>{c.expires_at ? fmtDate(c.expires_at) : '—'}</td>
                   <td style={td()}><Badge status={c.status} />{c.revoke_reason ? <div style={{ color: '#b91c1c', fontSize: '0.72rem', marginTop: '0.2rem' }}>{c.revoke_reason}</div> : null}</td>
-                  <td style={td()}>{c.status === 'issued' ? <button onClick={() => revoke(c)} disabled={busy === c.id} style={btnDanger()}>Revoke</button> : <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>—</span>}</td>
+                  <td style={td()}>{c.status === 'issued' ? <button onClick={() => revoke(c)} disabled={busy === c.id} style={btnDanger()}>Revoke</button> : <span style={{ color: colors.muted, fontSize: '0.8rem' }}>—</span>}</td>
                 </tr>
               ))}
             </tbody>
@@ -169,7 +170,7 @@ export default function CredentialsPage() {
                   <td style={td()}><strong>{o.title}</strong></td>
                   <td style={td()}>{o.trade_track}</td>
                   <td style={td()}><code style={{ fontSize: '0.78rem' }}>{o.paymax_role}</code></td>
-                  <td style={td()}>{o.eligibility_rule}<div style={{ color: '#9ca3af', fontSize: '0.72rem' }}>min: {o.min_credential_status}</div></td>
+                  <td style={td()}>{o.eligibility_rule}<div style={{ color: colors.muted, fontSize: '0.72rem' }}>min: {o.min_credential_status}</div></td>
                   <td style={td()}>{o.applicants}</td>
                   <td style={td()}>{o.routed}</td>
                   <td style={td()}><Badge status={o.status} /></td>
@@ -185,7 +186,7 @@ export default function CredentialsPage() {
             <div><label style={label()}>Min credential status</label><select style={select()} value={oppForm.min} onChange={(e) => setOppForm({ ...oppForm, min: e.target.value })}><option value="issued">issued</option><option value="active">active</option></select></div>
             <div><button onClick={addOpportunity} disabled={busy === 'opp'} style={btnPrimary()}>Create opportunity</button></div>
           </div>
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: '0.6rem' }}>{notice}</p>}
           <AuditNote>Template creation, issuance, revocation, earning-opportunity mapping and applicant routing are recorded to the immutable audit log.</AuditNote>
         </Card>
 
@@ -195,9 +196,9 @@ export default function CredentialsPage() {
             <tbody>
               {apps.map((a) => (
                 <tr key={a.id}>
-                  <td style={td()}>{a.learner_name}<div style={{ color: '#9ca3af', fontSize: '0.75rem' }}>{a.learner_id}</div></td>
+                  <td style={td()}>{a.learner_name}<div style={{ color: colors.muted, fontSize: '0.75rem' }}>{a.learner_id}</div></td>
                   <td style={td()}>{a.opportunity_title}</td>
-                  <td style={td()}>{a.credential_serial ? <code style={{ fontSize: '0.78rem' }}>{a.credential_serial}</code> : <span style={{ color: '#9ca3af' }}>none</span>}</td>
+                  <td style={td()}>{a.credential_serial ? <code style={{ fontSize: '0.78rem' }}>{a.credential_serial}</code> : <span style={{ color: colors.muted }}>none</span>}</td>
                   <td style={td()}><Badge status={a.status} /></td>
                   <td style={td()}>{timeAgo(a.submitted_at)}</td>
                 </tr>

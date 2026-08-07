@@ -30,12 +30,17 @@ const CUISINE_FILTERS = [
 ] as const;
 type Cuisine = typeof CUISINE_FILTERS[number]['key'];
 
+// Browse tiles. Each one opens the real (data-backed) Food module rather than
+// filtering the mock list below — `href` is what makes them tappable; without it
+// they were inert decoration. Nearby/Popular/Offers map to ?view= handled in
+// app/food/index.tsx. There is no scheduled-ordering feature yet, so that slot
+// is My Orders until pre-ordering ships.
 const CATEGORIES = [
-  { id: 'nearby',    label: 'Nearby',        icon: 'MapPin',         accent: Colors.secondary,  bg: Colors.iconBgBlue },
-  { id: 'popular',   label: 'Popular',        icon: 'Flame',          accent: '#EF4444',         bg: 'rgba(239,68,68,0.08)' },
-  { id: 'offers',    label: 'Offers',         icon: 'Tag',            accent: '#16A34A',         bg: Colors.iconBgGreen },
-  { id: 'schedule',  label: 'Schedule',       icon: 'Clock',          accent: Colors.primary,    bg: Colors.iconBgPurple },
-];
+  { id: 'nearby',    label: 'Nearby',     icon: 'MapPin',      accent: Colors.secondary,  bg: Colors.iconBgBlue,          href: '/food?view=nearby' },
+  { id: 'popular',   label: 'Popular',    icon: 'Flame',       accent: '#EF4444',         bg: 'rgba(239,68,68,0.08)',     href: '/food?view=popular' },
+  { id: 'offers',    label: 'Offers',     icon: 'Tag',         accent: '#16A34A',         bg: Colors.iconBgGreen,         href: '/food?view=offers' },
+  { id: 'orders',    label: 'My Orders',  icon: 'ReceiptText', accent: Colors.primary,    bg: Colors.iconBgPurple,        href: '/food/orders' },
+] as const;
 
 const RESTAURANTS = [
   {
@@ -323,8 +328,10 @@ export default function FoodScreen() {
           {CATEGORIES.map((cat) => (
             <Pressable
               key={cat.id}
+              onPress={() => router.push(cat.href)}
               style={({ pressed }) => [s.catCard, shadow1, pressed && { opacity: 0.82 }]}
               accessibilityRole="button"
+              accessibilityLabel={cat.label}
             >
               <View style={[s.catIcon, { backgroundColor: cat.bg }]}>
                 <DynamicIcon name={cat.icon} color={cat.accent} size={20} />

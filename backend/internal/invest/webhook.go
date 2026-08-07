@@ -58,7 +58,7 @@ func (h *WebhookHandler) Handle(c *gin.Context) {
 	var evt struct {
 		Type              string  `json:"type"` // order.filled | order.settled | order.rejected
 		ProviderReference string  `json:"provider_reference"`
-		ExecutedPrice     float64 `json:"executed_price"`     // naira
+		ExecutedPrice     float64 `json:"executed_price"` // naira
 		FilledQuantity    float64 `json:"filled_quantity"`
 		Reason            string  `json:"reason"`
 	}

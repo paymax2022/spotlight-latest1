@@ -2,7 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { listApprovals, decideApplication, type ApprovalRecord } from '@/services/associationAdminService';
-import { PageHeader, AssociationTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnPrimary, btnDanger, th, td, label, select, fmtDate } from '../_ui';
+import { AssociationTabs, DisclosureNote, StateBlock, FilterBar, AuditNote, fmtDate } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string) {
+  if (status === 'approved') return colors.success;
+  if (status === 'rejected') return colors.danger;
+  return colors.warning;
+}
 
 export default function ApprovalsPage() {
   const [rows, setRows] = useState<ApprovalRecord[]>([]);
@@ -29,8 +36,8 @@ export default function ApprovalsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Membership approvals" subtitle="Review and decide pending association membership applications." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Membership approvals" subtitle="Review and decide pending association membership applications." actions={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <AssociationTabs active="approvals" />
       <DisclosureNote>Each decision posts to <code>/api/finance/associations/admin/approvals/:id/decision</code> and is recorded to the immutable audit log (NL-12).</DisclosureNote>
 
@@ -38,8 +45,8 @@ export default function ApprovalsPage() {
 
       <FilterBar>
         <div>
-          <label style={label()}>Status</label>
-          <select style={select()} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' }}>Status</label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All</option>
             <option value="pending">Pending</option>
             <option value="approved">Approved</option>
@@ -50,27 +57,27 @@ export default function ApprovalsPage() {
 
       <Card>
         <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No applications match.">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12 }}>
             <thead><tr>
-              <th style={th()}>Application</th><th style={th()}>Association</th><th style={th()}>Applicant</th><th style={th()}>Tier</th>
-              <th style={th()}>Submitted</th><th style={th()}>Status</th><th style={th()}>Action</th>
+              <th style={thCell}>Application</th><th style={thCell}>Association</th><th style={thCell}>Applicant</th><th style={thCell}>Tier</th>
+              <th style={thCell}>Submitted</th><th style={thCell}>Status</th><th style={thCell}>Action</th>
             </tr></thead>
             <tbody>
               {rows.map((a) => (
                 <tr key={a.id}>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{a.id}</code></td>
-                  <td style={td()}>{a.association_name}</td>
-                  <td style={td()}>{a.applicant_masked}</td>
-                  <td style={td()}>{a.membership_tier}</td>
-                  <td style={td()}>{fmtDate(a.submitted_at)}</td>
-                  <td style={td()}><Badge status={a.status} /></td>
-                  <td style={td()}>
+                  <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{a.id}</code></td>
+                  <td style={tdCell}>{a.association_name}</td>
+                  <td style={tdCell}>{a.applicant_masked}</td>
+                  <td style={tdCell}>{a.membership_tier}</td>
+                  <td style={tdCell}>{fmtDate(a.submitted_at)}</td>
+                  <td style={tdCell}><Badge text={a.status} color={statusColor(a.status)} /></td>
+                  <td style={tdCell}>
                     {a.status === 'pending' ? (
                       <div style={{ display: 'flex', gap: '0.4rem' }}>
-                        <button style={btnPrimary()} disabled={busy === a.id} onClick={() => decide(a, 'approve')}>{busy === a.id ? '…' : 'Approve'}</button>
-                        <button style={btnDanger()} disabled={busy === a.id} onClick={() => decide(a, 'reject')}>Reject</button>
+                        <Button variant="primary" sm disabled={busy === a.id} onClick={() => decide(a, 'approve')}>{busy === a.id ? '…' : 'Approve'}</Button>
+                        <Button variant="danger" sm disabled={busy === a.id} onClick={() => decide(a, 'reject')}>Reject</Button>
                       </div>
-                    ) : <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>—</span>}
+                    ) : <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span>}
                   </td>
                 </tr>
               ))}
@@ -78,6 +85,6 @@ export default function ApprovalsPage() {
           </table>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

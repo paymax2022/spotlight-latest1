@@ -5,9 +5,10 @@ import { getMoverJobs, getMoverJob, setMoverStatus } from '@/services/mobilityMo
 import type { MoverRow, MoverDetail, MoverStatus } from '@/types/mobilityModes';
 import {
   PageHeader, MobilityTabs, Card, Badge, StateNote, AuditedNotice, Kpi,
-  btn, btnPrimary, btnDisabled, th, td, input, nairaFull,
+  btn, btnPrimary, btnDisabled, input, nairaFull,
   useMobilityPermissions, MOBILITY_PERMS,
 } from '../_ui';
+import { colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUS_FILTER: Array<MoverStatus | ''> = ['', 'quote_requested', 'bids_received', 'bid_accepted', 'crew_assigned', 'in_progress', 'completion_confirmed', 'disputed', 'cancelled'];
 const STATUS_OPTIONS: MoverStatus[] = ['quote_requested', 'bids_received', 'bid_accepted', 'crew_assigned', 'in_progress', 'completion_confirmed', 'disputed', 'cancelled'];
@@ -74,8 +75,8 @@ export default function MobilityMoversPage() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
         <Kpi label="Total jobs" value={String(rows.length)} />
-        <Kpi label="Funds in escrow" value={String(inEscrow)} accent="#9a3412" />
-        <Kpi label="Awaiting bids" value={String(awaitingBids)} accent={awaitingBids ? '#1d4ed8' : '#16a34a'} />
+        <Kpi label="Funds in escrow" value={String(inEscrow)} accent={colors.warning} />
+        <Kpi label="Awaiting bids" value={String(awaitingBids)} accent={awaitingBids ? colors.info : colors.success} />
       </div>
 
       <Card
@@ -91,20 +92,20 @@ export default function MobilityMoversPage() {
           : rows.length === 0 ? <StateNote kind="empty">No move jobs match this filter.</StateNote>
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-              <thead><tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>Job</th><th style={th()}>Route</th><th style={th()}>Truck / Helpers</th><th style={th()}>Status</th><th style={th()}>Bids</th><th style={th()}>Escrow</th><th style={th()}>Accepted</th><th style={th()}></th>
+              <thead><tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                <th style={thCell}>Job</th><th style={thCell}>Route</th><th style={thCell}>Truck / Helpers</th><th style={thCell}>Status</th><th style={thCell}>Bids</th><th style={thCell}>Escrow</th><th style={thCell}>Accepted</th><th style={thCell}></th>
               </tr></thead>
               <tbody>
                 {rows.map((m) => (
-                  <tr key={m.id} style={{ borderBottom: '1px solid #f3f4f6', background: m.status === 'disputed' ? '#fef2f2' : undefined }}>
-                    <td style={td()}><strong>{m.id}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{m.customerName}</div></td>
-                    <td style={td()}>{m.pickupAddress}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>→ {m.dropoffAddress}</div></td>
-                    <td style={td()}>{m.truckSize} · {m.helpers} helpers</td>
-                    <td style={td()}><Badge status={m.status} /></td>
-                    <td style={td()}>{m.bidsCount}</td>
-                    <td style={td()}><Badge status={m.escrowStatus} /></td>
-                    <td style={td()}>{m.acceptedAmountKobo != null ? nairaFull(m.acceptedAmountKobo) : '—'}</td>
-                    <td style={td()}><button style={btn()} onClick={() => void openDetail(m.id, m.status)}>{canManage ? 'Manage' : 'View'}</button></td>
+                  <tr key={m.id} style={{ borderBottom: `1px solid ${colors.border}`, background: m.status === 'disputed' ? tint(colors.danger, 0.08) : undefined }}>
+                    <td style={tdCell}><strong>{m.id}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{m.customerName}</div></td>
+                    <td style={tdCell}>{m.pickupAddress}<div style={{ fontSize: '0.72rem', color: colors.muted }}>→ {m.dropoffAddress}</div></td>
+                    <td style={tdCell}>{m.truckSize} · {m.helpers} helpers</td>
+                    <td style={tdCell}><Badge status={m.status} /></td>
+                    <td style={tdCell}>{m.bidsCount}</td>
+                    <td style={tdCell}><Badge status={m.escrowStatus} /></td>
+                    <td style={tdCell}>{m.acceptedAmountKobo != null ? nairaFull(m.acceptedAmountKobo) : '—'}</td>
+                    <td style={tdCell}><button style={btn()} onClick={() => void openDetail(m.id, m.status)}>{canManage ? 'Manage' : 'View'}</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -114,28 +115,28 @@ export default function MobilityMoversPage() {
 
       {(detail || detailLoading) && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }} onClick={() => !busy && setDetail(null)}>
-          <div style={{ background: '#fff', borderRadius: '0.5rem', padding: '1.25rem', width: 'min(620px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: colors.card, borderRadius: '0.5rem', padding: '1.25rem', width: 'min(620px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             {detailLoading || !detail ? <StateNote kind="loading">Loading job…</StateNote> : (
               <>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: '0.5rem' }}>
                   <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>{detail.id}</h2>
                   <Badge status={detail.status} /><Badge status={detail.escrowStatus} />
                 </div>
-                <p style={{ fontSize: '0.82rem', color: '#374151', margin: '0 0 0.25rem' }}>{detail.customerName} · {detail.truckSize} truck · {detail.helpers} helpers</p>
-                <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0 0 0.25rem' }}>{detail.pickupAddress} → {detail.dropoffAddress}</p>
-                <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0 0 1rem' }}>Move at {new Date(detail.moveAt).toLocaleString()} · {detail.inventory}</p>
+                <p style={{ fontSize: '0.82rem', color: colors.text, margin: '0 0 0.25rem' }}>{detail.customerName} · {detail.truckSize} truck · {detail.helpers} helpers</p>
+                <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 0.25rem' }}>{detail.pickupAddress} → {detail.dropoffAddress}</p>
+                <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 1rem' }}>Move at {new Date(detail.moveAt).toLocaleString()} · {detail.inventory}</p>
 
                 <div style={{ fontSize: '0.85rem', fontWeight: 700, margin: '0 0 0.5rem' }}>Bids ({detail.bids.length})</div>
                 {detail.bids.length === 0 ? <StateNote kind="empty">No bids submitted yet.</StateNote> : (
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', marginBottom: '1rem' }}>
-                    <thead><tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                      <th style={th()}>Mover</th><th style={th()}>Amount</th><th style={th()}>Crew</th><th style={th()}>Accepted</th>
+                    <thead><tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                      <th style={thCell}>Mover</th><th style={thCell}>Amount</th><th style={thCell}>Crew</th><th style={thCell}>Accepted</th>
                     </tr></thead>
                     <tbody>
                       {detail.bids.map((b) => (
-                        <tr key={b.id} style={{ borderBottom: '1px solid #f3f4f6', background: b.accepted ? '#dcfce7' : undefined }}>
-                          <td style={td()}>{b.moverName}</td><td style={td()}>{nairaFull(b.amountKobo)}</td><td style={td()}>{b.crewSize}</td>
-                          <td style={td()}>{b.accepted ? <Badge status="approved" label="accepted" /> : '—'}</td>
+                        <tr key={b.id} style={{ borderBottom: `1px solid ${colors.border}`, background: b.accepted ? tint(colors.success, 0.12) : undefined }}>
+                          <td style={tdCell}>{b.moverName}</td><td style={tdCell}>{nairaFull(b.amountKobo)}</td><td style={tdCell}>{b.crewSize}</td>
+                          <td style={tdCell}>{b.accepted ? <Badge status="approved" label="accepted" /> : '—'}</td>
                         </tr>
                       ))}
                     </tbody>

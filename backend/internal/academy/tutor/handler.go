@@ -80,11 +80,15 @@ func (h *Handler) fail(c *gin.Context, err error) {
 //	member: POST /tutor/onboard
 //	        GET  /tutor/me
 //	        POST /tutor/assignments
+//	        GET  /tutor/assignments — the caller's OWN assignments (owner-scoped)
+//	        GET  /tutor/cohorts     — the caller's class groups (owner-scoped)
+//	        GET  /tutor/submissions — graded submissions on the caller's assignments
 //	        POST /tutor/grades
 //	        GET  /tutor/earnings
 //	        POST /tutor/payouts
 //	        GET  /tutors            — list verified tutors (?subject=)
-//	admin : POST /tutor/:id/verify
+//	admin : GET  /tutor            — list ALL tutors (admin-wide)
+//	        POST /tutor/:id/verify
 //	        POST /tutor/:id/suspend
 //	        GET  /tutor/payouts
 func RegisterAcademyTutor(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, kyc KYCChecker, payout PayoutRail) {
@@ -104,6 +108,9 @@ func RegisterAcademyTutor(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rb
 		member.POST("/tutor/onboard", h.Onboard)
 		member.GET("/tutor/me", h.GetMe)
 		member.POST("/tutor/assignments", h.CreateAssignment)
+		member.GET("/tutor/assignments", h.ListMyAssignments)
+		member.GET("/tutor/cohorts", h.ListMyCohorts)
+		member.GET("/tutor/submissions", h.ListMySubmissions)
 		member.POST("/tutor/grades", h.CreateGrade)
 		member.GET("/tutor/earnings", h.GetEarnings)
 		member.POST("/tutor/payouts", h.RequestPayout)
@@ -113,6 +120,7 @@ func RegisterAcademyTutor(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rb
 
 	if admin != nil {
 		guard := middleware.RequirePermission(rbac, "academy.tutor")
+		admin.GET("/tutor", guard, h.AdminListTutors)
 		admin.POST("/tutor/:id/verify", guard, h.AdminVerify)
 		admin.POST("/tutor/:id/suspend", guard, h.AdminSuspend)
 		admin.GET("/tutor/payouts", guard, h.AdminListPayouts)
@@ -238,7 +246,60 @@ func (h *Handler) ListTutors(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
+// ListMyAssignments lists the caller's OWN assignments (owner-scoped).
+func (h *Handler) ListMyAssignments(c *gin.Context) {
+	u, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+	out, err := h.svc.ListMyAssignments(c.Request.Context(), u)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// ListMyCohorts lists the class groups the caller teaches (owner-scoped).
+func (h *Handler) ListMyCohorts(c *gin.Context) {
+	u, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+	out, err := h.svc.ListMyCohorts(c.Request.Context(), u)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// ListMySubmissions lists graded submissions across the caller's OWN assignments.
+func (h *Handler) ListMySubmissions(c *gin.Context) {
+	u, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+	out, err := h.svc.ListMySubmissions(c.Request.Context(), u)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
 // ── Admin handlers (RBAC academy.tutor) ─────────────────────────────────────────
+
+// AdminListTutors lists ALL tutors regardless of status (admin-wide, mirrors the
+// member verified-only ListTutors).
+func (h *Handler) AdminListTutors(c *gin.Context) {
+	out, err := h.svc.AdminListTutors(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
 
 func (h *Handler) AdminVerify(c *gin.Context) {
 	out, err := h.svc.VerifyTutor(c.Request.Context(), uid(c), c.Param("id"))

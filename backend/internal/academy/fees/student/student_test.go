@@ -250,12 +250,12 @@ func TestBulkImport_ValidatesAndRejectsBadRows(t *testing.T) {
 
 	csv := strings.Join([]string{
 		"admission_number,class_id,student_user_id,guardian_user_ids,minor_flag",
-		"NEW-1,class-a,,guardian-ok,true",       // valid
-		",class-a,,,true",                        // invalid: missing admission_number
-		"EXISTING-1,class-a,,,true",              // invalid: admission_number already taken in DB
-		"NEW-2,class-a,,ghost-guardian,true",     // invalid: unknown guardian identity
-		"DUP-1,class-a,,,true",                   // valid (first occurrence)
-		"DUP-1,class-b,,,true",                   // invalid: duplicate within batch
+		"NEW-1,class-a,,guardian-ok,true",    // valid
+		",class-a,,,true",                    // invalid: missing admission_number
+		"EXISTING-1,class-a,,,true",          // invalid: admission_number already taken in DB
+		"NEW-2,class-a,,ghost-guardian,true", // invalid: unknown guardian identity
+		"DUP-1,class-a,,,true",               // valid (first occurrence)
+		"DUP-1,class-b,,,true",               // invalid: duplicate within batch
 	}, "\n")
 
 	preview, err := svc.ParseAndValidateImport(ctx, "school-1", csv)

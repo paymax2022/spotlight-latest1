@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, Switch, Alert } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Repeat } from 'lucide-react-native';
@@ -14,8 +14,10 @@ import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import ProgressBar from '@/features/academy/components/ProgressBar';
 import { formatNaira } from '@/features/academy/constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { AUTOSAVE_CADENCES } from '@/features/academy/fees/constants';
 import { useVaults, useUpdateAutoSave } from '@/features/academy/fees/hooks';
+import { alertAsync } from '@/lib/confirm';
 
 /** PA-08 — Auto-save rules for a fees vault. */
 export default function AutoSaveRules() {
@@ -50,18 +52,16 @@ export default function AutoSaveRules() {
 
   const onSave = () => {
     if (enabled && amountKobo <= 0) {
-      Alert.alert('Add an amount', 'Enter how much to save each time.');
+      alertAsync({ title: 'Add an amount', message: 'Enter how much to save each time.' });
       return;
     }
     update.mutate(
       { vaultId: vault.id, rule: { cadence, amountKobo, enabled } },
       {
         onSuccess: () => {
-          Alert.alert('Auto-save updated', enabled ? `We'll save ${formatNaira(amountKobo)} ${cadence}.` : 'Auto-save turned off.', [
-            { text: 'Done', onPress: () => router.back() },
-          ]);
+          alertAsync({ title: 'Auto-save updated', message: enabled ? `We'll save ${formatNaira(amountKobo)} ${cadence}.` : 'Auto-save turned off.', buttonLabel: 'Done' }).then(() => router.back());
         },
-        onError: (e) => Alert.alert('Could not update', (e as Error).message),
+        onError: (e) => alertAsync({ title: 'Could not update', message: (e as Error).message }),
       },
     );
   };
@@ -102,7 +102,7 @@ export default function AutoSaveRules() {
               })}
             </View>
             <Text style={styles.section}>Amount each time</Text>
-            <TextInputField placeholder="e.g. 15000" value={amount} onChangeText={setAmount} keyboardType="numeric" leftIcon={<Text style={styles.naira}>₦</Text>} />
+            <TextInputField placeholder="e.g. 15000" value={amount} onChangeText={(v) => setAmount(sanitizeMoneyInput(v))} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} leftIcon={<Text style={styles.naira}>₦</Text>} />
           </>
         ) : null}
 

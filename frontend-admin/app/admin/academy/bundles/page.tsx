@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { listOfflineBundles, buildOfflineBundle, listContent, listPlans } from '@/services/academyAdminService';
 import type { OfflineBundle, ContentItem, Plan } from '@/types/academyAdmin';
 import { PageHeader, AcademyTabs, Card, Badge, StateBlock, AuditNote, DisclosureNote, Bar, btn, btnPrimary, th, td, input, label, select, fmtDate } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function BundlesPage() {
   const [bundles, setBundles] = useState<OfflineBundle[]>([]);
@@ -91,14 +92,14 @@ export default function BundlesPage() {
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)', gap: '1rem', alignItems: 'start' }}>
             <div>
               <label style={label()}>Pick lessons</label>
-              <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', maxHeight: 280, overflowY: 'auto' }}>
+              <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', maxHeight: 280, overflowY: 'auto' }}>
                 {lessons.map((c) => {
                   const std = c.variants.find((v) => v.quality === 'standard')?.size_mb ?? 0;
                   const on = picked.includes(c.id);
                   return (
                     <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.45rem 0.6rem', borderBottom: '1px solid #f3f4f6', cursor: 'pointer', background: on ? '#f5f3ff' : '#fff' }}>
                       <input type="checkbox" checked={on} onChange={() => togglePick(c.id)} />
-                      <span style={{ flex: 1, fontSize: '0.82rem' }}>{c.title} <span style={{ color: '#9ca3af' }}>· {c.subject}</span></span>
+                      <span style={{ flex: 1, fontSize: '0.82rem' }}>{c.title} <span style={{ color: colors.muted }}>· {c.subject}</span></span>
                       <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>{std} MB</span>
                     </label>
                   );
@@ -128,7 +129,7 @@ export default function BundlesPage() {
               <button onClick={build} disabled={busy} style={btnPrimary()}>{busy ? 'Building…' : 'Build bundle'}</button>
             </div>
           </div>
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: '0.6rem' }}>{notice}</p>}
           <AuditNote>Bundle composition and access-card mapping are recorded to the immutable audit log.</AuditNote>
         </Card>
       </StateBlock>

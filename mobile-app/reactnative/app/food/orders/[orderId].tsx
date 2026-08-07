@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { confirmAsync } from '@/lib/confirm';
 import * as Icons from 'lucide-react-native';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -44,16 +45,10 @@ export default function OrderTrackingScreen() {
     return s === 'placed' || s === 'accepted';
   }, [status]);
 
-  const onCancel = () => {
+  const onCancel = async () => {
     if (!order) return;
-    Alert.alert('Cancel order?', 'This will cancel your order. You will be refunded if already charged.', [
-      { text: 'Keep order', style: 'cancel' },
-      {
-        text: 'Cancel order',
-        style: 'destructive',
-        onPress: () => cancelOrder.mutate({ restaurantId: order.restaurantId, orderId: order.id }),
-      },
-    ]);
+    const ok = await confirmAsync({ title: 'Cancel order?', message: 'This will cancel your order. You will be refunded if already charged.', confirmLabel: 'Cancel order', cancelLabel: 'Keep order', destructive: true });
+    if (ok) cancelOrder.mutate({ restaurantId: order.restaurantId, orderId: order.id });
   };
 
   return (

@@ -4,17 +4,18 @@ import { useCallback, useEffect, useState } from 'react';
 import { listBoosts, rejectBoost, formatKobo } from '@/services/marketplaceAdminService';
 import type { MktBoost } from '@/types/marketplaceAdmin';
 import {
-  PageHeader, MarketplaceTabs, Card, StatusBadge, ScaffoldNotice, StateBlock, AuditNote,
-  PermissionBanner, btn, btnDanger, btnDisabled, th, td, timeAgo, fmtDate,
-  MARKETPLACE_PERMS, useMarketplacePermission,
+  MarketplaceTabs, StatusBadge, DisclosureNote, StateBlock, AuditNote,
+  PermissionBanner, fmtDate, MARKETPLACE_PERMS, useMarketplacePermission,
 } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function BoostsAdminPage() {
-  // Boost moderation reuses the same "moderate" surface as listings/flags per §2.4
-  // of the build contract (admin/system detects policy violation → reason_code
-  // mandatory → automatic refund). No dedicated marketplace.admin.boosts.* slug is
-  // seeded yet — gate on the moderation permission until Agent C adds one.
+  // List view is gated on the read/moderation surface, but the Reject action calls
+  // POST /admin/boosts/:id/reject which the backend guards with
+  // marketplace.admin.reject — gate the button on that permission so we never show
+  // an action that would 403.
   const { allowed: canModerate } = useMarketplacePermission(MARKETPLACE_PERMS.moderation);
+  const { allowed: canReject } = useMarketplacePermission(MARKETPLACE_PERMS.reject);
   const [rows, setRows] = useState<MktBoost[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,66 +45,67 @@ export default function BoostsAdminPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Marketplace — Boosts Admin"
         subtitle="Boost purchases (Start/VIP/VIP Gold/Diamond/Enterprise). Reject-with-reason triggers an automatic refund ledger tx."
-        action={<button onClick={() => void load()} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={() => void load()}>Refresh</Button>}
       />
       <MarketplaceTabs active="boosts" />
-      <ScaffoldNotice>
-        Listing + rejection are wired to <code>GET /admin/boosts</code> (not yet in the frozen route list — scaffolded pending Agent A) and
-        <code> POST /admin/boosts/:id/reject</code> (frozen, reason_code mandatory, per §2.4 Boost FSM). Full campaign analytics /
-        placement-weight tooling is out of scope for this pass.
-      </ScaffoldNotice>
+      <DisclosureNote>
+        Backed by <code>GET /v1/marketplace/admin/boosts</code> (RBAC <code>marketplace.admin.moderation</code>) and
+        <code> POST /admin/boosts/:id/reject</code> (RBAC <code>marketplace.admin.reject</code>, reason_code mandatory — triggers an
+        automatic refund per the Boost FSM). Every mutation writes an immutable <code>mkt_admin_audit_log</code> row.
+      </DisclosureNote>
 
       {!canModerate && <PermissionBanner permission={MARKETPLACE_PERMS.moderation} />}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {canModerate && !canReject && <PermissionBanner permission={MARKETPLACE_PERMS.reject} />}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
       {msg && <AuditNote>{msg}</AuditNote>}
 
-      <Card>
+      <Card style={{ overflow: 'auto' }}>
         <StateBlock loading={loading} error={null} empty={rows.length === 0} emptyText="No boosts found.">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>
-              <th style={th()}>Boost</th><th style={th()}>Listing</th><th style={th()}>Tier</th>
-              <th style={th()}>Price</th><th style={th()}>Status</th><th style={th()}>Window</th><th style={th()}>Action</th>
+              <th style={thCell}>Boost</th><th style={thCell}>Listing</th><th style={thCell}>Tier</th>
+              <th style={thCell}>Price</th><th style={thCell}>Status</th><th style={thCell}>Window</th><th style={thCell}>Action</th>
             </tr></thead>
             <tbody>
               {rows.map((b) => (
                 <tr key={b.id}>
-                  <td style={td()}><code style={{ fontSize: '0.78rem' }}>{b.id}</code></td>
-                  <td style={td()}>{b.listing_title ?? b.listing_id}</td>
-                  <td style={td()}>{b.tier.replace(/_/g, ' ')}</td>
-                  <td style={td()}>{formatKobo(b.price_kobo)}</td>
-                  <td style={td()}><StatusBadge status={b.status} /></td>
-                  <td style={td()}>{b.starts_at ? `${fmtDate(b.starts_at)} → ${fmtDate(b.ends_at)}` : '—'}</td>
-                  <td style={td()}>
+                  <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{b.id}</code></td>
+                  <td style={tdCell}>{b.listing_title ?? b.listing_id}</td>
+                  <td style={tdCell}>{b.tier.replace(/_/g, ' ')}</td>
+                  <td style={tdCell}>{formatKobo(b.price_kobo)}</td>
+                  <td style={tdCell}><StatusBadge status={b.status} /></td>
+                  <td style={tdCell}>{b.starts_at ? `${fmtDate(b.starts_at)} → ${fmtDate(b.ends_at)}` : '—'}</td>
+                  <td style={tdCell}>
                     {(b.status === 'purchased' || b.status === 'active') ? (
                       rejectingId === b.id ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', minWidth: 220 }}>
-                          <input
+                          <Input
                             autoFocus
                             placeholder="reason_code (mandatory)"
                             value={reasonDraft}
                             onChange={(e) => setReasonDraft(e.target.value)}
-                            style={{ padding: '0.3rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.8rem' }}
                           />
                           <div style={{ display: 'flex', gap: '0.4rem' }}>
-                            <button
-                              style={reasonDraft.trim() && busyId !== b.id ? btnDanger() : btnDisabled()}
-                              disabled={!reasonDraft.trim() || busyId === b.id || !canModerate}
+                            <Button
+                              variant="danger"
+                              sm
+                              disabled={!reasonDraft.trim() || busyId === b.id || !canReject}
                               onClick={() => void confirmReject(b)}
-                            >{busyId === b.id ? '…' : 'Confirm reject'}</button>
-                            <button style={btn()} onClick={() => setRejectingId(null)}>Cancel</button>
+                            >{busyId === b.id ? '…' : 'Confirm reject'}</Button>
+                            <Button variant="outline" sm onClick={() => setRejectingId(null)}>Cancel</Button>
                           </div>
                         </div>
                       ) : (
-                        <button style={canModerate ? btnDanger() : btnDisabled()} disabled={!canModerate} onClick={() => { setRejectingId(b.id); setReasonDraft(''); }}>
+                        <Button variant="danger" sm disabled={!canReject} onClick={() => { setRejectingId(b.id); setReasonDraft(''); }}>
                           Reject (refund)
-                        </button>
+                        </Button>
                       )
                     ) : (
-                      <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>{b.rejection_reason_code ?? '—'}</span>
+                      <span style={{ color: colors.muted, fontSize: '0.78rem' }}>{b.rejection_reason_code ?? '—'}</span>
                     )}
                   </td>
                 </tr>
@@ -112,6 +114,7 @@ export default function BoostsAdminPage() {
           </table>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }
+

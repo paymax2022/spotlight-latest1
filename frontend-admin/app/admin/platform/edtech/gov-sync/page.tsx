@@ -10,6 +10,7 @@ import {
   PlatformGuard, PlatformTabs, fmtDate,
   PageHeader, Card, Badge, Kpi, StateBlock, DisclosureNote, th, td,
 } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function GovSyncPage() {
   const [rows, setRows] = useState<GovSyncRow[]>([]);
@@ -35,8 +36,8 @@ export default function GovSyncPage() {
 
         <StateBlock loading={loading} error={error} empty={false}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <Kpi label="Schools opted in" value={optedIn.toString()} sub={`of ${rows.length}`} accent="#340075" />
-            <Kpi label="Exports logged" value={exports.length.toString()} accent="#15803d" />
+            <Kpi label="Schools opted in" value={optedIn.toString()} sub={`of ${rows.length}`} accent={colors.primary} />
+            <Kpi label="Exports logged" value={exports.length.toString()} accent={colors.success} />
           </div>
 
           <Card title="Opt-in status by school">
@@ -48,7 +49,7 @@ export default function GovSyncPage() {
                     <td style={td()}><strong>{r.school_name}</strong></td>
                     <td style={td()}>{r.regulator}</td>
                     <td style={td()}>{r.opted_in ? <Badge status="active" label="opted in" /> : <Badge status="none" label="off" />}</td>
-                    <td style={td()}>{r.data_categories.length ? r.data_categories.map((c) => <Badge key={c} status="verified" label={c} />) : <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                    <td style={td()}>{r.data_categories.length ? r.data_categories.map((c) => <Badge key={c} status="verified" label={c} />) : <span style={{ color: colors.muted }}>—</span>}</td>
                     <td style={td()}>{r.export_count}</td>
                     <td style={td()}>{fmtDate(r.last_export_at)}</td>
                   </tr>

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import TextInputField from '@/components/TextInputField';
-import { formatNaira } from '@/utils/money';
+import { formatNaira, sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -35,22 +35,27 @@ export default function AmountInput({
         label={label}
         placeholder="₦0.00"
         value={value}
-        onChangeText={onChange}
-        keyboardType="number-pad"
+        onChangeText={(v) => onChange(sanitizeMoneyInput(v))}
+        keyboardType="decimal-pad"
+        inputMode="decimal"
+        maxLength={13}
         error={error}
       />
 
       <View style={styles.pillRow}>
         {QUICK_AMOUNTS.map((item) => {
           const active = value === item;
+          // Fraud/UX guard: a quick pill that exceeds the wallet balance is disabled.
+          const exceedsBalance = balanceKobo != null && nairaStringToKobo(item) > balanceKobo;
           return (
             <Pressable
               key={item}
               accessibilityRole="button"
-              onPress={() => onChange(item)}
-              style={[styles.pill, active && styles.pillActive]}
+              disabled={exceedsBalance}
+              onPress={() => onChange(sanitizeMoneyInput(item))}
+              style={[styles.pill, active && styles.pillActive, exceedsBalance && styles.pillDisabled]}
             >
-              <Text style={[styles.pillText, active && styles.pillTextActive]}>
+              <Text style={[styles.pillText, active && styles.pillTextActive, exceedsBalance && styles.pillTextDisabled]}>
                 {formatNaira(Number(item) * 100, { decimals: false })}
               </Text>
             </Pressable>
@@ -83,8 +88,10 @@ const styles = StyleSheet.create({
     borderColor: Colors.outlineVariant,
   },
   pillActive: { backgroundColor: Colors.primaryFixed, borderColor: Colors.primary },
+  pillDisabled: { opacity: 0.4 },
   pillText: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   pillTextActive: { color: Colors.onPrimaryFixed },
+  pillTextDisabled: { color: Colors.outline },
   metaRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: Spacing.sm },
   meta: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   metaRight: { textAlign: 'right' },

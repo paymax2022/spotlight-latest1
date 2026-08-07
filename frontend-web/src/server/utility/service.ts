@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
+import { resolveUtilityCommission, type ResolvedCommission } from '@/src/server/commission/config';
 import { debitWallet, reverseWalletDebit } from '@/src/server/wallet/service';
 import { calculateUtilityPricing } from './pricing';
 import { getViableUtilityRoutes, selectUtilityProvider, type UtilityRouteCandidate } from './routing';
@@ -37,6 +38,95 @@ import type { UtilityPurchaseResult } from './adapters/types';
 
 function receiptNumber(id: string) {
   return `UTL-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${id.slice(0, 8).toUpperCase()}`;
+}
+
+// Commission module integration (additive, guarded). When an active
+// commission_config row matches the resolved (service, subtype), prefer its
+// customer-facing convenience fee over the utility_products value. When the fee
+// is unchanged (the current seeded case for electricity/cable = 10000, and
+// airtime/data = 0) the pricing is returned untouched, so amounts do not move
+// unless a config row deliberately differs. Reversible: delete these two lines
+// in payUtility to fall fully back to utility_products pricing.
+function applyCommissionConvenienceFee(
+  pricing: UtilityPricing,
+  config: ResolvedCommission['config'],
+): UtilityPricing {
+  if (!config) return pricing;
+  const convenienceFeeKobo = config.convenience_fee_kobo;
+  if (convenienceFeeKobo === pricing.convenienceFeeKobo) return pricing;
+
+  const delta = convenienceFeeKobo - pricing.convenienceFeeKobo;
+  const retailAmountKobo = pricing.retailAmountKobo + delta;
+  const grossProfitKobo = pricing.grossProfitKobo + delta;
+  const grossMarginBps = retailAmountKobo > 0 ? Math.floor((grossProfitKobo * 10_000) / retailAmountKobo) : 0;
+  return { ...pricing, convenienceFeeKobo, retailAmountKobo, grossProfitKobo, grossMarginBps };
+}
+
+// Append one immutable row to public.commission_earnings for a SETTLED utility
+// payment. Idempotent on the utility transaction id (UNIQUE idempotency_key +
+// ON CONFLICT DO NOTHING via upsert/ignoreDuplicates) so requeries/retries never
+// double-count. BEST-EFFORT: any failure is logged and swallowed — it must never
+// fail or reverse the customer's payment. Does NOT post to the ledger (the Go
+// backend owns ledger posting; ledger_ref is left null for the backend to fill).
+async function recordUtilityCommissionEarning(params: {
+  transaction: UtilityTransactionRow;
+  pricing: UtilityPricing;
+  commission: ResolvedCommission;
+}) {
+  try {
+    const { transaction, pricing, commission } = params;
+    const config = commission.config;
+    const service = config?.service ?? commission.service;
+    // No mapped commission service (e.g. 'internet') → skip; legacy behavior only.
+    if (!service) return;
+
+    const grossAmountKobo = pricing.amountKobo;
+    const commissionKobo = config ? Math.floor((grossAmountKobo * config.commission_bps) / 10_000) : 0;
+    const platformChargeKobo = config ? Math.floor((grossAmountKobo * config.platform_charge_bps) / 10_000) : 0;
+    const convenienceFeeKobo = pricing.convenienceFeeKobo;
+    const fixedFeeKobo = config ? config.fixed_fee_kobo : 0;
+
+    // Prefer the config-derived revenue; if there is no config (or it derives no
+    // revenue) fall back to the per-transaction gross profit already computed.
+    const derivedRevenue = commissionKobo + platformChargeKobo + convenienceFeeKobo + fixedFeeKobo;
+    const spotlightRevenueKobo = config && derivedRevenue > 0 ? derivedRevenue : pricing.grossProfitKobo;
+
+    const supabase = createAdminClient();
+    const { error } = await supabase
+      .from('commission_earnings')
+      .upsert(
+        {
+          config_id: config?.id ?? null,
+          service_category: 'Utility_Bills',
+          service,
+          service_subtype: config?.service_subtype ?? commission.subtype ?? '',
+          gross_amount_kobo: grossAmountKobo,
+          commission_kobo: commissionKobo,
+          platform_charge_kobo: platformChargeKobo,
+          convenience_fee_kobo: convenienceFeeKobo,
+          fixed_fee_kobo: fixedFeeKobo,
+          spotlight_revenue_kobo: spotlightRevenueKobo,
+          currency: 'NGN',
+          source_module: 'utility',
+          source_ref: transaction.id,
+          // TODO(ledger): the Go backend owns double-entry ledger posting for
+          // commission. Populate ledger_ref here once that backend posts the
+          // entry (or via a reconciliation job keyed on source_module+source_ref).
+          ledger_ref: null,
+          user_id: transaction.user_id,
+          idempotency_key: transaction.id,
+        },
+        { onConflict: 'idempotency_key', ignoreDuplicates: true },
+      );
+    if (error) {
+      console.error('[utility] commission_earnings insert failed (payment unaffected):', error.message);
+    }
+  } catch (error) {
+    console.error(
+      '[utility] commission_earnings recording threw (payment unaffected):',
+      error instanceof Error ? error.message : error,
+    );
+  }
 }
 
 function assertCategory(value: unknown): UtilityCategory {
@@ -483,7 +573,15 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
     product,
     amountKobo: amountKobo ?? product.min_amount_kobo ?? 1,
   });
-  const pricing = calculateUtilityPricing(product, route.mapping, amountKobo);
+  // Commission module (REFERENCE integration): resolve the active rate row for
+  // this utility (service, subtype). Best-effort — never throws.
+  const commission = await resolveUtilityCommission(category, biller);
+  // Prefer the commission_config convenience fee when a matching active config
+  // exists; otherwise the pricing is returned unchanged (pure fallback).
+  const pricing = applyCommissionConvenienceFee(
+    calculateUtilityPricing(product, route.mapping, amountKobo),
+    commission.config,
+  );
   await assertCategoryAvailableForPayment(userId, category, pricing.retailAmountKobo);
   const adapter = getUtilityAdapter(route.provider.adapter_code);
   const validation: UtilityValidationResult = biller.requires_validation
@@ -641,6 +739,14 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
 
   const { data: finalRow } = await supabase.from('utility_transactions').select('*').eq('id', transactionId).maybeSingle();
   const transaction = (finalRow ?? inserted) as UtilityTransactionRow;
+
+  // Record Spotlight commission for a SETTLED payment only (wallet debited &
+  // provider succeeded/pending — NOT failed/reversed). Idempotent + best-effort:
+  // it can never fail or reverse the customer's payment.
+  if (transaction.status === 'successful' || transaction.status === 'provider_pending') {
+    await recordUtilityCommissionEarning({ transaction, pricing, commission });
+  }
+
   await notifyUtilityTransactionStatus(transaction, providerResult.message);
   if (transaction.status === 'provider_pending') {
     queueUtilityAdminAlert({

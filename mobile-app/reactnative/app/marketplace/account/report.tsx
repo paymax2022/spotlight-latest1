@@ -6,7 +6,7 @@
 // Reached from the flag icon on Listing Detail, Seller Profile, and Chat.
 // Submit → confirmation with the expected review timeframe, then back.
 import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -20,6 +20,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { MarketColors } from '@/features/marketplace';
 import { useCreateReport, useBlockUser } from '@/features/marketplace/api/account.hooks';
 import type { ReportTargetType } from '@/features/marketplace/api/account.api';
+import { alertAsync } from '@/lib/confirm';
 
 const REASONS = [
   { key: 'prohibited_item', label: 'Prohibited or illegal item' },
@@ -53,7 +54,7 @@ export default function ReportFlow() {
       ? await ImagePicker.requestCameraPermissionsAsync()
       : await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Permission needed', `Allow access to your ${fromCamera ? 'camera' : 'photos'} to attach evidence.`);
+      alertAsync({ title: 'Permission needed', message: `Allow access to your ${fromCamera ? 'camera' : 'photos'} to attach evidence.` });
       return;
     }
     const result = fromCamera
@@ -79,13 +80,14 @@ export default function ReportFlow() {
           // Non-fatal: the report is filed regardless of the block outcome.
         }
       }
-      Alert.alert(
-        'Report received',
-        "Thanks for flagging this. Our safety team reviews reports within 24 hours and will take action if our policies were broken.",
-        [{ text: 'Done', onPress: () => router.back() }],
-      );
+      await alertAsync({
+        title: 'Report received',
+        message: "Thanks for flagging this. Our safety team reviews reports within 24 hours and will take action if our policies were broken.",
+        buttonLabel: 'Done',
+      });
+      router.back();
     } catch (e) {
-      Alert.alert('Could not submit', (e as Error)?.message ?? 'Please try again.');
+      alertAsync({ title: 'Could not submit', message: (e as Error)?.message ?? 'Please try again.' });
     }
   };
 

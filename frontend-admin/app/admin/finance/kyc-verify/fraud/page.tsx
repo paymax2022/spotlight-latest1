@@ -6,10 +6,11 @@
 // Shell: table + empty state. Backend endpoint TBD (e.g. GET /kyc/duplicate-hits).
 
 import { PageHeader, Card, th, ScaffoldNotice } from '../_ui';
+import { Page, colors } from '@/components/ui/vuexy';
 
 export default function KycFraudQueuePage() {
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader
         title="Fraud / Duplicate-Identity Queue (AK5)"
         subtitle="IDs flagged as previously registered; investigate linked accounts. RBAC: finance.admin.kyc (Compliance)."
@@ -32,11 +33,11 @@ export default function KycFraudQueuePage() {
               </tr>
             </thead>
             <tbody>
-              <tr><td colSpan={5} style={{ padding: '0.75rem 0.5rem', color: '#6b7280', fontSize: '0.85rem' }}>No duplicate-identity flags.</td></tr>
+              <tr><td colSpan={5} style={{ padding: '0.75rem 0.5rem', color: colors.muted, fontSize: '0.85rem' }}>No duplicate-identity flags.</td></tr>
             </tbody>
           </table>
         </div>
       </Card>
-    </div>
+    </Page>
   );
 }

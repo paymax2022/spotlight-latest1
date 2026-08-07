@@ -12,6 +12,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import CurrencyChip from '@/features/fx/components/CurrencyChip';
 import { useThresholds, useUpdateThreshold } from '@/features/fx/hooks/useFxAccount';
 import { parseToMinor, minorToInput } from '@/features/fx/utils/fxFormatters';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 export default function ThresholdsScreen() {
   const { data, isLoading, isError, refetch } = useThresholds();
@@ -19,7 +20,7 @@ export default function ThresholdsScreen() {
   const [local, setLocal] = useState<Record<string, { amount: string; approvers: number }>>({});
 
   useEffect(() => {
-    if (data) {
+    if (Array.isArray(data)) {
       const init: Record<string, { amount: string; approvers: number }> = {};
       data.forEach((t) => { init[t.id] = { amount: minorToInput(t.amount, t.currency), approvers: t.approversRequired }; });
       setLocal(init);
@@ -39,7 +40,7 @@ export default function ThresholdsScreen() {
                 <Text style={styles.label}>{t.label}</Text>
                 <View style={styles.amountRow}>
                   <CurrencyChip currency={t.currency} compact />
-                  <TextInput style={styles.amountInput} value={l.amount} onChangeText={(v) => set({ amount: v })} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={Colors.outline} accessibilityLabel={`${t.label} threshold amount`} />
+                  <TextInput style={styles.amountInput} value={l.amount} onChangeText={(v) => set({ amount: sanitizeMoneyInput(v) })} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} placeholder="0.00" placeholderTextColor={Colors.outline} accessibilityLabel={`${t.label} threshold amount`} />
                 </View>
                 <View style={styles.approversRow}>
                   <Text style={styles.approversLabel}>Approvers required</Text>

@@ -7,11 +7,11 @@
 // No dedicated Paymax messaging shell exists for the marketplace yet, so threads
 // are modelled around their listing + offers (see offers.mock.ts). TODO(messaging)
 // noted there — swap in the shared shell when it lands without touching this UI.
-import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, Pressable, Image, TextInput } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, FlatList, Pressable, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
-import { Package, Search, X } from 'lucide-react-native';
+import { router, useLocalSearchParams } from 'expo-router';
+import { Package } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -19,10 +19,11 @@ import { Radius } from '@/constants/radius';
 import StateView from '@/components/StateView';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import { useThreads, useOffers } from '@/features/marketplace/api/transact.hooks';
+import * as offersApi from '@/features/marketplace/api/offers.api';
 import type { DealThread } from '@/features/marketplace/api/offers.api';
-import { DealStageChip } from './_components/DealStageChip';
-import SafetyStrip from './_components/SafetyStrip';
-import { type DealStage } from './_components/transact.constants';
+import { DealStageChip } from '@/features/marketplace/components/DealStageChip';
+import SafetyStrip from '@/features/marketplace/components/SafetyStrip';
+import { type DealStage } from '@/features/marketplace/transact.constants';
 
 function ThreadRow({ thread }: { thread: DealThread }) {
   // Derive the deal stage from the latest offer on the listing; else chatting.
@@ -61,40 +62,53 @@ function ThreadRow({ thread }: { thread: DealThread }) {
 }
 
 export default function ChatInbox() {
+  // Deep-link params from Listing Detail (Contact seller / Make Offer) and Seller
+  // Profile (Message): open-or-create the relevant thread, then replace into the
+  // Deal Room so those CTAs never dead-end on the generic inbox. offer=1 forwards
+  // so the Deal Room auto-opens the offer composer.
+  const { listingId, sellerId, offer } = useLocalSearchParams<{ listingId?: string; sellerId?: string; offer?: string }>();
   const threadsQ = useThreads();
   const threads = threadsQ.data ?? [];
-  const [q, setQ] = useState('');
+  const [routing, setRouting] = useState<boolean>(Boolean(listingId || sellerId));
 
-  // MSG-009: filter the inbox by counterparty or listing title.
-  const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    if (!needle) return threads;
-    return threads.filter((t) =>
-      t.counterpartyName.toLowerCase().includes(needle) || t.listingTitle.toLowerCase().includes(needle),
+  useEffect(() => {
+    if (!listingId && !sellerId) {
+      setRouting(false);
+      return;
+    }
+    let cancelled = false;
+    setRouting(true);
+    (async () => {
+      try {
+        const thread = await offersApi.getOrCreateThread({ listingId, sellerId });
+        if (cancelled) return;
+        router.replace({
+          pathname: '/marketplace/deals/[threadId]',
+          params: { threadId: thread.id, ...(offer === '1' ? { offer: '1' } : {}) },
+        } as never);
+      } catch {
+        // Fall back to the inbox rather than dead-ending on failure.
+        if (!cancelled) setRouting(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [listingId, sellerId, offer]);
+
+  if (routing) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <StateView kind="loading" message="Opening conversation…" />
+      </SafeAreaView>
     );
-  }, [threads, q]);
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Chats & deals</Text>
       </View>
-
-      {threads.length > 0 ? (
-        <View style={styles.searchWrap}>
-          <Search size={16} color={MarketColors.muted} />
-          <TextInput
-            style={styles.searchInput}
-            value={q}
-            onChangeText={setQ}
-            placeholder="Search chats by name or listing"
-            placeholderTextColor={MarketColors.muted}
-            returnKeyType="search"
-          />
-          {q ? <Pressable onPress={() => setQ('')} hitSlop={8} accessibilityLabel="Clear search"><X size={16} color={MarketColors.muted} /></Pressable> : null}
-        </View>
-      ) : null}
-
       <View style={styles.stripWrap}><SafetyStrip /></View>
 
       {threadsQ.isLoading ? (
@@ -108,11 +122,9 @@ export default function ChatInbox() {
           title="No conversations yet"
           message="Message a seller from any listing to start negotiating safely."
         />
-      ) : filtered.length === 0 ? (
-        <StateView kind="empty" icon="Search" title="No matches" message={`No chats match “${q}”.`} compact />
       ) : (
         <FlatList
-          data={filtered}
+          data={threads}
           keyExtractor={(t) => t.id}
           contentContainerStyle={styles.list}
           renderItem={({ item }) => <ThreadRow thread={item} />}
@@ -126,8 +138,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   header: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.xs },
   headerTitle: { ...Typography.headlineMd, color: Colors.onSurface },
-  searchWrap: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.sm, paddingHorizontal: Spacing.sm + 2, borderRadius: Radius.lg, borderWidth: 1, borderColor: MarketColors.border, backgroundColor: MarketColors.surface },
-  searchInput: { flex: 1, ...Typography.bodyMd, color: MarketColors.text, paddingVertical: 10 },
   stripWrap: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.sm },
   list: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.sm, paddingBottom: Spacing.xl },
   row: { flexDirection: 'row', gap: Spacing.sm, backgroundColor: MarketColors.surface, borderRadius: Radius.lg, padding: Spacing.sm + 2 },

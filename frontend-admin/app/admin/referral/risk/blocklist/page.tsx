@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { listBlocklist } from '@/services/referralAdminOpsService';
 import type { BlocklistEntry } from '@/types/referralAdminOps';
-import { PageHeader, Card, Badge, btn, th, td, timeAgo, StateBlock } from '../../_ui';
+import { timeAgo } from '../../_ui';
+import { Page, PageHeader, Card, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function BlocklistPage() {
   const [rows, setRows] = useState<BlocklistEntry[] | null>(null);
@@ -21,41 +22,50 @@ export default function BlocklistPage() {
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [list]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Risk — Blocklists & allowlists"
         subtitle="Block or allow devices, identities, accounts and bank details (A-RSK-04)."
-        action={<Link href="/admin/referral/risk" style={{ ...btn(), textDecoration: 'none', color: '#374151' }}>← Dashboard</Link>}
+        actions={<Link href="/admin/referral/risk" className="vx-btn vx-btn--outline" style={{ textDecoration: 'none' }}>← Dashboard</Link>}
       />
 
-      <Card title="Entries" right={
-        <select value={list} onChange={(e) => setList(e.target.value)} style={{ ...btn(), cursor: 'pointer' }}>
-          <option value="all">All lists</option>
-          <option value="block">Blocklist</option>
-          <option value="allow">Allowlist</option>
-        </select>
-      }>
-        <StateBlock loading={loading} error={error} empty={!rows || rows.length === 0} emptyText="No entries.">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>
-              <th style={th()}>List</th><th style={th()}>Type</th><th style={th()}>Value</th>
-              <th style={th()}>Reason</th><th style={th()}>Added by</th><th style={th()}>When</th>
-            </tr></thead>
-            <tbody>
-              {(rows ?? []).map((b) => (
-                <tr key={b.id}>
-                  <td style={td()}><Badge status={b.list === 'block' ? 'critical' : 'active'} label={b.list} /></td>
-                  <td style={td()}>{b.type}</td>
-                  <td style={td()}><code style={{ fontSize: '0.8rem' }}>{b.value}</code></td>
-                  <td style={td()}>{b.reason}</td>
-                  <td style={td()}>{b.added_by}</td>
-                  <td style={td()}>{timeAgo(b.created_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </StateBlock>
+      <Card style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '14px 14px 0' }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Entries</h2>
+          <select value={list} onChange={(e) => setList(e.target.value)}>
+            <option value="all">All lists</option>
+            <option value="block">Blocklist</option>
+            <option value="allow">Allowlist</option>
+          </select>
+        </div>
+        <div style={{ padding: 14 }}>
+          {loading ? <p style={{ color: colors.muted }}>Loading…</p>
+            : error ? <p style={{ color: colors.danger }}>{error}</p>
+            : (!rows || rows.length === 0) ? <p style={{ color: colors.muted }}>No entries.</p>
+            : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr>
+                    <th style={thCell}>List</th><th style={thCell}>Type</th><th style={thCell}>Value</th>
+                    <th style={thCell}>Reason</th><th style={thCell}>Added by</th><th style={thCell}>When</th>
+                  </tr></thead>
+                  <tbody>
+                    {rows.map((b) => (
+                      <tr key={b.id}>
+                        <td style={tdCell}><Badge text={b.list} color={b.list === 'block' ? colors.danger : colors.success} /></td>
+                        <td style={tdCell}>{b.type}</td>
+                        <td style={tdCell}><code style={{ fontSize: 13 }}>{b.value}</code></td>
+                        <td style={tdCell}>{b.reason}</td>
+                        <td style={tdCell}>{b.added_by}</td>
+                        <td style={tdCell}>{timeAgo(b.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+        </div>
       </Card>
-    </div>
+    </Page>
   );
 }

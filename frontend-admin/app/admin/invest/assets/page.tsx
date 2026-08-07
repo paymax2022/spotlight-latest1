@@ -3,7 +3,15 @@
 import { useEffect, useState } from 'react';
 import { listAssets, updateAsset } from '@/services/investAdminService';
 import type { AdminStockAsset, AssetUpdate } from '@/types/investAdmin';
-import { PageHeader, InvestTabs, Card, Badge, btn, btnPrimary, th, td, naira } from '../_ui';
+import { InvestTabs, naira } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  if (status === 'active') return colors.success;
+  if (status === 'suspended') return colors.warning;
+  if (status === 'delisted') return colors.danger;
+  return colors.secondary;
+}
 
 export default function InvestAssetsPage() {
   const [assets, setAssets] = useState<AdminStockAsset[]>([]);
@@ -36,63 +44,61 @@ export default function InvestAssetsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Stock assets"
         subtitle="Enable/disable trading per asset. Disabled assets are immediately non-tradable for users."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <InvestTabs />
 
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-      <Card>
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      <Card style={{ padding: 0, overflow: 'auto' }}>
         {loading ? (
-          <p style={{ color: '#6b7280' }}>Loading assets…</p>
+          <p style={{ color: colors.muted, padding: 14 }}>Loading assets…</p>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-              <thead>
-                <tr>
-                  <th style={th()}>Symbol</th>
-                  <th style={th()}>Name</th>
-                  <th style={th()}>Sector</th>
-                  <th style={th()}>Status</th>
-                  <th style={th()}>Risk</th>
-                  <th style={th()}>Min order</th>
-                  <th style={th()}>KYC</th>
-                  <th style={th()}>Buy</th>
-                  <th style={th()}>Sell</th>
-                  <th style={th()}>Actions</th>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr>
+                <th style={thCell}>Symbol</th>
+                <th style={thCell}>Name</th>
+                <th style={thCell}>Sector</th>
+                <th style={thCell}>Status</th>
+                <th style={thCell}>Risk</th>
+                <th style={thCell}>Min order</th>
+                <th style={thCell}>KYC</th>
+                <th style={thCell}>Buy</th>
+                <th style={thCell}>Sell</th>
+                <th style={thCell}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {assets.map((a) => (
+                <tr key={a.id}>
+                  <td style={tdCell}><strong>{a.symbol}</strong></td>
+                  <td style={tdCell}>{a.name}</td>
+                  <td style={tdCell}>{a.sector}</td>
+                  <td style={tdCell}><Badge text={a.status} color={statusColor(a.status)} /></td>
+                  <td style={tdCell}>{a.risk_rating}</td>
+                  <td style={tdCell}>{naira(a.minimum_order_amount)}</td>
+                  <td style={tdCell}>T{a.kyc_tier_required}</td>
+                  <td style={tdCell}>{a.buy_enabled ? '✅' : '—'}</td>
+                  <td style={tdCell}>{a.sell_enabled ? '✅' : '—'}</td>
+                  <td style={tdCell}>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      <Button variant="outline" sm disabled={savingId === a.id} onClick={() => toggle(a, 'buy_enabled')}>{a.buy_enabled ? 'Disable buy' : 'Enable buy'}</Button>
+                      <Button variant="outline" sm disabled={savingId === a.id} onClick={() => toggle(a, 'sell_enabled')}>{a.sell_enabled ? 'Disable sell' : 'Enable sell'}</Button>
+                      <Button variant={a.status === 'active' ? 'danger' : 'primary'} sm disabled={savingId === a.id} onClick={() => toggle(a, 'status')}>
+                        {a.status === 'active' ? 'Suspend' : 'Activate'}
+                      </Button>
+                    </div>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {assets.map((a) => (
-                  <tr key={a.id}>
-                    <td style={td()}><strong>{a.symbol}</strong></td>
-                    <td style={td()}>{a.name}</td>
-                    <td style={td()}>{a.sector}</td>
-                    <td style={td()}><Badge status={a.status} /></td>
-                    <td style={td()}>{a.risk_rating}</td>
-                    <td style={td()}>{naira(a.minimum_order_amount)}</td>
-                    <td style={td()}>T{a.kyc_tier_required}</td>
-                    <td style={td()}>{a.buy_enabled ? '✅' : '—'}</td>
-                    <td style={td()}>{a.sell_enabled ? '✅' : '—'}</td>
-                    <td style={td()}>
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                        <button disabled={savingId === a.id} style={btn()} onClick={() => toggle(a, 'buy_enabled')}>{a.buy_enabled ? 'Disable buy' : 'Enable buy'}</button>
-                        <button disabled={savingId === a.id} style={btn()} onClick={() => toggle(a, 'sell_enabled')}>{a.sell_enabled ? 'Disable sell' : 'Enable sell'}</button>
-                        <button disabled={savingId === a.id} style={btnPrimary(a.status === 'active' ? '#b91c1c' : '#16a34a')} onClick={() => toggle(a, 'status')}>
-                          {a.status === 'active' ? 'Suspend' : 'Activate'}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

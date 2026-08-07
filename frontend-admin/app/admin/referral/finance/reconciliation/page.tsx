@@ -4,7 +4,30 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { getReconciliation, formatNaira } from '@/services/referralAdminOpsService';
 import type { Reconciliation } from '@/types/referralAdminOps';
-import { PageHeader, Card, Kpi, Badge, btn, th, td, StateBlock } from '../../_ui';
+import { Page, PageHeader, Card, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  const s = status.toLowerCase();
+  if (['active', 'approved', 'resolved', 'eligible', 'paid'].includes(s)) return colors.success;
+  if (['closed', 'ended', 'draft'].includes(s)) return colors.secondary;
+  if (['rejected', 'clawed_back', 'critical'].includes(s)) return colors.danger;
+  if (['open', 'pending', 'high'].includes(s)) return colors.warning;
+  return colors.secondary;
+}
+
+function StatusBadge({ status, label: lbl }: { status: string; label?: string }) {
+  return <Badge text={lbl ?? status.replace(/_/g, ' ')} color={statusColor(status)} />;
+}
+
+function Kpi({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
+  return (
+    <Card style={{ padding: '14px 16px' }}>
+      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: colors.muted, fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4, color: accent ?? colors.text }}>{value}</div>
+      {sub ? <div style={{ fontSize: 12, color: colors.muted, marginTop: 2 }}>{sub}</div> : null}
+    </Card>
+  );
+}
 
 export default function ReconciliationPage() {
   const [data, setData] = useState<Reconciliation | null>(null);
@@ -23,55 +46,60 @@ export default function ReconciliationPage() {
   const rows = (data?.rows ?? []).filter((r) => filter === 'all' ? true : filter === 'variance' ? r.variance_kobo !== 0 : r.status === filter);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Finance — Reconciliation"
         subtitle="Reward ledger ↔ wallet credit ↔ payout settlement (A-FIN-02). Variances flagged for investigation."
-        action={<Link href="/admin/referral/finance" style={{ ...btn(), textDecoration: 'none', color: '#374151' }}>← Payouts</Link>}
+        actions={<Link href="/admin/referral/finance" className="vx-btn vx-btn--outline vx-btn--sm" style={{ textDecoration: 'none' }}>← Payouts</Link>}
       />
 
-      <StateBlock loading={loading} error={error} empty={!data}>
-        {data && (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px,1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <Kpi label="Ledger accrued" value={formatNaira(data.total_accrued_kobo)} />
-              <Kpi label="Wallet credited" value={formatNaira(data.total_credited_kobo)} />
-              <Kpi label="Payout settled" value={formatNaira(data.total_settled_kobo)} />
-              <Kpi label="Unmatched" value={formatNaira(data.unmatched_kobo)} accent={data.unmatched_kobo > 0 ? '#b91c1c' : '#15803d'} />
-            </div>
+      {loading ? (
+        <p style={{ color: colors.muted }}>Loading…</p>
+      ) : error ? (
+        <p style={{ color: colors.danger }}>{error}</p>
+      ) : !data ? null : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px,1fr))', gap: 12, marginBottom: 20 }}>
+            <Kpi label="Ledger accrued" value={formatNaira(data.total_accrued_kobo)} />
+            <Kpi label="Wallet credited" value={formatNaira(data.total_credited_kobo)} />
+            <Kpi label="Payout settled" value={formatNaira(data.total_settled_kobo)} />
+            <Kpi label="Unmatched" value={formatNaira(data.unmatched_kobo)} accent={data.unmatched_kobo > 0 ? colors.danger : colors.success} />
+          </div>
 
-            <Card title="Daily reconciliation" right={
-              <select value={filter} onChange={(e) => setFilter(e.target.value)} style={{ ...btn(), cursor: 'pointer' }}>
+          <Card title="Daily reconciliation">
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+              <select value={filter} onChange={(e) => setFilter(e.target.value)}>
                 <option value="all">All rows</option>
                 <option value="matched">Matched</option>
                 <option value="variance">Variance only</option>
                 <option value="investigating">Investigating</option>
               </select>
-            }>
-              {rows.length === 0 ? <p style={{ color: '#6b7280' }}>No rows match.</p> : (
+            </div>
+            {rows.length === 0 ? <p style={{ color: colors.muted }}>No rows match.</p> : (
+              <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead><tr>
-                    <th style={th()}>Date</th><th style={th()}>Accrued</th><th style={th()}>Credited</th>
-                    <th style={th()}>Settled</th><th style={th()}>Variance</th><th style={th()}>Status</th>
+                    <th style={thCell}>Date</th><th style={thCell}>Accrued</th><th style={thCell}>Credited</th>
+                    <th style={thCell}>Settled</th><th style={thCell}>Variance</th><th style={thCell}>Status</th>
                   </tr></thead>
                   <tbody>
                     {rows.map((r) => (
                       <tr key={r.id}>
-                        <td style={td()}>{r.date}</td>
-                        <td style={td()}>{formatNaira(r.ledger_accrued_kobo)}</td>
-                        <td style={td()}>{formatNaira(r.wallet_credited_kobo)}</td>
-                        <td style={td()}>{formatNaira(r.payout_settled_kobo)}</td>
-                        <td style={{ ...td(), color: r.variance_kobo !== 0 ? '#b91c1c' : '#15803d', fontWeight: 600 }}>{formatNaira(r.variance_kobo)}</td>
-                        <td style={td()}><Badge status={r.status === 'matched' ? 'resolved' : r.status === 'investigating' ? 'open' : 'high'} label={r.status} /></td>
+                        <td style={tdCell}>{r.date}</td>
+                        <td style={tdCell}>{formatNaira(r.ledger_accrued_kobo)}</td>
+                        <td style={tdCell}>{formatNaira(r.wallet_credited_kobo)}</td>
+                        <td style={tdCell}>{formatNaira(r.payout_settled_kobo)}</td>
+                        <td style={{ ...tdCell, color: r.variance_kobo !== 0 ? colors.danger : colors.success, fontWeight: 600 }}>{formatNaira(r.variance_kobo)}</td>
+                        <td style={tdCell}><StatusBadge status={r.status === 'matched' ? 'resolved' : r.status === 'investigating' ? 'open' : 'high'} label={r.status} /></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              )}
-            </Card>
-          </>
-        )}
-      </StateBlock>
-    </div>
+              </div>
+            )}
+          </Card>
+        </>
+      )}
+    </Page>
   );
 }

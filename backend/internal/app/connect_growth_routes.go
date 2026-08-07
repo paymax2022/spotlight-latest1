@@ -2,12 +2,14 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	connectcreator "spotlight/backend/internal/connect/creator"
+	connectcredits "spotlight/backend/internal/connect/credits"
 	connectevents "spotlight/backend/internal/connect/events"
 	connectmonetization "spotlight/backend/internal/connect/monetization"
 	connectprofessional "spotlight/backend/internal/connect/professional"
@@ -91,14 +93,21 @@ func registerConnectGrowthRoutes(member *gin.RouterGroup, admin *gin.RouterGroup
 	cg.POST("/collab-requests/:id/respond", cr.RespondCollab)
 
 	// ── Phase 6 — Monetization (Paymax wallet; server-side entitlements) ───────
-	monSvc := connectmonetization.NewService(pool, walletSvc, revenue, audit)
+	refunder := &connectRefundAdapter{ledger: ledgerSvc}
+	monSvc := connectmonetization.NewService(pool, walletSvc, revenue, audit, refunder)
+	// PAY-008: consumable credits (super-likes/InMail). Grant on pass purchase; read balance.
+	creditsSvc := connectcredits.NewService(pool)
+	monSvc.SetCreditGranter(creditsSvc)
+	credits := connectcredits.NewHandler(creditsSvc)
 	mon := connectmonetization.NewHandler(monSvc)
 	mg := member.Group("/")
 	mg.GET("/plans", mon.ListPlans)
-	mg.POST("/subscriptions", mon.Subscribe) // Idempotency-Key required
+	mg.POST("/subscriptions", mon.Subscribe)              // Idempotency-Key required
+	mg.POST("/subscriptions/cancel", mon.CancelSubscription) // PAY-006 cancel (end-of-period or immediate+proration)
 	mg.POST("/boosts", mon.BuyBoost)         // Idempotency-Key required
 	mg.POST("/passes", mon.BuyPass)          // Idempotency-Key required
 	mg.GET("/entitlements", mon.Entitlements)
+	mg.GET("/credits", credits.Balances) // PAY-008 consumable credit balances
 	mg.POST("/date-plans/:id/ride", mon.BookRide)       // reuses Mobility + wallet
 	mg.POST("/date-plans/:id/tickets", mon.BookTickets) // reuses Events + wallet
 
@@ -113,6 +122,10 @@ func registerConnectGrowthRoutes(member *gin.RouterGroup, admin *gin.RouterGroup
 		middleware.RequirePermission(rbac, "connect.plans.manage"), mon.AdminUpsertPlan)
 	admin.GET("/orders",
 		middleware.RequirePermission(rbac, "connect.payments.reconcile"), mon.AdminListOrders)
+	admin.POST("/orders/:id/refund",
+		middleware.RequirePermission(rbac, "connect.payments.refund"), mon.AdminRefund)
+	admin.POST("/subscriptions/run-renewals",
+		middleware.RequirePermission(rbac, "connect.payments.reconcile"), mon.AdminRunRenewals)
 
 	log.Println("[connect-growth] routes registered — professional/events/creator/monetization live")
 }
@@ -142,4 +155,35 @@ func (r *revenueAdapter) RevenueAccountID(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return acc.ID, nil
+}
+
+// connectRefundAdapter reverses a Connect purchase: a balanced double-entry
+// DR paymax_revenue → CR buyer user_wallet (the mirror of the purchase debit),
+// keyed by idempotencyKey. A duplicate key means the refund already posted, which
+// is mapped to success so the refund is SINGLE under retries/concurrency (PAY-007).
+type connectRefundAdapter struct{ ledger *ledger.Service }
+
+func (r *connectRefundAdapter) Refund(ctx context.Context, userID, reference, idempotencyKey string, amountKobo int64) error {
+	if amountKobo <= 0 {
+		return ledger.ErrInsufficientFunds
+	}
+	rev, err := r.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		return err
+	}
+	w, err := r.ledger.GetOrCreateUserWallet(ctx, userID)
+	if err != nil {
+		return err
+	}
+	err = r.ledger.PostJournal(ctx, ledger.JournalEntry{
+		Reference:       reference,
+		IdempotencyKey:  idempotencyKey,
+		AmountKobo:      amountKobo,
+		DebitAccountID:  rev.ID, // revenue gives the money back…
+		CreditAccountID: w.ID,   // …to the buyer's wallet
+	})
+	if errors.Is(err, ledger.ErrDuplicate) {
+		return nil // already refunded — idempotent success
+	}
+	return err
 }

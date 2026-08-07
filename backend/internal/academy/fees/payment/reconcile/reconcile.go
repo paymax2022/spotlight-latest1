@@ -120,12 +120,12 @@ type Drift struct {
 // reports (no drift) return an empty Drifts/Alerts slice — never nil, so callers can log counts
 // deterministically.
 type Report struct {
-	Since               time.Time `json:"since"`
-	RanAt               time.Time `json:"ranAt"`
-	PaymentsChecked     int       `json:"paymentsChecked"`
-	ContributionsChecked int      `json:"contributionsChecked"`
-	Drifts              []Drift   `json:"drifts"`
-	Alerts              []string  `json:"alerts"`
+	Since                time.Time `json:"since"`
+	RanAt                time.Time `json:"ranAt"`
+	PaymentsChecked      int       `json:"paymentsChecked"`
+	ContributionsChecked int       `json:"contributionsChecked"`
+	Drifts               []Drift   `json:"drifts"`
+	Alerts               []string  `json:"alerts"`
 }
 
 // HasDrift reports whether the run found any mismatch (the paging signal).

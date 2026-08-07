@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ShieldAlert, Plus, Trash2, X, Phone, IdCard, Car } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -13,6 +13,7 @@ import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useAddBlacklist, useBlacklist, useRemoveBlacklist } from '@/features/visitor/hooks/useVisitor';
 import { relativeTime } from '@/features/visitor/utils/visitorFormatters';
+import { confirmAsync } from '@/lib/confirm';
 import type { BlacklistMatchKind } from '@/features/visitor/types/visitor.types';
 
 const KINDS: { kind: BlacklistMatchKind; label: string; Icon: typeof Phone }[] = [
@@ -42,11 +43,9 @@ export default function BlacklistScreen() {
     );
   };
 
-  const onRemove = (id: string, label: string) => {
-    Alert.alert('Remove from blacklist?', `${label} will be allowed entry again.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove', style: 'destructive', onPress: () => remove.mutate(id) },
-    ]);
+  const onRemove = async (id: string, label: string) => {
+    const ok = await confirmAsync({ title: 'Remove from blacklist?', message: `${label} will be allowed entry again.`, confirmLabel: 'Remove', destructive: true });
+    if (ok) remove.mutate(id);
   };
 
   return (

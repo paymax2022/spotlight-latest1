@@ -6,9 +6,21 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { listAssets } from '@/services/fractionalreAdminService';
 import type { AdminAsset, AssetStatus } from '@/types/fractionalreAdmin';
-import { PageHeader, FractionalReTabs, Card, Badge, btn, btnPrimary, th, td, input, money } from '../_ui';
+import { FractionalReTabs, money } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const LIFECYCLE: AssetStatus[] = ['Draft', 'UnderReview', 'TitleVerification', 'Approved', 'FundingOpen', 'Funded', 'Operational', 'Distributing', 'Exited', 'Closed', 'Rejected'];
+
+const STATUS_COLOR: Record<string, string> = {
+  active: colors.success, verified: colors.success, completed: colors.success, approved: colors.success, funded: colors.success, operational: colors.success,
+  pending: colors.warning, underreview: colors.warning, titleverification: colors.warning, draft: colors.secondary,
+  rejected: colors.danger, halted: colors.danger, suspended: colors.danger, cancelled: colors.danger, expired: colors.danger,
+  fundingopen: colors.info, open: colors.info, distributing: colors.warning, exited: colors.secondary, closed: colors.secondary,
+};
+
+function statusColor(status: string): string {
+  return STATUS_COLOR[status.toLowerCase()] ?? colors.secondary;
+}
 
 export default function AssetsListPage() {
   const [assets, setAssets] = useState<AdminAsset[]>([]);
@@ -28,41 +40,41 @@ export default function AssetsListPage() {
     (!q || a.name.toLowerCase().includes(q.toLowerCase()) || a.location.toLowerCase().includes(q.toLowerCase()))), [assets, filter, q]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Assets" subtitle="All opportunities by lifecycle state." action={<Link href="/admin/fractionalre/assets/new" style={{ ...btnPrimary(), textDecoration: 'none' }}>+ Onboard asset</Link>} />
+    <Page>
+      <PageHeader title="Assets" subtitle="All opportunities by lifecycle state." actions={<Link href="/admin/fractionalre/assets/new"><Button variant="primary">+ Onboard asset</Button></Link>} />
       <FractionalReTabs active="assets" />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-        <select value={filter} onChange={(e) => setFilter(e.target.value)} style={{ ...input(), width: 220 }}>
+        <select value={filter} onChange={(e) => setFilter(e.target.value)} className="vx-input" style={{ width: 220 }}>
           <option value="">All lifecycle states</option>
           {LIFECYCLE.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
-        <input placeholder="Search name or location…" value={q} onChange={(e) => setQ(e.target.value)} style={{ ...input(), width: 280 }} />
-        <button onClick={load} style={btn()}>Refresh</button>
+        <Input placeholder="Search name or location…" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 280 }} />
+        <Button onClick={load}>Refresh</Button>
       </div>
 
-      <Card>
-        {loading ? <p style={{ color: '#6b7280' }}>Loading assets…</p> : rows.length === 0 ? <p style={{ color: '#6b7280' }}>No assets match.</p> : (
+      <Card style={{ padding: 0, overflow: 'auto' }}>
+        {loading ? <p style={{ color: colors.muted, padding: 14 }}>Loading assets…</p> : rows.length === 0 ? <p style={{ color: colors.muted, padding: 14 }}>No assets match.</p> : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Name</th><th style={th()}>Type</th><th style={th()}>Location</th><th style={th()}>Value</th><th style={th()}>Units sold</th><th style={th()}>Title</th><th style={th()}>Status</th><th style={th()} /></tr></thead>
+            <thead><tr><th style={thCell}>Name</th><th style={thCell}>Type</th><th style={thCell}>Location</th><th style={thCell}>Value</th><th style={thCell}>Units sold</th><th style={thCell}>Title</th><th style={thCell}>Status</th><th style={thCell} /></tr></thead>
             <tbody>
               {rows.map((a) => (
                 <tr key={a.id}>
-                  <td style={td()}>{a.name}</td>
-                  <td style={{ ...td(), textTransform: 'capitalize' }}>{a.type.replace(/_/g, ' ')}</td>
-                  <td style={td()}>{a.location}</td>
-                  <td style={td()}>{money(a.totalValueKobo)}</td>
-                  <td style={td()}>{a.unitsSold.toLocaleString('en-NG')} / {a.totalUnits.toLocaleString('en-NG')}</td>
-                  <td style={td()}>{a.titleVerified ? <Badge status="verified" label="verified" /> : <Badge status="pending" label="unverified" />}</td>
-                  <td style={td()}><Badge status={a.status} /></td>
-                  <td style={td()}><Link href={`/admin/fractionalre/assets/${a.id}`} style={{ color: '#1d4ed8' }}>Open →</Link></td>
+                  <td style={tdCell}>{a.name}</td>
+                  <td style={{ ...tdCell, textTransform: 'capitalize' }}>{a.type.replace(/_/g, ' ')}</td>
+                  <td style={tdCell}>{a.location}</td>
+                  <td style={tdCell}>{money(a.totalValueKobo)}</td>
+                  <td style={tdCell}>{a.unitsSold.toLocaleString('en-NG')} / {a.totalUnits.toLocaleString('en-NG')}</td>
+                  <td style={tdCell}>{a.titleVerified ? <Badge text="verified" color={colors.success} /> : <Badge text="unverified" color={colors.warning} />}</td>
+                  <td style={tdCell}><Badge text={a.status.replace(/_/g, ' ')} color={statusColor(a.status)} /></td>
+                  <td style={tdCell}><Link href={`/admin/fractionalre/assets/${a.id}`} style={{ color: colors.info }}>Open →</Link></td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

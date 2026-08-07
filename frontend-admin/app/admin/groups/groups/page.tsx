@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { listGroups, listGroupMembers, formatNaira, type GroupRecord, type GroupMember } from '@/services/groupsAdminService';
 import { PageHeader, GroupsTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, btn, btnPrimary, th, td, input, label, select, fmtDate } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function GroupsPage() {
   const [rows, setRows] = useState<GroupRecord[]>([]);
@@ -62,7 +63,7 @@ export default function GroupsPage() {
             <tbody>
               {rows.map((g) => (
                 <tr key={g.id}>
-                  <td style={td()}>{g.name}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{g.id}</div></td>
+                  <td style={td()}>{g.name}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{g.id}</div></td>
                   <td style={td()}>{g.owner_masked}</td>
                   <td style={td()}><Badge status={g.status} /></td>
                   <td style={td()}>{g.members_count.toLocaleString('en-NG')}</td>

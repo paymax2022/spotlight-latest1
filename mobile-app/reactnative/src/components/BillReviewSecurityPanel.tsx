@@ -7,20 +7,24 @@ import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 
-const feeRate = 0;
+/** Mandatory convenience fee (Naira) the USER pays on certain bill categories
+ * (Cable TV, Electricity). Passed explicitly per screen — 0 for airtime/data. */
+export const CONVENIENCE_FEE_NAIRA = 100;
 
 export function formatNaira(value?: number) {
   return `₦${Number(value ?? 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export function calculateBillReview(amount?: number, walletBalance?: number) {
+// A flat convenience fee (Naira) is added ON TOP of the service amount and paid by
+// the user; totalDebit = serviceAmount + fee. Fee defaults to 0 (no fee).
+export function calculateBillReview(amount?: number, walletBalance?: number, fee: number = 0) {
   const serviceAmount = Number(amount ?? 0);
-  const fee = Math.round(serviceAmount * feeRate * 100) / 100;
-  const totalDebit = serviceAmount + fee;
+  const convenienceFee = Number(fee ?? 0);
+  const totalDebit = serviceAmount + convenienceFee;
   const balance = Number(walletBalance ?? 0);
   return {
     serviceAmount,
-    fee,
+    fee: convenienceFee,
     totalDebit,
     balanceBefore: balance,
     balanceAfter: balance - totalDebit,
@@ -30,6 +34,8 @@ export function calculateBillReview(amount?: number, walletBalance?: number) {
 
 interface Props {
   amount?: number;
+  /** Flat convenience fee (Naira) added on top and paid by the user. Default 0. */
+  fee?: number;
   walletBalance?: number;
   pin: string;
   onPinChange: (pin: string) => void;
@@ -42,6 +48,7 @@ interface Props {
 
 export default function BillReviewSecurityPanel({
   amount,
+  fee = 0,
   walletBalance,
   pin,
   onPinChange,
@@ -51,7 +58,7 @@ export default function BillReviewSecurityPanel({
   saveBeneficiary,
   onSaveBeneficiaryChange,
 }: Props) {
-  const review = calculateBillReview(amount, walletBalance);
+  const review = calculateBillReview(amount, walletBalance, fee);
 
   return (
     <View style={styles.wrap}>

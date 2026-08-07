@@ -17,8 +17,8 @@ const minPayoutTier = 1
 // reconciliation, budget/burn monitoring, float, and reward-to-LTV.
 type Service struct {
 	repo    *Repository
-	finance *financeledger.Service   // posts the real wallet credit (double-entry, idempotent)
-	events  *referralevents.Service  // audit
+	finance *financeledger.Service  // posts the real wallet credit (double-entry, idempotent)
+	events  *referralevents.Service // audit
 }
 
 func NewService(repo *Repository, finance *financeledger.Service, events *referralevents.Service) *Service {
@@ -203,7 +203,9 @@ func (s *Service) LatestFloat(ctx context.Context) (*Float, error) { return s.re
 
 // --- reward-to-LTV ---
 
-func (s *Service) RewardToLTV(ctx context.Context) (*RewardToLTV, error) { return s.repo.RewardToLTV(ctx) }
+func (s *Service) RewardToLTV(ctx context.Context) (*RewardToLTV, error) {
+	return s.repo.RewardToLTV(ctx)
+}
 
 // --- helpers ---
 

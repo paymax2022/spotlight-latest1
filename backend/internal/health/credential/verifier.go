@@ -60,9 +60,9 @@ type VerifyRequest struct {
 // VerifyResult is the normalised verdict. For ASSISTED it is always PENDING; a
 // future API adapter would populate Outcome + LicenceExpiry from the register.
 type VerifyResult struct {
-	Source       Source
-	Method       Method
-	Outcome      Outcome
+	Source        Source
+	Method        Method
+	Outcome       Outcome
 	LicenceExpiry *string // ISO date when the verifier itself can determine it (API mode)
 	// Notes carries adapter-side context for the audit/reviewer; never PII.
 	Notes string

@@ -10,6 +10,7 @@ import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import TripRouteCard from '@/features/mobility/components/TripRouteCard';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import SelectableCard from '@/features/mobility/components/SelectableCard';
@@ -138,7 +139,7 @@ export default function ParcelDescribeScreen() {
             <TextInputField label="Receiver phone" value={receiverPhone} onChangeText={setReceiverPhone} placeholder="+234…" keyboardType="phone-pad" />
 
             <Text style={styles.section}>Declared value (for insurance)</Text>
-            <TextInputField value={declaredValue} onChangeText={(t) => setDeclaredValue(t.replace(/[^0-9]/g, ''))} placeholder="₦ value of contents" keyboardType="number-pad" />
+            <TextInputField value={declaredValue} onChangeText={(t) => setDeclaredValue(sanitizeMoneyInput(t))} placeholder="₦ value of contents" keyboardType="decimal-pad" inputMode="decimal" maxLength={13} />
 
             <Pressable style={[styles.photoBtn, photoAttached && styles.photoBtnDone]} onPress={() => setPhotoAttached((p) => !p)}>
               <Camera size={18} color={photoAttached ? Colors.tertiaryContainer : Colors.onSurfaceVariant} strokeWidth={2} />

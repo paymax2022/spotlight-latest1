@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Linking, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MessageCircle, Mail, Share2, Copy, Check, Ban, Clock, MapPin, User, Users, Repeat } from 'lucide-react-native';
@@ -18,6 +18,7 @@ import { useAccessCode, useCodeAttendance, useRevokeAccessCode } from '@/feature
 import { buildShareMessage, effectiveStatus, formatCodeValue, formatDateTime, isActive, timeUntil } from '@/features/visitor/utils/visitorFormatters';
 import { codeTypeMeta } from '@/features/visitor/constants/visitor.constants';
 import * as visitorApi from '@/features/visitor/api/visitor.api';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 export default function AccessCodeDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -66,12 +67,12 @@ export default function AccessCodeDetailScreen() {
     try {
       const ok = await Linking.canOpenURL(url);
       if (!ok && channel === 'whatsapp') {
-        Alert.alert('WhatsApp not installed', 'Try sharing via SMS or email instead.');
+        alertAsync({ title: 'WhatsApp not installed', message: 'Try sharing via SMS or email instead.' });
         return;
       }
       await Linking.openURL(url);
     } catch {
-      Alert.alert('Could not share', 'Please try a different channel.');
+      alertAsync({ title: 'Could not share', message: 'Please try a different channel.' });
     }
   };
 
@@ -80,15 +81,15 @@ export default function AccessCodeDetailScreen() {
     setTimeout(() => setCopied(false), 1600);
   };
 
-  const onRevoke = () => {
-    Alert.alert('Revoke code?', 'This code will stop working at the gate immediately.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Revoke',
-        style: 'destructive',
-        onPress: () => revoke.mutate(code.id, { onError: () => Alert.alert('Error', 'Could not revoke the code.') }),
-      },
-    ]);
+  const onRevoke = async () => {
+    const ok = await confirmAsync({
+      title: 'Revoke code?',
+      message: 'This code will stop working at the gate immediately.',
+      confirmLabel: 'Revoke',
+      destructive: true,
+    });
+    if (!ok) return;
+    revoke.mutate(code.id, { onError: () => alertAsync({ title: 'Error', message: 'Could not revoke the code.' }) });
   };
 
   return (

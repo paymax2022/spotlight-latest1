@@ -13,7 +13,7 @@
 // Publish = POST /listings (draft) then POST /listings/:id/submit. Success shows
 // "live in <5 min" for auto-approved categories, then routes to My Listings.
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, TextInput, Alert, Image, Switch } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, TextInput, Image, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -23,6 +23,7 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import PrimaryButton from '@/components/PrimaryButton';
+import { sanitizeMoneyInput } from '@/utils/money';
 import {
   MarketColors,
   formatNaira,
@@ -32,11 +33,12 @@ import type { ListingCondition, DeliveryOption } from '@/features/marketplace';
 import { aiPrefill, estimateFairPriceBand, uploadListingImage, isEscrowEligibleCategory } from '@/features/marketplace/api/sell.api';
 import type { AiPrefillResult } from '@/features/marketplace/api/sell.api';
 import { useSellCategories, useSellCategory, useCreateListing, useSubmitListing } from '@/features/marketplace/sell.hooks';
-import PhotoStrip, { type ComposerPhoto } from './_components/PhotoStrip';
-import AiPrefillCard from './_components/AiPrefillCard';
-import ComposerValidation, { checkBannedPatterns, countWords } from './_components/ComposerValidation';
-import AttributeFields, { normalizeSchema, missingRequired } from './_components/AttributeFields';
-import FairPriceMeter from './_components/FairPriceMeter';
+import PhotoStrip, { type ComposerPhoto } from '@/features/marketplace/components/sell/PhotoStrip';
+import AiPrefillCard from '@/features/marketplace/components/sell/AiPrefillCard';
+import ComposerValidation, { checkBannedPatterns, countWords } from '@/features/marketplace/components/sell/ComposerValidation';
+import AttributeFields, { normalizeSchema, missingRequired } from '@/features/marketplace/components/sell/AttributeFields';
+import FairPriceMeter from '@/features/marketplace/components/sell/FairPriceMeter';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 function track(event: string, props: Record<string, unknown>) {
   if (__DEV__) console.log(`[analytics] ${event}`, props);
@@ -130,12 +132,14 @@ export default function SellWizard() {
     if (!perm.granted) {
       if (fromCamera) {
         // Camera denied → gallery fallback (spec §10).
-        Alert.alert('Camera unavailable', "We couldn't open the camera. Pick photos from your gallery instead.", [
-          { text: 'Open gallery', onPress: () => addPhotos(false) },
-          { text: 'Cancel', style: 'cancel' },
-        ]);
+        const ok = await confirmAsync({
+          title: 'Camera unavailable',
+          message: "We couldn't open the camera. Pick photos from your gallery instead.",
+          confirmLabel: 'Open gallery',
+        });
+        if (ok) addPhotos(false);
       } else {
-        Alert.alert('Permission needed', 'Allow photo access to add listing photos.');
+        alertAsync({ title: 'Permission needed', message: 'Allow photo access to add listing photos.' });
       }
       return;
     }
@@ -200,7 +204,7 @@ export default function SellWizard() {
     if (!categoryId) return;
     const pendingUploads = photos.some((p) => p.uploading);
     if (pendingUploads) {
-      Alert.alert('Photos still uploading', 'Give it a second for your photos to finish uploading.');
+      alertAsync({ title: 'Photos still uploading', message: 'Give it a second for your photos to finish uploading.' });
       return;
     }
     try {
@@ -218,15 +222,16 @@ export default function SellWizard() {
       const live = await submitListing.mutateAsync(created.id);
       track('listing_published', { listing_id: created.id, category_id: categoryId, status: live.status, escrow: escrowReady });
       const autoApproved = live.status === 'active';
-      Alert.alert(
-        autoApproved ? "You're live!" : 'Submitted for review',
-        autoApproved
+      await alertAsync({
+        title: autoApproved ? "You're live!" : 'Submitted for review',
+        message: autoApproved
           ? 'Your listing is live and searchable — usually within 5 minutes for this category.'
           : "Thanks! We're reviewing your listing and will notify you shortly.",
-        [{ text: 'View my listings', onPress: () => router.replace('/marketplace/sell' as never) }],
-      );
+        buttonLabel: 'View my listings',
+      });
+      router.replace('/marketplace/sell' as never);
     } catch (e) {
-      Alert.alert('Could not publish', (e as Error).message || 'Please try again.');
+      alertAsync({ title: 'Could not publish', message: (e as Error).message || 'Please try again.' });
     }
   };
 
@@ -315,7 +320,7 @@ export default function SellWizard() {
           {step === 'price' ? (
             <>
               <Text style={styles.label}>Price (₦)</Text>
-              <TextInput style={styles.input} placeholder="0" placeholderTextColor={MarketColors.muted} value={priceInput} onChangeText={setPriceInput} keyboardType="numeric" />
+              <TextInput style={styles.input} placeholder="0" placeholderTextColor={MarketColors.muted} value={priceInput} onChangeText={(v) => setPriceInput(sanitizeMoneyInput(v))} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} />
               <View style={{ height: Spacing.sm }} />
               <FairPriceMeter priceKobo={priceKobo} band={band} />
 

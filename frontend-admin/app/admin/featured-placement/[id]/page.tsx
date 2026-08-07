@@ -14,13 +14,12 @@ import {
 } from '@/services/featuredPlacementAdminService';
 import { StatusBadge } from '../statusBadge';
 import { useFeaturedPermissions, FEATURED_PERMS } from '../_ui';
-
-const card = { border: '1px solid #2a2a2a', padding: 12, borderRadius: 6 } as const;
+import { Page, Card, Button, colors } from '@/components/ui/vuexy';
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <tr style={{ borderBottom: '1px solid #1c1c1c' }}>
-      <td style={{ padding: '6px 8px', opacity: 0.7, width: '40%' }}>{label}</td>
+    <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+      <td style={{ padding: '6px 8px', color: colors.muted, width: '40%' }}>{label}</td>
       <td style={{ padding: '6px 8px' }}>{value}</td>
     </tr>
   );
@@ -98,35 +97,34 @@ export default function FeaturedPlacementDetailPage({ params }: { params: Promis
     void runAction(() => suspend(id, suspendReason.trim()), 'Suspend');
   };
 
-  if (loading) return <p>Loading campaign…</p>;
-  if (!campaign) return <p style={{ color: 'salmon' }}>{error || 'Campaign not found.'}</p>;
+  if (loading) return <Page><p style={{ color: colors.muted }}>Loading campaign…</p></Page>;
+  if (!campaign) return <Page><p style={{ color: colors.danger }}>{error || 'Campaign not found.'}</p></Page>;
 
   const canApprove = can(FEATURED_PERMS.approve);
   const canReject = can(FEATURED_PERMS.reject);
   const canSuspend = can(FEATURED_PERMS.suspend);
 
   return (
-    <div>
+    <Page>
       <p><Link href="/admin/featured-placement">← Back to review queue</Link></p>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <h1 style={{ margin: 0 }}>{campaign.creative.headline}</h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
+        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>{campaign.creative.headline}</h1>
         <StatusBadge status={campaign.state} />
       </div>
-      <p style={{ fontSize: 13, opacity: 0.7 }}>
+      <p style={{ fontSize: 13, color: colors.muted }}>
         {campaign.zone_code} · {campaign.subject_type}/{campaign.subject_id} · rate {campaign.rate_version} ·{' '}
         <span style={{ fontFamily: 'monospace' }}>{campaign.id}</span>
       </p>
 
-      {message ? <p style={{ color: 'lightgreen' }}>{message}</p> : null}
-      {error ? <p style={{ color: 'salmon' }}>{error}</p> : null}
+      {message ? <p style={{ color: colors.success }}>{message}</p> : null}
+      {error ? <p style={{ color: colors.danger }}>{error}</p> : null}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16, marginTop: 12 }}>
         <div style={{ display: 'grid', gap: 16 }}>
           {/* Creative */}
-          <section style={card}>
-            <h2 style={{ marginTop: 0 }}>Creative</h2>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <Card title="Creative">
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 12 }}>
               <tbody>
                 <Field label="Headline" value={campaign.creative.headline} />
                 <Field
@@ -140,12 +138,11 @@ export default function FeaturedPlacementDetailPage({ params }: { params: Promis
                 />
               </tbody>
             </table>
-          </section>
+          </Card>
 
           {/* Placement */}
-          <section style={card}>
-            <h2 style={{ marginTop: 0 }}>Placement</h2>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <Card title="Placement">
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 12 }}>
               <tbody>
                 <Field label="Zone" value={campaign.zone_code} />
                 <Field label="Subject type" value={campaign.subject_type} />
@@ -161,15 +158,14 @@ export default function FeaturedPlacementDetailPage({ params }: { params: Promis
                 {campaign.review_reason ? <Field label="Review reason" value={campaign.review_reason} /> : null}
               </tbody>
             </table>
-          </section>
+          </Card>
         </div>
 
         {/* Right column */}
         <div style={{ display: 'grid', gap: 16 }}>
           {/* Merchant standing */}
-          <section style={card}>
-            <h2 style={{ marginTop: 0 }}>Merchant Standing</h2>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <Card title="Merchant Standing">
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 12 }}>
               <tbody>
                 <Field label="Merchant" value={campaign.merchant_name ?? '—'} />
                 <Field
@@ -185,15 +181,14 @@ export default function FeaturedPlacementDetailPage({ params }: { params: Promis
                 <Field label="Updated" value={new Date(campaign.updated_at).toLocaleString()} />
               </tbody>
             </table>
-          </section>
+          </Card>
 
           {/* Decision actions */}
-          <section style={card}>
-            <h2 style={{ marginTop: 0 }}>Decision</h2>
-            <div style={{ display: 'grid', gap: 12 }}>
-              <button onClick={onApprove} disabled={busy || !canApprove} title={canApprove ? '' : 'Requires placement.admin.approve'}>
+          <Card title="Decision">
+            <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
+              <Button variant="primary" onClick={onApprove} disabled={busy || !canApprove} title={canApprove ? '' : 'Requires placement.admin.approve'}>
                 {busy ? '…' : 'Approve'}
-              </button>
+              </Button>
 
               <div style={{ display: 'grid', gap: 6 }}>
                 <textarea
@@ -203,9 +198,9 @@ export default function FeaturedPlacementDetailPage({ params }: { params: Promis
                   rows={2}
                   style={{ width: '100%' }}
                 />
-                <button onClick={onRequestInfo} disabled={busy || !canReject} title={canReject ? '' : 'Requires placement.admin.reject'}>
+                <Button variant="outline" onClick={onRequestInfo} disabled={busy || !canReject} title={canReject ? '' : 'Requires placement.admin.reject'}>
                   Request changes
-                </button>
+                </Button>
               </div>
 
               <div style={{ display: 'grid', gap: 6 }}>
@@ -216,9 +211,9 @@ export default function FeaturedPlacementDetailPage({ params }: { params: Promis
                   rows={2}
                   style={{ width: '100%' }}
                 />
-                <button onClick={onReject} disabled={busy || !canReject} title={canReject ? '' : 'Requires placement.admin.reject'}>
+                <Button variant="danger" onClick={onReject} disabled={busy || !canReject} title={canReject ? '' : 'Requires placement.admin.reject'}>
                   Reject
-                </button>
+                </Button>
               </div>
 
               <div style={{ display: 'grid', gap: 6 }}>
@@ -229,17 +224,17 @@ export default function FeaturedPlacementDetailPage({ params }: { params: Promis
                   rows={2}
                   style={{ width: '100%' }}
                 />
-                <button onClick={onSuspend} disabled={busy || !canSuspend} title={canSuspend ? '' : 'Requires placement.admin.suspend'}>
+                <Button variant="danger" onClick={onSuspend} disabled={busy || !canSuspend} title={canSuspend ? '' : 'Requires placement.admin.suspend'}>
                   Suspend
-                </button>
+                </Button>
               </div>
             </div>
-            <p style={{ fontSize: 12, opacity: 0.6, marginTop: 10 }}>
+            <p style={{ fontSize: 12, color: colors.muted, marginTop: 10 }}>
               Actions are role-gated (RBAC) and written to the placement audit log. Server enforces.
             </p>
-          </section>
+          </Card>
         </div>
       </div>
-    </div>
+    </Page>
   );
 }

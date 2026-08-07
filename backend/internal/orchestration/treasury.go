@@ -14,11 +14,11 @@ type floatKey struct {
 // FloatBucket tracks Paymax's pre-funded balance with a provider in a currency
 // (spec §7). Exposed to the router as available_float.
 type FloatBucket struct {
-	Provider     string
-	Currency     string
-	BalanceMinor int64
-	LowWaterMinor  int64
-	HighWaterMinor int64
+	Provider           string
+	Currency           string
+	BalanceMinor       int64
+	LowWaterMinor      int64
+	HighWaterMinor     int64
 	ExposureLimitMinor int64
 	ExposureUsedMinor  int64
 }

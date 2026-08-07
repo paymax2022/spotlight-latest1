@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { router } from 'expo-router';
 import { FileCheck, Plus, X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -10,6 +11,7 @@ import { Typography } from '@/constants/typography';
 import PrimaryButton from '@/components/PrimaryButton';
 import SelectField from '@/components/SelectField';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { formatKobo } from '@/api/doctor.batch4.api';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { StateView, PreAuthRow } from '@/features/doctor/components';
@@ -74,12 +76,10 @@ export default function PreAuthListScreen() {
           try {
             const result = await request.mutateAsync(input);
             setOpen(false);
-            Alert.alert('Request sent', `${result.ref} is now ${PREAUTH_STATUS_LABELS[result.status].label.toLowerCase()}.`, [
-              { text: 'View', onPress: () => router.push(`/(doctor)/hmo/pre-auth/${result.preAuthId}`) },
-              { text: 'Done' },
-            ]);
+            const ok = await confirmAsync({ title: 'Request sent', message: `${result.ref} is now ${PREAUTH_STATUS_LABELS[result.status].label.toLowerCase()}.`, confirmLabel: 'View', cancelLabel: 'Done' });
+            if (ok) { router.push(`/(doctor)/hmo/pre-auth/${result.preAuthId}`); }
           } catch {
-            Alert.alert('Failed', 'Could not raise the request. Please try again.');
+            alertAsync({ title: 'Failed', message: 'Could not raise the request. Please try again.' });
           }
         }}
       />
@@ -113,7 +113,7 @@ function RequestSheet({ visible, pending, onClose, onSubmit }: {
         <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <SelectField label="Provider" placeholder="Select provider" value={provider} options={HMO_PROVIDER_OPTIONS} onChange={setProvider} />
           <SelectField label="Service" placeholder="Select service" value={service} options={PREAUTH_SERVICE_OPTIONS} onChange={setService} />
-          <TextInputField label="Estimated cost (NGN)" value={naira} onChangeText={setNaira} keyboardType="number-pad" placeholder="e.g. 150000" />
+          <TextInputField label="Estimated cost (NGN)" value={naira} onChangeText={(v) => setNaira(sanitizeMoneyInput(v))} keyboardType="decimal-pad" maxLength={13} placeholder="e.g. 150000" />
           <TextInputField label="Clinical justification (optional)" value={note} onChangeText={setNote} placeholder="Why is this service required?" multiline />
           <PrimaryButton label="Submit request" onPress={() => onSubmit({ patientId: 'pat-2', provider, service, estimatedKobo, note: note.trim() || undefined })} loading={pending} disabled={!canSubmit} style={styles.btn} />
         </ScrollView>

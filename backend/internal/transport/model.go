@@ -93,28 +93,28 @@ const BaseFareKobo int64 = 150000 // ₦1,500
 
 // Driver is a registered ride-hailing driver.
 type Driver struct {
-	ID         string       `json:"id"`
-	UserID     string       `json:"userId"`
-	Name       string       `json:"name"`
-	VehicleReg string       `json:"vehicleReg"`
-	VehicleType string      `json:"vehicleType"` // car | bike | tricycle
-	Status     DriverStatus `json:"status"`
-	Rating     float64      `json:"rating"`
-	CreatedAt  time.Time    `json:"createdAt"`
+	ID          string       `json:"id"`
+	UserID      string       `json:"userId"`
+	Name        string       `json:"name"`
+	VehicleReg  string       `json:"vehicleReg"`
+	VehicleType string       `json:"vehicleType"` // car | bike | tricycle
+	Status      DriverStatus `json:"status"`
+	Rating      float64      `json:"rating"`
+	CreatedAt   time.Time    `json:"createdAt"`
 }
 
 // Trip is a ride from pickup to destination.
 type Trip struct {
-	ID              string     `json:"id"`
-	RiderID         string     `json:"riderId"`
-	DriverID        *string    `json:"driverId,omitempty"`
-	PickupAddress   string     `json:"pickupAddress"`
-	DestAddress     string     `json:"destAddress"`
-	FareKobo        int64      `json:"fareKobo"`
-	Status          TripStatus `json:"status"`
-	IdempotencyKey  string     `json:"idempotencyKey"`
-	SettlementID    string     `json:"settlementId"`
-	CreatedAt       time.Time  `json:"createdAt"`
+	ID             string     `json:"id"`
+	RiderID        string     `json:"riderId"`
+	DriverID       *string    `json:"driverId,omitempty"`
+	PickupAddress  string     `json:"pickupAddress"`
+	DestAddress    string     `json:"destAddress"`
+	FareKobo       int64      `json:"fareKobo"`
+	Status         TripStatus `json:"status"`
+	IdempotencyKey string     `json:"idempotencyKey"`
+	SettlementID   string     `json:"settlementId"`
+	CreatedAt      time.Time  `json:"createdAt"`
 }
 
 // RegisterDriverRequest is the body for POST /transport/drivers.
@@ -245,14 +245,14 @@ type TrustedContact struct {
 
 // TripRating is a bidirectional rating + optional tip.
 type TripRating struct {
-	ID       string `json:"id"`
-	TripID   string `json:"tripId"`
-	RaterID  string `json:"raterId"`
-	RateeID  string `json:"rateeId"`
-	Role     string `json:"role"`
-	Stars    int    `json:"stars"`
-	Comment  string `json:"comment,omitempty"`
-	TipKobo  int64  `json:"tipKobo"`
+	ID      string `json:"id"`
+	TripID  string `json:"tripId"`
+	RaterID string `json:"raterId"`
+	RateeID string `json:"rateeId"`
+	Role    string `json:"role"`
+	Stars   int    `json:"stars"`
+	Comment string `json:"comment,omitempty"`
+	TipKobo int64  `json:"tipKobo"`
 }
 
 // FareEstimate is returned by the estimate endpoint.
@@ -312,7 +312,7 @@ type SOSRequest struct {
 	TripID      *string  `json:"trip_id,omitempty"`
 	Lat         *float64 `json:"lat,omitempty"`
 	Lng         *float64 `json:"lng,omitempty"`
-	Description  string   `json:"description,omitempty"`
+	Description string   `json:"description,omitempty"`
 }
 
 // RateRequest is POST /mobility/rides/:id/rate.
@@ -424,4 +424,20 @@ type SafetyIncidentPatchRequest struct {
 	Status         string `json:"status"`
 	AssignedAdmin  string `json:"assigned_admin"`
 	ResolutionNote string `json:"resolution_note"`
+}
+
+// BusDepartureTemplateRequest is POST /bus/provider/templates — a recurring
+// weekly departure pattern the scheduler materializes into bus_schedules.
+type BusDepartureTemplateRequest struct {
+	RouteID     string `json:"route_id" binding:"required"`
+	DaysOfWeek  []int  `json:"days_of_week" binding:"required"` // 0=Sunday .. 6=Saturday
+	DepartTime  string `json:"depart_time" binding:"required"`  // 'HH:MM' local (Africa/Lagos)
+	TotalSeats  int    `json:"total_seats" binding:"required,min=1,max=80"`
+	FareKobo    int64  `json:"fare_kobo" binding:"required,min=0"`
+	HorizonDays int    `json:"horizon_days"` // optional; defaults to 14 in the service
+}
+
+// BusDepartureTemplateActiveRequest is PATCH /bus/provider/templates/:id.
+type BusDepartureTemplateActiveRequest struct {
+	Active bool `json:"active"`
 }

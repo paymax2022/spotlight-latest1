@@ -27,8 +27,8 @@ import (
 //     wiring layer falls back to triage.MockEngine (mock-first, network-free CI).
 
 const (
-	infermedicaBaseURL  = "https://api.infermedica.com/v3"
-	infermedicaTimeout  = 12 * time.Second
+	infermedicaBaseURL = "https://api.infermedica.com/v3"
+	infermedicaTimeout = 12 * time.Second
 )
 
 // InfermedicaEngine is the HTTP client for the Infermedica engine. appID/appKey
@@ -61,9 +61,9 @@ func (e *InfermedicaEngine) Name() string { return "infermedica" }
 // --- wire shapes (de-identified) ---
 
 type infEvidence struct {
-	ID         string `json:"id"`
-	ChoiceID   string `json:"choice_id"`
-	Source     string `json:"source,omitempty"`
+	ID       string `json:"id"`
+	ChoiceID string `json:"choice_id"`
+	Source   string `json:"source,omitempty"`
 }
 
 type infRequest struct {

@@ -18,7 +18,7 @@ type VirtualAccount struct {
 type InboundTransfer struct {
 	AccountNumber  string
 	AmountKobo     int64
-	Reference      string  // Paystack transfer reference
+	Reference      string // Paystack transfer reference
 	SenderName     string
 	SenderBank     string
 	IdempotencyKey string // derived from Paystack event ID

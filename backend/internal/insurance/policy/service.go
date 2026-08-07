@@ -179,11 +179,11 @@ func (s *Service) GetQuote(ctx context.Context, userID, quoteID string) (*QuoteR
 //     PENDING_PAYMENT → BINDING.
 //  4. gateway.BindPolicy(idempotency_key) — idempotent at the provider.
 //     - On SUCCESS: BINDING → ACTIVE; write commission ledger entry to the
-//       SEPARATE AccountCommission (the only revenue); store cert ref; audit;
-//       notify.
+//     SEPARATE AccountCommission (the only revenue); store cert ref; audit;
+//     notify.
 //     - On FAILURE: BINDING → BIND_FAILED, then AUTO-REVERSE the premium
-//       (reversing CREDIT back to the user wallet) → VOID. The user is NEVER left
-//       debited without cover. This auto-reverse is the #1 invariant.
+//     (reversing CREDIT back to the user wallet) → VOID. The user is NEVER left
+//     debited without cover. This auto-reverse is the #1 invariant.
 //
 // idempotencyKey is the caller-supplied Idempotency-Key (REQUIRED on bind); the
 // same key is reused for the wallet debit and forwarded to the provider so the

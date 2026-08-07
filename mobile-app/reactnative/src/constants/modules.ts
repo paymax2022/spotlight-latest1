@@ -98,12 +98,12 @@ export const SERVICE_MODULES: ServiceModule[] = [
   { id: 'crypto',          label: 'Crypto',          icon: 'Bitcoin',         iconColor: '#F7931A',         bgColor: 'rgba(247,147,26,0.10)', route: '/crypto',            category: 'investment', badge: 'New' },
   { id: 'learn',           label: 'Learn',           icon: 'GraduationCap',   iconColor: Colors.teal,       bgColor: Colors.iconBgTeal,   route: '/learn',                category: 'investment' },
   { id: 'invest-ai',       label: 'Invest AI',       icon: 'Sparkles',        iconColor: Colors.secondary,  bgColor: Colors.iconBgBlue,   route: '/invest-ai',            category: 'investment', badge: 'New' },
-  // AI Trading fund (§16A) — custodial managed-fund member surface (KYC → fund → redeem).
-  // Distinct from 'invest-ai' (the education chat assistant).
-  { id: 'ai-trading',      label: 'AI Trading',      icon: 'Bot',             iconColor: Colors.primary,    bgColor: Colors.iconBgPurple, route: '/ai-trading',           category: 'investment', badge: 'New' },
-  { id: 'academy',         label: 'Academy',         icon: 'GraduationCap',   iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/learn/academy',        category: 'investment', badge: 'New' },
+  { id: 'academy',         label: 'StudyHub',        icon: 'BookOpenText',    iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/learn/academy',        category: 'investment', badge: 'New' },
   { id: 'spotlight-wealth', label: 'Spotlight Wealth', icon: 'Trophy',        iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/spotlight-wealth',     category: 'investment' },
   { id: 'fractionalre',    label: 'Real Estate Invest', icon: 'Building',     iconColor: Colors.teal,       bgColor: Colors.iconBgTeal,   route: '/fractionalre',         category: 'investment', badge: 'New' },
+  // AI Trading — custodial, paper/eligibility-gated managed fund (member surface).
+  // Landing screen carries the honest risk/fee framing; nothing places a real order.
+  { id: 'ai-trading',      label: 'AI Trading',      icon: 'BrainCircuit',    iconColor: Colors.primary,    bgColor: Colors.iconBgPurple, route: '/ai-trading',           category: 'investment', badge: 'Beta' },
 
   // ── Utility ──────────────────────────────────────────────────────────────────
   { id: 'bills',           label: 'Bill Payments',   icon: 'ReceiptText',     iconColor: Colors.primary,    bgColor: Colors.iconBgPurple, route: '/services/bills',       category: 'utility' },
@@ -156,11 +156,9 @@ export const SERVICE_MODULES: ServiceModule[] = [
 
 export const FEATURED_SERVICES = [
   { id: 'naija-driver', title: 'Nigerian Drivers Challenge', subtitle: 'Compete, play along & back a driver', icon: 'CarFront', iconColor: '#F97316', bgColor: 'rgba(249,115,22,0.08)', route: '/arena' },
-  { id: 'invest-ai', title: 'Learn investing with Invest AI', subtitle: 'Plain-English answers to your money questions', icon: 'Sparkles', iconColor: Colors.secondary, bgColor: Colors.iconBgBlue, route: '/invest-ai' },
   { id: 'bills',    title: 'Pay Bills Instantly',    subtitle: 'Settle utilities in seconds', icon: 'ReceiptText', iconColor: Colors.primary,   bgColor: Colors.iconBgPurple,  route: '/services/bills' },
   { id: 'food-ride',title: 'Book Food & Rides',      subtitle: 'Everything for your commute', icon: 'Car',         iconColor: Colors.secondary, bgColor: Colors.iconBgBlue,    route: '/services/food' },
   { id: 'invest',   title: 'Own the companies shaping your future', subtitle: 'Invest in Nigerian stocks & ETFs', icon: 'TrendingUp', iconColor: '#16A34A', bgColor: 'rgba(22,163,74,0.08)', route: '/investment' },
-  { id: 'ai-trading', title: 'AI Trading Fund', subtitle: 'An AI-managed fund — clear risks, transparent fees', icon: 'Bot', iconColor: Colors.primary, bgColor: Colors.iconBgPurple, route: '/ai-trading' },
 ];
 
 export const QUICK_ACTIONS = [

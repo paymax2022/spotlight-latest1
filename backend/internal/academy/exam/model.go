@@ -93,7 +93,7 @@ type CBTBlueprint struct {
 	ArenaID      string           `json:"arena_id"`
 	Name         string           `json:"name"`
 	Variant      BlueprintVariant `json:"variant"`
-	Sections     []any            `json:"sections"`     // jsonb array
+	Sections     []any            `json:"sections"` // jsonb array
 	TotalItems   int              `json:"total_items"`
 	TotalSeconds int              `json:"total_seconds"` // server timer budget
 	Navigation   map[string]any   `json:"navigation"`    // jsonb
@@ -127,7 +127,7 @@ type Attempt struct {
 	ServerDeadline *time.Time     `json:"server_deadline,omitempty"` // server-authoritative
 	PausedAt       *time.Time     `json:"paused_at,omitempty"`
 	SubmittedAt    *time.Time     `json:"submitted_at,omitempty"`
-	Score          map[string]any `json:"score"`     // jsonb; per-subject + overall
+	Score          map[string]any `json:"score"` // jsonb; per-subject + overall
 	Readiness      *float64       `json:"readiness,omitempty"`
 	Predicted      map[string]any `json:"predicted"` // jsonb
 	Integrity      map[string]any `json:"integrity"` // jsonb; anti-cheat signals (logged, not punitive)
@@ -148,19 +148,6 @@ type Response struct {
 	TimeMS         int            `json:"time_ms"`
 	Flagged        bool           `json:"flagged"`
 	CreatedAt      time.Time      `json:"created_at"`
-}
-
-// ServedQuestion is a single question delivered to a learner for an attempt.
-// The canonical answer key is NEVER included — grading is server-authoritative
-// (Submit re-scores against academy_question_items). Mirrors the fields the CBT
-// simulator needs to render a question.
-type ServedQuestion struct {
-	ID          string  `json:"id"`
-	Type        string  `json:"type"`
-	Stem        string  `json:"stem"`
-	Options     []any   `json:"options"` // jsonb array, e.g. [{id,text}]
-	SubjectID   *string `json:"subject_id,omitempty"`
-	ObjectiveID *string `json:"objective_id,omitempty"`
 }
 
 // ── Request DTOs ────────────────────────────────────────────────────────────────
@@ -245,18 +232,17 @@ type CombinationRequest struct {
 
 // SubjectScore is the per-subject scoring breakdown.
 type SubjectScore struct {
-	Subject string  `json:"subject"`                // subject id (uuid)
-	Name    string  `json:"subject_name,omitempty"` // human label, resolved from academy_subjects at scoring time
-	Raw     int     `json:"raw"`                    // correct count
-	Total   int     `json:"total"`                  // items in subject
-	Scaled  float64 `json:"scaled"`                 // scaled per scoring_rules (e.g. /100 of the 400 scale)
+	Subject string  `json:"subject"`
+	Raw     int     `json:"raw"`    // correct count
+	Total   int     `json:"total"`  // items in subject
+	Scaled  float64 `json:"scaled"` // scaled per scoring_rules (e.g. /100 of the 400 scale)
 	Grade   string  `json:"grade,omitempty"`
 }
 
 // Result is the pure scoring output (per-subject + overall + readiness + predicted).
 type Result struct {
 	Subjects  []SubjectScore `json:"subjects"`
-	Overall   float64        `json:"overall"`   // UTME 400-scale OR aggregate of bands
+	Overall   float64        `json:"overall"` // UTME 400-scale OR aggregate of bands
 	Grade     string         `json:"grade,omitempty"`
 	Readiness float64        `json:"readiness"` // coverage × mastery × mock
 	Predicted map[string]any `json:"predicted"`

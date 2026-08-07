@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import * as Icons from 'lucide-react-native';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -36,7 +37,7 @@ export default function RestaurantOrderScreen() {
     if (!order) return;
     setStatus.mutate(
       { restaurantId: order.restaurantId, orderId: order.id, status: next },
-      { onError: (e) => Alert.alert('Could not update', toFoodError(e).message) },
+      { onError: (e) => alertAsync({ title: 'Could not update', message: toFoodError(e).message }) },
     );
   };
 
@@ -44,27 +45,21 @@ export default function RestaurantOrderScreen() {
   const onAssign = () => {
     if (!order) return;
     assignRider.mutate(order.id, {
-      onError: (e) => Alert.alert('Could not assign rider', toFoodError(e).message),
+      onError: (e) => alertAsync({ title: 'Could not assign rider', message: toFoodError(e).message }),
     });
   };
 
   const onRedispatch = () => {
     if (!order) return;
     redispatch.mutate(order.id, {
-      onError: (e) => Alert.alert('Could not re-dispatch', toFoodError(e).message),
+      onError: (e) => alertAsync({ title: 'Could not re-dispatch', message: toFoodError(e).message }),
     });
   };
 
-  const onReject = () => {
+  const onReject = async () => {
     if (!order) return;
-    Alert.alert('Reject order?', 'This cancels the order and refunds the customer.', [
-      { text: 'Keep', style: 'cancel' },
-      {
-        text: 'Reject',
-        style: 'destructive',
-        onPress: () => cancelOrder.mutate({ restaurantId: order.restaurantId, orderId: order.id }),
-      },
-    ]);
+    const ok = await confirmAsync({ title: 'Reject order?', message: 'This cancels the order and refunds the customer.', confirmLabel: 'Reject', cancelLabel: 'Keep', destructive: true });
+    if (ok) cancelOrder.mutate({ restaurantId: order.restaurantId, orderId: order.id });
   };
 
   return (

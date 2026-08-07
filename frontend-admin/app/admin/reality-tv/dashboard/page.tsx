@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { getRealityTVDashboard } from '@/services/realityTvService';
 import type { RealityTVDashboardMetrics } from '@/types/realityTv';
+import { Page, PageHeader, Card, colors } from '@/components/ui/vuexy';
 
 export default function RealityTVAdminDashboardPage() {
   const [metrics, setMetrics] = useState<RealityTVDashboardMetrics | null>(null);
@@ -24,27 +25,27 @@ export default function RealityTVAdminDashboardPage() {
   ];
 
   return (
-    <section>
-      <h1>Reality TV Command Center</h1>
+    <Page>
+      <PageHeader title="Reality TV Command Center" />
       {metrics?.activeSeason ? (
-        <div style={{ border: '1px solid #2a2a2a', padding: 12, marginTop: 8 }}>
-          <p style={{ margin: 0, fontSize: 12 }}>Active Season</p>
+        <Card style={{ marginBottom: 12 }}>
+          <p style={{ margin: 0, fontSize: 12, color: colors.muted }}>Active Season</p>
           <p style={{ margin: '6px 0 0 0', fontWeight: 600 }}>
             {metrics.activeSeason.season_title} (S{metrics.activeSeason.season_number})
           </p>
-          <p style={{ margin: '6px 0 0 0', fontSize: 12 }}>Status: {metrics.activeSeason.status}</p>
-        </div>
+          <p style={{ margin: '6px 0 0 0', fontSize: 12, color: colors.muted }}>Status: {metrics.activeSeason.status}</p>
+        </Card>
       ) : null}
 
-      {!metrics ? <p style={{ marginTop: 12 }}>Loading dashboard...</p> : null}
-      <div style={{ display: 'grid', gap: 10, marginTop: 12, gridTemplateColumns: 'repeat(3, minmax(0,1fr))' }}>
+      {!metrics ? <p style={{ color: colors.muted }}>Loading dashboard...</p> : null}
+      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(3, minmax(0,1fr))' }}>
         {cards.map((card) => (
-          <article key={card.label} style={{ border: '1px solid #2a2a2a', padding: 12 }}>
-            <p style={{ margin: 0, fontSize: 12, opacity: 0.8 }}>{card.label}</p>
+          <Card key={card.label}>
+            <p style={{ margin: 0, fontSize: 12, color: colors.muted }}>{card.label}</p>
             <p style={{ margin: '6px 0 0 0', fontWeight: 700, fontSize: 22 }}>{card.value}</p>
-          </article>
+          </Card>
         ))}
       </div>
-    </section>
+    </Page>
   );
 }

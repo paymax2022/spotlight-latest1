@@ -5,7 +5,21 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { getMerchant, approveMerchantCampaign, formatNaira } from '@/services/referralAdminOpsService';
 import type { MerchantDetail } from '@/types/referralAdminOps';
-import { PageHeader, Card, Kpi, Badge, btn, btnPrimary, th, td, timeAgo, StateBlock } from '../../_ui';
+import { timeAgo } from '../../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function badgeColor(status: string): string {
+  switch (status) {
+    case 'active': case 'verified': case 'paid':
+      return colors.success;
+    case 'ended': case 'draft':
+      return colors.secondary;
+    case 'suspended': case 'rejected': case 'failed': case 'overdue':
+      return colors.danger;
+    default:
+      return colors.warning;
+  }
+}
 
 export default function MerchantDetailPage() {
   const params = useParams();
@@ -36,84 +50,105 @@ export default function MerchantDetailPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title={data ? data.name : 'Merchant'}
         subtitle="Onboarding, campaign approval (A-MER-02), funding/revenue-share (A-MER-03) and analytics/billing (A-MER-04)."
-        action={<Link href="/admin/referral/merchants" style={{ ...btn(), textDecoration: 'none', color: '#374151' }}>← Directory</Link>}
+        actions={<Link href="/admin/referral/merchants" className="vx-btn vx-btn--outline" style={{ textDecoration: 'none' }}>← Directory</Link>}
       />
 
-      <StateBlock loading={loading} error={error} empty={!data} emptyText="Merchant not found.">
-        {data && (
+      {loading ? <p style={{ color: colors.muted }}>Loading…</p>
+        : error ? <p style={{ color: colors.danger }}>{error}</p>
+        : !data ? <p style={{ color: colors.muted }}>Merchant not found.</p>
+        : (
           <>
-            <Card title="Partner profile" right={<Badge status={data.status === 'active' ? 'active' : data.status === 'suspended' ? 'critical' : data.status === 'rejected' ? 'rejected' : 'pending'} label={data.status} />}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px,1fr))', gap: '0.5rem' }}>
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Partner profile</h2>
+                <Badge text={data.status} color={badgeColor(data.status)} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px,1fr))', gap: 10 }}>
                 <Kpi label="Category" value={data.category} />
-                <Kpi label="KYC" value={data.kyc_status} accent={data.kyc_status === 'verified' ? '#15803d' : '#9a3412'} />
+                <Kpi label="KYC" value={data.kyc_status} accent={data.kyc_status === 'verified' ? colors.success : colors.warning} />
                 <Kpi label="API key" value={data.api_key_active ? 'Active' : 'Inactive'} sub="A-MER-05 credentials" />
                 <Kpi label="Take rate" value={`${data.take_rate_pct}%`} />
                 <Kpi label="Revenue share" value={`${data.revenue_share_pct}%`} />
                 <Kpi label="Funded" value={formatNaira(data.funded_kobo)} />
-                <Kpi label="Outstanding" value={formatNaira(data.outstanding_balance_kobo)} accent={data.outstanding_balance_kobo > 0 ? '#9a3412' : '#15803d'} />
+                <Kpi label="Outstanding" value={formatNaira(data.outstanding_balance_kobo)} accent={data.outstanding_balance_kobo > 0 ? colors.warning : colors.success} />
               </div>
-              <p style={{ fontSize: '0.78rem', color: '#9ca3af', marginTop: '0.75rem' }}>{data.contact_email} · {data.contact_phone} · joined {timeAgo(data.joined_at)}</p>
+              <p style={{ fontSize: 12, color: colors.muted, marginTop: 12 }}>{data.contact_email} · {data.contact_phone} · joined {timeAgo(data.joined_at)}</p>
             </Card>
 
-            <Card title="Campaigns & approval (A-MER-02)">
-              {data.campaign_list.length === 0 ? <p style={{ color: '#6b7280' }}>No campaigns.</p> : (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr><th style={th()}>Campaign</th><th style={th()}>Funded</th><th style={th()}>Spent</th><th style={th()}>Status</th><th style={th()} /></tr></thead>
-                  <tbody>
-                    {data.campaign_list.map((c) => (
-                      <tr key={c.id}>
-                        <td style={td()}>{c.name}<br /><code style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{c.id}</code></td>
-                        <td style={td()}>{formatNaira(c.funded_kobo)}</td>
-                        <td style={td()}>{formatNaira(c.spent_kobo)}</td>
-                        <td style={td()}><Badge status={c.status === 'active' ? 'active' : c.status === 'ended' ? 'ended' : c.status === 'paused' ? 'paused' : 'draft'} label={c.status} /></td>
-                        <td style={td()}>
-                          {(c.status === 'draft' || c.status === 'paused') ? (
-                            <button disabled={busy === c.id} onClick={() => approveCampaign(c.id)} style={btnPrimary()}>{busy === c.id ? '…' : 'Approve'}</button>
-                          ) : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <Card title="Campaigns & approval (A-MER-02)" style={{ marginBottom: 16 }}>
+              {data.campaign_list.length === 0 ? <p style={{ color: colors.muted }}>No campaigns.</p> : (
+                <div style={{ overflowX: 'auto', marginTop: 14 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead><tr><th style={thCell}>Campaign</th><th style={thCell}>Funded</th><th style={thCell}>Spent</th><th style={thCell}>Status</th><th style={thCell} /></tr></thead>
+                    <tbody>
+                      {data.campaign_list.map((c) => (
+                        <tr key={c.id}>
+                          <td style={tdCell}>{c.name}<br /><code style={{ fontSize: 12, color: colors.muted }}>{c.id}</code></td>
+                          <td style={tdCell}>{formatNaira(c.funded_kobo)}</td>
+                          <td style={tdCell}>{formatNaira(c.spent_kobo)}</td>
+                          <td style={tdCell}><Badge text={c.status} color={badgeColor(c.status)} /></td>
+                          <td style={tdCell}>
+                            {(c.status === 'draft' || c.status === 'paused') ? (
+                              <Button variant="primary" sm disabled={busy === c.id} onClick={() => approveCampaign(c.id)}>{busy === c.id ? '…' : 'Approve'}</Button>
+                            ) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
-              {msg && <p style={{ color: '#15803d', fontSize: '0.8rem', marginTop: '0.5rem' }}>{msg}</p>}
+              {msg && <p style={{ color: colors.success, fontSize: 13, marginTop: 8 }}>{msg}</p>}
             </Card>
 
-            <Card title="Invoices & billing (A-MER-04)">
-              {data.invoices.length === 0 ? <p style={{ color: '#6b7280' }}>No invoices.</p> : (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr><th style={th()}>Invoice</th><th style={th()}>Period</th><th style={th()}>Amount</th><th style={th()}>Status</th></tr></thead>
-                  <tbody>
-                    {data.invoices.map((inv) => (
-                      <tr key={inv.id}>
-                        <td style={td()}><code style={{ fontSize: '0.78rem' }}>{inv.id}</code></td>
-                        <td style={td()}>{inv.period}</td>
-                        <td style={td()}>{formatNaira(inv.amount_kobo)}</td>
-                        <td style={td()}><Badge status={inv.status === 'paid' ? 'paid' : inv.status === 'overdue' ? 'critical' : 'pending'} label={inv.status} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <Card title="Invoices & billing (A-MER-04)" style={{ marginBottom: 16 }}>
+              {data.invoices.length === 0 ? <p style={{ color: colors.muted }}>No invoices.</p> : (
+                <div style={{ overflowX: 'auto', marginTop: 14 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead><tr><th style={thCell}>Invoice</th><th style={thCell}>Period</th><th style={thCell}>Amount</th><th style={thCell}>Status</th></tr></thead>
+                    <tbody>
+                      {data.invoices.map((inv) => (
+                        <tr key={inv.id}>
+                          <td style={tdCell}><code style={{ fontSize: 13 }}>{inv.id}</code></td>
+                          <td style={tdCell}>{inv.period}</td>
+                          <td style={tdCell}>{formatNaira(inv.amount_kobo)}</td>
+                          <td style={tdCell}><Badge text={inv.status} color={badgeColor(inv.status)} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </Card>
 
             <Card title="Audit trail">
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th style={th()}>When</th><th style={th()}>Actor</th><th style={th()}>Action</th></tr></thead>
-                <tbody>
-                  {data.audit.map((a, i) => (
-                    <tr key={i}><td style={td()}>{timeAgo(a.ts)}</td><td style={td()}>{a.actor}</td><td style={td()}>{a.action}</td></tr>
-                  ))}
-                </tbody>
-              </table>
+              <div style={{ overflowX: 'auto', marginTop: 14 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={thCell}>When</th><th style={thCell}>Actor</th><th style={thCell}>Action</th></tr></thead>
+                  <tbody>
+                    {data.audit.map((a, i) => (
+                      <tr key={i}><td style={tdCell}>{timeAgo(a.ts)}</td><td style={tdCell}>{a.actor}</td><td style={tdCell}>{a.action}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </Card>
           </>
         )}
-      </StateBlock>
+    </Page>
+  );
+}
+
+function Kpi({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
+  return (
+    <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: '13px 15px', background: colors.card }}>
+      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 21, fontWeight: 700, marginTop: 4, color: accent ?? colors.text }}>{value}</div>
+      {sub ? <div style={{ fontSize: 12, color: colors.muted, marginTop: 2 }}>{sub}</div> : null}
     </div>
   );
 }

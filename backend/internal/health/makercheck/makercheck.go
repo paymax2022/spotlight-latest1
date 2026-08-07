@@ -46,9 +46,9 @@ type State string
 
 const (
 	StatePending  State = "PENDING_APPROVAL" // proposed by the maker, awaiting an independent checker
-	StateApproved State = "APPROVED"         // approved by a distinct checker; executable once
-	StateRejected State = "REJECTED"         // declined by a checker
-	StateConsumed State = "CONSUMED"         // the approved action has been executed (single-use)
+	StateApproved State = "APPROVED"          // approved by a distinct checker; executable once
+	StateRejected State = "REJECTED"          // declined by a checker
+	StateConsumed State = "CONSUMED"          // the approved action has been executed (single-use)
 )
 
 // Approve records a checker's decision on a PENDING request. The checker must be a

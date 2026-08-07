@@ -50,9 +50,9 @@ const COURIERS: CourierRow[] = [
 ];
 
 let BUS_OPERATORS: BusOperator[] = [
-  { id: 'bop_1', name: 'GreenLine Express', zone: 'Lagos', status: 'active', routes: 6, fleetSize: 24 },
-  { id: 'bop_2', name: 'CityHopper Transit', zone: 'Lagos', status: 'active', routes: 4, fleetSize: 12 },
-  { id: 'bop_3', name: 'Naija Coaches', zone: 'Lagos', status: 'inactive', routes: 2, fleetSize: 8 },
+  { id: 'bop_1', businessName: 'GreenLine Express', ownerUserId: 'usr_9001', baseState: 'Lagos', verificationStatus: 'verified', verified: true, status: 'active', ratingAvg: 4.6, ratingCount: 312, routeCount: 6, createdAt: '2026-05-01T10:00:00Z' },
+  { id: 'bop_2', businessName: 'CityHopper Transit', ownerUserId: 'usr_9002', baseState: 'Lagos', verificationStatus: 'pending', verified: false, status: 'active', ratingAvg: 4.2, ratingCount: 88, routeCount: 4, createdAt: '2026-06-10T10:00:00Z' },
+  { id: 'bop_3', businessName: 'Naija Coaches', ownerUserId: 'usr_9003', baseState: 'Oyo', verificationStatus: 'suspended', verified: false, status: 'inactive', ratingAvg: 3.4, ratingCount: 41, routeCount: 2, createdAt: '2026-04-18T10:00:00Z' },
 ];
 
 let BUS_ROUTES: BusRoute[] = [
@@ -159,7 +159,26 @@ export async function getCouriers(): Promise<CourierRow[]> {
 export async function getBusOperators(): Promise<BusOperator[]> {
   if (USE_MOCK) { await delay(); return [...BUS_OPERATORS]; }
   const res = await fetch(`${adminBase()}/bus/operators`, { headers: authHeaders() });
-  return res.json();
+  const j = await res.json();
+  return Array.isArray(j) ? j : (j.operators ?? []);
+}
+
+export async function setBusProviderVerification(
+  id: string,
+  status: 'verified' | 'suspended' | 'pending',
+  reason: string,
+): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay(400);
+    BUS_OPERATORS = BUS_OPERATORS.map((o) =>
+      o.id === id
+        ? { ...o, verificationStatus: status, verified: status === 'verified', status: status === 'suspended' ? 'inactive' : 'active' }
+        : o,
+    );
+    return { ok: true };
+  }
+  await fetch(`${adminBase()}/bus/operators/${id}/verification`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ status, reason }) });
+  return { ok: true };
 }
 
 export async function getBusRoutes(): Promise<BusRoute[]> {

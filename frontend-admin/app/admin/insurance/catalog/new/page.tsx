@@ -9,6 +9,7 @@ import {
   PageHeader, InsuranceTabs, Card, DisclosureNote,
   btnPrimary, label, input, select,
 } from '../../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 interface NewForm {
   code: string;
@@ -93,7 +94,7 @@ export default function InsuranceNewProductPage() {
       <PageHeader
         title="New insurance product"
         subtitle="Create a catalog product. It is created inactive — enable it only after the routing rule and underwriter contract are confirmed."
-        action={<Link href="/admin/insurance/catalog" style={{ ...btnPrimary(), background: '#fff', color: '#340075', textDecoration: 'none' }}>Back to catalog</Link>}
+        action={<Link href="/admin/insurance/catalog" style={{ ...btnPrimary(), background: colors.card, color: colors.primary, textDecoration: 'none' }}>Back to catalog</Link>}
       />
       <InsuranceTabs active="catalog" />
 
@@ -148,7 +149,7 @@ export default function InsuranceNewProductPage() {
           <div>
             <label style={label()}>Base premium (kobo)</label>
             <input type="number" min={0} style={input()} value={form.base_premium_kobo} onChange={(e) => patch('base_premium_kobo', Number(e.target.value))} />
-            <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: 2 }}>= {formatNaira(form.base_premium_kobo)}</div>
+            <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 2 }}>= {formatNaira(form.base_premium_kobo)}</div>
           </div>
           <div>
             <label style={label()}>Commission basis (%)</label>
@@ -157,17 +158,17 @@ export default function InsuranceNewProductPage() {
           <div>
             <label style={label()}>Sum insured — min (kobo)</label>
             <input type="number" min={0} style={input()} value={form.sum_insured_min_kobo} onChange={(e) => patch('sum_insured_min_kobo', Number(e.target.value))} />
-            <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: 2 }}>= {formatNaira(form.sum_insured_min_kobo)}</div>
+            <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 2 }}>= {formatNaira(form.sum_insured_min_kobo)}</div>
           </div>
           <div>
             <label style={label()}>Sum insured — max (kobo)</label>
             <input type="number" min={0} style={input()} value={form.sum_insured_max_kobo} onChange={(e) => patch('sum_insured_max_kobo', Number(e.target.value))} />
-            <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: 2 }}>= {formatNaira(form.sum_insured_max_kobo)}</div>
+            <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 2 }}>= {formatNaira(form.sum_insured_max_kobo)}</div>
           </div>
           <div>
             <label style={label()}>Sum insured — default (kobo)</label>
             <input type="number" min={0} style={input()} value={form.sum_insured_default_kobo} onChange={(e) => patch('sum_insured_default_kobo', Number(e.target.value))} />
-            <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: 2 }}>= {formatNaira(form.sum_insured_default_kobo)}</div>
+            <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 2 }}>= {formatNaira(form.sum_insured_default_kobo)}</div>
           </div>
         </div>
 
@@ -176,7 +177,7 @@ export default function InsuranceNewProductPage() {
           <textarea style={{ ...input(), minHeight: 80, resize: 'vertical', fontFamily: 'inherit' }} value={form.description} onChange={(e) => patch('description', e.target.value)} />
         </div>
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.9rem', fontSize: '0.85rem', color: '#374151' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.9rem', fontSize: '0.85rem', color: colors.text }}>
           <input type="checkbox" checked={form.active} onChange={(e) => patch('active', e.target.checked)} />
           Active (feature-flag enabled for binding)
         </label>
@@ -185,8 +186,8 @@ export default function InsuranceNewProductPage() {
           <button style={{ ...btnPrimary(), opacity: saving ? 0.6 : 1, cursor: saving ? 'not-allowed' : 'pointer' }} onClick={save} disabled={saving}>
             {saving ? 'Creating…' : 'Create product'}
           </button>
-          {saved && <span style={{ color: '#15803d', fontSize: '0.82rem', fontWeight: 600 }}>Created — redirecting…</span>}
-          {error && <span style={{ color: '#dc2626', fontSize: '0.82rem' }}>{error}</span>}
+          {saved && <span style={{ color: colors.success, fontSize: '0.82rem', fontWeight: 600 }}>Created — redirecting…</span>}
+          {error && <span style={{ color: colors.danger, fontSize: '0.82rem' }}>{error}</span>}
         </div>
       </Card>
     </div>

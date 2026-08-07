@@ -68,18 +68,18 @@ type SetProviderTypeRequest struct {
 
 // VerificationDocument mirrors public.doctor_verification_documents.
 type VerificationDocument struct {
-	ID             string     `json:"id"`
-	VerificationID *string    `json:"verificationId,omitempty"`
-	UserID         string     `json:"userId"`
-	DocType        string     `json:"docType"`
-	Label          *string    `json:"label,omitempty"`
-	FileName       *string    `json:"fileName,omitempty"`
-	FileURL        *string    `json:"fileUrl,omitempty"`
-	MimeType       *string    `json:"mimeType,omitempty"`
-	SizeBytes      *int64     `json:"sizeBytes,omitempty"`
-	Required       bool       `json:"required"`
-	UploadedAt     time.Time  `json:"uploadedAt"`
-	CreatedAt      time.Time  `json:"createdAt"`
+	ID             string    `json:"id"`
+	VerificationID *string   `json:"verificationId,omitempty"`
+	UserID         string    `json:"userId"`
+	DocType        string    `json:"docType"`
+	Label          *string   `json:"label,omitempty"`
+	FileName       *string   `json:"fileName,omitempty"`
+	FileURL        *string   `json:"fileUrl,omitempty"`
+	MimeType       *string   `json:"mimeType,omitempty"`
+	SizeBytes      *int64    `json:"sizeBytes,omitempty"`
+	Required       bool      `json:"required"`
+	UploadedAt     time.Time `json:"uploadedAt"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 // AuditEntry mirrors public.doctor_compliance_audit (read projection).

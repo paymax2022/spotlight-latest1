@@ -109,15 +109,15 @@ const (
 // Ticket binds an attendee to a tier and to a credential (the rotating-QR gate
 // entry token lives in the credential package; CredentialID is the link).
 type Ticket struct {
-	ID           string      `json:"id"`
-	EventID      string      `json:"event_id"`
-	TierID       string      `json:"tier_id"`
-	OrderID      string      `json:"order_id"`
-	OwnerID      string      `json:"owner_id"`
-	State        TicketState `json:"state"`
-	CredentialID string      `json:"credential_id"`
-	PricePaidKobo int64      `json:"price_paid_kobo"`
-	CreatedAt    time.Time   `json:"created_at"`
+	ID            string      `json:"id"`
+	EventID       string      `json:"event_id"`
+	TierID        string      `json:"tier_id"`
+	OrderID       string      `json:"order_id"`
+	OwnerID       string      `json:"owner_id"`
+	State         TicketState `json:"state"`
+	CredentialID  string      `json:"credential_id"`
+	PricePaidKobo int64       `json:"price_paid_kobo"`
+	CreatedAt     time.Time   `json:"created_at"`
 }
 
 // Order is a checkout aggregate (one or more tickets paid via wallet.Debit).
@@ -148,13 +148,13 @@ const (
 // ledger; on close the unspent residual is credited back to the attendee's MAIN
 // wallet (NL-3). There is no path to cash out the event-wallet balance directly.
 type EventWallet struct {
-	ID         string           `json:"id"`
-	EventID    string           `json:"event_id"`
-	OwnerID    string           `json:"owner_id"`
-	State      EventWalletState `json:"state"`
-	BalanceKobo int64           `json:"balance_kobo"` // projection of event_wallet_ledger
-	CredentialID string         `json:"credential_id,omitempty"` // optional wallet band/tag
-	CreatedAt  time.Time        `json:"created_at"`
+	ID           string           `json:"id"`
+	EventID      string           `json:"event_id"`
+	OwnerID      string           `json:"owner_id"`
+	State        EventWalletState `json:"state"`
+	BalanceKobo  int64            `json:"balance_kobo"`            // projection of event_wallet_ledger
+	CredentialID string           `json:"credential_id,omitempty"` // optional wallet band/tag
+	CreatedAt    time.Time        `json:"created_at"`
 }
 
 // EventWalletEntry is one append-only sub-balance movement (NL-8 style for the
@@ -171,13 +171,13 @@ type EventWalletEntry struct {
 
 // Vendor is a POS-lite seller at an event. Payouts to a vendor are KYC-gated (NL-10).
 type Vendor struct {
-	ID        string    `json:"id"`
-	EventID   string    `json:"event_id"`
-	UserID    string    `json:"user_id"` // FK auth.users(id) — payout beneficiary
-	Name      string    `json:"name"`
-	Active    bool      `json:"active"`
-	CredentialID string `json:"credential_id,omitempty"` // POS-lite identity
-	CreatedAt time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	EventID      string    `json:"event_id"`
+	UserID       string    `json:"user_id"` // FK auth.users(id) — payout beneficiary
+	Name         string    `json:"name"`
+	Active       bool      `json:"active"`
+	CredentialID string    `json:"credential_id,omitempty"` // POS-lite identity
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // VendorCharge records a single tap-charge from an attendee event-wallet to a vendor.

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { listConsultations, formatNaira, type ConsultationRecord } from '@/services/telemedicineAdminService';
 import { PageHeader, TelemedTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, btn, th, td, input, label, select, fmtDate } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function ConsultationsPage() {
   const [rows, setRows] = useState<ConsultationRecord[]>([]);
@@ -60,7 +61,7 @@ export default function ConsultationsPage() {
                   <td style={td()}><Badge status={c.status} /></td>
                   <td style={td()}>{formatNaira(c.fee_kobo)}</td>
                   <td style={td()}>{fmtDate(c.scheduled_at)}</td>
-                  <td style={td()}>{c.prescription_issued ? <Badge status="paid" label="issued" /> : <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                  <td style={td()}>{c.prescription_issued ? <Badge status="paid" label="issued" /> : <span style={{ color: colors.muted }}>—</span>}</td>
                 </tr>
               ))}
             </tbody>

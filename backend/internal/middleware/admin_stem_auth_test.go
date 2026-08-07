@@ -87,4 +87,3 @@ func TestRequireAdmin_AndStemRole_AllowedManageRole(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 }
-

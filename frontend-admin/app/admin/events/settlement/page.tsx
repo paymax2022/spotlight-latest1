@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { getSettlement, resolveSettlementBreak, formatNaira } from '@/services/eventsAdminService';
 import type { Settlement, SettlementLine } from '@/types/eventsAdmin';
 import { PageHeader, EventsTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, AuditNote, btn, btnPrimary, th, td, fmtDate } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function SettlementPage() {
   const [data, setData] = useState<Settlement | null>(null);
@@ -44,12 +45,12 @@ export default function SettlementPage() {
         {data && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <Kpi label="Total gross" value={formatNaira(data.total_gross_kobo)} accent="#340075" />
-              <Kpi label="Total fees" value={formatNaira(data.total_fees_kobo)} accent="#15803d" />
+              <Kpi label="Total gross" value={formatNaira(data.total_gross_kobo)} accent={colors.primary} />
+              <Kpi label="Total fees" value={formatNaira(data.total_fees_kobo)} accent={colors.success} />
               <Kpi label="Organiser net" value={formatNaira(data.total_organiser_net_kobo)} />
               <Kpi label="Vendor payouts" value={formatNaira(data.total_vendor_payouts_kobo)} />
-              <Kpi label="Open breaks" value={data.breaks_open.toLocaleString('en-NG')} accent={data.breaks_open > 0 ? '#b91c1c' : '#15803d'} />
-              <Kpi label="Break value" value={formatNaira(data.total_break_kobo)} accent={data.total_break_kobo > 0 ? '#b91c1c' : '#15803d'} />
+              <Kpi label="Open breaks" value={data.breaks_open.toLocaleString('en-NG')} accent={data.breaks_open > 0 ? colors.danger : colors.success} />
+              <Kpi label="Break value" value={formatNaira(data.total_break_kobo)} accent={data.total_break_kobo > 0 ? colors.danger : colors.success} />
             </div>
 
             <Card title={`Settlement lines (as of ${fmtDate(data.generated_at)})`}>
@@ -62,16 +63,16 @@ export default function SettlementPage() {
                   <tbody>
                     {data.lines.map((l) => (
                       <tr key={l.id}>
-                        <td style={td()}>{l.event_title}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{l.id}</div></td>
+                        <td style={td()}>{l.event_title}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{l.id}</div></td>
                         <td style={td()}>{formatNaira(l.gross_kobo)}</td>
                         <td style={td()}>{formatNaira(l.fees_kobo)}</td>
                         <td style={td()}>{formatNaira(l.vendor_payouts_kobo)}</td>
                         <td style={td()}>{formatNaira(l.organiser_net_kobo)}</td>
                         <td style={td()}>{formatNaira(l.residual_refunds_kobo)}</td>
-                        <td style={td()}><span style={{ color: l.break_kobo > 0 ? '#b91c1c' : '#15803d', fontWeight: 600 }}>{formatNaira(l.break_kobo)}</span></td>
+                        <td style={td()}><span style={{ color: l.break_kobo > 0 ? colors.danger : colors.success, fontWeight: 600 }}>{formatNaira(l.break_kobo)}</span></td>
                         <td style={td()}><Badge status={l.status} /></td>
                         <td style={td()}>
-                          {l.status === 'settled' ? <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>—</span> : (
+                          {l.status === 'settled' ? <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span> : (
                             <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                               {l.status === 'open' && <button style={btn()} disabled={busy === l.id} onClick={() => resolve(l, 'investigate')}>Investigate</button>}
                               <button style={btn()} disabled={busy === l.id} onClick={() => resolve(l, 'resolve')}>Resolve</button>

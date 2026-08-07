@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import * as Icons from 'lucide-react-native';
@@ -14,6 +14,7 @@ import { useRepair, useAddRepairUpdate } from '@/features/repairs/hooks';
 import { CATEGORY_META, URGENCY_META, STATUS_META, STATUS_FLOW } from '@/features/repairs/api';
 import { formatNairaFromKobo } from '@/features/visitor/utils/visitorFormatters';
 import type { RepairStatus } from '@/features/repairs/api';
+import { confirmAsync } from '@/lib/confirm';
 
 export default function RepairDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -28,9 +29,11 @@ export default function RepairDetailScreen() {
   const nextIdx = STATUS_FLOW.indexOf(data.status as RepairStatus);
   const next = nextIdx >= 0 && nextIdx < STATUS_FLOW.length - 1 ? STATUS_FLOW[nextIdx + 1] : null;
 
-  const advance = (to: RepairStatus) => Alert.alert('Update status', `Move to "${STATUS_META[to].label}"?`, [
-    { text: 'Cancel', style: 'cancel' }, { text: 'Update', onPress: () => addUpdate.mutate({ status: to }) },
-  ]);
+  const advance = async (to: RepairStatus) => {
+    const ok = await confirmAsync({ title: 'Update status', message: `Move to "${STATUS_META[to].label}"?`, confirmLabel: 'Update' });
+    if (!ok) return;
+    addUpdate.mutate({ status: to });
+  };
 
   return (
     <Wrap>

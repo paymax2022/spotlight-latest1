@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getComplianceSummary, listAuditLogs, listDataRequests, fulfilDataRequest } from '@/services/crowdfundingAdminService';
 import type { CfComplianceSummary, CfAuditLog, CfDataRequest } from '@/types/crowdfunding';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
-const DR_BADGE: Record<string, string> = { PENDING: '#d97706', IN_PROGRESS: '#1d4ed8', COMPLETED: '#16a34a' };
+const DR_BADGE: Record<string, string> = { PENDING: colors.warning, IN_PROGRESS: colors.info, COMPLETED: colors.success };
 
 export default function CompliancePage() {
   const [summary, setSummary] = useState<CfComplianceSummary | null>(null);
@@ -30,100 +31,90 @@ export default function CompliancePage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-        <div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>Compliance</h1>
-          <p style={{ color: '#6b7280', margin: '0.25rem 0 0', fontSize: '0.85rem' }}>Audit logs, data-subject requests and regulatory posture.</p>
-        </div>
-        <button onClick={load} style={btn()}>Refresh</button>
-      </div>
+    <Page>
+      <PageHeader
+        title="Compliance"
+        subtitle="Audit logs, data-subject requests and regulatory posture."
+        actions={<Button variant="outline" sm onClick={load}>Refresh</Button>}
+      />
 
-      {error && <p style={{ color: '#dc2626', marginBottom: '1rem' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger, marginBottom: '1rem' }}>{error}</p>}
 
-      {loading || !summary ? <p style={{ color: '#6b7280' }}>Loading compliance…</p> : (
+      {loading || !summary ? <p style={{ color: colors.muted }}>Loading compliance…</p> : (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
-            <Kpi label="Pending KYC" value={String(summary.pendingKyc)} accent="#d97706" />
-            <Kpi label="Pending KYB" value={String(summary.pendingKyb)} accent="#d97706" />
-            <Kpi label="Open data requests" value={String(summary.openDataRequests)} accent="#1d4ed8" />
-            <Kpi label="Investment module" value={summary.investmentEnabled ? 'Enabled' : 'Disabled (unlicensed)'} accent={summary.investmentEnabled ? '#16a34a' : '#6b7280'} />
+            <Kpi label="Pending KYC" value={String(summary.pendingKyc)} accent={colors.warning} />
+            <Kpi label="Pending KYB" value={String(summary.pendingKyb)} accent={colors.warning} />
+            <Kpi label="Open data requests" value={String(summary.openDataRequests)} accent={colors.info} />
+            <Kpi label="Investment module" value={summary.investmentEnabled ? 'Enabled' : 'Disabled (unlicensed)'} accent={summary.investmentEnabled ? colors.success : colors.muted} />
             <Kpi label="Retention policy" value={`${Math.round(summary.retentionPolicyDays / 365)} yrs`} />
             <Kpi label="Audit events today" value={String(summary.auditEventsToday)} />
           </div>
 
           {/* Regulatory export */}
-          <div style={{ ...card(), display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+          <Card style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
             <div>
               <div style={{ fontWeight: 600 }}>Regulatory reports</div>
-              <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>Last export: {new Date(summary.lastRegulatoryExport).toLocaleDateString()}</div>
+              <div style={{ fontSize: '0.8rem', color: colors.muted }}>Last export: {new Date(summary.lastRegulatoryExport).toLocaleDateString()}</div>
             </div>
-            <button style={primaryBtn('#1d4ed8')} onClick={() => alert('Export queued (mock).')}>Export regulatory report</button>
-          </div>
+            <Button variant="primary" onClick={() => alert('Export queued (mock).')}>Export regulatory report</Button>
+          </Card>
 
           {/* Data requests */}
           <h2 style={h2()}>Data-subject requests</h2>
-          <div style={{ ...card(), marginBottom: '1.5rem', padding: 0 }}>
+          <Card style={{ marginBottom: '1.5rem', padding: 0, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
-              <thead><tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>Type</th><th style={th()}>User</th><th style={th()}>Requested</th><th style={th()}>Due by</th><th style={th()}>Status</th><th style={th()}></th>
+              <thead><tr>
+                <th style={thCell}>Type</th><th style={thCell}>User</th><th style={thCell}>Requested</th><th style={thCell}>Due by</th><th style={thCell}>Status</th><th style={thCell}></th>
               </tr></thead>
               <tbody>
                 {requests.map((r) => (
-                  <tr key={r.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={td()}><strong>{r.type}</strong></td>
-                    <td style={td()}>{r.userName}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.email}</div></td>
-                    <td style={td()}>{new Date(r.requestedAt).toLocaleDateString()}</td>
-                    <td style={td()}>{new Date(r.dueBy).toLocaleDateString()}</td>
-                    <td style={td()}><span style={badge(DR_BADGE[r.status])}>{r.status.replace('_', ' ')}</span></td>
-                    <td style={td()}>{r.status !== 'COMPLETED' && <button disabled={busy === r.id} onClick={() => fulfil(r.id)} style={btn()}>{busy === r.id ? '…' : 'Mark fulfilled'}</button>}</td>
+                  <tr key={r.id}>
+                    <td style={tdCell}><strong>{r.type}</strong></td>
+                    <td style={tdCell}>{r.userName}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.email}</div></td>
+                    <td style={tdCell}>{new Date(r.requestedAt).toLocaleDateString()}</td>
+                    <td style={tdCell}>{new Date(r.dueBy).toLocaleDateString()}</td>
+                    <td style={tdCell}><Badge text={r.status.replace('_', ' ')} color={DR_BADGE[r.status]} /></td>
+                    <td style={tdCell}>{r.status !== 'COMPLETED' && <Button variant="outline" sm disabled={busy === r.id} onClick={() => fulfil(r.id)}>{busy === r.id ? '…' : 'Mark fulfilled'}</Button>}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </Card>
 
           {/* Audit log */}
           <h2 style={h2()}>Admin audit log</h2>
-          <div style={{ ...card(), padding: 0 }}>
+          <Card style={{ padding: 0, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
-              <thead><tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>When</th><th style={th()}>Actor</th><th style={th()}>Action</th><th style={th()}>Target</th><th style={th()}>IP</th>
+              <thead><tr>
+                <th style={thCell}>When</th><th style={thCell}>Actor</th><th style={thCell}>Action</th><th style={thCell}>Target</th><th style={thCell}>IP</th>
               </tr></thead>
               <tbody>
                 {logs.map((l) => (
-                  <tr key={l.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={td()}>{new Date(l.createdAt).toLocaleString()}</td>
-                    <td style={td()}>{l.actor}</td>
-                    <td style={td()}><code style={{ background: '#f3f4f6', padding: '0.1rem 0.35rem', borderRadius: '0.25rem', fontSize: '0.75rem' }}>{l.action}</code></td>
-                    <td style={td()}>{l.target}</td>
-                    <td style={td()}><span style={{ color: '#9ca3af', fontFamily: 'monospace', fontSize: '0.75rem' }}>{l.ip}</span></td>
+                  <tr key={l.id}>
+                    <td style={tdCell}>{new Date(l.createdAt).toLocaleString()}</td>
+                    <td style={tdCell}>{l.actor}</td>
+                    <td style={tdCell}><code style={{ background: colors.headBg, padding: '0.1rem 0.35rem', borderRadius: '0.25rem', fontSize: '0.75rem' }}>{l.action}</code></td>
+                    <td style={tdCell}>{l.target}</td>
+                    <td style={tdCell}><span style={{ color: colors.muted, fontFamily: 'monospace', fontSize: '0.75rem' }}>{l.ip}</span></td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </Card>
         </>
       )}
-    </div>
+    </Page>
   );
 }
 
 function Kpi({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
-    <div style={{ ...card(), padding: '0.9rem 1rem', borderLeft: `3px solid ${accent ?? '#e5e7eb'}` }}>
-      <div style={{ fontSize: '0.72rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
-      <div style={{ fontSize: '1.15rem', fontWeight: 700, marginTop: 4, color: '#111827' }}>{value}</div>
-    </div>
+    <Card style={{ padding: '0.9rem 1rem', borderLeft: `3px solid ${accent ?? colors.border}` }}>
+      <div style={{ fontSize: '0.72rem', color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ fontSize: '1.15rem', fontWeight: 700, marginTop: 4, color: colors.text }}>{value}</div>
+    </Card>
   );
 }
 
-const card = (): React.CSSProperties => ({ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem', background: '#fff' });
-const btn = (): React.CSSProperties => ({ padding: '0.35rem 0.7rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: '0.8rem' });
-const primaryBtn = (bg: string): React.CSSProperties => ({ padding: '0.45rem 1rem', borderRadius: '0.375rem', border: 'none', background: bg, color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' });
-const h2 = (): React.CSSProperties => ({ fontSize: '1.05rem', fontWeight: 700, margin: '0 0 0.75rem' });
-const th = (): React.CSSProperties => ({ padding: '0.5rem 0.75rem', fontWeight: 600 });
-const td = (): React.CSSProperties => ({ padding: '0.55rem 0.75rem', color: '#374151' });
-function badge(bg: string): React.CSSProperties {
-  return { background: bg, color: '#fff', padding: '0.1rem 0.5rem', borderRadius: '9999px', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3 };
-}
+const h2 = (): React.CSSProperties => ({ fontSize: '1.05rem', fontWeight: 700, margin: '0 0 0.75rem', color: colors.text });

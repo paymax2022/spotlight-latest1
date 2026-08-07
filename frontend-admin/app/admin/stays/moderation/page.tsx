@@ -4,21 +4,15 @@ import { useEffect, useState } from 'react';
 import { listModeration, approveProperty } from '@/services/staysAdminService';
 import type { ModerationItem, ModerationStatus } from '@/types/staysAdmin';
 import {
-  PageHeader,
   StaysTabs,
-  Card,
   Badge,
   StateBlock,
   FilterBar,
-  btn,
-  btnPrimary,
-  btnDanger,
-  th,
-  td,
   label,
   select,
   timeAgo,
 } from '../_ui';
+import { Page, PageHeader, Card, Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUSES: ModerationStatus[] = ['pending_review', 'approved', 'rejected', 'needs_changes'];
 
@@ -46,11 +40,11 @@ export default function StaysModerationPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Direct-hotel moderation"
         subtitle="Approval queue for direct-rail hotel listings submitted by hoteliers — review photos, room counts and flags before a property goes live."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="supply" />
 
@@ -62,7 +56,7 @@ export default function StaysModerationPage() {
             {STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
           </select>
         </div>
-        <button onClick={load} style={btn()}>Refresh</button>
+        <Button variant="outline" onClick={load}>Refresh</Button>
       </FilterBar>
 
       <Card title="Moderation queue">
@@ -71,44 +65,44 @@ export default function StaysModerationPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
               <thead>
                 <tr>
-                  <th style={th()}>Property</th>
-                  <th style={th()}>Hotelier</th>
-                  <th style={th()}>City</th>
-                  <th style={th()}>Star</th>
-                  <th style={th()}>Rooms</th>
-                  <th style={th()}>Photos</th>
-                  <th style={th()}>Flags</th>
-                  <th style={th()}>Status</th>
-                  <th style={th()}>Submitted</th>
-                  <th style={th()}>Actions</th>
+                  <th style={thCell}>Property</th>
+                  <th style={thCell}>Hotelier</th>
+                  <th style={thCell}>City</th>
+                  <th style={thCell}>Star</th>
+                  <th style={thCell}>Rooms</th>
+                  <th style={thCell}>Photos</th>
+                  <th style={thCell}>Flags</th>
+                  <th style={thCell}>Status</th>
+                  <th style={thCell}>Submitted</th>
+                  <th style={thCell}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {data.map((m) => (
                   <tr key={m.id}>
-                    <td style={td()}>{m.property_name}</td>
-                    <td style={td()}>{m.hotelier_masked}</td>
-                    <td style={td()}>{m.city}</td>
-                    <td style={td()}>{m.star_rating}★</td>
-                    <td style={td()}>{m.rooms.toLocaleString('en-NG')}</td>
-                    <td style={td()}>{m.photos_count.toLocaleString('en-NG')}</td>
-                    <td style={td()}>
-                      {m.flags.length === 0 ? <span style={{ color: '#9ca3af' }}>—</span> : (
+                    <td style={tdCell}>{m.property_name}</td>
+                    <td style={tdCell}>{m.hotelier_masked}</td>
+                    <td style={tdCell}>{m.city}</td>
+                    <td style={tdCell}>{m.star_rating}★</td>
+                    <td style={tdCell}>{m.rooms.toLocaleString('en-NG')}</td>
+                    <td style={tdCell}>{m.photos_count.toLocaleString('en-NG')}</td>
+                    <td style={tdCell}>
+                      {m.flags.length === 0 ? <span style={{ color: colors.muted }}>—</span> : (
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                           {m.flags.map((f) => <Badge key={f} status="flagged" label={f.replace(/_/g, ' ')} />)}
                         </div>
                       )}
                     </td>
-                    <td style={td()}><Badge status={m.status} /></td>
-                    <td style={td()}>{timeAgo(m.submitted_at)}</td>
-                    <td style={td()}>
+                    <td style={tdCell}><Badge status={m.status} /></td>
+                    <td style={tdCell}>{timeAgo(m.submitted_at)}</td>
+                    <td style={tdCell}>
                       {m.status === 'pending_review' || m.status === 'needs_changes' ? (
                         <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                          <button style={btnPrimary()} disabled={busy === m.id} onClick={() => decide(m.id, 'approved')}>Approve</button>
-                          <button style={btnDanger()} disabled={busy === m.id} onClick={() => decide(m.id, 'rejected')}>Reject</button>
-                          <button style={btn()} disabled={busy === m.id} onClick={() => decide(m.id, 'needs_changes')}>Needs changes</button>
+                          <Button variant="primary" sm disabled={busy === m.id} onClick={() => decide(m.id, 'approved')}>Approve</Button>
+                          <Button variant="danger" sm disabled={busy === m.id} onClick={() => decide(m.id, 'rejected')}>Reject</Button>
+                          <Button variant="outline" sm disabled={busy === m.id} onClick={() => decide(m.id, 'needs_changes')}>Needs changes</Button>
                         </div>
-                      ) : <span style={{ color: '#9ca3af' }}>—</span>}
+                      ) : <span style={{ color: colors.muted }}>—</span>}
                     </td>
                   </tr>
                 ))}
@@ -117,6 +111,6 @@ export default function StaysModerationPage() {
           </div>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

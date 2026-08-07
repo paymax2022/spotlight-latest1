@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { getReporting, formatNaira } from '@/services/healthPharmacyAdminService';
 import type { ReportingData } from '@/types/healthAdmin';
 import { PageHeader, PharmacyTabs, Card, Kpi, DisclosureNote, StateBlock, FilterBar, btn, th, td, label, select, pct } from '../../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function ReportingPage() {
   const [data, setData] = useState<ReportingData | null>(null);
@@ -41,15 +42,15 @@ export default function ReportingPage() {
         {data && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <Kpi label={`GMV (${data.period_label})`} value={formatNaira(data.gmv_kobo)} accent="#340075" />
-              <Kpi label="Net revenue" value={formatNaira(data.net_revenue_kobo)} accent="#15803d" />
+              <Kpi label={`GMV (${data.period_label})`} value={formatNaira(data.gmv_kobo)} accent={colors.primary} />
+              <Kpi label="Net revenue" value={formatNaira(data.net_revenue_kobo)} accent={colors.success} />
               <Kpi label="Orders" value={data.orders.toLocaleString('en-NG')} sub={`${data.rx_orders.toLocaleString('en-NG')} Rx · ${data.otc_orders.toLocaleString('en-NG')} OTC`} />
               <Kpi label="Refund rate" value={pct(data.refund_rate)} />
               <Kpi label="Avg verify time" value={`${data.avg_verify_minutes}m`} sub="Rx pharmacist (HL-3)" />
-              <Kpi label="NAFDAC block rate" value={pct(data.nafdac_block_rate)} sub="catalog writes rejected (HL-5)" accent="#9a3412" />
-              <Kpi label="Controlled blocked" value={data.controlled_blocked.toLocaleString('en-NG')} sub="HL-4" accent={data.controlled_blocked > 0 ? '#b91c1c' : undefined} />
+              <Kpi label="NAFDAC block rate" value={pct(data.nafdac_block_rate)} sub="catalog writes rejected (HL-5)" accent={colors.warning} />
+              <Kpi label="Controlled blocked" value={data.controlled_blocked.toLocaleString('en-NG')} sub="HL-4" accent={data.controlled_blocked > 0 ? colors.danger : undefined} />
               <Kpi label="Recalls issued" value={data.recalls_issued.toLocaleString('en-NG')} />
-              <Kpi label="Payouts KYC hold" value={data.payouts_kyc_hold.toLocaleString('en-NG')} sub="HL-10" accent={data.payouts_kyc_hold > 0 ? '#9a3412' : undefined} />
+              <Kpi label="Payouts KYC hold" value={data.payouts_kyc_hold.toLocaleString('en-NG')} sub="HL-10" accent={data.payouts_kyc_hold > 0 ? colors.warning : undefined} />
             </div>
 
             <Card title="Orders & GMV by state">
@@ -68,22 +69,22 @@ export default function ReportingPage() {
               </table>
             </Card>
 
-            <Card title="Monthly GMV vs net (6 months)" right={<span style={{ fontSize: '0.75rem', color: '#6b7280' }}>GMV (purple) vs net (green)</span>}>
+            <Card title="Monthly GMV vs net (6 months)" right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>GMV (purple) vs net (green)</span>}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 {data.monthly.map((m) => {
                   const gmvW = (m.gmv_kobo / maxGmv) * 100;
                   const netW = (m.net_kobo / maxGmv) * 100;
                   return (
                     <div key={m.month} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                      <span style={{ width: 70, flexShrink: 0, fontSize: '0.72rem', color: '#9ca3af' }}>{m.month}</span>
+                      <span style={{ width: 70, flexShrink: 0, fontSize: '0.72rem', color: colors.muted }}>{m.month}</span>
                       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                          <div style={{ height: 10, width: `${gmvW}%`, minWidth: 2, background: '#340075', borderRadius: 2 }} />
-                          <span style={{ fontSize: '0.7rem', color: '#6b7280', whiteSpace: 'nowrap' }}>{formatNaira(m.gmv_kobo)} · {m.orders.toLocaleString('en-NG')} ord</span>
+                          <div style={{ height: 10, width: `${gmvW}%`, minWidth: 2, background: colors.primary, borderRadius: 2 }} />
+                          <span style={{ fontSize: '0.7rem', color: colors.muted, whiteSpace: 'nowrap' }}>{formatNaira(m.gmv_kobo)} · {m.orders.toLocaleString('en-NG')} ord</span>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                          <div style={{ height: 10, width: `${netW}%`, minWidth: 2, background: '#15803d', borderRadius: 2 }} />
-                          <span style={{ fontSize: '0.7rem', color: '#6b7280', whiteSpace: 'nowrap' }}>{formatNaira(m.net_kobo)}</span>
+                          <div style={{ height: 10, width: `${netW}%`, minWidth: 2, background: colors.success, borderRadius: 2 }} />
+                          <span style={{ fontSize: '0.7rem', color: colors.muted, whiteSpace: 'nowrap' }}>{formatNaira(m.net_kobo)}</span>
                         </div>
                       </div>
                     </div>

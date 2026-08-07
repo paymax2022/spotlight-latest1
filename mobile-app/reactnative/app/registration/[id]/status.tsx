@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, RefreshControl, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Colors } from '@/constants/colors';
@@ -13,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import StatusChip from '@/features/registration/components/StatusChip';
 import { useStatus, useWithdraw } from '@/features/registration/hooks/useRegistration';
 import { statusLabel } from '@/features/registration/utils/status';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 const TERMINAL = ['withdrawn', 'rejected', 'disqualified', 'eliminated', 'winner'];
 
@@ -26,21 +27,17 @@ export default function RegistrationStatusScreen() {
   const draft = statusQuery.data?.draft;
   const timeline = statusQuery.data?.timeline ?? [];
 
-  const onWithdraw = () => {
-    Alert.alert(
-      'Withdraw application?',
-      'This will withdraw your application from the contest. This cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Withdraw',
-          style: 'destructive',
-          onPress: () => withdraw.mutate(undefined, {
-            onError: () => Alert.alert('Couldn’t withdraw', 'Please try again.'),
-          }),
-        },
-      ],
-    );
+  const onWithdraw = async () => {
+    const ok = await confirmAsync({
+      title: 'Withdraw application?',
+      message: 'This will withdraw your application from the contest. This cannot be undone.',
+      confirmLabel: 'Withdraw',
+      destructive: true,
+    });
+    if (!ok) return;
+    withdraw.mutate(undefined, {
+      onError: () => alertAsync({ title: 'Couldn’t withdraw', message: 'Please try again.' }),
+    });
   };
 
   if (statusQuery.isLoading) {

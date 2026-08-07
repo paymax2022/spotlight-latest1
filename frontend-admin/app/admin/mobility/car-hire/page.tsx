@@ -5,9 +5,10 @@ import { getCarHireBookings, setCarHireStatus } from '@/services/mobilityModesAd
 import type { CarHireRow, CarHireStatus } from '@/types/mobilityModes';
 import {
   PageHeader, MobilityTabs, Card, Badge, StateNote, AuditedNotice, Kpi,
-  btn, btnPrimary, btnDisabled, th, td, input, nairaFull,
+  btn, btnPrimary, btnDisabled, input, nairaFull,
   useMobilityPermissions, MOBILITY_PERMS,
 } from '../_ui';
+import { colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUS_FILTER: Array<CarHireStatus | ''> = ['', 'requested', 'quoted', 'confirmed', 'active', 'extended', 'completed', 'cancelled'];
 const STATUS_OPTIONS: CarHireStatus[] = ['requested', 'quoted', 'confirmed', 'active', 'extended', 'completed', 'cancelled'];
@@ -68,8 +69,8 @@ export default function MobilityCarHirePage() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
         <Kpi label="Total bookings" value={String(rows.length)} />
-        <Kpi label="Active hires" value={String(active)} accent="#1d4ed8" />
-        <Kpi label="Deposits in escrow" value={String(depositsHeld)} accent="#9a3412" />
+        <Kpi label="Active hires" value={String(active)} accent={colors.info} />
+        <Kpi label="Deposits in escrow" value={String(depositsHeld)} accent={colors.warning} />
       </div>
 
       <Card
@@ -85,20 +86,20 @@ export default function MobilityCarHirePage() {
           : rows.length === 0 ? <StateNote kind="empty">No bookings match this filter.</StateNote>
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-              <thead><tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>Booking</th><th style={th()}>Vehicle</th><th style={th()}>Driver</th><th style={th()}>Start / Duration</th><th style={th()}>Status</th><th style={th()}>Escrow</th><th style={th()}>Fare</th><th style={th()}></th>
+              <thead><tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                <th style={thCell}>Booking</th><th style={thCell}>Vehicle</th><th style={thCell}>Driver</th><th style={thCell}>Start / Duration</th><th style={thCell}>Status</th><th style={thCell}>Escrow</th><th style={thCell}>Fare</th><th style={thCell}></th>
               </tr></thead>
               <tbody>
                 {rows.map((c) => (
-                  <tr key={c.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={td()}><strong>{c.id}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{c.customerName} · {c.zone}</div></td>
-                    <td style={td()}>{c.vehicleClass} · {c.hireType.replace(/_/g, ' ')}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{c.chauffeur ? 'chauffeured' : 'self-drive'}</div></td>
-                    <td style={td()}>{c.driverName ?? <span style={{ color: '#9ca3af' }}>—</span>}</td>
-                    <td style={td()}>{new Date(c.startAt).toLocaleString()}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{c.durationHours}h</div></td>
-                    <td style={td()}><Badge status={c.status} /></td>
-                    <td style={td()}><Badge status={c.escrowStatus} /></td>
-                    <td style={td()}>{nairaFull(c.fareKobo)}</td>
-                    <td style={td()}><button style={btn()} onClick={() => openDetail(c)}>{canManage ? 'Manage' : 'View'}</button></td>
+                  <tr key={c.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <td style={tdCell}><strong>{c.id}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{c.customerName} · {c.zone}</div></td>
+                    <td style={tdCell}>{c.vehicleClass} · {c.hireType.replace(/_/g, ' ')}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{c.chauffeur ? 'chauffeured' : 'self-drive'}</div></td>
+                    <td style={tdCell}>{c.driverName ?? <span style={{ color: colors.muted }}>—</span>}</td>
+                    <td style={tdCell}>{new Date(c.startAt).toLocaleString()}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{c.durationHours}h</div></td>
+                    <td style={tdCell}><Badge status={c.status} /></td>
+                    <td style={tdCell}><Badge status={c.escrowStatus} /></td>
+                    <td style={tdCell}>{nairaFull(c.fareKobo)}</td>
+                    <td style={tdCell}><button style={btn()} onClick={() => openDetail(c)}>{canManage ? 'Manage' : 'View'}</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -108,14 +109,14 @@ export default function MobilityCarHirePage() {
 
       {selected && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }} onClick={() => !busy && setSelected(null)}>
-          <div style={{ background: '#fff', borderRadius: '0.5rem', padding: '1.25rem', width: 'min(520px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: colors.card, borderRadius: '0.5rem', padding: '1.25rem', width: 'min(520px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: '0.5rem' }}>
               <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>{selected.id}</h2>
               <Badge status={selected.status} /><Badge status={selected.escrowStatus} />
             </div>
-            <p style={{ fontSize: '0.82rem', color: '#374151', margin: '0 0 0.25rem' }}>{selected.customerName} · {selected.vehicleClass} · {selected.hireType.replace(/_/g, ' ')} · {selected.chauffeur ? 'chauffeured' : 'self-drive'}</p>
-            <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0 0 0.5rem' }}>Start {new Date(selected.startAt).toLocaleString()} · {selected.durationHours}h · {selected.zone}</p>
-            <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0 0 1rem' }}>Fare {nairaFull(selected.fareKobo)} · Deposit {nairaFull(selected.depositKobo)} · Driver {selected.driverName ?? '—'}</p>
+            <p style={{ fontSize: '0.82rem', color: colors.text, margin: '0 0 0.25rem' }}>{selected.customerName} · {selected.vehicleClass} · {selected.hireType.replace(/_/g, ' ')} · {selected.chauffeur ? 'chauffeured' : 'self-drive'}</p>
+            <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 0.5rem' }}>Start {new Date(selected.startAt).toLocaleString()} · {selected.durationHours}h · {selected.zone}</p>
+            <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 1rem' }}>Fare {nairaFull(selected.fareKobo)} · Deposit {nairaFull(selected.depositKobo)} · Driver {selected.driverName ?? '—'}</p>
 
             {!canManage ? (
               <StateNote kind="restricted">Read-only — your role cannot update bookings.</StateNote>

@@ -12,6 +12,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { useCreateListing, ESCROW_DISCLOSURE } from '@/features/social/escrow';
 import { SocialColors } from '@/features/social/constants/social.constants';
 import type { ListingCondition } from '@/features/social/escrow';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 const CONDITIONS: ListingCondition[] = ['new', 'used', 'refurbished'];
 const CATEGORIES = ['Phones', 'Gaming', 'Fashion', 'Home', 'Electronics', 'Other'];
@@ -57,7 +58,7 @@ export default function CreateListing() {
         <Text style={styles.label}>Description</Text>
         <TextInput style={[styles.input, styles.multiline]} placeholder="Condition, accessories, etc." placeholderTextColor={SocialColors.muted} value={description} onChangeText={setDescription} multiline />
         <Text style={styles.label}>Price (₦)</Text>
-        <TextInput style={styles.input} placeholder="0" placeholderTextColor={SocialColors.muted} keyboardType="number-pad" value={price} onChangeText={setPrice} />
+        <TextInput style={styles.input} placeholder="0" placeholderTextColor={SocialColors.muted} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} value={price} onChangeText={(t) => setPrice(sanitizeMoneyInput(t))} />
 
         <Text style={styles.label}>Condition</Text>
         <View style={styles.chipRow}>

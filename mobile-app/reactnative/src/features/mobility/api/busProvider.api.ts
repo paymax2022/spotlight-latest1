@@ -18,6 +18,8 @@ import type {
   BusRouteCreateRequest,
   BusRouteUpdateRequest,
   BusScheduleCreateRequest,
+  BusDepartureTemplate,
+  BusTemplateCreateRequest,
 } from '../types/busProvider.types';
 import { USE_MOCK } from './bus.api';
 import {
@@ -28,6 +30,10 @@ import {
   mockUpdateRoute,
   mockAddSchedule,
   mockManifest,
+  mockListTemplates,
+  mockCreateTemplate,
+  mockSetTemplateActive,
+  mockDeleteTemplate,
 } from './busProvider.mock';
 
 const BASE = '/api/v1/mobility';
@@ -128,6 +134,55 @@ export async function createSchedule(routeId: string, req: BusScheduleCreateRequ
       fare_kobo: req.fareKobo,
     }),
   );
+}
+
+// ─── Recurring departure templates ─────────────────────────────────────────────
+
+// GET /bus/provider/templates → { templates }
+export async function listTemplates(): Promise<BusDepartureTemplate[]> {
+  if (USE_MOCK) {
+    await delay(320);
+    return mockListTemplates();
+  }
+  const res = await api.get(`${BASE}/bus/provider/templates`);
+  return (res.data?.templates ?? res.data?.data ?? []) as BusDepartureTemplate[];
+}
+
+// POST /bus/provider/templates {route_id,days_of_week,depart_time,total_seats,fare_kobo,horizon_days?}
+export async function createTemplate(req: BusTemplateCreateRequest): Promise<BusDepartureTemplate> {
+  if (USE_MOCK) {
+    await delay(500);
+    return mockCreateTemplate(req);
+  }
+  const res = await api.post(`${BASE}/bus/provider/templates`, {
+    route_id: req.routeId,
+    days_of_week: req.daysOfWeek,
+    depart_time: req.departTime,
+    total_seats: req.totalSeats,
+    fare_kobo: req.fareKobo,
+    ...(req.horizonDays !== undefined ? { horizon_days: req.horizonDays } : {}),
+  });
+  return (res.data?.template ?? res.data?.data ?? res.data) as BusDepartureTemplate;
+}
+
+// PATCH /bus/provider/templates/:id {active}
+export async function setTemplateActive(id: string, active: boolean): Promise<BusDepartureTemplate> {
+  if (USE_MOCK) {
+    await delay(320);
+    return mockSetTemplateActive(id, active);
+  }
+  const res = await api.patch(`${BASE}/bus/provider/templates/${id}`, { active });
+  return (res.data?.template ?? res.data?.data ?? res.data) as BusDepartureTemplate;
+}
+
+// DELETE /bus/provider/templates/:id → { ok: true }
+export async function deleteTemplate(id: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay(320);
+    mockDeleteTemplate(id);
+    return;
+  }
+  await api.delete(`${BASE}/bus/provider/templates/${id}`);
 }
 
 // GET /bus/provider/bookings?scheduleId → manifest

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Alert, Modal, TextInput, FlatList } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Modal, TextInput, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { alertAsync } from '@/lib/confirm';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Plus, Sparkles, Search, X, Trash2, ChevronDown, ShieldCheck, FileSignature, Eye } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -110,7 +111,7 @@ export default function CreatePrescriptionScreen() {
   // K1 / K24 — save draft (plain create path reuses Phase 1).
   const saveDraft = async () => {
     if (!canSubmit || !diagnosis) {
-      Alert.alert('Incomplete', 'Add a diagnosis and at least one complete drug.');
+      alertAsync({ title: 'Incomplete', message: 'Add a diagnosis and at least one complete drug.' });
       return;
     }
     const patientId = appointment?.patient.id ?? '';
@@ -119,18 +120,17 @@ export default function CreatePrescriptionScreen() {
         appointmentId, patientId, diagnosis,
         items: validLines.map((l) => ({ ...l.base, dosage: l.strength || l.base.dosage })),
       });
-      Alert.alert('Draft saved', 'The prescription has been saved as a draft.', [
-        { text: 'View prescriptions', onPress: () => router.replace('/(doctor)/prescriptions') },
-      ]);
+      await alertAsync({ title: 'Draft saved', message: 'The prescription has been saved as a draft.', buttonLabel: 'View prescriptions' });
+      router.replace('/(doctor)/prescriptions');
     } catch {
-      Alert.alert('Failed', 'Could not save the prescription. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not save the prescription. Please try again.' });
     }
   };
 
   // K26 / K28 — digital signature → issue.
   const handleIssue = async () => {
     if (!canSubmit || !diagnosis) {
-      Alert.alert('Incomplete', 'Add a diagnosis and at least one complete drug.');
+      alertAsync({ title: 'Incomplete', message: 'Add a diagnosis and at least one complete drug.' });
       return;
     }
     const patientId = appointment?.patient.id ?? '';
@@ -141,11 +141,10 @@ export default function CreatePrescriptionScreen() {
       });
       const result = await issue.mutateAsync({ prescriptionId: created.prescriptionId, signaturePin });
       setSignOpen(false);
-      Alert.alert('Prescription issued', `${result.ref} has been digitally signed and issued.`, [
-        { text: 'View prescription', onPress: () => router.replace(`/(doctor)/prescriptions/${result.prescriptionId}/issued`) },
-      ]);
+      await alertAsync({ title: 'Prescription issued', message: `${result.ref} has been digitally signed and issued.`, buttonLabel: 'View prescription' });
+      router.replace(`/(doctor)/prescriptions/${result.prescriptionId}/issued`);
     } catch {
-      Alert.alert('Failed', 'Could not issue the prescription. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not issue the prescription. Please try again.' });
     }
   };
 
@@ -212,13 +211,13 @@ export default function CreatePrescriptionScreen() {
             <Text style={styles.aiText}>AI safety check</Text>
           </Pressable>
 
-          <Pressable style={styles.previewBtn} onPress={() => canSubmit ? setPreviewOpen(true) : Alert.alert('Incomplete', 'Add a diagnosis and a complete drug to preview.')} accessibilityRole="button" accessibilityLabel="Preview prescription">
+          <Pressable style={styles.previewBtn} onPress={() => canSubmit ? setPreviewOpen(true) : alertAsync({ title: 'Incomplete', message: 'Add a diagnosis and a complete drug to preview.' })} accessibilityRole="button" accessibilityLabel="Preview prescription">
             <Eye size={18} color={Colors.secondary} strokeWidth={2.2} />
             <Text style={styles.previewText}>Preview</Text>
           </Pressable>
 
           <PrimaryButton label="Save draft" onPress={saveDraft} loading={create.isPending && !issue.isPending} variant="secondary" disabled={!canSubmit} style={styles.btn} />
-          <PrimaryButton label="Sign & issue" onPress={() => canSubmit ? setSignOpen(true) : Alert.alert('Incomplete', 'Add a diagnosis and a complete drug.')} disabled={!canSubmit} style={styles.btn} />
+          <PrimaryButton label="Sign & issue" onPress={() => canSubmit ? setSignOpen(true) : alertAsync({ title: 'Incomplete', message: 'Add a diagnosis and a complete drug.' })} disabled={!canSubmit} style={styles.btn} />
         </ScrollView>
       </KeyboardAvoidingView>
 

@@ -36,18 +36,18 @@ const (
 type PaymentMethod string
 
 const (
-	PaymentWallet         PaymentMethod = "WALLET"
-	PaymentCard           PaymentMethod = "CARD"
-	PaymentTransfer       PaymentMethod = "TRANSFER"
-	PaymentPayAtProperty  PaymentMethod = "PAY_AT_PROPERTY"
-	PaymentDeposit        PaymentMethod = "DEPOSIT"
+	PaymentWallet        PaymentMethod = "WALLET"
+	PaymentCard          PaymentMethod = "CARD"
+	PaymentTransfer      PaymentMethod = "TRANSFER"
+	PaymentPayAtProperty PaymentMethod = "PAY_AT_PROPERTY"
+	PaymentDeposit       PaymentMethod = "DEPOSIT"
 )
 
 // Occupancy describes the guests per room for a search/booking.
 type Occupancy struct {
-	Adults       int   `json:"adults"`
-	Children     int   `json:"children"`
-	ChildAges    []int `json:"child_ages,omitempty"`
+	Adults    int   `json:"adults"`
+	Children  int   `json:"children"`
+	ChildAges []int `json:"child_ages,omitempty"`
 }
 
 // SearchRequest is the normalised search input handed to each adapter.
@@ -69,11 +69,11 @@ type SearchRequest struct {
 
 // RatePlan is the normalised rate-plan view of a bookable offer.
 type RatePlan struct {
-	SupplierRatePlanRef string         `json:"supplier_rate_plan_ref"`
-	Type                RatePlanType   `json:"type"`
-	Board               string         `json:"board"` // room-only | breakfast | half-board ...
-	Refundable          bool           `json:"refundable"`
-	MobileOnly          bool           `json:"mobile_only"`
+	SupplierRatePlanRef string       `json:"supplier_rate_plan_ref"`
+	Type                RatePlanType `json:"type"`
+	Board               string       `json:"board"` // room-only | breakfast | half-board ...
+	Refundable          bool         `json:"refundable"`
+	MobileOnly          bool         `json:"mobile_only"`
 	// CancellationPolicy is the normalised, snapshot-able policy (free-cancel
 	// deadline, penalty schedule, non-ref flag) — captured on the reservation.
 	CancellationPolicy map[string]any `json:"cancellation_policy"`
@@ -87,10 +87,10 @@ type PropertyOffer struct {
 	SupplierCode        string     `json:"supplier_code"`
 	SupplierPropertyRef string     `json:"supplier_property_ref"`
 	// MappedPropertyID is set by the dedup layer (empty as returned by an adapter).
-	MappedPropertyID string `json:"mapped_property_id,omitempty"`
-	Name             string `json:"name"`
-	City             string `json:"city"`
-	Address          string `json:"address"`
+	MappedPropertyID string  `json:"mapped_property_id,omitempty"`
+	Name             string  `json:"name"`
+	City             string  `json:"city"`
+	Address          string  `json:"address"`
 	Lat              float64 `json:"lat"`
 	Lng              float64 `json:"lng"`
 	StarRating       int     `json:"star_rating"`
@@ -206,11 +206,11 @@ type Reservation struct {
 
 // CancelRequest cancels a supplier reservation idempotently.
 type CancelRequest struct {
-	Rail        SourceRail `json:"rail"`
-	SupplierCode string    `json:"supplier_code"`
-	SupplierRef string     `json:"supplier_ref"`
-	Reason      string     `json:"reason"`
-	IdempotencyKey string  `json:"idempotency_key"`
+	Rail           SourceRail `json:"rail"`
+	SupplierCode   string     `json:"supplier_code"`
+	SupplierRef    string     `json:"supplier_ref"`
+	Reason         string     `json:"reason"`
+	IdempotencyKey string     `json:"idempotency_key"`
 }
 
 // Cancellation is the normalised cancellation result, incl. the refund amount the
@@ -226,13 +226,13 @@ type Cancellation struct {
 
 // ModifyRequest re-prices a stay delta (dates/occupancy).
 type ModifyRequest struct {
-	Rail         SourceRail `json:"rail"`
-	SupplierCode string     `json:"supplier_code"`
-	SupplierRef  string     `json:"supplier_ref"`
-	NewCheckIn   time.Time  `json:"new_check_in"`
-	NewCheckOut  time.Time  `json:"new_check_out"`
-	NewOccupancy Occupancy  `json:"new_occupancy"`
-	IdempotencyKey string   `json:"idempotency_key"`
+	Rail           SourceRail `json:"rail"`
+	SupplierCode   string     `json:"supplier_code"`
+	SupplierRef    string     `json:"supplier_ref"`
+	NewCheckIn     time.Time  `json:"new_check_in"`
+	NewCheckOut    time.Time  `json:"new_check_out"`
+	NewOccupancy   Occupancy  `json:"new_occupancy"`
+	IdempotencyKey string     `json:"idempotency_key"`
 }
 
 // ARIEvent is a Rail-B availability/rate/restriction push (PRD §28 B). Idempotent

@@ -8,6 +8,7 @@ import {
   PageHeader, InsuranceTabs, Card, Badge, StateBlock, DisclosureNote,
   btnPrimary, th, td, label, select, input, timeAgo,
 } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function InsuranceCatalogPage() {
   const [rows, setRows] = useState<InsuranceProduct[]>([]);
@@ -44,7 +45,7 @@ export default function InsuranceCatalogPage() {
         The underwriter (NAICOM-licensed insurer) is disclosed per product below — every quote, policy and document must surface the same underwriter and aggregator.
       </DisclosureNote>
 
-      <Card title="Products" right={<span style={{ fontSize: '0.75rem', color: '#6b7280' }}>{rows.length} shown</span>}>
+      <Card title="Products" right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>{rows.length} shown</span>}>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.9rem' }}>
           <div style={{ minWidth: 160 }}>
             <label style={label()}>Provider</label>
@@ -93,7 +94,7 @@ export default function InsuranceCatalogPage() {
                 {rows.map((p) => (
                   <tr key={p.code}>
                     <td style={td()}>
-                      <Link href={`/admin/insurance/catalog/${encodeURIComponent(p.code)}`} style={{ color: '#340075', fontWeight: 600, textDecoration: 'none' }}>
+                      <Link href={`/admin/insurance/catalog/${encodeURIComponent(p.code)}`} style={{ color: colors.primary, fontWeight: 600, textDecoration: 'none' }}>
                         <code style={{ fontSize: '0.8rem' }}>{p.code}</code>
                       </Link>
                     </td>

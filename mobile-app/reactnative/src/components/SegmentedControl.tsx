@@ -70,7 +70,12 @@ const styles = StyleSheet.create({
     borderRadius: Radius.DEFAULT,
   },
   segScroll: {
-    flex: 0,
+    // Size each chip to its content and never shrink, so a long filter row
+    // scrolls horizontally instead of squeezing chips into wrapped ovals.
+    // (Bare `flex: 0` collapses the flex-basis on react-native-web.)
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 'auto',
     paddingHorizontal: Spacing.md,
     backgroundColor: Colors.surfaceContainerLow,
     borderWidth: 1,

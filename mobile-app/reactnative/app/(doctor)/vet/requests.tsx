@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Modal, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Inbox, X, Stethoscope } from 'lucide-react-native';
@@ -14,6 +14,7 @@ import { StateView, PetRequestRow, SectionCard, InfoRow } from '@/features/docto
 import { usePetOwnerRequests, useRespondToPetRequest } from '@/features/doctor/hooks';
 import { PET_SPECIES_LABELS, VET_CONSULT_TYPE_LABELS } from '@/features/doctor/constants';
 import type { PetOwnerRequest } from '@/types/doctor.batch5';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 const DECLINE_REASONS = ['Outside my species scope', 'Fully booked', 'Needs in-person exam', 'Refer to emergency clinic', 'Other'];
 
@@ -30,21 +31,19 @@ export default function PetOwnerRequestsScreen() {
   const accept = async (req: PetOwnerRequest) => {
     try {
       await respond.mutateAsync({ requestId: req.id, accept: true });
-      Alert.alert('Request accepted', `${req.petName}'s consult has been added to your queue.`, [
-        { text: 'Open pet', onPress: () => { closeSheet(); router.push(`/(doctor)/vet/pet/${req.id}`); } },
-        { text: 'Done', onPress: closeSheet },
-      ]);
-    } catch { Alert.alert('Failed', 'Could not accept the request. Please try again.'); }
+      const ok = await confirmAsync({ title: 'Request accepted', message: `${req.petName}'s consult has been added to your queue.`, confirmLabel: 'Open pet', cancelLabel: 'Done' });
+      if (ok) { closeSheet(); router.push(`/(doctor)/vet/pet/${req.id}`); } else { closeSheet(); }
+    } catch { alertAsync({ title: 'Failed', message: 'Could not accept the request. Please try again.' }); }
   };
 
   const decline = async () => {
     if (!active) return;
-    if (!declineReason) { Alert.alert('Select a reason', 'Choose why you are declining.'); return; }
+    if (!declineReason) { alertAsync({ title: 'Select a reason', message: 'Choose why you are declining.' }); return; }
     try {
       await respond.mutateAsync({ requestId: active.id, accept: false, declineReason });
       closeSheet();
-      Alert.alert('Request declined', 'The pet owner has been notified.');
-    } catch { Alert.alert('Failed', 'Please try again.'); }
+      alertAsync({ title: 'Request declined', message: 'The pet owner has been notified.' });
+    } catch { alertAsync({ title: 'Failed', message: 'Please try again.' }); }
   };
 
   return (

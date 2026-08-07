@@ -70,11 +70,11 @@ export default function TransactionDetailScreen() {
         </View>
 
         {/* Fees */}
-        {tx.fees.length > 0 ? (
+        {(tx.fees?.length ?? 0) > 0 ? (
           <>
             <Text style={styles.sectionLabel}>Fees</Text>
             <View style={styles.card}>
-              {tx.fees.map((f) => (
+              {(tx.fees ?? []).map((f) => (
                 <SummaryRow key={f.type} label={FEE_LABEL[f.type] ?? f.type} value={formatMoneyObj(f.amount)} />
               ))}
             </View>
@@ -84,9 +84,9 @@ export default function TransactionDetailScreen() {
         {/* Route & references */}
         <Text style={styles.sectionLabel}>Route & references</Text>
         <View style={styles.card}>
-          <SummaryRow label="Corridor" value={tx.route.corridor} />
-          <SummaryRow label="Rail" value={RAIL_LABEL[tx.route.rail]} />
-          <SummaryRow label="Provider" value={tx.route.provider} />
+          <SummaryRow label="Corridor" value={tx.route?.corridor ?? '—'} />
+          <SummaryRow label="Rail" value={(tx.route && RAIL_LABEL[tx.route.rail]) ?? '—'} />
+          <SummaryRow label="Provider" value={tx.route?.provider ?? '—'} />
           {tx.counterparty ? <SummaryRow label="Counterparty" value={tx.counterparty} /> : null}
           {tx.narration ? <SummaryRow label="Narration" value={tx.narration} /> : null}
           <SummaryRow label="Reference" value={tx.reference} copyable />
@@ -97,11 +97,11 @@ export default function TransactionDetailScreen() {
         {/* Status history */}
         <Text style={styles.sectionLabel}>Status history</Text>
         <View style={styles.card}>
-          {tx.statusHistory.map((s, i) => (
+          {(tx.statusHistory ?? []).map((s, i) => (
             <View key={`${s.status}-${i}`} style={styles.timelineRow}>
               <View style={styles.timelineDotWrap}>
                 <View style={styles.timelineDot} />
-                {i < tx.statusHistory.length - 1 ? <View style={styles.timelineLine} /> : null}
+                {i < (tx.statusHistory ?? []).length - 1 ? <View style={styles.timelineLine} /> : null}
               </View>
               <View style={styles.timelineBody}>
                 <Text style={styles.timelineStatus}>{(TX_STATUS_STYLE[s.status]?.label ?? s.status)}</Text>

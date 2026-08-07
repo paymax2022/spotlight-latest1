@@ -74,14 +74,14 @@ const (
 )
 
 type SplitBill struct {
-	ID            string     `json:"id"`
-	OrganiserID   string     `json:"organiser_id"`
-	Title         string     `json:"title"`
-	TotalKobo     int64      `json:"total_kobo"`
-	Mode          SplitMode  `json:"mode"`
-	State         SplitState `json:"state"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID          string     `json:"id"`
+	OrganiserID string     `json:"organiser_id"`
+	Title       string     `json:"title"`
+	TotalKobo   int64      `json:"total_kobo"`
+	Mode        SplitMode  `json:"mode"`
+	State       SplitState `json:"state"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 type ShareState string

@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { getOverview } from '@/services/investAdminService';
 import type { InvestOverview } from '@/types/investAdmin';
-import { PageHeader, InvestTabs, Kpi, btn } from './_ui';
+import { InvestTabs, Kpi } from './_ui';
+import { Page, PageHeader, Button, colors } from '@/components/ui/vuexy';
 
 export default function InvestOverviewPage() {
   const [data, setData] = useState<InvestOverview | null>(null);
@@ -19,32 +20,32 @@ export default function InvestOverviewPage() {
   useEffect(() => { load(); }, []);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Paymax Invest"
         subtitle="Stock-trading control plane — assets, orders, settlement, fees and audit."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <InvestTabs />
 
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
       {loading || !data ? (
-        <p style={{ color: '#6b7280' }}>Loading dashboard…</p>
+        <p style={{ color: colors.muted }}>Loading dashboard…</p>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem' }}>
-          <Kpi label="Tradable assets" value={`${data.assets_tradable}/${data.assets_total}`} accent="#340075" sub="Enabled / total" />
+          <Kpi label="Tradable assets" value={`${data.assets_tradable}/${data.assets_total}`} accent={colors.primary} sub="Enabled / total" />
           <Kpi label="Active investors" value={data.investors.toLocaleString('en-NG')} />
           <Kpi label="Orders (all-time)" value={data.orders_total.toLocaleString('en-NG')} />
-          <Kpi label="Pending settlement" value={String(data.orders_pending_settlement)} accent={data.orders_pending_settlement ? '#d97706' : '#16a34a'} sub="Awaiting T+N" />
-          <Kpi label="Failed orders" value={String(data.orders_failed)} accent={data.orders_failed ? '#dc2626' : '#16a34a'} sub="Needs review" />
+          <Kpi label="Pending settlement" value={String(data.orders_pending_settlement)} accent={data.orders_pending_settlement ? colors.warning : colors.success} sub="Awaiting T+N" />
+          <Kpi label="Failed orders" value={String(data.orders_failed)} accent={data.orders_failed ? colors.danger : colors.success} sub="Needs review" />
           <Kpi label="Open offers" value={String(data.open_offers)} />
         </div>
       )}
 
-      <p style={{ marginTop: '1.5rem', fontSize: '0.8rem', color: '#9ca3af' }}>
+      <p style={{ marginTop: '1.5rem', fontSize: '0.8rem', color: colors.muted }}>
         Requires the <code>invest.manage</code> RBAC permission. Every change here is written to the
         invest admin audit log.
       </p>
-    </div>
+    </Page>
   );
 }

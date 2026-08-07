@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, Image, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Clock, Building2, Video, MapPin, Navigation, Phone, Star, ShieldCheck } from 'lucide-react-native';
@@ -16,17 +16,23 @@ import DetailRow from '@/features/realtor/components/DetailRow';
 import { useInspection, useCancelInspection } from '@/features/realtor/hooks/useRealtor';
 import { INSPECTION_STATUS_META } from '@/features/realtor/constants/realtor.constants';
 import { formatSlotDate } from '@/features/realtor/utils/realtorFormatters';
+import { confirmAsync } from '@/lib/confirm';
 
 export default function InspectionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const inspection = useInspection(String(id));
   const cancel = useCancelInspection();
 
-  const onCancel = () => {
-    Alert.alert('Cancel inspection?', 'The agent will be notified that you can no longer attend.', [
-      { text: 'Keep it', style: 'cancel' },
-      { text: 'Cancel inspection', style: 'destructive', onPress: () => cancel.mutate(String(id)) },
-    ]);
+  const onCancel = async () => {
+    const ok = await confirmAsync({
+      title: 'Cancel inspection?',
+      message: 'The agent will be notified that you can no longer attend.',
+      confirmLabel: 'Cancel inspection',
+      cancelLabel: 'Keep it',
+      destructive: true,
+    });
+    if (!ok) return;
+    cancel.mutate(String(id));
   };
 
   if (inspection.isLoading) {

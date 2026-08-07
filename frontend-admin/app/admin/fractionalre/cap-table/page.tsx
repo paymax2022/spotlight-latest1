@@ -6,7 +6,14 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { getCapTable, listAssets, transferUnits } from '@/services/fractionalreAdminService';
 import type { AdminAsset, CapTable, TransferUnitsInput } from '@/types/fractionalreAdmin';
-import { PageHeader, FractionalReTabs, Card, Badge, SodNote, btn, btnPrimary, th, td, input, label } from '../_ui';
+import { FractionalReTabs, SodNote } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const labelStyle = { fontSize: '0.78rem', fontWeight: 600, color: colors.text, display: 'block', marginBottom: 4 } as const;
+
+const SOURCE_COLOR: Record<string, string> = {
+  primary: colors.info, secondary: colors.secondary, matched: colors.secondary, correction: colors.warning,
+};
 
 export default function CapTablePage() {
   const params = useSearchParams();
@@ -58,26 +65,26 @@ export default function CapTablePage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Cap table" subtitle="Ownership ledger per asset, exportable; transfers are dual-control." action={<button onClick={() => load(assetId)} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Cap table" subtitle="Ownership ledger per asset, exportable; transfers are dual-control." actions={<Button onClick={() => load(assetId)}>Refresh</Button>} />
       <FractionalReTabs active="cap-table" />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-      {msg && <p style={{ color: '#15803d' }}>{msg}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      {msg && <p style={{ color: colors.success }}>{msg}</p>}
 
       <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
-        <select value={assetId} onChange={(e) => setAssetId(e.target.value)} style={{ ...input(), width: 320 }}>
+        <select value={assetId} onChange={(e) => setAssetId(e.target.value)} className="vx-input" style={{ width: 320 }}>
           <option value="">Select asset…</option>
           {assets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
-        <button onClick={exportCsv} disabled={!cap} style={btn()}>Export CSV</button>
+        <Button onClick={exportCsv} disabled={!cap}>Export CSV</Button>
       </div>
 
       <Card title={cap ? `${cap.assetName} — ${cap.unitsAllocated.toLocaleString('en-NG')} / ${cap.totalUnits.toLocaleString('en-NG')} units` : 'Cap table'}>
-        {loading ? <p style={{ color: '#6b7280' }}>Loading cap table…</p> : !cap || cap.entries.length === 0 ? <p style={{ color: '#6b7280' }}>No holders.</p> : (
+        {loading ? <p style={{ color: colors.muted }}>Loading cap table…</p> : !cap || cap.entries.length === 0 ? <p style={{ color: colors.muted }}>No holders.</p> : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Investor</th><th style={th()}>Units</th><th style={th()}>Ownership</th><th style={th()}>Acquired</th><th style={th()}>Source</th><th style={th()}>Certificate</th></tr></thead>
+            <thead><tr><th style={thCell}>Investor</th><th style={thCell}>Units</th><th style={thCell}>Ownership</th><th style={thCell}>Acquired</th><th style={thCell}>Source</th><th style={thCell}>Certificate</th></tr></thead>
             <tbody>{cap.entries.map((e) => (
-              <tr key={e.id}><td style={td()}>{e.investorName}</td><td style={td()}>{e.units.toLocaleString('en-NG')}</td><td style={td()}>{e.ownershipPct}%</td><td style={td()}>{new Date(e.acquisitionDate).toLocaleDateString('en-NG')}</td><td style={td()}><Badge status={e.source} /></td><td style={td()}>{e.certificateRef ?? '—'}</td></tr>
+              <tr key={e.id}><td style={tdCell}>{e.investorName}</td><td style={tdCell}>{e.units.toLocaleString('en-NG')}</td><td style={tdCell}>{e.ownershipPct}%</td><td style={tdCell}>{new Date(e.acquisitionDate).toLocaleDateString('en-NG')}</td><td style={tdCell}><Badge text={e.source} color={SOURCE_COLOR[e.source] ?? colors.secondary} /></td><td style={tdCell}>{e.certificateRef ?? '—'}</td></tr>
             ))}</tbody>
           </table>
         )}
@@ -86,13 +93,13 @@ export default function CapTablePage() {
       <SodNote>Ownership transfers / manual corrections are <strong>logged and dual-control</strong>: this submits a request that a second authorised user must approve.</SodNote>
       <Card title="Ownership transfer / correction">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.8rem', maxWidth: 640 }}>
-          <div><label style={label()}>From investor ID</label><input value={xfer.from} onChange={(e) => setXfer({ ...xfer, from: e.target.value })} style={input()} placeholder="inv-2" /></div>
-          <div><label style={label()}>To investor ID</label><input value={xfer.to} onChange={(e) => setXfer({ ...xfer, to: e.target.value })} style={input()} placeholder="inv-3" /></div>
-          <div><label style={label()}>Units</label><input value={xfer.units} onChange={(e) => setXfer({ ...xfer, units: e.target.value })} style={input()} placeholder="20" /></div>
-          <div><label style={label()}>Reason (logged)</label><input value={xfer.reason} onChange={(e) => setXfer({ ...xfer, reason: e.target.value })} style={input()} /></div>
+          <div><label style={labelStyle}>From investor ID</label><Input value={xfer.from} onChange={(e) => setXfer({ ...xfer, from: e.target.value })} placeholder="inv-2" /></div>
+          <div><label style={labelStyle}>To investor ID</label><Input value={xfer.to} onChange={(e) => setXfer({ ...xfer, to: e.target.value })} placeholder="inv-3" /></div>
+          <div><label style={labelStyle}>Units</label><Input value={xfer.units} onChange={(e) => setXfer({ ...xfer, units: e.target.value })} placeholder="20" /></div>
+          <div><label style={labelStyle}>Reason (logged)</label><Input value={xfer.reason} onChange={(e) => setXfer({ ...xfer, reason: e.target.value })} /></div>
         </div>
-        <button onClick={submitTransfer} disabled={working || !xfer.from || !xfer.to || !xfer.units || !xfer.reason} style={{ ...btnPrimary(), marginTop: '0.8rem', opacity: working || !xfer.from || !xfer.to || !xfer.units || !xfer.reason ? 0.6 : 1 }}>{working ? 'Submitting…' : 'Submit transfer (maker)'}</button>
+        <Button variant="primary" onClick={submitTransfer} disabled={working || !xfer.from || !xfer.to || !xfer.units || !xfer.reason} style={{ marginTop: '0.8rem' }}>{working ? 'Submitting…' : 'Submit transfer (maker)'}</Button>
       </Card>
-    </div>
+    </Page>
   );
 }

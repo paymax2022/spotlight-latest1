@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { listConnectRoles, type ConnectRole } from '@/services/connectAdminOpsService';
 import { PageHeader, Card, btn, th, td } from '../../_ui';
+import { Page, colors } from '@/components/ui/vuexy';
 
 export default function ConnectRolesPage() {
   const [rows, setRows] = useState<ConnectRole[]>([]);
@@ -19,15 +20,15 @@ export default function ConnectRolesPage() {
   useEffect(() => { load(); }, []);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <Link href="/admin/connect/rbac" style={{ color: '#1d4ed8', textDecoration: 'none', fontSize: '0.85rem' }}>← RBAC</Link>
+    <Page>
+      <Link href="/admin/connect/rbac" style={{ color: colors.info, textDecoration: 'none', fontSize: '0.85rem' }}>← RBAC</Link>
       <div style={{ height: 8 }} />
       <PageHeader title="Roles & scopes" subtitle="All Connect roles and their scope. Role/permission edits are audited." action={<button onClick={load} style={btn()}>Refresh</button>} />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       <Card>
-        {loading ? <p style={{ color: '#6b7280' }}>Loading roles…</p> : rows.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No roles defined.</p>
+        {loading ? <p style={{ color: colors.muted }}>Loading roles…</p> : rows.length === 0 ? (
+          <p style={{ color: colors.muted }}>No roles defined.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr><th style={th()}>Role</th><th style={th()}>Slug</th><th style={th()}>Description</th><th style={th()}>Type</th><th style={th()}>Admins</th></tr></thead>
@@ -45,6 +46,6 @@ export default function ConnectRolesPage() {
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

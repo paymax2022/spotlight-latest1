@@ -8,10 +8,10 @@ import {
   getDuesReconciliation, listOversightPayments, listOversightRestrictions,
 } from '@/services/estateAdminService';
 import type { DuesReconciliationRow, OversightPayment, OversightRestriction } from '@/types/estateAdmin';
-import {
-  PageHeader, EstateOversightTabs, Card, Badge, btn, th, td, naira, timeAgo,
-  useEstatePermissions, ESTATE_ADMIN_PERMS, Restricted,
-} from '../_ui';
+import { EstateOversightTabs, Restricted, useEstatePermissions, ESTATE_ADMIN_PERMS, naira, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const cap = (s: string) => s.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
 
 export default function DuesReconciliationPage() {
   const { can } = useEstatePermissions();
@@ -37,28 +37,28 @@ export default function DuesReconciliationPage() {
   useEffect(() => { void load(); }, [load]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Dues reconciliation" subtitle="Billed vs collected vs outstanding per estate. Variance surfaces ledger/projection drift." action={<button onClick={() => void load()} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Dues reconciliation" subtitle="Billed vs collected vs outstanding per estate. Variance surfaces ledger/projection drift." actions={<Button variant="outline" sm onClick={() => void load()}>Refresh</Button>} />
       <EstateOversightTabs active="dues-reconciliation" />
       {!canView ? <Restricted perm="estate.admin.dues" /> : (
         <>
-          {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-          {loading ? <p style={{ color: '#6b7280' }}>Loading reconciliation…</p> : (
+          {error && <p style={{ color: colors.danger }}>{error}</p>}
+          {loading ? <p style={{ color: colors.muted }}>Loading reconciliation…</p> : (
             <>
-              <Card title="Collections vs ledger">
-                {recon.length === 0 ? <p style={{ color: '#6b7280' }}>No dues data.</p> : (
+              <Card title="Collections vs ledger" style={{ marginBottom: '1.25rem' }}>
+                {recon.length === 0 ? <p style={{ color: colors.muted }}>No dues data.</p> : (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead><tr><th style={th()}>Estate</th><th style={th()}>Billed</th><th style={th()}>Collected</th><th style={th()}>Paid invoices</th><th style={th()}>Outstanding</th><th style={th()}>Overdue</th><th style={th()}>Variance</th></tr></thead>
+                    <thead><tr><th style={thCell}>Estate</th><th style={thCell}>Billed</th><th style={thCell}>Collected</th><th style={thCell}>Paid invoices</th><th style={thCell}>Outstanding</th><th style={thCell}>Overdue</th><th style={thCell}>Variance</th></tr></thead>
                     <tbody>
                       {recon.map((r) => (
                         <tr key={r.estateId}>
-                          <td style={td()}><strong>{r.estateId}</strong></td>
-                          <td style={td()}>{naira(r.billedKobo)}</td>
-                          <td style={td()}>{naira(r.collectedKobo)}</td>
-                          <td style={td()}>{naira(r.paidInvoiceKobo)}</td>
-                          <td style={td()}>{naira(r.outstandingKobo)}</td>
-                          <td style={td()}>{r.overdueCount}</td>
-                          <td style={td()}>{r.varianceKobo === 0 ? <Badge status="paid" label="Balanced" /> : <Badge status="overdue" label={naira(r.varianceKobo)} />}</td>
+                          <td style={tdCell}><strong>{r.estateId}</strong></td>
+                          <td style={tdCell}>{naira(r.billedKobo)}</td>
+                          <td style={tdCell}>{naira(r.collectedKobo)}</td>
+                          <td style={tdCell}>{naira(r.paidInvoiceKobo)}</td>
+                          <td style={tdCell}>{naira(r.outstandingKobo)}</td>
+                          <td style={tdCell}>{r.overdueCount}</td>
+                          <td style={tdCell}>{r.varianceKobo === 0 ? <Badge text="Balanced" color={colors.success} /> : <Badge text={naira(r.varianceKobo)} color={colors.danger} />}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -66,20 +66,20 @@ export default function DuesReconciliationPage() {
                 )}
               </Card>
 
-              <Card title="Recent payments">
-                {payments.length === 0 ? <p style={{ color: '#6b7280' }}>No payments.</p> : (
+              <Card title="Recent payments" style={{ marginBottom: '1.25rem' }}>
+                {payments.length === 0 ? <p style={{ color: colors.muted }}>No payments.</p> : (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead><tr><th style={th()}>Estate</th><th style={th()}>Payer</th><th style={th()}>Amount</th><th style={th()}>Method</th><th style={th()}>Status</th><th style={th()}>Reference</th><th style={th()}>When</th></tr></thead>
+                    <thead><tr><th style={thCell}>Estate</th><th style={thCell}>Payer</th><th style={thCell}>Amount</th><th style={thCell}>Method</th><th style={thCell}>Status</th><th style={thCell}>Reference</th><th style={thCell}>When</th></tr></thead>
                     <tbody>
                       {payments.map((p) => (
                         <tr key={p.id}>
-                          <td style={td()}>{p.estateId}</td>
-                          <td style={td()}>{p.payerId}</td>
-                          <td style={td()}>{naira(p.amountKobo)}</td>
-                          <td style={td()}>{p.method}</td>
-                          <td style={td()}><Badge status={p.status === 'successful' ? 'paid' : p.status === 'refunded' ? 'restricted' : 'pending'} label={p.status} /></td>
-                          <td style={td()}><code style={{ fontSize: '0.78rem' }}>{p.reference ?? '—'}</code></td>
-                          <td style={td()}>{timeAgo(p.createdAt)}</td>
+                          <td style={tdCell}>{p.estateId}</td>
+                          <td style={tdCell}>{p.payerId}</td>
+                          <td style={tdCell}>{naira(p.amountKobo)}</td>
+                          <td style={tdCell}>{p.method}</td>
+                          <td style={tdCell}><Badge text={cap(p.status)} color={p.status === 'successful' ? colors.success : p.status === 'refunded' ? colors.danger : colors.warning} /></td>
+                          <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{p.reference ?? '—'}</code></td>
+                          <td style={tdCell}>{timeAgo(p.createdAt)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -88,18 +88,18 @@ export default function DuesReconciliationPage() {
               </Card>
 
               <Card title="Access restrictions">
-                {restrictions.length === 0 ? <p style={{ color: '#6b7280' }}>No restrictions.</p> : (
+                {restrictions.length === 0 ? <p style={{ color: colors.muted }}>No restrictions.</p> : (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead><tr><th style={th()}>Estate</th><th style={th()}>Resident</th><th style={th()}>Level</th><th style={th()}>Reason</th><th style={th()}>Active</th><th style={th()}>Applied</th></tr></thead>
+                    <thead><tr><th style={thCell}>Estate</th><th style={thCell}>Resident</th><th style={thCell}>Level</th><th style={thCell}>Reason</th><th style={thCell}>Active</th><th style={thCell}>Applied</th></tr></thead>
                     <tbody>
                       {restrictions.map((x) => (
                         <tr key={x.id}>
-                          <td style={td()}>{x.estateId}</td>
-                          <td style={td()}>{x.residentId}</td>
-                          <td style={td()}><Badge status={x.level === 'hard' ? 'overdue' : 'pending'} label={x.level} /></td>
-                          <td style={td()}>{x.reason ?? '—'}</td>
-                          <td style={td()}><Badge status={x.active ? 'restricted' : 'resolved'} label={x.active ? 'Active' : 'Lifted'} /></td>
-                          <td style={td()}>{timeAgo(x.createdAt)}</td>
+                          <td style={tdCell}>{x.estateId}</td>
+                          <td style={tdCell}>{x.residentId}</td>
+                          <td style={tdCell}><Badge text={cap(x.level)} color={x.level === 'hard' ? colors.danger : colors.warning} /></td>
+                          <td style={tdCell}>{x.reason ?? '—'}</td>
+                          <td style={tdCell}><Badge text={x.active ? 'Active' : 'Lifted'} color={x.active ? colors.danger : colors.success} /></td>
+                          <td style={tdCell}>{timeAgo(x.createdAt)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -110,6 +110,6 @@ export default function DuesReconciliationPage() {
           )}
         </>
       )}
-    </div>
+    </Page>
   );
 }

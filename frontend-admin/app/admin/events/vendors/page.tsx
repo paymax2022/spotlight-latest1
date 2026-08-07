@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listVendors, decideVendorPayout, formatNaira } from '@/services/eventsAdminService';
 import type { VendorRecord } from '@/types/eventsAdmin';
 import { PageHeader, EventsTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnPrimary, btnDanger, th, td, input, label, select } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function VendorsPage() {
   const [rows, setRows] = useState<VendorRecord[]>([]);
@@ -71,7 +72,7 @@ export default function VendorsPage() {
             <tbody>
               {rows.map((v) => (
                 <tr key={v.id}>
-                  <td style={td()}>{v.name_masked}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{v.id}</div></td>
+                  <td style={td()}>{v.name_masked}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{v.id}</div></td>
                   <td style={td()}>{v.event_title}</td>
                   <td style={td()}>
                     <Badge status={v.kyc_tier} label={v.kyc_tier.toUpperCase()} />
@@ -87,7 +88,7 @@ export default function VendorsPage() {
                         <button style={btnPrimary()} disabled={busy === v.id} title={!v.kyc_verified ? 'Blocked — KYC tier insufficient (NL-10)' : undefined} onClick={() => decide(v, 'approve')}>{busy === v.id ? '…' : 'Approve payout'}</button>
                         <button style={btnDanger()} disabled={busy === v.id} onClick={() => decide(v, 'reject')}>Reject</button>
                       </div>
-                    ) : <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>—</span>}
+                    ) : <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span>}
                   </td>
                 </tr>
               ))}

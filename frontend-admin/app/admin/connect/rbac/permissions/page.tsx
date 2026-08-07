@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { listConnectPermissions, listConnectRoles, type ConnectPermission, type ConnectRole } from '@/services/connectAdminOpsService';
 import { PageHeader, Card, btn, th, td } from '../../_ui';
+import { Page, colors } from '@/components/ui/vuexy';
 
 export default function ConnectPermissionsPage() {
   const [perms, setPerms] = useState<ConnectPermission[]>([]);
@@ -20,15 +21,15 @@ export default function ConnectPermissionsPage() {
   useEffect(() => { load(); }, []);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <Link href="/admin/connect/rbac" style={{ color: '#1d4ed8', textDecoration: 'none', fontSize: '0.85rem' }}>← RBAC</Link>
+    <Page>
+      <Link href="/admin/connect/rbac" style={{ color: colors.info, textDecoration: 'none', fontSize: '0.85rem' }}>← RBAC</Link>
       <div style={{ height: 8 }} />
       <PageHeader title="Permission matrix" subtitle="Read-only display of the connect.* permission slugs mapped to roles." action={<button onClick={load} style={btn()}>Refresh</button>} />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       <Card>
-        {loading ? <p style={{ color: '#6b7280' }}>Loading matrix…</p> : perms.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No permissions defined.</p>
+        {loading ? <p style={{ color: colors.muted }}>Loading matrix…</p> : perms.length === 0 ? (
+          <p style={{ color: colors.muted }}>No permissions defined.</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
@@ -41,10 +42,10 @@ export default function ConnectPermissionsPage() {
               <tbody>
                 {perms.map((p) => (
                   <tr key={p.slug}>
-                    <td style={td()}><code style={{ fontSize: '0.78rem' }}>{p.slug}</code><div style={{ color: '#6b7280', fontSize: '0.72rem' }}>{p.description}</div></td>
+                    <td style={td()}><code style={{ fontSize: '0.78rem' }}>{p.slug}</code><div style={{ color: colors.muted, fontSize: '0.72rem' }}>{p.description}</div></td>
                     {roles.map((r) => (
                       <td key={r.id} style={{ ...td(), textAlign: 'center' }}>
-                        {p.roles.includes(r.slug) ? <span style={{ color: '#16a34a', fontWeight: 700 }}>✓</span> : <span style={{ color: '#d1d5db' }}>—</span>}
+                        {p.roles.includes(r.slug) ? <span style={{ color: colors.success, fontWeight: 700 }}>✓</span> : <span style={{ color: colors.inputBorder }}>—</span>}
                       </td>
                     ))}
                   </tr>
@@ -54,6 +55,6 @@ export default function ConnectPermissionsPage() {
           </div>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

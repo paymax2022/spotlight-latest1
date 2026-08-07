@@ -9,9 +9,10 @@ import type {
 } from '@/types/mobilityModes';
 import {
   PageHeader, MobilityTabs, Card, Badge, StateNote, AuditedNotice, Kpi,
-  btn, btnPrimary, btnDisabled, th, td, input, nairaFull,
+  btn, btnPrimary, btnDisabled, input, nairaFull,
   useMobilityPermissions, MOBILITY_PERMS,
 } from '../_ui';
+import { colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const OFFER_FILTER: Array<EventOfferStatus | ''> = ['', 'draft', 'open', 'full', 'departed', 'completed', 'cancelled'];
 const OFFER_OPTIONS: EventOfferStatus[] = ['draft', 'open', 'full', 'departed', 'completed', 'cancelled'];
@@ -77,8 +78,8 @@ export default function MobilityEventsPage() {
       {error && <StateNote kind="error">{error}</StateNote>}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-        <Kpi label="Open offers" value={String(openOffers)} accent="#16a34a" />
-        <Kpi label="Seats booked" value={String(seatsBooked)} accent="#1d4ed8" />
+        <Kpi label="Open offers" value={String(openOffers)} accent={colors.success} />
+        <Kpi label="Seats booked" value={String(seatsBooked)} accent={colors.info} />
         <Kpi label="Active bookings" value={String(activeBookings)} />
       </div>
 
@@ -96,19 +97,19 @@ export default function MobilityEventsPage() {
           : offers.length === 0 ? <StateNote kind="empty">No offers match this filter.</StateNote>
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-              <thead><tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>Offer</th><th style={th()}>Venue</th><th style={th()}>Capacity</th><th style={th()}>Fare</th><th style={th()}>Departure</th><th style={th()}>Status</th><th style={th()}></th>
+              <thead><tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                <th style={thCell}>Offer</th><th style={thCell}>Venue</th><th style={thCell}>Capacity</th><th style={thCell}>Fare</th><th style={thCell}>Departure</th><th style={thCell}>Status</th><th style={thCell}></th>
               </tr></thead>
               <tbody>
                 {offers.map((o) => (
-                  <tr key={o.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={td()}><strong>{o.title}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{o.organizerName} · {o.type.replace(/_/g, ' ')}{o.busScheduleId ? ` · bus ${o.busScheduleId}` : ''}</div></td>
-                    <td style={td()}>{o.venue}</td>
-                    <td style={td()}>{o.bookedCount}/{o.capacity}</td>
-                    <td style={td()}>{nairaFull(o.fareKobo)}</td>
-                    <td style={td()}>{new Date(o.departureTime).toLocaleString()}</td>
-                    <td style={td()}><Badge status={o.status} /></td>
-                    <td style={td()}><button style={btn()} onClick={() => openOffer(o)}>{canManage ? 'Manage' : 'View'}</button></td>
+                  <tr key={o.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <td style={tdCell}><strong>{o.title}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{o.organizerName} · {o.type.replace(/_/g, ' ')}{o.busScheduleId ? ` · bus ${o.busScheduleId}` : ''}</div></td>
+                    <td style={tdCell}>{o.venue}</td>
+                    <td style={tdCell}>{o.bookedCount}/{o.capacity}</td>
+                    <td style={tdCell}>{nairaFull(o.fareKobo)}</td>
+                    <td style={tdCell}>{new Date(o.departureTime).toLocaleString()}</td>
+                    <td style={tdCell}><Badge status={o.status} /></td>
+                    <td style={tdCell}><button style={btn()} onClick={() => openOffer(o)}>{canManage ? 'Manage' : 'View'}</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -122,19 +123,19 @@ export default function MobilityEventsPage() {
           : bookings.length === 0 ? <StateNote kind="empty">No bookings.</StateNote>
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-              <thead><tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>Booking</th><th style={th()}>Rider</th><th style={th()}>Offer</th><th style={th()}>Seats</th><th style={th()}>Total</th><th style={th()}>Status</th><th style={th()}>Escrow</th>
+              <thead><tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                <th style={thCell}>Booking</th><th style={thCell}>Rider</th><th style={thCell}>Offer</th><th style={thCell}>Seats</th><th style={thCell}>Total</th><th style={thCell}>Status</th><th style={thCell}>Escrow</th>
               </tr></thead>
               <tbody>
                 {bookings.map((b) => (
-                  <tr key={b.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={td()}><strong>{b.id}</strong>{b.ticketRef ? <div style={{ fontSize: '0.72rem', color: '#1d4ed8' }}>🎟 {b.ticketRef} (bundle)</div> : <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>ride only</div>}</td>
-                    <td style={td()}>{b.riderName}</td>
-                    <td style={td()}>{b.offerTitle}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{b.type.replace(/_/g, ' ')}</div></td>
-                    <td style={td()}>{b.seats}</td>
-                    <td style={td()}>{nairaFull(b.totalKobo)}</td>
-                    <td style={td()}><Badge status={b.status} /></td>
-                    <td style={td()}><Badge status={b.escrowStatus} /></td>
+                  <tr key={b.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <td style={tdCell}><strong>{b.id}</strong>{b.ticketRef ? <div style={{ fontSize: '0.72rem', color: colors.info }}>🎟 {b.ticketRef} (bundle)</div> : <div style={{ fontSize: '0.72rem', color: colors.muted }}>ride only</div>}</td>
+                    <td style={tdCell}>{b.riderName}</td>
+                    <td style={tdCell}>{b.offerTitle}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{b.type.replace(/_/g, ' ')}</div></td>
+                    <td style={tdCell}>{b.seats}</td>
+                    <td style={tdCell}>{nairaFull(b.totalKobo)}</td>
+                    <td style={tdCell}><Badge status={b.status} /></td>
+                    <td style={tdCell}><Badge status={b.escrowStatus} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -145,13 +146,13 @@ export default function MobilityEventsPage() {
       {/* Offer status modal */}
       {offer && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }} onClick={() => !busy && setOffer(null)}>
-          <div style={{ background: '#fff', borderRadius: '0.5rem', padding: '1.25rem', width: 'min(520px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: colors.card, borderRadius: '0.5rem', padding: '1.25rem', width: 'min(520px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: '0.5rem' }}>
               <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>{offer.title}</h2>
               <Badge status={offer.status} />
             </div>
-            <p style={{ fontSize: '0.82rem', color: '#374151', margin: '0 0 0.25rem' }}>{offer.organizerName} · {offer.type.replace(/_/g, ' ')} · {offer.venue}</p>
-            <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0 0 1rem' }}>Capacity {offer.bookedCount}/{offer.capacity} · Fare {nairaFull(offer.fareKobo)} · Departs {new Date(offer.departureTime).toLocaleString()}</p>
+            <p style={{ fontSize: '0.82rem', color: colors.text, margin: '0 0 0.25rem' }}>{offer.organizerName} · {offer.type.replace(/_/g, ' ')} · {offer.venue}</p>
+            <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 1rem' }}>Capacity {offer.bookedCount}/{offer.capacity} · Fare {nairaFull(offer.fareKobo)} · Departs {new Date(offer.departureTime).toLocaleString()}</p>
             {!canManage ? (
               <StateNote kind="restricted">Read-only — your role cannot update offers.</StateNote>
             ) : (

@@ -3,7 +3,22 @@
 import { useEffect, useState } from 'react';
 import { getModerationQueue, decideListing } from '@/services/realtorAdminService';
 import type { AdminListing } from '@/types/realtorAdmin';
-import { PageHeader, RealtorTabs, Card, Badge, btn, btnPrimary, th, td, money, timeAgo } from '../_ui';
+import { RealtorTabs, money, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  switch (status) {
+    case 'verified':
+    case 'approved':
+      return colors.success;
+    case 'pending':
+      return colors.warning;
+    case 'rejected':
+      return colors.danger;
+    default:
+      return colors.secondary;
+  }
+}
 
 export default function ModerationPage() {
   const [rows, setRows] = useState<AdminListing[]>([]);
@@ -27,29 +42,29 @@ export default function ModerationPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Listing moderation" subtitle="Approve or reject listings before they go live. AI risk flags are surfaced per item." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Listing moderation" subtitle="Approve or reject listings before they go live. AI risk flags are surfaced per item." actions={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <RealtorTabs active="moderation" />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
-      <Card>
-        {loading ? <p style={{ color: '#6b7280' }}>Loading queue…</p> : rows.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>Queue clear — no listings waiting for review.</p>
+      <Card style={{ padding: 0, overflow: 'auto' }}>
+        {loading ? <p style={{ color: colors.muted, padding: 14 }}>Loading queue…</p> : rows.length === 0 ? (
+          <p style={{ color: colors.muted, padding: 14 }}>Queue clear — no listings waiting for review.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Listing</th><th style={th()}>Owner</th><th style={th()}>Price</th><th style={th()}>Verification</th><th style={th()}>Risk</th><th style={th()}>Actions</th></tr></thead>
+            <thead><tr><th style={thCell}>Listing</th><th style={thCell}>Owner</th><th style={thCell}>Price</th><th style={thCell}>Verification</th><th style={thCell}>Risk</th><th style={thCell}>Actions</th></tr></thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><strong>{r.title}</strong><div style={{ color: '#6b7280', fontSize: '0.75rem' }}>{r.area}, {r.city} · {r.mode.replace('_', ' ')} · {timeAgo(r.submittedAt)}</div></td>
-                  <td style={td()}>{r.ownerName}{r.ownerVerified ? ' ✓' : ''}</td>
-                  <td style={td()}>{money(r.priceKobo)}</td>
-                  <td style={td()}><Badge status={r.verification} /></td>
-                  <td style={td()}>{r.riskFlags.length === 0 ? <span style={{ color: '#16a34a' }}>Clean</span> : <span style={{ color: '#d97706' }}>{r.riskFlags.join('; ')}</span>}</td>
-                  <td style={td()}>
+                  <td style={tdCell}><strong>{r.title}</strong><div style={{ color: colors.muted, fontSize: '0.75rem' }}>{r.area}, {r.city} · {r.mode.replace('_', ' ')} · {timeAgo(r.submittedAt)}</div></td>
+                  <td style={tdCell}>{r.ownerName}{r.ownerVerified ? ' ✓' : ''}</td>
+                  <td style={tdCell}>{money(r.priceKobo)}</td>
+                  <td style={tdCell}><Badge text={r.verification} color={statusColor(r.verification)} /></td>
+                  <td style={tdCell}>{r.riskFlags.length === 0 ? <span style={{ color: colors.success }}>Clean</span> : <span style={{ color: colors.warning }}>{r.riskFlags.join('; ')}</span>}</td>
+                  <td style={tdCell}>
                     <div style={{ display: 'flex', gap: '0.4rem' }}>
-                      <button disabled={busy === r.id} onClick={() => decide(r.id, 'approved')} style={btnPrimary('#16a34a')}>Approve</button>
-                      <button disabled={busy === r.id} onClick={() => decide(r.id, 'rejected')} style={btnPrimary('#dc2626')}>Reject</button>
+                      <Button sm variant="primary" disabled={busy === r.id} onClick={() => decide(r.id, 'approved')}>Approve</Button>
+                      <Button sm variant="danger" disabled={busy === r.id} onClick={() => decide(r.id, 'rejected')}>Reject</Button>
                     </div>
                   </td>
                 </tr>
@@ -58,6 +73,6 @@ export default function ModerationPage() {
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

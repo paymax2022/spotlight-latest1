@@ -17,6 +17,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import Chip from '@/features/academy/components/Chip';
 import ProgressBar from '@/features/academy/components/ProgressBar';
 import { formatNaira } from '@/features/academy/constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { AUTOSAVE_CADENCES } from '@/features/academy/fees/constants';
 import {
   useVaults, useFundVault, useCreateVault, useFeesChildren,
@@ -98,7 +99,7 @@ export default function FeesVaultHome() {
           <View style={[styles.createCard, shadow1]}>
             <Text style={styles.createTitle}>New vault</Text>
             <TextInputField label="Name" placeholder="e.g. Ada — next term" value={name} onChangeText={setName} />
-            <TextInputField label="Target (₦)" placeholder="e.g. 130000" value={target} onChangeText={setTarget} keyboardType="numeric" />
+            <TextInputField label="Target (₦)" placeholder="e.g. 130000" value={target} onChangeText={(v) => setTarget(sanitizeMoneyInput(v))} keyboardType="decimal-pad" inputMode="decimal" maxLength={13} />
             <SelectField label="For child (optional)" placeholder="Select a child" value={childName} options={kidOptions} onChange={setChildName} />
             <SelectField label="Auto-save" placeholder="Cadence" value={AUTOSAVE_CADENCES.find((c) => c.value === cadence)?.label} options={AUTOSAVE_CADENCES.map((c) => c.label)} onChange={(l) => setCadence(AUTOSAVE_CADENCES.find((c) => c.label === l)?.value ?? 'manual')} searchable={false} />
             <PrimaryButton label="Create vault" onPress={onCreate} loading={create.isPending} style={{ marginTop: Spacing.xs }} />

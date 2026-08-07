@@ -154,9 +154,18 @@ type Payout struct {
 // Earnings is the member earnings dashboard: append-only entries plus the DERIVED
 // withdrawable (pending) balance.
 type Earnings struct {
-	Entries       []Earning `json:"entries"`
-	PendingMinor  int64     `json:"pending_minor"` // derived = SUM(pending)
-	Payouts       []Payout  `json:"payouts"`
+	Entries      []Earning `json:"entries"`
+	PendingMinor int64     `json:"pending_minor"` // derived = SUM(pending)
+	Payouts      []Payout  `json:"payouts"`
+}
+
+// Cohort is a class group the tutor teaches, derived from the tutor's assignments
+// (distinct class_group_id). AssignmentCount is how many of the tutor's assignments
+// target that cohort. There is no standalone cohort table — this is a read-only
+// projection over academy_tutor_assignments.
+type Cohort struct {
+	ClassGroupID    string `json:"class_group_id"`
+	AssignmentCount int    `json:"assignment_count"`
 }
 
 // ── Request DTOs ─────────────────────────────────────────────────────────────────
@@ -194,7 +203,7 @@ type PayoutRequest struct {
 
 // PayoutResult is the response from a payout request (or its idempotent replay).
 type PayoutResult struct {
-	Payout    *Payout `json:"payout"`
-	Ref       string  `json:"ref,omitempty"`
-	Replayed  bool    `json:"replayed"` // true when this was an idempotent replay
+	Payout   *Payout `json:"payout"`
+	Ref      string  `json:"ref,omitempty"`
+	Replayed bool    `json:"replayed"` // true when this was an idempotent replay
 }

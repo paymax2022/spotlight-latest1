@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { getEvent, formatNaira } from '@/services/eventsAdminService';
 import type { EventDetail } from '@/types/eventsAdmin';
 import { PageHeader, EventsTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, btn, th, td, fmtDate, timeAgo, pct } from '../../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function EventDetailPage() {
   const params = useParams<{ id: string }>();
@@ -37,21 +38,21 @@ export default function EventDetailPage() {
             <DisclosureNote>Status <strong>{data.status.toUpperCase()}</strong>. Cashless wallet is closed-loop; residual is refunded at close (NL-3). Timeline below is reconstructed from the immutable audit log (NL-12).</DisclosureNote>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <Kpi label="Status" value={data.status.toUpperCase()} accent="#340075" />
+              <Kpi label="Status" value={data.status.toUpperCase()} accent={colors.primary} />
               <Kpi label="Capacity sold" value={pct(data.capacity_sold_pct)} sub={`${data.tickets_sold.toLocaleString('en-NG')} / ${data.capacity.toLocaleString('en-NG')}`} />
-              <Kpi label="GMV" value={formatNaira(data.gmv_kobo)} accent="#340075" />
-              <Kpi label="Net revenue" value={formatNaira(data.net_revenue_kobo)} accent="#15803d" />
-              <Kpi label="Cashless float" value={formatNaira(data.cashless_float_kobo)} accent="#0e7490" />
-              <Kpi label="Cashless liability" value={formatNaira(data.cashless_liability_kobo)} sub="Unspent — owed to customers" accent={data.cashless_liability_kobo > 0 ? '#9a3412' : undefined} />
+              <Kpi label="GMV" value={formatNaira(data.gmv_kobo)} accent={colors.primary} />
+              <Kpi label="Net revenue" value={formatNaira(data.net_revenue_kobo)} accent={colors.success} />
+              <Kpi label="Cashless float" value={formatNaira(data.cashless_float_kobo)} accent={colors.info} />
+              <Kpi label="Cashless liability" value={formatNaira(data.cashless_liability_kobo)} sub="Unspent — owed to customers" accent={data.cashless_liability_kobo > 0 ? colors.warning : undefined} />
             </div>
 
             <Card title="About">
-              <p style={{ margin: 0, color: '#374151', fontSize: '0.9rem' }}>{data.description}</p>
-              <p style={{ marginTop: '0.5rem', color: '#6b7280', fontSize: '0.82rem' }}>Organiser {data.organiser_masked} · {data.city} · starts {fmtDate(data.starts_at)}</p>
+              <p style={{ margin: 0, color: colors.text, fontSize: '0.9rem' }}>{data.description}</p>
+              <p style={{ marginTop: '0.5rem', color: colors.muted, fontSize: '0.82rem' }}>Organiser {data.organiser_masked} · {data.city} · starts {fmtDate(data.starts_at)}</p>
             </Card>
 
             <Card title="Ticket tiers">
-              {data.tiers.length === 0 ? <p style={{ color: '#6b7280' }}>No tiers configured.</p> : (
+              {data.tiers.length === 0 ? <p style={{ color: colors.muted }}>No tiers configured.</p> : (
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead><tr><th style={th()}>Tier</th><th style={th()}>Price</th><th style={th()}>Sold / Qty</th><th style={th()}>Held</th><th style={th()}>Status</th><th style={th()}>Config v</th><th style={th()}>Promo</th></tr></thead>
                   <tbody>
@@ -72,7 +73,7 @@ export default function EventDetailPage() {
             </Card>
 
             <Card title="Lifecycle timeline (audit-backed)">
-              {data.timeline.length === 0 ? <p style={{ color: '#6b7280' }}>No timeline entries.</p> : (
+              {data.timeline.length === 0 ? <p style={{ color: colors.muted }}>No timeline entries.</p> : (
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead><tr><th style={th()}>State</th><th style={th()}>Event</th><th style={th()}>Actor</th><th style={th()}>Audit</th><th style={th()}>When</th></tr></thead>
                   <tbody>

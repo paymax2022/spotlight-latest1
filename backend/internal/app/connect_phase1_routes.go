@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	connectcredits "spotlight/backend/internal/connect/credits"
 	connectdiscovery "spotlight/backend/internal/connect/discovery"
 	connectmatching "spotlight/backend/internal/connect/matching"
 	connectprofile "spotlight/backend/internal/connect/profile"
@@ -74,6 +75,7 @@ func registerConnectPhase1Routes(member *gin.RouterGroup, admin *gin.RouterGroup
 	profileHandler := connectprofile.NewHandler(profileSvc)
 
 	matchSvc := connectmatching.NewService(pool)
+	matchSvc.SetCreditConsumer(connectcredits.NewService(pool)) // PAY-003: super-like spends a credit
 	matchHandler := connectmatching.NewHandler(matchSvc)
 
 	discoverySvc := connectdiscovery.NewService(pool)

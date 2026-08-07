@@ -25,10 +25,10 @@ const TierBlack Tier = "BLACK"
 // BlackMember is a Paymax Black enrolment. Eligibility is decided by the admin/
 // upgrade flow (spend + tenure); this row is the granted standing.
 type BlackMember struct {
-	UserID     string     `json:"user_id"`
-	State      string     `json:"state"` // ACTIVE | CANCELLED
-	GrantedAt  time.Time  `json:"granted_at"`
-	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	UserID      string     `json:"user_id"`
+	State       string     `json:"state"` // ACTIVE | CANCELLED
+	GrantedAt   time.Time  `json:"granted_at"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 	CancelledAt *time.Time `json:"cancelled_at,omitempty"`
 }
 
@@ -36,10 +36,10 @@ type BlackMember struct {
 // rail: "credential" perks mint a single-use credential validated at an event gate.
 type Perk struct {
 	ID          string `json:"id"`
-	Code        string `json:"code"`         // EARLY_TICKETS | LOUNGE | ...
+	Code        string `json:"code"` // EARLY_TICKETS | LOUNGE | ...
 	Title       string `json:"title"`
-	Kind        string `json:"kind"`         // early_access | lounge | discount | partner
-	RedeemVia   string `json:"redeem_via"`   // credential | entitlement
+	Kind        string `json:"kind"`       // early_access | lounge | discount | partner
+	RedeemVia   string `json:"redeem_via"` // credential | entitlement
 	MaxPerMonth int    `json:"max_per_month"`
 	Active      bool   `json:"active"`
 }

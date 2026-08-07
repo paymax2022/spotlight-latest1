@@ -30,9 +30,9 @@ import (
 type PledgeState string
 
 const (
-	PledgePledged   PledgeState = "pledged"   // sponsor committed; funds not yet moved
-	PledgeFunded    PledgeState = "funded"     // funds moved into the scholarship fund (ledger)
-	PledgeApplied   PledgeState = "applied"    // at least one award applied to an invoice
+	PledgePledged   PledgeState = "pledged" // sponsor committed; funds not yet moved
+	PledgeFunded    PledgeState = "funded"  // funds moved into the scholarship fund (ledger)
+	PledgeApplied   PledgeState = "applied" // at least one award applied to an invoice
 	PledgeCancelled PledgeState = "cancelled"
 )
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, FlatList, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, FlatList, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TimerOff, LogOut, Users } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -12,6 +12,7 @@ import StateView from '@/components/StateView';
 import { VisitorColors } from '@/features/visitor/constants/visitor.constants';
 import { useCheckOutVisit, useGateSession, useOverstays } from '@/features/visitor/hooks/useVisitor';
 import { relativeTime } from '@/features/visitor/utils/visitorFormatters';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import type { OverstayVisit } from '@/features/visitor/types/visitor.types';
 
 function overdueLabel(mins: number): string {
@@ -27,11 +28,10 @@ export default function OverstayScreen() {
 
   const gateId = session.data?.gateId ?? 'gate_main';
 
-  const onCheckOut = (v: OverstayVisit) => {
-    Alert.alert('Check out visitor?', `Close ${v.visitorName}'s overdue visit to ${v.unitLabel}.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Check out', onPress: () => checkout.mutate({ visitEventId: v.visitEventId, gateId }, { onError: () => Alert.alert('Error', 'Could not check out.') }) },
-    ]);
+  const onCheckOut = async (v: OverstayVisit) => {
+    const ok = await confirmAsync({ title: 'Check out visitor?', message: `Close ${v.visitorName}'s overdue visit to ${v.unitLabel}.`, confirmLabel: 'Check out' });
+    if (!ok) return;
+    checkout.mutate({ visitEventId: v.visitEventId, gateId }, { onError: () => alertAsync({ title: 'Error', message: 'Could not check out.' }) });
   };
 
   const renderItem = ({ item }: { item: OverstayVisit }) => (

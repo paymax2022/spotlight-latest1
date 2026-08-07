@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
-	"spotlight/backend/internal/finance/tiers"
 )
 
 // lagosTZ is the delivery locale used to decide the night-fee window. Loaded once;
@@ -39,16 +39,6 @@ type RouteDistancer interface {
 	RouteDistanceKmEta(ctx context.Context, oLat, oLng, dLat, dLng float64) (km, etaMin float64, err error)
 }
 
-// DeliveryZoneChecker reports whether a delivery point falls inside any service area
-// the given owner has configured. `hasZones` is false when the owner has defined no
-// zones at all — in that case PlaceOrder does NOT enforce a zone (back-compat: a
-// restaurant that hasn't drawn a delivery area still takes orders). Satisfied by
-// maps.OwnerZoneChecker (PostGIS ST_Contains over service_areas). Optional: when nil,
-// no zone gate is applied.
-type DeliveryZoneChecker interface {
-	InAnyOwnerZone(ctx context.Context, lat, lng float64, ownerID string) (inZone, hasZones bool, err error)
-}
-
 // Service manages restaurants, menus, and orders.
 type Service struct {
 	db         *pgxpool.Pool
@@ -59,26 +49,11 @@ type Service struct {
 	feeRepo    *DeliveryConfigRepo // distance-based delivery-fee config (nil-safe → defaults)
 	notifier   Notifier            // nil-safe via s.notify; defaults to LogNotifier
 	rt         *Realtime           // optional; nil → no WS fan-out
-	tiers      *tiers.Service      // optional; nil → no tier-limit gate on the order escrow
-	zones      DeliveryZoneChecker // optional; nil → no delivery-zone gate on PlaceOrder
-
-	// Merchant WITHDRAWAL money path (wallet → bank). Wired only when
-	// FEATURE_RESTAURANT_WITHDRAWALS_ENABLED is on; see withdrawal.go. The `tiers`
-	// field above doubles as the fail-closed tier gate on the wallet debit.
-	disburser     WithdrawalDisburser // outbound bank disbursement; nil ⇒ NoopDisburser (executes nothing)
-	withdrawalsOn bool                // feature flag: no flag, no money path
+	commission CommissionRecorder  // optional; nil ⇒ realized-profit recording is a no-op
 }
 
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
 	return &Service{db: db, settlement: settlement, notifier: LogNotifier{}, feeRepo: NewDeliveryConfigRepo(db)}
-}
-
-// WithTiers attaches the KYC/tier-limit service so the order escrow debit is gated by
-// the customer's daily & per-transaction wallet limits (fail-closed), per the money
-// iron rule. Without it the gate is skipped (nil-safe, preserves prior behavior).
-func (s *Service) WithTiers(t *tiers.Service) *Service {
-	s.tiers = t
-	return s
 }
 
 // WithLedger attaches the finance ledger used by the payout-run disbursement
@@ -93,14 +68,6 @@ func (s *Service) WithLedger(l *ledger.Service) *Service {
 // to an order's connected participants. nil-safe (fan-out becomes a no-op).
 func (s *Service) WithRealtime(rt *Realtime) *Service {
 	s.rt = rt
-	return s
-}
-
-// WithZoneChecker attaches a delivery-zone checker so PlaceOrder rejects destinations
-// outside the restaurant owner's configured service areas. nil-safe: without it (or when
-// the owner has drawn no zones), orders are accepted regardless of destination.
-func (s *Service) WithZoneChecker(z DeliveryZoneChecker) *Service {
-	s.zones = z
 	return s
 }
 
@@ -138,13 +105,11 @@ func (s *Service) CreateRestaurant(ctx context.Context, ownerID string, req Crea
 		Description: req.Description,
 		Address:     req.Address,
 		LogoURL:     req.LogoURL,
-		Cuisine:     req.Cuisine,
-		Rating:      5.0,
 		IsOpen:      false,
 		CreatedAt:   time.Now(),
 	}
-	const q = `INSERT INTO restaurants (id, owner_id, name, description, address, logo_url, cuisine, is_open) VALUES ($1,$2,$3,$4,$5,$6,$7,false)`
-	_, err := s.db.Exec(ctx, q, r.ID, r.OwnerID, r.Name, r.Description, r.Address, r.LogoURL, nullIfEmpty(r.Cuisine))
+	const q = `INSERT INTO restaurants (id, owner_id, name, description, address, logo_url, is_open) VALUES ($1,$2,$3,$4,$5,$6,false)`
+	_, err := s.db.Exec(ctx, q, r.ID, r.OwnerID, r.Name, r.Description, r.Address, r.LogoURL)
 
 	// Best-effort: geocode the address to a pin so "near me" works. The UPDATE
 	// fires the merchant_locations sync trigger. A geocode failure never fails
@@ -210,37 +175,11 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	var isOpen bool
 	var ownerID string
 	var rLat, rLng *float64
-	var serviceFeeBp, surgeBp, prepTimeMinutes int
-	var minOrderKobo int64
-	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng, service_fee_bp, surge_bp, prep_time_minutes, min_order_kobo FROM restaurants WHERE id=$1`, restaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng, &serviceFeeBp, &surgeBp, &prepTimeMinutes, &minOrderKobo); err != nil {
+	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng FROM restaurants WHERE id=$1`, restaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng); err != nil {
 		return nil, fmt.Errorf("restaurant: not found")
 	}
 	if !isOpen {
 		return nil, fmt.Errorf("restaurant: restaurant is currently closed")
-	}
-	// Business-hours gate: a holiday override for today (if any) wins over the weekly
-	// schedule; a restaurant with neither is governed solely by is_open (checked above),
-	// preserving prior behavior. A load error blocks — an order must not slip through
-	// when availability can't be evaluated.
-	hours, herr := s.loadBusinessHours(ctx, restaurantID)
-	if herr != nil {
-		return nil, fmt.Errorf("restaurant: check business hours: %w", herr)
-	}
-	if req.ScheduledFor != nil {
-		// Scheduled order (SG-001): gate on the FUTURE slot (lead/horizon + open-at-slot)
-		// rather than open-now, so a restaurant that's closed right now can still take an
-		// order for a valid future window.
-		if verr := validateScheduledFor(time.Now(), *req.ScheduledFor, hours, lagosTZ); verr != nil {
-			return nil, verr
-		}
-	} else {
-		holiday, holErr := s.loadHolidayForDate(ctx, restaurantID, time.Now(), lagosTZ)
-		if holErr != nil {
-			return nil, fmt.Errorf("restaurant: check holiday hours: %w", holErr)
-		}
-		if !effectiveOpenWithHoliday(true, hours, holiday, time.Now(), lagosTZ) {
-			return nil, ErrClosedNow
-		}
 	}
 
 	// Fetch and validate menu items.
@@ -255,41 +194,16 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		if !mi.IsAvailable {
 			return nil, fmt.Errorf("restaurant: menu item '%s' is not available", mi.Name)
 		}
-		// Resolve chosen modifiers against the item's groups (validates availability,
-		// membership and each group's min/max/required rules) and add the per-unit
-		// delta to the base price. Plain items (no groups, no selection) price exactly
-		// as before. A bad selection is a client error (ErrInvalidModifierSelection).
-		groups, gErr := s.loadItemModifierGroups(ctx, mi.ID)
-		if gErr != nil {
-			return nil, gErr
-		}
-		chosenMods, modDelta, mErr := resolveLineModifiers(groups, input.ModifierIDs)
-		if mErr != nil {
-			return nil, mErr
-		}
-		lineUnit := mi.PriceKobo + modDelta
-		lineTotal := lineUnit * int64(input.Quantity)
-		snapshot := make([]OrderItemModifier, 0, len(chosenMods))
-		for _, cm := range chosenMods {
-			snapshot = append(snapshot, OrderItemModifier{ModifierID: cm.ID, Name: cm.Name, PriceDeltaKobo: cm.PriceDeltaKobo})
-		}
+		lineTotal := mi.PriceKobo * int64(input.Quantity)
 		items = append(items, OrderItem{
-			ID:            uuid.New().String(),
-			MenuItemID:    mi.ID,
-			Name:          mi.Name,
-			PriceKobo:     mi.PriceKobo,
-			Quantity:      input.Quantity,
-			ModifiersKobo: modDelta,
-			Modifiers:     snapshot,
-			SubtotalKobo:  lineTotal,
+			ID:           uuid.New().String(),
+			MenuItemID:   mi.ID,
+			Name:         mi.Name,
+			PriceKobo:    mi.PriceKobo,
+			Quantity:     input.Quantity,
+			SubtotalKobo: lineTotal,
 		})
 		subtotal += lineTotal
-	}
-
-	// Minimum-order gate (CT-007): the item subtotal must meet the restaurant's floor
-	// (0 = no minimum). Checked before any fee/escrow so an undersized cart fails fast.
-	if minOrderKobo > 0 && subtotal < minOrderKobo {
-		return nil, fmt.Errorf("restaurant: order subtotal %d is below the minimum of %d kobo", subtotal, minOrderKobo)
 	}
 
 	// Delivery fee: distance-based when BOTH the restaurant pin AND the delivery
@@ -305,104 +219,36 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		deliveryKobo = b.TotalKobo
 		breakdown = &b
 		dm := math.Round(b.DistanceKm*1000*10) / 10 // numeric(10,1) meters
-		// Door-to-door ETA = kitchen prep + travel (AV-004).
-		em := totalEtaMinutes(prepTimeMinutes, b.EtaMinutes)
+		em := b.EtaMinutes
 		distanceMeters = &dm
 		etaMinutes = &em
 	}
 
-	// Delivery-zone gate (BEFORE any money moves): when the restaurant's owner has
-	// drawn one or more service areas, the destination must fall inside one of them.
-	// Skipped when no zones are defined OR the request carries no coordinates
-	// (back-compat — a restaurant that hasn't drawn a delivery area still takes
-	// orders). A checker ERROR is treated as non-blocking: this is a logistics gate,
-	// not a money-safety invariant, and a transient geo-lookup failure must not strand
-	// every order — the order proceeds and an out-of-range drop can still be declined
-	// downstream. (Contrast the tier gate below, which is fail-closed by design.)
-	if s.zones != nil {
-		if dLat, dLng, ok := req.DeliveryCoords(); ok {
-			if inZone, hasZones, zerr := s.zones.InAnyOwnerZone(ctx, dLat, dLng, ownerID); zerr == nil && hasZones && !inZone {
-				return nil, ErrOutsideDeliveryZone
-			}
-		}
-	}
-
-	// Optional promo code: validate + price the discount BEFORE escrow (it reduces
-	// what the wallet is debited). An unusable code fails the order rather than being
-	// silently dropped, so the customer isn't charged full price on a code they expected
-	// to work. The discount applies to the item subtotal only (not delivery or tip) and
-	// is clamped to the subtotal by computeDiscount.
-	var applied *appliedPromo
-	discount := int64(0)
-	if req.PromoCode != "" {
-		ap, perr := s.resolvePromo(ctx, restaurantID, customerID, req.PromoCode, subtotal, deliveryKobo, time.Now())
-		if perr != nil {
-			return nil, perr
-		}
-		applied = &ap
-		discount = ap.DiscountKobo
-	}
-
-	// Pricing v2 (all default-0 basis points → no change): item surge inflates the
-	// item subtotal (peak dynamic pricing — part of the 80/10/10 settlement gross), and
-	// the platform service fee is a fixed platform leg at settlement. Both are derived
-	// from the pre-surge menu subtotal.
-	surgeKobo := applyBp(subtotal, surgeBp)
-	serviceFeeKobo := applyBp(subtotal, serviceFeeBp)
-
-	// Optional rider tip: escrowed with the order and paid 100% to the rider at
-	// settlement. Never trust a negative tip from the client — clamp to 0 so it can
-	// only ever add to the total (and thus to what the customer's wallet is debited).
-	tip := req.TipKobo
-	if tip < 0 {
-		tip = 0
-	}
-	// total = items + surge − discount + service fee + delivery + tip. The settlement
-	// gross (items+surge+delivery, pre-discount) splits 80/10/10; the service fee is a
-	// 100%-platform leg; the tip is a 100%-rider leg; the discount is borne by its funder.
-	total := subtotal + surgeKobo - discount + serviceFeeKobo + deliveryKobo + tip
+	total := subtotal + deliveryKobo
 	orderID := uuid.New().String()
 	ref := "order:" + orderID
 
-	// Escrow full amount: 80% restaurant, 10% rider, 10% platform (of the non-tip
-	// base); the tip rides on top and is paid entirely to the rider at settlement.
-	// Tier-limit gate (money iron rule): the order escrow debits the customer's wallet,
-	// so enforce their KYC/tier daily & per-transaction limits fail-closed BEFORE any
-	// debit. A tier/limit lookup error also blocks (never allow-on-error).
-	if s.tiers != nil {
-		if terr := s.tiers.EnforceWalletDebitLimit(ctx, customerID, total); terr != nil {
-			return nil, terr
-		}
-	}
+	// Escrow full amount: 80% restaurant, 10% rider, 10% platform.
 	sett, err := s.settlement.Escrow(ctx, customerID, ref, req.IdempotencyKey, "food_delivery", total)
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: escrow payment: %w", err)
 	}
 
 	order := &Order{
-		ID:                  orderID,
-		CustomerID:          customerID,
-		RestaurantID:        restaurantID,
-		SubtotalKobo:        subtotal,
-		DeliveryKobo:        deliveryKobo,
-		TipKobo:             tip,
-		SurgeKobo:           surgeKobo,
-		ServiceFeeKobo:      serviceFeeKobo,
-		SpecialInstructions: sanitizeInstructions(req.SpecialInstructions),
-		DiscountKobo:        discount,
-		TotalKobo:           total,
-		Status:              OrderPending,
-		IdempotencyKey:      req.IdempotencyKey,
-		SettlementID:        sett.ID,
-		DeliveryAddress:     req.DeliveryAddress,
-		DistanceMeters:      distanceMeters,
-		EtaMinutes:          etaMinutes,
-		DeliveryBreakdown:   breakdown,
-		CreatedAt:           time.Now(),
-	}
-	if applied != nil {
-		pid, fnd := applied.PromoID, string(applied.Funder)
-		order.PromoID, order.PromoFunder = &pid, &fnd
+		ID:                orderID,
+		CustomerID:        customerID,
+		RestaurantID:      restaurantID,
+		SubtotalKobo:      subtotal,
+		DeliveryKobo:      deliveryKobo,
+		TotalKobo:         total,
+		Status:            OrderPending,
+		IdempotencyKey:    req.IdempotencyKey,
+		SettlementID:      sett.ID,
+		DeliveryAddress:   req.DeliveryAddress,
+		DistanceMeters:    distanceMeters,
+		EtaMinutes:        etaMinutes,
+		DeliveryBreakdown: breakdown,
+		CreatedAt:         time.Now(),
 	}
 
 	// delivery_breakdown is a NOT NULL jsonb column (default '{}'); marshal the
@@ -421,17 +267,14 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	defer tx.Rollback(ctx)
 
 	const insertOrder = `
-		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, tip_kobo, discount_kobo, promo_id, promo_funder, surge_kobo, service_fee_kobo, special_instructions, scheduled_for)
-		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown)
+		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insertOrder,
 		order.ID, order.CustomerID, order.RestaurantID,
 		order.SubtotalKobo, order.DeliveryKobo, order.TotalKobo,
 		order.IdempotencyKey, order.SettlementID, order.DeliveryAddress,
-		order.DistanceMeters, order.EtaMinutes, breakdownJSON, order.TipKobo,
-		order.DiscountKobo, order.PromoID, order.PromoFunder,
-		order.SurgeKobo, order.ServiceFeeKobo, nullIfEmpty(order.SpecialInstructions),
-		req.ScheduledFor,
+		order.DistanceMeters, order.EtaMinutes, breakdownJSON,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: insert order: %w", err)
@@ -452,29 +295,6 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 			items[i].Name, items[i].PriceKobo, items[i].Quantity, items[i].SubtotalKobo,
 		); err != nil {
 			return nil, fmt.Errorf("restaurant: insert order item: %w", err)
-		}
-		// Snapshot the chosen modifiers so the historical line price is reproducible
-		// even if the menu is edited later.
-		for _, m := range items[i].Modifiers {
-			const insertMod = `INSERT INTO order_item_modifiers (id, order_item_id, modifier_id, name, price_delta_kobo) VALUES ($1,$2,$3,$4,$5)`
-			if _, err := tx.Exec(ctx, insertMod,
-				uuid.New().String(), items[i].ID, m.ModifierID, m.Name, m.PriceDeltaKobo,
-			); err != nil {
-				return nil, fmt.Errorf("restaurant: insert order item modifier: %w", err)
-			}
-		}
-	}
-	// Record the promo redemption in the SAME tx as the order, so a discounted order
-	// and its redemption commit atomically. UNIQUE(order_id) + ON CONFLICT DO NOTHING
-	// makes it idempotent on replay (never double-counts a single order's usage).
-	if applied != nil {
-		const insertRedemption = `
-			INSERT INTO restaurant_promo_redemptions (id, promo_id, order_id, user_id, discount_kobo)
-			VALUES ($1,$2,$3,$4,$5) ON CONFLICT (order_id) DO NOTHING`
-		if _, err := tx.Exec(ctx, insertRedemption,
-			uuid.New().String(), applied.PromoID, order.ID, customerID, applied.DiscountKobo,
-		); err != nil {
-			return nil, fmt.Errorf("restaurant: record promo redemption: %w", err)
 		}
 	}
 	order.Items = items
@@ -502,17 +322,6 @@ func (s *Service) OrderParties(ctx context.Context, orderID string) (customer, o
 
 // orderParties returns the three participant user-ids for an order: the
 // customer, the restaurant owner, and the assigned rider (rider may be empty).
-// recordOrderEvent appends an immutable audit row (actor + from→to + timestamp) for a
-// lifecycle transition, satisfying the "every state change writes an audit event"
-// invariant. Best-effort and non-blocking — an audit-write failure must never fail the
-// transition (the row is the compliance trail, not the source of truth).
-func (s *Service) recordOrderEvent(ctx context.Context, orderID, actorID string, from, to OrderStatus) {
-	_, _ = s.db.Exec(ctx,
-		`INSERT INTO restaurant_order_status_events (order_id, actor_id, from_status, to_status)
-		 VALUES ($1, NULLIF($2,''), NULLIF($3,''), $4)`,
-		orderID, actorID, string(from), string(to))
-}
-
 // getOrderByIdempotencyKey resolves and returns the order previously created with the
 // given Idempotency-Key — the canonical result for an idempotent PlaceOrder replay
 // (returned instead of a UNIQUE-violation 500). Scoped to the order's own customer.
@@ -580,7 +389,7 @@ func (s *Service) UpdateStatus(ctx context.Context, orderID, actorID string, new
 	if newStatus == OrderCancelled {
 		return s.cancelAndRefund(ctx, orderID, actorID)
 	}
-	return s.transitionInternal(ctx, orderID, actorID, newStatus)
+	return s.transitionInternal(ctx, orderID, newStatus)
 }
 
 // transitionInternal performs the guarded lifecycle transition and its side effects
@@ -588,11 +397,12 @@ func (s *Service) UpdateStatus(ctx context.Context, orderID, actorID string, new
 // assumed to have ALREADY been checked, or the caller is a trusted internal path such
 // as ConfirmHandoff (after it verifies the delivery-code POD). It is the ONLY place
 // `delivered` may be set.
-func (s *Service) transitionInternal(ctx context.Context, orderID, actorID string, newStatus OrderStatus) error {
+func (s *Service) transitionInternal(ctx context.Context, orderID string, newStatus OrderStatus) error {
 	var order Order
-	// COALESCE settlement_id: it is nullable, and the non-settling transitions
-	// (confirmed/preparing/ready) don't need it — scanning a NULL into the non-pointer
-	// SettlementID would otherwise fail with a misleading "order not found".
+	// settlement_id is a NULLABLE column; COALESCE to '' so a settlement-less order
+	// (e.g. one created outside the escrow path) scans cleanly instead of erroring —
+	// which the previous `settlement_id` scan into a string masked as "order not
+	// found". Mirrors the COALESCE(settlement_id::text,'') pattern in delivery.go.
 	const q = `SELECT id, restaurant_id, status, COALESCE(settlement_id::text,'') FROM orders WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&order.ID, &order.RestaurantID, &order.Status, &order.SettlementID); err != nil {
 		return fmt.Errorf("restaurant: order not found")
@@ -605,8 +415,6 @@ func (s *Service) transitionInternal(ctx context.Context, orderID, actorID strin
 	if _, err := s.db.Exec(ctx, `UPDATE orders SET status=$1 WHERE id=$2`, string(newStatus), orderID); err != nil {
 		return err
 	}
-	// Append-only audit of the transition (actor + from→to). Best-effort, non-blocking.
-	s.recordOrderEvent(ctx, orderID, actorID, order.Status, newStatus)
 
 	// On delivery, settle: 80% restaurant owner, 10% rider (stubbed to owner if no rider), 10% platform.
 	if newStatus == OrderDelivered {
@@ -661,18 +469,58 @@ func canTransition(from, to OrderStatus) bool {
 	}
 	switch from {
 	case OrderPending:
-		return to == OrderConfirmed || to == OrderCancelled || to == OrderRejected
+		return to == OrderConfirmed || to == OrderCancelled
 	case OrderConfirmed:
-		return to == OrderPreparing || to == OrderCancelled || to == OrderRejected
+		return to == OrderPreparing || to == OrderCancelled
 	case OrderPreparing:
 		return to == OrderReady || to == OrderCancelled
 	case OrderReady:
-		return to == OrderPickedUp || to == OrderCancelled || to == OrderDispatchFailed
+		return to == OrderPickedUp || to == OrderCancelled
 	case OrderPickedUp:
-		return to == OrderDelivered || to == OrderDeliveryFailed
+		return to == OrderDelivered
 	default:
-		// delivered / cancelled / rejected / dispatch_failed / delivery_failed are terminal.
+		// delivered / cancelled are terminal.
 		return false
+	}
+}
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module (§ profit registry). app-wiring injects a thin adapter over the finance
+// commission service; when the commission feature is off (or no recorder is wired)
+// the field is nil and recording is a silent no-op. Modeled as a LOCAL interface so
+// restaurant never imports the commission package at compile time (mirrors the
+// Notifier / AddressGeocoder seams) — the adapter, which lives in app-wiring,
+// discards the returned earning row and surfaces only the error.
+//
+// This records realized profit ONLY; it never moves money. Restaurant's own money
+// movements (the 80/10/10 settlement split into owner/rider/platform wallets) are
+// unchanged, and the injected recorder is deliberately constructed WITHOUT a ledger
+// so RecordFor never re-posts to the ledger (no double count of the commission
+// revenue account) — it appends the immutable earning row used by profit reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a settled food order.
+// It is best-effort and MUST NEVER affect the caller's outcome: a nil recorder is a
+// no-op, and any error is logged and swallowed so a profit-registry failure can
+// never fail or reverse the order settlement / payout. The recorded breakdown is
+// resolved server-side from the central rate card; the order id doubles as the
+// source ref + idempotency key so retries and the crash-recovery reconciler never
+// double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
+		"restaurant", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[restaurant] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
 	}
 }
 
@@ -687,49 +535,40 @@ func canTransition(from, to OrderStatus) bool {
 // live UpdateStatus(delivered) path and the crash-recovery reconciler.
 func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settlementID string) error {
 	var riderID *string
-	var tipKobo, discountKobo, serviceFeeKobo int64
-	var promoFunder *string
-	s.db.QueryRow(ctx, `SELECT rider_id, tip_kobo, discount_kobo, promo_funder, service_fee_kobo FROM orders WHERE id=$1`, orderID).
-		Scan(&riderID, &tipKobo, &discountKobo, &promoFunder, &serviceFeeKobo)
+	s.db.QueryRow(ctx, `SELECT rider_id FROM orders WHERE id=$1`, orderID).Scan(&riderID)
 	var ownerID string
 	s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID)
-	platformFunded := promoFunder != nil && *promoFunder == string(FunderPlatform)
-	return s.settlement.Settle(ctx, settlementID, orderSettlementSplit(ownerID, riderID, tipKobo, discountKobo, serviceFeeKobo, platformFunded))
-}
-
-// orderSettlementSplit builds the settlement split for a food order. Pure (no DB) so
-// the payout policy — rider-tip routing and promo-discount funding, plus their edge
-// cases — is table-testable. Two shapes:
-//
-//   - rider assigned:  80% owner / 10% platform / 10% rider of the pre-discount gross,
-//     the whole tip added on top to the rider, and the promo discount borne by the
-//     funder (platform-funded → off the platform leg; else off the owner remainder).
-//   - no rider:        the rider's 10% folds into the owner (90/10) and the tip flows
-//     through the base split (TipKobo=0, since settlement rejects a tip with no rider);
-//     the promo discount is still borne by its funder. Nothing is stranded or lost.
-func orderSettlementSplit(ownerID string, riderID *string, tipKobo, discountKobo, serviceFeeKobo int64, platformFunded bool) settlement.Split {
+	split := settlement.Split{
+		ProviderID:  ownerID,
+		ProviderPct: 0.80,
+		PlatformPct: 0.10,
+		RiderID:     riderID,
+		RiderPct:    0.10,
+	}
 	if riderID == nil {
-		return settlement.Split{
-			ProviderID:               ownerID,
-			ProviderPct:              0.90,
-			PlatformPct:              0.10,
-			DiscountKobo:             discountKobo,
-			DiscountFundedByPlatform: platformFunded,
-			ServiceFeeKobo:           serviceFeeKobo, // 100% platform, on top
-			// no RiderID, no RiderPct, and no fixed tip leg (would be rejected)
-		}
+		split.ProviderPct = 0.90
+		split.RiderPct = 0
 	}
-	return settlement.Split{
-		ProviderID:               ownerID,
-		ProviderPct:              0.80,
-		PlatformPct:              0.10,
-		RiderID:                  riderID,
-		RiderPct:                 0.10,
-		TipKobo:                  tipKobo, // 100% to the rider, on top of the base split
-		DiscountKobo:             discountKobo,
-		DiscountFundedByPlatform: platformFunded,
-		ServiceFeeKobo:           serviceFeeKobo, // 100% platform, on top
+	if err := s.settlement.Settle(ctx, settlementID, split); err != nil {
+		return err
 	}
+
+	// Record realized Spotlight profit into the central Commission & Profit registry.
+	// This is the food-delivery settlement point (shared by the live UpdateStatus
+	// (delivered) path and the crash-recovery reconciler re-drive). Best-effort +
+	// idempotent: the order id doubles as source ref + idempotency key, so retries /
+	// reconciliation never double-count. gross = the full order value the customer
+	// paid (total_kobo = food subtotal + delivery fee) — the SAME basis restaurant's
+	// own 10% platform cut is computed on (the escrow split above applies its
+	// PlatformPct to this same escrowed total). A recorder failure is logged and
+	// swallowed — it must NEVER fail the settlement above (restaurant's own settle
+	// already posted the platform cut to the ledger; this appends the earning row
+	// only). userID is the paying customer.
+	var grossKobo int64
+	var customerID string
+	s.db.QueryRow(ctx, `SELECT total_kobo, customer_id FROM orders WHERE id=$1`, orderID).Scan(&grossKobo, &customerID)
+	s.recordCommissionSafe(ctx, "Lifestyle", "Restaurant", "", grossKobo, orderID, &customerID)
+	return nil
 }
 
 // CancelOrder refunds the customer if the order has not yet been picked up.
@@ -754,59 +593,53 @@ func (s *Service) CancelOrder(ctx context.Context, orderID, actorID string) erro
 // escrow (idempotent on the settlement status), marks the order cancelled, then notifies.
 // Idempotent: re-cancelling an already-cancelled order is a no-op.
 func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) error {
-	return s.refundAndClose(ctx, orderID, actorID, OrderCancelled, "order_cancelled")
-}
-
-// refundAndClose refunds an order's escrow and moves it to a terminal REFUNDED close
-// state (cancelled | rejected | dispatch_failed). Transactional (SELECT … FOR UPDATE);
-// idempotent when the order is already in that same close state; refuses to refund a
-// picked-up/delivered order (its money is already settling to the provider). The reason
-// is persisted on the order + the audit trail. This is the single money-safe path
-// shared by cancellation, restaurant rejection, and dispatch failure.
-func (s *Service) refundAndClose(ctx context.Context, orderID, actorID string, target OrderStatus, reason string) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("restaurant: begin refund tx: %w", err)
+		return fmt.Errorf("restaurant: begin cancel tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
 	var status, settlementID string
+	// COALESCE the nullable settlement_id so a settlement-less order scans cleanly
+	// (see transitionInternal / delivery.go) rather than masking the scan error as
+	// "order not found".
 	if err := tx.QueryRow(ctx,
-		`SELECT status, settlement_id FROM orders WHERE id=$1 FOR UPDATE`, orderID).
+		`SELECT status, COALESCE(settlement_id::text,'') FROM orders WHERE id=$1 FOR UPDATE`, orderID).
 		Scan(&status, &settlementID); err != nil {
 		return fmt.Errorf("restaurant: order not found")
 	}
-	if status == string(target) {
-		return tx.Commit(ctx) // already in this close state — idempotent no-op
-	}
-	if isRefundedClose(OrderStatus(status)) {
-		return fmt.Errorf("restaurant: order is already %s", status)
+	if status == string(OrderCancelled) {
+		return tx.Commit(ctx) // already cancelled — idempotent no-op
 	}
 	if status == string(OrderPickedUp) || status == string(OrderDelivered) {
-		return fmt.Errorf("restaurant: cannot refund an order that is already picked up or delivered")
+		return fmt.Errorf("restaurant: cannot cancel an order that is already picked up or delivered")
 	}
-	// Refund the escrow before committing the close so an order is never moved to a
-	// terminal refunded state without the money being returned. Refund is idempotent on
-	// the settlement status, so a retry after a mid-flight failure never double-refunds.
-	if err := s.settlement.Refund(ctx, settlementID, reason); err != nil {
-		return fmt.Errorf("restaurant: refund order: %w", err)
+	// Refund the escrow before committing the cancel so an order is never marked
+	// cancelled without the money being returned. Refund is idempotent on the
+	// settlement status, so a retry after a mid-flight failure does not double-refund.
+	// A settlement-less order (no escrow attached) has nothing to refund — real
+	// orders always carry a settlement from CreateOrder, so this only guards
+	// non-standard rows.
+	if settlementID != "" {
+		if err := s.settlement.Refund(ctx, settlementID, "order_cancelled"); err != nil {
+			return fmt.Errorf("restaurant: refund order: %w", err)
+		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE orders SET status=$1, status_reason=$2 WHERE id=$3`, string(target), nullIfEmpty(reason), orderID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE orders SET status='cancelled' WHERE id=$1`, orderID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	s.recordOrderEvent(ctx, orderID, actorID, OrderStatus(status), target)
 
-	// Notify the customer + rider (if assigned) and broadcast the close.
+	// Notify the customer + rider (if assigned) and broadcast cancellation.
 	customer, _, rider, _ := s.orderParties(ctx, orderID)
 	if customer != "" && customer != actorID {
-		s.notify(ctx, Notification{UserID: customer, Event: EventOrderCancelled, Title: "Order " + string(target), Body: "Your order was " + string(target) + " and refunded.", Data: map[string]any{"order_id": orderID, "reason": reason}})
+		s.notify(ctx, Notification{UserID: customer, Event: EventOrderCancelled, Title: "Order cancelled", Body: "Your order was cancelled and refunded.", Data: map[string]any{"order_id": orderID}})
 	}
 	if rider != "" && rider != actorID {
-		s.notify(ctx, Notification{UserID: rider, Event: EventOrderCancelled, Title: "Order " + string(target), Body: "An assigned order was " + string(target) + ".", Data: map[string]any{"order_id": orderID}})
+		s.notify(ctx, Notification{UserID: rider, Event: EventOrderCancelled, Title: "Order cancelled", Body: "An assigned order was cancelled.", Data: map[string]any{"order_id": orderID}})
 	}
-	s.broadcastStatus(orderID, target)
+	s.broadcastStatus(orderID, OrderCancelled)
 	return nil
 }

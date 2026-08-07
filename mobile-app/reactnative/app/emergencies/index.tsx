@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, FlatList, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, FlatList, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { confirmAsync } from '@/lib/confirm';
 import * as Icons from 'lucide-react-native';
 import { Siren, CheckCircle2 } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -20,9 +21,10 @@ export default function EmergenciesScreen() {
   const { data, isLoading, isError, refetch, isRefetching } = useEmergencies();
   const resolve = useResolveEmergency();
 
-  const onResolve = (a: EmergencyAlert) => Alert.alert('Mark resolved?', `Close the ${KIND_META[a.kind].label.toLowerCase()} alert.`, [
-    { text: 'Cancel', style: 'cancel' }, { text: 'Resolve', onPress: () => resolve.mutate(a.id) },
-  ]);
+  const onResolve = async (a: EmergencyAlert) => {
+    const ok = await confirmAsync({ title: 'Mark resolved?', message: `Close the ${KIND_META[a.kind].label.toLowerCase()} alert.`, confirmLabel: 'Resolve' });
+    if (ok) resolve.mutate(a.id);
+  };
 
   const renderItem = ({ item }: { item: EmergencyAlert }) => {
     const meta = KIND_META[item.kind]; const sc = STATUS_META[item.status];

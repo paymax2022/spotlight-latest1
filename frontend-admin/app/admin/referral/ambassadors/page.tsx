@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { listAmbassadors, formatNaira } from '@/services/referralAdminOpsService';
 import type { Ambassador } from '@/types/referralAdminOps';
-import { PageHeader, Card, Badge, btn, th, td, timeAgo, StateBlock } from '../_ui';
+import { timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const TIERS = ['all', 'Ambassador', 'Agent'];
 const links = [
@@ -28,43 +29,52 @@ export default function AmbassadorsDirectoryPage() {
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tier]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Ambassadors & Agents — Directory & tiers"
         subtitle="Manage ambassadors and agents, tier assignment and performance oversight (A-AMB-01/05)."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
-        {links.map((l) => <Link key={l.href} href={l.href} style={{ ...btn(), textDecoration: 'none', color: '#374151' }}>{l.label}</Link>)}
+        {links.map((l) => <Link key={l.href} href={l.href}><Button variant="outline" sm>{l.label}</Button></Link>)}
       </div>
 
-      <Card title="Directory" right={
-        <select value={tier} onChange={(e) => setTier(e.target.value)} style={{ ...btn(), cursor: 'pointer' }}>
-          {TIERS.map((t) => <option key={t} value={t}>{t === 'all' ? 'All tiers' : t}</option>)}
-        </select>
-      }>
-        <StateBlock loading={loading} error={error} empty={!rows || rows.length === 0} emptyText="No ambassadors / agents.">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <Card style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '14px 14px 0' }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Directory</h2>
+          <select value={tier} onChange={(e) => setTier(e.target.value)}>
+            {TIERS.map((t) => <option key={t} value={t}>{t === 'all' ? 'All tiers' : t}</option>)}
+          </select>
+        </div>
+
+        {loading ? (
+          <p style={{ color: colors.muted, fontSize: 13, padding: 14 }}>Loading…</p>
+        ) : error ? (
+          <p style={{ color: colors.danger, fontSize: 13, padding: 14 }}>{error}</p>
+        ) : !rows || rows.length === 0 ? (
+          <p style={{ color: colors.muted, fontSize: 13, padding: 14 }}>No ambassadors / agents.</p>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 14 }}>
             <thead><tr>
-              <th style={th()}>Name</th><th style={th()}>Tier</th><th style={th()}>Status</th>
-              <th style={th()}>Network</th><th style={th()}>Earned</th><th style={th()}>Override</th><th style={th()}>Joined</th>
+              <th style={thCell}>Name</th><th style={thCell}>Tier</th><th style={thCell}>Status</th>
+              <th style={thCell}>Network</th><th style={thCell}>Earned</th><th style={thCell}>Override</th><th style={thCell}>Joined</th>
             </tr></thead>
             <tbody>
-              {(rows ?? []).map((a) => (
+              {rows.map((a) => (
                 <tr key={a.id}>
-                  <td style={td()}><Link href={`/admin/referral/users/${a.id}`} style={{ color: '#340075', fontWeight: 600 }}>{a.name}</Link><br /><code style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{a.id}</code></td>
-                  <td style={td()}><Badge status="normal" label={a.tier} /></td>
-                  <td style={td()}><Badge status={a.status === 'active' ? 'active' : a.status === 'suspended' ? 'critical' : 'high'} label={a.status} /></td>
-                  <td style={td()}>{a.network_size}</td>
-                  <td style={td()}>{formatNaira(a.total_earned_kobo)}</td>
-                  <td style={td()}>{formatNaira(a.override_earned_kobo)}</td>
-                  <td style={td()}>{timeAgo(a.joined_at)}</td>
+                  <td style={tdCell}><Link href={`/admin/referral/users/${a.id}`} style={{ color: colors.primary, fontWeight: 600, textDecoration: 'none' }}>{a.name}</Link><br /><code style={{ fontSize: '0.72rem', color: colors.muted }}>{a.id}</code></td>
+                  <td style={tdCell}><Badge text={a.tier} color={colors.info} /></td>
+                  <td style={tdCell}><Badge text={a.status} color={a.status === 'active' ? colors.success : a.status === 'suspended' ? colors.danger : colors.warning} /></td>
+                  <td style={tdCell}>{a.network_size}</td>
+                  <td style={tdCell}>{formatNaira(a.total_earned_kobo)}</td>
+                  <td style={tdCell}>{formatNaira(a.override_earned_kobo)}</td>
+                  <td style={tdCell}>{timeAgo(a.joined_at)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </StateBlock>
+        )}
       </Card>
-    </div>
+    </Page>
   );
 }

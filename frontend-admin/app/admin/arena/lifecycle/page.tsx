@@ -10,9 +10,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { listCompetitions, listContestants, runTransition } from '@/services/arenaAdminService';
 import type { Competition, Contestant, ContestantState } from '@/types/arenaAdmin';
 import { LEGAL_TRANSITIONS, MERIT_DERIVED_TRANSITIONS } from '@/types/arenaAdmin';
+import { Page, PageHeader, Card, Button, Input, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 import {
-  PageHeader, Card, btn, btnPrimary, btnDisabled, th, td, inputStyle, selectStyle, mono,
-  StateBadge, LockedChip, timeAgo, AuditNote, PermissionBanner, ARENA_PERMS, useArenaPermission,
+  mono, StateBadge, LockedChip, timeAgo, AuditNote, PermissionBanner, ARENA_PERMS, useArenaPermission,
 } from '../_ui';
 
 export default function ArenaLifecyclePage() {
@@ -67,47 +67,47 @@ export default function ArenaLifecyclePage() {
   const stateOrder: ContestantState[] = ['APPLIED', 'SCREENED', 'TRAINED', 'THEORY_ASSIGNED', 'THEORY_TAKEN', 'QUALIFIED', 'FINALIST', 'CROWNED', 'ELIMINATED', 'REJECTED', 'WITHDRAWN'];
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Arena — Lifecycle Transitions (A5)"
         subtitle="Contestants by state. Only legal transitions are offered. Advancement (QUALIFIED / FINALIST / CROWNED) reads the Merit leaderboard ONLY. RBAC: arena.admin.manage."
-        action={
+        actions={
           <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <select value={competitionId} onChange={(e) => setCompetitionId(e.target.value)} style={selectStyle()}>
+            <select value={competitionId} onChange={(e) => setCompetitionId(e.target.value)}>
               {competitions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <button onClick={() => void load()} style={btn()}>Refresh</button>
+            <Button variant="outline" onClick={() => void load()}>Refresh</Button>
           </div>
         }
       />
 
       {!allowed && <PermissionBanner permission={ARENA_PERMS.admin} />}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-      {notice && <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#166534', marginBottom: '1.25rem' }}>{notice}</div>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      {notice && <div style={{ background: tint(colors.success, 0.12), border: `1px solid ${tint(colors.success, 0.35)}`, borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.success, marginBottom: '1.25rem' }}>{notice}</div>}
 
-      <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#1e40af', marginBottom: '1.25rem', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div style={{ background: tint(colors.info, 0.12), border: `1px solid ${tint(colors.info, 0.35)}`, borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.info, marginBottom: '1.25rem', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <LockedChip label="NDC-1" /> Advancement transitions are a pure function of the signed Merit ledger — no engagement or money tally is read here.
       </div>
 
       {loading ? (
-        <Card><p style={{ color: '#6b7280' }}>Loading contestants…</p></Card>
+        <Card><p style={{ color: colors.muted }}>Loading contestants…</p></Card>
       ) : rows.length === 0 ? (
-        <Card><p style={{ color: '#6b7280' }}>No contestants.</p></Card>
+        <Card><p style={{ color: colors.muted }}>No contestants.</p></Card>
       ) : (
         stateOrder.filter((s) => grouped[s]?.length).map((state) => (
-          <Card key={state} title={`${state.replace(/_/g, ' ')} · ${grouped[state].length}`}>
-            <div style={{ overflowX: 'auto' }}>
+          <Card key={state} title={`${state.replace(/_/g, ' ')} · ${grouped[state].length}`} style={{ marginBottom: 20 }}>
+            <div style={{ overflowX: 'auto', marginTop: 8 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
-                    <th style={th()}>Contestant</th>
-                    <th style={th()}>Home state</th>
-                    <th style={th()}>Batch</th>
-                    <th style={th()}>Merit total</th>
-                    <th style={th()}>Updated</th>
-                    <th style={th()}>Transition to</th>
-                    <th style={th()}>Reason</th>
-                    <th style={th()}></th>
+                    <th style={thCell}>Contestant</th>
+                    <th style={thCell}>Home state</th>
+                    <th style={thCell}>Batch</th>
+                    <th style={thCell}>Merit total</th>
+                    <th style={thCell}>Updated</th>
+                    <th style={thCell}>Transition to</th>
+                    <th style={thCell}>Reason</th>
+                    <th style={thCell}></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -115,21 +115,20 @@ export default function ArenaLifecyclePage() {
                     const legal = LEGAL_TRANSITIONS[c.state] ?? [];
                     return (
                       <tr key={c.id}>
-                        <td style={td()}>
-                          {c.full_name ?? '—'}<div style={{ ...mono(), color: '#9ca3af' }}>{c.user_id}</div>
+                        <td style={tdCell}>
+                          {c.full_name ?? '—'}<div style={{ ...mono(), color: colors.muted }}>{c.user_id}</div>
                         </td>
-                        <td style={td()}>{c.home_state}</td>
-                        <td style={td()}>{c.theory_batch ?? '—'}</td>
-                        <td style={td()}>{c.merit_total != null ? c.merit_total.toFixed(1) : '—'}</td>
-                        <td style={td()}>{timeAgo(c.updated_at)}</td>
-                        <td style={td()}>
+                        <td style={tdCell}>{c.home_state}</td>
+                        <td style={tdCell}>{c.theory_batch ?? '—'}</td>
+                        <td style={tdCell}>{c.merit_total != null ? c.merit_total.toFixed(1) : '—'}</td>
+                        <td style={tdCell}>{timeAgo(c.updated_at)}</td>
+                        <td style={tdCell}>
                           {legal.length === 0 ? (
-                            <span style={{ color: '#9ca3af' }}>Terminal</span>
+                            <span style={{ color: colors.muted }}>Terminal</span>
                           ) : (
                             <select
                               value={target[c.id] ?? ''}
                               onChange={(e) => setTarget((t) => ({ ...t, [c.id]: e.target.value as ContestantState }))}
-                              style={selectStyle()}
                               disabled={!allowed}
                             >
                               <option value="">Select…</option>
@@ -141,23 +140,23 @@ export default function ArenaLifecyclePage() {
                             </select>
                           )}
                         </td>
-                        <td style={td()}>
-                          <input
+                        <td style={tdCell}>
+                          <Input
                             value={reasons[c.id] ?? ''}
                             onChange={(e) => setReasons((r) => ({ ...r, [c.id]: e.target.value }))}
                             placeholder="Reason (required)"
-                            style={{ ...inputStyle(), minWidth: 180 }}
+                            style={{ minWidth: 180 }}
                             disabled={!allowed || legal.length === 0}
                           />
                         </td>
-                        <td style={td()}>
-                          <button
+                        <td style={tdCell}>
+                          <Button
+                            variant="primary"
                             onClick={() => void submit(c)}
-                            style={allowed && target[c.id] && (reasons[c.id] ?? '').trim() && busyId !== c.id ? btnPrimary() : btnDisabled()}
                             disabled={!allowed || !target[c.id] || !(reasons[c.id] ?? '').trim() || busyId === c.id}
                           >
                             {busyId === c.id ? '…' : 'Run'}
-                          </button>
+                          </Button>
                         </td>
                       </tr>
                     );
@@ -170,11 +169,11 @@ export default function ArenaLifecyclePage() {
       )}
 
       <Card>
-        <p style={{ fontSize: '0.85rem', color: '#374151', margin: 0 }}>
+        <p style={{ fontSize: '0.85rem', color: colors.text, margin: 0 }}>
           <StateBadge state="CROWNED" /> is atomic: crowning issues the <code>NAIJA_DRIVER</code> credential, finalizes the award with a signature, and triggers the guarded pot disbursement — all in one transaction, or none of it.
         </p>
         <AuditNote>Every transition records actor + timestamp + reason to audit_log. Only transitions in the LOCKED state machine are accepted; the backend rejects the rest (NDC-5).</AuditNote>
       </Card>
-    </div>
+    </Page>
   );
 }

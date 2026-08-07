@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"log"
 	"math/big"
 	"strings"
 	"time"
@@ -87,17 +88,18 @@ type PayoutGate interface {
 
 // Service is the PharmacyOrder + catalog + Rx-verification engine.
 type Service struct {
-	db       *pgxpool.Pool
-	escrow   EscrowHolder
-	rx       RxGate
-	dispatch Dispatcher
-	prov     ProviderGate
-	payout   PayoutGate
-	verifier RxVerifier
-	audit    Auditor
-	reviews  ReviewCaseOpener // optional (nil-safe), injected via SetReviewCaseOpener
-	qty      QuantityGate     // optional (nil-safe), injected via SetQuantityGate (PRD §5.5)
-	rxItems  RxItems          // optional; nil ⇒ dispensed-item↔Rx match check is skipped (DP-002)
+	db         *pgxpool.Pool
+	escrow     EscrowHolder
+	rx         RxGate
+	dispatch   Dispatcher
+	prov       ProviderGate
+	payout     PayoutGate
+	verifier   RxVerifier
+	audit      Auditor
+	reviews    ReviewCaseOpener   // optional (nil-safe), injected via SetReviewCaseOpener
+	qty        QuantityGate       // optional (nil-safe), injected via SetQuantityGate (PRD §5.5)
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	rxItems    RxItems            // optional; nil ⇒ dispensed-item↔Rx match check is skipped (DP-002)
 }
 
 func NewService(db *pgxpool.Pool, escrow EscrowHolder, rx RxGate, verifier RxVerifier, dispatch Dispatcher, prov ProviderGate, payout PayoutGate, audit Auditor) *Service {
@@ -106,6 +108,29 @@ func NewService(db *pgxpool.Pool, escrow EscrowHolder, rx RxGate, verifier RxVer
 
 // SetReviewCaseOpener injects the optional symptom-search seam at wiring time.
 func (s *Service) SetReviewCaseOpener(r ReviewCaseOpener) { s.reviews = r }
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module (§ profit registry). app-wiring injects a thin adapter over the finance
+// commission service; when the commission feature is off (or no recorder is wired)
+// the field is nil and recording is a silent no-op. Modeled as a LOCAL interface so
+// pharmacy never imports the commission package at compile time (mirrors the
+// transport/doctor seams) — the adapter, which lives in app-wiring, discards the
+// returned earning row and surfaces only the error.
+//
+// This records realized profit ONLY; it never moves money. The pharmacy module's
+// own money movements (the order escrow HELD→RELEASE of the patient payment to the
+// pharmacy) are unchanged, and the injected recorder is deliberately constructed
+// WITHOUT a ledger so RecordFor never re-posts to the ledger (no double count of the
+// commission revenue account) — it appends the immutable earning row used by profit
+// reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
 
 // RxItems is the nil-safe seam that returns the drug identity (NAFDAC reference) +
 // prescribed quantity for each item on a verified prescription — the authority the
@@ -142,6 +167,24 @@ func (s *Service) dispensedRxLines(ctx context.Context, orderID string) ([]Dispe
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// recordCommissionSafe records realized Spotlight profit for a completed pharmacy
+// order. It is best-effort and MUST NEVER affect the caller's outcome: a nil
+// recorder is a no-op, and any error is logged and swallowed so a profit-registry
+// failure can never fail or reverse the order completion / pharmacy payout. The
+// recorded breakdown is resolved server-side from the central rate card; the source
+// ref (the order id) doubles as the idempotency key so retries and reconciliation
+// sweeps never double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
+		"health.pharmacy", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[health.pharmacy] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
+	}
 }
 
 // ─── Catalog (HL-5 NAFDAC gating at write) ──────────────────────────────────
@@ -660,6 +703,17 @@ func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode str
 			return nil, fmt.Errorf("pharmacy: release payment (HL-9): %w", err)
 		}
 	}
+	// Pharmacy-order settlement point: DELIVERED/COLLECTED + escrow release realizes
+	// Spotlight's commission on the fulfilled order. Record realized profit into the
+	// central Commission & Profit registry — best-effort + idempotent (the order id
+	// doubles as source ref + idempotency key, so retries / the CLOSED-retry path
+	// never double-count). gross = the full order total the patient paid (the same
+	// basis the pharmacy's own escrow split settles on) — this is the VERTICAL's own
+	// order settlement, NOT the separate transport delivery leg. A recorder failure
+	// is logged and swallowed — it must NEVER fail or reverse the release above. Nil
+	// recorder ⇒ no-op (commission feature off).
+	patientID := o.PatientID
+	s.recordCommissionSafe(ctx, "Health", "Pharmacy", "", o.TotalKobo, orderID, &patientID)
 	// Terminal CLOSED once funds released.
 	closed, err := s.transition(ctx, actorID, orderID, StateClosed, nil, "health.pharmacy.order.close")
 	if err != nil {

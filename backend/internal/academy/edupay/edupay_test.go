@@ -20,7 +20,9 @@ type fakeCollectRail struct {
 	ref   string
 }
 
-func newFakeCollect() *fakeCollectRail { return &fakeCollectRail{calls: map[string]int{}, ref: "collect-ref"} }
+func newFakeCollect() *fakeCollectRail {
+	return &fakeCollectRail{calls: map[string]int{}, ref: "collect-ref"}
+}
 
 func (f *fakeCollectRail) Collect(_ context.Context, _, _, idemKey string, _ int64) (string, error) {
 	f.calls[idemKey]++
@@ -32,7 +34,9 @@ type fakeDisburseRail struct {
 	ref   string
 }
 
-func newFakeDisburse() *fakeDisburseRail { return &fakeDisburseRail{calls: map[string]int{}, ref: "payout-ref"} }
+func newFakeDisburse() *fakeDisburseRail {
+	return &fakeDisburseRail{calls: map[string]int{}, ref: "payout-ref"}
+}
 
 func (f *fakeDisburseRail) Disburse(_ context.Context, _, _, idemKey string, _ int64) (string, error) {
 	f.calls[idemKey]++

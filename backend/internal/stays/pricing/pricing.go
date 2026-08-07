@@ -56,22 +56,22 @@ type Converter interface {
 
 // Discount is one applied loyalty/promo discount line for the breakdown.
 type Discount struct {
-	Code    string `json:"code"`
-	Bps     int64  `json:"bps"`
-	Kobo    int64  `json:"kobo"`
+	Code string `json:"code"`
+	Bps  int64  `json:"bps"`
+	Kobo int64  `json:"kobo"`
 }
 
 // Breakdown is the fully-disclosed price breakdown attached to an offer/reservation.
 // Every leg is explicit so FX, markup, commission and discounts are auditable.
 type Breakdown struct {
 	Rail            gateway.SourceRail `json:"rail"`
-	NetRateKobo     int64              `json:"net_rate_kobo"`     // supplier net / hotel sell
-	MarkupKobo      int64              `json:"markup_kobo"`       // Rail A only (added)
-	CommissionKobo  int64              `json:"commission_kobo"`   // Rail B (deducted at settle; informational)
+	NetRateKobo     int64              `json:"net_rate_kobo"`   // supplier net / hotel sell
+	MarkupKobo      int64              `json:"markup_kobo"`     // Rail A only (added)
+	CommissionKobo  int64              `json:"commission_kobo"` // Rail B (deducted at settle; informational)
 	TaxKobo         int64              `json:"tax_kobo"`
 	DiscountKobo    int64              `json:"discount_kobo"`
 	Discounts       []Discount         `json:"discounts,omitempty"`
-	GrossKobo       int64              `json:"gross_kobo"`        // what the guest pays
+	GrossKobo       int64              `json:"gross_kobo"` // what the guest pays
 	SourceCurrency  string             `json:"source_currency"`
 	DisplayCurrency string             `json:"display_currency"`
 	FXRate          float64            `json:"fx_rate,omitempty"` // 0 when no conversion applied

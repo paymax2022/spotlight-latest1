@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listContentModeration, moderateContent, formatNaira } from '@/services/creatorsAdminService';
 import type { ContentModItem, ContentModAction, AgeRating } from '@/types/creatorsAdmin';
 import { PageHeader, CreatorsTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnPrimary, btnDanger, th, td, input, label, select } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 const AGE_OPTS: { value: AgeRating; label: string }[] = [
   { value: 'all', label: 'All ages' },
@@ -90,14 +91,14 @@ export default function CreatorModerationPage() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><strong>{r.title}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.id}</div></td>
+                  <td style={td()}><strong>{r.title}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.id}</div></td>
                   <td style={td()}>{r.creator_handle_masked}</td>
                   <td style={td()}>{r.kind.replace(/_/g, ' ')}</td>
-                  <td style={td()}>{r.is_paid ? formatNaira(r.price_kobo) : <span style={{ color: '#9ca3af' }}>free</span>}</td>
+                  <td style={td()}>{r.is_paid ? formatNaira(r.price_kobo) : <span style={{ color: colors.muted }}>free</span>}</td>
                   <td style={td()}>
-                    {r.auto_flags.length === 0 ? <span style={{ color: '#9ca3af' }}>—</span> : r.auto_flags.map((f) => <div key={f} style={{ marginBottom: 3 }}><Badge status="flagged" label={f.replace(/_/g, ' ')} /></div>)}
+                    {r.auto_flags.length === 0 ? <span style={{ color: colors.muted }}>—</span> : r.auto_flags.map((f) => <div key={f} style={{ marginBottom: 3 }}><Badge status="flagged" label={f.replace(/_/g, ' ')} /></div>)}
                   </td>
-                  <td style={td()}><span style={{ color: r.reports_count > 0 ? '#b91c1c' : '#9ca3af', fontWeight: r.reports_count > 0 ? 700 : 400 }}>{r.reports_count}</span></td>
+                  <td style={td()}><span style={{ color: r.reports_count > 0 ? colors.danger : colors.muted, fontWeight: r.reports_count > 0 ? 700 : 400 }}>{r.reports_count}</span></td>
                   <td style={td()}>
                     <select
                       style={{ ...select(), width: 130 }}
@@ -116,7 +117,7 @@ export default function CreatorModerationPage() {
                         <button style={btn()} disabled={busy === r.id} onClick={() => moderate(r, 'flag')}>Flag</button>
                         <button style={btnDanger()} disabled={busy === r.id} onClick={() => moderate(r, 'reject')}>Reject</button>
                       </div>
-                    ) : <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>—</span>}
+                    ) : <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span>}
                   </td>
                 </tr>
               ))}

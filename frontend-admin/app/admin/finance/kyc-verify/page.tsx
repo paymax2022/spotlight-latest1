@@ -10,6 +10,7 @@ import { listReviewQueue } from '@/services/kycAdminService';
 import type { KycReviewItem } from '@/types/kycAdmin';
 import { CHECK_TYPE_LABELS, TIER_LABELS } from '@/types/kycAdmin';
 import { PageHeader, Card, btn, th, td, timeAgo, ConfidencePill, useKycPermissions } from './_ui';
+import { Page, colors } from '@/components/ui/vuexy';
 
 export default function KycReviewQueuePage() {
   const { canManage } = useKycPermissions();
@@ -27,7 +28,7 @@ export default function KycReviewQueuePage() {
   useEffect(() => { void load(); }, [load]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader
         title="KYC Verification — Review Queue"
         subtitle="Sessions in NEEDS_REVIEW (facial below threshold, document flagged, AML hit). Prioritized by confidence. RBAC: finance.admin.kyc (KYC Ops)."
@@ -35,18 +36,18 @@ export default function KycReviewQueuePage() {
       />
 
       {!canManage && (
-        <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#b91c1c', marginBottom: '1.25rem' }}>
+        <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.danger, marginBottom: '1.25rem' }}>
           You lack <code>finance.admin.kyc</code>. You can view the queue but case decisions are disabled. Backend RBAC is authoritative.
         </div>
       )}
 
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       <Card>
         {loading ? (
-          <p style={{ color: '#6b7280' }}>Loading review queue…</p>
+          <p style={{ color: colors.muted }}>Loading review queue…</p>
         ) : rows.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No cases awaiting review. </p>
+          <p style={{ color: colors.muted }}>No cases awaiting review. </p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -66,7 +67,7 @@ export default function KycReviewQueuePage() {
                 {rows.map((r) => (
                   <tr key={r.session.id}>
                     <td style={td()}>
-                      <span style={{ fontWeight: 700, color: (r.priority ?? 0) >= 40 ? '#b91c1c' : '#9a3412' }}>
+                      <span style={{ fontWeight: 700, color: (r.priority ?? 0) >= 40 ? colors.danger : colors.warning }}>
                         {r.priority ?? '—'}
                       </span>
                     </td>
@@ -77,7 +78,7 @@ export default function KycReviewQueuePage() {
                     <td style={td()}><ConfidencePill value={r.confidence} /></td>
                     <td style={td()}>{timeAgo(r.submitted_at)}</td>
                     <td style={td()}>
-                      <Link href={`/admin/finance/kyc-verify/cases/${r.session.id}`} style={{ color: '#1d4ed8', textDecoration: 'none', fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                      <Link href={`/admin/finance/kyc-verify/cases/${r.session.id}`} style={{ color: colors.primary, textDecoration: 'none', fontFamily: 'monospace', fontSize: '0.8rem' }}>
                         {r.session.id} →
                       </Link>
                     </td>
@@ -88,6 +89,6 @@ export default function KycReviewQueuePage() {
           </div>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

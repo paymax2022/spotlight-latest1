@@ -6,7 +6,11 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { listInvestors } from '@/services/fractionalreAdminService';
 import type { AdminInvestorSummary } from '@/types/fractionalreAdmin';
-import { PageHeader, FractionalReTabs, Card, Badge, btn, th, td, input, money } from '../_ui';
+import { FractionalReTabs, money } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const KYC_COLOR: Record<string, string> = { unverified: colors.secondary, pending: colors.warning, verified: colors.success, rejected: colors.danger, expired: colors.danger };
+const CLASS_COLOR: Record<string, string> = { retail: colors.info, qualified: colors.secondary, hni: colors.success, institutional: colors.secondary };
 
 export default function InvestorsListPage() {
   const [investors, setInvestors] = useState<AdminInvestorSummary[]>([]);
@@ -27,37 +31,37 @@ export default function InvestorsListPage() {
     (!kyc || i.kycStatus === kyc) && (!cls || i.classification === cls)), [investors, q, kyc, cls]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Investors" subtitle="Search and filter by KYC status, classification and AUM." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Investors" subtitle="Search and filter by KYC status, classification and AUM." actions={<Button onClick={load}>Refresh</Button>} />
       <FractionalReTabs active="investors" />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-        <input placeholder="Search name or email…" value={q} onChange={(e) => setQ(e.target.value)} style={{ ...input(), width: 260 }} />
-        <select value={kyc} onChange={(e) => setKyc(e.target.value)} style={{ ...input(), width: 180 }}>
+        <Input placeholder="Search name or email…" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 260 }} />
+        <select value={kyc} onChange={(e) => setKyc(e.target.value)} className="vx-input" style={{ width: 180 }}>
           <option value="">All KYC</option>{['unverified', 'pending', 'verified', 'rejected', 'expired'].map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
-        <select value={cls} onChange={(e) => setCls(e.target.value)} style={{ ...input(), width: 180 }}>
+        <select value={cls} onChange={(e) => setCls(e.target.value)} className="vx-input" style={{ width: 180 }}>
           <option value="">All classifications</option>{['retail', 'qualified', 'hni', 'institutional'].map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
       </div>
 
-      <Card>
-        {loading ? <p style={{ color: '#6b7280' }}>Loading investors…</p> : rows.length === 0 ? <p style={{ color: '#6b7280' }}>No investors match.</p> : (
+      <Card style={{ padding: 0, overflow: 'auto' }}>
+        {loading ? <p style={{ color: colors.muted, padding: 14 }}>Loading investors…</p> : rows.length === 0 ? <p style={{ color: colors.muted, padding: 14 }}>No investors match.</p> : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Name</th><th style={th()}>Email</th><th style={th()}>KYC</th><th style={th()}>Class</th><th style={th()}>AUM</th><th style={th()}>Holdings</th><th style={th()} /></tr></thead>
+            <thead><tr><th style={thCell}>Name</th><th style={thCell}>Email</th><th style={thCell}>KYC</th><th style={thCell}>Class</th><th style={thCell}>AUM</th><th style={thCell}>Holdings</th><th style={thCell} /></tr></thead>
             <tbody>{rows.map((i) => (
               <tr key={i.id}>
-                <td style={td()}>{i.name}</td><td style={td()}>{i.email}</td>
-                <td style={td()}><Badge status={i.kycStatus} /></td>
-                <td style={td()}><Badge status={i.classification} /></td>
-                <td style={td()}>{money(i.aumKobo)}</td><td style={td()}>{i.holdingsCount}</td>
-                <td style={td()}><Link href={`/admin/fractionalre/investors/${i.id}`} style={{ color: '#1d4ed8' }}>Open →</Link></td>
+                <td style={tdCell}>{i.name}</td><td style={tdCell}>{i.email}</td>
+                <td style={tdCell}><Badge text={i.kycStatus} color={KYC_COLOR[i.kycStatus.toLowerCase()] ?? colors.secondary} /></td>
+                <td style={tdCell}><Badge text={i.classification} color={CLASS_COLOR[i.classification.toLowerCase()] ?? colors.secondary} /></td>
+                <td style={tdCell}>{money(i.aumKobo)}</td><td style={tdCell}>{i.holdingsCount}</td>
+                <td style={tdCell}><Link href={`/admin/fractionalre/investors/${i.id}`} style={{ color: colors.info }}>Open →</Link></td>
               </tr>
             ))}</tbody>
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

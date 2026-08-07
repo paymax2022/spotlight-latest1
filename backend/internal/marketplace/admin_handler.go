@@ -112,6 +112,22 @@ func (h *Handler) AdminAuditLog(c *gin.Context) {
 	respond(c, http.StatusOK, rows)
 }
 
+// AdminListBoosts GET /admin/boosts?status=&limit=&offset= — platform-wide boost
+// list for the admin console. Boosts are the one LIVE marketplace money path
+// (§2.4), so admins must be able to list/moderate them. Read-scoped by
+// marketplace.admin.moderation (same style as AdminModerationQueue / AdminFlags).
+// Returns the uniform {"data":[...]} envelope (respond) with camel-free snake_case
+// keys matching the member boost API + an additive listing_title per row.
+func (h *Handler) AdminListBoosts(c *gin.Context) {
+	limit, offset := pageParams(c)
+	bs, err := h.svc.repo.ListBoosts(c.Request.Context(), c.Query("status"), limit, offset)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, bs)
+}
+
 // AdminRejectBoost POST /admin/boosts/:id/reject — reason_code MANDATORY (§2.4).
 // (Not in the frozen route list explicitly, but exposed for the admin boost console;
 // safe additive admin action following the exemplar.)

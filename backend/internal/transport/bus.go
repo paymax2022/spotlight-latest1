@@ -213,6 +213,12 @@ func (s *Service) BookBusTicket(ctx context.Context, userID string, req BusBookR
 	if err := s.settlement.Settle(ctx, sett.ID, settlementSplit(settleUserID, comm)); err != nil {
 		return nil, fmt.Errorf("transport: settle bus ticket: %w", err)
 	}
+	// Record realized Spotlight profit (best-effort + idempotent; ticket id as source
+	// ref + idempotency key). gross = the full ticket fare the passenger paid. A
+	// recorder failure is logged and swallowed — it must NEVER affect the settlement
+	// above (earning-row only; no ledger re-post).
+	bookerID := userID
+	s.recordCommissionSafe(ctx, "Lifestyle", "Bus Booking", "", fare, ticketID, &bookerID)
 	s.recordModeEvent(ctx, userID, "bus.ticket_issued", "bus_ticket", ticketID, "", "issued",
 		map[string]any{"schedule_id": req.ScheduleID, "seat_number": req.SeatNumber, "settle_user_id": settleUserID})
 	return s.BusTicketDetail(ctx, ticketID, userID)
@@ -429,6 +435,73 @@ func (a *AdminService) ApproveBusFare(ctx context.Context, adminID, scheduleID s
 	}
 	return writeAudit(ctx, a.svc.db, adminID, "bus.fare.approve", "bus_schedule", scheduleID,
 		map[string]any{"fare_approved": approved}, map[string]any{"fare_approved": true, "fare_kobo": fare}, reason)
+}
+
+// SetBusProviderVerification verifies / suspends / re-pends a bus operator (ADR-020
+// go-live gate). Admin-only. A 'verified' provider becomes discoverable; 'suspended'
+// also flips status='inactive' so its trips drop out of customer discovery
+// immediately. Writes an immutable audit row. Reason is required for suspension.
+func (a *AdminService) SetBusProviderVerification(ctx context.Context, adminID, providerID, newStatus, reason string) error {
+	valid := map[string]bool{"verified": true, "suspended": true, "pending": true}
+	if !valid[newStatus] {
+		return codedErr(http.StatusBadRequest, CodeInvalidState, "verification status must be verified, suspended or pending")
+	}
+	if newStatus == "suspended" && reason == "" {
+		return codedErr(http.StatusBadRequest, CodeInvalidState, "a reason is required to suspend a provider")
+	}
+	var oldStatus, oldOpStatus string
+	if err := a.svc.db.QueryRow(ctx, `SELECT verification_status, status FROM bus_providers WHERE id=$1`, providerID).
+		Scan(&oldStatus, &oldOpStatus); err != nil {
+		return codedErr(http.StatusNotFound, CodeNotFound, "bus provider not found")
+	}
+	if _, err := a.svc.db.Exec(ctx, `UPDATE bus_providers SET verification_status=$1, updated_at=NOW() WHERE id=$2`, newStatus, providerID); err != nil {
+		return err
+	}
+	// Keep the operational status consistent so discovery reflects the decision at once.
+	switch newStatus {
+	case "suspended":
+		a.svc.db.Exec(ctx, `UPDATE bus_providers SET status='inactive' WHERE id=$1`, providerID)
+	case "verified":
+		a.svc.db.Exec(ctx, `UPDATE bus_providers SET status='active' WHERE id=$1`, providerID)
+	}
+	return writeAudit(ctx, a.svc.db, adminID, "bus_provider.verification", "bus_provider", providerID,
+		map[string]any{"verification_status": oldStatus, "status": oldOpStatus},
+		map[string]any{"verification_status": newStatus}, reason)
+}
+
+// ListBusProvidersAdmin returns every operator (any status) with verification +
+// route count for the admin console. Pending providers sort first (the review queue).
+func (a *AdminService) ListBusProvidersAdmin(ctx context.Context) ([]map[string]any, error) {
+	rows, err := a.svc.db.Query(ctx, `
+		SELECT p.id, p.business_name, p.owner_user_id, p.base_state, p.verification_status, p.status,
+		       p.rating_avg, p.rating_count,
+		       COALESCE((SELECT COUNT(*) FROM bus_routes r WHERE r.provider_id = p.id), 0) AS route_count,
+		       p.created_at
+		FROM bus_providers p
+		ORDER BY (p.verification_status = 'pending') DESC, p.created_at DESC
+		LIMIT 200`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []map[string]any
+	for rows.Next() {
+		var id, name, verStatus, opStatus string
+		var owner, baseState *string
+		var ratingAvg float64
+		var ratingCount, routeCount int
+		var createdAt time.Time
+		if err := rows.Scan(&id, &name, &owner, &baseState, &verStatus, &opStatus, &ratingAvg, &ratingCount, &routeCount, &createdAt); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]any{
+			"id": id, "businessName": name, "ownerUserId": owner, "baseState": baseState,
+			"verificationStatus": verStatus, "verified": verStatus == "verified", "status": opStatus,
+			"ratingAvg": ratingAvg, "ratingCount": ratingCount, "routeCount": routeCount,
+			"createdAt": createdAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return out, rows.Err()
 }
 
 // BusManifest lists passengers for a schedule (admin/operator).

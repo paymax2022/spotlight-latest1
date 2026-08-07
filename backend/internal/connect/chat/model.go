@@ -44,9 +44,9 @@ type SendMessageRequest struct {
 // flagged (so moderators can see it), but the sender receives the inline
 // warning and is told whether the conversation was escalated.
 type SendResult struct {
-	Message  Message  `json:"message"`
-	Warning  string   `json:"warning,omitempty"`
-	Flagged  bool     `json:"flagged"`
+	Message   Message `json:"message"`
+	Warning   string  `json:"warning,omitempty"`
+	Flagged   bool    `json:"flagged"`
 	Escalated bool    `json:"escalated"`
 }
 
@@ -62,4 +62,9 @@ const (
 	ErrConversationClosed = chatError("connect: conversation is not open")
 	// ErrBlocked — an active block exists between the two participants.
 	ErrBlocked = chatError("connect: messaging blocked between these users")
+	// ErrRestricted — the sender is suspended/banned (moderation enforcement, TS-009).
+	ErrRestricted = chatError("connect: account restricted")
+	// ErrSafetyUnavailable — safety config could not be loaded; the send fails
+	// closed (message not delivered unscanned) per invariant 12 (TS-013).
+	ErrSafetyUnavailable = chatError("connect: safety checks temporarily unavailable")
 )

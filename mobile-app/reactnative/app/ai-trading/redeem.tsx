@@ -2,7 +2,7 @@
 // Redeems units at the current NAV, paying cash back to the base Paymax wallet.
 // Supports "withdraw all" and shows the cash the redemption will pay.
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ArrowLeft, Info } from 'lucide-react-native';
@@ -13,6 +13,7 @@ import { Radius } from '@/constants/radius';
 import PrimaryButton from '@/components/PrimaryButton';
 import { usePosition, useRedeem } from '@/features/aitrading/hooks';
 import { formatNaira, formatUnits, UNIT_SCALE } from '@/features/aitrading/api';
+import { alertAsync } from '@/lib/confirm';
 
 export default function RedeemScreen() {
   const pos = usePosition();
@@ -29,9 +30,10 @@ export default function RedeemScreen() {
     if (!valid) return;
     try {
       const r = await redeem.mutateAsync(units);
-      Alert.alert('Withdrawal submitted', `${formatNaira(r.cashKobo)} paid to your Paymax wallet at ${formatNaira(r.navPerUnitKobo)} / unit.`, [{ text: 'Done', onPress: () => router.back() }]);
+      await alertAsync({ title: 'Withdrawal submitted', message: `${formatNaira(r.cashKobo)} paid to your Paymax wallet at ${formatNaira(r.navPerUnitKobo)} / unit.`, buttonLabel: 'Done' });
+      router.back();
     } catch (e) {
-      Alert.alert('Could not withdraw', e instanceof Error ? e.message : 'Please try again.');
+      alertAsync({ title: 'Could not withdraw', message: e instanceof Error ? e.message : 'Please try again.' });
     }
   }
 

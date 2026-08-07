@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { getAudit } from '@/services/connectAdminService';
 import type { ConnectAuditEntry } from '@/types/connectAdmin';
-import { PageHeader, ConnectTabs, Card, btn, th, td, timeAgo } from '../_ui';
+import { ConnectTabs, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function ConnectAuditPage() {
   const [rows, setRows] = useState<ConnectAuditEntry[]>([]);
@@ -19,30 +20,30 @@ export default function ConnectAuditPage() {
   useEffect(() => { load(); }, []);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Audit log" subtitle="Immutable record of Connect admin & sensitive actions." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Audit log" subtitle="Immutable record of Connect admin & sensitive actions." actions={<Button variant="outline" sm onClick={load}>Refresh</Button>} />
       <ConnectTabs active="audit" />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
-      <Card>
-        {loading ? <p style={{ color: '#6b7280' }}>Loading audit log…</p> : rows.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No audit entries.</p>
+      <Card style={{ padding: 0, overflow: 'auto' }}>
+        {loading ? <p style={{ color: colors.muted, padding: 14 }}>Loading audit log…</p> : rows.length === 0 ? (
+          <p style={{ color: colors.muted, padding: 14 }}>No audit entries.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Action</th><th style={th()}>Actor</th><th style={th()}>Entity</th><th style={th()}>When</th></tr></thead>
+            <thead><tr><th style={thCell}>Action</th><th style={thCell}>Actor</th><th style={thCell}>Entity</th><th style={thCell}>When</th></tr></thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><code style={{ fontSize: '0.8rem' }}>{r.action}</code></td>
-                  <td style={td()}>{r.actor_id ?? 'system'}{r.actor_role ? ` (${r.actor_role})` : ''}</td>
-                  <td style={td()}>{r.entity_type ? `${r.entity_type}:${r.entity_id ?? ''}` : '—'}</td>
-                  <td style={td()}>{timeAgo(r.created_at)}</td>
+                  <td style={tdCell}><code style={{ fontSize: '0.8rem' }}>{r.action}</code></td>
+                  <td style={tdCell}>{r.actor_id ?? 'system'}{r.actor_role ? ` (${r.actor_role})` : ''}</td>
+                  <td style={tdCell}>{r.entity_type ? `${r.entity_type}:${r.entity_id ?? ''}` : '—'}</td>
+                  <td style={tdCell}>{timeAgo(r.created_at)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

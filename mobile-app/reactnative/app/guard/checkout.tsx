@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, FlatList, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, FlatList, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Icons from 'lucide-react-native';
 import { LogOut } from 'lucide-react-native';
@@ -13,6 +13,7 @@ import StateView from '@/components/StateView';
 import { useCheckOutVisit, useGateSession, useOpenVisits } from '@/features/visitor/hooks/useVisitor';
 import { codeTypeMeta } from '@/features/visitor/constants/visitor.constants';
 import { relativeTime } from '@/features/visitor/utils/visitorFormatters';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import type { OpenVisit } from '@/features/visitor/types/visitor.types';
 
 export default function CheckOutScreen() {
@@ -22,14 +23,10 @@ export default function CheckOutScreen() {
 
   const gateId = session.data?.gateId ?? 'gate_main';
 
-  const onCheckOut = (v: OpenVisit) => {
-    Alert.alert('Check out visitor?', `Close ${v.visitorName}'s visit to ${v.unitLabel}.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Check out',
-        onPress: () => checkout.mutate({ visitEventId: v.visitEventId, gateId }, { onError: () => Alert.alert('Error', 'Could not check out the visitor.') }),
-      },
-    ]);
+  const onCheckOut = async (v: OpenVisit) => {
+    const ok = await confirmAsync({ title: 'Check out visitor?', message: `Close ${v.visitorName}'s visit to ${v.unitLabel}.`, confirmLabel: 'Check out' });
+    if (!ok) return;
+    checkout.mutate({ visitEventId: v.visitEventId, gateId }, { onError: () => alertAsync({ title: 'Error', message: 'Could not check out the visitor.' }) });
   };
 
   const renderItem = ({ item }: { item: OpenVisit }) => {

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Alert, Modal, TextInput } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Modal, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { alertAsync } from '@/lib/confirm';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Search, X, Package, BadgeCheck, Star, MapPin, Check, Eye, Share2, Clock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -85,7 +86,7 @@ export default function CreateLabOrderScreen() {
 
   const handleSubmit = async () => {
     if (!canSubmit) {
-      Alert.alert('Select tests', 'Choose at least one test to order.');
+      alertAsync({ title: 'Select tests', message: 'Choose at least one test to order.' });
       return;
     }
     const patientId = appointment?.patient.id ?? '';
@@ -95,20 +96,19 @@ export default function CreateLabOrderScreen() {
         clinicalNote: [reason, diagnosis ? `Dx: ${diagnosis.label}` : ''].filter(Boolean).join(' · '),
         priority: urgency === 'routine' ? 'routine' : 'urgent',
       });
-      Alert.alert('Lab order created', `${result.ref} has been sent to the lab.`, [
-        { text: 'View records', onPress: () => router.replace('/(doctor)/(tabs)/records') },
-      ]);
+      await alertAsync({ title: 'Lab order created', message: `${result.ref} has been sent to the lab.`, buttonLabel: 'View records' });
+      router.replace('/(doctor)/(tabs)/records');
     } catch {
-      Alert.alert('Failed', 'Could not create the lab order. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not create the lab order. Please try again.' });
     }
   };
 
   const handleShare = async () => {
     try {
       await share.mutateAsync({ orderId: appointmentId, channel: 'link' });
-      Alert.alert('Shared', 'A link to the lab order has been shared.');
+      alertAsync({ title: 'Shared', message: 'A link to the lab order has been shared.' });
     } catch {
-      Alert.alert('Failed', 'Please try again.');
+      alertAsync({ title: 'Failed', message: 'Please try again.' });
     }
   };
 
@@ -209,7 +209,7 @@ export default function CreateLabOrderScreen() {
           )}
 
           {/* M21 — preview */}
-          <Pressable style={styles.previewBtn} onPress={() => canSubmit ? setPreviewOpen(true) : Alert.alert('Select tests', 'Add a test to preview.')} accessibilityRole="button" accessibilityLabel="Preview order">
+          <Pressable style={styles.previewBtn} onPress={() => canSubmit ? setPreviewOpen(true) : alertAsync({ title: 'Select tests', message: 'Add a test to preview.' })} accessibilityRole="button" accessibilityLabel="Preview order">
             <Eye size={18} color={Colors.secondary} strokeWidth={2.2} />
             <Text style={styles.previewText}>Preview order</Text>
           </Pressable>

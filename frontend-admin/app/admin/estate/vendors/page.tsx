@@ -5,7 +5,16 @@
 import { useEffect, useState } from 'react';
 import { listVendors, verifyVendor } from '@/services/estateAdminService';
 import type { AdminVendor } from '@/types/estateAdmin';
-import { PageHeader, EstateTabs, Card, Badge, btn, btnPrimary, th, td } from '../_ui';
+import { EstateTabs } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const cap = (s: string) => s.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+function statusColor(status: string): string {
+  if (status === 'verified') return colors.success;
+  if (status === 'pending') return colors.warning;
+  if (status === 'rejected' || status === 'suspended') return colors.danger;
+  return colors.secondary;
+}
 
 export default function VendorsPage() {
   const [rows, setRows] = useState<AdminVendor[]>([]);
@@ -31,30 +40,30 @@ export default function VendorsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Vendors & artisans" subtitle="Approved trades directory. Verify pending applications before they take estate jobs." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Vendors & artisans" subtitle="Approved trades directory. Verify pending applications before they take estate jobs." actions={<Button variant="outline" sm onClick={load}>Refresh</Button>} />
       <EstateTabs active="vendors" />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       <Card title="Vendor directory">
-        {loading ? <p style={{ color: '#6b7280' }}>Loading vendors…</p> : rows.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No vendors registered.</p>
+        {loading ? <p style={{ color: colors.muted }}>Loading vendors…</p> : rows.length === 0 ? (
+          <p style={{ color: colors.muted }}>No vendors registered.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Vendor</th><th style={th()}>Trade</th><th style={th()}>Phone</th><th style={th()}>Rating</th><th style={th()}>Jobs</th><th style={th()}>Status</th><th style={th()}>Actions</th></tr></thead>
+            <thead><tr><th style={thCell}>Vendor</th><th style={thCell}>Trade</th><th style={thCell}>Phone</th><th style={thCell}>Rating</th><th style={thCell}>Jobs</th><th style={thCell}>Status</th><th style={thCell}>Actions</th></tr></thead>
             <tbody>
               {rows.map((v) => (
                 <tr key={v.id}>
-                  <td style={td()}><strong>{v.name}</strong></td>
-                  <td style={td()}>{v.trade}</td>
-                  <td style={td()}>{v.phone}</td>
-                  <td style={td()}>{v.rating > 0 ? `${v.rating.toFixed(1)} ★` : '—'}</td>
-                  <td style={td()}>{v.jobsCompleted}</td>
-                  <td style={td()}><Badge status={v.status} /></td>
-                  <td style={td()}>
+                  <td style={tdCell}><strong>{v.name}</strong></td>
+                  <td style={tdCell}>{v.trade}</td>
+                  <td style={tdCell}>{v.phone}</td>
+                  <td style={tdCell}>{v.rating > 0 ? `${v.rating.toFixed(1)} ★` : '—'}</td>
+                  <td style={tdCell}>{v.jobsCompleted}</td>
+                  <td style={tdCell}><Badge text={cap(v.status)} color={statusColor(v.status)} /></td>
+                  <td style={tdCell}>
                     {v.status === 'pending'
-                      ? <button disabled={busy === v.id} onClick={() => verify(v.id)} style={btnPrimary('#16a34a')}>Verify</button>
-                      : <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>—</span>}
+                      ? <Button variant="primary" sm disabled={busy === v.id} onClick={() => verify(v.id)}>Verify</Button>
+                      : <span style={{ color: colors.muted, fontSize: '0.8rem' }}>—</span>}
                   </td>
                 </tr>
               ))}
@@ -62,6 +71,6 @@ export default function VendorsPage() {
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

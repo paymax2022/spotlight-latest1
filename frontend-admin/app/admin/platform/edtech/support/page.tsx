@@ -10,6 +10,7 @@ import {
   PlatformGuard, PlatformTabs, timeAgo,
   PageHeader, Card, Badge, Kpi, StateBlock, DisclosureNote, AuditNote, btn, btnPrimary, th, td, input, select, label,
 } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function SupportQueuePage() {
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
@@ -46,12 +47,12 @@ export default function SupportQueuePage() {
         <PageHeader title="Support Ticket Queue" subtitle="Escalations from school admins and parents that couldn't be resolved at the school level. Triage, work and resolve." action={<button onClick={load} style={btn()}>Refresh</button>} />
         <PlatformTabs active="support" />
         <DisclosureNote>Requires <code>platform_edtech_admin</code>. Hardship/freeze-related escalations must respect SF-9 — they route to human review and are never auto-approved/denied.</DisclosureNote>
-        {notice ? <div style={{ marginBottom: '1rem', color: '#5b21b6' }}>{notice}</div> : null}
+        {notice ? <div style={{ marginBottom: '1rem', color: colors.primary }}>{notice}</div> : null}
 
         <StateBlock loading={loading} error={error} empty={false}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <Kpi label="Open / escalated" value={open.length.toString()} accent={open.length ? '#b91c1c' : '#15803d'} />
-            <Kpi label="Critical" value={tickets.filter((t) => t.priority === 'critical' && t.status !== 'resolved').length.toString()} accent="#b91c1c" />
+            <Kpi label="Open / escalated" value={open.length.toString()} accent={open.length ? colors.danger : colors.success} />
+            <Kpi label="Critical" value={tickets.filter((t) => t.priority === 'critical' && t.status !== 'resolved').length.toString()} accent={colors.danger} />
             <Kpi label="From parents" value={tickets.filter((t) => t.origin === 'parent').length.toString()} />
           </div>
 
@@ -62,7 +63,7 @@ export default function SupportQueuePage() {
             {rows.map((t) => (
               <div key={t.id} style={{ borderTop: '1px solid #f3f4f6', padding: '0.75rem 0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <div><strong>{t.subject}</strong><div style={{ fontSize: '0.78rem', color: '#6b7280' }}>{t.school_name} · from {t.origin.replace('_', ' ')} · opened {timeAgo(t.opened_at)} · updated {timeAgo(t.last_update_at)}</div></div>
+                  <div><strong>{t.subject}</strong><div style={{ fontSize: '0.78rem', color: colors.muted }}>{t.school_name} · from {t.origin.replace('_', ' ')} · opened {timeAgo(t.opened_at)} · updated {timeAgo(t.last_update_at)}</div></div>
                   <span style={{ display: 'flex', gap: '0.4rem' }}><Badge status={t.priority} /><Badge status={t.status} label={t.status.replace('_', ' ')} /></span>
                 </div>
                 {t.status !== 'resolved' ? (

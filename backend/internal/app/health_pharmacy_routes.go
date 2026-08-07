@@ -8,7 +8,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
 	healthpharmacy "spotlight/backend/internal/health/pharmacy"
@@ -39,7 +41,7 @@ import (
 // Returns the pharmacy service so the orchestrator can hand it optional
 // collaborators (e.g. the symptom-search ReviewCaseOpener seam — PRD §10);
 // nil when the pool is absent.
-func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) *healthpharmacy.Service {
+func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config) *healthpharmacy.Service {
 	if pool == nil {
 		log.Println("[health.pharmacy] nil pool — skipping pharmacy routes")
 		return nil
@@ -63,6 +65,16 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 		nil, // audit sink injected by orchestrator (HL-12) — nil-safe here
 	)
 
+	// Central Commission & Profit recording at the pharmacy order settlement point
+	// (Complete → escrow release). Best-effort + idempotent + nil-safe: constructed
+	// with a nil ledger so the earning row is appended WITHOUT re-posting to the
+	// ledger (pharmacy's own escrow split already posts the platform cut). Reuses the
+	// shared commissionRecorderAdapter (marketplace_routes.go). Gated on the flag ⇒
+	// off leaves the recorder nil ⇒ silent no-op.
+	if cfg.FeatureCommissionEnabled {
+		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+	}
+
 	isAdmin := func(c *gin.Context) bool { return isHealthPharmacyAdmin(c, rbac) }
 	h := healthpharmacy.NewHandler(svc, isAdmin)
 
@@ -72,22 +84,22 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 
 	// --- Member routes (/api/finance/health/pharmacy) — HEALTH-BUILD §6 ---
 	pg := member.Group("/health/pharmacy")
-	pg.GET("/products", h.ListProducts)                        // NAFDAC-gated, Rx flag (HL-5)
-	pg.GET("/products/:id", h.GetProduct)                      // single product + owning pharmacy
-	pg.POST("/products", h.UpsertProduct)                      // pharmacy owner, HL-5 write-gate
-	pg.POST("/prescriptions/:id/verify", h.VerifyPrescription) // pharmacist, HL-3
-	pg.GET("/pharmacies", h.DiscoverPharmacies)                // browse ALL pharmacies — proximity/rating (HL-2)
-	pg.GET("/pharmacies/:id", h.GetPharmacy)                   // pharmacy detail
-	pg.GET("/pharmacies/:id/reviews", h.ListPharmacyReviews)   // public rating feed
+	pg.GET("/products", h.ListProducts)                         // NAFDAC-gated, Rx flag (HL-5)
+	pg.GET("/products/:id", h.GetProduct)                       // single product + owning pharmacy
+	pg.POST("/products", h.UpsertProduct)                       // pharmacy owner, HL-5 write-gate
+	pg.POST("/prescriptions/:id/verify", h.VerifyPrescription)  // pharmacist, HL-3
+	pg.GET("/pharmacies", h.DiscoverPharmacies)                 // browse ALL pharmacies — proximity/rating (HL-2)
+	pg.GET("/pharmacies/:id", h.GetPharmacy)                    // pharmacy detail
+	pg.GET("/pharmacies/:id/reviews", h.ListPharmacyReviews)    // public rating feed
 	pg.POST("/pharmacies/:id/profile", h.UpsertPharmacyProfile) // verified owner storefront settings (HL-2)
-	pg.POST("/orders", h.CreateOrder)                          // patient, payment HELD (HL-9)
-	pg.GET("/orders/:id", h.Get)                               // object-level authZ
-	pg.POST("/orders/:id/confirm", h.Confirm)                  // HL-3 verified e-Rx gate
-	pg.POST("/orders/:id/dispense", h.Dispense)                // pharmacist (HL-1/HL-3)
-	pg.POST("/orders/:id/dispatch", h.Dispatch)                // transport last-mile rail
-	pg.POST("/orders/:id/complete", h.Complete)                // release payment (HL-9)
-	pg.POST("/orders/:id/cancel", h.Cancel)                    // pre-dispense → refund (HL-9)
-	pg.POST("/orders/:id/reviews", h.SubmitReview)             // patient, order must be completed
+	pg.POST("/orders", h.CreateOrder)                           // patient, payment HELD (HL-9)
+	pg.GET("/orders/:id", h.Get)                                // object-level authZ
+	pg.POST("/orders/:id/confirm", h.Confirm)                   // HL-3 verified e-Rx gate
+	pg.POST("/orders/:id/dispense", h.Dispense)                 // pharmacist (HL-1/HL-3)
+	pg.POST("/orders/:id/dispatch", h.Dispatch)                 // transport last-mile rail
+	pg.POST("/orders/:id/complete", h.Complete)                 // release payment (HL-9)
+	pg.POST("/orders/:id/cancel", h.Cancel)                     // pre-dispense → refund (HL-9)
+	pg.POST("/orders/:id/reviews", h.SubmitReview)              // patient, order must be completed
 
 	// --- Admin routes (/api/health/pharmacy/admin, RBAC health.pharmacy.*) ---
 	ag := admin.Group("")

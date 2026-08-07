@@ -159,12 +159,12 @@ func (w *workerHandler) handleEmail(ctx context.Context, t *asynq.Task) error {
 // ── SMS (Termii) ──────────────────────────────────────────────────────────────
 
 type termiiSMSRequest struct {
-	To       string `json:"to"`
-	From     string `json:"from"`
-	SMS      string `json:"sms"`
-	Type     string `json:"type"`
-	Channel  string `json:"channel"`
-	APIKey   string `json:"api_key"`
+	To      string `json:"to"`
+	From    string `json:"from"`
+	SMS     string `json:"sms"`
+	Type    string `json:"type"`
+	Channel string `json:"channel"`
+	APIKey  string `json:"api_key"`
 }
 
 func (w *workerHandler) handleSMS(ctx context.Context, t *asynq.Task) error {

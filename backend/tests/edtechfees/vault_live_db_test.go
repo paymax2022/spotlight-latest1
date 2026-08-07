@@ -122,15 +122,16 @@ func cleanupVault(t *testing.T, pool *pgxpool.Pool, vaultID string) {
 // ---------------------------------------------------------------------------
 
 // TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice proves:
-//   (a) Contribute moves money guardian wallet → the SEGREGATED edtech_fees_vault
-//       standing account (that account's balance rises by the contribution) and
-//       saved_minor derives from SUM(academy_pot_contributions);
-//   (b) a Contribute REPLAY on the same idempotency_key appends NO second
-//       contribution row and leaves the derived balance unchanged;
-//   (c) reaching the target auto-advances active → target_reached;
-//   (d) ApplyToInvoice posts ONE balanced transfer OUT of the segregated vault
-//       account into settlement AND records an academy_invoice_payments row;
-//   (e) a replay of ApplyToInvoice double-transfers nothing (terminal-state guard).
+//
+//	(a) Contribute moves money guardian wallet → the SEGREGATED edtech_fees_vault
+//	    standing account (that account's balance rises by the contribution) and
+//	    saved_minor derives from SUM(academy_pot_contributions);
+//	(b) a Contribute REPLAY on the same idempotency_key appends NO second
+//	    contribution row and leaves the derived balance unchanged;
+//	(c) reaching the target auto-advances active → target_reached;
+//	(d) ApplyToInvoice posts ONE balanced transfer OUT of the segregated vault
+//	    account into settlement AND records an academy_invoice_payments row;
+//	(e) a replay of ApplyToInvoice double-transfers nothing (terminal-state guard).
 func TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice(t *testing.T) {
 	pool := liveDBPool(t)
 	defer pool.Close()

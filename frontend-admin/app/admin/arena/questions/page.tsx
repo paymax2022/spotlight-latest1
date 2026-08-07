@@ -28,9 +28,9 @@ import type {
   QuizStats,
 } from '@/types/arenaAdmin';
 import { QUIZ_STAGE_LABELS } from '@/types/arenaAdmin';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 import {
-  PageHeader, Card, btn, btnPrimary, btnDisabled, th, td, inputStyle, selectStyle, mono,
-  timeAgo, AuditNote, PermissionBanner, Pill, ARENA_PERMS, useArenaPermission,
+  mono, timeAgo, AuditNote, PermissionBanner, ARENA_PERMS, useArenaPermission,
 } from '../_ui';
 
 const STAGE_FILTERS: { value: '' | QuizStage; label: string }[] = [
@@ -40,16 +40,16 @@ const STAGE_FILTERS: { value: '' | QuizStage; label: string }[] = [
   { value: 3, label: 'Stage 3' },
 ];
 
-const STAGE_ACCENT: Record<QuizStage, { fg: string; bg: string }> = {
-  1: { fg: '#1d4ed8', bg: '#dbeafe' },
-  2: { fg: '#9a3412', bg: '#ffedd5' },
-  3: { fg: '#6b21a8', bg: '#f3e8ff' },
+const STAGE_ACCENT: Record<QuizStage, string> = {
+  1: colors.info,
+  2: colors.warning,
+  3: colors.primary,
 };
 
-function passRateColor(rate: number): { fg: string; bg: string } {
-  if (rate >= 0.75) return { fg: '#15803d', bg: '#dcfce7' };
-  if (rate >= 0.6) return { fg: '#9a3412', bg: '#ffedd5' };
-  return { fg: '#b91c1c', bg: '#fee2e2' };
+function passRateColor(rate: number): string {
+  if (rate >= 0.75) return colors.success;
+  if (rate >= 0.6) return colors.warning;
+  return colors.danger;
 }
 
 export default function ArenaQuizBankPage() {
@@ -136,62 +136,66 @@ export default function ArenaQuizBankPage() {
   const toggle = (id: string) => setExpanded((m) => ({ ...m, [id]: !m[id] }));
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Arena — Quiz Bank"
         subtitle="Naija Driver safe-driving assessment: 90 questions (3 stages × 30, 120s each). Full admin teaching/QA view — answers, explanations, time limits and pass marks are shown. RBAC: arena.admin.questions."
-        action={
+        actions={
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            <select value={competitionId} onChange={(e) => setCompetitionId(e.target.value)} style={selectStyle()}>
+            <select value={competitionId} onChange={(e) => setCompetitionId(e.target.value)}>
               {competitions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <button onClick={() => void load()} style={btn()}>Refresh</button>
-            <button
+            <Button variant="outline" onClick={() => void load()}>Refresh</Button>
+            <Button
+              variant="primary"
               onClick={() => { setConfirmImport(true); setNotice(null); }}
-              style={allowed && competitionId ? btnPrimary() : btnDisabled()}
               disabled={!allowed || !competitionId}
             >
               Import quiz bank
-            </button>
+            </Button>
           </div>
         }
       />
 
       {!allowed && <PermissionBanner permission={ARENA_PERMS.questions} />}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
       {notice && (
-        <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#166534', marginBottom: '1.25rem' }}>
+        <div style={{ background: tint(colors.success, 0.12), border: `1px solid ${tint(colors.success, 0.35)}`, borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.success, marginBottom: '1.25rem' }}>
           {notice}
         </div>
       )}
 
       {confirmImport && (
-        <Card title="Import quiz bank?" right={<button onClick={() => setConfirmImport(false)} style={btn()}>Cancel</button>}>
-          <p style={{ fontSize: '0.9rem', color: '#374151', margin: '0 0 0.5rem' }}>
+        <Card style={{ marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Import quiz bank?</h2>
+            <Button variant="outline" onClick={() => setConfirmImport(false)}>Cancel</Button>
+          </div>
+          <p style={{ fontSize: '0.9rem', color: colors.text, margin: '0 0 0.5rem' }}>
             This imports the <strong>{DEFAULT_QUIZ_BANK_KEY}</strong> bank (90 questions across 3 stages) into{' '}
             <strong>{competitions.find((c) => c.id === competitionId)?.name ?? competitionId}</strong>.
             {hasBank ? ' A bank is already present — importing again re-seeds it per backend policy.' : ''}
           </p>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button
+            <Button
+              variant="primary"
               onClick={() => void runImport()}
-              style={allowed && !importing ? btnPrimary('#15803d') : btnDisabled()}
               disabled={!allowed || importing}
             >
               {importing ? 'Importing…' : `Import ${DEFAULT_QUIZ_BANK_KEY}`}
-            </button>
-            <button onClick={() => setConfirmImport(false)} style={btn()} disabled={importing}>Cancel</button>
+            </Button>
+            <Button variant="outline" onClick={() => setConfirmImport(false)} disabled={importing}>Cancel</Button>
           </div>
           <AuditNote>Importing a quiz bank writes an audit_log row (actor, bank key, rubric version, timestamp). Backend RBAC is authoritative.</AuditNote>
         </Card>
       )}
 
       {/* Stats header */}
-      <Card title="Bank overview">
+      <Card title="Bank overview" style={{ marginBottom: 20 }}>
         {loading && !stats ? (
           <StatsSkeleton />
         ) : (
-          <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+          <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginTop: 8 }}>
             <Metric label="Total questions" value={String(stats?.totalQuestions ?? counts?.total ?? 0)} />
             {([1, 2, 3] as QuizStage[]).map((s) => {
               const perStage = stats?.perStage.find((p) => p.stage === s);
@@ -200,14 +204,14 @@ export default function ArenaQuizBankPage() {
               const rate = perStage?.passRate ?? 0;
               const rc = passRateColor(rate);
               return (
-                <div key={s} style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.75rem' }}>
+                <div key={s} style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.75rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                    <Pill fg={STAGE_ACCENT[s].fg} bg={STAGE_ACCENT[s].bg}>Stage {s}</Pill>
-                    {qc > 0 ? <Pill fg={rc.fg} bg={rc.bg}>{Math.round(rate * 100)}% pass</Pill> : <span style={{ color: '#9ca3af', fontSize: '0.72rem' }}>—</span>}
+                    <Badge text={`Stage ${s}`} color={STAGE_ACCENT[s]} />
+                    {qc > 0 ? <Badge text={`${Math.round(rate * 100)}% pass`} color={rc} /> : <span style={{ color: colors.muted, fontSize: '0.72rem' }}>—</span>}
                   </div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#111827' }}>{qc}</div>
-                  <div style={{ fontSize: '0.72rem', color: '#6b7280' }}>questions · {attempts.toLocaleString()} attempts</div>
-                  <div style={{ fontSize: '0.7rem', color: '#9ca3af', marginTop: 4 }}>{QUIZ_STAGE_LABELS[s]}</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700, color: colors.text }}>{qc}</div>
+                  <div style={{ fontSize: '0.72rem', color: colors.muted }}>questions · {attempts.toLocaleString()} attempts</div>
+                  <div style={{ fontSize: '0.7rem', color: colors.muted, marginTop: 4 }}>{QUIZ_STAGE_LABELS[s]}</div>
                 </div>
               );
             })}
@@ -216,47 +220,46 @@ export default function ArenaQuizBankPage() {
       </Card>
 
       {/* Questions table */}
-      <Card
-        title="Questions"
-        right={
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Questions</h2>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <select value={String(stage)} onChange={(e) => setStage((e.target.value ? Number(e.target.value) : '') as '' | QuizStage)} style={selectStyle()}>
+            <select value={String(stage)} onChange={(e) => setStage((e.target.value ? Number(e.target.value) : '') as '' | QuizStage)}>
               {STAGE_FILTERS.map((f) => <option key={String(f.value)} value={String(f.value)}>{f.label}</option>)}
             </select>
-            <select value={category} onChange={(e) => setCategory(e.target.value)} style={selectStyle()}>
+            <select value={category} onChange={(e) => setCategory(e.target.value)}>
               <option value="">All categories</option>
               {categoryOptions.map((c) => <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>)}
             </select>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search prompt / id / answer…" style={{ ...inputStyle(), minWidth: 220 }} />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search prompt / id / answer…" style={{ minWidth: 220 }} />
           </div>
-        }
-      >
+        </div>
         {loading ? (
           <TableSkeleton />
         ) : !hasBank ? (
-          <div style={{ textAlign: 'center', padding: '2rem 1rem', color: '#6b7280' }}>
+          <div style={{ textAlign: 'center', padding: '2rem 1rem', color: colors.muted }}>
             <p style={{ fontSize: '0.95rem', margin: '0 0 0.75rem' }}>No quiz bank imported yet for this competition.</p>
-            <button
+            <Button
+              variant="primary"
               onClick={() => { setConfirmImport(true); setNotice(null); }}
-              style={allowed && competitionId ? btnPrimary() : btnDisabled()}
               disabled={!allowed || !competitionId}
             >
               Import {DEFAULT_QUIZ_BANK_KEY}
-            </button>
+            </Button>
           </div>
         ) : visible.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No questions match the current filters.</p>
+          <p style={{ color: colors.muted }}>No questions match the current filters.</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>ID</th>
-                  <th style={th()}>Stage</th>
-                  <th style={th()}>Category</th>
-                  <th style={th()}>Prompt</th>
-                  <th style={th()}>Pass mark</th>
-                  <th style={th()}></th>
+                  <th style={thCell}>ID</th>
+                  <th style={thCell}>Stage</th>
+                  <th style={thCell}>Category</th>
+                  <th style={thCell}>Prompt</th>
+                  <th style={thCell}>Pass mark</th>
+                  <th style={thCell}></th>
                 </tr>
               </thead>
               <tbody>
@@ -265,18 +268,29 @@ export default function ArenaQuizBankPage() {
                   return (
                     <Fragment key={q.id}>
                       <tr>
-                        <td style={{ ...td(), ...mono() }}>{q.externalId}</td>
-                        <td style={td()}><Pill fg={STAGE_ACCENT[q.stage].fg} bg={STAGE_ACCENT[q.stage].bg}>S{q.stage}</Pill></td>
-                        <td style={td()}><Pill fg="#374151" bg="#f3f4f6">{q.category.replace(/_/g, ' ')}</Pill></td>
-                        <td style={td()}>{q.prompt}</td>
-                        <td style={td()}>{q.passMarkPercent}%</td>
-                        <td style={td()}>
-                          <button onClick={() => toggle(q.id)} style={btn()}>{open ? 'Hide' : 'Reveal answer'}</button>
+                        <td style={{ ...tdCell, ...mono() }}>{q.externalId}</td>
+                        <td style={tdCell}><Badge text={`S${q.stage}`} color={STAGE_ACCENT[q.stage]} /></td>
+                        <td style={tdCell}><Badge text={q.category.replace(/_/g, ' ')} color={colors.secondary} /></td>
+                        <td style={tdCell}>{q.prompt}</td>
+                        <td style={tdCell}>{q.passMarkPercent}%</td>
+                        <td style={tdCell}>
+                          <Button variant="outline" onClick={() => toggle(q.id)}>{open ? 'Hide' : 'Reveal answer'}</Button>
                         </td>
                       </tr>
                       {open && (
                         <tr>
-                          <td style={{ ...td(), background: '#fafafa' }} colSpan={6}>
+                          <td style={{ ...tdCell, background: colors.headBg }} colSpan={6}>
+                            {q.imageUrl ? (
+                              <div style={{ marginBottom: '0.75rem' }}>
+                                <div style={{ fontSize: '0.72rem', color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: 4 }}>Illustration</div>
+                                {q.imageUrl.startsWith('sign:') ? (
+                                  <Badge text={`Sign: ${q.imageUrl.slice('sign:'.length)}`} color={colors.info} />
+                                ) : (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={q.imageUrl} alt="Question illustration" style={{ maxWidth: 220, maxHeight: 160, borderRadius: '0.5rem', border: `1px solid ${colors.border}`, objectFit: 'contain', background: colors.card }} />
+                                )}
+                              </div>
+                            ) : null}
                             <div style={{ display: 'grid', gap: 6, marginBottom: '0.75rem' }}>
                               {q.options.map((opt, i) => {
                                 const correct = i === q.correctIndex;
@@ -286,15 +300,15 @@ export default function ArenaQuizBankPage() {
                                     style={{
                                       display: 'flex', alignItems: 'center', gap: 8,
                                       padding: '0.4rem 0.6rem', borderRadius: '0.375rem',
-                                      border: correct ? '1px solid #86efac' : '1px solid #e5e7eb',
-                                      background: correct ? '#f0fdf4' : '#fff',
+                                      border: correct ? `1px solid ${tint(colors.success, 0.5)}` : `1px solid ${colors.border}`,
+                                      background: correct ? tint(colors.success, 0.12) : colors.card,
                                       fontWeight: correct ? 600 : 400,
-                                      color: correct ? '#166534' : '#374151', fontSize: '0.85rem',
+                                      color: correct ? colors.success : colors.text, fontSize: '0.85rem',
                                     }}
                                   >
-                                    <span style={{ ...mono(), color: '#9ca3af' }}>{String.fromCharCode(65 + i)}</span>
+                                    <span style={{ ...mono(), color: colors.muted }}>{String.fromCharCode(65 + i)}</span>
                                     <span>{opt}</span>
-                                    {correct ? <Pill fg="#166534" bg="#dcfce7">correct</Pill> : null}
+                                    {correct ? <Badge text="correct" color={colors.success} /> : null}
                                   </div>
                                 );
                               })}
@@ -306,8 +320,8 @@ export default function ArenaQuizBankPage() {
                               <DetailField label="Stage" value={QUIZ_STAGE_LABELS[q.stage]} />
                             </div>
                             <div>
-                              <div style={{ fontSize: '0.72rem', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.3 }}>Explanation</div>
-                              <p style={{ fontSize: '0.85rem', color: '#374151', margin: '0.25rem 0 0' }}>{q.explanation}</p>
+                              <div style={{ fontSize: '0.72rem', color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.3 }}>Explanation</div>
+                              <p style={{ fontSize: '0.85rem', color: colors.text, margin: '0.25rem 0 0' }}>{q.explanation}</p>
                             </div>
                           </td>
                         </tr>
@@ -317,21 +331,21 @@ export default function ArenaQuizBankPage() {
                 })}
               </tbody>
             </table>
-            <p style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.75rem' }}>
+            <p style={{ fontSize: '0.75rem', color: colors.muted, marginTop: '0.75rem' }}>
               Showing {visible.length} of {counts?.total ?? questions.length} questions{stage ? ` · Stage ${stage}` : ''}{category ? ` · ${category.replace(/_/g, ' ')}` : ''}.
             </p>
           </div>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.75rem' }}>
-      <div style={{ fontSize: '0.72rem', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.3 }}>{label}</div>
-      <div style={{ fontSize: '1.6rem', fontWeight: 700, color: '#111827' }}>{value}</div>
+    <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.75rem' }}>
+      <div style={{ fontSize: '0.72rem', color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.3 }}>{label}</div>
+      <div style={{ fontSize: '1.6rem', fontWeight: 700, color: colors.text }}>{value}</div>
     </div>
   );
 }
@@ -339,19 +353,19 @@ function Metric({ label, value }: { label: string; value: string }) {
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div style={{ fontSize: '0.72rem', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.3 }}>{label}</div>
-      <div style={{ fontSize: '0.9rem', color: '#374151' }}>{value}</div>
+      <div style={{ fontSize: '0.72rem', color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.3 }}>{label}</div>
+      <div style={{ fontSize: '0.9rem', color: colors.text }}>{value}</div>
     </div>
   );
 }
 
 function StatsSkeleton() {
   return (
-    <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+    <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginTop: 8 }}>
       {[0, 1, 2, 3].map((i) => (
-        <div key={i} style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.75rem', height: 84, background: '#f9fafb' }}>
-          <div style={{ width: '60%', height: 10, background: '#e5e7eb', borderRadius: 4, marginBottom: 12 }} />
-          <div style={{ width: '40%', height: 22, background: '#e5e7eb', borderRadius: 4 }} />
+        <div key={i} style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.75rem', height: 84, background: colors.headBg }}>
+          <div style={{ width: '60%', height: 10, background: colors.border, borderRadius: 4, marginBottom: 12 }} />
+          <div style={{ width: '40%', height: 22, background: colors.border, borderRadius: 4 }} />
         </div>
       ))}
     </div>
@@ -362,7 +376,7 @@ function TableSkeleton() {
   return (
     <div style={{ display: 'grid', gap: 8 }}>
       {[0, 1, 2, 3, 4].map((i) => (
-        <div key={i} style={{ height: 34, background: '#f3f4f6', borderRadius: 6 }} />
+        <div key={i} style={{ height: 34, background: colors.headBg, borderRadius: 6 }} />
       ))}
     </div>
   );

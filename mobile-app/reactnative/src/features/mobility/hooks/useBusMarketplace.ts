@@ -18,6 +18,7 @@ import type {
   BusRouteCreateRequest,
   BusRouteUpdateRequest,
   BusScheduleCreateRequest,
+  BusTemplateCreateRequest,
 } from '../types/busProvider.types';
 
 const MKT_KEY = 'busmkt';
@@ -113,6 +114,47 @@ export function useCreateSchedule() {
       qc.invalidateQueries({ queryKey: [BUS_KEY, PROV_KEY, 'me'] });
       qc.invalidateQueries({ queryKey: [BUS_KEY, MKT_KEY] });
     },
+    onError: (e) => { throw toMobilityError(e); },
+  });
+}
+
+// ─── Recurring departure templates ─────────────────────────────────────────────
+const TPL_KEY = 'templates';
+
+export function useTemplates() {
+  return useQuery({
+    queryKey: [BUS_KEY, PROV_KEY, TPL_KEY],
+    queryFn: provider.listTemplates,
+    staleTime: 15_000,
+  });
+}
+
+export function useCreateTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (req: BusTemplateCreateRequest) => provider.createTemplate(req),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [BUS_KEY, PROV_KEY, TPL_KEY] });
+      qc.invalidateQueries({ queryKey: [BUS_KEY, MKT_KEY] });
+    },
+    onError: (e) => { throw toMobilityError(e); },
+  });
+}
+
+export function useSetTemplateActive() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, active }: { id: string; active: boolean }) => provider.setTemplateActive(id, active),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [BUS_KEY, PROV_KEY, TPL_KEY] }),
+    onError: (e) => { throw toMobilityError(e); },
+  });
+}
+
+export function useDeleteTemplate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => provider.deleteTemplate(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [BUS_KEY, PROV_KEY, TPL_KEY] }),
     onError: (e) => { throw toMobilityError(e); },
   });
 }

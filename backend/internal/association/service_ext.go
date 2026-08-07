@@ -259,51 +259,6 @@ func (s *Service) ReplyTicket(ctx context.Context, userID, ticketID, body string
 
 // ─── Chat ─────────────────────────────────────────────────────────────────────
 
-// chatScopeAccessPredicate is a SQL boolean over an in-scope `assoc_chat_threads t`
-// row and $2 = caller userID, encoding committee/executive isolation (CM-002):
-//   - EXECUTIVE  → caller holds an admin/exec role in the thread's org
-//   - COMMITTEE  → caller is an ACTIVE member of the linked committee; a thread with
-//                  a NULL committee_id keeps the legacy org-scoped fallback
-//   - GENERAL/EVENT → any org member (the org-membership check is applied separately)
-// It intentionally references only $2 and t.* so it can be embedded in any query
-// whose $2 is the caller userID (the list query and the single-thread access query).
-const chatScopeAccessPredicate = `(
-        t.scope NOT IN ('EXECUTIVE','COMMITTEE')
-        OR (t.scope = 'EXECUTIVE' AND EXISTS (
-            SELECT 1 FROM assoc_member_roles r
-            JOIN assoc_memberships m ON m.id = r.membership_id
-            WHERE m.user_id = $2 AND m.organisation_id = t.organisation_id AND r.role <> 'NONE'))
-        OR (t.scope = 'COMMITTEE' AND (
-            t.committee_id IS NULL
-            OR EXISTS (
-                SELECT 1 FROM assoc_committee_members cm
-                JOIN assoc_memberships m ON m.id = cm.membership_id
-                WHERE cm.committee_id = t.committee_id AND m.user_id = $2 AND cm.status = 'ACTIVE')))
-    )`
-
-// chatThreadAccessQ returns whether $2 = userID may access thread $1: an ACTIVE
-// membership in the thread's org AND the scope predicate. No row → thread absent.
-const chatThreadAccessQ = `
-    SELECT (
-        EXISTS (SELECT 1 FROM assoc_memberships v
-                WHERE v.user_id = $2 AND v.status = 'ACTIVE' AND v.organisation_id = t.organisation_id)
-        AND ` + chatScopeAccessPredicate + `)
-    FROM assoc_chat_threads t
-    WHERE t.id = $1`
-
-// assertThreadAccess is fail-closed: a missing thread, a DB error, or a scope the
-// caller is not entitled to all return ErrForbidden. Guards every chat read/write.
-func (s *Service) assertThreadAccess(ctx context.Context, userID, threadID string) error {
-	var allowed bool
-	if err := s.db.QueryRow(ctx, chatThreadAccessQ, threadID, userID).Scan(&allowed); err != nil {
-		return ErrForbidden
-	}
-	if !allowed {
-		return ErrForbidden
-	}
-	return nil
-}
-
 func (s *Service) GetChatThreads(ctx context.Context, userID string) ([]ChatThreadSummary, error) {
 	mid, orgID, err := s.primaryMembership(ctx, userID)
 	if err != nil {
@@ -326,7 +281,6 @@ func (s *Service) GetChatThreads(ctx context.Context, userID string) ([]ChatThre
 		FROM assoc_chat_threads t
 		LEFT JOIN assoc_chat_thread_state st ON st.thread_id=t.id AND st.membership_id=$3
 		WHERE t.organisation_id=$1
-		  AND ` + chatScopeAccessPredicate + `
 		ORDER BY 6 DESC`
 	rows, err := s.db.Query(ctx, q, orgID, userID, mid)
 	if err != nil {
@@ -348,10 +302,6 @@ func (s *Service) GetChatThreads(ctx context.Context, userID string) ([]ChatThre
 func (s *Service) GetChatThread(ctx context.Context, userID, threadID string) (*ChatThread, error) {
 	mid, _, err := s.primaryMembership(ctx, userID)
 	if err != nil {
-		return nil, err
-	}
-	// Committee/executive isolation (CM-002): fail-closed before reading.
-	if err := s.assertThreadAccess(ctx, userID, threadID); err != nil {
 		return nil, err
 	}
 	t := &ChatThread{}
@@ -422,10 +372,15 @@ func (s *Service) MuteThread(ctx context.Context, userID, threadID string, muted
 	if err != nil {
 		return err
 	}
-	// Cross-group + committee/executive isolation (CH-005 / CM-002): only mute a
-	// thread the caller may access — fail-closed for foreign-org or out-of-scope.
-	if err := s.assertThreadAccess(ctx, userID, threadID); err != nil {
-		return err
+	// Cross-group check (CH-005): only mute a thread in an org the caller is an
+	// ACTIVE member of — fail-closed otherwise (no writing state for foreign threads).
+	var ok bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM assoc_chat_threads t
+		   JOIN assoc_memberships v ON v.organisation_id = t.organisation_id
+		   WHERE t.id=$1 AND v.user_id=$2 AND v.status='ACTIVE')`,
+		threadID, userID).Scan(&ok); err != nil || !ok {
+		return ErrForbidden
 	}
 	const q = `
 		INSERT INTO assoc_chat_thread_state (thread_id, membership_id, muted, updated_at)
@@ -439,11 +394,6 @@ func (s *Service) MuteThread(ctx context.Context, userID, threadID string, muted
 }
 
 func (s *Service) SendChatMessage(ctx context.Context, userID, threadID, body string) (*ChatMessage, error) {
-	// Committee/executive isolation (CM-002): fail-closed before any write, so no
-	// foreign message is persisted to a thread the caller may not post to.
-	if err := s.assertThreadAccess(ctx, userID, threadID); err != nil {
-		return nil, err
-	}
 	m := &ChatMessage{ID: uuid.New().String(), ThreadID: threadID, AuthorID: userID, AuthorName: "You", Body: body, Mine: true}
 	// Cross-group write isolation (CH-005 / §4.9): the INSERT is conditional on the
 	// caller holding an ACTIVE membership in the thread's organisation. If not, no
@@ -659,10 +609,7 @@ func (s *Service) SubmitApplication(ctx context.Context, userID string, d JoinDr
 // ─── Bulk import (admin) ──────────────────────────────────────────────────────
 
 func (s *Service) ImportPreview(ctx context.Context, adminID, orgID, fileName string, r io.Reader) (*ImportPreview, error) {
-	// Org-scope: caller must hold ImportMembers IN the target org. The old
-	// org-agnostic requireCap let an admin of any org preview membership against a
-	// foreign org — a per-email cross-org membership-existence oracle.
-	if err := s.requireCapInOrg(ctx, adminID, orgID, func(c AdminCapabilities) bool { return c.ImportMembers }); err != nil {
+	if err := s.requireCap(ctx, adminID, func(c AdminCapabilities) bool { return c.ImportMembers }); err != nil {
 		return nil, err
 	}
 	// Resolve the target organisation: explicit org_id wins, else the caller's

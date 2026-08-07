@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { card, PageHeader, Notice } from './_ui';
+import type { ReactNode } from 'react';
+import { Page, PageHeader, Card, colors, tint } from '@/components/ui/vuexy';
 
 type HubLink = { group: string; code: string; href: string; title: string; desc: string };
 
@@ -23,35 +24,44 @@ const LINKS: HubLink[] = [
 
 const GROUPS = ['Configuration', 'Operations & records', 'Analytics'];
 
+function Notice({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ background: tint(colors.warning, 0.12), border: `1px solid ${tint(colors.warning, 0.3)}`, color: colors.text, padding: '10px 12px', borderRadius: 8, fontSize: 13, marginTop: 14, display: 'flex', gap: 8 }}>
+      <span aria-hidden>🔒</span>
+      <span>{children}</span>
+    </div>
+  );
+}
+
 export default function IntakeHubPage() {
   return (
-    <div>
+    <Page>
       <PageHeader
         title="Pre-Consultation Intake"
         subtitle="Configure the patient intake schema, safety rules, and consent; monitor intake completion and triggered red-flag cases; and review de-identified analytics. All access is role-gated (health.admin.intake) and audit-logged."
       />
-      <Notice kind="audit">
+      <Notice>
         Intake holds sensitive health data. Every configuration change and every record access is written to the audit log.
       </Notice>
 
       {GROUPS.map((group) => (
         <section key={group} style={{ marginTop: 24 }}>
-          <p style={{ fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 }}>{group}</p>
+          <p style={{ fontSize: 12, color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>{group}</p>
           <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', marginTop: 8 }}>
             {LINKS.filter((l) => l.group === group).map((l) => (
               <Link key={l.href} href={l.href} style={{ textDecoration: 'none', color: 'inherit' }}>
-                <div style={{ ...card, height: '100%' }}>
+                <Card style={{ height: '100%' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                     <strong>{l.title}</strong>
-                    <span style={{ fontSize: 11, opacity: 0.5, fontFamily: 'monospace' }}>{l.code}</span>
+                    <span style={{ fontSize: 11, color: colors.muted, fontFamily: 'monospace' }}>{l.code}</span>
                   </div>
-                  <p style={{ fontSize: 12, opacity: 0.7, marginTop: 8, marginBottom: 0 }}>{l.desc}</p>
-                </div>
+                  <p style={{ fontSize: 12, color: colors.muted, marginTop: 8, marginBottom: 0 }}>{l.desc}</p>
+                </Card>
               </Link>
             ))}
           </div>
         </section>
       ))}
-    </div>
+    </Page>
   );
 }

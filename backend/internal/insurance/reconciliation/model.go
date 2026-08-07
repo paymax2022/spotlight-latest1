@@ -21,26 +21,26 @@ const (
 type CommissionStatus string
 
 const (
-	CommissionPending  CommissionStatus = "PENDING"  // posted at bind, awaiting statement confirm
+	CommissionPending   CommissionStatus = "PENDING"   // posted at bind, awaiting statement confirm
 	CommissionConfirmed CommissionStatus = "CONFIRMED" // reconciled against provider statement
-	CommissionReversed CommissionStatus = "REVERSED"  // reversing entry posted (cancel/clawback)
+	CommissionReversed  CommissionStatus = "REVERSED"  // reversing entry posted (cancel/clawback)
 )
 
 // ReconciliationRecord is one premium↔statement match attempt. A BREAK is a
 // discrepancy an operator works in the admin workbench.
 type ReconciliationRecord struct {
-	ID                string       `json:"id"`
-	Provider          string       `json:"provider"`
-	PolicyID          *string      `json:"policy_id,omitempty"`
-	PremiumTxID       *string      `json:"premium_tx_id,omitempty"`
-	StatementRef      string       `json:"statement_ref"`
-	ExpectedAmountKobo int64       `json:"expected_amount_kobo"`
-	StatementAmountKobo int64      `json:"statement_amount_kobo"`
-	Status            RecordStatus `json:"status"`
-	BreakReason       string       `json:"break_reason,omitempty"`
-	ResolutionNote    string       `json:"resolution_note,omitempty"`
-	CreatedAt         time.Time    `json:"created_at"`
-	ResolvedAt        *time.Time   `json:"resolved_at,omitempty"`
+	ID                  string       `json:"id"`
+	Provider            string       `json:"provider"`
+	PolicyID            *string      `json:"policy_id,omitempty"`
+	PremiumTxID         *string      `json:"premium_tx_id,omitempty"`
+	StatementRef        string       `json:"statement_ref"`
+	ExpectedAmountKobo  int64        `json:"expected_amount_kobo"`
+	StatementAmountKobo int64        `json:"statement_amount_kobo"`
+	Status              RecordStatus `json:"status"`
+	BreakReason         string       `json:"break_reason,omitempty"`
+	ResolutionNote      string       `json:"resolution_note,omitempty"`
+	CreatedAt           time.Time    `json:"created_at"`
+	ResolvedAt          *time.Time   `json:"resolved_at,omitempty"`
 }
 
 // CommissionEntry is the insurance-domain record of a commission posting on the

@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { getCustomers } from '@/services/fxAdminService';
 import type { AdminCustomer, CustomerVerification } from '@/types/fxAdmin';
-import { PageHeader, FxTabs, Card, Badge, btn, th, td, money } from '../_ui';
+import { PageHeader, FxTabs, Card, Badge, money } from '../_ui';
+import { Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const FILTERS: (CustomerVerification | 'all')[] = ['all', 'pending', 'review', 'approved', 'rejected', 'suspended'];
 
@@ -21,35 +22,35 @@ export default function FxCustomersPage() {
 
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Customers (KYC/KYB)" subtitle={`${queue} awaiting verification`} action={<button onClick={load} style={btn()}>Refresh</button>} />
+      <PageHeader title="Customers (KYC/KYB)" subtitle={`${queue} awaiting verification`} action={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <FxTabs active="customers" />
 
       <Card>
         <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
           {FILTERS.map((f) => (
-            <button key={f} onClick={() => setFilter(f)} style={{ ...btn(), background: filter === f ? '#1d4ed8' : '#fff', color: filter === f ? '#fff' : '#374151', textTransform: 'capitalize' }}>{f}</button>
+            <Button key={f} variant={filter === f ? 'primary' : 'outline'} style={{ textTransform: 'capitalize' }} onClick={() => setFilter(f)}>{f}</Button>
           ))}
         </div>
       </Card>
 
       <Card>
-        {loading ? <p style={{ color: '#6b7280' }}>Loading…</p> : shown.length === 0 ? <p style={{ color: '#6b7280' }}>No customers match.</p> : (
+        {loading ? <p style={{ color: colors.muted }}>Loading…</p> : shown.length === 0 ? <p style={{ color: colors.muted }}>No customers match.</p> : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
-              <tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>Name</th><th style={th()}>Type</th><th style={th()}>Country</th><th style={th()}>Tier</th><th style={th()}>Balance</th><th style={th()}>Status</th><th style={th()}></th>
+              <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                <th style={thCell}>Name</th><th style={thCell}>Type</th><th style={thCell}>Country</th><th style={thCell}>Tier</th><th style={thCell}>Balance</th><th style={thCell}>Status</th><th style={thCell}></th>
               </tr>
             </thead>
             <tbody>
               {shown.map((c) => (
-                <tr key={c.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                  <td style={td()}><strong>{c.name}</strong><div style={{ color: '#6b7280', fontSize: '0.78rem' }}>{c.email}</div></td>
-                  <td style={{ ...td(), textTransform: 'capitalize' }}>{c.type}</td>
-                  <td style={td()}>{c.country}</td>
-                  <td style={td()}>{c.tier}</td>
-                  <td style={td()}>{money(c.balanceUsdCents, 'USD')}</td>
-                  <td style={td()}><Badge status={c.verification === 'approved' ? 'successful' : c.verification === 'rejected' || c.verification === 'suspended' ? 'failed' : 'pending'} label={c.verification} /></td>
-                  <td style={{ ...td(), textAlign: 'right' }}><Link href={`/admin/fx/customers/${c.id}`} style={{ color: '#1d4ed8', textDecoration: 'none', fontWeight: 600 }}>Review →</Link></td>
+                <tr key={c.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  <td style={tdCell}><strong>{c.name}</strong><div style={{ color: colors.muted, fontSize: '0.78rem' }}>{c.email}</div></td>
+                  <td style={{ ...tdCell, textTransform: 'capitalize' }}>{c.type}</td>
+                  <td style={tdCell}>{c.country}</td>
+                  <td style={tdCell}>{c.tier}</td>
+                  <td style={tdCell}>{money(c.balanceUsdCents, 'USD')}</td>
+                  <td style={tdCell}><Badge status={c.verification === 'approved' ? 'successful' : c.verification === 'rejected' || c.verification === 'suspended' ? 'failed' : 'pending'} label={c.verification} /></td>
+                  <td style={{ ...tdCell, textAlign: 'right' }}><Link href={`/admin/fx/customers/${c.id}`} style={{ color: colors.info, textDecoration: 'none', fontWeight: 600 }}>Review →</Link></td>
                 </tr>
               ))}
             </tbody>

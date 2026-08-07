@@ -5,7 +5,6 @@ import {
   ScrollView,
   StyleSheet,
   Platform,
-  Alert,
   Pressable,
   ActivityIndicator,
   RefreshControl,
@@ -28,6 +27,7 @@ import {
   ChevronRight,
   LineChart,
   KeyRound,
+  Building2,
 } from 'lucide-react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import TextInputField from '@/components/TextInputField';
@@ -52,6 +52,7 @@ import {
 } from '@/api/profile.api';
 import { STATE_NAMES, getLGAsForState } from '@/data/nigeria';
 import { getErrorMessage } from '@/utils/errorMapper';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 type ProfileForm = {
   firstName: string;
@@ -288,7 +289,7 @@ export default function ProfileScreen() {
           phone: updated.phone ?? user.phone,
         });
       }
-      Alert.alert('Profile updated', 'Your account information has been saved.');
+      alertAsync({ title: 'Profile updated', message: 'Your account information has been saved.' });
     },
     onError: (error) => setProfileError(getErrorMessage(error)),
   });
@@ -305,7 +306,7 @@ export default function ProfileScreen() {
       setDocumentNumber('');
       qc.setQueryData(['kyc'], updated);
       if (user) setUser({ ...user, kycStatus: updated.status });
-      Alert.alert('KYC submitted', `Your Tier ${selectedTier} KYC request is pending review.`);
+      alertAsync({ title: 'KYC submitted', message: `Your Tier ${selectedTier} KYC request is pending review.` });
     },
     onError: (error) => setKycError(getErrorMessage(error)),
   });
@@ -316,7 +317,7 @@ export default function ProfileScreen() {
       setKycError('');
       qc.setQueryData(['kyc'], updated);
       if (user) setUser({ ...user, kycStatus: updated.status });
-      Alert.alert('Tier 0 activated', 'Your account is now Tier 0 verified.');
+      alertAsync({ title: 'Tier 0 activated', message: 'Your account is now Tier 0 verified.' });
     },
     onError: (error) => setKycError(getErrorMessage(error)),
   });
@@ -368,18 +369,11 @@ export default function ProfileScreen() {
     submitKycRequest.mutate();
   };
 
-  const handleLogout = () => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign Out',
-        style: 'destructive',
-        onPress: async () => {
-          await logout();
-          router.replace('/(auth)/login');
-        },
-      },
-    ]);
+  const handleLogout = async () => {
+    const ok = await confirmAsync({ title: 'Sign Out', message: 'Are you sure you want to sign out?', confirmLabel: 'Sign Out', destructive: true });
+    if (!ok) return;
+    await logout();
+    router.replace('/(auth)/login');
   };
 
   return (
@@ -499,6 +493,7 @@ export default function ProfileScreen() {
                   onChange={(val) => {
                     setProfileValue('state', val);
                     setProfileValue('lga', '');
+                    setProfileValue('city', '');
                   }}
                 />
                 <SelectField
@@ -509,7 +504,14 @@ export default function ProfileScreen() {
                   onChange={(val) => setProfileValue('lga', val)}
                   disabled={!profileForm.state}
                 />
-                <TextInputField label="City" value={profileForm.city} onChangeText={(value) => setProfileValue('city', value)} autoCapitalize="words" />
+                <SelectField
+                  label="City"
+                  placeholder={profileForm.state ? 'Select city' : 'Select state first'}
+                  value={profileForm.city}
+                  options={getLGAsForState(profileForm.state)}
+                  onChange={(value) => setProfileValue('city', value)}
+                  disabled={!profileForm.state}
+                />
                 <TextInputField label="Residential address" value={profileForm.address} onChangeText={(value) => setProfileValue('address', value)} autoCapitalize="words" />
 
                 {profileError ? <Text style={styles.errorText}>{profileError}</Text> : null}
@@ -698,6 +700,22 @@ export default function ProfileScreen() {
               <Text style={styles.merchantSub}>Sell or offer services — keep your customer account</Text>
             </View>
             <ChevronRight size={18} color={Colors.onPrimary} strokeWidth={2} />
+          </Pressable>
+
+          <Pressable
+            onPress={() => router.push('/profile/business')}
+            style={({ pressed }) => [styles.settingsRow, shadow1, pressed && { opacity: 0.9 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Business and CAC registration"
+          >
+            <View style={styles.settingsIcon}>
+              <Building2 size={20} color={Colors.primary} strokeWidth={2} />
+            </View>
+            <View style={styles.merchantBody}>
+              <Text style={styles.settingsTitle}>Business / Merchant</Text>
+              <Text style={styles.settingsSub}>Register or verify your business with CAC</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
           </Pressable>
 
           <Pressable

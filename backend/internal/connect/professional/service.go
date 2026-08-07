@@ -105,9 +105,16 @@ func (s *Service) Discover(ctx context.Context, viewerID, industry string, limit
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
+	// PN-011 / safety invariant 3: exclude profiles of users the viewer blocked or
+	// who blocked the viewer — block is absolute across professional surfaces too.
 	const q = `SELECT id, user_id, headline, company, role_title, industry, bio, verification_status, visible, created_at
-		FROM connect_professional_profiles
+		FROM connect_professional_profiles pr
 		WHERE visible = true AND user_id <> $1 AND ($2 = '' OR industry = $2)
+		  AND NOT EXISTS (
+		    SELECT 1 FROM connect_blocks b
+		    WHERE (b.blocker_id = $1::uuid AND b.blocked_id = pr.user_id)
+		       OR (b.blocked_id = $1::uuid AND b.blocker_id = pr.user_id)
+		  )
 		ORDER BY (verification_status='verified') DESC, created_at DESC LIMIT $3`
 	rows, err := s.db.Query(ctx, q, viewerID, industry, limit)
 	if err != nil {

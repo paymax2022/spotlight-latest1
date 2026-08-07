@@ -2,52 +2,53 @@
 
 import Link from 'next/link';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
+import { colors, tint } from '@/components/ui/vuexy';
 
 // Shared presentational helpers for the Insurance console — matches the Connect /
 // Referral admin light-card inline-style convention. All insurance pages import
 // from this file via relative path, so everything they need is exported here.
 
-export const card = (): CSSProperties => ({ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem', background: '#fff' });
-export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: '0.85rem' });
-export const btnPrimary = (): CSSProperties => ({ ...btn(), border: '1px solid #340075', background: '#340075', color: '#fff', fontWeight: 600 });
-export const btnDanger = (): CSSProperties => ({ ...btn(), border: '1px solid #b91c1c', background: '#fff', color: '#b91c1c', fontWeight: 600 });
-export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: '#6b7280', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3 });
-export const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: '#374151', fontSize: '0.85rem', borderTop: '1px solid #f3f4f6' });
-export const input = (): CSSProperties => ({ padding: '0.4rem 0.55rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem', width: '100%', boxSizing: 'border-box' });
-export const label = (): CSSProperties => ({ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#374151', marginBottom: '0.25rem' });
-export const select = (): CSSProperties => ({ ...input(), background: '#fff', cursor: 'pointer' });
+export const card = (): CSSProperties => ({ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card });
+export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: `1px solid ${colors.inputBorder}`, background: colors.card, cursor: 'pointer', fontSize: '0.85rem' });
+export const btnPrimary = (): CSSProperties => ({ ...btn(), border: `1px solid ${colors.primary}`, background: colors.primary, color: '#fff', fontWeight: 600 });
+export const btnDanger = (): CSSProperties => ({ ...btn(), border: `1px solid ${colors.danger}`, background: colors.card, color: colors.danger, fontWeight: 600 });
+export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: colors.muted, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3 });
+export const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: colors.text, fontSize: '0.85rem', borderTop: `1px solid ${colors.headBg}` });
+export const input = (): CSSProperties => ({ padding: '0.4rem 0.55rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem', fontSize: '0.85rem', width: '100%', boxSizing: 'border-box' });
+export const label = (): CSSProperties => ({ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' });
+export const select = (): CSSProperties => ({ ...input(), background: colors.card, cursor: 'pointer' });
 
 const STATUS_COLORS: Record<string, { fg: string; bg: string }> = {
   // generic / lifecycle
-  active: { fg: '#15803d', bg: '#dcfce7' }, approved: { fg: '#15803d', bg: '#dcfce7' },
-  settled: { fg: '#15803d', bg: '#dcfce7' }, renewed: { fg: '#15803d', bg: '#dcfce7' },
-  reconciled: { fg: '#15803d', bg: '#dcfce7' }, matched: { fg: '#15803d', bg: '#dcfce7' },
-  resolved: { fg: '#15803d', bg: '#dcfce7' }, paid: { fg: '#15803d', bg: '#dcfce7' },
-  healthy: { fg: '#15803d', bg: '#dcfce7' }, up: { fg: '#15803d', bg: '#dcfce7' },
-  open: { fg: '#9a3412', bg: '#ffedd5' }, pending: { fg: '#9a3412', bg: '#ffedd5' },
-  pending_payment: { fg: '#9a3412', bg: '#ffedd5' }, payout_pending: { fg: '#9a3412', bg: '#ffedd5' },
-  binding: { fg: '#1d4ed8', bg: '#dbeafe' }, quoted: { fg: '#1d4ed8', bg: '#dbeafe' },
-  under_assessment: { fg: '#1d4ed8', bg: '#dbeafe' }, fnol_submitted: { fg: '#1d4ed8', bg: '#dbeafe' },
-  needs_more_info: { fg: '#9a3412', bg: '#ffedd5' }, renewal_due: { fg: '#9a3412', bg: '#ffedd5' },
-  investigating: { fg: '#1d4ed8', bg: '#dbeafe' }, reviewing: { fg: '#1d4ed8', bg: '#dbeafe' },
-  draft: { fg: '#6b7280', bg: '#f3f4f6' }, expired: { fg: '#6b7280', bg: '#f3f4f6' },
-  closed: { fg: '#6b7280', bg: '#f3f4f6' }, cancelled: { fg: '#6b7280', bg: '#f3f4f6' },
-  void: { fg: '#6b7280', bg: '#f3f4f6' }, inactive: { fg: '#6b7280', bg: '#f3f4f6' },
-  rejected: { fg: '#b91c1c', bg: '#fee2e2' }, lapsed: { fg: '#b91c1c', bg: '#fee2e2' },
-  failed: { fg: '#b91c1c', bg: '#fee2e2' }, bind_failed: { fg: '#b91c1c', bg: '#fee2e2' },
-  payment_failed: { fg: '#b91c1c', bg: '#fee2e2' }, break: { fg: '#b91c1c', bg: '#fee2e2' },
-  unmatched: { fg: '#b91c1c', bg: '#fee2e2' }, down: { fg: '#b91c1c', bg: '#fee2e2' },
-  degraded: { fg: '#9a3412', bg: '#ffedd5' }, reversed: { fg: '#7c3aed', bg: '#ede9fe' },
+  active: { fg: colors.success, bg: tint(colors.success, 0.12) }, approved: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  settled: { fg: colors.success, bg: tint(colors.success, 0.12) }, renewed: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  reconciled: { fg: colors.success, bg: tint(colors.success, 0.12) }, matched: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  resolved: { fg: colors.success, bg: tint(colors.success, 0.12) }, paid: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  healthy: { fg: colors.success, bg: tint(colors.success, 0.12) }, up: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  open: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, pending: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  pending_payment: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, payout_pending: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  binding: { fg: colors.info, bg: tint(colors.info, 0.12) }, quoted: { fg: colors.info, bg: tint(colors.info, 0.12) },
+  under_assessment: { fg: colors.info, bg: tint(colors.info, 0.12) }, fnol_submitted: { fg: colors.info, bg: tint(colors.info, 0.12) },
+  needs_more_info: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, renewal_due: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  investigating: { fg: colors.info, bg: tint(colors.info, 0.12) }, reviewing: { fg: colors.info, bg: tint(colors.info, 0.12) },
+  draft: { fg: colors.muted, bg: colors.headBg }, expired: { fg: colors.muted, bg: colors.headBg },
+  closed: { fg: colors.muted, bg: colors.headBg }, cancelled: { fg: colors.muted, bg: colors.headBg },
+  void: { fg: colors.muted, bg: colors.headBg }, inactive: { fg: colors.muted, bg: colors.headBg },
+  rejected: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, lapsed: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
+  failed: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, bind_failed: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
+  payment_failed: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, break: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
+  unmatched: { fg: colors.danger, bg: tint(colors.danger, 0.12) }, down: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
+  degraded: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, reversed: { fg: '#7c3aed', bg: tint('#7c3aed', 0.12) },
   // severity
-  low: { fg: '#6b7280', bg: '#f3f4f6' }, normal: { fg: '#1d4ed8', bg: '#dbeafe' },
-  medium: { fg: '#9a3412', bg: '#ffedd5' }, high: { fg: '#9a3412', bg: '#ffedd5' },
-  critical: { fg: '#b91c1c', bg: '#fee2e2' },
+  low: { fg: colors.muted, bg: colors.headBg }, normal: { fg: colors.info, bg: tint(colors.info, 0.12) },
+  medium: { fg: colors.warning, bg: tint(colors.warning, 0.12) }, high: { fg: colors.warning, bg: tint(colors.warning, 0.12) },
+  critical: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
   // binding mode
-  embedded: { fg: '#7c3aed', bg: '#ede9fe' }, voluntary: { fg: '#1d4ed8', bg: '#dbeafe' },
+  embedded: { fg: '#7c3aed', bg: tint('#7c3aed', 0.12) }, voluntary: { fg: colors.info, bg: tint(colors.info, 0.12) },
 };
 
 export function Badge({ status, label: lbl }: { status: string; label?: string }) {
-  const c = STATUS_COLORS[status] ?? { fg: '#374151', bg: '#f3f4f6' };
+  const c = STATUS_COLORS[status] ?? { fg: colors.text, bg: colors.headBg };
   return <span style={{ display: 'inline-block', padding: '0.1rem 0.5rem', borderRadius: 9999, fontSize: '0.72rem', fontWeight: 600, color: c.fg, background: c.bg, textTransform: 'capitalize', whiteSpace: 'nowrap' }}>{lbl ?? status.replace(/_/g, ' ')}</span>;
 }
 
@@ -56,7 +57,7 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', gap: '1rem', flexWrap: 'wrap' }}>
       <div>
         <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>{title}</h1>
-        {subtitle ? <p style={{ color: '#6b7280', margin: '0.25rem 0 0', fontSize: '0.85rem', maxWidth: 820 }}>{subtitle}</p> : null}
+        {subtitle ? <p style={{ color: colors.muted, margin: '0.25rem 0 0', fontSize: '0.85rem', maxWidth: 820 }}>{subtitle}</p> : null}
       </div>
       {action}
     </div>
@@ -79,10 +80,10 @@ export function Card({ title, children, right }: PropsWithChildren<{ title?: str
 
 export function Kpi({ label: lbl, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
   return (
-    <div style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.85rem 1rem', background: '#fff' }}>
-      <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: '#6b7280', fontWeight: 600 }}>{lbl}</div>
-      <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: accent ?? '#111827' }}>{value}</div>
-      {sub ? <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.15rem' }}>{sub}</div> : null}
+    <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.85rem 1rem', background: colors.card }}>
+      <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 600 }}>{lbl}</div>
+      <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: accent ?? colors.text }}>{value}</div>
+      {sub ? <div style={{ fontSize: '0.75rem', color: colors.muted, marginTop: '0.15rem' }}>{sub}</div> : null}
     </div>
   );
 }
@@ -98,9 +99,9 @@ export function InsuranceTabs({ active }: { active: string }) {
     { href: '/admin/insurance/reports', label: 'Ops', key: 'ops' },
   ];
   return (
-    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>
+    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1.25rem', borderBottom: `1px solid ${colors.border}`, paddingBottom: '0.5rem' }}>
       {tabs.map((t) => (
-        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : '#374151', background: active === t.key ? '#340075' : '#f3f4f6' }}>{t.label}</Link>
+        <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : colors.text, background: active === t.key ? colors.primary : colors.headBg }}>{t.label}</Link>
       ))}
     </div>
   );
@@ -108,16 +109,16 @@ export function InsuranceTabs({ active }: { active: string }) {
 
 // Standard loading / empty / error placeholders so every list page is consistent.
 export function StateBlock({ loading, error, empty, emptyText = 'No records found.', children }: PropsWithChildren<{ loading: boolean; error: string | null; empty: boolean; emptyText?: string }>) {
-  if (loading) return <p style={{ color: '#6b7280' }}>Loading…</p>;
-  if (error) return <p style={{ color: '#dc2626' }}>{error}</p>;
-  if (empty) return <p style={{ color: '#6b7280' }}>{emptyText}</p>;
+  if (loading) return <p style={{ color: colors.muted }}>Loading…</p>;
+  if (error) return <p style={{ color: colors.danger }}>{error}</p>;
+  if (empty) return <p style={{ color: colors.muted }}>{emptyText}</p>;
   return <>{children}</>;
 }
 
 // Disclosure banner — underwriter + aggregator must be shown (PRD §13/§18).
 export function DisclosureNote({ children }: PropsWithChildren) {
   return (
-    <div style={{ border: '1px solid #ddd6fe', background: '#f5f3ff', color: '#5b21b6', borderRadius: '0.5rem', padding: '0.6rem 0.8rem', fontSize: '0.78rem', marginBottom: '1rem' }}>
+    <div style={{ border: `1px solid ${tint('#7c3aed', 0.4)}`, background: tint('#7c3aed', 0.08), color: '#5b21b6', borderRadius: '0.5rem', padding: '0.6rem 0.8rem', fontSize: '0.78rem', marginBottom: '1rem' }}>
       {children}
     </div>
   );

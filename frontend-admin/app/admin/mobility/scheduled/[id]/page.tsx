@@ -8,9 +8,10 @@ import {
 import type { ScheduledBookingDetail } from '@/types/scheduledMobility';
 import {
   Card, Badge, StateNote, AuditedNotice,
-  btn, btnPrimary, btnDisabled, th, td, input, card, naira,
+  btn, btnPrimary, btnDisabled, input, card, naira,
   useMobilityPermissions,
 } from '../../_ui';
+import { colors, thCell, tdCell } from '@/components/ui/vuexy';
 import { SCHEDULED_PERMS } from '../_perms';
 
 type ActionKind = 'force-dispatch' | 'reassign' | 'cancel' | null;
@@ -101,9 +102,9 @@ export default function ScheduledBookingDetailPage({ params }: { params: Promise
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: '0.5rem' }}>
         <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700 }}>{booking.id}</h1>
         <Badge status={booking.status} />
-        <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>{booking.mode.replace(/_/g, ' ')}</span>
+        <span style={{ fontSize: '0.8rem', color: colors.muted }}>{booking.mode.replace(/_/g, ' ')}</span>
       </div>
-      <p style={{ fontSize: '0.85rem', color: '#6b7280', margin: '0 0 1rem' }}>
+      <p style={{ fontSize: '0.85rem', color: colors.muted, margin: '0 0 1rem' }}>
         {booking.userName} ({booking.userId}) · market {booking.marketId} · pickup {new Date(booking.scheduledPickupAt).toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' })} ({booking.timezone}) · lead time {booking.leadTimeMinutes}m
       </p>
 
@@ -116,30 +117,30 @@ export default function ScheduledBookingDetailPage({ params }: { params: Promise
           <Card title="Booking">
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <tbody>
-                <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280', width: '35%' }}>Pickup</td><td style={td()}>{booking.pickupLabel ?? '—'}</td></tr>
-                <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280' }}>Dropoff</td><td style={td()}>{booking.dropoffLabel ?? '—'}</td></tr>
-                <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280' }}>Estimated fare</td><td style={td()}>{booking.estimatedFareKobo != null ? naira(booking.estimatedFareKobo) : '—'} {booking.currency}</td></tr>
-                <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280' }}>Payment method</td><td style={td()}>{booking.paymentMethod}</td></tr>
-                <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280' }}>Settlement ref</td><td style={td()}>{booking.settlementId ?? '—'}</td></tr>
-                <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280' }}>Dispatch attempts</td><td style={td()}>{booking.dispatchAttempts}</td></tr>
-                <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280' }}>Last dispatch error</td><td style={td()}>{booking.lastDispatchError ? <span style={{ color: '#dc2626' }}>{booking.lastDispatchError}</span> : '—'}</td></tr>
-                <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280' }}>Materialized</td><td style={td()}>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted, width: '35%' }}>Pickup</td><td style={tdCell}>{booking.pickupLabel ?? '—'}</td></tr>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted }}>Dropoff</td><td style={tdCell}>{booking.dropoffLabel ?? '—'}</td></tr>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted }}>Estimated fare</td><td style={tdCell}>{booking.estimatedFareKobo != null ? naira(booking.estimatedFareKobo) : '—'} {booking.currency}</td></tr>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted }}>Payment method</td><td style={tdCell}>{booking.paymentMethod}</td></tr>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted }}>Settlement ref</td><td style={tdCell}>{booking.settlementId ?? '—'}</td></tr>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted }}>Dispatch attempts</td><td style={tdCell}>{booking.dispatchAttempts}</td></tr>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted }}>Last dispatch error</td><td style={tdCell}>{booking.lastDispatchError ? <span style={{ color: colors.danger }}>{booking.lastDispatchError}</span> : '—'}</td></tr>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted }}>Materialized</td><td style={tdCell}>
                   {booking.materializedRef
                     ? (matHref ? <Link href={matHref}>{booking.materializedKind}: {booking.materializedRef} →</Link> : `${booking.materializedKind}: ${booking.materializedRef}`)
                     : '—'}
                 </td></tr>
-                <tr style={{ borderBottom: '1px solid #f3f4f6' }}><td style={{ ...td(), color: '#6b7280' }}>Reminders</td><td style={td()}>
+                <tr style={{ borderBottom: `1px solid ${colors.border}` }}><td style={{ ...tdCell, color: colors.muted }}>Reminders</td><td style={tdCell}>
                   24h {booking.reminder24hSentAt ? `sent ${new Date(booking.reminder24hSentAt).toLocaleString('en-NG')}` : 'pending'} · 1h {booking.reminder1hSentAt ? `sent ${new Date(booking.reminder1hSentAt).toLocaleString('en-NG')}` : 'pending'}
                 </td></tr>
                 {booking.cancelReason && (
-                  <tr><td style={{ ...td(), color: '#6b7280' }}>Cancel reason</td><td style={td()}>{booking.cancelReason}</td></tr>
+                  <tr><td style={{ ...tdCell, color: colors.muted }}>Cancel reason</td><td style={tdCell}>{booking.cancelReason}</td></tr>
                 )}
               </tbody>
             </table>
           </Card>
 
           <Card title="Mode payload">
-            <pre style={{ margin: 0, fontSize: '0.78rem', background: '#f9fafb', padding: '0.75rem', borderRadius: '0.375rem', overflowX: 'auto' }}>
+            <pre style={{ margin: 0, fontSize: '0.78rem', background: colors.headBg, padding: '0.75rem', borderRadius: '0.375rem', overflowX: 'auto' }}>
               {JSON.stringify(booking.modePayload, null, 2)}
             </pre>
           </Card>
@@ -148,17 +149,17 @@ export default function ScheduledBookingDetailPage({ params }: { params: Promise
             {booking.dispatchHistory.length === 0 ? <StateNote kind="empty">No dispatch attempts yet.</StateNote> : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                 <thead>
-                  <tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                    <th style={th()}>Attempt</th><th style={th()}>Outcome</th><th style={th()}>Error</th><th style={th()}>When</th>
+                  <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                    <th style={thCell}>Attempt</th><th style={thCell}>Outcome</th><th style={thCell}>Error</th><th style={thCell}>When</th>
                   </tr>
                 </thead>
                 <tbody>
                   {booking.dispatchHistory.map((d) => (
-                    <tr key={d.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                      <td style={td()}>{d.attempt}</td>
-                      <td style={td()}><Badge status={d.outcome === 'success' ? 'completed' : d.outcome === 'failed' ? 'failed' : 'pending'} label={d.outcome} /></td>
-                      <td style={td()}>{d.error ?? '—'}</td>
-                      <td style={td()}>{new Date(d.createdAt).toLocaleString('en-NG')}</td>
+                    <tr key={d.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                      <td style={tdCell}>{d.attempt}</td>
+                      <td style={tdCell}><Badge status={d.outcome === 'success' ? 'completed' : d.outcome === 'failed' ? 'failed' : 'pending'} label={d.outcome} /></td>
+                      <td style={tdCell}>{d.error ?? '—'}</td>
+                      <td style={tdCell}>{new Date(d.createdAt).toLocaleString('en-NG')}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -170,17 +171,17 @@ export default function ScheduledBookingDetailPage({ params }: { params: Promise
             {booking.auditLog.length === 0 ? <StateNote kind="empty">No admin actions recorded yet.</StateNote> : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                 <thead>
-                  <tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                    <th style={th()}>Action</th><th style={th()}>reason_code</th><th style={th()}>Actor</th><th style={th()}>When</th>
+                  <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                    <th style={thCell}>Action</th><th style={thCell}>reason_code</th><th style={thCell}>Actor</th><th style={thCell}>When</th>
                   </tr>
                 </thead>
                 <tbody>
                   {booking.auditLog.map((a) => (
-                    <tr key={a.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                      <td style={td()}>{a.action}</td>
-                      <td style={td()}><code>{a.reasonCode}</code></td>
-                      <td style={td()}>{a.actor}</td>
-                      <td style={td()}>{new Date(a.createdAt).toLocaleString('en-NG')}</td>
+                    <tr key={a.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                      <td style={tdCell}>{a.action}</td>
+                      <td style={tdCell}><code>{a.reasonCode}</code></td>
+                      <td style={tdCell}>{a.actor}</td>
+                      <td style={tdCell}>{new Date(a.createdAt).toLocaleString('en-NG')}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -207,14 +208,14 @@ export default function ScheduledBookingDetailPage({ params }: { params: Promise
                 </button>
                 <button
                   disabled={!canReassign}
-                  style={canReassign ? btnPrimary('#7c3aed') : btnDisabled()}
+                  style={canReassign ? btnPrimary(colors.primary) : btnDisabled()}
                   onClick={() => openAction('reassign')}
                 >
                   Reassign
                 </button>
                 <button
                   disabled={!canCancel || !canCancelBooking}
-                  style={canCancel && canCancelBooking ? btnPrimary('#dc2626') : btnDisabled()}
+                  style={canCancel && canCancelBooking ? btnPrimary(colors.danger) : btnDisabled()}
                   onClick={() => openAction('cancel')}
                   title={!canCancelBooking ? `Not applicable in status ${booking.status}` : undefined}
                 >

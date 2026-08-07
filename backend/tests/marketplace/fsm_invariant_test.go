@@ -47,7 +47,27 @@ import (
 	mkt "spotlight/backend/internal/marketplace"
 )
 
-// ─── §2.2 Escrow Order FSM (the critical path) ───────────────────────────────
+// ─── ADR-023 HISTORICAL NOTICE (order + dispute FSM) ─────────────────────────
+//
+// The escrow ORDER and DISPUTE money-paths were REMOVED in the listings-and-connect
+// pivot (ADR-023): the marketplace no longer holds funds, creates orders, or manages
+// disputes (parties transact off-platform via Meetup Mode). The order/dispute FSM
+// source (fsm_order.go / fsm_dispute.go, service_order.go / service_dispute.go and
+// their handlers/webhooks) has been DELETED. Per ADR-023 the residual enum values
+// and mkt_orders/mkt_disputes tables are retained-but-unused (additive-only; not
+// physically dropped).
+//
+// Consequently the order/dispute transition-table MIRRORS below (orderTransitionsMirror,
+// disputeTransitionsMirror) transcribe a spec that no live code implements. Their
+// TestOrderFSM_* / TestDisputeFSM_* assertions were passing while testing DELETED
+// behavior — false confidence. They are now t.Skip'd with this pointer (kept, not
+// deleted, as the historical §2.2/§2.3 record). The LISTING and BOOST FSM tests in
+// this file SHIP and still run — boostTransitionsMirror is also consumed by the live
+// boost chaos test in chaos_error_taxonomy_test.go.
+const adr023OrderDisputeSkip = "ADR-023: order/dispute escrow money-path removed (listings-and-connect pivot); " +
+	"this mirror tests deleted FSM code. Kept as the historical §2.2/§2.3 record. See ADR-023."
+
+// ─── §2.2 Escrow Order FSM (the critical path) — HISTORICAL, see ADR-023 above ─
 
 // orderTransitionsMirror transcribes fsm_order.go's orderTransitions verbatim.
 // Keep in sync with backend/internal/marketplace/fsm_order.go if that table changes.
@@ -101,6 +121,7 @@ var orderTerminalStates = map[mkt.OrderStatus]bool{
 // illegal, matching the "no implicit transitions anywhere" build-order mandate
 // (§10.2) and the skill's "every disallowed transition is rejected" checklist item.
 func TestOrderFSM_ExhaustiveTransitionMatrix(t *testing.T) {
+	t.Skip(adr023OrderDisputeSkip)
 	legalCount := 0
 	for _, from := range allOrderStates {
 		for _, to := range allOrderStates {
@@ -126,6 +147,7 @@ func TestOrderFSM_ExhaustiveTransitionMatrix(t *testing.T) {
 
 // TestOrderFSM_HappyPathEdgesLegal locks each named §2.2 event as legal.
 func TestOrderFSM_HappyPathEdgesLegal(t *testing.T) {
+	t.Skip(adr023OrderDisputeSkip)
 	cases := []struct {
 		event    string
 		from, to mkt.OrderStatus
@@ -157,6 +179,7 @@ func TestOrderFSM_HappyPathEdgesLegal(t *testing.T) {
 // that a regression could plausibly introduce (skipping states, going backward,
 // re-entering after terminal) are rejected.
 func TestOrderFSM_IllegalTransitionsRejected(t *testing.T) {
+	t.Skip(adr023OrderDisputeSkip)
 	cases := []struct {
 		name     string
 		from, to mkt.OrderStatus
@@ -189,6 +212,7 @@ func TestOrderFSM_IllegalTransitionsRejected(t *testing.T) {
 // zero outgoing edges" (verified exhaustively above) AND "every non-terminal state
 // has at least one outgoing edge" (no dead ends short of a terminal state).
 func TestOrderFSM_EveryTerminalStateHasNoForwardPath(t *testing.T) {
+	t.Skip(adr023OrderDisputeSkip)
 	for _, s := range allOrderStates {
 		edges := orderTransitionsMirror[s]
 		isTerminal := orderTerminalStates[s]
@@ -208,6 +232,7 @@ func TestOrderFSM_EveryTerminalStateHasNoForwardPath(t *testing.T) {
 // holds buyer funds, the reconciliation job would under-count and silently miss
 // leaked/stranded escrow — the highest-severity class of bug in this system.
 func TestOrderFSM_EscrowHoldsFundsMirrorsReconciliationSet(t *testing.T) {
+	t.Skip(adr023OrderDisputeSkip)
 	holdsFunds := map[mkt.OrderStatus]bool{
 		mkt.OrderFunded:           true,
 		mkt.OrderSellerAccepted:   true,
@@ -346,9 +371,9 @@ func TestListingFSM_TerminalStatesHaveNoOutgoingEdges(t *testing.T) {
 // guards the outbox contract Agent B depends on.
 func TestListingFSM_OutboxOpMirrorsSearchVisibility(t *testing.T) {
 	cases := []struct {
-		to        mkt.ListingStatus
-		wantOp    string
-		wantEmit  bool
+		to       mkt.ListingStatus
+		wantOp   string
+		wantEmit bool
 	}{
 		{mkt.ListingActive, "upsert", true},
 		{mkt.ListingPaused, "delete", true},
@@ -404,6 +429,7 @@ var disputeTransitionsMirror = map[mkt.DisputeStatus]map[mkt.DisputeStatus]bool{
 }
 
 func TestDisputeFSM_HappyPathIsLinearThenAppealable(t *testing.T) {
+	t.Skip(adr023OrderDisputeSkip)
 	order := []mkt.DisputeStatus{
 		mkt.DisputeOpened, mkt.DisputeEvidenceWindow, mkt.DisputeUnderReview,
 		mkt.DisputeDecided, mkt.DisputeExecuted, mkt.DisputeClosed, mkt.DisputeAppealed,
@@ -421,6 +447,7 @@ func TestDisputeFSM_HappyPathIsLinearThenAppealable(t *testing.T) {
 }
 
 func TestDisputeFSM_CannotSkipEvidenceOrDualDecision(t *testing.T) {
+	t.Skip(adr023OrderDisputeSkip)
 	cases := []struct {
 		name     string
 		from, to mkt.DisputeStatus
@@ -444,6 +471,7 @@ func TestDisputeFSM_CannotSkipEvidenceOrDualDecision(t *testing.T) {
 // TestDisputeFSM_DualApprovalThreshold locks the ₦500k (kobo) boundary that
 // determines whether a second, DISTINCT admin approver is required (§6.3).
 func TestDisputeFSM_DualApprovalThreshold(t *testing.T) {
+	t.Skip(adr023OrderDisputeSkip)                 // dual-approval was a dispute-decision gate (removed); constant retained but unused.
 	const halfMillionNairaInKobo int64 = 500_00000 // ₦500,000 * 100 kobo/naira = 50,000,000
 	if mkt.DualApprovalThresholdKobo != halfMillionNairaInKobo {
 		t.Fatalf("DualApprovalThresholdKobo = %d, want %d (₦500,000 in kobo)", mkt.DualApprovalThresholdKobo, halfMillionNairaInKobo)
@@ -471,6 +499,7 @@ func TestDisputeFSM_DualApprovalThreshold(t *testing.T) {
 
 // TestDisputeFSM_EvidenceAndInspectionWindowDurations locks the §2.2/§2.3 clocks.
 func TestDisputeFSM_EvidenceAndInspectionWindowDurations(t *testing.T) {
+	t.Skip(adr023OrderDisputeSkip) // inspection/evidence clocks belonged to the removed escrow order/dispute flow.
 	if mkt.InspectionWindow.Hours() != 48 {
 		t.Errorf("InspectionWindow = %v, want 48h", mkt.InspectionWindow)
 	}
@@ -570,10 +599,10 @@ func TestBoostFSM_IllegalTransitionsRejected(t *testing.T) {
 // render verbatim. A typo here breaks every client that switches on `error.code`.
 func TestInvalidTransitionErrorCodesArePresentAndDistinct(t *testing.T) {
 	codes := map[string]string{
-		"order":    mkt.CodeInvalidOrderTransition,
-		"listing":  mkt.CodeInvalidListingTransition,
-		"dispute":  mkt.CodeInvalidDisputeTransition,
-		"boost":    mkt.CodeInvalidBoostTransition,
+		"order":   mkt.CodeInvalidOrderTransition,
+		"listing": mkt.CodeInvalidListingTransition,
+		"dispute": mkt.CodeInvalidDisputeTransition,
+		"boost":   mkt.CodeInvalidBoostTransition,
 	}
 	seen := map[string]string{}
 	for name, code := range codes {

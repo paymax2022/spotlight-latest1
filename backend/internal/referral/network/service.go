@@ -253,10 +253,10 @@ func (s *Service) recordExcluded(ctx context.Context, leadID, sourceUserID, reas
 		return
 	}
 	_ = s.events.Record(ctx, referralevents.Input{
-		EventType:  "override_excluded",
-		UserID:     leadID,
-		ReferrerID: leadID,
-		Payload:    map[string]any{"source_user_id": sourceUserID, "reason": reason},
+		EventType:      "override_excluded",
+		UserID:         leadID,
+		ReferrerID:     leadID,
+		Payload:        map[string]any{"source_user_id": sourceUserID, "reason": reason},
 		IdempotencyKey: "override_excluded:" + leadID + ":" + sourceUserID + ":" + reason,
 	})
 }

@@ -12,9 +12,9 @@ func at(h, m int) time.Time { return time.Date(2026, 7, 30, h, m, 0, 0, time.UTC
 
 func TestSlotsOverlap(t *testing.T) {
 	cases := []struct {
-		name           string
-		aS, aE, bS, bE time.Time
-		want           bool
+		name                   string
+		aS, aE, bS, bE         time.Time
+		want                   bool
 	}{
 		{"identical slot", at(9, 0), at(9, 30), at(9, 0), at(9, 30), true},
 		{"partial overlap", at(9, 0), at(9, 30), at(9, 15), at(9, 45), true},

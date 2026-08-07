@@ -6,10 +6,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { listOversightVisitorLogs } from '@/services/estateAdminService';
 import type { OversightVisitorLog } from '@/types/estateAdmin';
-import {
-  PageHeader, EstateOversightTabs, Card, Badge, btn, th, td, timeAgo,
-  useEstatePermissions, ESTATE_ADMIN_PERMS, Restricted,
-} from '../_ui';
+import { EstateOversightTabs, Restricted, useEstatePermissions, ESTATE_ADMIN_PERMS, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const cap = (s: string) => s.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
 
 export default function VisitorLogsPage() {
   const { can } = useEstatePermissions();
@@ -29,26 +29,26 @@ export default function VisitorLogsPage() {
   useEffect(() => { void load(); }, [load]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Visitor logs" subtitle="Gate check-in/out and vehicle events synced from guard devices. Gated on estate.admin.security." action={<button onClick={() => void load()} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Visitor logs" subtitle="Gate check-in/out and vehicle events synced from guard devices. Gated on estate.admin.security." actions={<Button variant="outline" sm onClick={() => void load()}>Refresh</Button>} />
       <EstateOversightTabs active="visitor-logs" />
       {!canView ? <Restricted perm="estate.admin.security" /> : (
         <Card title="Gate visitor log">
-          {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-          {loading ? <p style={{ color: '#6b7280' }}>Loading visitor logs…</p> : logs.length === 0 ? (
-            <p style={{ color: '#6b7280' }}>No visitor events synced.</p>
+          {error && <p style={{ color: colors.danger }}>{error}</p>}
+          {loading ? <p style={{ color: colors.muted }}>Loading visitor logs…</p> : logs.length === 0 ? (
+            <p style={{ color: colors.muted }}>No visitor events synced.</p>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr><th style={th()}>Estate</th><th style={th()}>Event</th><th style={th()}>Details</th><th style={th()}>Guard</th><th style={th()}>Captured</th><th style={th()}>Synced</th></tr></thead>
+              <thead><tr><th style={thCell}>Estate</th><th style={thCell}>Event</th><th style={thCell}>Details</th><th style={thCell}>Guard</th><th style={thCell}>Captured</th><th style={thCell}>Synced</th></tr></thead>
               <tbody>
                 {logs.map((l) => (
                   <tr key={l.id}>
-                    <td style={td()}>{l.estateId}</td>
-                    <td style={td()}><Badge status={l.eventType === 'checkin' ? 'active' : l.eventType === 'checkout' ? 'low' : 'pending'} label={l.eventType} /></td>
-                    <td style={td()}><code style={{ fontSize: '0.78rem' }}>{JSON.stringify(l.payload)}</code></td>
-                    <td style={td()}>{l.guardId}</td>
-                    <td style={td()}>{timeAgo(l.capturedAt)}</td>
-                    <td style={td()}>{timeAgo(l.syncedAt)}</td>
+                    <td style={tdCell}>{l.estateId}</td>
+                    <td style={tdCell}><Badge text={cap(l.eventType)} color={l.eventType === 'checkin' ? colors.success : l.eventType === 'checkout' ? colors.info : colors.warning} /></td>
+                    <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{JSON.stringify(l.payload)}</code></td>
+                    <td style={tdCell}>{l.guardId}</td>
+                    <td style={tdCell}>{timeAgo(l.capturedAt)}</td>
+                    <td style={tdCell}>{timeAgo(l.syncedAt)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -56,6 +56,6 @@ export default function VisitorLogsPage() {
           )}
         </Card>
       )}
-    </div>
+    </Page>
   );
 }

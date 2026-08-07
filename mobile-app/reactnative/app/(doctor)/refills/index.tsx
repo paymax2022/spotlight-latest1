@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Platform, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RefreshCw } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -13,6 +13,7 @@ import type { StatusTone } from '@/features/doctor/components';
 import { useRefillRequests, useReviewRefill, useRequestRefillConsultation } from '@/features/doctor/hooks';
 import { REFILL_STATUS_LABELS } from '@/features/doctor/constants';
 import type { RefillRequest, RefillStatus } from '@/types/doctor.phase2';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 const STATUS_TONE: Record<RefillStatus, StatusTone> = {
   pending:  'warning',
@@ -26,50 +27,38 @@ export default function RefillsScreen() {
   const requestConsult = useRequestRefillConsultation();
 
   // K42 — refill consultation required: when a refill needs a fresh consult.
-  const handleRequestConsultation = (refill: RefillRequest) => {
-    Alert.alert(
-      'Consultation required',
-      `Ask ${refill.patient.name} to book a consultation before this refill can be approved?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Request consultation',
-          onPress: async () => {
-            try {
-              await requestConsult.mutateAsync({
-                prescriptionId: refill.prescriptionRef,
-                patientId: refill.patient.id,
-                reason: 'Refill requires a fresh consultation before approval.',
-              });
-              Alert.alert('Requested', 'The patient has been asked to book a consultation.');
-            } catch {
-              Alert.alert('Failed', 'Please try again.');
-            }
-          },
-        },
-      ],
-    );
+  const handleRequestConsultation = async (refill: RefillRequest) => {
+    const ok = await confirmAsync({
+      title: 'Consultation required',
+      message: `Ask ${refill.patient.name} to book a consultation before this refill can be approved?`,
+      confirmLabel: 'Request consultation',
+    });
+    if (!ok) return;
+    try {
+      await requestConsult.mutateAsync({
+        prescriptionId: refill.prescriptionRef,
+        patientId: refill.patient.id,
+        reason: 'Refill requires a fresh consultation before approval.',
+      });
+      await alertAsync({ title: 'Requested', message: 'The patient has been asked to book a consultation.' });
+    } catch {
+      await alertAsync({ title: 'Failed', message: 'Please try again.' });
+    }
   };
 
-  const handleReview = (refill: RefillRequest, decision: 'approve' | 'reject') => {
-    Alert.alert(
-      decision === 'approve' ? 'Approve refill?' : 'Reject refill?',
-      `${refill.drugSummary} for ${refill.patient.name}.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: decision === 'approve' ? 'Approve' : 'Reject',
-          style: decision === 'reject' ? 'destructive' : 'default',
-          onPress: async () => {
-            try {
-              await review.mutateAsync({ refillId: refill.id, decision });
-            } catch {
-              Alert.alert('Failed', 'Please try again.');
-            }
-          },
-        },
-      ],
-    );
+  const handleReview = async (refill: RefillRequest, decision: 'approve' | 'reject') => {
+    const ok = await confirmAsync({
+      title: decision === 'approve' ? 'Approve refill?' : 'Reject refill?',
+      message: `${refill.drugSummary} for ${refill.patient.name}.`,
+      confirmLabel: decision === 'approve' ? 'Approve' : 'Reject',
+      destructive: decision === 'reject',
+    });
+    if (!ok) return;
+    try {
+      await review.mutateAsync({ refillId: refill.id, decision });
+    } catch {
+      await alertAsync({ title: 'Failed', message: 'Please try again.' });
+    }
   };
 
   return (

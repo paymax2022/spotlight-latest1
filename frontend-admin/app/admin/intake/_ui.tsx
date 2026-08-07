@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
+import { colors, tint } from '@/components/ui/vuexy';
 
 // Shared presentational + RBAC helpers for the Pre-Consultation Intake console.
 // Dark inline-style theme, matching the nutrition / merchant-onboarding pages.
@@ -33,12 +34,12 @@ export function useIntakePermissions() {
 
 // ─── Style tokens ────────────────────────────────────────────────────────────
 
-export const card: CSSProperties = { border: '1px solid #2a2a2a', padding: 14, borderRadius: 8, background: '#111' };
-export const th: CSSProperties = { padding: '8px 6px', fontWeight: 600, opacity: 0.8 };
-export const td: CSSProperties = { padding: '8px 6px' };
-export const input: CSSProperties = { background: '#0c0c0c', color: '#eee', border: '1px solid #2a2a2a', padding: '5px 8px', borderRadius: 4 };
-export const btn: CSSProperties = { background: '#1f1f1f', color: '#eee', border: '1px solid #2a2a2a', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontWeight: 600 };
-export const btnPrimary: CSSProperties = { ...btn, background: '#1e3a8a', borderColor: '#1e40af' };
+export const card: CSSProperties = { border: `1px solid ${colors.border}`, padding: 14, borderRadius: 8, background: colors.card };
+export const th: CSSProperties = { padding: '8px 6px', fontWeight: 600, color: colors.muted };
+export const td: CSSProperties = { padding: '8px 6px', color: colors.text };
+export const input: CSSProperties = { background: colors.card, color: colors.text, border: `1px solid ${colors.inputBorder}`, padding: '5px 8px', borderRadius: 4 };
+export const btn: CSSProperties = { background: colors.card, color: colors.text, border: `1px solid ${colors.inputBorder}`, padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontWeight: 600 };
+export const btnPrimary: CSSProperties = { ...btn, background: colors.primary, color: '#fff', borderColor: colors.primary };
 
 // ─── Common components ───────────────────────────────────────────────────────
 
@@ -64,9 +65,9 @@ export function BackLink() {
 
 export function Notice({ kind, children }: PropsWithChildren<{ kind: 'info' | 'audit' | 'support' }>) {
   const palette: Record<string, { bg: string; border: string; fg: string; icon: string }> = {
-    info: { bg: '#0b1f33', border: '#1e3a5f', fg: '#bfdbfe', icon: 'ℹ︎' },
-    audit: { bg: '#1a1300', border: '#5c4a00', fg: '#fde68a', icon: '🔒' },
-    support: { bg: '#0e1f17', border: '#1f5138', fg: '#bbf7d0', icon: '🤝' },
+    info: { bg: tint(colors.info, 0.12), border: colors.info, fg: colors.info, icon: 'ℹ︎' },
+    audit: { bg: tint(colors.warning, 0.12), border: colors.warning, fg: colors.warning, icon: '🔒' },
+    support: { bg: tint(colors.success, 0.12), border: colors.success, fg: colors.success, icon: '🤝' },
   };
   const c = palette[kind];
   return (
@@ -78,53 +79,53 @@ export function Notice({ kind, children }: PropsWithChildren<{ kind: 'info' | 'a
 }
 
 const SEVERITY_COLORS: Record<string, { bg: string; fg: string }> = {
-  emergency: { bg: '#7f1d1d', fg: '#fecaca' },
-  urgent: { bg: '#78350f', fg: '#fde68a' },
+  emergency: { bg: tint(colors.danger, 0.12), fg: colors.danger },
+  urgent: { bg: tint(colors.warning, 0.12), fg: colors.warning },
 };
 
 export function SeverityBadge({ severity }: { severity: string }) {
-  const c = SEVERITY_COLORS[severity] ?? { bg: '#374151', fg: '#d1d5db' };
+  const c = SEVERITY_COLORS[severity] ?? { bg: colors.bg, fg: colors.muted };
   return <span style={pill(c)}>{severity}</span>;
 }
 
 const ROUTING_COLORS: Record<string, { bg: string; fg: string }> = {
-  EMERGENCY: { bg: '#7f1d1d', fg: '#fecaca' },
-  URGENT_CARE: { bg: '#78350f', fg: '#fde68a' },
+  EMERGENCY: { bg: tint(colors.danger, 0.12), fg: colors.danger },
+  URGENT_CARE: { bg: tint(colors.warning, 0.12), fg: colors.warning },
   // CRISIS framed with a calm, supportive palette — not alarmist red.
-  CRISIS: { bg: '#13343b', fg: '#a5f3fc' },
+  CRISIS: { bg: tint(colors.info, 0.12), fg: colors.info },
 };
 
 export function RoutingBadge({ routing }: { routing: string }) {
-  const c = ROUTING_COLORS[routing] ?? { bg: '#374151', fg: '#d1d5db' };
+  const c = ROUTING_COLORS[routing] ?? { bg: colors.bg, fg: colors.muted };
   const label = routing === 'CRISIS' ? 'Crisis support' : routing.replace(/_/g, ' ').toLowerCase();
   return <span style={{ ...pill(c), textTransform: 'capitalize' }}>{label}</span>;
 }
 
 const STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
-  SUBMITTED: { bg: '#064e3b', fg: '#a7f3d0' },
-  DRAFT: { bg: '#78350f', fg: '#fde68a' },
-  NOT_STARTED: { bg: '#374151', fg: '#d1d5db' },
+  SUBMITTED: { bg: tint(colors.success, 0.12), fg: colors.success },
+  DRAFT: { bg: tint(colors.warning, 0.12), fg: colors.warning },
+  NOT_STARTED: { bg: colors.bg, fg: colors.muted },
 };
 
 export function IntakeStatusBadge({ status }: { status: string }) {
-  const c = STATUS_COLORS[status] ?? { bg: '#374151', fg: '#d1d5db' };
+  const c = STATUS_COLORS[status] ?? { bg: colors.bg, fg: colors.muted };
   return <span style={{ ...pill(c), textTransform: 'capitalize' }}>{status.replace(/_/g, ' ').toLowerCase()}</span>;
 }
 
 const DISPOSITION_COLORS: Record<string, { bg: string; fg: string }> = {
-  OPEN: { bg: '#78350f', fg: '#fde68a' },
-  ROUTED: { bg: '#1e3a8a', fg: '#bfdbfe' },
-  CONTACTED: { bg: '#13343b', fg: '#a5f3fc' },
-  RESOLVED: { bg: '#064e3b', fg: '#a7f3d0' },
+  OPEN: { bg: tint(colors.warning, 0.12), fg: colors.warning },
+  ROUTED: { bg: tint(colors.primary, 0.12), fg: colors.primary },
+  CONTACTED: { bg: tint(colors.info, 0.12), fg: colors.info },
+  RESOLVED: { bg: tint(colors.success, 0.12), fg: colors.success },
 };
 
 export function DispositionBadge({ disposition }: { disposition: string }) {
-  const c = DISPOSITION_COLORS[disposition] ?? { bg: '#374151', fg: '#d1d5db' };
+  const c = DISPOSITION_COLORS[disposition] ?? { bg: colors.bg, fg: colors.muted };
   return <span style={{ ...pill(c), textTransform: 'capitalize' }}>{disposition.toLowerCase()}</span>;
 }
 
 export function ActiveBadge({ active }: { active: boolean }) {
-  const c = active ? { bg: '#064e3b', fg: '#a7f3d0' } : { bg: '#374151', fg: '#9ca3af' };
+  const c = active ? { bg: tint(colors.success, 0.12), fg: colors.success } : { bg: colors.bg, fg: colors.muted };
   return <span style={pill(c)}>{active ? 'active' : 'inactive'}</span>;
 }
 

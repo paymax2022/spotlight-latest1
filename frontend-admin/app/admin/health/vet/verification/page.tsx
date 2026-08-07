@@ -16,12 +16,13 @@ import {
   PageHeader, VetTabs, Card, Badge, DisclosureNote, AuditNote, StateBlock,
   btn, btnPrimary, btnDanger, th, td, input, label, fmtDate,
 } from '../../_ui';
+import { colors, tint } from '@/components/ui/vuexy';
 
 // Advisory identity cross-check badge — green=match / red=mismatch / grey=unverifiable.
 const MATCH_COLORS: Record<VcnFieldMatch, { fg: string; bg: string }> = {
-  match: { fg: '#15803d', bg: '#dcfce7' },
-  mismatch: { fg: '#b91c1c', bg: '#fee2e2' },
-  unverifiable: { fg: '#6b7280', bg: '#f3f4f6' },
+  match: { fg: colors.success, bg: tint(colors.success, 0.12) },
+  mismatch: { fg: colors.danger, bg: tint(colors.danger, 0.12) },
+  unverifiable: { fg: colors.muted, bg: colors.headBg },
 };
 function MatchBadge({ value }: { value: VcnFieldMatch }) {
   const c = MATCH_COLORS[value] ?? MATCH_COLORS.unverifiable;
@@ -118,7 +119,7 @@ export default function VcnVerificationPage() {
                 <tr key={it.record.id}>
                   <td style={td()}>
                     <strong>{it.display_name}</strong>
-                    <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{it.record.reg_number} · {it.record.id}</div>
+                    <div style={{ fontSize: '0.72rem', color: colors.muted }}>{it.record.reg_number} · {it.record.id}</div>
                   </td>
                   <td style={td()}><Badge status={it.record.status.toLowerCase()} label={it.record.status} /></td>
                   <td style={td()}>{it.identity_flag ? <Badge status="rejected" label="Identity flag" /> : '—'}</td>
@@ -134,13 +135,13 @@ export default function VcnVerificationPage() {
       {open && rec && (
         <Card title={`Review — ${open.display_name}`} right={<button style={btn()} onClick={() => setOpen(null)}>Close</button>}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.6rem', marginBottom: '1rem', fontSize: '0.85rem' }}>
-            <div><span style={{ color: '#6b7280' }}>VCN reg number:</span> <code>{rec.reg_number}</code></div>
-            <div><span style={{ color: '#6b7280' }}>Source / method:</span> {rec.source} · {rec.method}</div>
-            <div><span style={{ color: '#6b7280' }}>Application state:</span> {open.application_state}</div>
-            <div><span style={{ color: '#6b7280' }}>Status:</span> <Badge status={rec.status.toLowerCase()} label={rec.status} /></div>
-            <div><span style={{ color: '#6b7280' }}>Created:</span> {fmtDate(rec.created_at)}</div>
-            <div><span style={{ color: '#6b7280' }}>Decided:</span> {fmtDate(rec.decided_at)}</div>
-            <div><span style={{ color: '#6b7280' }}>Consent on file:</span> {fmtDate(rec.consent_at)}</div>
+            <div><span style={{ color: colors.muted }}>VCN reg number:</span> <code>{rec.reg_number}</code></div>
+            <div><span style={{ color: colors.muted }}>Source / method:</span> {rec.source} · {rec.method}</div>
+            <div><span style={{ color: colors.muted }}>Application state:</span> {open.application_state}</div>
+            <div><span style={{ color: colors.muted }}>Status:</span> <Badge status={rec.status.toLowerCase()} label={rec.status} /></div>
+            <div><span style={{ color: colors.muted }}>Created:</span> {fmtDate(rec.created_at)}</div>
+            <div><span style={{ color: colors.muted }}>Decided:</span> {fmtDate(rec.decided_at)}</div>
+            <div><span style={{ color: colors.muted }}>Consent on file:</span> {fmtDate(rec.consent_at)}</div>
           </div>
 
           <h3 style={{ fontSize: '0.9rem', fontWeight: 700, margin: '0 0 0.5rem' }}>Identity cross-check (advisory)</h3>
@@ -158,11 +159,11 @@ export default function VcnVerificationPage() {
 
           <h3 style={{ fontSize: '0.9rem', fontWeight: 700, margin: '0 0 0.5rem' }}>Evidence documents</h3>
           {rec.evidence_doc_ids.length === 0 ? (
-            <p style={{ color: '#6b7280', fontSize: '0.85rem' }}>No documents attached.</p>
+            <p style={{ color: colors.muted, fontSize: '0.85rem' }}>No documents attached.</p>
           ) : (
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
               {rec.evidence_doc_ids.map((docId) => (
-                <button key={docId} style={btn()} onClick={() => viewDoc(docId)}>View document <span style={{ color: '#9ca3af' }}>({docId})</span></button>
+                <button key={docId} style={btn()} onClick={() => viewDoc(docId)}>View document <span style={{ color: colors.muted }}>({docId})</span></button>
               ))}
             </div>
           )}
@@ -184,7 +185,7 @@ export default function VcnVerificationPage() {
             <button disabled={busy} style={btn()} onClick={() => decide('need_info')}>Needs info</button>
             <button disabled={busy} style={btnDanger()} onClick={() => decide('reject')}>Reject</button>
           </div>
-          {!licenceExpiry && <p style={{ color: '#9a3412', fontSize: '0.72rem', marginTop: '0.4rem' }}>Set a licence expiry date to enable approval (HL-2 auto-suspend on expiry).</p>}
+          {!licenceExpiry && <p style={{ color: colors.warning, fontSize: '0.72rem', marginTop: '0.4rem' }}>Set a licence expiry date to enable approval (HL-2 auto-suspend on expiry).</p>}
 
           {result && <AuditNote>Application {result.id}: status {result.status}. {result.status === 'VERIFIED' ? 'Provider vet capability granted idempotently and licence-expiry auto-suspend scheduled (HL-2). ' : ''}Recorded to the immutable audit log (HL-12).</AuditNote>}
         </Card>

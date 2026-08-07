@@ -13,6 +13,7 @@ import {
   readCurrentAdmin,
   isSuperAdmin,
 } from '@/components/rbac';
+import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 type MatrixRow = PermissionMatrix['rows'][number];
 
@@ -231,7 +232,7 @@ export default function AdminPermissionsMatrixPage() {
   };
 
   return (
-    <div>
+    <Page>
       <ToastStack toasts={toasts} onDismiss={dismiss} />
       <ConfirmDialog
         open={Boolean(pending)}
@@ -242,38 +243,42 @@ export default function AdminPermissionsMatrixPage() {
         onConfirm={confirmPending}
         onCancel={() => setPending(null)}
       />
-      <h1>Permission Matrix</h1>
-      <p>Assign and remove permissions by role with live matrix controls. Critical and conflicting changes prompt for confirmation.</p>
+
+      <PageHeader
+        title="Permission Matrix"
+        subtitle="Assign and remove permissions by role with live matrix controls. Critical and conflicting changes prompt for confirmation."
+      />
+
       {!superAdmin ? (
-        <p style={{ color: '#f59e0b', fontSize: 12 }}>
+        <p style={{ color: colors.warning, fontSize: 12, margin: '0 0 12px' }}>
           You are not a super-admin. Critical-permission grants are disabled in this view (the backend also enforces this).
         </p>
       ) : null}
 
-      <div style={{ marginTop: 10 }}>
-        <input placeholder="search permission slug" value={query} onChange={(e) => setQuery(e.target.value)} />
+      <div style={{ marginBottom: 12, maxWidth: 460 }}>
+        <Input placeholder="Search permission slug" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
 
-      {loading ? <p>Loading…</p> : null}
-      {errored && !loading ? <p><button onClick={() => void load()}>Retry</button> — failed to load matrix.</p> : null}
-      {!loading && !errored && matrix && matrix.rows.length === 0 ? <p>No roles to display.</p> : null}
+      {loading ? <p style={{ color: colors.muted }}>Loading…</p> : null}
+      {errored && !loading ? <p><Button variant="outline" sm onClick={() => void load()}>Retry</Button> <span style={{ color: colors.danger }}>— failed to load matrix.</span></p> : null}
+      {!loading && !errored && matrix && matrix.rows.length === 0 ? <p style={{ color: colors.muted }}>No roles to display.</p> : null}
 
       {!matrix ? null : (
-        <div style={{ overflowX: 'auto', marginTop: 12 }}>
-          <table style={{ borderCollapse: 'collapse', minWidth: 900 }}>
+        <Card style={{ padding: 0, overflow: 'auto' }}>
+          <table style={{ borderCollapse: 'collapse', minWidth: 900, width: '100%' }}>
             <thead>
               <tr>
-                <th style={{ textAlign: 'left', borderBottom: '1px solid #2a2a2a', padding: 8 }}>Role</th>
+                <th style={thCell}>Role</th>
                 {filteredSlugs.map((slug) => {
                   const critical = isCriticalPermissionSlug(slug);
                   return (
-                    <th key={slug} style={{ textAlign: 'left', borderBottom: '1px solid #2a2a2a', padding: 8, fontSize: 12 }}>
-                      <div title={critical ? 'Critical permission' : undefined} style={{ color: critical ? '#f59e0b' : undefined }}>
+                    <th key={slug} style={{ ...thCell, fontSize: 12, textTransform: 'none', letterSpacing: 0 }}>
+                      <div title={critical ? 'Critical permission' : undefined} style={{ color: critical ? colors.warning : undefined }}>
                         {critical ? '● ' : ''}{slug}
                       </div>
                       <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                        <button onClick={() => onBulkPermissionGrant(slug)} disabled={busyKey === `perm:${slug}`}>All+</button>
-                        <button onClick={() => void performBulkPermission(slug, false)} disabled={busyKey === `perm:${slug}`}>All-</button>
+                        <Button variant="outline" sm onClick={() => onBulkPermissionGrant(slug)} disabled={busyKey === `perm:${slug}`}>All+</Button>
+                        <Button variant="outline" sm onClick={() => void performBulkPermission(slug, false)} disabled={busyKey === `perm:${slug}`}>All-</Button>
                       </div>
                     </th>
                   );
@@ -283,18 +288,18 @@ export default function AdminPermissionsMatrixPage() {
             <tbody>
               {matrix.rows.map((row) => (
                 <tr key={row.roleId}>
-                  <td style={{ borderBottom: '1px solid #2a2a2a', padding: 8, fontWeight: 600 }}>
+                  <td style={{ ...tdCell, fontWeight: 600 }}>
                     <div>{row.roleName}</div>
                     <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                      <button onClick={() => onBulkRoleGrant(row)} disabled={busyKey === `role:${row.roleId}`}>Row+</button>
-                      <button onClick={() => void performBulkRoleRemove(row)} disabled={busyKey === `role:${row.roleId}`}>Row-</button>
+                      <Button variant="outline" sm onClick={() => onBulkRoleGrant(row)} disabled={busyKey === `role:${row.roleId}`}>Row+</Button>
+                      <Button variant="outline" sm onClick={() => void performBulkRoleRemove(row)} disabled={busyKey === `role:${row.roleId}`}>Row-</Button>
                     </div>
                   </td>
                   {filteredSlugs.map((slug) => {
                     const enabled = Boolean(row.permissions?.[slug]);
                     const key = `${row.roleId}:${slug}`;
                     return (
-                      <td key={slug} style={{ borderBottom: '1px solid #2a2a2a', padding: 8 }}>
+                      <td key={slug} style={{ ...tdCell, textAlign: 'center' }}>
                         <input
                           type="checkbox"
                           aria-label={`${enabled ? 'Remove' : 'Assign'} ${slug} for ${row.roleName}`}
@@ -309,8 +314,8 @@ export default function AdminPermissionsMatrixPage() {
               ))}
             </tbody>
           </table>
-        </div>
+        </Card>
       )}
-    </div>
+    </Page>
   );
 }

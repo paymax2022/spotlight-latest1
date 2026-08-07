@@ -66,16 +66,16 @@ func RegisterReferralRewards(
 	admin := r.Group("/v1/admin/referrals")
 	admin.Use(authMW)
 	admin.Use(requireUserID())
-	admin.GET("/config", guard("referral.admin.config"), h.AdminGetConfig)               // A1
-	admin.PUT("/config", guard("referral.admin.config"), h.AdminPutConfig)               // A1
-	admin.GET("/analytics", guard("referral.admin.analytics"), h.AdminAnalytics)         // A2
-	admin.GET("/fraud-queue", guard("referral.admin.fraud"), h.AdminFraudQueue)          // A3
-	admin.POST("/fraud-queue", guard("referral.admin.fraud"), h.AdminFraudAction)        // A3
-	admin.GET("/ledger", guard("referral.admin.ledger"), h.AdminLedger)                  // A4
-	admin.GET("/:referrerId/case", guard("referral.admin.case"), h.AdminGetCase)         // A5
-	admin.POST("/:referrerId/case", guard("referral.admin.case"), h.AdminAdjustCase)     // A5
+	admin.GET("/config", guard("referral.admin.config"), h.AdminGetConfig)                 // A1
+	admin.PUT("/config", guard("referral.admin.config"), h.AdminPutConfig)                 // A1
+	admin.GET("/analytics", guard("referral.admin.analytics"), h.AdminAnalytics)           // A2
+	admin.GET("/fraud-queue", guard("referral.admin.fraud"), h.AdminFraudQueue)            // A3
+	admin.POST("/fraud-queue", guard("referral.admin.fraud"), h.AdminFraudAction)          // A3
+	admin.GET("/ledger", guard("referral.admin.ledger"), h.AdminLedger)                    // A4
+	admin.GET("/:referrerId/case", guard("referral.admin.case"), h.AdminGetCase)           // A5
+	admin.POST("/:referrerId/case", guard("referral.admin.case"), h.AdminAdjustCase)       // A5
 	admin.GET("/milestones-log", guard("referral.admin.milestones"), h.AdminMilestonesLog) // A6
-	admin.GET("/module-status", guard("referral.admin.module"), h.AdminModuleStatus)     // A7
+	admin.GET("/module-status", guard("referral.admin.module"), h.AdminModuleStatus)       // A7
 
 	// --- Internal hooks (/internal/referrals) — service-to-service shared secret ---
 	// Both the in-process Service.OnPurchase{Settled,Refunded} hooks AND these HTTP

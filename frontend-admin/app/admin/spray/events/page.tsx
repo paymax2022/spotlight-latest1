@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { listSprayEvents, getSprayLeaderboard, formatNaira, type SprayEvent, type SprayLeaderRow } from '@/services/sprayAdminService';
 import { PageHeader, SprayTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, btn, btnPrimary, th, td, input, label, select, fmtDate } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function SprayEventsPage() {
   const [rows, setRows] = useState<SprayEvent[]>([]);
@@ -62,7 +63,7 @@ export default function SprayEventsPage() {
             <tbody>
               {rows.map((e) => (
                 <tr key={e.context_ref}>
-                  <td style={td()}>{e.name}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{e.context_ref}</div></td>
+                  <td style={td()}>{e.name}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{e.context_ref}</div></td>
                   <td style={td()}>{e.host_masked}</td>
                   <td style={td()}><Badge status={e.status} /></td>
                   <td style={td()}>{formatNaira(e.total_sprayed_kobo)}</td>

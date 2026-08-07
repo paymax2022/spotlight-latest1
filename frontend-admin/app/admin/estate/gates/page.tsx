@@ -5,7 +5,17 @@
 import { useEffect, useState } from 'react';
 import { listGates, listGuardShifts, listIncidents } from '@/services/estateAdminService';
 import type { AdminGate, AdminGuardShift, AdminIncident } from '@/types/estateAdmin';
-import { PageHeader, EstateTabs, Card, Badge, btn, th, td, timeAgo } from '../_ui';
+import { EstateTabs, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const cap = (s: string) => s.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+function statusColor(status: string): string {
+  if (['online', 'on_duty', 'resolved', 'completed', 'active'].includes(status)) return colors.success;
+  if (['pending', 'scheduled', 'investigating', 'maintenance', 'medium'].includes(status)) return colors.warning;
+  if (['overdue', 'offline', 'missed', 'high', 'critical', 'open'].includes(status)) return colors.danger;
+  if (status === 'low') return colors.info;
+  return colors.secondary;
+}
 
 export default function GatesPage() {
   const [gates, setGates] = useState<AdminGate[]>([]);
@@ -27,25 +37,25 @@ export default function GatesPage() {
   const fmt = (iso: string) => new Date(iso).toLocaleString('en-NG', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' });
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Gates & security" subtitle="Gate health, guard shift roster and the estate incident log." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Gates & security" subtitle="Gate health, guard shift roster and the estate incident log." actions={<Button variant="outline" sm onClick={load}>Refresh</Button>} />
       <EstateTabs active="gates" />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
-      {loading ? <p style={{ color: '#6b7280' }}>Loading security data…</p> : (
+      {loading ? <p style={{ color: colors.muted }}>Loading security data…</p> : (
         <>
-          <Card title="Gates">
-            {gates.length === 0 ? <p style={{ color: '#6b7280' }}>No gates configured.</p> : (
+          <Card title="Gates" style={{ marginBottom: '1.25rem' }}>
+            {gates.length === 0 ? <p style={{ color: colors.muted }}>No gates configured.</p> : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th style={th()}>Gate</th><th style={th()}>Location</th><th style={th()}>Status</th><th style={th()}>Guards on duty</th><th style={th()}>Last heartbeat</th></tr></thead>
+                <thead><tr><th style={thCell}>Gate</th><th style={thCell}>Location</th><th style={thCell}>Status</th><th style={thCell}>Guards on duty</th><th style={thCell}>Last heartbeat</th></tr></thead>
                 <tbody>
                   {gates.map((g) => (
                     <tr key={g.id}>
-                      <td style={td()}><strong>{g.name}</strong></td>
-                      <td style={td()}>{g.location}</td>
-                      <td style={td()}><Badge status={g.status} /></td>
-                      <td style={td()}>{g.guardsOnDuty}</td>
-                      <td style={td()}>{timeAgo(g.lastHeartbeat)}</td>
+                      <td style={tdCell}><strong>{g.name}</strong></td>
+                      <td style={tdCell}>{g.location}</td>
+                      <td style={tdCell}><Badge text={cap(g.status)} color={statusColor(g.status)} /></td>
+                      <td style={tdCell}>{g.guardsOnDuty}</td>
+                      <td style={tdCell}>{timeAgo(g.lastHeartbeat)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -53,19 +63,19 @@ export default function GatesPage() {
             )}
           </Card>
 
-          <Card title="Guard shifts">
-            {shifts.length === 0 ? <p style={{ color: '#6b7280' }}>No shifts scheduled.</p> : (
+          <Card title="Guard shifts" style={{ marginBottom: '1.25rem' }}>
+            {shifts.length === 0 ? <p style={{ color: colors.muted }}>No shifts scheduled.</p> : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th style={th()}>Guard</th><th style={th()}>Gate</th><th style={th()}>Shift</th><th style={th()}>Starts</th><th style={th()}>Ends</th><th style={th()}>Status</th></tr></thead>
+                <thead><tr><th style={thCell}>Guard</th><th style={thCell}>Gate</th><th style={thCell}>Shift</th><th style={thCell}>Starts</th><th style={thCell}>Ends</th><th style={thCell}>Status</th></tr></thead>
                 <tbody>
                   {shifts.map((s) => (
                     <tr key={s.id}>
-                      <td style={td()}><strong>{s.guardName}</strong></td>
-                      <td style={td()}>{s.gate}</td>
-                      <td style={td()} >{s.shift}</td>
-                      <td style={td()}>{fmt(s.startsAt)}</td>
-                      <td style={td()}>{fmt(s.endsAt)}</td>
-                      <td style={td()}><Badge status={s.status} /></td>
+                      <td style={tdCell}><strong>{s.guardName}</strong></td>
+                      <td style={tdCell}>{s.gate}</td>
+                      <td style={tdCell}>{s.shift}</td>
+                      <td style={tdCell}>{fmt(s.startsAt)}</td>
+                      <td style={tdCell}>{fmt(s.endsAt)}</td>
+                      <td style={tdCell}><Badge text={cap(s.status)} color={statusColor(s.status)} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -74,18 +84,18 @@ export default function GatesPage() {
           </Card>
 
           <Card title="Incident log">
-            {incidents.length === 0 ? <p style={{ color: '#6b7280' }}>No incidents logged.</p> : (
+            {incidents.length === 0 ? <p style={{ color: colors.muted }}>No incidents logged.</p> : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th style={th()}>Incident</th><th style={th()}>Gate</th><th style={th()}>Severity</th><th style={th()}>Status</th><th style={th()}>Reported by</th><th style={th()}>When</th></tr></thead>
+                <thead><tr><th style={thCell}>Incident</th><th style={thCell}>Gate</th><th style={thCell}>Severity</th><th style={thCell}>Status</th><th style={thCell}>Reported by</th><th style={thCell}>When</th></tr></thead>
                 <tbody>
                   {incidents.map((i) => (
                     <tr key={i.id}>
-                      <td style={td()}><strong>{i.title}</strong></td>
-                      <td style={td()}>{i.gate}</td>
-                      <td style={td()}><Badge status={i.severity} /></td>
-                      <td style={td()}><Badge status={i.status} /></td>
-                      <td style={td()}>{i.reportedBy}</td>
-                      <td style={td()}>{timeAgo(i.reportedAt)}</td>
+                      <td style={tdCell}><strong>{i.title}</strong></td>
+                      <td style={tdCell}>{i.gate}</td>
+                      <td style={tdCell}><Badge text={cap(i.severity)} color={statusColor(i.severity)} /></td>
+                      <td style={tdCell}><Badge text={cap(i.status)} color={statusColor(i.status)} /></td>
+                      <td style={tdCell}>{i.reportedBy}</td>
+                      <td style={tdCell}>{timeAgo(i.reportedAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -94,6 +104,6 @@ export default function GatesPage() {
           </Card>
         </>
       )}
-    </div>
+    </Page>
   );
 }

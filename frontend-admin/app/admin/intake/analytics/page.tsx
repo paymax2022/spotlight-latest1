@@ -2,9 +2,10 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { IntakeAnalytics } from '@/types/intakeAdmin';
 import { getAnalytics } from '@/services/intakeAdminService';
-import { BackLink, PageHeader, Notice, card } from '../_ui';
+import { Page, PageHeader, Card, colors, tint } from '@/components/ui/vuexy';
 
 function pct(n: number): string {
   return `${(n * 100).toFixed(1)}%`;
@@ -14,6 +15,15 @@ function mmss(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return `${m}m ${s.toString().padStart(2, '0')}s`;
+}
+
+function Notice({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ background: tint(colors.info, 0.12), border: `1px solid ${tint(colors.info, 0.3)}`, color: colors.text, padding: '10px 12px', borderRadius: 8, fontSize: 13, marginTop: 14, display: 'flex', gap: 8 }}>
+      <span aria-hidden>ℹ︎</span>
+      <span>{children}</span>
+    </div>
+  );
 }
 
 export default function AnalyticsPage() {
@@ -35,52 +45,54 @@ export default function AnalyticsPage() {
   }, []);
 
   return (
-    <div>
-      <BackLink />
+    <Page>
+      <div style={{ marginBottom: 14 }}>
+        <Link href="/admin/intake" style={{ fontSize: 13, color: colors.primary }}>← Intake console</Link>
+      </div>
       <PageHeader title="A12 · Completion Analytics" subtitle="How often patients finish the intake, where they drop off, and how long it takes. Aggregated, de-identified." />
-      <Notice kind="info">All figures are aggregated across patients. See <Link href="/admin/intake/insights">Clinical Insights (A13)</Link> for top complaints and conditions.</Notice>
+      <Notice>All figures are aggregated across patients. See <Link href="/admin/intake/insights">Clinical Insights (A13)</Link> for top complaints and conditions.</Notice>
 
-      {error ? <p style={{ color: 'salmon' }}>{error}</p> : null}
-      {loading ? <p style={{ opacity: 0.6, marginTop: 16 }}>Loading…</p> : null}
+      {error ? <p style={{ color: colors.danger }}>{error}</p> : null}
+      {loading ? <p style={{ color: colors.muted, marginTop: 16 }}>Loading…</p> : null}
 
       {data && !loading ? (
         <>
           <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', marginTop: 16 }}>
-            <Kpi label="Completion rate" value={pct(data.completion_rate)} accent="#22c55e" />
-            <Kpi label="Avg time to complete" value={mmss(data.avg_time_to_complete_sec)} accent="#60a5fa" />
-            <Kpi label="Red-flag trigger rate" value={pct(data.red_flag_trigger_rate)} accent="#22d3ee" />
+            <Kpi label="Completion rate" value={pct(data.completion_rate)} accent={colors.success} />
+            <Kpi label="Avg time to complete" value={mmss(data.avg_time_to_complete_sec)} accent={colors.info} />
+            <Kpi label="Red-flag trigger rate" value={pct(data.red_flag_trigger_rate)} accent={colors.info} />
           </div>
 
           <section style={{ marginTop: 24 }}>
-            <p style={{ fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 }}>Per-step drop-off</p>
-            <div style={{ ...card, marginTop: 8, display: 'grid', gap: 10 }}>
+            <p style={{ fontSize: 12, color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Per-step drop-off</p>
+            <Card style={{ marginTop: 8, display: 'grid', gap: 10 }}>
               {data.per_step_dropoff.map((s) => {
                 const rate = s.reached ? s.completed / s.reached : 0;
                 return (
                   <div key={s.step}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
                       <span>{s.step}</span>
-                      <span style={{ opacity: 0.7 }}>{s.completed}/{s.reached} ({pct(rate)})</span>
+                      <span style={{ color: colors.muted }}>{s.completed}/{s.reached} ({pct(rate)})</span>
                     </div>
-                    <div style={{ height: 10, background: '#1f1f1f', borderRadius: 6, overflow: 'hidden' }}>
-                      <div style={{ width: `${rate * 100}%`, height: '100%', background: rate > 0.92 ? '#16a34a' : rate > 0.85 ? '#ca8a04' : '#b91c1c' }} />
+                    <div style={{ height: 10, background: colors.border, borderRadius: 6, overflow: 'hidden' }}>
+                      <div style={{ width: `${rate * 100}%`, height: '100%', background: rate > 0.92 ? colors.success : rate > 0.85 ? colors.warning : colors.danger }} />
                     </div>
                   </div>
                 );
               })}
-            </div>
+            </Card>
           </section>
         </>
       ) : null}
-    </div>
+    </Page>
   );
 }
 
 function Kpi({ label, value, accent }: { label: string; value: string; accent: string }) {
   return (
-    <div style={{ ...card, borderLeft: `3px solid ${accent}` }}>
-      <div style={{ fontSize: 11, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
+    <Card style={{ borderLeft: `3px solid ${accent}` }}>
+      <div style={{ fontSize: 11, color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
       <div style={{ fontSize: 24, fontWeight: 700, marginTop: 4 }}>{value}</div>
-    </div>
+    </Card>
   );
 }

@@ -4,9 +4,10 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { listFraudAlerts, setCampaignFreeze } from '@/services/crowdfundingAdminService';
 import type { CfFraudAlert, CfRiskLevel } from '@/types/crowdfunding';
+import { Page, PageHeader, Card, Button, Badge, colors, tint } from '@/components/ui/vuexy';
 
-const RISK_COLOR: Record<CfRiskLevel, string> = { LOW: '#16a34a', MEDIUM: '#d97706', HIGH: '#dc2626' };
-const STATUS_BADGE: Record<string, string> = { OPEN: '#dc2626', INVESTIGATING: '#d97706', RESOLVED: '#16a34a', FROZEN: '#1f2937' };
+const RISK_COLOR: Record<CfRiskLevel, string> = { LOW: colors.success, MEDIUM: colors.warning, HIGH: colors.danger };
+const STATUS_BADGE: Record<string, string> = { OPEN: colors.danger, INVESTIGATING: colors.warning, RESOLVED: colors.success, FROZEN: colors.secondary };
 const naira = (kobo: number) => `₦${(kobo / 100).toLocaleString('en-NG')}`;
 
 export default function FraudAdminPage() {
@@ -36,82 +37,78 @@ export default function FraudAdminPage() {
   const high = items.filter((i) => i.riskLevel === 'HIGH').length;
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.25rem' }}>Fraud & Risk</h1>
-      <p style={{ color: '#6b7280', margin: '0 0 1rem', fontSize: '0.85rem' }}>Investigate flagged campaigns and freeze funds instantly when needed.</p>
+    <Page>
+      <PageHeader title="Fraud & Risk" subtitle="Investigate flagged campaigns and freeze funds instantly when needed." />
 
       <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem' }}>
-        <Summary label="Open / investigating" value={String(items.filter((i) => i.status === 'OPEN' || i.status === 'INVESTIGATING').length)} color="#d97706" />
-        <Summary label="High risk" value={String(high)} color="#dc2626" />
-        <Summary label="Frozen" value={String(items.filter((i) => i.status === 'FROZEN').length)} color="#1f2937" />
-        <button onClick={load} style={{ marginLeft: 'auto', alignSelf: 'flex-start', ...btn() }}>Refresh</button>
+        <Summary label="Open / investigating" value={String(items.filter((i) => i.status === 'OPEN' || i.status === 'INVESTIGATING').length)} color={colors.warning} />
+        <Summary label="High risk" value={String(high)} color={colors.danger} />
+        <Summary label="Frozen" value={String(items.filter((i) => i.status === 'FROZEN').length)} color={colors.secondary} />
+        <Button variant="outline" sm style={{ marginLeft: 'auto', alignSelf: 'flex-start' }} onClick={load}>Refresh</Button>
       </div>
 
-      {error && <p style={{ color: '#dc2626', marginBottom: '1rem' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger, marginBottom: '1rem' }}>{error}</p>}
 
-      {loading ? <p style={{ color: '#6b7280' }}>Loading alerts…</p> : items.length === 0 ? <p style={{ color: '#6b7280' }}>No fraud alerts.</p> : (
+      {loading ? <p style={{ color: colors.muted }}>Loading alerts…</p> : items.length === 0 ? <p style={{ color: colors.muted }}>No fraud alerts.</p> : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           {items.map((a) => (
-            <div key={a.id} style={{ border: `1px solid ${a.riskLevel === 'HIGH' ? '#fecaca' : '#e5e7eb'}`, borderRadius: '0.5rem', padding: '1rem', background: '#fff' }}>
+            <Card key={a.id} style={{ borderColor: a.riskLevel === 'HIGH' ? tint(colors.danger, 0.4) : colors.border }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
-                    <span style={badge(STATUS_BADGE[a.status])}>{a.status}</span>
-                    <span style={{ ...badge('#fff'), color: RISK_COLOR[a.riskLevel], border: `1px solid ${RISK_COLOR[a.riskLevel]}` }}>RISK {a.riskLevel}</span>
+                    <Badge text={a.status} color={STATUS_BADGE[a.status]} />
+                    <span style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3, padding: '0.1rem 0.5rem', borderRadius: '9999px', color: RISK_COLOR[a.riskLevel], border: `1px solid ${RISK_COLOR[a.riskLevel]}` }}>RISK {a.riskLevel}</span>
                   </div>
                   <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{a.campaignTitle}</div>
-                  <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 2 }}>{a.creatorName} · raised {naira(a.raisedKobo)} · {new Date(a.createdAt).toLocaleString()}</div>
+                  <div style={{ fontSize: '0.8rem', color: colors.muted, marginTop: 2 }}>{a.creatorName} · raised {naira(a.raisedKobo)} · {new Date(a.createdAt).toLocaleString()}</div>
                   <ul style={{ margin: '0.5rem 0 0', paddingLeft: '1.1rem' }}>
-                    {a.signals.map((s, i) => <li key={i} style={{ fontSize: '0.8rem', color: '#374151' }}>{s}</li>)}
+                    {a.signals.map((s, i) => <li key={i} style={{ fontSize: '0.8rem', color: colors.text }}>{s}</li>)}
                   </ul>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'flex-end' }}>
-                  <Link href={`/admin/crowdfunding/review/${a.campaignId}`} style={{ ...btn(), textDecoration: 'none', color: '#1d4ed8', textAlign: 'center' }}>Open campaign</Link>
+                  <Link href={`/admin/crowdfunding/review/${a.campaignId}`}>
+                    <Button variant="outline" sm style={{ textAlign: 'center' }}>Open campaign</Button>
+                  </Link>
                   {a.status !== 'FROZEN' ? (
-                    <button disabled={busy === a.campaignId} onClick={() => { setModal({ campaignId: a.campaignId, freeze: true, title: a.campaignTitle, note: '' }); setError(null); }} style={{ padding: '0.4rem 0.8rem', borderRadius: '0.375rem', border: 'none', background: '#dc2626', color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: '0.85rem' }}>Freeze funds</button>
+                    <Button variant="danger" sm disabled={busy === a.campaignId} onClick={() => { setModal({ campaignId: a.campaignId, freeze: true, title: a.campaignTitle, note: '' }); setError(null); }}>Freeze funds</Button>
                   ) : (
-                    <button disabled={busy === a.campaignId} onClick={() => { setModal({ campaignId: a.campaignId, freeze: false, title: a.campaignTitle, note: '' }); setError(null); }} style={{ ...btn(), color: '#16a34a', borderColor: '#86efac' }}>Unfreeze</button>
+                    <Button variant="outline" sm disabled={busy === a.campaignId} style={{ color: colors.success, borderColor: tint(colors.success, 0.4) }} onClick={() => { setModal({ campaignId: a.campaignId, freeze: false, title: a.campaignTitle, note: '' }); setError(null); }}>Unfreeze</Button>
                   )}
                 </div>
               </div>
-            </div>
+            </Card>
           ))}
         </div>
       )}
 
       {modal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
-          <div style={{ background: '#fff', borderRadius: '0.75rem', padding: '1.5rem', width: '100%', maxWidth: '28rem', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+          <div style={{ background: colors.card, borderRadius: '0.75rem', padding: '1.5rem', width: '100%', maxWidth: '28rem', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
             <h2 style={{ fontWeight: 700, marginTop: 0 }}>{modal.freeze ? 'Freeze campaign funds' : 'Unfreeze campaign'}</h2>
-            <p style={{ fontSize: '0.85rem', color: '#374151' }}>
+            <p style={{ fontSize: '0.85rem', color: colors.text }}>
               {modal.freeze ? `Freezing "${modal.title}" immediately blocks contributions and withdrawals while under investigation.` : `Unfreeze "${modal.title}" and return it to investigation status.`}
             </p>
             <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600 }}>
               Reason (required)
-              <textarea value={modal.note} onChange={(e) => setModal({ ...modal, note: e.target.value })} rows={3} style={{ display: 'block', width: '100%', marginTop: '0.35rem', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', resize: 'vertical', boxSizing: 'border-box' }} />
+              <textarea value={modal.note} onChange={(e) => setModal({ ...modal, note: e.target.value })} rows={3} style={{ display: 'block', width: '100%', marginTop: '0.35rem', padding: '0.5rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem', resize: 'vertical', boxSizing: 'border-box' }} />
             </label>
-            {error && <p style={{ color: '#dc2626', fontSize: '0.85rem' }}>{error}</p>}
+            {error && <p style={{ color: colors.danger, fontSize: '0.85rem' }}>{error}</p>}
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.75rem' }}>
-              <button onClick={() => { setModal(null); setError(null); }} style={btn()}>Cancel</button>
-              <button onClick={confirm} disabled={!!busy} style={{ padding: '0.45rem 1rem', borderRadius: '0.375rem', border: 'none', background: modal.freeze ? '#dc2626' : '#16a34a', color: '#fff', fontWeight: 600, cursor: busy ? 'not-allowed' : 'pointer' }}>{busy ? 'Working…' : 'Confirm'}</button>
+              <Button variant="outline" onClick={() => { setModal(null); setError(null); }}>Cancel</Button>
+              <Button variant={modal.freeze ? 'danger' : 'primary'} disabled={!!busy} onClick={confirm}>{busy ? 'Working…' : 'Confirm'}</Button>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </Page>
   );
 }
 
 function Summary({ label, value, color }: { label: string; value: string; color: string }) {
   return (
-    <div style={{ border: '1px solid #e5e7eb', borderLeft: `3px solid ${color}`, borderRadius: '0.5rem', padding: '0.6rem 1rem', background: '#fff', minWidth: 140 }}>
-      <div style={{ fontSize: '0.72rem', color: '#6b7280', textTransform: 'uppercase' }}>{label}</div>
+    <Card style={{ borderLeft: `3px solid ${color}`, padding: '0.6rem 1rem', minWidth: 140 }}>
+      <div style={{ fontSize: '0.72rem', color: colors.muted, textTransform: 'uppercase' }}>{label}</div>
       <div style={{ fontSize: '1.25rem', fontWeight: 700, color }}>{value}</div>
-    </div>
+    </Card>
   );
-}
-
-const btn = (): React.CSSProperties => ({ padding: '0.4rem 0.8rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: '0.85rem' });
-function badge(bg: string): React.CSSProperties {
-  return { background: bg, color: '#fff', padding: '0.1rem 0.5rem', borderRadius: '9999px', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3 };
 }

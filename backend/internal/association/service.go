@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,16 +24,63 @@ var ErrForbidden = errors.New("association: forbidden")
 
 // Service manages association dues payments, receipts, and admin approvals.
 type Service struct {
-	db     *pgxpool.Pool
-	ledger *ledger.Service
-	// cardKey is the HMAC key used to sign/verify membership-card QR tokens.
-	// Defaults to a dev key (defaultDevCardKey); production wiring MUST override
-	// it via SetCardSigningSecret with a real server secret.
-	cardKey []byte
+	db         *pgxpool.Pool
+	ledger     *ledger.Service
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 }
 
 func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
-	return &Service{db: db, ledger: ledger, cardKey: defaultDevCardKey}
+	return &Service{db: db, ledger: ledger}
+}
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module. app-wiring injects a thin adapter over the finance commission service;
+// when the commission feature is off (or no recorder is wired) the field is nil and
+// recording is a silent no-op. Modeled as a LOCAL interface so association never
+// imports the commission package at compile time (mirrors transport/service.go). It
+// records realized profit ONLY; it never moves money. The injected recorder is built
+// WITHOUT a ledger so RecordFor never re-posts (the dues split above already routes
+// the platform fee) — it appends the immutable earning row used by profit reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+	RecordExact(ctx context.Context, category, service, subtype string, grossKobo, recordedRevenueKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a settled dues payment.
+// It is best-effort and MUST NEVER affect the caller's outcome: a nil recorder is a
+// no-op, and any error is logged and swallowed so a profit-registry failure can never
+// fail or reverse the member's dues payment. The invoice id doubles as source ref +
+// idempotency key so retries and reconciliation sweeps never double-count. The
+// module's ACTUAL platform cut is the 5% Platform-fee line of the RevenueSplit, NOT a
+// flat 10% of the dues, so we record the EXACT platformKobo via RecordExact (grossKobo
+// = the full dues amount is passed for context/throughput).
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo, platformKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || platformKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordExact(ctx, category, service, subtype, grossKobo, platformKobo,
+		"association", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[association] commission record (source=%s gross=%d platform=%d) failed, continuing: %v", sourceRef, grossKobo, platformKobo, err)
+	}
+}
+
+// platformShareKobo extracts the platform-fee line (5%) from the dues RevenueSplit —
+// the exact amount actually credited to platform revenue — so profit recording uses
+// the realized cut rather than the whole dues amount.
+func platformShareKobo(amountKobo int64) int64 {
+	for _, line := range RevenueSplit(amountKobo) {
+		if line.Label == "Platform fee" {
+			return line.AmountKobo
+		}
+	}
+	return 0
 }
 
 // GetDues returns the caller's outstanding + paid dues for the current year.
@@ -149,6 +197,16 @@ func (s *Service) PayInvoice(ctx context.Context, userID, invoiceID string, req 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("association: commit: %w", err)
 	}
+
+	// Record realized Spotlight profit into the central Commission & Profit registry.
+	// This is the dues-settlement point: the RevenueSplit above realizes the platform
+	// fee (5% of the dues amount). We record that EXACT platform share (not the whole
+	// dues, not a flat 10%) as the profit; gross = the full dues amount is passed for
+	// throughput context. Best-effort + idempotent: the invoice id doubles as source
+	// ref + idempotency key, so retries / the early PAID return never double-count. A
+	// recorder failure is logged and swallowed — it must NEVER fail or reverse the dues
+	// payment above.
+	s.recordCommissionSafe(ctx, "Community", "Group Membership", "", amount, platformShareKobo(amount), invoiceID, &userID)
 
 	return &PayInvoiceResult{ReceiptID: "rcpt_" + invoiceID, Status: "SUCCESS"}, nil
 }
@@ -383,7 +441,7 @@ func (s *Service) GetCard(ctx context.Context, userID string) (MembershipCard, e
 		       o.name, o.acronym,
 		       COALESCE(mc.label,'Member'),
 		       ch.name,
-		       COALESCE(mp.full_name,''), mp.photo_url, m.id, m.organisation_id
+		       mp.full_name, mp.photo_url
 		FROM assoc_memberships m
 		JOIN assoc_organisations o ON o.id=m.organisation_id
 		LEFT JOIN assoc_membership_categories mc ON mc.id=m.category_id
@@ -393,20 +451,16 @@ func (s *Service) GetCard(ctx context.Context, userID string) (MembershipCard, e
 		LIMIT 1`
 	var card MembershipCard
 	var validThrough *string
-	var membershipID, orgID string
 	if err := s.db.QueryRow(ctx, q, userID).Scan(
 		&card.MemberID, &card.MemberID, &card.Status, &card.PaymentStanding, &card.Verified, &validThrough,
 		&card.OrganisationName, &card.OrganisationAcronym,
 		&card.CategoryLabel, &card.ChapterName,
-		&card.FullName, &card.PhotoURL, &membershipID, &orgID,
+		&card.FullName, &card.PhotoURL,
 	); err != nil {
 		return card, fmt.Errorf("association: membership not found: %w", err)
 	}
 	card.ValidThrough = validThrough
-	// Signed, tamper-evident QR: authenticity is provable at the verify endpoint,
-	// which also does a live standing/status lookup (MC-003/004/005). Replaces the
-	// old unsigned "assoc:<code>" plaintext.
-	card.QRPayload = s.SignCardToken(membershipID, card.MemberID, orgID)
+	card.QRPayload = "assoc:" + card.MemberID
 	return card, nil
 }
 
@@ -551,31 +605,6 @@ func (s *Service) requireAssocAdmin(ctx context.Context, userID string) error {
 		return ErrForbidden
 	}
 	return nil
-}
-
-// adminPrimaryOrg resolves the single organisation an admin acts within, mirroring
-// the scoping GetAdminKpis already uses. Admin dashboard LIST endpoints (approval
-// queue, offline-payments queue) must scope their rows to this org so an admin of
-// one org cannot read another org's applicant/financial PII (cross-org IDOR). The
-// highest-priority admin role's org wins when the caller is an admin of several.
-// Fail-closed: no admin role → ErrForbidden.
-func (s *Service) adminPrimaryOrg(ctx context.Context, adminID string) (string, error) {
-	var orgID string
-	if err := s.db.QueryRow(ctx, `
-		SELECT m.organisation_id FROM assoc_member_roles r
-		JOIN assoc_memberships m ON m.id=r.membership_id
-		WHERE m.user_id=$1 AND r.role != 'NONE'
-		ORDER BY CASE r.role
-			WHEN 'SUPER_ADMIN'    THEN 1
-			WHEN 'NATIONAL_ADMIN' THEN 2
-			WHEN 'FINANCE_ADMIN'  THEN 3
-			WHEN 'CHAPTER_ADMIN'  THEN 4
-			WHEN 'SECRETARY'      THEN 5
-			ELSE 6 END
-		LIMIT 1`, adminID).Scan(&orgID); err != nil {
-		return "", ErrForbidden
-	}
-	return orgID, nil
 }
 
 // requireCap fetches the caller's highest-privilege role and checks that the
@@ -1031,13 +1060,6 @@ func (s *Service) GetApprovalQueue(ctx context.Context, adminID, jurisdiction st
 	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
 		return nil, err
 	}
-	// Org-scope: the queue must only surface applications for the admin's own
-	// organisation — otherwise any admin of any org reads every org's pending
-	// applicant PII (cross-org IDOR). $1 is always the admin's org.
-	orgID, err := s.adminPrimaryOrg(ctx, adminID)
-	if err != nil {
-		return nil, err
-	}
 	q := `
 		SELECT a.id, COALESCE(mp.full_name, u.email, a.user_id::text),
 		       COALESCE(mc.label,''), COALESCE(ch.name,''), a.submitted_at::text,
@@ -1047,9 +1069,8 @@ func (s *Service) GetApprovalQueue(ctx context.Context, adminID, jurisdiction st
 		LEFT JOIN assoc_membership_categories mc ON mc.id=a.category_id
 		LEFT JOIN assoc_chapters ch ON ch.id=a.chapter_id
 		LEFT JOIN auth.users u ON u.id=a.user_id
-		WHERE a.organisation_id=$1
-		  AND a.status IN ('PENDING','PENDING_CHAPTER','PENDING_NATIONAL','INFO_REQUESTED')`
-	args := []any{orgID}
+		WHERE a.status IN ('PENDING','PENDING_CHAPTER','PENDING_NATIONAL','INFO_REQUESTED')`
+	args := []any{}
 	if jurisdiction != "" && jurisdiction != "ALL" {
 		args = append(args, jurisdiction)
 		q += fmt.Sprintf(` AND a.jurisdiction=$%d`, len(args))
@@ -1135,13 +1156,6 @@ func (s *Service) GetOfflinePayments(ctx context.Context, adminID string) ([]Off
 	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
 		return nil, err
 	}
-	// Org-scope: only the admin's own organisation's offline payments (member name,
-	// amount, reference are financial PII) — otherwise any admin reads every org's
-	// pending offline payments (cross-org IDOR).
-	orgID, err := s.adminPrimaryOrg(ctx, adminID)
-	if err != nil {
-		return nil, err
-	}
 	rows, err := s.db.Query(ctx, `
 		SELECT p.id, COALESCE(mp.full_name,''), m.member_code,
 		       p.amount_kobo, p.method, COALESCE(p.reference,''),
@@ -1151,8 +1165,7 @@ func (s *Service) GetOfflinePayments(ctx context.Context, adminID string) ([]Off
 		JOIN assoc_dues_invoices i ON i.id=p.invoice_id
 		LEFT JOIN assoc_member_profiles mp ON mp.membership_id=m.id
 		WHERE p.offline=true AND p.status='PENDING'
-		  AND m.organisation_id=$1
-		ORDER BY p.created_at DESC LIMIT 200`, orgID)
+		ORDER BY p.created_at DESC LIMIT 200`)
 	if err != nil {
 		return nil, fmt.Errorf("association: offline payments: %w", err)
 	}

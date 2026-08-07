@@ -10,6 +10,7 @@ import {
   PlatformGuard, PlatformTabs, formatNaira, fmtDate, timeAgo,
   PageHeader, Card, Kpi, StateBlock, DisclosureNote, Bar, th, td,
 } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function CollectionsPage() {
   const [ov, setOv] = useState<CollectionsOverview | null>(null);
@@ -37,10 +38,10 @@ export default function CollectionsPage() {
           {ov ? (
             <>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-                <Kpi label="GMV (lifetime)" value={formatNaira(ov.gmv_kobo)} accent="#15803d" />
+                <Kpi label="GMV (lifetime)" value={formatNaira(ov.gmv_kobo)} accent={colors.success} />
                 <Kpi label="GMV today" value={formatNaira(ov.gmv_today_kobo)} />
-                <Kpi label="Collection rate" value={`${(ov.collection_rate * 100).toFixed(1)}%`} sub={`${ov.invoices_paid.toLocaleString('en-NG')} / ${ov.invoices_issued.toLocaleString('en-NG')} invoices`} accent="#340075" />
-                <Kpi label="Recon drift flagged" value={ov.reconciliation.drift_flagged.toString()} accent={ov.reconciliation.drift_flagged > 0 ? '#b91c1c' : '#15803d'} sub={`last run ${timeAgo(ov.reconciliation.last_run_at)}`} />
+                <Kpi label="Collection rate" value={`${(ov.collection_rate * 100).toFixed(1)}%`} sub={`${ov.invoices_paid.toLocaleString('en-NG')} / ${ov.invoices_issued.toLocaleString('en-NG')} invoices`} accent={colors.primary} />
+                <Kpi label="Recon drift flagged" value={ov.reconciliation.drift_flagged.toString()} accent={ov.reconciliation.drift_flagged > 0 ? colors.danger : colors.success} sub={`last run ${timeAgo(ov.reconciliation.last_run_at)}`} />
               </div>
 
               <Card title="GMV — last 14 days">
@@ -51,9 +52,9 @@ export default function CollectionsPage() {
 
               <Card title="Reconciliation health (SF-8)">
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.75rem' }}>
-                  <Kpi label="Matched" value={ov.reconciliation.matched.toLocaleString('en-NG')} accent="#15803d" />
-                  <Kpi label="Pending" value={ov.reconciliation.pending.toLocaleString('en-NG')} accent="#9a3412" />
-                  <Kpi label="Drift flagged" value={ov.reconciliation.drift_flagged.toLocaleString('en-NG')} accent="#b91c1c" />
+                  <Kpi label="Matched" value={ov.reconciliation.matched.toLocaleString('en-NG')} accent={colors.success} />
+                  <Kpi label="Pending" value={ov.reconciliation.pending.toLocaleString('en-NG')} accent={colors.warning} />
+                  <Kpi label="Drift flagged" value={ov.reconciliation.drift_flagged.toLocaleString('en-NG')} accent={colors.danger} />
                   <Kpi label="Last run" value={fmtDate(ov.reconciliation.last_run_at)} />
                 </div>
               </Card>

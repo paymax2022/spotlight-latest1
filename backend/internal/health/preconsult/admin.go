@@ -250,9 +250,9 @@ func (s *Service) Monitoring(ctx context.Context, incompleteOnly bool, nearMinut
 // ── Intake record viewer (A9; access-logged + audited) ────────────────────────
 
 type AdminIntakeRecord struct {
-	Intake  *Intake          `json:"intake"`
-	Answers map[string]any   `json:"answers"`
-	Access  []AccessLogRow   `json:"recent_access"`
+	Intake  *Intake        `json:"intake"`
+	Answers map[string]any `json:"answers"`
+	Access  []AccessLogRow `json:"recent_access"`
 }
 
 // AdminViewIntake returns one intake for clinical-admin support. It WRITES an
@@ -351,7 +351,7 @@ type Analytics struct {
 	CompletionRate float64        `json:"completion_rate"`
 	RedFlagCount   int            `json:"red_flag_count"`
 	RedFlagRate    float64        `json:"red_flag_rate"`
-	StepDropoff    map[string]int `json:"step_dropoff"`     // unanswered-field counts on DRAFT intakes
+	StepDropoff    map[string]int `json:"step_dropoff"`        // unanswered-field counts on DRAFT intakes
 	TopCategories  map[string]int `json:"top_reason_category"` // aggregated, de-identified
 }
 

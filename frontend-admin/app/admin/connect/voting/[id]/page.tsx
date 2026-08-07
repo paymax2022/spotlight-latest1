@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { getVotingContest, formatNaira } from '@/services/connectAdminService';
 import type { VotingContestDetail } from '@/types/connectAdmin';
 import { PageHeader, Card, Badge, th, td } from '../../_ui';
+import { Page, colors } from '@/components/ui/vuexy';
 
 export default function ConnectVotingDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -15,19 +16,19 @@ export default function ConnectVotingDetailPage({ params }: { params: Promise<{ 
   async function load() { setLoading(true); setError(null); try { setC(await getVotingContest(id)); } catch (e) { setError(String(e)); } finally { setLoading(false); } }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [id]);
 
-  if (loading) return <div style={{ padding: '0.5rem' }}><p style={{ color: '#6b7280' }}>Loading…</p></div>;
-  if (error || !c) return <div style={{ padding: '0.5rem' }}><p style={{ color: '#dc2626' }}>{error ?? 'Not found'}</p><Link href="/admin/connect/voting" style={{ color: '#1d4ed8' }}>← Back</Link></div>;
+  if (loading) return <Page><p style={{ color: colors.muted }}>Loading…</p></Page>;
+  if (error || !c) return <Page><p style={{ color: colors.danger }}>{error ?? 'Not found'}</p><Link href="/admin/connect/voting" style={{ color: colors.info }}>← Back</Link></Page>;
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <Link href="/admin/connect/voting" style={{ color: '#1d4ed8', textDecoration: 'none', fontSize: '0.85rem' }}>← Voting integrity</Link>
+    <Page>
+      <Link href="/admin/connect/voting" style={{ color: colors.info, textDecoration: 'none', fontSize: '0.85rem' }}>← Voting integrity</Link>
       <div style={{ height: 8 }} />
       <PageHeader title={c.title} subtitle={`${c.status} · integrity ${c.integrity_score}/100`} />
 
       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' }}>
         <Badge status={c.status === 'live' ? 'investigating' : c.status === 'finalized' ? 'resolved' : 'normal'} label={c.status} />
         <span style={{ fontSize: '0.85rem' }}>Paid volume: <strong>{formatNaira(c.paid_vote_volume_kobo)}</strong></span>
-        <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{c.paid_votes.toLocaleString('en-NG')} paid · {c.free_votes.toLocaleString('en-NG')} free</span>
+        <span style={{ fontSize: '0.85rem', color: colors.muted }}>{c.paid_votes.toLocaleString('en-NG')} paid · {c.free_votes.toLocaleString('en-NG')} free</span>
       </div>
 
       <Card title="Entrants & tallies">
@@ -43,7 +44,7 @@ export default function ConnectVotingDetailPage({ params }: { params: Promise<{ 
 
       <Card title="Integrity flags (paid-vote audit)">
         {c.flags.length === 0 ? (
-          <p style={{ color: '#6b7280' }}>No integrity flags.</p>
+          <p style={{ color: colors.muted }}>No integrity flags.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr><th style={th()}>Signal</th><th style={th()}>Reason codes</th><th style={th()}>Affected votes</th><th style={th()}>Amount</th><th style={th()}>Status</th></tr></thead>
@@ -60,8 +61,8 @@ export default function ConnectVotingDetailPage({ params }: { params: Promise<{ 
             </tbody>
           </table>
         )}
-        {c.notes ? <p style={{ fontSize: '0.8rem', color: '#9ca3af', marginTop: '0.75rem' }}>{c.notes}</p> : null}
+        {c.notes ? <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: '0.75rem' }}>{c.notes}</p> : null}
       </Card>
-    </div>
+    </Page>
   );
 }

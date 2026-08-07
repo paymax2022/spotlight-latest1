@@ -93,12 +93,12 @@ type Entry struct {
 
 // Summary aggregates a beneficiary's rewards by state (M-HOME-03 / my-rewards).
 type Summary struct {
-	BeneficiaryID    string           `json:"beneficiary_id"`
-	TotalEarnedKobo  int64            `json:"total_earned_kobo"`
-	EligibleKobo     int64            `json:"eligible_kobo"`
-	PaidKobo         int64            `json:"paid_kobo"`
-	ClawedBackKobo   int64            `json:"clawed_back_kobo"`
-	ByState          map[string]int64 `json:"by_state"`
+	BeneficiaryID   string           `json:"beneficiary_id"`
+	TotalEarnedKobo int64            `json:"total_earned_kobo"`
+	EligibleKobo    int64            `json:"eligible_kobo"`
+	PaidKobo        int64            `json:"paid_kobo"`
+	ClawedBackKobo  int64            `json:"clawed_back_kobo"`
+	ByState         map[string]int64 `json:"by_state"`
 }
 
 // Service drives the reward state machine.
@@ -441,8 +441,8 @@ func (s *Service) ListByBeneficiary(ctx context.Context, beneficiaryID string, l
 	var out []Entry
 	for rows.Next() {
 		var (
-			e                      Entry
-			ben, hAcc, ref         *string
+			e              Entry
+			ben, hAcc, ref *string
 		)
 		if err := rows.Scan(&e.ID, &ben, &hAcc, &ref, &e.Kind, &e.State,
 			&e.AmountKobo, &e.Currency, &e.IsHouse, &e.ExcludedFromOverride, &e.ExcludedFromKFactor); err != nil {

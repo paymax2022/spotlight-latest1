@@ -3,10 +3,19 @@
 import { useEffect, useState } from 'react';
 import { listCatalog, governTest, formatNaira } from '@/services/healthLabAdminService';
 import type { LabCatalogItem, LabCatalogGovernanceAction } from '@/types/healthLabAdmin';
-import { PageHeader, LabTabs, Card, Badge, DisclosureNote, AuditNote, StateBlock, FilterBar, btn, btnPrimary, btnDanger, th, td, input, select, label } from '../../_ui';
+import { LabTabs, DisclosureNote, AuditNote, StateBlock, FilterBar } from '../../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUSES = ['', 'pending', 'approved', 'rejected', 'suspended'];
 const CATEGORIES = ['', 'haematology', 'chemistry', 'microbiology', 'serology', 'molecular', 'panel'];
+
+function statusColor(status: string): string {
+  const v = status.toLowerCase();
+  if (/(reject|fail|block|suspend|breach|critical|invalid|no loinc)/.test(v)) return colors.danger;
+  if (/(pending|flag|hold|warn)/.test(v)) return colors.warning;
+  if (/(approve|active|verified|complete|release|resolve|paid|ok)/.test(v)) return colors.success;
+  return colors.secondary;
+}
 
 export default function LabCatalogPage() {
   const [rows, setRows] = useState<LabCatalogItem[]>([]);
@@ -34,8 +43,8 @@ export default function LabCatalogPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Test catalog governance" subtitle="Govern test & package definitions — LOINC mapping, specimen, prep and turnaround. Untyped/unmapped tests are held for review before listing." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Test catalog governance" subtitle="Govern test & package definitions — LOINC mapping, specimen, prep and turnaround. Untyped/unmapped tests are held for review before listing." actions={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <LabTabs active="catalog" />
 
       <DisclosureNote>
@@ -46,58 +55,60 @@ export default function LabCatalogPage() {
 
       <FilterBar>
         <div>
-          <label style={label()}>Status</label>
-          <select style={select()} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <label>Status</label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
             {STATUSES.map((s) => <option key={s} value={s}>{s ? s : 'All statuses'}</option>)}
           </select>
         </div>
         <div>
-          <label style={label()}>Category</label>
-          <select style={select()} value={category} onChange={(e) => setCategory(e.target.value)}>
+          <label>Category</label>
+          <select value={category} onChange={(e) => setCategory(e.target.value)}>
             {CATEGORIES.map((c) => <option key={c} value={c}>{c ? c : 'All categories'}</option>)}
           </select>
         </div>
         <div style={{ minWidth: 240 }}>
-          <label style={label()}>Search</label>
-          <input style={input()} placeholder="Test name, LOINC, lab, id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
+          <label>Search</label>
+          <Input placeholder="Test name, LOINC, lab, id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
         </div>
-        <button style={btnPrimary()} onClick={load}>Apply</button>
+        <Button variant="primary" onClick={load}>Apply</Button>
       </FilterBar>
 
       {msg && <AuditNote>{msg}</AuditNote>}
 
-      <Card>
-        <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No catalog items match.">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>
-              <th style={th()}>Test</th><th style={th()}>LOINC</th><th style={th()}>Category</th>
-              <th style={th()}>Specimen / prep</th><th style={th()}>TAT</th><th style={th()}>Price</th>
-              <th style={th()}>Lab</th><th style={th()}>Status</th><th style={th()}>Actions</th>
-            </tr></thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td style={td()}><strong>{r.test_name}</strong>{r.is_package ? <Badge status="otc" label="package" /> : null}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.id}</div></td>
-                  <td style={td()}>{r.loinc_code ? <code style={{ fontSize: '0.76rem' }}>{r.loinc_code}</code> : <Badge status="flagged" label="no LOINC" />}</td>
-                  <td style={td()}>{r.category}</td>
-                  <td style={td()}>{r.specimen}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.prep_required}</div></td>
-                  <td style={td()}>{r.tat_hours}h</td>
-                  <td style={td()}>{formatNaira(r.price_kobo)}</td>
-                  <td style={td()}>{r.lab_masked}</td>
-                  <td style={td()}><Badge status={r.status} />{r.flagged_reason ? <div style={{ fontSize: '0.72rem', color: '#b91c1c', marginTop: 2 }}>{r.flagged_reason}</div> : null}</td>
-                  <td style={td()}>
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      <button disabled={busy} style={btnPrimary()} onClick={() => govern(r.id, 'approve')}>Approve</button>
-                      <button disabled={busy} style={btn()} onClick={() => govern(r.id, 'suspend')}>Suspend</button>
-                      <button disabled={busy} style={btnDanger()} onClick={() => govern(r.id, 'reject')}>Reject</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </StateBlock>
+      <Card style={{ padding: 0, overflow: 'auto' }}>
+        <div style={{ padding: rows.length === 0 || loading || error ? 14 : 0 }}>
+          <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No catalog items match.">
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr>
+                <th style={thCell}>Test</th><th style={thCell}>LOINC</th><th style={thCell}>Category</th>
+                <th style={thCell}>Specimen / prep</th><th style={thCell}>TAT</th><th style={thCell}>Price</th>
+                <th style={thCell}>Lab</th><th style={thCell}>Status</th><th style={thCell}>Actions</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id}>
+                    <td style={tdCell}><strong>{r.test_name}</strong>{r.is_package ? <Badge text="package" color={colors.secondary} /> : null}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.id}</div></td>
+                    <td style={tdCell}>{r.loinc_code ? <code style={{ fontSize: '0.76rem' }}>{r.loinc_code}</code> : <Badge text="no LOINC" color={colors.warning} />}</td>
+                    <td style={tdCell}>{r.category}</td>
+                    <td style={tdCell}>{r.specimen}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.prep_required}</div></td>
+                    <td style={tdCell}>{r.tat_hours}h</td>
+                    <td style={tdCell}>{formatNaira(r.price_kobo)}</td>
+                    <td style={tdCell}>{r.lab_masked}</td>
+                    <td style={tdCell}><Badge text={r.status.replace(/_/g, ' ')} color={statusColor(r.status)} />{r.flagged_reason ? <div style={{ fontSize: '0.72rem', color: colors.danger, marginTop: 2 }}>{r.flagged_reason}</div> : null}</td>
+                    <td style={tdCell}>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        <Button variant="primary" sm disabled={busy} onClick={() => govern(r.id, 'approve')}>Approve</Button>
+                        <Button variant="outline" sm disabled={busy} onClick={() => govern(r.id, 'suspend')}>Suspend</Button>
+                        <Button variant="danger" sm disabled={busy} onClick={() => govern(r.id, 'reject')}>Reject</Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </StateBlock>
+        </div>
       </Card>
-    </div>
+    </Page>
   );
 }

@@ -19,9 +19,9 @@ type ShieldFlag struct {
 type AIFeature string
 
 const (
-	FeatureProfileCoach        AIFeature = "profile_coach"
-	FeatureConversationAssist  AIFeature = "conversation_assistant"
-	FeatureMatchExplanation    AIFeature = "match_explanation"
+	FeatureProfileCoach       AIFeature = "profile_coach"
+	FeatureConversationAssist AIFeature = "conversation_assistant"
+	FeatureMatchExplanation   AIFeature = "match_explanation"
 )
 
 func validAIFeature(f AIFeature) bool {

@@ -111,7 +111,7 @@ export default function StockBuyReviewScreen() {
             maxLength={4}
             secure
             value={pin}
-            onChangeText={(t) => setPin(t.replace(/\D/g, '').slice(0, 4))}
+            onChangeText={(t) => { setPin(t.replace(/\D/g, '').slice(0, 4)); if (pinError) setPinError(undefined); }}
             error={pinError}
           />
         </View>

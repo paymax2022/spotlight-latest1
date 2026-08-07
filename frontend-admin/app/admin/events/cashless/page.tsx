@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { getCashlessFloat, formatNaira } from '@/services/eventsAdminService';
 import type { CashlessFloat } from '@/types/eventsAdmin';
 import { PageHeader, EventsTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, btn, th, td, fmtDate } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function CashlessPage() {
   const [data, setData] = useState<CashlessFloat | null>(null);
@@ -33,13 +34,13 @@ export default function CashlessPage() {
         {data && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <Kpi label="Total loaded" value={formatNaira(data.total_loaded_kobo)} accent="#0e7490" />
+              <Kpi label="Total loaded" value={formatNaira(data.total_loaded_kobo)} accent={colors.info} />
               <Kpi label="Total spent" value={formatNaira(data.total_spent_kobo)} />
-              <Kpi label="Outstanding liability" value={formatNaira(data.total_liability_kobo)} sub="Owed back to customers" accent={data.total_liability_kobo > 0 ? '#9a3412' : undefined} />
-              <Kpi label="Residual pending" value={formatNaira(data.total_residual_pending_kobo)} sub="NL-3 — refund at close" accent={data.total_residual_pending_kobo > 0 ? '#b91c1c' : undefined} />
+              <Kpi label="Outstanding liability" value={formatNaira(data.total_liability_kobo)} sub="Owed back to customers" accent={data.total_liability_kobo > 0 ? colors.warning : undefined} />
+              <Kpi label="Residual pending" value={formatNaira(data.total_residual_pending_kobo)} sub="NL-3 — refund at close" accent={data.total_residual_pending_kobo > 0 ? colors.danger : undefined} />
               <Kpi label="Ledger balance" value={formatNaira(data.ledger_balance_kobo)} sub="Projection (NL-8)" />
               <Kpi label="Custody balance" value={formatNaira(data.custody_balance_kobo)} sub="Bank/VA backing" />
-              <Kpi label="Recon delta" value={formatNaira(data.delta_kobo)} sub="custody − ledger" accent={data.delta_kobo !== 0 ? '#b91c1c' : '#15803d'} />
+              <Kpi label="Recon delta" value={formatNaira(data.delta_kobo)} sub="custody − ledger" accent={data.delta_kobo !== 0 ? colors.danger : colors.success} />
             </div>
 
             <Card title={`Per-event float (as of ${fmtDate(data.generated_at)})`}>
@@ -52,14 +53,14 @@ export default function CashlessPage() {
                   <tbody>
                     {data.lines.map((l) => (
                       <tr key={l.event_id}>
-                        <td style={td()}>{l.event_title}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{l.event_id}</div></td>
+                        <td style={td()}>{l.event_title}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{l.event_id}</div></td>
                         <td style={td()}><Badge status={l.wallet_status} /></td>
                         <td style={td()}>{formatNaira(l.loaded_kobo)}</td>
                         <td style={td()}>{formatNaira(l.spent_kobo)}</td>
                         <td style={td()}>{formatNaira(l.liability_kobo)}</td>
                         <td style={td()}>{formatNaira(l.residual_refunded_kobo)}</td>
                         <td style={td()}>
-                          <span style={{ color: l.residual_pending_kobo > 0 ? '#b91c1c' : '#15803d', fontWeight: 600 }}>{formatNaira(l.residual_pending_kobo)}</span>
+                          <span style={{ color: l.residual_pending_kobo > 0 ? colors.danger : colors.success, fontWeight: 600 }}>{formatNaira(l.residual_pending_kobo)}</span>
                           {l.wallet_status === 'closed' && l.residual_pending_kobo > 0 && <div style={{ marginTop: 4 }}><Badge status="flagged" label="refund due" /></div>}
                         </td>
                         <td style={td()}>{l.closed_at ? fmtDate(l.closed_at) : '—'}</td>

@@ -44,8 +44,54 @@ func (s *Service) ListSubjects(ctx context.Context, classID string) ([]Subject, 
 	return s.repo.ListSubjects(ctx, classID)
 }
 
+// GetSubject returns a single subject by id.
+func (s *Service) GetSubject(ctx context.Context, id string) (*Subject, error) {
+	return s.repo.GetSubjectByID(ctx, id)
+}
+
 func (s *Service) ListTopics(ctx context.Context, subjectID string) ([]Topic, error) {
 	return s.repo.ListTopics(ctx, subjectID)
+}
+
+// GetTopic returns a single topic by id.
+func (s *Service) GetTopic(ctx context.Context, id string) (*Topic, error) {
+	return s.repo.GetTopicByID(ctx, id)
+}
+
+// LessonsForTopic bridges topic → objectives → content lessons (read-only).
+func (s *Service) LessonsForTopic(ctx context.Context, topicID string) ([]Lesson, error) {
+	return s.repo.ListLessonsByTopic(ctx, topicID)
+}
+
+// GetLesson returns a single content lesson by id (read-only).
+func (s *Service) GetLesson(ctx context.Context, id string) (*Lesson, error) {
+	return s.repo.GetLessonByID(ctx, id)
+}
+
+// AdminTree composes the full curriculum tree (versions → classes → subjects)
+// from the existing list queries. Read-only; there is no dedicated tree table.
+func (s *Service) AdminTree(ctx context.Context) ([]VersionTree, error) {
+	versions, err := s.repo.ListVersions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]VersionTree, 0, len(versions))
+	for _, v := range versions {
+		classes, err := s.repo.ListClasses(ctx, v.ID, 0)
+		if err != nil {
+			return nil, err
+		}
+		nodes := make([]ClassSubjectsTree, 0, len(classes))
+		for _, cl := range classes {
+			subs, err := s.repo.ListSubjects(ctx, cl.ID)
+			if err != nil {
+				return nil, err
+			}
+			nodes = append(nodes, ClassSubjectsTree{Class: cl, Subjects: subs})
+		}
+		out = append(out, VersionTree{Version: v, Classes: nodes})
+	}
+	return out, nil
 }
 
 func (s *Service) GetObjectives(ctx context.Context, topicID string) ([]LearningObjective, error) {

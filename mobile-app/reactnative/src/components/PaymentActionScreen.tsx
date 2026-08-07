@@ -8,7 +8,6 @@ import * as Icons from 'lucide-react-native';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { initiateFunding } from '@/api/wallet.api';
-import { useGatewayCheckout } from '@/features/payments';
 import {
   resolvePaymaxRecipient,
   initiateWalletTransfer,
@@ -23,6 +22,8 @@ import {
 import { fetchBanks } from '@/features/transfers/api';
 import BankPicker from '@/features/transfers/components/BankPicker';
 import type { TransferRecipient, WalletTransfer, Beneficiary, BankTransferResult } from '@/types/wallet';
+import { showToast } from '@/store/toastStore';
+import { normalizeApiError } from '@/utils/errorMapper';
 import { sanitizeMoneyInput } from '@/utils/money';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -92,6 +93,46 @@ const ACTIONS: Record<ActionKind, ActionConfig> = {
 
 const QUICK_AMOUNTS = ['1000', '2500', '5000', '10000'];
 
+/**
+ * Turn a money-path failure into toast copy the user can act on.
+ *
+ * The resolve endpoint answers 404 for "no Paymax account has this phone/email",
+ * which is a normal outcome of typing an unknown number — not a crash. Showing
+ * the raw axios "Request failed with status code 404" tells the user nothing,
+ * so the actionable cases get their own copy and everything else falls through
+ * to the server message.
+ */
+function showTransferError(error: unknown, fallbackTitle: string) {
+  const { message, status } = normalizeApiError(error);
+  const lower = message.toLowerCase();
+
+  if (status === 404) {
+    showToast({
+      variant: 'error',
+      title: 'Recipient not found',
+      message: 'No Paymax account matches that phone number or email. Check it and try again.',
+    });
+    return;
+  }
+  if (lower.includes('insufficient')) {
+    showToast({
+      variant: 'error',
+      title: 'Insufficient balance',
+      message: 'Add money to your wallet to complete this transfer.',
+    });
+    return;
+  }
+  if (lower.includes('limit')) {
+    showToast({
+      variant: 'error',
+      title: 'Daily limit reached',
+      message: 'Upgrade your KYC tier to raise your daily transfer limit.',
+    });
+    return;
+  }
+  showToast({ variant: 'error', title: fallbackTitle, message });
+}
+
 function DynamicIcon({ name, color, size = 24 }: { name: keyof typeof Icons; color: string; size?: number }) {
   const IconComponent = Icons[name] as unknown as Icons.LucideIcon | undefined;
   const Fallback = Icons.Circle;
@@ -151,47 +192,30 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   const amountKobo = useMemo(() => Math.round(amountValue * 100), [amountValue]);
   const feeKobo = useMemo(() => calculateTransferFee(amountKobo), [amountKobo]);
 
-  // ── Wallet funding via in-app Paystack SDK ──────────────────────────────────
-  // The server initializes the top-up (Idempotency-Key + ledger authority) and
-  // returns a Paystack authorization_url; useGatewayCheckout resumes it inside
-  // the in-app SDK, then routes to the top-up status screen. When the SDK flag
-  // is off (or no access code is derivable) it falls back to the old external
-  // Paystack redirect.
-  const fundCheckout = useGatewayCheckout();
-  const fundBusy = fundCheckout.phase === 'initializing' || fundCheckout.phase === 'awaiting';
-
-  useEffect(() => {
-    if (fundCheckout.error) {
-      Alert.alert('Could not complete funding', fundCheckout.error);
-    }
-  }, [fundCheckout.error]);
-
-  const startFunding = () => {
-    if (!amountValue || amountValue < 100) {
-      Alert.alert('Enter an amount', 'Enter an amount of at least ₦100.');
-      return;
-    }
-    void fundCheckout.start({
-      domain: 'wallet_topup',
-      // initiateFunding's `amount` field is kobo (posted as amount_kobo).
-      initialize: () => initiateFunding({ amount: Math.round(amountValue * 100) }),
-      onResolved: (result) => {
-        router.push(`/wallet/topup/${encodeURIComponent(result.reference)}` as never);
-      },
-      onFallback: async (result) => {
-        if (!result.authorizationUrl) {
-          Alert.alert('Funding Started', `Reference: ${result.reference}`);
-          return;
-        }
-        const canOpen = await Linking.canOpenURL(result.authorizationUrl);
-        if (canOpen) {
-          await Linking.openURL(result.authorizationUrl);
-        } else {
-          Alert.alert('Funding Link Ready', result.authorizationUrl);
-        }
-      },
-    });
-  };
+  // ── Wallet funding mutation ─────────────────────────────────────────────────
+  const fundMutation = useMutation({
+    mutationFn: async () => {
+      if (!amountValue || amountValue < 100) {
+        throw new Error('Enter an amount of at least ₦100.');
+      }
+      return initiateFunding({ amount: Math.round(amountValue * 100) });
+    },
+    onSuccess: async (result) => {
+      if (!result.authorizationUrl) {
+        Alert.alert('Funding Started', `Reference: ${result.reference}`);
+        return;
+      }
+      const canOpen = await Linking.canOpenURL(result.authorizationUrl);
+      if (canOpen) {
+        await Linking.openURL(result.authorizationUrl);
+      } else {
+        Alert.alert('Funding Link Ready', result.authorizationUrl);
+      }
+    },
+    onError: (error) => {
+      Alert.alert('Could not start funding', error instanceof Error ? error.message : 'Please try again.');
+    },
+  });
 
   // ── Transfer: step 1 — resolve recipient ───────────────────────────────────
   const resolveMutation = useMutation({
@@ -204,12 +228,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
       setResolvedRecipient(data);
       setTransferStep('confirm');
     },
-    onError: (error) => {
-      Alert.alert(
-        'Recipient not found',
-        error instanceof Error ? error.message : 'No Paymax user found. Check the number or email.',
-      );
-    },
+    onError: (error) => showTransferError(error, 'Could not look up recipient'),
   });
 
   // ── Transfer: step 2 — execute transfer ────────────────────────────────────
@@ -321,7 +340,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     },
   });
 
-  const isPending = fundBusy || resolveMutation.isPending || transferMutation.isPending ||
+  const isPending = fundMutation.isPending || resolveMutation.isPending || transferMutation.isPending ||
     resolveAccountMutation.isPending || bankTransferMutation.isPending;
 
   const resetBankFlow = () => {
@@ -339,7 +358,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   };
 
   const handlePrimary = () => {
-    if (kind === 'fund') { startFunding(); return; }
+    if (kind === 'fund') { fundMutation.mutate(); return; }
     if (kind === 'transfer') {
       if (transferStep === 'form')    { resolveMutation.mutate(); return; }
       if (transferStep === 'confirm') { transferMutation.mutate(); return; }
@@ -362,7 +381,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
   };
 
   const primaryLabel = () => {
-    if (kind === 'fund') return fundBusy ? 'Please wait…' : config.primaryAction;
+    if (kind === 'fund') return fundMutation.isPending ? 'Please wait…' : config.primaryAction;
     if (kind === 'transfer') {
       if (transferStep === 'form')    return resolveMutation.isPending ? 'Looking up recipient…' : 'Preview Transfer';
       if (transferStep === 'confirm') return transferMutation.isPending ? 'Sending…' : 'Confirm & Send';
@@ -530,9 +549,6 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
           </View>
         )}
       </ScrollView>
-
-      {/* Hosts the in-app Paystack checkout WebView on native (renders nothing on web). */}
-      <fundCheckout.Sheet />
     </SafeAreaView>
   );
 }

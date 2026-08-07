@@ -10,6 +10,7 @@ import { listRoutingRules, updateRoutingRule } from '@/services/kycAdminService'
 import type { KycRoutingRule, CheckType } from '@/types/kycAdmin';
 import { CHECK_TYPE_LABELS } from '@/types/kycAdmin';
 import { PageHeader, Card, btn, btnPrimary, btnDisabled, inputStyle, useKycPermissions } from '../_ui';
+import { Page, colors } from '@/components/ui/vuexy';
 
 // Known KYC providers the ordered list can be composed from.
 const KNOWN_PROVIDERS = ['smile_id', 'dojah', 'complyadvantage', 'prembly', 'youverify'];
@@ -52,7 +53,7 @@ function RuleEditor({ rule, canManage, onSaved }: { rule: KycRoutingRule; canMan
 
   return (
     <Card title={CHECK_TYPE_LABELS[rule.check_type]} right={
-      <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: '#374151' }}>
+      <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: colors.text }}>
         <input type="checkbox" checked={enabled} disabled={!canManage} onChange={(e) => setEnabled(e.target.checked)} />
         {enabled ? 'Enabled' : 'Disabled'}
       </label>
@@ -62,8 +63,8 @@ function RuleEditor({ rule, canManage, onSaved }: { rule: KycRoutingRule; canMan
       </div>
       <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
         {providers.map((p, i) => (
-          <li key={p} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', border: '1px solid #e5e7eb', borderRadius: '0.375rem', padding: '0.4rem 0.6rem' }}>
-            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: i === 0 ? '#15803d' : '#6b7280', minWidth: '4.5rem' }}>
+          <li key={p} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', border: `1px solid ${colors.border}`, borderRadius: '0.375rem', padding: '0.4rem 0.6rem' }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: i === 0 ? '#15803d' : colors.muted, minWidth: '4.5rem' }}>
               {i === 0 ? 'Primary' : `Fallback ${i}`}
             </span>
             <span style={{ flex: 1, fontSize: '0.85rem', textTransform: 'capitalize' }}>{p.replace(/_/g, ' ')}</span>
@@ -91,7 +92,7 @@ function RuleEditor({ rule, canManage, onSaved }: { rule: KycRoutingRule; canMan
       )}
 
       <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', marginTop: '0.9rem', flexWrap: 'wrap' }}>
-        <label style={{ fontSize: '0.8rem', color: '#374151', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+        <label style={{ fontSize: '0.8rem', color: colors.text, display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
           Threshold (pass / review cut-off, %)
           <input
             type="number" min={0} max={100} value={threshold}
@@ -106,7 +107,7 @@ function RuleEditor({ rule, canManage, onSaved }: { rule: KycRoutingRule; canMan
         {saved && !dirty && <span style={{ fontSize: '0.8rem', color: '#15803d', fontWeight: 600 }}>Saved</span>}
       </div>
 
-      {error && <p style={{ color: '#dc2626', fontSize: '0.85rem', margin: '0.6rem 0 0' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger, fontSize: '0.85rem', margin: '0.6rem 0 0' }}>{error}</p>}
     </Card>
   );
 }
@@ -131,7 +132,7 @@ export default function KycRoutingRulesPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader
         title="KYC Provider Routing Rules"
         subtitle="Per check type: ordered primary→fallback providers, pass/review threshold, enable toggle. Saved via PUT — swap providers with no code change. RBAC: finance.admin.kyc (Admin)."
@@ -139,22 +140,22 @@ export default function KycRoutingRulesPage() {
       />
 
       {!canManage && (
-        <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#b91c1c', marginBottom: '1.25rem' }}>
+        <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.danger, marginBottom: '1.25rem' }}>
           You lack <code>finance.admin.kyc</code>. Rules are read-only. Backend RBAC is authoritative.
         </div>
       )}
 
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       {loading ? (
-        <p style={{ color: '#6b7280' }}>Loading routing rules…</p>
+        <p style={{ color: colors.muted }}>Loading routing rules…</p>
       ) : rules.length === 0 ? (
-        <p style={{ color: '#6b7280' }}>No routing rules configured.</p>
+        <p style={{ color: colors.muted }}>No routing rules configured.</p>
       ) : (
         rules.map((r: KycRoutingRule & { check_type: CheckType }) => (
           <RuleEditor key={r.check_type} rule={r} canManage={canManage} onSaved={onSaved} />
         ))
       )}
-    </div>
+    </Page>
   );
 }

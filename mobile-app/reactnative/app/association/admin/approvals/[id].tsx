@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Mail, Phone, Briefcase, UserPlus, FileCheck2, FileX2, Clock, AlertTriangle, CheckCircle2 } from 'lucide-react-native';
@@ -14,6 +14,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { useApplication, useDecideApplication } from '@/features/association/hooks/useAdmin';
 import { formatNaira, formatDateTime } from '@/features/association/utils/associationFormatters';
 import type { ApprovalDecision } from '@/features/association/types/admin.types';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 export default function ApplicationDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -40,19 +41,14 @@ export default function ApplicationDetail() {
   const a = app.data;
   const slaBreached = a.slaHoursLeft < 0;
 
-  const onDecide = (decision: ApprovalDecision) => {
+  const onDecide = async (decision: ApprovalDecision) => {
     const verb = decision === 'APPROVE' ? 'Approve' : decision === 'REJECT' ? 'Reject' : 'Request info from';
-    Alert.alert(`${verb} application`, `${verb} ${a.applicantName}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Confirm',
-        style: decision === 'REJECT' ? 'destructive' : 'default',
-        onPress: () => decide.mutate({ id: a.id, decision }, {
-          onSuccess: () => router.replace('/association/admin/approvals'),
-          onError: () => Alert.alert('Failed', 'Could not record the decision. Please try again.'),
-        }),
-      },
-    ]);
+    const ok = await confirmAsync({ title: `${verb} application`, message: `${verb} ${a.applicantName}?`, confirmLabel: 'Confirm', destructive: decision === 'REJECT' });
+    if (!ok) return;
+    decide.mutate({ id: a.id, decision }, {
+      onSuccess: () => router.replace('/association/admin/approvals'),
+      onError: () => alertAsync({ title: 'Failed', message: 'Could not record the decision. Please try again.' }),
+    });
   };
 
   return (

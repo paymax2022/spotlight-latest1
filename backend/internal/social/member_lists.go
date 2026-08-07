@@ -12,13 +12,13 @@ import (
 
 // ActivityItem is a single row of the caller's Social Pay activity feed.
 type ActivityItem struct {
-	Kind        string    `json:"kind"` // send | receive | request
-	ID          string    `json:"id"`
-	CounterpartID string  `json:"counterpart_id"`
-	AmountKobo  int64     `json:"amount_kobo"`
-	Note        string    `json:"note"`
-	State       string    `json:"state,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	Kind          string    `json:"kind"` // send | receive | request
+	ID            string    `json:"id"`
+	CounterpartID string    `json:"counterpart_id"`
+	AmountKobo    int64     `json:"amount_kobo"`
+	Note          string    `json:"note"`
+	State         string    `json:"state,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // ActivityFeed returns the caller's recent P2P payments (sent + received) and
@@ -95,8 +95,8 @@ func (s *Service) ListRequests(ctx context.Context, userID string, limit int) ([
 // SplitRow is a split bill the caller organised or participates in.
 type SplitRow struct {
 	SplitBill
-	MyState       string `json:"my_state,omitempty"`   // this caller's share state
-	MyAmountKobo  int64  `json:"my_amount_kobo"`       // this caller's share
+	MyState       string `json:"my_state,omitempty"` // this caller's share state
+	MyAmountKobo  int64  `json:"my_amount_kobo"`     // this caller's share
 	PendingShares int    `json:"pending_shares"`
 }
 
@@ -136,8 +136,8 @@ func (s *Service) ListSplits(ctx context.Context, userID string, limit int) ([]S
 // PoolRow is a group pool the caller organises or contributed to, with balance.
 type PoolRow struct {
 	GroupPool
-	BalanceKobo    int64 `json:"balance_kobo"`
-	MyContribKobo  int64 `json:"my_contribution_kobo"`
+	BalanceKobo   int64 `json:"balance_kobo"`
+	MyContribKobo int64 `json:"my_contribution_kobo"`
 }
 
 // ListPools returns pools the caller organised or contributed to, with derived

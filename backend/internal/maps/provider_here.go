@@ -50,9 +50,9 @@ func (h *HERE) Capabilities() Capset {
 
 // hereItem is the subset of a HERE Geocoding & Search item we consume.
 type hereItem struct {
-	Title    string `json:"title"`
-	ID       string `json:"id"`
-	Address  struct {
+	Title   string `json:"title"`
+	ID      string `json:"id"`
+	Address struct {
 		Label string `json:"label"`
 	} `json:"address"`
 	Position struct {
@@ -60,8 +60,8 @@ type hereItem struct {
 		Lng float64 `json:"lng"`
 	} `json:"position"`
 	Scoring struct {
-		QueryScore  float64            `json:"queryScore"`
-		FieldScore  map[string]float64 `json:"fieldScore"`
+		QueryScore float64            `json:"queryScore"`
+		FieldScore map[string]float64 `json:"fieldScore"`
 	} `json:"scoring"`
 }
 

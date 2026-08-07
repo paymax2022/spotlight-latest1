@@ -16,6 +16,7 @@ import {
   type FilterChip,
   type SortState,
 } from '@/components/rbac';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const PAGE_SIZE = 12;
 
@@ -162,7 +163,7 @@ export default function AdminRolesPage() {
   };
 
   return (
-    <div>
+    <Page>
       <ToastStack toasts={toasts} onDismiss={dismiss} />
       <ConfirmDialog
         open={Boolean(pendingDelete)}
@@ -173,54 +174,61 @@ export default function AdminRolesPage() {
         onConfirm={() => void confirmDelete()}
         onCancel={() => setPendingDelete(null)}
       />
-      <h1>Role Management</h1>
-      <p>Create, edit, clone, and delete roles. System roles are protected by backend policy.</p>
 
-      <section style={{ border: '1px solid #2a2a2a', padding: 12, marginTop: 12 }}>
-        <h2 style={{ marginTop: 0 }}>Create Role</h2>
-        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(4,minmax(0,1fr))' }}>
-          <input placeholder="name" value={newRole.name} onChange={(e) => setNewRole((v) => ({ ...v, name: e.target.value }))} />
-          <input placeholder="slug" value={newRole.slug} onChange={(e) => setNewRole((v) => ({ ...v, slug: e.target.value }))} />
-          <input placeholder="role type" value={newRole.roleType} onChange={(e) => setNewRole((v) => ({ ...v, roleType: e.target.value }))} />
-          <input placeholder="description" value={newRole.description} onChange={(e) => setNewRole((v) => ({ ...v, description: e.target.value }))} />
+      <PageHeader
+        title="Role Management"
+        subtitle="Create, edit, clone, and delete roles. System roles are protected by backend policy."
+      />
+
+      <Card title="Create Role" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(4,minmax(0,1fr))', marginTop: 14 }}>
+          <Input placeholder="Name" value={newRole.name} onChange={(e) => setNewRole((v) => ({ ...v, name: e.target.value }))} />
+          <Input placeholder="Slug" value={newRole.slug} onChange={(e) => setNewRole((v) => ({ ...v, slug: e.target.value }))} />
+          <Input placeholder="Role type" value={newRole.roleType} onChange={(e) => setNewRole((v) => ({ ...v, roleType: e.target.value }))} />
+          <Input placeholder="Description" value={newRole.description} onChange={(e) => setNewRole((v) => ({ ...v, description: e.target.value }))} />
         </div>
-        <button style={{ marginTop: 8 }} onClick={() => void onCreate()} disabled={saving}>{saving ? 'Saving...' : 'Create Role'}</button>
-      </section>
+        <Button variant="primary" style={{ marginTop: 14 }} onClick={() => void onCreate()} disabled={saving}>{saving ? 'Saving…' : 'Create Role'}</Button>
+      </Card>
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <input placeholder="filter roles" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') applySearch(); }} />
-        <button onClick={applySearch}>Filter</button>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 10, maxWidth: 460 }}>
+        <Input placeholder="Filter roles" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') applySearch(); }} />
+        <Button variant="outline" style={{ whiteSpace: 'nowrap' }} onClick={applySearch}>Filter</Button>
       </div>
       <FilterChips chips={chips} onClear={clearSearch} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: 16, marginTop: 16 }}>
-        <section>
-          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16, marginTop: 16, alignItems: 'start' }}>
+        <Card style={{ padding: 0, overflow: 'hidden' }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%' }}>
             <thead>
               <tr>
-                <th style={th()}><SortHeaderButton label="Name" active={sort?.key === 'name'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('name')} /></th>
-                <th style={th()}><SortHeaderButton label="Slug" active={sort?.key === 'slug'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('slug')} /></th>
-                <th style={th()}><SortHeaderButton label="Type" active={sort?.key === 'roleType'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('roleType')} /></th>
-                <th style={th()}>Actions</th>
+                <th style={thCell}><SortHeaderButton label="Name" active={sort?.key === 'name'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('name')} /></th>
+                <th style={thCell}><SortHeaderButton label="Slug" active={sort?.key === 'slug'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('slug')} /></th>
+                <th style={thCell}><SortHeaderButton label="Type" active={sort?.key === 'roleType'} dir={sort?.dir ?? 'asc'} onClick={() => sortBy('roleType')} /></th>
+                <th style={thCell}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td style={td()} colSpan={4}>Loading…</td></tr>
+                <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={4}>Loading…</td></tr>
               ) : errored ? (
-                <tr><td style={td()} colSpan={4}><button onClick={() => void load()}>Retry</button> — failed to load.</td></tr>
+                <tr><td style={tdCell} colSpan={4}><Button variant="outline" sm onClick={() => void load()}>Retry</Button> <span style={{ color: colors.danger }}>— failed to load.</span></td></tr>
               ) : slice.length === 0 ? (
-                <tr><td style={td()} colSpan={4}>No roles to display.</td></tr>
+                <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={4}>No roles to display.</td></tr>
               ) : (
                 slice.map((r) => (
-                  <tr key={r.id} style={{ background: selected?.id === r.id ? '#1f1f1f' : 'transparent' }}>
-                    <td style={td()}><strong>{r.name}</strong></td>
-                    <td style={td()}>{r.slug}</td>
-                    <td style={td()}>{r.roleType || '-'} {r.isSystemRole ? '· system' : ''}</td>
-                    <td style={td()}>
+                  <tr key={r.id} style={{ background: selected?.id === r.id ? tint(colors.primary, 0.08) : 'transparent' }}>
+                    <td style={tdCell}><strong>{r.name}</strong></td>
+                    <td style={{ ...tdCell, color: colors.muted }}>{r.slug}</td>
+                    <td style={tdCell}>
+                      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                        {r.roleType ? <Badge text={r.roleType} color={colors.primary} /> : <span style={{ color: colors.muted }}>—</span>}
+                        {r.isSystemRole ? <Badge text="system" color={colors.secondary} /> : null}
+                      </span>
+                    </td>
+                    <td style={tdCell}>
                       <div style={{ display: 'flex', gap: 8 }}>
-                        <button onClick={() => setSelected(r)}>Edit</button>
-                        <button onClick={() => setPendingDelete(r)} disabled={Boolean(r.isSystemRole) || saving}>Delete</button>
+                        <Button variant="outline" sm onClick={() => setSelected(r)}>Edit</Button>
+                        <Button variant="danger" sm onClick={() => setPendingDelete(r)} disabled={Boolean(r.isSystemRole) || saving}>Delete</Button>
                       </div>
                     </td>
                   </tr>
@@ -228,39 +236,33 @@ export default function AdminRolesPage() {
               )}
             </tbody>
           </table>
-          <Pagination page={safePage} pageCount={pageCount} total={total} pageSize={PAGE_SIZE} onPage={setPage} />
-        </section>
+          <div style={{ padding: '10px 14px' }}>
+            <Pagination page={safePage} pageCount={pageCount} total={total} pageSize={PAGE_SIZE} onPage={setPage} />
+          </div>
+        </Card>
 
-        <section style={{ border: '1px solid #2a2a2a', padding: 12 }}>
-          <h2 style={{ marginTop: 0 }}>Role Detail</h2>
-          {!selected ? <p>Select a role to edit or clone.</p> : null}
+        <Card title="Role Detail">
+          {!selected ? <p style={{ color: colors.muted, fontSize: 13, marginTop: 12 }}>Select a role to edit or clone.</p> : null}
           {selected ? (
-            <div style={{ display: 'grid', gap: 8 }}>
-              <input value={selected.name || ''} onChange={(e) => setSelected((v) => (v ? { ...v, name: e.target.value } : v))} placeholder="name" />
-              <input value={selected.description || ''} onChange={(e) => setSelected((v) => (v ? { ...v, description: e.target.value } : v))} placeholder="description" />
-              <input value={selected.roleType || ''} onChange={(e) => setSelected((v) => (v ? { ...v, roleType: e.target.value } : v))} placeholder="role type" />
-              <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div style={{ display: 'grid', gap: 10, marginTop: 14 }}>
+              <Input value={selected.name || ''} onChange={(e) => setSelected((v) => (v ? { ...v, name: e.target.value } : v))} placeholder="Name" />
+              <Input value={selected.description || ''} onChange={(e) => setSelected((v) => (v ? { ...v, description: e.target.value } : v))} placeholder="Description" />
+              <Input value={selected.roleType || ''} onChange={(e) => setSelected((v) => (v ? { ...v, roleType: e.target.value } : v))} placeholder="Role type" />
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, color: colors.text }}>
                 <input type="checkbox" checked={Boolean(selected.isActive)} onChange={(e) => setSelected((v) => (v ? { ...v, isActive: e.target.checked } : v))} />
                 Active
               </label>
-              <button onClick={() => void onUpdate()} disabled={saving || Boolean(selected.isSystemRole)}>{saving ? 'Saving...' : 'Save Role'}</button>
+              <Button variant="primary" onClick={() => void onUpdate()} disabled={saving || Boolean(selected.isSystemRole)}>{saving ? 'Saving…' : 'Save Role'}</Button>
 
-              <hr style={{ width: '100%', borderColor: '#2a2a2a' }} />
-              <h3 style={{ margin: 0 }}>Clone Role</h3>
-              <input placeholder="clone name" value={cloneInput.name} onChange={(e) => setCloneInput((v) => ({ ...v, name: e.target.value }))} />
-              <input placeholder="clone slug" value={cloneInput.slug} onChange={(e) => setCloneInput((v) => ({ ...v, slug: e.target.value }))} />
-              <button onClick={() => void onClone()} disabled={saving}>{saving ? 'Cloning...' : 'Clone Role'}</button>
+              <hr />
+              <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: colors.text }}>Clone Role</h3>
+              <Input placeholder="Clone name" value={cloneInput.name} onChange={(e) => setCloneInput((v) => ({ ...v, name: e.target.value }))} />
+              <Input placeholder="Clone slug" value={cloneInput.slug} onChange={(e) => setCloneInput((v) => ({ ...v, slug: e.target.value }))} />
+              <Button variant="outline" onClick={() => void onClone()} disabled={saving}>{saving ? 'Cloning…' : 'Clone Role'}</Button>
             </div>
           ) : null}
-        </section>
+        </Card>
       </div>
-    </div>
+    </Page>
   );
-}
-
-function th(): React.CSSProperties {
-  return { textAlign: 'left', borderBottom: '1px solid #2a2a2a', padding: 8 };
-}
-function td(): React.CSSProperties {
-  return { borderBottom: '1px solid #1f1f1f', padding: 8 };
 }

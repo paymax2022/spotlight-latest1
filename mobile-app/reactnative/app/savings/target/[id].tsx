@@ -17,6 +17,7 @@ import DisclosureBanner from '@/features/savings/components/DisclosureBanner';
 import { PaymentSheet, usePurchasePayment } from '@/features/payments';
 import { useTarget, useContributeToTarget } from '@/features/savings/hooks';
 import { SavingsColors, formatNaira, GROUP_TARGET_DISCLOSURE } from '@/features/savings/constants/savings.constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 export default function GroupTargetDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -60,7 +61,7 @@ export default function GroupTargetDetail() {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Add your contribution</Text>
-          <TextInputField placeholder="Amount" keyboardType="numeric" value={amount} onChangeText={setAmount} />
+          <TextInputField placeholder="Amount" keyboardType="decimal-pad" maxLength={13} value={amount} onChangeText={(t) => setAmount(sanitizeMoneyInput(t))} />
           <PrimaryButton label="Contribute" onPress={startPay} disabled={amountKobo <= 0} loading={contribute.isPending} />
         </View>
 

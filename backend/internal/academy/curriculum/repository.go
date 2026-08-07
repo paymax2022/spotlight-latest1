@@ -242,6 +242,20 @@ func (r *Repository) ListSubjects(ctx context.Context, classID string) ([]Subjec
 	return out, rows.Err()
 }
 
+// GetSubjectByID returns a single subject row (mirrors ListSubjects columns).
+func (r *Repository) GetSubjectByID(ctx context.Context, id string) (*Subject, error) {
+	const q = `
+		SELECT id, version_id, class_id, code, name, kind, stream, exam_relevance
+		FROM public.academy_subjects WHERE id = $1`
+	s := &Subject{}
+	err := r.db.QueryRow(ctx, q, id).Scan(&s.ID, &s.VersionID, &s.ClassID, &s.Code, &s.Name,
+		&s.Kind, &s.Stream, &s.ExamRelevance)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return s, err
+}
+
 func (r *Repository) CreateSubject(ctx context.Context, req CreateSubjectRequest) (*Subject, error) {
 	kind := req.Kind
 	if kind == "" {
@@ -301,6 +315,19 @@ func (r *Repository) ListTopics(ctx context.Context, subjectID string) ([]Topic,
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// GetTopicByID returns a single topic row (mirrors ListTopics columns).
+func (r *Repository) GetTopicByID(ctx context.Context, id string) (*Topic, error) {
+	const q = `
+		SELECT id, subject_id, code, title, ordinal
+		FROM public.academy_topics WHERE id = $1`
+	t := &Topic{}
+	err := r.db.QueryRow(ctx, q, id).Scan(&t.ID, &t.SubjectID, &t.Code, &t.Title, &t.Ordinal)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return t, err
 }
 
 func (r *Repository) CreateTopic(ctx context.Context, req CreateTopicRequest) (*Topic, error) {
@@ -382,6 +409,61 @@ func (r *Repository) UpdateObjective(ctx context.Context, id string, req UpdateO
 		return nil, ErrNotFound
 	}
 	return o, err
+}
+
+// ── Lessons (read-only bridge into the content package's academy_lessons) ───────
+//
+// Lessons are owned by the content package; the curriculum module reads them
+// read-only for the topic→objectives→lessons bridge and the single-lesson lookup.
+// Column set mirrors content.lessonCols exactly so the projection stays in sync.
+
+const lessonCols = `id, objective_id, title, type, version_id, media_ref, transcript, duration_s, status, created_at, updated_at`
+
+func scanLesson(row interface{ Scan(dest ...any) error }) (*Lesson, error) {
+	l := &Lesson{}
+	err := row.Scan(&l.ID, &l.ObjectiveID, &l.Title, &l.Type, &l.VersionID,
+		&l.MediaRef, &l.Transcript, &l.DurationS, &l.Status, &l.CreatedAt, &l.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+// ListLessonsByTopic returns every lesson attached to any objective under a topic
+// (topic → academy_learning_objectives → academy_lessons), most-recent first.
+func (r *Repository) ListLessonsByTopic(ctx context.Context, topicID string) ([]Lesson, error) {
+	const q = `
+		SELECT ` + lessonColsPrefixed + `
+		FROM public.academy_lessons l
+		JOIN public.academy_learning_objectives o ON o.id = l.objective_id
+		WHERE o.topic_id = $1
+		ORDER BY l.updated_at DESC`
+	rows, err := r.db.Query(ctx, q, topicID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Lesson{}
+	for rows.Next() {
+		l, err := scanLesson(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *l)
+	}
+	return out, rows.Err()
+}
+
+// lessonColsPrefixed is lessonCols aliased to the `l` table for the topic join.
+const lessonColsPrefixed = `l.id, l.objective_id, l.title, l.type, l.version_id, l.media_ref, l.transcript, l.duration_s, l.status, l.created_at, l.updated_at`
+
+// GetLessonByID returns a single lesson row from the content-owned table.
+func (r *Repository) GetLessonByID(ctx context.Context, id string) (*Lesson, error) {
+	const q = `SELECT ` + lessonCols + ` FROM public.academy_lessons WHERE id = $1`
+	return scanLesson(r.db.QueryRow(ctx, q, id))
 }
 
 // ── Audit ─────────────────────────────────────────────────────────────────────

@@ -9,10 +9,24 @@ import { useEffect, useState } from 'react';
 import { listPromotions, approvePromotion, applyPromotion, PROMOTION_FLOW } from '@/services/academyFeesService';
 import type { PromotionBatch } from '@/types/academyFees';
 import {
-  PageHeader, Card, Badge, Kpi, StateBlock, DisclosureNote, AuditNote,
-  btn, btnPrimary, th, td, fmtDate,
+  Kpi, StateBlock, DisclosureNote, AuditNote, fmtDate,
 } from '../../_ui';
 import { FeesTabs, FeesGuard } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  const s = status.toLowerCase();
+  if (['active', 'approved', 'published', 'funded', 'paid', 'completed', 'allocated', 'live', 'reconciled', 'disbursed', 'collected', 'released', 'core', 'issued', 'routed', 'ready', 'eligible', 'actioned', 'verified', 'resolved', 'plan_published', 'badge_earned', 'pool_funded', 'item_approved'].includes(s)) return colors.success;
+  if (['pending', 'in_review', 'under_review', 'needs_info', 'scheduled', 'low_balance', 'review', 'in_translation', 'funding', 'fee_due', 'onboarding', 'frequent', 'packaged', 'matured', 'paused', 'processing', 'triaged', 'investigating', 'hide', 'warn', 'high', 'medium'].includes(s)) return colors.warning;
+  if (['draft', 'authoring', 'open', 'upcoming', 'generated', 'partial', 'submitted', 'trial', 'requested', 'applied', 'cards_generated', 'exam_opened', 'campaign_launched'].includes(s)) return colors.info;
+  if (['rejected', 'failed', 'suspended', 'blocked', 'unfunded', 'expired', 'duplicate', 'revoked', 'escalated', 'ban', 'critical', 'overdue', 'item_rejected'].includes(s)) return colors.danger;
+  if (['refunded', 'reversed', 'redeemed', 'reward_redeemed'].includes(s)) return colors.primary;
+  return colors.secondary;
+}
+
+function StatusBadge({ status, label: lbl }: { status: string; label?: string }) {
+  return <Badge text={lbl ?? status.replace(/_/g, ' ')} color={statusColor(status)} />;
+}
 
 export default function FeesPromotionPage() {
   const [batches, setBatches] = useState<PromotionBatch[]>([]);
@@ -45,15 +59,15 @@ export default function FeesPromotionPage() {
 
   return (
     <FeesGuard permission="academy.fees.promotion.approve">
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Promotion & Rollover" subtitle="End-of-session promotion with the two-approval gate, then class/session rollover. Both a teacher and a head-teacher approval are structurally required before rollover applies." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Promotion & Rollover" subtitle="End-of-session promotion with the two-approval gate, then class/session rollover. Both a teacher and a head-teacher approval are structurally required before rollover applies." actions={<Button onClick={load} variant="outline" sm>Refresh</Button>} />
       <FeesTabs active="promotion" />
       <DisclosureNote>Requires <code>academy.fees.promotion.approve</code>. <strong>SF-3 — two-approval gate:</strong> a promotion must be approved by the <strong>class teacher</strong> and <em>then</em> the <strong>head teacher</strong>. No path skips <code>promotion_computed → applied</code>; a single approval is <strong>not</strong> enough (release blocker if violated).</DisclosureNote>
 
       <StateBlock loading={loading} error={error} empty={false}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-          <Kpi label="Awaiting approval" value={awaitingApproval.toString()} accent={awaitingApproval > 0 ? '#9a3412' : undefined} />
-          <Kpi label="Ready to apply" value={readyToApply.toString()} accent={readyToApply > 0 ? '#15803d' : undefined} />
+          <Kpi label="Awaiting approval" value={awaitingApproval.toString()} accent={awaitingApproval > 0 ? colors.warning : undefined} />
+          <Kpi label="Ready to apply" value={readyToApply.toString()} accent={readyToApply > 0 ? colors.success : undefined} />
           <Kpi label="Applied" value={batches.filter((b) => b.status === 'applied').length.toString()} />
         </div>
 
@@ -61,12 +75,12 @@ export default function FeesPromotionPage() {
           <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
             {PROMOTION_FLOW.map((st, i) => (
               <span key={st} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
-                <Badge status={st === 'applied' ? 'approved' : st === 'promotion_computed' ? 'draft' : 'pending'} label={st.replace(/_/g, ' ')} />
-                {i < PROMOTION_FLOW.length - 1 ? <span style={{ color: '#9ca3af' }}>→</span> : null}
+                <StatusBadge status={st === 'applied' ? 'approved' : st === 'promotion_computed' ? 'draft' : 'pending'} label={st.replace(/_/g, ' ')} />
+                {i < PROMOTION_FLOW.length - 1 ? <span style={{ color: colors.muted }}>→</span> : null}
               </span>
             ))}
           </div>
-          <p style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.5rem' }}>The <strong>two</strong> approval steps (<code>promotion_reviewed</code> = teacher, <code>promotion_approved</code> = head teacher) are both mandatory.</p>
+          <p style={{ fontSize: '0.75rem', color: colors.muted, marginTop: '0.5rem' }}>The <strong>two</strong> approval steps (<code>promotion_reviewed</code> = teacher, <code>promotion_approved</code> = head teacher) are both mandatory.</p>
         </Card>
 
         <Card title="Promotion batches">
@@ -75,42 +89,42 @@ export default function FeesPromotionPage() {
             const headDone = Boolean(b.head_approved_by);
             const canApply = b.status === 'promotion_approved';
             return (
-              <div key={b.id} style={{ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '0.85rem', marginBottom: '0.75rem' }}>
+              <div key={b.id} style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.85rem', marginBottom: '0.75rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <div>
                     <strong>{b.from_class} → {b.to_class}</strong>
-                    <span style={{ marginLeft: '0.6rem', fontSize: '0.82rem', color: '#6b7280' }}>{b.students_promoted} promoted · {b.students_retained} retained · {b.students_total} total</span>
+                    <span style={{ marginLeft: '0.6rem', fontSize: '0.82rem', color: colors.muted }}>{b.students_promoted} promoted · {b.students_retained} retained · {b.students_total} total</span>
                   </div>
-                  <Badge status={b.status === 'applied' ? 'approved' : b.status === 'promotion_computed' ? 'draft' : 'pending'} label={b.status.replace(/_/g, ' ')} />
+                  <StatusBadge status={b.status === 'applied' ? 'approved' : b.status === 'promotion_computed' ? 'draft' : 'pending'} label={b.status.replace(/_/g, ' ')} />
                 </div>
 
                 {/* Two-approval progress — makes SF-3 visible */}
                 <div style={{ display: 'flex', gap: '1.5rem', margin: '0.7rem 0', flexWrap: 'wrap' }}>
                   <div style={{ fontSize: '0.82rem' }}>
-                    <div style={{ color: '#6b7280', textTransform: 'uppercase', fontSize: '0.68rem', fontWeight: 600, letterSpacing: 0.3 }}>Approval 1 · Class teacher</div>
-                    {teacherDone ? <div style={{ color: '#15803d', fontWeight: 600 }}>✓ {b.teacher_approved_by} · {fmtDate(b.teacher_approved_at)}</div> : <div style={{ color: '#9a3412' }}>Pending</div>}
+                    <div style={{ color: colors.muted, textTransform: 'uppercase', fontSize: '0.68rem', fontWeight: 600, letterSpacing: 0.3 }}>Approval 1 · Class teacher</div>
+                    {teacherDone ? <div style={{ color: colors.success, fontWeight: 600 }}>✓ {b.teacher_approved_by} · {fmtDate(b.teacher_approved_at)}</div> : <div style={{ color: colors.warning }}>Pending</div>}
                   </div>
                   <div style={{ fontSize: '0.82rem' }}>
-                    <div style={{ color: '#6b7280', textTransform: 'uppercase', fontSize: '0.68rem', fontWeight: 600, letterSpacing: 0.3 }}>Approval 2 · Head teacher</div>
-                    {headDone ? <div style={{ color: '#15803d', fontWeight: 600 }}>✓ {b.head_approved_by} · {fmtDate(b.head_approved_at)}</div> : <div style={{ color: '#9a3412' }}>{teacherDone ? 'Pending' : 'Blocked — needs teacher approval first'}</div>}
+                    <div style={{ color: colors.muted, textTransform: 'uppercase', fontSize: '0.68rem', fontWeight: 600, letterSpacing: 0.3 }}>Approval 2 · Head teacher</div>
+                    {headDone ? <div style={{ color: colors.success, fontWeight: 600 }}>✓ {b.head_approved_by} · {fmtDate(b.head_approved_at)}</div> : <div style={{ color: colors.warning }}>{teacherDone ? 'Pending' : 'Blocked — needs teacher approval first'}</div>}
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', borderTop: '1px solid #f3f4f6', paddingTop: '0.6rem' }}>
-                  <button onClick={() => approve(b, 'class_teacher')} disabled={busy === b.id || teacherDone || b.status !== 'promotion_computed'} style={btnPrimary()}>Approve as class teacher</button>
-                  <button onClick={() => approve(b, 'head_teacher')} disabled={busy === b.id || headDone || !teacherDone || b.status !== 'promotion_reviewed'} style={btnPrimary()} title={!teacherDone ? 'SF-3: requires a prior teacher approval' : ''}>Approve as head teacher</button>
-                  <button onClick={() => apply(b)} disabled={busy === b.id || !canApply} style={{ ...btn(), border: '1px solid #15803d', background: canApply ? '#15803d' : '#fff', color: canApply ? '#fff' : '#9ca3af', fontWeight: 600 }} title={!canApply ? 'SF-3: both approvals required before rollover' : ''}>Apply rollover</button>
-                  {b.status === 'applied' && <span style={{ color: '#15803d', fontSize: '0.82rem', alignSelf: 'center' }}>Rollover applied.</span>}
+                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', borderTop: `1px solid ${colors.border}`, paddingTop: '0.6rem' }}>
+                  <Button onClick={() => approve(b, 'class_teacher')} disabled={busy === b.id || teacherDone || b.status !== 'promotion_computed'} variant="primary" sm>Approve as class teacher</Button>
+                  <Button onClick={() => approve(b, 'head_teacher')} disabled={busy === b.id || headDone || !teacherDone || b.status !== 'promotion_reviewed'} variant="primary" sm title={!teacherDone ? 'SF-3: requires a prior teacher approval' : ''}>Approve as head teacher</Button>
+                  <Button onClick={() => apply(b)} disabled={busy === b.id || !canApply} variant="outline" sm style={{ borderColor: colors.success, background: canApply ? colors.success : colors.card, color: canApply ? '#fff' : colors.muted, fontWeight: 600 }} title={!canApply ? 'SF-3: both approvals required before rollover' : ''}>Apply rollover</Button>
+                  {b.status === 'applied' && <span style={{ color: colors.success, fontSize: '0.82rem', alignSelf: 'center' }}>Rollover applied.</span>}
                 </div>
-                {!canApply && b.status !== 'applied' && <p style={{ fontSize: '0.75rem', color: '#b91c1c', marginTop: '0.4rem' }}>Apply is disabled: a single approval is not enough — both teacher and head-teacher approvals are required (SF-3).</p>}
+                {!canApply && b.status !== 'applied' && <p style={{ fontSize: '0.75rem', color: colors.danger, marginTop: '0.4rem' }}>Apply is disabled: a single approval is not enough — both teacher and head-teacher approvals are required (SF-3).</p>}
               </div>
             );
           })}
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.text, marginTop: '0.6rem' }}>{notice}</p>}
           <AuditNote>Each approval and the final rollover are recorded to the immutable audit log (module <code>academy.fees</code>), preserving who approved each of the two gates.</AuditNote>
         </Card>
       </StateBlock>
-    </div>
+    </Page>
     </FeesGuard>
   );
 }

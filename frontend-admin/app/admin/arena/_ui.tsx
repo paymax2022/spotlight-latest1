@@ -5,18 +5,19 @@ import { useEffect, useState } from 'react';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 import type { CompetitionStatus, ContestantState, DisbursementStatus, CredentialStatus } from '@/types/arenaAdmin';
+import { colors, tint } from '@/components/ui/vuexy';
 
 // Shared presentational + RBAC helpers for the Arena admin console.
-// Matches the existing admin light-card inline-style convention (kyc-verify/_ui).
+// Restyled to the shared Vuexy light-card convention (see @/components/ui/vuexy).
 
-export const card = (): CSSProperties => ({ border: '1px solid #e5e7eb', borderRadius: '0.5rem', padding: '1rem', background: '#fff' });
-export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontSize: '0.85rem' });
-export const btnPrimary = (bg = '#1d4ed8'): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: 'none', background: bg, color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 });
-export const btnDisabled = (): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: '1px solid #e5e7eb', background: '#f3f4f6', color: '#9ca3af', cursor: 'not-allowed', fontSize: '0.85rem', fontWeight: 600 });
-export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: '#6b7280', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3 });
-export const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: '#374151', fontSize: '0.85rem', borderTop: '1px solid #f3f4f6' });
-export const selectStyle = (): CSSProperties => ({ padding: '0.35rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem' });
-export const inputStyle = (): CSSProperties => ({ padding: '0.35rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.85rem', boxSizing: 'border-box' });
+export const card = (): CSSProperties => ({ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card });
+export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: `1px solid ${colors.inputBorder}`, background: colors.card, cursor: 'pointer', fontSize: '0.85rem' });
+export const btnPrimary = (bg = colors.primary): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: 'none', background: bg, color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 });
+export const btnDisabled = (): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: `1px solid ${colors.border}`, background: colors.headBg, color: colors.muted, cursor: 'not-allowed', fontSize: '0.85rem', fontWeight: 600 });
+export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: colors.muted, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3 });
+export const td = (): CSSProperties => ({ padding: '0.55rem 0.5rem', color: colors.text, fontSize: '0.85rem', borderTop: `1px solid ${colors.border}` });
+export const selectStyle = (): CSSProperties => ({ padding: '0.35rem 0.5rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem', fontSize: '0.85rem' });
+export const inputStyle = (): CSSProperties => ({ padding: '0.35rem 0.5rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem', fontSize: '0.85rem', boxSizing: 'border-box' });
 export const mono = (): CSSProperties => ({ fontFamily: 'monospace', fontSize: '0.8rem' });
 
 export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
@@ -24,7 +25,7 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', gap: '1rem', flexWrap: 'wrap' }}>
       <div>
         <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>{title}</h1>
-        {subtitle ? <p style={{ color: '#6b7280', margin: '0.25rem 0 0', fontSize: '0.85rem' }}>{subtitle}</p> : null}
+        {subtitle ? <p style={{ color: colors.muted, margin: '0.25rem 0 0', fontSize: '0.85rem' }}>{subtitle}</p> : null}
       </div>
       {action}
     </div>
@@ -48,7 +49,7 @@ export function Card({ title, children, right }: PropsWithChildren<{ title?: str
 // Amber banner used to flag scaffolded (not-yet-wired-to-full-workflow) screens.
 export function ScaffoldNotice({ children }: PropsWithChildren) {
   return (
-    <div style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#9a3412', marginBottom: '1.25rem' }}>
+    <div style={{ background: tint(colors.warning, 0.1), border: `1px solid ${tint(colors.warning, 0.4)}`, borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.warning, marginBottom: '1.25rem' }}>
       <strong>Scaffold.</strong> {children}
     </div>
   );
@@ -58,7 +59,7 @@ export function ScaffoldNotice({ children }: PropsWithChildren) {
 // operators know their action is logged (actor, entity, before/after, ts).
 export function AuditNote({ children }: PropsWithChildren) {
   return (
-    <p style={{ color: '#6b7280', fontSize: '0.75rem', margin: '0.5rem 0 0' }}>
+    <p style={{ color: colors.muted, fontSize: '0.75rem', margin: '0.5rem 0 0' }}>
       🛈 {children ?? 'Every action here writes an immutable audit_log row (actor, entity, before/after, timestamp). Backend RBAC is authoritative.'}
     </p>
   );
@@ -67,7 +68,7 @@ export function AuditNote({ children }: PropsWithChildren) {
 // Red banner: caller lacks the console's permission — reads allowed, writes gated.
 export function PermissionBanner({ permission }: { permission: string }) {
   return (
-    <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: '#b91c1c', marginBottom: '1.25rem' }}>
+    <div style={{ background: tint(colors.danger, 0.1), border: `1px solid ${tint(colors.danger, 0.4)}`, borderRadius: '0.5rem', padding: '0.6rem 0.9rem', fontSize: '0.8rem', color: colors.danger, marginBottom: '1.25rem' }}>
       You lack <code>{permission}</code>. You can view this console but actions are disabled. Backend RBAC is authoritative.
     </div>
   );
@@ -97,7 +98,7 @@ export function BackToArena() {
 // ── Badges ──────────────────────────────────────────────────────────────────
 
 const COMPETITION_STATUS_COLORS: Record<CompetitionStatus, { fg: string; bg: string }> = {
-  DRAFT:      { fg: '#374151', bg: '#f3f4f6' },
+  DRAFT:      { fg: colors.muted, bg: colors.headBg },
   CONFIGURED: { fg: '#1d4ed8', bg: '#dbeafe' },
   PUBLISHED:  { fg: '#15803d', bg: '#dcfce7' },
   LIVE:       { fg: '#15803d', bg: '#dcfce7' },
@@ -107,12 +108,12 @@ const COMPETITION_STATUS_COLORS: Record<CompetitionStatus, { fg: string; bg: str
 };
 
 export function CompetitionStatusBadge({ status }: { status: CompetitionStatus }) {
-  const c = COMPETITION_STATUS_COLORS[status] ?? { fg: '#374151', bg: '#f3f4f6' };
+  const c = COMPETITION_STATUS_COLORS[status] ?? { fg: colors.muted, bg: colors.headBg };
   return <Pill fg={c.fg} bg={c.bg}>{status}</Pill>;
 }
 
 const STATE_COLORS: Record<ContestantState, { fg: string; bg: string }> = {
-  APPLIED:         { fg: '#374151', bg: '#f3f4f6' },
+  APPLIED:         { fg: colors.muted, bg: colors.headBg },
   SCREENED:        { fg: '#1d4ed8', bg: '#dbeafe' },
   REJECTED:        { fg: '#b91c1c', bg: '#fee2e2' },
   TRAINED:         { fg: '#1d4ed8', bg: '#dbeafe' },
@@ -126,7 +127,7 @@ const STATE_COLORS: Record<ContestantState, { fg: string; bg: string }> = {
 };
 
 export function StateBadge({ state }: { state: ContestantState }) {
-  const c = STATE_COLORS[state] ?? { fg: '#374151', bg: '#f3f4f6' };
+  const c = STATE_COLORS[state] ?? { fg: colors.muted, bg: colors.headBg };
   return <Pill fg={c.fg} bg={c.bg}>{state.replace(/_/g, ' ')}</Pill>;
 }
 
@@ -140,7 +141,7 @@ const DISBURSE_COLORS: Record<DisbursementStatus, { fg: string; bg: string }> = 
 };
 
 export function DisbursementBadge({ status }: { status: DisbursementStatus }) {
-  const c = DISBURSE_COLORS[status] ?? { fg: '#374151', bg: '#f3f4f6' };
+  const c = DISBURSE_COLORS[status] ?? { fg: colors.muted, bg: colors.headBg };
   return <Pill fg={c.fg} bg={c.bg}>{status.replace(/_/g, ' ')}</Pill>;
 }
 

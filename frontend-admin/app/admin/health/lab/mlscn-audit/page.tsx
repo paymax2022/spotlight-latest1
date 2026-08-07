@@ -3,9 +3,18 @@
 import { useEffect, useState } from 'react';
 import { listMlscnApplications, decideMlscn } from '@/services/healthLabAdminService';
 import type { MlscnApplication, MlscnDecision } from '@/types/healthLabAdmin';
-import { PageHeader, LabTabs, Card, Badge, DisclosureNote, AuditNote, StateBlock, FilterBar, btn, btnPrimary, btnDanger, th, td, input, select, label, fmtDate } from '../../_ui';
+import { LabTabs, DisclosureNote, AuditNote, StateBlock, FilterBar, fmtDate } from '../../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUSES = ['', 'submitted', 'under_review', 'needs_info', 'approved', 'suspended', 'rejected'];
+
+function statusColor(status: string): string {
+  const v = status.toLowerCase();
+  if (/(reject|suspend|fail|block)/.test(v)) return colors.danger;
+  if (/(pending|needs_info|needs info|under_review|under review|warn|flag)/.test(v)) return colors.warning;
+  if (/(approve|verified|active|complete|ok)/.test(v)) return colors.success;
+  return colors.secondary;
+}
 
 export default function MlscnAuditPage() {
   const [rows, setRows] = useState<MlscnApplication[]>([]);
@@ -33,8 +42,8 @@ export default function MlscnAuditPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="MLSCN credential audit" subtitle="Verify lab facility (MLSCN) and registered medical-laboratory-scientist licences before granting discoverability. Fail-closed: no unverified lab goes live (HL-2)." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="MLSCN credential audit" subtitle="Verify lab facility (MLSCN) and registered medical-laboratory-scientist licences before granting discoverability. Fail-closed: no unverified lab goes live (HL-2)." actions={<Button variant="outline" onClick={load}>Refresh</Button>} />
       <LabTabs active="mlscn-audit" />
 
       <DisclosureNote>
@@ -45,80 +54,86 @@ export default function MlscnAuditPage() {
 
       <FilterBar>
         <div>
-          <label style={label()}>Status</label>
-          <select style={select()} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <label>Status</label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
             {STATUSES.map((s) => <option key={s} value={s}>{s ? s.replace(/_/g, ' ') : 'All statuses'}</option>)}
           </select>
         </div>
         <div style={{ minWidth: 240 }}>
-          <label style={label()}>Search</label>
-          <input style={input()} placeholder="Lab name, MLSCN no, state, id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
+          <label>Search</label>
+          <Input placeholder="Lab name, MLSCN no, state, id…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
         </div>
-        <button style={btnPrimary()} onClick={load}>Apply</button>
+        <Button variant="primary" onClick={load}>Apply</Button>
       </FilterBar>
 
       {msg && <AuditNote>{msg}</AuditNote>}
 
-      <Card>
-        <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No applications match.">
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>
-              <th style={th()}>Lab</th><th style={th()}>MLSCN facility no</th><th style={th()}>Scientist</th>
-              <th style={th()}>State</th><th style={th()}>Verified</th><th style={th()}>Earliest expiry</th>
-              <th style={th()}>Status</th><th style={th()}></th>
-            </tr></thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td style={td()}><strong>{r.lab_name}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.id}</div></td>
-                  <td style={td()}><code style={{ fontSize: '0.76rem' }}>{r.mlscn_lab_no}</code></td>
-                  <td style={td()}>{r.lab_scientist_masked}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.mlscn_scientist_no}</div></td>
-                  <td style={td()}>{r.state}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.lga}</div></td>
-                  <td style={td()}>
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      <Badge status={r.lab_verified ? 'verified' : 'pending'} label={r.lab_verified ? 'facility ✓' : 'facility ✗'} />
-                      <Badge status={r.scientist_verified ? 'verified' : 'pending'} label={r.scientist_verified ? 'scientist ✓' : 'scientist ✗'} />
-                    </div>
-                  </td>
-                  <td style={td()}>{fmtDate(r.licence_expires_at)}{r.licence_expires_at && new Date(r.licence_expires_at) < new Date() ? <div style={{ fontSize: '0.7rem', color: '#b91c1c' }}>expired</div> : null}</td>
-                  <td style={td()}><Badge status={r.status} /></td>
-                  <td style={td()}><button style={btn()} onClick={() => setOpen(r)}>Review</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </StateBlock>
+      <Card style={{ padding: 0, overflow: 'auto' }}>
+        <div style={{ padding: rows.length === 0 || loading || error ? 14 : 0 }}>
+          <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No applications match.">
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr>
+                <th style={thCell}>Lab</th><th style={thCell}>MLSCN facility no</th><th style={thCell}>Scientist</th>
+                <th style={thCell}>State</th><th style={thCell}>Verified</th><th style={thCell}>Earliest expiry</th>
+                <th style={thCell}>Status</th><th style={thCell}></th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id}>
+                    <td style={tdCell}><strong>{r.lab_name}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.id}</div></td>
+                    <td style={tdCell}><code style={{ fontSize: '0.76rem' }}>{r.mlscn_lab_no}</code></td>
+                    <td style={tdCell}>{r.lab_scientist_masked}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.mlscn_scientist_no}</div></td>
+                    <td style={tdCell}>{r.state}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.lga}</div></td>
+                    <td style={tdCell}>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        <Badge text={r.lab_verified ? 'facility ✓' : 'facility ✗'} color={r.lab_verified ? colors.success : colors.warning} />
+                        <Badge text={r.scientist_verified ? 'scientist ✓' : 'scientist ✗'} color={r.scientist_verified ? colors.success : colors.warning} />
+                      </div>
+                    </td>
+                    <td style={tdCell}>{fmtDate(r.licence_expires_at)}{r.licence_expires_at && new Date(r.licence_expires_at) < new Date() ? <div style={{ fontSize: '0.7rem', color: colors.danger }}>expired</div> : null}</td>
+                    <td style={tdCell}><Badge text={r.status.replace(/_/g, ' ')} color={statusColor(r.status)} /></td>
+                    <td style={tdCell}><Button variant="outline" sm onClick={() => setOpen(r)}>Review</Button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </StateBlock>
+        </div>
       </Card>
 
       {open && (
-        <Card title={`Review — ${open.lab_name}`} right={<button style={btn()} onClick={() => setOpen(null)}>Close</button>}>
+        <Card>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, color: colors.text }}>Review — {open.lab_name}</h2>
+            <Button variant="outline" sm onClick={() => setOpen(null)}>Close</Button>
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.6rem', marginBottom: '1rem', fontSize: '0.85rem' }}>
-            <div><span style={{ color: '#6b7280' }}>Scientist:</span> {open.lab_scientist_masked}</div>
-            <div><span style={{ color: '#6b7280' }}>CAC:</span> {open.cac_rc_no}</div>
-            <div><span style={{ color: '#6b7280' }}>Submitted:</span> {fmtDate(open.submitted_at)}</div>
+            <div><span style={{ color: colors.muted }}>Scientist:</span> {open.lab_scientist_masked}</div>
+            <div><span style={{ color: colors.muted }}>CAC:</span> {open.cac_rc_no}</div>
+            <div><span style={{ color: colors.muted }}>Submitted:</span> {fmtDate(open.submitted_at)}</div>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1rem' }}>
-            <thead><tr><th style={th()}>Document</th><th style={th()}>Reference</th><th style={th()}>Expires</th><th style={th()}>Verified</th></tr></thead>
+            <thead><tr><th style={thCell}>Document</th><th style={thCell}>Reference</th><th style={thCell}>Expires</th><th style={thCell}>Verified</th></tr></thead>
             <tbody>
               {open.docs.map((d, i) => (
                 <tr key={i}>
-                  <td style={td()}>{d.kind.replace(/_/g, ' ')}</td>
-                  <td style={td()}><code style={{ fontSize: '0.76rem' }}>{d.reference}</code></td>
-                  <td style={td()}>{fmtDate(d.expires_at)}</td>
-                  <td style={td()}><Badge status={d.verified ? 'verified' : 'pending'} label={d.verified ? 'verified' : 'unverified'} /></td>
+                  <td style={tdCell}>{d.kind.replace(/_/g, ' ')}</td>
+                  <td style={tdCell}><code style={{ fontSize: '0.76rem' }}>{d.reference}</code></td>
+                  <td style={tdCell}>{fmtDate(d.expires_at)}</td>
+                  <td style={tdCell}><Badge text={d.verified ? 'verified' : 'unverified'} color={d.verified ? colors.success : colors.warning} /></td>
                 </tr>
               ))}
             </tbody>
           </table>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button disabled={busy} style={btnPrimary()} onClick={() => decide(open.id, 'approve')}>Approve &amp; grant capability</button>
-            <button disabled={busy} style={btn()} onClick={() => decide(open.id, 'need_info')}>Request info</button>
-            <button disabled={busy} style={btn()} onClick={() => decide(open.id, 'suspend')}>Suspend</button>
-            <button disabled={busy} style={btnDanger()} onClick={() => decide(open.id, 'reject')}>Reject</button>
+            <Button variant="primary" disabled={busy} onClick={() => decide(open.id, 'approve')}>Approve &amp; grant capability</Button>
+            <Button variant="outline" disabled={busy} onClick={() => decide(open.id, 'need_info')}>Request info</Button>
+            <Button variant="outline" disabled={busy} onClick={() => decide(open.id, 'suspend')}>Suspend</Button>
+            <Button variant="danger" disabled={busy} onClick={() => decide(open.id, 'reject')}>Reject</Button>
           </div>
           <AuditNote>Approval is fail-closed (HL-2) and every decision is written to the immutable audit log (HL-12).</AuditNote>
         </Card>
       )}
-    </div>
+    </Page>
   );
 }

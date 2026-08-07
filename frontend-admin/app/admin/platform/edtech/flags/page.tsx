@@ -10,6 +10,7 @@ import {
   PlatformGuard, PlatformTabs, fmtDate,
   PageHeader, Card, Badge, Kpi, StateBlock, DisclosureNote, AuditNote, btn, th, td,
 } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function FeatureFlagsPage() {
   const [flags, setFlags] = useState<FeatureFlag[]>([]);
@@ -38,12 +39,12 @@ export default function FeatureFlagsPage() {
         <PageHeader title="Feature Flag & Tenant Configuration" subtitle="Roll EdTech features out incrementally per school, region or verification tier. Backend flags follow the FEATURE_ACADEMY_* pattern (no flag, no merge)." action={<button onClick={load} style={btn()}>Refresh</button>} />
         <PlatformTabs active="flags" />
         <DisclosureNote>Requires <code>platform_edtech_admin</code>. Scope precedence at runtime: <strong>global → tier → region → school</strong> (most specific wins). Every toggle is audited.</DisclosureNote>
-        {notice ? <div style={{ marginBottom: '1rem', color: '#5b21b6' }}>{notice}</div> : null}
+        {notice ? <div style={{ marginBottom: '1rem', color: colors.primary }}>{notice}</div> : null}
 
         <StateBlock loading={loading} error={error} empty={false}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <Kpi label="Flags configured" value={flags.length.toString()} accent="#340075" />
-            <Kpi label="Enabled" value={flags.filter((f) => f.enabled).length.toString()} accent="#15803d" />
+            <Kpi label="Flags configured" value={flags.length.toString()} accent={colors.primary} />
+            <Kpi label="Enabled" value={flags.filter((f) => f.enabled).length.toString()} accent={colors.success} />
             <Kpi label="Scoped (non-global)" value={flags.filter((f) => f.scope_type !== 'global').length.toString()} />
           </div>
 
@@ -55,8 +56,8 @@ export default function FeatureFlagsPage() {
                   const key = `${fl.key}|${fl.scope_type}|${fl.scope_ref}`;
                   return (
                     <tr key={key}>
-                      <td style={td()}><strong>{fl.label}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}><code>{fl.key}</code></div><div style={{ fontSize: '0.76rem', color: '#6b7280', marginTop: 2 }}>{fl.description}</div></td>
-                      <td style={td()}><Badge status="verified" label={fl.scope_type} />{fl.scope_ref ? <div style={{ fontSize: '0.74rem', color: '#6b7280', marginTop: 2 }}>{fl.scope_ref}</div> : null}</td>
+                      <td style={td()}><strong>{fl.label}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}><code>{fl.key}</code></div><div style={{ fontSize: '0.76rem', color: colors.muted, marginTop: 2 }}>{fl.description}</div></td>
+                      <td style={td()}><Badge status="verified" label={fl.scope_type} />{fl.scope_ref ? <div style={{ fontSize: '0.74rem', color: colors.muted, marginTop: 2 }}>{fl.scope_ref}</div> : null}</td>
                       <td style={td()}>{fl.enabled ? <Badge status="active" label="on" /> : <Badge status="none" label="off" />}</td>
                       <td style={td()}>{fmtDate(fl.updated_at)}</td>
                       <td style={td()}><button onClick={() => toggle(fl)} disabled={busy === key} style={btn()}>{fl.enabled ? 'Disable' : 'Enable'}</button></td>

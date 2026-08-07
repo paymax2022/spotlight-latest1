@@ -15,7 +15,7 @@ var (
 	ErrConflict        = errors.New("arena: conflict")
 	ErrInvalidInput    = errors.New("arena: invalid input")
 	ErrBadState        = errors.New("arena: illegal state transition")
-	ErrKYCTierTooLow   = errors.New("arena: kyc tier below required")   // NDC-3
+	ErrKYCTierTooLow   = errors.New("arena: kyc tier below required")              // NDC-3
 	ErrUnauthorizedSig = errors.New("arena: merit entry signature not authorized") // NDC-2
 	ErrReplay          = errors.New("arena: merit entry is a replay")
 	ErrMissingIdem     = errors.New("arena: Idempotency-Key required")
@@ -41,13 +41,13 @@ type Config struct {
 	Version                 int            `json:"version"`
 	Rails                   map[string]any `json:"rails"`
 	Awards                  map[string]any `json:"awards"`
-	RequiredKYCTier         int            `json:"required_kyc_tier"`         // NDC-3 gate
-	QualifyTopN             int            `json:"qualify_top_n"`             // merit cut for QUALIFIED
-	FinalistTopN            int            `json:"finalist_top_n"`            // merit cut for FINALIST
-	PlayAlongThreshold      int            `json:"playalong_threshold"`       // points → CERTIFIED_SAFE_DRIVER
-	PlayAlongCashbackKobo   int64          `json:"playalong_cashback_kobo"`   // ledgered reward on pass
-	PlayAlongCashbackPerDay int            `json:"playalong_cashback_per_day"`// rate limit
-	PotApprovalsRequired    int            `json:"pot_approvals_required"`    // NDC-4 multi-approve
+	RequiredKYCTier         int            `json:"required_kyc_tier"`          // NDC-3 gate
+	QualifyTopN             int            `json:"qualify_top_n"`              // merit cut for QUALIFIED
+	FinalistTopN            int            `json:"finalist_top_n"`             // merit cut for FINALIST
+	PlayAlongThreshold      int            `json:"playalong_threshold"`        // points → CERTIFIED_SAFE_DRIVER
+	PlayAlongCashbackKobo   int64          `json:"playalong_cashback_kobo"`    // ledgered reward on pass
+	PlayAlongCashbackPerDay int            `json:"playalong_cashback_per_day"` // rate limit
+	PotApprovalsRequired    int            `json:"pot_approvals_required"`     // NDC-4 multi-approve
 	RubricVersions          map[string]any `json:"rubric_versions"`
 }
 

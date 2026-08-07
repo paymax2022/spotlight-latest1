@@ -56,7 +56,7 @@ export default function RateAlertsScreen() {
                 <View style={styles.flex}>
                   <Text style={styles.pair}>{item.from} → {item.to}</Text>
                   <Text style={styles.cond}>
-                    Notify when {above ? 'above' : 'below'} {item.target.toLocaleString('en-NG', { maximumFractionDigits: 2 })}
+                    Notify when {above ? 'above' : 'below'} {(item.target ?? 0).toLocaleString('en-NG', { maximumFractionDigits: 2 })}
                   </Text>
                   <Text style={styles.meta}>
                     {triggered ? `Triggered ${relativeTime(item.triggeredAt!)}` : item.active ? 'Active' : 'Paused'} · created {relativeTime(item.createdAt)}

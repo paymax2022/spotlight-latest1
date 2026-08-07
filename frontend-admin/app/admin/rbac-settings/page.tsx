@@ -1,18 +1,20 @@
 import Link from 'next/link';
+import { Page, PageHeader, Card, colors } from '@/components/ui/vuexy';
 
 export default function AdminRbacSettingsPage() {
   return (
-    <div>
-      <h1>RBAC Settings</h1>
-      <p>Manage access control across roles, permissions, assignment matrix, and audit trails.</p>
-      <div style={{ display: 'grid', gap: 10, marginTop: 16 }}>
-        <Link href="/admin/roles">Role Management</Link>
-        <Link href="/admin/permissions">Permissions Management</Link>
-        <Link href="/admin/permissions-matrix">Permission Matrix</Link>
-        <Link href="/admin/users">User Role & Status Management</Link>
-        <Link href="/admin/audit-logs">Audit Logs</Link>
-        <Link href="/admin/security-events">Security Events</Link>
-      </div>
-    </div>
+    <Page>
+      <PageHeader title="RBAC Settings" subtitle="Manage access control across roles, permissions, assignment matrix, and audit trails." />
+      <Card>
+        <div style={{ display: 'grid', gap: 10 }}>
+          <Link href="/admin/roles" style={{ color: colors.primary }}>Role Management</Link>
+          <Link href="/admin/permissions" style={{ color: colors.primary }}>Permissions Management</Link>
+          <Link href="/admin/permissions-matrix" style={{ color: colors.primary }}>Permission Matrix</Link>
+          <Link href="/admin/users" style={{ color: colors.primary }}>User Role & Status Management</Link>
+          <Link href="/admin/audit-logs" style={{ color: colors.primary }}>Audit Logs</Link>
+          <Link href="/admin/security-events" style={{ color: colors.primary }}>Security Events</Link>
+        </div>
+      </Card>
+    </Page>
   );
 }

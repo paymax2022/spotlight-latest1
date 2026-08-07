@@ -43,17 +43,17 @@ type Quote struct {
 
 // Order is an immutable money-path record of a filled buy/sell.
 type Order struct {
-	ID         string    `json:"id"`
-	UserID     string    `json:"user_id"`
-	AssetID    string    `json:"asset_id"`
-	Symbol     string    `json:"symbol,omitempty"`
-	Side       string    `json:"side"` // buy|sell
-	Status     string    `json:"status"`
-	CashKobo   int64     `json:"cash_kobo"`
-	Units      int64     `json:"units"` // asset minor units
-	PriceKobo  int64     `json:"price_kobo"`
-	Reference  string    `json:"reference,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	AssetID   string    `json:"asset_id"`
+	Symbol    string    `json:"symbol,omitempty"`
+	Side      string    `json:"side"` // buy|sell
+	Status    string    `json:"status"`
+	CashKobo  int64     `json:"cash_kobo"`
+	Units     int64     `json:"units"` // asset minor units
+	PriceKobo int64     `json:"price_kobo"`
+	Reference string    `json:"reference,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 
 	idem string // idempotency key (not serialised; set by the service on a fill)
 }

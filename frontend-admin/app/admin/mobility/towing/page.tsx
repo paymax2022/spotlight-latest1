@@ -5,9 +5,10 @@ import { getTowingJobs, setTowingStatus } from '@/services/mobilityModesAdminSer
 import type { TowingRow, TowingStatus } from '@/types/mobilityModes';
 import {
   PageHeader, MobilityTabs, Card, Badge, StateNote, AuditedNotice, Kpi,
-  btn, btnPrimary, btnDisabled, th, td, input, nairaFull,
+  btn, btnPrimary, btnDisabled, input, nairaFull,
   useMobilityPermissions, MOBILITY_PERMS,
 } from '../_ui';
+import { colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUS_FILTER: Array<TowingStatus | ''> = ['', 'requested', 'operator_accepted', 'operator_en_route', 'pin_verified', 'in_progress', 'completed', 'cancelled'];
 const STATUS_OPTIONS: TowingStatus[] = ['requested', 'operator_accepted', 'operator_en_route', 'pin_verified', 'in_progress', 'completed', 'cancelled'];
@@ -68,8 +69,8 @@ export default function MobilityTowingPage() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
         <Kpi label="Total jobs" value={String(rows.length)} />
-        <Kpi label="Active" value={String(active)} accent="#1d4ed8" />
-        <Kpi label="Awaiting operator" value={String(unassigned)} accent={unassigned ? '#dc2626' : '#16a34a'} />
+        <Kpi label="Active" value={String(active)} accent={colors.info} />
+        <Kpi label="Awaiting operator" value={String(unassigned)} accent={unassigned ? colors.danger : colors.success} />
       </div>
 
       <Card
@@ -85,20 +86,20 @@ export default function MobilityTowingPage() {
           : rows.length === 0 ? <StateNote kind="empty">No towing jobs match this filter.</StateNote>
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-              <thead><tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>Job</th><th style={th()}>Route</th><th style={th()}>Operator</th><th style={th()}>Type</th><th style={th()}>Status</th><th style={th()}>Escrow</th><th style={th()}>Fare</th><th style={th()}></th>
+              <thead><tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                <th style={thCell}>Job</th><th style={thCell}>Route</th><th style={thCell}>Operator</th><th style={thCell}>Type</th><th style={thCell}>Status</th><th style={thCell}>Escrow</th><th style={thCell}>Fare</th><th style={thCell}></th>
               </tr></thead>
               <tbody>
                 {rows.map((t) => (
-                  <tr key={t.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={td()}><strong>{t.id}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{t.customerName}</div></td>
-                    <td style={td()}>{t.pickupAddress}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>→ {t.destAddress}</div></td>
-                    <td style={td()}>{t.operatorName ?? <span style={{ color: '#9ca3af' }}>unassigned</span>}</td>
-                    <td style={td()}>{t.serviceType.replace(/_/g, ' ')}</td>
-                    <td style={td()}><Badge status={t.status} /></td>
-                    <td style={td()}><Badge status={t.escrowStatus} /></td>
-                    <td style={td()}>{nairaFull(t.fareKobo)}</td>
-                    <td style={td()}><button style={btn()} onClick={() => openDetail(t)}>{canManage ? 'Manage' : 'View'}</button></td>
+                  <tr key={t.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <td style={tdCell}><strong>{t.id}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{t.customerName}</div></td>
+                    <td style={tdCell}>{t.pickupAddress}<div style={{ fontSize: '0.72rem', color: colors.muted }}>→ {t.destAddress}</div></td>
+                    <td style={tdCell}>{t.operatorName ?? <span style={{ color: colors.muted }}>unassigned</span>}</td>
+                    <td style={tdCell}>{t.serviceType.replace(/_/g, ' ')}</td>
+                    <td style={tdCell}><Badge status={t.status} /></td>
+                    <td style={tdCell}><Badge status={t.escrowStatus} /></td>
+                    <td style={tdCell}>{nairaFull(t.fareKobo)}</td>
+                    <td style={tdCell}><button style={btn()} onClick={() => openDetail(t)}>{canManage ? 'Manage' : 'View'}</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -108,14 +109,14 @@ export default function MobilityTowingPage() {
 
       {selected && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }} onClick={() => !busy && setSelected(null)}>
-          <div style={{ background: '#fff', borderRadius: '0.5rem', padding: '1.25rem', width: 'min(520px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: colors.card, borderRadius: '0.5rem', padding: '1.25rem', width: 'min(520px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: '0.5rem' }}>
               <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>{selected.id}</h2>
               <Badge status={selected.status} /><Badge status={selected.escrowStatus} />
             </div>
-            <p style={{ fontSize: '0.82rem', color: '#374151', margin: '0 0 0.25rem' }}>{selected.customerName} · {selected.serviceType.replace(/_/g, ' ')}</p>
-            <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0 0 0.5rem' }}>{selected.pickupAddress} → {selected.destAddress} · {selected.zone}</p>
-            <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0 0 1rem' }}>Callout {nairaFull(selected.calloutKobo)} · Fare {nairaFull(selected.fareKobo)} · Operator {selected.operatorName ?? '—'}</p>
+            <p style={{ fontSize: '0.82rem', color: colors.text, margin: '0 0 0.25rem' }}>{selected.customerName} · {selected.serviceType.replace(/_/g, ' ')}</p>
+            <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 0.5rem' }}>{selected.pickupAddress} → {selected.destAddress} · {selected.zone}</p>
+            <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 1rem' }}>Callout {nairaFull(selected.calloutKobo)} · Fare {nairaFull(selected.fareKobo)} · Operator {selected.operatorName ?? '—'}</p>
 
             {!canManage ? (
               <StateNote kind="restricted">Read-only — your role cannot update towing jobs.</StateNote>

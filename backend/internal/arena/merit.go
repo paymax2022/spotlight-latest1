@@ -30,12 +30,12 @@ const (
 type Stage string
 
 const (
-	StageScreening      Stage = "SCREENING"
-	StageTheoryB1       Stage = "THEORY_B1"
-	StageTheoryB2       Stage = "THEORY_B2"
-	StageTheoryB3       Stage = "THEORY_B3"
+	StageScreening       Stage = "SCREENING"
+	StageTheoryB1        Stage = "THEORY_B1"
+	StageTheoryB2        Stage = "THEORY_B2"
+	StageTheoryB3        Stage = "THEORY_B3"
 	StageFinalePractical Stage = "FINALE_PRACTICAL"
-	StageFinaleFirstAid Stage = "FINALE_FIRSTAID"
+	StageFinaleFirstAid  Stage = "FINALE_FIRSTAID"
 )
 
 // ScorePayload is the exact, canonical input an adapter signs. Field order in

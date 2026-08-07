@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"log"
 	"math/big"
 	"strings"
 	"time"
@@ -83,18 +84,59 @@ type RecordsVault interface {
 
 // Service is the LabOrder + catalog + sample/custody + result engine.
 type Service struct {
-	db       *pgxpool.Pool
-	escrow   EscrowHolder
-	dispatch Dispatcher
-	prov     ProviderGate
-	payout   PayoutGate
-	notify   Notifier
-	vault    RecordsVault
-	audit    Auditor
+	db         *pgxpool.Pool
+	escrow     EscrowHolder
+	dispatch   Dispatcher
+	prov       ProviderGate
+	payout     PayoutGate
+	notify     Notifier
+	vault      RecordsVault
+	audit      Auditor
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 }
 
 func NewService(db *pgxpool.Pool, escrow EscrowHolder, dispatch Dispatcher, prov ProviderGate, payout PayoutGate, notify Notifier, vault RecordsVault, audit Auditor) *Service {
 	return &Service{db: db, escrow: escrow, dispatch: dispatch, prov: prov, payout: payout, notify: notify, vault: vault, audit: audit}
+}
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module (§ profit registry). app-wiring injects a thin adapter over the finance
+// commission service; when the commission feature is off (or no recorder is wired)
+// the field is nil and recording is a silent no-op. Modeled as a LOCAL interface so
+// lab never imports the commission package at compile time (mirrors the
+// transport/doctor seams) — the adapter, which lives in app-wiring, discards the
+// returned earning row and surfaces only the error.
+//
+// This records realized profit ONLY; it never moves money. The lab module's own
+// money movements (the escrow HELD→RELEASE of the patient payment to the lab) are
+// unchanged, and the injected recorder is deliberately constructed WITHOUT a ledger
+// so RecordFor never re-posts to the ledger (no double count of the commission
+// revenue account) — it appends the immutable earning row used by profit reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a released lab order.
+// It is best-effort and MUST NEVER affect the caller's outcome: a nil recorder is a
+// no-op, and any error is logged and swallowed so a profit-registry failure can
+// never fail or reverse the result release / payout. The recorded breakdown is
+// resolved server-side from the central rate card; the source ref (the order id)
+// doubles as the idempotency key so retries and reconciliation sweeps never
+// double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
+		"health.lab", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[health.lab] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
+	}
 }
 
 // ─── Catalog (HL-1: lab defines tests; HL-2: only a verified lab lists) ──────
@@ -740,6 +782,16 @@ func (s *Service) Release(ctx context.Context, scientistID, orderID string) (*Or
 			return nil, fmt.Errorf("lab: release payment (HL-9): %w", err)
 		}
 	}
+	// Lab-order settlement point: the sign-off release realizes Spotlight's
+	// commission on the completed lab test. Record realized profit into the central
+	// Commission & Profit registry — best-effort + idempotent (the order id doubles
+	// as source ref + idempotency key, so retries / reconciliation never
+	// double-count). gross = the full order total the patient paid (the same basis
+	// the lab's own escrow split settles on). A recorder failure is logged and
+	// swallowed — it must NEVER fail or reverse the release above. Nil recorder ⇒
+	// no-op (commission feature off).
+	patientID := o.PatientID
+	s.recordCommissionSafe(ctx, "Health", "Lab", "", o.TotalKobo, orderID, &patientID)
 	// Terminal CLOSED once funds released (best-effort, idempotent on retry).
 	if closed, cerr := s.transition(ctx, scientistID, orderID, StateClosed, nil, "health.lab.order.close"); cerr == nil {
 		out = closed

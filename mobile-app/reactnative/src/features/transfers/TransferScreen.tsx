@@ -61,6 +61,9 @@ const SEGMENTS: { value: TransferType; label: string }[] = [
 
 type Step = 'form' | 'review' | 'success';
 
+// Minimum transferable amount (kobo) — ₦1.
+const MIN_TRANSFER_KOBO = 100;
+
 interface BankAccountState {
   bankCode: string;
   bankName: string;
@@ -121,6 +124,25 @@ export default function TransferScreen() {
   }, [type, amountKobo]);
 
   const balanceKobo = (walletQuery.data?.balance ?? 0) * 100; // wallet.balance is naira major units
+
+  // ── pre-flight validation: wallet balance sufficiency ───────────────────────
+  // The NGN wallet is active on account creation, so there is NO KYC/tier gate on a
+  // basic send. The single hard rule: (amount + fee) must not exceed the wallet
+  // balance. Applies to the wallet-funded flows (wallet→wallet, wallet→bank);
+  // bank→bank funds from an external source account and is exempt. The backend stays
+  // authoritative (ledger insufficient-funds → 402); this blocks it earlier + clearer.
+  const totalDebitKobo = amountKobo + feeKobo;
+  const usesWallet = type === 'wallet_wallet' || type === 'wallet_bank';
+  const walletGuard = useMemo(() => {
+    if (!usesWallet || amountKobo < MIN_TRANSFER_KOBO) return { blocked: false, reason: null as string | null };
+    if (walletQuery.isSuccess && totalDebitKobo > balanceKobo) {
+      return {
+        blocked: true,
+        reason: `Insufficient wallet balance — you need ${formatNaira(totalDebitKobo)} (incl. fee) but have ${formatNaira(balanceKobo)}.`,
+      };
+    }
+    return { blocked: false, reason: null as string | null };
+  }, [usesWallet, amountKobo, totalDebitKobo, balanceKobo, walletQuery.isSuccess]);
 
   // ── reset when switching transfer type ──────────────────────────────────────
   const switchType = (next: TransferType) => {
@@ -208,10 +230,11 @@ export default function TransferScreen() {
   // ── validation for the "Continue to review" button ──────────────────────────
   const canReview = useMemo(() => {
     if (amountKobo < 100) return false;
+    if (walletGuard.blocked) return false; // insufficient wallet balance (amount + fee)
     if (type === 'wallet_wallet') return recipient.trim().length > 0;
     if (type === 'wallet_bank') return !!dest.resolved;
     return !!dest.resolved && !!source.resolved;
-  }, [type, amountKobo, recipient, dest.resolved, source.resolved]);
+  }, [type, amountKobo, recipient, dest.resolved, source.resolved, walletGuard.blocked]);
 
   const goToReview = () => {
     if (type === 'wallet_wallet') {
@@ -230,6 +253,17 @@ export default function TransferScreen() {
 
   const submitTransfer = (pin: string) => {
     setPinError(null);
+    // Defense-in-depth: re-assert amount + balance at authorise time so no state
+    // manipulation between review and confirm can push through an invalid/over-balance
+    // transfer. The backend re-validates fail-closed regardless.
+    if (!Number.isInteger(amountKobo) || amountKobo < MIN_TRANSFER_KOBO) {
+      setPinError('Enter a valid amount to continue.');
+      return;
+    }
+    if (usesWallet && walletQuery.isSuccess && totalDebitKobo > balanceKobo) {
+      setPinError('Insufficient wallet balance for this transfer.');
+      return;
+    }
     if (type === 'wallet_wallet') {
       walletTransferMut.mutate(pin);
       return;
@@ -373,6 +407,9 @@ export default function TransferScreen() {
       {/* Sticky CTA */}
       {step !== 'success' && (
         <View style={styles.footer}>
+          {step === 'form' && walletGuard.reason ? (
+            <Text style={styles.guardError}>{walletGuard.reason}</Text>
+          ) : null}
           {step === 'form' ? (
             <PrimaryButton
               label={resolveRecipientMut.isPending ? 'Looking up…' : 'Continue'}
@@ -893,5 +930,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: Spacing.containerMargin,
     paddingBottom: Spacing.sm,
+  },
+  guardError: {
+    ...Typography.labelSm,
+    color: Colors.error,
+    textAlign: 'center',
+    marginBottom: Spacing.sm,
+    lineHeight: 18,
   },
 });

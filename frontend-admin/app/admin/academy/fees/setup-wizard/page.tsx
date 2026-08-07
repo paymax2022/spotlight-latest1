@@ -13,10 +13,24 @@ import type {
   FeesSchool, FeesSession, FeesClass, FeeSchedule, FeeItemInput, InstallmentPolicy,
 } from '@/types/academyFees';
 import {
-  PageHeader, Card, Badge, StateBlock, DisclosureNote, AuditNote,
-  btn, btnPrimary, th, td, input, label, select, formatNaira, fmtDate,
+  StateBlock, DisclosureNote, AuditNote, label, select, formatNaira, fmtDate,
 } from '../../_ui';
 import { FeesTabs, FeesGuard } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+function statusColor(status: string): string {
+  const s = status.toLowerCase();
+  if (['active', 'approved', 'published', 'funded', 'paid', 'completed', 'allocated', 'live', 'reconciled', 'disbursed', 'collected', 'released', 'core', 'issued', 'routed', 'ready', 'eligible', 'actioned', 'verified', 'resolved', 'plan_published', 'badge_earned', 'pool_funded', 'item_approved'].includes(s)) return colors.success;
+  if (['pending', 'in_review', 'under_review', 'needs_info', 'scheduled', 'low_balance', 'review', 'in_translation', 'funding', 'fee_due', 'onboarding', 'frequent', 'packaged', 'matured', 'paused', 'processing', 'triaged', 'investigating', 'hide', 'warn', 'high', 'medium'].includes(s)) return colors.warning;
+  if (['draft', 'authoring', 'open', 'upcoming', 'generated', 'partial', 'submitted', 'trial', 'requested', 'applied', 'cards_generated', 'exam_opened', 'campaign_launched'].includes(s)) return colors.info;
+  if (['rejected', 'failed', 'suspended', 'blocked', 'unfunded', 'expired', 'duplicate', 'revoked', 'escalated', 'ban', 'critical', 'overdue', 'item_rejected'].includes(s)) return colors.danger;
+  if (['refunded', 'reversed', 'redeemed', 'reward_redeemed'].includes(s)) return colors.primary;
+  return colors.secondary;
+}
+
+function StatusBadge({ status, label: lbl }: { status: string; label?: string }) {
+  return <Badge text={lbl ?? status.replace(/_/g, ' ')} color={statusColor(status)} />;
+}
 
 export default function FeesSetupWizardPage() {
   const [schools, setSchools] = useState<FeesSchool[]>([]);
@@ -103,8 +117,8 @@ export default function FeesSetupWizardPage() {
 
   return (
     <FeesGuard permission="academy.fees.setup">
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Setup Wizard" subtitle="Stand up a school fees programme end-to-end: school → academic session → classes → fee schedules. Build fee items and an optional installment plan, then issue." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Setup Wizard" subtitle="Stand up a school fees programme end-to-end: school → academic session → classes → fee schedules. Build fee items and an optional installment plan, then issue." actions={<Button onClick={load} variant="outline" sm>Refresh</Button>} />
       <FeesTabs active="setup-wizard" />
       <DisclosureNote>Requires <code>academy.fees.setup</code>. <strong>SF-1:</strong> a FeeSchedule becomes <strong>immutable</strong> the moment it is <strong>issued</strong> (once an invoice can reference it). Fee items and installment terms lock at issuance — plan carefully. All money in ₦ (kobo internally).</DisclosureNote>
 
@@ -112,106 +126,106 @@ export default function FeesSetupWizardPage() {
         {/* STEP 1 — School */}
         <Card title="Step 1 · School">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>School</th><th style={th()}>State</th><th style={th()}>Verification</th><th style={th()}>Status</th></tr></thead>
-            <tbody>{schools.map((s) => <tr key={s.id}><td style={td()}><strong>{s.name}</strong></td><td style={td()}>{s.state}</td><td style={td()}><Badge status={s.verification_tier} /></td><td style={td()}><Badge status={s.status} /></td></tr>)}</tbody>
+            <thead><tr><th style={thCell}>School</th><th style={thCell}>State</th><th style={thCell}>Verification</th><th style={thCell}>Status</th></tr></thead>
+            <tbody>{schools.map((s) => <tr key={s.id}><td style={tdCell}><strong>{s.name}</strong></td><td style={tdCell}>{s.state}</td><td style={tdCell}><StatusBadge status={s.verification_tier} /></td><td style={tdCell}><StatusBadge status={s.status} /></td></tr>)}</tbody>
           </table>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.6rem', alignItems: 'end', marginTop: '0.75rem', borderTop: '1px solid #f3f4f6', paddingTop: '0.75rem' }}>
-            <div><label style={label()}>Name</label><input style={input()} value={schoolForm.name} onChange={(e) => setSchoolForm({ ...schoolForm, name: e.target.value })} /></div>
-            <div><label style={label()}>State</label><input style={input()} value={schoolForm.state} onChange={(e) => setSchoolForm({ ...schoolForm, state: e.target.value })} /></div>
-            <div><label style={label()}>Owner email</label><input style={input()} value={schoolForm.owner_email} onChange={(e) => setSchoolForm({ ...schoolForm, owner_email: e.target.value })} /></div>
-            <div><button onClick={addSchool} disabled={busy === 'school'} style={btnPrimary()}>Create school</button></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.6rem', alignItems: 'end', marginTop: '0.75rem', borderTop: `1px solid ${colors.border}`, paddingTop: '0.75rem' }}>
+            <div><label style={label()}>Name</label><Input value={schoolForm.name} onChange={(e) => setSchoolForm({ ...schoolForm, name: e.target.value })} /></div>
+            <div><label style={label()}>State</label><Input value={schoolForm.state} onChange={(e) => setSchoolForm({ ...schoolForm, state: e.target.value })} /></div>
+            <div><label style={label()}>Owner email</label><Input value={schoolForm.owner_email} onChange={(e) => setSchoolForm({ ...schoolForm, owner_email: e.target.value })} /></div>
+            <div><Button onClick={addSchool} disabled={busy === 'school'} variant="primary" sm>Create school</Button></div>
           </div>
         </Card>
 
         {/* STEP 2 — Session */}
         <Card title="Step 2 · Academic session">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>School</th><th style={th()}>Session</th><th style={th()}>Starts</th><th style={th()}>Ends</th><th style={th()}>Status</th></tr></thead>
-            <tbody>{sessions.map((s) => <tr key={s.id}><td style={td()}>{nameOf(schools, s.school_id)}</td><td style={td()}>{s.name}</td><td style={td()}>{fmtDate(s.starts_on)}</td><td style={td()}>{fmtDate(s.ends_on)}</td><td style={td()}><Badge status={s.status} /></td></tr>)}</tbody>
+            <thead><tr><th style={thCell}>School</th><th style={thCell}>Session</th><th style={thCell}>Starts</th><th style={thCell}>Ends</th><th style={thCell}>Status</th></tr></thead>
+            <tbody>{sessions.map((s) => <tr key={s.id}><td style={tdCell}>{nameOf(schools, s.school_id)}</td><td style={tdCell}>{s.name}</td><td style={tdCell}>{fmtDate(s.starts_on)}</td><td style={tdCell}>{fmtDate(s.ends_on)}</td><td style={tdCell}><StatusBadge status={s.status} /></td></tr>)}</tbody>
           </table>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem', alignItems: 'end', marginTop: '0.75rem', borderTop: '1px solid #f3f4f6', paddingTop: '0.75rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem', alignItems: 'end', marginTop: '0.75rem', borderTop: `1px solid ${colors.border}`, paddingTop: '0.75rem' }}>
             <div><label style={label()}>School</label><select style={select()} value={sessionForm.school_id} onChange={(e) => setSessionForm({ ...sessionForm, school_id: e.target.value })}>{schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
-            <div><label style={label()}>Session name</label><input style={input()} value={sessionForm.name} onChange={(e) => setSessionForm({ ...sessionForm, name: e.target.value })} placeholder="2025/2026" /></div>
-            <div><label style={label()}>Starts</label><input type="date" style={input()} value={sessionForm.starts_on} onChange={(e) => setSessionForm({ ...sessionForm, starts_on: e.target.value })} /></div>
-            <div><label style={label()}>Ends</label><input type="date" style={input()} value={sessionForm.ends_on} onChange={(e) => setSessionForm({ ...sessionForm, ends_on: e.target.value })} /></div>
-            <div><button onClick={addSession} disabled={busy === 'session'} style={btnPrimary()}>Create session</button></div>
+            <div><label style={label()}>Session name</label><Input value={sessionForm.name} onChange={(e) => setSessionForm({ ...sessionForm, name: e.target.value })} placeholder="2025/2026" /></div>
+            <div><label style={label()}>Starts</label><Input type="date" value={sessionForm.starts_on} onChange={(e) => setSessionForm({ ...sessionForm, starts_on: e.target.value })} /></div>
+            <div><label style={label()}>Ends</label><Input type="date" value={sessionForm.ends_on} onChange={(e) => setSessionForm({ ...sessionForm, ends_on: e.target.value })} /></div>
+            <div><Button onClick={addSession} disabled={busy === 'session'} variant="primary" sm>Create session</Button></div>
           </div>
         </Card>
 
         {/* STEP 3 — Class */}
         <Card title="Step 3 · Classes">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Class</th><th style={th()}>Session</th><th style={th()}>Curriculum</th><th style={th()}>Students</th></tr></thead>
-            <tbody>{classes.map((c) => <tr key={c.id}><td style={td()}><strong>{c.name}</strong></td><td style={td()}>{nameOf(sessions, c.session_id)}</td><td style={td()}><Badge status="core" label={c.curriculum_class} /></td><td style={td()}>{c.students}</td></tr>)}</tbody>
+            <thead><tr><th style={thCell}>Class</th><th style={thCell}>Session</th><th style={thCell}>Curriculum</th><th style={thCell}>Students</th></tr></thead>
+            <tbody>{classes.map((c) => <tr key={c.id}><td style={tdCell}><strong>{c.name}</strong></td><td style={tdCell}>{nameOf(sessions, c.session_id)}</td><td style={tdCell}><StatusBadge status="core" label={c.curriculum_class} /></td><td style={tdCell}>{c.students}</td></tr>)}</tbody>
           </table>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem', alignItems: 'end', marginTop: '0.75rem', borderTop: '1px solid #f3f4f6', paddingTop: '0.75rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem', alignItems: 'end', marginTop: '0.75rem', borderTop: `1px solid ${colors.border}`, paddingTop: '0.75rem' }}>
             <div><label style={label()}>School</label><select style={select()} value={classForm.school_id} onChange={(e) => setClassForm({ ...classForm, school_id: e.target.value, session_id: '' })}>{schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
             <div><label style={label()}>Session</label><select style={select()} value={classForm.session_id} onChange={(e) => setClassForm({ ...classForm, session_id: e.target.value })}><option value="">Select…</option>{sessionsFor(classForm.school_id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
-            <div><label style={label()}>Class name</label><input style={input()} value={classForm.name} onChange={(e) => setClassForm({ ...classForm, name: e.target.value })} placeholder="JSS 1A" /></div>
+            <div><label style={label()}>Class name</label><Input value={classForm.name} onChange={(e) => setClassForm({ ...classForm, name: e.target.value })} placeholder="JSS 1A" /></div>
             <div><label style={label()}>Curriculum</label><select style={select()} value={classForm.curriculum_class} onChange={(e) => setClassForm({ ...classForm, curriculum_class: e.target.value })}>{['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'JSS1', 'JSS2', 'JSS3', 'SS1', 'SS2', 'SS3'].map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
-            <div><button onClick={addClass} disabled={busy === 'class'} style={btnPrimary()}>Create class</button></div>
+            <div><Button onClick={addClass} disabled={busy === 'class'} variant="primary" sm>Create class</Button></div>
           </div>
         </Card>
 
         {/* STEP 4 — Fee schedule builder */}
         <Card title="Step 4 · Fee schedule builder">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Class</th><th style={th()}>Term</th><th style={th()}>Total</th><th style={th()}>Items</th><th style={th()}>Installments</th><th style={th()}>Due</th><th style={th()}>Status</th><th style={th()}>Action</th></tr></thead>
+            <thead><tr><th style={thCell}>Class</th><th style={thCell}>Term</th><th style={thCell}>Total</th><th style={thCell}>Items</th><th style={thCell}>Installments</th><th style={thCell}>Due</th><th style={thCell}>Status</th><th style={thCell}>Action</th></tr></thead>
             <tbody>
               {schedules.map((f) => {
                 const total = f.fee_items.reduce((s, it) => s + it.amount_kobo, 0);
                 return (
                   <tr key={f.id}>
-                    <td style={td()}>{nameOf(classes, f.class_id)}</td>
-                    <td style={td()}>{f.term}</td>
-                    <td style={td()}>{formatNaira(total)}</td>
-                    <td style={td()}>{f.fee_items.map((it) => `${it.name}${it.mandatory ? '' : ' (opt)'}`).join(', ')}</td>
-                    <td style={td()}>{f.installment_policy.enabled ? `${f.installment_policy.count}× / ${f.installment_policy.cadence_days}d` : 'Full payment'}</td>
-                    <td style={td()}>{fmtDate(f.due_date)}</td>
-                    <td style={td()}><Badge status={f.status} label={f.status === 'issued' ? 'issued · locked' : 'draft'} /></td>
-                    <td style={td()}>{f.status === 'draft' ? <button onClick={() => issue(f)} disabled={busy === f.id} style={btnPrimary()}>Issue (lock)</button> : <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>immutable</span>}</td>
+                    <td style={tdCell}>{nameOf(classes, f.class_id)}</td>
+                    <td style={tdCell}>{f.term}</td>
+                    <td style={tdCell}>{formatNaira(total)}</td>
+                    <td style={tdCell}>{f.fee_items.map((it) => `${it.name}${it.mandatory ? '' : ' (opt)'}`).join(', ')}</td>
+                    <td style={tdCell}>{f.installment_policy.enabled ? `${f.installment_policy.count}× / ${f.installment_policy.cadence_days}d` : 'Full payment'}</td>
+                    <td style={tdCell}>{fmtDate(f.due_date)}</td>
+                    <td style={tdCell}><StatusBadge status={f.status} label={f.status === 'issued' ? 'issued · locked' : 'draft'} /></td>
+                    <td style={tdCell}>{f.status === 'draft' ? <Button onClick={() => issue(f)} disabled={busy === f.id} variant="primary" sm>Issue (lock)</Button> : <span style={{ color: colors.muted, fontSize: '0.8rem' }}>immutable</span>}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
 
-          <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: '0.75rem', marginTop: '0.75rem' }}>
+          <div style={{ borderTop: `1px solid ${colors.border}`, paddingTop: '0.75rem', marginTop: '0.75rem' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.6rem', alignItems: 'end' }}>
               <div><label style={label()}>School</label><select style={select()} value={schedForm.school_id} onChange={(e) => setSchedForm({ ...schedForm, school_id: e.target.value, session_id: '', class_id: '' })}>{schools.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
               <div><label style={label()}>Session</label><select style={select()} value={schedForm.session_id} onChange={(e) => setSchedForm({ ...schedForm, session_id: e.target.value, class_id: '' })}><option value="">Select…</option>{sessionsFor(schedForm.school_id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
               <div><label style={label()}>Class</label><select style={select()} value={schedForm.class_id} onChange={(e) => setSchedForm({ ...schedForm, class_id: e.target.value })}><option value="">Select…</option>{classesFor(schedForm.session_id).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-              <div><label style={label()}>Term</label><input style={input()} value={schedForm.term} onChange={(e) => setSchedForm({ ...schedForm, term: e.target.value })} placeholder="First Term 2025/26" /></div>
-              <div><label style={label()}>Due date</label><input type="date" style={input()} value={schedForm.due_date} onChange={(e) => setSchedForm({ ...schedForm, due_date: e.target.value })} /></div>
+              <div><label style={label()}>Term</label><Input value={schedForm.term} onChange={(e) => setSchedForm({ ...schedForm, term: e.target.value })} placeholder="First Term 2025/26" /></div>
+              <div><label style={label()}>Due date</label><Input type="date" value={schedForm.due_date} onChange={(e) => setSchedForm({ ...schedForm, due_date: e.target.value })} /></div>
             </div>
 
             <div style={{ marginTop: '0.85rem' }}>
               <label style={label()}>Fee items</label>
               {feeItems.map((it, i) => (
                 <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto auto', gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem' }}>
-                  <input style={input()} value={it.name} placeholder="Item name" onChange={(e) => setItem(i, { name: e.target.value })} />
-                  <input type="number" style={input()} value={it.amount_kobo ? it.amount_kobo / 100 : ''} placeholder="₦ amount" onChange={(e) => setItem(i, { amount_kobo: Number(e.target.value) * 100 })} />
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.8rem', color: '#374151', whiteSpace: 'nowrap' }}><input type="checkbox" checked={it.mandatory} onChange={(e) => setItem(i, { mandatory: e.target.checked })} /> mandatory</label>
-                  <button onClick={() => removeItem(i)} disabled={feeItems.length === 1} style={btn()}>Remove</button>
+                  <Input value={it.name} placeholder="Item name" onChange={(e) => setItem(i, { name: e.target.value })} />
+                  <Input type="number" value={it.amount_kobo ? it.amount_kobo / 100 : ''} placeholder="₦ amount" onChange={(e) => setItem(i, { amount_kobo: Number(e.target.value) * 100 })} />
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.8rem', color: colors.text, whiteSpace: 'nowrap' }}><input type="checkbox" checked={it.mandatory} onChange={(e) => setItem(i, { mandatory: e.target.checked })} /> mandatory</label>
+                  <Button onClick={() => removeItem(i)} disabled={feeItems.length === 1} variant="outline" sm>Remove</Button>
                 </div>
               ))}
-              <button onClick={addItem} style={btn()}>+ Add item</button>
-              <span style={{ marginLeft: '1rem', fontSize: '0.85rem', color: '#374151' }}>Schedule total: <strong>{formatNaira(scheduleTotal)}</strong></span>
+              <Button onClick={addItem} variant="outline" sm>+ Add item</Button>
+              <span style={{ marginLeft: '1rem', fontSize: '0.85rem', color: colors.text }}>Schedule total: <strong>{formatNaira(scheduleTotal)}</strong></span>
             </div>
 
             <div style={{ marginTop: '0.85rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.6rem', alignItems: 'end' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', color: '#374151' }}><input type="checkbox" checked={policy.enabled} onChange={(e) => setPolicy({ ...policy, enabled: e.target.checked })} /> Allow installments</label>
-              <div><label style={label()}>Installments</label><input type="number" disabled={!policy.enabled} style={input()} value={policy.count} onChange={(e) => setPolicy({ ...policy, count: Number(e.target.value) })} /></div>
-              <div><label style={label()}>Cadence (days)</label><input type="number" disabled={!policy.enabled} style={input()} value={policy.cadence_days} onChange={(e) => setPolicy({ ...policy, cadence_days: Number(e.target.value) })} /></div>
-              <div><button onClick={addSchedule} disabled={busy === 'sched'} style={btnPrimary()}>Create draft schedule</button></div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', color: colors.text }}><input type="checkbox" checked={policy.enabled} onChange={(e) => setPolicy({ ...policy, enabled: e.target.checked })} /> Allow installments</label>
+              <div><label style={label()}>Installments</label><Input type="number" disabled={!policy.enabled} value={policy.count} onChange={(e) => setPolicy({ ...policy, count: Number(e.target.value) })} /></div>
+              <div><label style={label()}>Cadence (days)</label><Input type="number" disabled={!policy.enabled} value={policy.cadence_days} onChange={(e) => setPolicy({ ...policy, cadence_days: Number(e.target.value) })} /></div>
+              <div><Button onClick={addSchedule} disabled={busy === 'sched'} variant="primary" sm>Create draft schedule</Button></div>
             </div>
-            <p style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.5rem' }}>Installments are <strong>guardian-pays-school-over-time only</strong> — Paymax never fronts fees (Model A). Terms lock at issuance (SF-1 / SF-6).</p>
+            <p style={{ fontSize: '0.75rem', color: colors.muted, marginTop: '0.5rem' }}>Installments are <strong>guardian-pays-school-over-time only</strong> — Paymax never fronts fees (Model A). Terms lock at issuance (SF-1 / SF-6).</p>
           </div>
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.text, marginTop: '0.6rem' }}>{notice}</p>}
           <AuditNote>School / session / class creation, schedule drafts and issuance are recorded to the immutable audit log (module <code>academy.fees</code>).</AuditNote>
         </Card>
       </StateBlock>
-    </div>
+    </Page>
     </FeesGuard>
   );
 }

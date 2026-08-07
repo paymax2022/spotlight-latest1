@@ -142,11 +142,11 @@ func (m *MockProvider) MatchToRoad(_ context.Context, trace []Point) (Polyline, 
 
 // Ensure MockProvider satisfies every adapter role.
 var (
-	_ TileProvider   = (*MockProvider)(nil)
-	_ Geocoder       = (*MockProvider)(nil)
-	_ Autocompleter  = (*MockProvider)(nil)
-	_ PlaceSearcher  = (*MockProvider)(nil)
-	_ Router         = (*MockProvider)(nil)
-	_ Matrixer       = (*MockProvider)(nil)
-	_ MapMatcher     = (*MockProvider)(nil)
+	_ TileProvider  = (*MockProvider)(nil)
+	_ Geocoder      = (*MockProvider)(nil)
+	_ Autocompleter = (*MockProvider)(nil)
+	_ PlaceSearcher = (*MockProvider)(nil)
+	_ Router        = (*MockProvider)(nil)
+	_ Matrixer      = (*MockProvider)(nil)
+	_ MapMatcher    = (*MockProvider)(nil)
 )

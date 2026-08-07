@@ -8,6 +8,7 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, WizardProgress, ToggleRow } from '@/features/doctor/components';
 import { useProfileDraft, useSaveProfileDraft } from '@/features/doctor/hooks';
@@ -77,9 +78,9 @@ export default function PricingScreen() {
           </SectionCard>
 
           <SectionCard title="Fees per consultation (₦)" style={styles.card}>
-            <TextInputField label="Video consult" placeholder="3500" value={koboToNaira(form.videoFeeKobo)} onChangeText={(v) => set({ videoFeeKobo: nairaToKobo(v) })} keyboardType="number-pad" />
-            <TextInputField label="Audio consult" placeholder="3000" value={koboToNaira(form.audioFeeKobo)} onChangeText={(v) => set({ audioFeeKobo: nairaToKobo(v) })} keyboardType="number-pad" />
-            <TextInputField label="Chat consult" placeholder="2000" value={koboToNaira(form.chatFeeKobo)} onChangeText={(v) => set({ chatFeeKobo: nairaToKobo(v) })} keyboardType="number-pad" />
+            <TextInputField label="Video consult" placeholder="3500" value={koboToNaira(form.videoFeeKobo)} onChangeText={(v) => set({ videoFeeKobo: nairaToKobo(sanitizeMoneyInput(v)) })} keyboardType="number-pad" maxLength={13} />
+            <TextInputField label="Audio consult" placeholder="3000" value={koboToNaira(form.audioFeeKobo)} onChangeText={(v) => set({ audioFeeKobo: nairaToKobo(sanitizeMoneyInput(v)) })} keyboardType="number-pad" maxLength={13} />
+            <TextInputField label="Chat consult" placeholder="2000" value={koboToNaira(form.chatFeeKobo)} onChangeText={(v) => set({ chatFeeKobo: nairaToKobo(sanitizeMoneyInput(v)) })} keyboardType="number-pad" maxLength={13} />
             <Text style={styles.summary}>Video {formatKobo(form.videoFeeKobo)} · Audio {formatKobo(form.audioFeeKobo)} · Chat {formatKobo(form.chatFeeKobo)}</Text>
           </SectionCard>
 

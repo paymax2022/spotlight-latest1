@@ -23,12 +23,12 @@ import (
 
 // parcelTransitions is the guarded state machine for parcels.
 var parcelTransitions = map[string]map[string]bool{
-	"created":              {"courier_assigned": true, "cancelled": true},
-	"courier_assigned":     {"pickup_pin_verified": true, "cancelled": true, "failed": true},
-	"pickup_pin_verified":  {"picked_up": true, "cancelled": true, "failed": true},
-	"picked_up":            {"in_transit": true, "dropoff_verified": true, "failed": true, "disputed": true},
-	"in_transit":           {"dropoff_verified": true, "failed": true, "disputed": true},
-	"dropoff_verified":     {"delivered": true},
+	"created":             {"courier_assigned": true, "cancelled": true},
+	"courier_assigned":    {"pickup_pin_verified": true, "cancelled": true, "failed": true},
+	"pickup_pin_verified": {"picked_up": true, "cancelled": true, "failed": true},
+	"picked_up":           {"in_transit": true, "dropoff_verified": true, "failed": true, "disputed": true},
+	"in_transit":          {"dropoff_verified": true, "failed": true, "disputed": true},
+	"dropoff_verified":    {"delivered": true},
 }
 
 func canTransitionParcel(from, to string) bool {
@@ -129,10 +129,10 @@ type ParcelVerifyDropoffRequest struct {
 
 // ParcelEstimate is the estimate response.
 type ParcelEstimate struct {
-	DistanceM      int   `json:"distanceM"`
-	DurationS      int   `json:"durationS"`
-	FareKobo       int64 `json:"fareKobo"`
-	SizeMultiplier float64 `json:"sizeMultiplier"`
+	DistanceM       int     `json:"distanceM"`
+	DurationS       int     `json:"durationS"`
+	FareKobo        int64   `json:"fareKobo"`
+	SizeMultiplier  float64 `json:"sizeMultiplier"`
 	SpeedMultiplier float64 `json:"speedMultiplier"`
 }
 
@@ -254,9 +254,9 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 	var (
 		pid, senderID, pickup, dropoff, receiver, rphone, category, size, speed, status string
 		courierID, photoURL, proofURL, pickupPin, dropoffPin                            *string
-		declared, fare                                                                 int64
-		distM                                                                          *int
-		createdAt                                                                      time.Time
+		declared, fare                                                                  int64
+		distM                                                                           *int
+		createdAt                                                                       time.Time
 	)
 	if err := s.db.QueryRow(ctx, q, id).Scan(
 		&pid, &senderID, &courierID, &pickup, &dropoff, &receiver, &rphone,
@@ -491,6 +491,12 @@ func (s *Service) VerifyParcelDropoff(ctx context.Context, id, driverUserID, pin
 		if err := s.settleModeProvider(ctx, *p.SettlementID, *p.CourierID); err != nil {
 			return fmt.Errorf("transport: settle parcel: %w", err)
 		}
+		// Record realized Spotlight profit (best-effort + idempotent; parcel id as
+		// source ref + idempotency key). gross = the full delivery fare the sender
+		// paid. A recorder failure is logged and swallowed — it must NEVER affect the
+		// courier settlement above (earning-row only; no ledger re-post).
+		senderID := p.SenderID
+		s.recordCommissionSafe(ctx, "Lifestyle", "Delivery - Rider", "", p.FareKobo, id, &senderID)
 	}
 	if err := s.parcelSetStatus(ctx, id, "dropoff_verified", "delivered"); err != nil {
 		return err

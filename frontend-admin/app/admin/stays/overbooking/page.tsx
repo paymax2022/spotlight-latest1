@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { listOverbooking, formatNaira } from '@/services/staysAdminService';
 import type { OverbookingCase, OverbookingStatus } from '@/types/staysAdmin';
-import { PageHeader, StaysTabs, Card, Badge, FilterBar, btn, th, td, label, select, fmtDate, timeAgo, StateBlock, DisclosureNote } from '../_ui';
+import { StaysTabs, Badge, FilterBar, label, select, fmtDate, timeAgo, StateBlock, DisclosureNote } from '../_ui';
+import { Page, PageHeader, Card, Button, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUSES: OverbookingStatus[] = ['open', 'rebooked', 'refunded', 'resolved'];
 const CASE_TYPES: OverbookingCase['case_type'][] = ['overbooking', 'no_show'];
@@ -27,11 +28,11 @@ export default function StaysOverbookingPage() {
   useEffect(() => { load(); }, [status, caseType]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="No-show & overbooking"
         subtitle="Handle overbooking incidents and no-show charges across both rails. Money is in ₦ (kobo minor units); guest PII is masked."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="reservations" />
 
@@ -64,31 +65,31 @@ export default function StaysOverbookingPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>Reservation</th>
-                  <th style={th()}>Property</th>
-                  <th style={th()}>Rail</th>
-                  <th style={th()}>Case type</th>
-                  <th style={th()}>Status</th>
-                  <th style={th()}>Guest</th>
-                  <th style={th()}>Check-in</th>
-                  <th style={th()}>Amount</th>
-                  <th style={th()}>Detail</th>
-                  <th style={th()}>Created</th>
+                  <th style={thCell}>Reservation</th>
+                  <th style={thCell}>Property</th>
+                  <th style={thCell}>Rail</th>
+                  <th style={thCell}>Case type</th>
+                  <th style={thCell}>Status</th>
+                  <th style={thCell}>Guest</th>
+                  <th style={thCell}>Check-in</th>
+                  <th style={thCell}>Amount</th>
+                  <th style={thCell}>Detail</th>
+                  <th style={thCell}>Created</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((c) => (
                   <tr key={c.id}>
-                    <td style={td()}><code style={{ fontSize: '0.78rem', background: '#f3f4f6', padding: '0.1rem 0.35rem', borderRadius: '0.25rem' }}>{c.reservation_id}</code></td>
-                    <td style={td()}>{c.property_name}</td>
-                    <td style={td()}><Badge status={c.rail} /></td>
-                    <td style={td()}><Badge status={c.case_type} label={c.case_type.replace(/_/g, ' ')} /></td>
-                    <td style={td()}><Badge status={c.status} /></td>
-                    <td style={td()}>{c.guest_masked}</td>
-                    <td style={td()}>{fmtDate(c.check_in)}</td>
-                    <td style={td()}>{formatNaira(c.amount_kobo)} <span style={{ color: '#9ca3af', fontSize: '0.72rem' }}>{c.currency}</span></td>
-                    <td style={{ ...td(), maxWidth: 320 }}>{c.detail}</td>
-                    <td style={td()}>{timeAgo(c.created_at)}</td>
+                    <td style={tdCell}><code style={{ fontSize: '0.78rem', background: tint(colors.muted, 0.12), padding: '0.1rem 0.35rem', borderRadius: '0.25rem' }}>{c.reservation_id}</code></td>
+                    <td style={tdCell}>{c.property_name}</td>
+                    <td style={tdCell}><Badge status={c.rail} /></td>
+                    <td style={tdCell}><Badge status={c.case_type} label={c.case_type.replace(/_/g, ' ')} /></td>
+                    <td style={tdCell}><Badge status={c.status} /></td>
+                    <td style={tdCell}>{c.guest_masked}</td>
+                    <td style={tdCell}>{fmtDate(c.check_in)}</td>
+                    <td style={tdCell}>{formatNaira(c.amount_kobo)} <span style={{ color: colors.muted, fontSize: '0.72rem' }}>{c.currency}</span></td>
+                    <td style={{ ...tdCell, maxWidth: 320 }}>{c.detail}</td>
+                    <td style={tdCell}>{timeAgo(c.created_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -96,6 +97,6 @@ export default function StaysOverbookingPage() {
           </div>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

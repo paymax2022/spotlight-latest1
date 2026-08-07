@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { listEventApprovals, decideEvent } from '@/services/eventsAdminService';
 import type { EventApprovalItem, EventApprovalDecision } from '@/types/eventsAdmin';
 import { PageHeader, EventsTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, AuditNote, btn, btnPrimary, btnDanger, th, td, input, label, select, fmtDate } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 export default function EventApprovalPage() {
   const [rows, setRows] = useState<EventApprovalItem[]>([]);
@@ -72,8 +73,8 @@ export default function EventApprovalPage() {
               {rows.map((r) => (
                 <tr key={r.id}>
                   <td style={td()}>
-                    <Link href={`/admin/events/events/${r.id}`} style={{ color: '#340075', fontWeight: 600, textDecoration: 'none' }}>{r.title}</Link>
-                    <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.id} · {r.tiers_count} tiers{r.cashless_enabled ? ' · cashless' : ''}</div>
+                    <Link href={`/admin/events/events/${r.id}`} style={{ color: colors.primary, fontWeight: 600, textDecoration: 'none' }}>{r.title}</Link>
+                    <div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.id} · {r.tiers_count} tiers{r.cashless_enabled ? ' · cashless' : ''}</div>
                   </td>
                   <td style={td()}>{r.organiser_masked}</td>
                   <td style={td()}>{r.category}</td>
@@ -94,7 +95,7 @@ export default function EventApprovalPage() {
                       </div>
                     ) : r.status === 'approved' || r.status === 'live' ? (
                       <button style={btnDanger()} disabled={busy === r.id} onClick={() => decide(r, 'suspend')}>Suspend</button>
-                    ) : <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>—</span>}
+                    ) : <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span>}
                   </td>
                 </tr>
               ))}

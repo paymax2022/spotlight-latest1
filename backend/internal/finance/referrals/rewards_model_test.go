@@ -76,13 +76,13 @@ func TestComputeReward(t *testing.T) {
 		rate   float64
 		want   int64
 	}{
-		{100_000, 0.05, 5_000},    // ₦1,000 margin @ 5% = ₦50
-		{100_000, 0.08, 8_000},    // Growth
-		{100_000, 0.15, 15_000},   // Elite
-		{0, 0.05, 0},              // zero margin → zero reward (§4.1 no-op precondition)
-		{-500, 0.05, 0},           // negative margin → zero
-		{100_000, 0, 0},           // zero rate (count 0 / no tier) → zero
-		{333, 0.05, 16},           // floor(16.65) = 16 — never rounds up (fail-closed on cost)
+		{100_000, 0.05, 5_000},  // ₦1,000 margin @ 5% = ₦50
+		{100_000, 0.08, 8_000},  // Growth
+		{100_000, 0.15, 15_000}, // Elite
+		{0, 0.05, 0},            // zero margin → zero reward (§4.1 no-op precondition)
+		{-500, 0.05, 0},         // negative margin → zero
+		{100_000, 0, 0},         // zero rate (count 0 / no tier) → zero
+		{333, 0.05, 16},         // floor(16.65) = 16 — never rounds up (fail-closed on cost)
 	}
 	for _, c := range cases {
 		if got := referrals.ComputeReward(c.margin, c.rate); got != c.want {

@@ -6,10 +6,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { listOversightAnnouncements, listOversightDocuments } from '@/services/estateAdminService';
 import type { OversightAnnouncement, OversightDocument } from '@/types/estateAdmin';
-import {
-  PageHeader, EstateOversightTabs, Card, Badge, btn, th, td, timeAgo,
-  useEstatePermissions, ESTATE_ADMIN_PERMS, Restricted,
-} from '../_ui';
+import { EstateOversightTabs, Restricted, useEstatePermissions, ESTATE_ADMIN_PERMS, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const cap = (s: string) => s.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
 
 export default function ContentOversightPage() {
   const { can } = useEstatePermissions();
@@ -32,26 +32,26 @@ export default function ContentOversightPage() {
   useEffect(() => { void load(); }, [load]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Content oversight" subtitle="Announcements and documents across estates. Gated on estate.admin.content." action={<button onClick={() => void load()} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Content oversight" subtitle="Announcements and documents across estates. Gated on estate.admin.content." actions={<Button variant="outline" sm onClick={() => void load()}>Refresh</Button>} />
       <EstateOversightTabs active="content" />
       {!canView ? <Restricted perm="estate.admin.content" /> : (
         <>
-          {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-          {loading ? <p style={{ color: '#6b7280' }}>Loading content…</p> : (
+          {error && <p style={{ color: colors.danger }}>{error}</p>}
+          {loading ? <p style={{ color: colors.muted }}>Loading content…</p> : (
             <>
-              <Card title="Announcements">
-                {announcements.length === 0 ? <p style={{ color: '#6b7280' }}>No announcements.</p> : (
+              <Card title="Announcements" style={{ marginBottom: '1.25rem' }}>
+                {announcements.length === 0 ? <p style={{ color: colors.muted }}>No announcements.</p> : (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead><tr><th style={th()}>Estate</th><th style={th()}>Title</th><th style={th()}>Body</th><th style={th()}>Kind</th><th style={th()}>When</th></tr></thead>
+                    <thead><tr><th style={thCell}>Estate</th><th style={thCell}>Title</th><th style={thCell}>Body</th><th style={thCell}>Kind</th><th style={thCell}>When</th></tr></thead>
                     <tbody>
                       {announcements.map((a) => (
                         <tr key={a.id}>
-                          <td style={td()}>{a.estateId}</td>
-                          <td style={td()}><strong>{a.title}</strong></td>
-                          <td style={td()}>{a.body}</td>
-                          <td style={td()}><Badge status={a.kind === 'emergency' || a.kind === 'security' ? 'high' : a.kind === 'payment' ? 'medium' : 'low'} label={a.kind} /></td>
-                          <td style={td()}>{timeAgo(a.createdAt)}</td>
+                          <td style={tdCell}>{a.estateId}</td>
+                          <td style={tdCell}><strong>{a.title}</strong></td>
+                          <td style={tdCell}>{a.body}</td>
+                          <td style={tdCell}><Badge text={cap(a.kind)} color={a.kind === 'emergency' || a.kind === 'security' ? colors.danger : a.kind === 'payment' ? colors.warning : colors.info} /></td>
+                          <td style={tdCell}>{timeAgo(a.createdAt)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -60,18 +60,18 @@ export default function ContentOversightPage() {
               </Card>
 
               <Card title="Documents">
-                {documents.length === 0 ? <p style={{ color: '#6b7280' }}>No documents.</p> : (
+                {documents.length === 0 ? <p style={{ color: colors.muted }}>No documents.</p> : (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead><tr><th style={th()}>Estate</th><th style={th()}>Title</th><th style={th()}>Category</th><th style={th()}>Visibility</th><th style={th()}>Uploaded</th><th style={th()}>File</th></tr></thead>
+                    <thead><tr><th style={thCell}>Estate</th><th style={thCell}>Title</th><th style={thCell}>Category</th><th style={thCell}>Visibility</th><th style={thCell}>Uploaded</th><th style={thCell}>File</th></tr></thead>
                     <tbody>
                       {documents.map((d) => (
                         <tr key={d.id}>
-                          <td style={td()}>{d.estateId}</td>
-                          <td style={td()}><strong>{d.title}</strong></td>
-                          <td style={td()}>{d.category}</td>
-                          <td style={td()}><Badge status={d.restricted ? 'restricted' : 'active'} label={d.restricted ? 'Restricted' : 'Open'} /></td>
-                          <td style={td()}>{timeAgo(d.createdAt)}</td>
-                          <td style={td()}><a href={d.fileUrl} target="_blank" rel="noreferrer" style={{ color: '#1d4ed8', fontSize: '0.82rem' }}>Open →</a></td>
+                          <td style={tdCell}>{d.estateId}</td>
+                          <td style={tdCell}><strong>{d.title}</strong></td>
+                          <td style={tdCell}>{d.category}</td>
+                          <td style={tdCell}><Badge text={d.restricted ? 'Restricted' : 'Open'} color={d.restricted ? colors.danger : colors.success} /></td>
+                          <td style={tdCell}>{timeAgo(d.createdAt)}</td>
+                          <td style={tdCell}><a href={d.fileUrl} target="_blank" rel="noreferrer" style={{ color: colors.info, fontSize: '0.82rem' }}>Open →</a></td>
                         </tr>
                       ))}
                     </tbody>
@@ -82,6 +82,6 @@ export default function ContentOversightPage() {
           )}
         </>
       )}
-    </div>
+    </Page>
   );
 }

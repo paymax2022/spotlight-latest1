@@ -261,11 +261,11 @@ func (r *SessionSupabaseRepository) LastSuccessfulLogin(email string) (*domain.L
 		CreatedAt *time.Time     `json:"created_at"`
 	}
 	q := map[string]string{
-		"select":  "ip_address,location_metadata,created_at",
-		"email":   "eq." + strings.ToLower(strings.TrimSpace(email)),
-		"status":  "eq.success",
-		"order":   "created_at.desc",
-		"limit":   "1",
+		"select": "ip_address,location_metadata,created_at",
+		"email":  "eq." + strings.ToLower(strings.TrimSpace(email)),
+		"status": "eq.success",
+		"order":  "created_at.desc",
+		"limit":  "1",
 	}
 	if err := r.client.REST(http.MethodGet, "login_activity", q, nil, &rows); err != nil || len(rows) == 0 {
 		return nil, err

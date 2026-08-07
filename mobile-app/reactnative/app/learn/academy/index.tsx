@@ -44,7 +44,7 @@ export default function AcademyHome() {
         <ScrollView contentContainerStyle={styles.scroll}>
           <LinearGradient colors={Colors.gradientPurple} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.hero, shadow3]}>
             <View style={styles.heroIcon}><GraduationCap size={24} color={Colors.onPrimary} /></View>
-            <Text style={styles.heroTitle}>Spotlight Academy</Text>
+            <Text style={styles.heroTitle}>StudyHub</Text>
             <Text style={styles.heroSub}>Learn. Play. Earn. Pass your exams with edutainment lessons, CBT mocks and learn-to-earn rewards.</Text>
           </LinearGradient>
           <Pressable style={styles.cta} onPress={() => router.push('/learn/academy/onboarding/role')}>

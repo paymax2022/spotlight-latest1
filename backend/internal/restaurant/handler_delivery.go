@@ -2,208 +2,31 @@ package restaurant
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-// EarningsStatement → GET /restaurant/:id/earnings?from=YYYY-MM-DD&to=YYYY-MM-DD (owner).
-func (h *Handler) EarningsStatement(c *gin.Context) {
-	userID := c.GetString("user_id")
-	from, err := time.Parse("2006-01-02", c.DefaultQuery("from", time.Now().AddDate(0, 0, -30).Format("2006-01-02")))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "from must be YYYY-MM-DD"})
-		return
+// ownerErrStatus maps a store-management service error to an HTTP status: a
+// missing store/item/category is 404, everything else (wrong owner, validation)
+// is 403/forbidden — mirroring the menu handlers' fail-closed default.
+func ownerErrStatus(err error) int {
+	if strings.Contains(err.Error(), "not found") {
+		return http.StatusNotFound
 	}
-	to, err := time.Parse("2006-01-02", c.DefaultQuery("to", time.Now().Format("2006-01-02")))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "to must be YYYY-MM-DD"})
-		return
-	}
-	stmt, err := h.svc.EarningsStatement(c.Request.Context(), c.Param("id"), userID, from, to)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, stmt)
-}
-
-// ── Reviews & moderation ──────────────────────────────────────────────────────
-
-// ListReviews → GET /restaurant/:id/reviews (public; hidden excluded, rater anonymized).
-func (h *Handler) ListReviews(c *gin.Context) {
-	list, err := h.svc.ListReviews(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"reviews": list})
-}
-
-// AdminModerateReview → POST /api/restaurant/admin/reviews/:id/moderate (ops). Body {status}.
-func (h *Handler) AdminModerateReview(c *gin.Context) {
-	var body struct {
-		Status string `json:"status" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err := h.svc.ModerateReview(c.Request.Context(), c.Param("id"), body.Status); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
-
-// ── Saved delivery addresses (customer) ───────────────────────────────────────
-
-// ListAddresses → GET /restaurant/addresses.
-func (h *Handler) ListAddresses(c *gin.Context) {
-	list, err := h.svc.ListAddresses(c.Request.Context(), c.GetString("user_id"))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"addresses": list})
-}
-
-// AddAddress → POST /restaurant/addresses.
-func (h *Handler) AddAddress(c *gin.Context) {
-	var body SavedAddress
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	a, err := h.svc.AddAddress(c.Request.Context(), c.GetString("user_id"), body)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusCreated, a)
-}
-
-// SetDefaultAddress → PUT /restaurant/addresses/:id/default.
-func (h *Handler) SetDefaultAddress(c *gin.Context) {
-	if err := h.svc.SetDefaultAddress(c.Request.Context(), c.GetString("user_id"), c.Param("id")); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
-
-// DeleteAddress → DELETE /restaurant/addresses/:id.
-func (h *Handler) DeleteAddress(c *gin.Context) {
-	if err := h.svc.DeleteAddress(c.Request.Context(), c.GetString("user_id"), c.Param("id")); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	return http.StatusForbidden
 }
 
 // ── Reads ─────────────────────────────────────────────────────────────────────
 
 // ListRestaurants → GET /restaurant (discovery list of open restaurants).
-// ListRestaurants → GET /restaurant. With no query params it returns the legacy open
-// listing (newest first). With any search/filter/sort/paging param it runs discovery
-// search: ?q=&cuisine=&min_rating=&open_now=&near_lat=&near_lng=&radius_km=&sort=&limit=&offset=.
 func (h *Handler) ListRestaurants(c *gin.Context) {
-	p, hasParams := parseSearchParams(c)
-	if !hasParams {
-		list, err := h.svc.ListOpenRestaurants(c.Request.Context())
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"restaurants": list})
-		return
-	}
-	list, err := h.svc.SearchRestaurants(c.Request.Context(), p)
+	list, err := h.svc.ListOpenRestaurants(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"restaurants": list})
-}
-
-// parseSearchParams reads the discovery query params off the request, returning the
-// parsed params and whether ANY were present (so a bare GET keeps legacy behavior).
-// near_lat/near_lng only activate when BOTH parse as valid floats.
-func parseSearchParams(c *gin.Context) (SearchParams, bool) {
-	var p SearchParams
-	any := false
-	if v := c.Query("q"); v != "" {
-		p.Query = v
-		any = true
-	}
-	if v := c.Query("cuisine"); v != "" {
-		p.Cuisine = v
-		any = true
-	}
-	if v := c.Query("dietary"); v != "" {
-		p.DietaryTags = strings.Split(v, ",")
-		any = true
-	}
-	if v := c.Query("min_rating"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			p.MinRating = f
-			any = true
-		}
-	}
-	if v := c.Query("open_now"); v == "true" || v == "1" {
-		p.OpenNow = true
-		any = true
-	}
-	latS, lngS := c.Query("near_lat"), c.Query("near_lng")
-	if latS != "" && lngS != "" {
-		if lat, err1 := strconv.ParseFloat(latS, 64); err1 == nil {
-			if lng, err2 := strconv.ParseFloat(lngS, 64); err2 == nil {
-				p.NearLat, p.NearLng = &lat, &lng
-				any = true
-			}
-		}
-	}
-	if v := c.Query("radius_km"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			p.RadiusKm = f
-			any = true
-		}
-	}
-	if v := c.Query("sort"); v != "" {
-		p.Sort = v
-		any = true
-	}
-	if v := c.Query("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			p.Limit = n
-			any = true
-		}
-	}
-	if v := c.Query("offset"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			p.Offset = n
-			any = true
-		}
-	}
-	return p, any
-}
-
-// UpdateRestaurantProfile → PATCH /restaurant/:id (owner). Sets discovery fields
-// (cuisine / description / logo).
-func (h *Handler) UpdateRestaurantProfile(c *gin.Context) {
-	userID := c.GetString("user_id")
-	var req UpdateProfileRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err := h.svc.UpdateRestaurantProfile(c.Request.Context(), c.Param("id"), userID, req); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 // GetRestaurant → GET /restaurant/:id (restaurant detail + menu).
@@ -291,156 +114,82 @@ func (h *Handler) UpdateItem(c *gin.Context) {
 	c.JSON(http.StatusOK, it)
 }
 
-// ── Menu-item modifiers ───────────────────────────────────────────────────────
+// ── Store management (owner only) ─────────────────────────────────────────────
 
-// ListItemModifierGroups → GET /restaurant/:id/menu/items/:itemId/modifier-groups.
-// Public read for clients rendering an item's options.
-func (h *Handler) ListItemModifierGroups(c *gin.Context) {
-	groups, err := h.svc.ListItemModifierGroups(c.Request.Context(), c.Param("itemId"))
+// Earnings → GET /restaurant/earnings (the caller's food-delivery earnings).
+func (h *Handler) Earnings(c *gin.Context) {
+	userID := c.GetString("user_id")
+	e, err := h.svc.GetMerchantEarnings(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"groups": groups})
+	c.JSON(http.StatusOK, gin.H{"data": e})
 }
 
-// CreateModifierGroup → POST /restaurant/:id/menu/items/:itemId/modifier-groups (owner).
-func (h *Handler) CreateModifierGroup(c *gin.Context) {
+// MyRestaurants → GET /restaurant/mine (the caller's own stores).
+func (h *Handler) MyRestaurants(c *gin.Context) {
 	userID := c.GetString("user_id")
-	var req CreateModifierGroupRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	g, err := h.svc.CreateModifierGroup(c.Request.Context(), c.Param("id"), userID, c.Param("itemId"), req)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusCreated, g)
-}
-
-// AddModifier → POST /restaurant/:id/menu/modifier-groups/:groupId/modifiers (owner).
-func (h *Handler) AddModifier(c *gin.Context) {
-	userID := c.GetString("user_id")
-	var req AddModifierRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	m, err := h.svc.AddModifier(c.Request.Context(), c.Param("id"), userID, c.Param("groupId"), req)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusCreated, m)
-}
-
-// ── Promos ────────────────────────────────────────────────────────────────────
-
-// CreatePromo → POST /restaurant/:id/promos (owner). Creates a restaurant-funded promo.
-func (h *Handler) CreatePromo(c *gin.Context) {
-	userID := c.GetString("user_id")
-	var req CreatePromoRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	p, err := h.svc.CreatePromo(c.Request.Context(), c.Param("id"), userID, req)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusCreated, p)
-}
-
-// AdminSetPricingConfig → PUT /api/restaurant/admin/pricing-config (ops). Sets a
-// restaurant's service-fee + surge basis points.
-func (h *Handler) AdminSetPricingConfig(c *gin.Context) {
-	var body struct {
-		RestaurantID string `json:"restaurant_id" binding:"required"`
-		PricingConfig
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err := h.svc.SetPricingConfig(c.Request.Context(), body.RestaurantID, body.PricingConfig); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
-
-// SetHoliday → PUT /restaurant/:id/holidays (owner). Upserts a per-date override.
-func (h *Handler) SetHoliday(c *gin.Context) {
-	userID := c.GetString("user_id")
-	var body HolidayHour
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err := h.svc.SetHoliday(c.Request.Context(), c.Param("id"), userID, body); err != nil {
-		c.JSON(kybErrCode(err), gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
-
-// DeleteHoliday → DELETE /restaurant/:id/holidays/:date (owner).
-func (h *Handler) DeleteHoliday(c *gin.Context) {
-	userID := c.GetString("user_id")
-	if err := h.svc.DeleteHoliday(c.Request.Context(), c.Param("id"), userID, c.Param("date")); err != nil {
-		c.JSON(kybErrCode(err), gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
-
-// AdminSweepUnaccepted → POST /api/restaurant/admin/sweep-unaccepted (ops). Auto-cancels
-// + refunds orders never accepted within their restaurant's accept-SLA.
-func (h *Handler) AdminSweepUnaccepted(c *gin.Context) {
-	n, err := h.svc.SweepUnacceptedOrders(c.Request.Context(), time.Now())
+	list, err := h.svc.ListMyRestaurants(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"swept": n})
+	c.JSON(http.StatusOK, gin.H{"data": list})
 }
 
-// ── Business hours ────────────────────────────────────────────────────────────
-
-// GetBusinessHours → GET /restaurant/:id/hours. Public: weekly schedule + open-now.
-func (h *Handler) GetBusinessHours(c *gin.Context) {
-	st, err := h.svc.GetBusinessHours(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, st)
-}
-
-// SetBusinessHours → PUT /restaurant/:id/hours (owner). Replaces the whole schedule.
-func (h *Handler) SetBusinessHours(c *gin.Context) {
+// UpdateRestaurant → PATCH /restaurant/:id (edit store profile).
+func (h *Handler) UpdateRestaurant(c *gin.Context) {
 	userID := c.GetString("user_id")
-	var body struct {
-		Windows []BusinessHourInput `json:"windows"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var req UpdateRestaurantRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	hours, err := h.svc.SetBusinessHours(c.Request.Context(), c.Param("id"), userID, body.Windows)
+	r, err := h.svc.UpdateRestaurant(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
-		// Owner-check failures are 403; validation failures are 400.
-		code := http.StatusBadRequest
-		if err.Error() == "restaurant: only the owner may manage the menu" || err.Error() == "restaurant: not found" {
-			code = http.StatusForbidden
-		}
-		c.JSON(code, gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"windows": hours})
+	c.JSON(http.StatusOK, r)
+}
+
+// SetAvailability → PATCH /restaurant/:id/availability (merchant open/close).
+func (h *Handler) SetAvailability(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var body struct {
+		IsOpen *bool `json:"is_open" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.IsOpen == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "is_open is required"})
+		return
+	}
+	r, err := h.svc.SetAvailability(c.Request.Context(), c.Param("id"), userID, *body.IsOpen)
+	if err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, r)
+}
+
+// DeleteItem → DELETE /restaurant/:id/menu/items/:itemId.
+func (h *Handler) DeleteItem(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if err := h.svc.DeleteItem(c.Request.Context(), c.Param("id"), userID, c.Param("itemId")); err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
+}
+
+// DeleteCategory → DELETE /restaurant/:id/menu/categories/:categoryId.
+func (h *Handler) DeleteCategory(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if err := h.svc.DeleteCategory(c.Request.Context(), c.Param("id"), userID, c.Param("categoryId")); err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
 
 // ── Rider / delivery lifecycle ────────────────────────────────────────────────

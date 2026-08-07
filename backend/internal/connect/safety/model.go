@@ -37,6 +37,26 @@ func ValidCaseResolution(r string) bool { return caseResolutions[r] }
 // ValidCaseSeverity reports whether s is an allowed severity.
 func ValidCaseSeverity(s string) bool { return caseSeverities[s] }
 
+// SeverityForReport derives the INITIAL case severity from a member report's type
+// so that child-safety and potential-CSAM categories AUTO-ESCALATE at intake
+// (invariant 6: "critical reports (CSAM, threats) escalate"; TS-003 severity
+// routing) instead of being filed as normal and waiting for manual triage. Admins
+// can still lower/raise severity later via UpdateCase. Pure + deterministic so it
+// is unit-tested without a DB; fail-safe default is "normal" for unknown types.
+func SeverityForReport(caseType string) string {
+	switch caseType {
+	case "underage", "inappropriate_media":
+		// Minor safety / potential CSAM: highest priority — hard-escalate to the
+		// top of the moderation queue immediately.
+		return "critical"
+	case "safety":
+		// Threats / violence / self-harm signals: elevated.
+		return "high"
+	default:
+		return "normal"
+	}
+}
+
 // Case mirrors a row of public.connect_cases. Nullable columns use *string so a
 // SQL NULL scans cleanly (same pattern as events.Ticket.ScannedAt).
 type Case struct {

@@ -7,6 +7,7 @@ import {
   PageHeader, MapsTabs, Card, Badge, DisclosureNote, AuditNote, StateBlock,
   btn, btnPrimary, btnDanger, th, td, input, label, fmtDate,
 } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 function truncate(s: string, n = 80): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
@@ -80,7 +81,7 @@ export default function MapsContributionsPage() {
                 <tr key={c.id}>
                   <td style={td()}>
                     <strong style={{ textTransform: 'capitalize' }}>{c.type.replace(/_/g, ' ')}</strong>
-                    <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{c.id}</div>
+                    <div style={{ fontSize: '0.72rem', color: colors.muted }}>{c.id}</div>
                   </td>
                   <td style={td()}><code style={{ fontSize: '0.78rem' }}>{c.h3_cell}</code></td>
                   <td style={td()}>
@@ -109,7 +110,7 @@ export default function MapsContributionsPage() {
           </div>
 
           <h3 style={{ fontSize: '0.9rem', fontWeight: 700, margin: '0 0 0.5rem' }}>Geometry (GeoJSON)</h3>
-          <pre style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '0.375rem', padding: '0.6rem', fontSize: '0.72rem', overflowX: 'auto', margin: '0 0 1rem' }}>{open.geometry}</pre>
+          <pre style={{ background: '#f9fafb', border: `1px solid ${colors.border}`, borderRadius: '0.375rem', padding: '0.6rem', fontSize: '0.72rem', overflowX: 'auto', margin: '0 0 1rem' }}>{open.geometry}</pre>
 
           {!open.pii_stripped && (
             <p style={{ color: '#b91c1c', fontSize: '0.78rem', marginBottom: '0.75rem' }}>

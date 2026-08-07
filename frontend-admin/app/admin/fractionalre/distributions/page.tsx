@@ -6,9 +6,17 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { listDistributions, scheduleDistribution, listAssets } from '@/services/fractionalreAdminService';
 import type { AdminDistribution, AdminAsset, ScheduleDistributionInput } from '@/types/fractionalreAdmin';
-import { PageHeader, FractionalReTabs, Card, Badge, btn, btnPrimary, th, td, input, label, money, timeAgo } from '../_ui';
+import { FractionalReTabs, money, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const SOURCES: ScheduleDistributionInput['source'][] = ['rental_income', 'sale_proceeds', 'interest', 'other'];
+
+const STATUS_COLOR: Record<string, string> = {
+  draft: colors.secondary, calculated: colors.warning, pendingapproval: colors.warning, executing: colors.warning,
+  distributing: colors.warning, completed: colors.success, partiallyfailed: colors.danger, refunding: colors.warning,
+};
+
+const labelStyle = { fontSize: '0.78rem', fontWeight: 600, color: colors.text, display: 'block', marginBottom: 4 } as const;
 
 export default function DistributionsPage() {
   const [dist, setDist] = useState<AdminDistribution[]>([]);
@@ -36,39 +44,39 @@ export default function DistributionsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Distributions" subtitle="Schedule payout runs; preview, then maker-checker approval." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Distributions" subtitle="Schedule payout runs; preview, then maker-checker approval." actions={<Button onClick={load}>Refresh</Button>} />
       <FractionalReTabs active="distributions" />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
-      {msg && <p style={{ color: '#15803d' }}>{msg}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      {msg && <p style={{ color: colors.success }}>{msg}</p>}
 
       <Card title="Schedule a distribution run">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.8rem', alignItems: 'end' }}>
-          <div><label style={label()}>Asset</label><select value={form.assetId} onChange={(e) => setForm({ ...form, assetId: e.target.value })} style={input()}><option value="">Select…</option>{assets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div>
-          <div><label style={label()}>Period</label><input value={form.period} onChange={(e) => setForm({ ...form, period: e.target.value })} placeholder="2026-Q3" style={input()} /></div>
-          <div><label style={label()}>Gross amount (₦)</label><input value={form.grossNaira} onChange={(e) => setForm({ ...form, grossNaira: e.target.value })} placeholder="38500000" style={input()} /></div>
-          <div><label style={label()}>Source</label><select value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value as ScheduleDistributionInput['source'] })} style={input()}>{SOURCES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}</select></div>
+          <div><label style={labelStyle}>Asset</label><select value={form.assetId} onChange={(e) => setForm({ ...form, assetId: e.target.value })} className="vx-input"><option value="">Select…</option>{assets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div>
+          <div><label style={labelStyle}>Period</label><Input value={form.period} onChange={(e) => setForm({ ...form, period: e.target.value })} placeholder="2026-Q3" /></div>
+          <div><label style={labelStyle}>Gross amount (₦)</label><Input value={form.grossNaira} onChange={(e) => setForm({ ...form, grossNaira: e.target.value })} placeholder="38500000" /></div>
+          <div><label style={labelStyle}>Source</label><select value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value as ScheduleDistributionInput['source'] })} className="vx-input">{SOURCES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}</select></div>
         </div>
-        <button onClick={schedule} disabled={working || !form.assetId || !form.period || !form.grossNaira} style={{ ...btnPrimary(), marginTop: '0.8rem', opacity: working || !form.assetId || !form.period || !form.grossNaira ? 0.6 : 1 }}>{working ? 'Scheduling…' : 'Schedule run'}</button>
+        <Button variant="primary" onClick={schedule} disabled={working || !form.assetId || !form.period || !form.grossNaira} style={{ marginTop: '0.8rem' }}>{working ? 'Scheduling…' : 'Schedule run'}</Button>
       </Card>
 
       <Card title="Distribution history">
-        {loading ? <p style={{ color: '#6b7280' }}>Loading…</p> : dist.length === 0 ? <p style={{ color: '#6b7280' }}>No runs.</p> : (
+        {loading ? <p style={{ color: colors.muted }}>Loading…</p> : dist.length === 0 ? <p style={{ color: colors.muted }}>No runs.</p> : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Asset</th><th style={th()}>Period</th><th style={th()}>Gross</th><th style={th()}>Source</th><th style={th()}>Status</th><th style={th()}>Maker / Checker</th><th style={th()}>Created</th><th style={th()} /></tr></thead>
+            <thead><tr><th style={thCell}>Asset</th><th style={thCell}>Period</th><th style={thCell}>Gross</th><th style={thCell}>Source</th><th style={thCell}>Status</th><th style={thCell}>Maker / Checker</th><th style={thCell}>Created</th><th style={thCell} /></tr></thead>
             <tbody>{dist.map((d) => (
               <tr key={d.id}>
-                <td style={td()}>{d.assetName}</td><td style={td()}>{d.period}</td><td style={td()}>{money(d.grossAmountKobo)}</td>
-                <td style={{ ...td(), textTransform: 'capitalize' }}>{d.source.replace(/_/g, ' ')}</td>
-                <td style={td()}><Badge status={d.status} /></td>
-                <td style={td()}>{d.maker ?? '—'} / {d.checker ?? '—'}</td>
-                <td style={td()}>{timeAgo(d.createdAt)}</td>
-                <td style={td()}><Link href={`/admin/fractionalre/distributions/${d.id}`} style={{ color: '#1d4ed8' }}>Open →</Link></td>
+                <td style={tdCell}>{d.assetName}</td><td style={tdCell}>{d.period}</td><td style={tdCell}>{money(d.grossAmountKobo)}</td>
+                <td style={{ ...tdCell, textTransform: 'capitalize' }}>{d.source.replace(/_/g, ' ')}</td>
+                <td style={tdCell}><Badge text={d.status.replace(/_/g, ' ')} color={STATUS_COLOR[d.status.toLowerCase()] ?? colors.secondary} /></td>
+                <td style={tdCell}>{d.maker ?? '—'} / {d.checker ?? '—'}</td>
+                <td style={tdCell}>{timeAgo(d.createdAt)}</td>
+                <td style={tdCell}><Link href={`/admin/fractionalre/distributions/${d.id}`} style={{ color: colors.info }}>Open →</Link></td>
               </tr>
             ))}</tbody>
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

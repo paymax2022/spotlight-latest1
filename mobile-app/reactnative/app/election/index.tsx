@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { Vote, Users, CheckCircle2, Circle, ShieldAlert, Clock, ChevronRight, Settings2, Receipt } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -63,21 +64,16 @@ export default function ElectionScreen() {
   const allVoted = votedCount === e.positions.length;
   const eligible = eligibility.data?.eligible ?? true;
 
-  const submit = (position: ElectionPosition) => {
+  const submit = async (position: ElectionPosition) => {
     const candidateId = selected[position.id];
     if (!candidateId) return;
     const candidate = position.candidates.find((c) => c.id === candidateId);
-    Alert.alert('Confirm your vote', `Vote ${candidate?.name} for ${position.title}? This can't be changed.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Cast vote',
-        onPress: () =>
-          castVote.mutate(
-            { electionId: e.id, positionId: position.id, candidateId },
-            { onError: (err) => Alert.alert('Could not vote', err instanceof Error ? err.message : 'Please try again.') },
-          ),
-      },
-    ]);
+    const ok = await confirmAsync({ title: 'Confirm your vote', message: `Vote ${candidate?.name} for ${position.title}? This can't be changed.`, confirmLabel: 'Cast vote' });
+    if (!ok) return;
+    castVote.mutate(
+      { electionId: e.id, positionId: position.id, candidateId },
+      { onError: (err) => alertAsync({ title: 'Could not vote', message: err instanceof Error ? err.message : 'Please try again.' }) },
+    );
   };
 
   return (

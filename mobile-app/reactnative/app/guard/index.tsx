@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ScanLine, Users, ClipboardList, Siren, CloudUpload, DoorOpen, LogOut, UserPlus, ClipboardCheck, Search, ShieldAlert, TriangleAlert, FileWarning, Car, BarChart3, TimerOff } from 'lucide-react-native';
@@ -13,6 +13,7 @@ import StateView from '@/components/StateView';
 import { VisitorColors } from '@/features/visitor/constants/visitor.constants';
 import { useExpectedVisitors, useGateSession, usePendingSyncCount, useSyncPendingLogs } from '@/features/visitor/hooks/useVisitor';
 import { formatTime } from '@/features/visitor/utils/visitorFormatters';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 
 export default function GuardDashboard() {
   const session = useGateSession();
@@ -42,8 +43,8 @@ export default function GuardDashboard() {
 
   const runSync = () => {
     sync.mutate(undefined, {
-      onSuccess: (n) => Alert.alert('Sync complete', n > 0 ? `${n} pending log${n === 1 ? '' : 's'} synced.` : 'Nothing to sync.'),
-      onError: () => Alert.alert('Sync failed', 'Will retry when connection is stable.'),
+      onSuccess: (n) => alertAsync({ title: 'Sync complete', message: n > 0 ? `${n} pending log${n === 1 ? '' : 's'} synced.` : 'Nothing to sync.' }),
+      onError: () => alertAsync({ title: 'Sync failed', message: 'Will retry when connection is stable.' }),
     });
   };
 
@@ -114,7 +115,7 @@ export default function GuardDashboard() {
 
         {/* Panic (VM-217 P0) */}
         <Pressable
-          onPress={() => Alert.alert('Security escalation', 'This raises an immediate panic alert to estate security and admin.', [{ text: 'Cancel', style: 'cancel' }, { text: 'Raise alert', style: 'destructive' }])}
+          onPress={async () => { await confirmAsync({ title: 'Security escalation', message: 'This raises an immediate panic alert to estate security and admin.', confirmLabel: 'Raise alert', destructive: true }); }}
           accessibilityRole="button"
           style={({ pressed }) => [styles.panic, pressed && styles.pressed]}
         >

@@ -7,12 +7,12 @@ import (
 // Register wires the admin reconciliation workbench + commission ledger view.
 //
 //   - admin (per-route RBAC):
-//       POST /reconciliation/match            (insurance.reconciliation.resolve)
-//       GET  /reconciliation                  (insurance.reconciliation.view)
-//       POST /reconciliation/:id/resolve      (insurance.reconciliation.resolve)
-//       GET  /commission                      (insurance.commission.view)
-//       POST /commission/:policy_id/confirm   (insurance.reconciliation.resolve)
-//       POST /commission/:policy_id/reverse   (insurance.reconciliation.resolve)
+//     POST /reconciliation/match            (insurance.reconciliation.resolve)
+//     GET  /reconciliation                  (insurance.reconciliation.view)
+//     POST /reconciliation/:id/resolve      (insurance.reconciliation.resolve)
+//     GET  /commission                      (insurance.commission.view)
+//     POST /commission/:policy_id/confirm   (insurance.reconciliation.resolve)
+//     POST /commission/:policy_id/reverse   (insurance.reconciliation.resolve)
 func Register(admin *gin.RouterGroup, h *Handler, guard func(permission string) gin.HandlerFunc) {
 	rg := admin.Group("/reconciliation")
 	rg.GET("", guard("insurance.reconciliation.view"), h.ListRecords)

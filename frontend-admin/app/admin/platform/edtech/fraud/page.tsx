@@ -10,6 +10,7 @@ import {
   PlatformGuard, PlatformTabs, formatNaira, timeAgo,
   PageHeader, Card, Badge, Kpi, StateBlock, DisclosureNote, AuditNote, btn, btnPrimary, th, td, input, select, label,
 } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 const KIND_LABEL: Record<string, string> = { anomalous_payment: 'Anomalous payment', disputed_promotion: 'Disputed promotion', chargeback: 'Chargeback' };
 
@@ -46,19 +47,19 @@ export default function FraudRiskPage() {
         <PageHeader title="Fraud & Risk Queue" subtitle="Anomalous payments, disputed promotions and chargebacks flagged across every school. Triage, investigate, action or dismiss." action={<button onClick={load} style={btn()}>Refresh</button>} />
         <PlatformTabs active="fraud" />
         <DisclosureNote>Requires <code>platform_edtech_admin</code>. Disputed-promotion cases must respect SF-3 (two approvals) — a promotion recorded without a second approval is itself a defect, not a valid state.</DisclosureNote>
-        {notice ? <div style={{ marginBottom: '1rem', color: '#5b21b6' }}>{notice}</div> : null}
+        {notice ? <div style={{ marginBottom: '1rem', color: colors.primary }}>{notice}</div> : null}
 
         <StateBlock loading={loading} error={error} empty={false}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <Kpi label="Open / investigating" value={open.length.toString()} accent={open.length ? '#b91c1c' : '#15803d'} />
-            <Kpi label="Critical" value={cases.filter((c) => c.severity === 'critical' && (c.status === 'open' || c.status === 'investigating')).length.toString()} accent="#b91c1c" />
-            <Kpi label="Amount at risk" value={formatNaira(open.reduce((s, c) => s + (c.amount_kobo ?? 0), 0))} accent="#9a3412" />
+            <Kpi label="Open / investigating" value={open.length.toString()} accent={open.length ? colors.danger : colors.success} />
+            <Kpi label="Critical" value={cases.filter((c) => c.severity === 'critical' && (c.status === 'open' || c.status === 'investigating')).length.toString()} accent={colors.danger} />
+            <Kpi label="Amount at risk" value={formatNaira(open.reduce((s, c) => s + (c.amount_kobo ?? 0), 0))} accent={colors.warning} />
           </div>
 
           {cases.map((c) => (
             <Card key={c.id} title={`${KIND_LABEL[c.kind]} — ${c.school_name}`} right={<span style={{ display: 'flex', gap: '0.4rem' }}><Badge status={c.severity} /><Badge status={c.status} /></span>}>
-              <p style={{ margin: '0 0 0.5rem', fontSize: '0.88rem', color: '#374151' }}>{c.summary}</p>
-              <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>{c.amount_kobo ? `${formatNaira(c.amount_kobo)} · ` : ''}opened {timeAgo(c.opened_at)} · {c.id}</div>
+              <p style={{ margin: '0 0 0.5rem', fontSize: '0.88rem', color: colors.text }}>{c.summary}</p>
+              <div style={{ fontSize: '0.78rem', color: colors.muted }}>{c.amount_kobo ? `${formatNaira(c.amount_kobo)} · ` : ''}opened {timeAgo(c.opened_at)} · {c.id}</div>
               {c.status !== 'actioned' && c.status !== 'dismissed' ? (
                 <div style={{ borderTop: '1px solid #f3f4f6', marginTop: '0.75rem', paddingTop: '0.75rem', display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: '0.6rem', alignItems: 'end' }}>
                   <div><span style={label()}>Set status</span>

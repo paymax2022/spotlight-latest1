@@ -6,10 +6,11 @@
 // TBD (e.g. GET /kyc/aml-hits).
 
 import { PageHeader, Card, th, ScaffoldNotice } from '../_ui';
+import { Page, colors } from '@/components/ui/vuexy';
 
 export default function KycAmlQueuePage() {
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader
         title="AML / PEP Hits Queue (AK4)"
         subtitle="Screening hits with match detail; disposition (clear / escalate). RBAC: finance.admin.kyc (Compliance)."
@@ -33,11 +34,11 @@ export default function KycAmlQueuePage() {
               </tr>
             </thead>
             <tbody>
-              <tr><td colSpan={6} style={{ padding: '0.75rem 0.5rem', color: '#6b7280', fontSize: '0.85rem' }}>No open AML / PEP hits.</td></tr>
+              <tr><td colSpan={6} style={{ padding: '0.75rem 0.5rem', color: colors.muted, fontSize: '0.85rem' }}>No open AML / PEP hits.</td></tr>
             </tbody>
           </table>
         </div>
       </Card>
-    </div>
+    </Page>
   );
 }

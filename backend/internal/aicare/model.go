@@ -6,18 +6,18 @@ import "time"
 type SessionStatus string
 
 const (
-	SessionOpen       SessionStatus = "open"
-	SessionEscalated  SessionStatus = "escalated"
-	SessionResolved   SessionStatus = "resolved"
+	SessionOpen      SessionStatus = "open"
+	SessionEscalated SessionStatus = "escalated"
+	SessionResolved  SessionStatus = "resolved"
 )
 
 // MessageRole identifies who sent a message.
 type MessageRole string
 
 const (
-	RoleUser   MessageRole = "user"
-	RoleAI     MessageRole = "ai"
-	RoleAgent  MessageRole = "agent"
+	RoleUser  MessageRole = "user"
+	RoleAI    MessageRole = "ai"
+	RoleAgent MessageRole = "agent"
 )
 
 // Session is a customer support conversation.

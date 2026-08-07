@@ -63,9 +63,8 @@ function txToActivity(tx: Transaction): Activity {
 const FINANCIAL = SERVICE_MODULES.filter((m) => m.category === 'financial');
 const UTILITY   = SERVICE_MODULES.filter((m) => m.category === 'utility');
 const LIFESTYLE = SERVICE_MODULES.filter((m) => m.category === 'lifestyle');
-// Invest & grow — stocks, crypto, real-estate, Spotlight Wealth, and Invest AI
-// (the AI trading/education assistant). Excludes 'academy' (StudyHub).
-const INVEST    = SERVICE_MODULES.filter((m) => m.category === 'investment' && m.id !== 'academy');
+// StudyHub — the EdTech learning module (distinct from the Education utility bill).
+const LEARN     = SERVICE_MODULES.filter((m) => m.id === 'academy');
 
 function SubCategoryLabel({ label }: { label: string }) {
   return (
@@ -150,8 +149,8 @@ export default function HomeScreen() {
           <SubCategoryLabel label="Lifestyle" />
           <ModuleGrid modules={LIFESTYLE} />
           <View style={styles.divider} />
-          <SubCategoryLabel label="Invest & Grow" />
-          <ModuleGrid modules={INVEST} />
+          <SubCategoryLabel label="Learn" />
+          <ModuleGrid modules={LEARN} />
         </View>
 
         <SectionHeader title="Featured Services" style={{ marginTop: Spacing.lg }} />

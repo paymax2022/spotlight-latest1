@@ -20,9 +20,9 @@ import (
 // Commit / Rollback on it, which are no-ops here.
 type stubTx struct{}
 
-func (stubTx) Begin(context.Context) (pgx.Tx, error)            { return stubTx{}, nil }
-func (stubTx) Commit(context.Context) error                     { return nil }
-func (stubTx) Rollback(context.Context) error                   { return nil }
+func (stubTx) Begin(context.Context) (pgx.Tx, error) { return stubTx{}, nil }
+func (stubTx) Commit(context.Context) error          { return nil }
+func (stubTx) Rollback(context.Context) error        { return nil }
 func (stubTx) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
 	return 0, nil
 }
@@ -49,8 +49,8 @@ type fakeStore struct {
 	catalog       map[string]*CatalogItem
 	redemptions   map[string]*Redemption
 
-	inserts       int // ledger inserts attempted that succeeded
-	spentApplied  int64
+	inserts          int // ledger inserts attempted that succeeded
+	spentApplied     int64
 	insertWalletRefs int
 }
 
@@ -138,6 +138,9 @@ func (f *fakeStore) ListUserEntries(context.Context, string, int) ([]LedgerEntry
 	return out, nil
 }
 func (f *fakeStore) ListPoolEntries(context.Context, string, int) ([]LedgerEntry, error) {
+	return nil, nil
+}
+func (f *fakeStore) ListAllEntries(context.Context, int) ([]LedgerEntry, error) {
 	return nil, nil
 }
 

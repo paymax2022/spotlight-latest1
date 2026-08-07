@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, Pressable, Platform, Linking, Alert,
+  View, Text, ScrollView, StyleSheet, Pressable, Platform, Linking,
 } from 'react-native';
+import { alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Wallet, CreditCard, ShieldCheck } from 'lucide-react-native';
@@ -15,7 +16,6 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useDraft, useInitiateRegistrationPayment } from '@/features/registration/hooks/useRegistration';
 import { newRegistrationIdempotencyKey } from '@/features/registration/api/registration.client';
-import { useGatewayCheckout } from '@/features/payments';
 import { useAuthStore } from '@/store/authStore';
 import type { RegistrationPaymentMethod } from '@/features/registration/types/registration.types';
 
@@ -40,12 +40,6 @@ export default function RegistrationPaymentScreen() {
   const draftQuery = useDraft(appId);
   const initiate   = useInitiateRegistrationPayment(appId);
   const user       = useAuthStore((s) => s.user);
-  // In-app Paystack SDK checkout (flag-gated); falls back to the legacy hosted
-  // redirect when off, and to a direct navigate for the mock (no auth URL).
-  const paystackCheckout = useGatewayCheckout();
-  React.useEffect(() => {
-    if (paystackCheckout.error) Alert.alert('Payment failed', paystackCheckout.error);
-  }, [paystackCheckout.error]);
 
   const [selected, setSelected] = useState<RegistrationPaymentMethod>('PAYSTACK');
   // One key per screen visit (not per tap) — a double-tap or a network-level
@@ -75,53 +69,32 @@ export default function RegistrationPaymentScreen() {
     );
   }
 
-  const runInitiate = (method: RegistrationPaymentMethod) =>
-    initiate.mutateAsync({
-      amountKobo: feeKobo,
-      method,
-      email: user?.email ?? '',
-      name:  user?.fullName ?? '',
-      idempotencyKey: idempotencyKeyRef.current,
-    });
-
-  const goProcessing = (transactionId: string | undefined, reference: string) => {
-    const params = `transactionId=${encodeURIComponent(transactionId ?? '')}&reference=${encodeURIComponent(reference)}`;
-    router.push(`/registration/${appId}/payment-processing?${params}` as never);
-  };
-
   const handlePay = async () => {
-    if (selected === 'WALLET') {
-      try {
-        await runInitiate('WALLET');
+    try {
+      const result = await initiate.mutateAsync({
+        amountKobo: feeKobo,
+        method: selected,
+        email: user?.email ?? '',
+        name:  user?.fullName ?? '',
+        idempotencyKey: idempotencyKeyRef.current,
+      });
+
+      if (selected === 'WALLET') {
         // Wallet: instant settlement — go straight to submit review.
         router.replace(`/registration/${appId}/submit` as never);
-      } catch (e: any) {
-        const msg = e?.response?.data?.error ?? e?.message ?? 'Could not start payment. Please try again.';
-        Alert.alert('Payment failed', msg);
+        return;
       }
-      return;
-    }
 
-    // Paystack: resume the server-initialized transaction in the in-app SDK, then
-    // go to processing/verification. Fallback opens the hosted checkout (flag off)
-    // or navigates straight through (mock, no authorization_url).
-    await paystackCheckout.start({
-      domain: 'registration',
-      email: user?.email ?? undefined,
-      initialize: async () => {
-        const result = await runInitiate('PAYSTACK');
-        return {
-          authorizationUrl: result.authorizationUrl ?? '',
-          reference: result.reference,
-          transactionId: result.transactionId,
-        };
-      },
-      onResolved: (res) => goProcessing(res.transactionId, res.reference),
-      onFallback: async (res) => {
-        if (res.authorizationUrl) await Linking.openURL(res.authorizationUrl);
-        goProcessing(res.transactionId, res.reference);
-      },
-    });
+      // Paystack: open hosted checkout, then navigate to processing/verification.
+      const params = `transactionId=${encodeURIComponent(result.transactionId)}&reference=${encodeURIComponent(result.reference)}`;
+      if (result.authorizationUrl) {
+        await Linking.openURL(result.authorizationUrl);
+      }
+      router.push(`/registration/${appId}/payment-processing?${params}` as never);
+    } catch (e: any) {
+      const msg = e?.response?.data?.error ?? e?.message ?? 'Could not start payment. Please try again.';
+      alertAsync({ title: 'Payment failed', message: msg });
+    }
   };
 
   return (
@@ -181,12 +154,9 @@ export default function RegistrationPaymentScreen() {
         <PrimaryButton
           label={`Pay ${fmt(feeNgn)}`}
           onPress={handlePay}
-          loading={initiate.isPending || paystackCheckout.phase === 'initializing' || paystackCheckout.phase === 'awaiting'}
+          loading={initiate.isPending}
         />
       </View>
-
-      {/* Hosts the in-app Paystack checkout WebView on native (nothing on web). */}
-      <paystackCheckout.Sheet />
     </SafeAreaView>
   );
 }

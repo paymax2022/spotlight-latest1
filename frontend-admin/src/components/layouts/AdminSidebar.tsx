@@ -7,6 +7,23 @@ import type { AdminMenuCounts } from '@/types/admin';
 import { getAdminMenuCounts } from '@/services/adminApiClient';
 import { canManageStem, canReadStem, getCurrentStemRole } from '@/config/stemAccess';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
+import { colors, tint } from '@/components/ui/vuexy';
+
+type SectionIcon = '📊' | '🏆' | '👥' | '💰' | '🏥' | '🎓' | '🏨' | '🚗' | '🍽️' | '🏠' | '⚙️';
+
+const sectionIcons: Record<string, SectionIcon> = {
+  'Overview': '📊',
+  'Contests': '🏆',
+  'Support': '👥',
+  'Finance': '💰',
+  'Health': '🏥',
+  'Academy': '🎓',
+  'Stays': '🏨',
+  'Mobility': '🚗',
+  'Restaurant': '🍽️',
+  'Property Management': '🏠',
+  'Platform': '⚙️',
+};
 
 type NavItem = {
   label: string;
@@ -20,8 +37,12 @@ type NavItem = {
 const navItemsBase: NavItem[] = [
   { label: 'Dashboard', href: '/admin', section: 'Overview' },
   { label: 'Analytics', href: '/admin/analytics', section: 'Overview' },
-  { label: 'Competitions', href: '/admin/competitions', section: 'Contests', countKey: 'open_mic', permissions: ['contest.create', 'contest.update', 'contest.publish'] },
+  { label: 'Contests Dashboard', href: '/admin/competitions', section: 'Contests', countKey: 'open_mic', permissions: ['contest.create', 'contest.update', 'contest.publish'] },
+  { label: 'Competitions', href: '/admin/competitions/list', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
+  { label: 'Participants', href: '/admin/competitions/participants', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
+  { label: 'Results & Leaderboard', href: '/admin/competitions/results', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
   { label: 'Open Mic Editions', href: '/admin/competitions/open-mic', section: 'Contests' },
+  { label: 'Contest Settings', href: '/admin/competitions/settings', section: 'Contests', permissions: ['contest.create'] },
   { label: 'Voting Visibility', href: '/admin/voting/visibility', section: 'Voting', permissions: ['votes:manage'] },
   { label: 'Chat Sessions', href: '/admin/chatbot', section: 'Support' },
   { label: 'Leads Queue', href: '/admin/leads', section: 'Support' },
@@ -62,6 +83,9 @@ const navItemsBase: NavItem[] = [
   { label: 'Nutrition', href: '/admin/nutrition', section: 'Finance', permissions: ['nutrition.admin.manage'] },
   { label: 'Nutrition Consults', href: '/admin/nutrition/consults', section: 'Finance', permissions: ['nutrition.admin.resolve'] },
   { label: 'Nutritionist Payouts', href: '/admin/nutrition/payouts', section: 'Finance', permissions: ['nutrition.admin.resolve'] },
+  // ── Commission & Profit (central rate card + realized-revenue dashboard) ──
+  { label: 'Rate Card', href: '/admin/commission', section: 'Commission' },
+  { label: 'Profit Dashboard', href: '/admin/commission/profit', section: 'Commission' },
   { label: 'CF Overview', href: '/admin/crowdfunding', section: 'Crowdfunding', permissions: ['crowdfunding.view'] },
   { label: 'Campaign Review', href: '/admin/crowdfunding/review', section: 'Crowdfunding', permissions: ['crowdfunding.review'] },
   { label: 'Users & Creators', href: '/admin/crowdfunding/users', section: 'Crowdfunding', permissions: ['crowdfunding.users'] },
@@ -395,7 +419,6 @@ const navItemsBase: NavItem[] = [
   { label: 'Membership Approvals', href: '/admin/association/approvals', section: 'Community', permissions: ['savings.admin.view'] },
   { label: 'Dues & Finance', href: '/admin/association/dues', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   { label: 'Members', href: '/admin/association/members', section: 'Community', permissions: ['savings.admin.view'] },
-  { label: 'Elections', href: '/admin/association/elections', section: 'Community', permissions: ['savings.admin.view'] },
   { label: 'Bulk Import', href: '/admin/association/import', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   { label: 'Association Audit Log', href: '/admin/association/audit', section: 'Community', permissions: ['savings.admin.view', 'savings.admin.recon'] },
   // ── P2P Marketplace (Social — escrow marketplace; admin = dispute arbitration) ──
@@ -420,24 +443,12 @@ const navItemsBase: NavItem[] = [
   { label: 'Analytics', href: '/extranet/analytics/performance', section: 'Stays Extranet', permissions: ['stays.hotelier.analytics', 'stays.hotelier.view'] },
   { label: 'Users & Roles', href: '/extranet/staff', section: 'Stays Extranet', permissions: ['stays.hotelier.staff', 'stays.hotelier.view'] },
   { label: 'Onboarding', href: '/extranet/onboarding/go-live', section: 'Stays Extranet', permissions: ['stays.hotelier.onboarding', 'stays.hotelier.view'] },
-  // ── Paymax Marketplace (Jiji-style classifieds + escrow; RBAC marketplace.admin.*) ──
-  { label: 'Marketplace Overview', href: '/admin/marketplace', section: 'Marketplace', permissions: ['marketplace.admin.moderation', 'marketplace.admin.dispute.review', 'marketplace.admin.audit.read'] },
+  // ── Paymax Marketplace (Jiji-style classifieds; listings + connect, no escrow — ADR-023; RBAC marketplace.admin.*) ──
+  { label: 'Marketplace Overview', href: '/admin/marketplace', section: 'Marketplace', permissions: ['marketplace.admin.moderation', 'marketplace.admin.audit.read'] },
   { label: 'Moderation Queue', href: '/admin/marketplace/moderation', section: 'Marketplace', permissions: ['marketplace.admin.moderation'] },
-  { label: 'Taxonomy', href: '/admin/marketplace/taxonomy', section: 'Marketplace', permissions: ['marketplace.admin.taxonomy'] },
-  { label: 'Dispute Workbench', href: '/admin/marketplace/disputes', section: 'Marketplace', permissions: ['marketplace.admin.dispute.review'] },
-  { label: 'Appeals', href: '/admin/marketplace/appeals', section: 'Marketplace', permissions: ['marketplace.admin.appeals.review', 'marketplace.admin.appeals.decide'] },
-  { label: 'Users & Trust', href: '/admin/marketplace/users', section: 'Marketplace', permissions: ['marketplace.admin.users.view', 'marketplace.admin.users.action'] },
-  { label: 'Fraud Signals', href: '/admin/marketplace/fraud', section: 'Marketplace', permissions: ['marketplace.admin.users.view', 'marketplace.admin.users.action'] },
   { label: 'Flags Queue', href: '/admin/marketplace/flags', section: 'Marketplace', permissions: ['marketplace.admin.flags.action'] },
-  { label: 'Orders Aging', href: '/admin/marketplace/orders-aging', section: 'Marketplace', permissions: ['marketplace.admin.orders.aging'] },
   { label: 'Boosts', href: '/admin/marketplace/boosts', section: 'Marketplace', permissions: ['marketplace.admin.moderation'] },
-  { label: 'Pricing & Monetisation', href: '/admin/marketplace/pricing', section: 'Marketplace', permissions: ['marketplace.admin.pricing'] },
-  { label: 'CMS & Banners', href: '/admin/marketplace/cms', section: 'Marketplace', permissions: ['marketplace.admin.cms'] },
-  { label: 'Analytics', href: '/admin/marketplace/analytics', section: 'Marketplace', permissions: ['marketplace.admin.analytics', 'marketplace.admin.audit.read'] },
   { label: 'Audit Log', href: '/admin/marketplace/audit-log', section: 'Marketplace', permissions: ['marketplace.admin.audit.read'] },
-  { label: 'Module KYC', href: '/admin/trading/kyc', section: 'AI Trading', permissions: ['trading.kyc.review', 'trading.kyc.bypass.approve'] },
-  { label: 'Bypass Register', href: '/admin/trading/bypass', section: 'AI Trading', permissions: ['trading.audit.read', 'trading.kyc.bypass.approve'] },
-  { label: 'Promotion Ladder', href: '/admin/trading/promotions', section: 'AI Trading', permissions: ['trading.promotion.read'] },
   // ── Arena (Naija Driver contest ops console; per-console RBAC arena.*) ──────
   { label: 'Competition Config', href: '/admin/arena/config', section: 'Arena', permissions: ['arena.admin.manage'] },
   { label: 'Quiz Bank', href: '/admin/arena/questions', section: 'Arena', permissions: ['arena.admin.questions', 'arena.admin.manage'] },
@@ -449,6 +460,8 @@ const navItemsBase: NavItem[] = [
   { label: 'Pot & Disbursement', href: '/admin/arena/pot', section: 'Arena', permissions: ['arena.admin.manage'] },
   { label: 'Sponsor Placement', href: '/admin/arena/sponsors', section: 'Arena', permissions: ['arena.admin.manage'] },
   { label: 'Credentials', href: '/admin/arena/credentials', section: 'Arena', permissions: ['arena.admin.manage'] },
+  // ── Business Registry (CAC business-name verify/register review; RBAC business.registry.review) ──
+  { label: 'Business Registry', href: '/admin/business', section: 'Business Registry', permissions: ['business.registry.review'] },
   // ── Platform · EdTech (SUPER-ADMIN console, SU-01..SU-12) ────────────────────
   // Checkpoint E — RBAC scope separation. This is a Paymax PLATFORM-OPERATOR
   // surface, NOT an escalated school-admin surface. It is registered as its OWN
@@ -478,12 +491,13 @@ const navItemsBase: NavItem[] = [
   { label: 'Compliance (SU-12)', href: '/admin/platform/edtech/compliance', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
 ];
 
-const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Crowdfunding', 'Connect', 'Connect · Network', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'AI Trading', 'Crypto', 'Platform · EdTech'];
+const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Commission', 'Crowdfunding', 'Connect', 'Connect · Network', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'Crypto', 'Business Registry', 'Platform · EdTech'];
 
 export function AdminSidebar() {
   const pathname = usePathname() ?? '';
   const [counts, setCounts] = useState<AdminMenuCounts | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const role = getCurrentStemRole();
   const allowRead = canReadStem(role);
   const allowManage = canManageStem(role);
@@ -493,14 +507,29 @@ export function AdminSidebar() {
     try {
       const raw = localStorage.getItem('spotlight_admin_user');
       if (raw) setAuthUser(JSON.parse(raw) as AuthUser);
+      const exp = localStorage.getItem('admin_sidebar_expanded');
+      if (exp) setExpanded(JSON.parse(exp) as Record<string, boolean>);
     } catch {}
   }, []);
 
   const isActive = (href: string) => (href === '/admin' ? pathname === '/admin' : pathname === href || pathname.startsWith(`${href}/`));
 
+  const toggleSection = (section: string) => {
+    const next = { ...expanded, [section]: !expanded[section] };
+    setExpanded(next);
+    localStorage.setItem('admin_sidebar_expanded', JSON.stringify(next));
+  };
+
   return (
-    <aside style={{ width: 280, borderRight: '1px solid #2a2a2a', minHeight: '100vh', padding: 16 }}>
-      <h2 style={{ marginTop: 0 }}>Spotlight Admin</h2>
+    <aside style={{ width: 280, borderRight: `1px solid ${colors.border}`, minHeight: '100vh', padding: 12, background: colors.bg, overflowY: 'auto' }}>
+      <Link href="/admin" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, padding: '10px 8px', borderRadius: '0.375rem', background: isActive('/admin') ? tint(colors.primary, 0.1) : 'transparent', textDecoration: 'none', transition: 'all .15s' }}>
+        <span style={{ fontSize: 20 }}>📊</span>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: colors.text }}>Admin</div>
+          <div style={{ fontSize: 11, color: colors.muted }}>Dashboard</div>
+        </div>
+      </Link>
+
       {sections.map((section) => {
         const items = navItemsBase.filter((item) => {
           if (item.section !== section) return false;
@@ -510,30 +539,76 @@ export function AdminSidebar() {
           return true;
         });
         if (!items.length) return null;
+
+        const isExpanded = expanded[section] ?? true;
+        const icon = sectionIcons[section.split(' · ')[0]] || '📋';
+
         return (
-          <div key={section} style={{ marginTop: 16 }}>
-            <p style={{ fontSize: 11, opacity: 0.6, marginBottom: 8 }}>{section}</p>
-            <div style={{ display: 'grid', gap: 6 }}>
-              {items.map((item) => {
-                const count = item.countKey && counts ? counts[item.countKey] : null;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      padding: '8px 10px',
-                      border: '1px solid #2a2a2a',
-                      background: isActive(item.href) ? '#1f1f1f' : 'transparent',
-                    }}
-                  >
-                    <span>{item.label}</span>
-                    {typeof count === 'number' && count > 0 ? <strong>{count}</strong> : null}
-                  </Link>
-                );
-              })}
-            </div>
+          <div key={section} style={{ marginBottom: 8 }}>
+            <button
+              onClick={() => toggleSection(section)}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px 8px',
+                border: 'none',
+                background: 'transparent',
+                color: colors.text,
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: 0.4,
+                transition: 'all .15s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = tint(colors.primary, 0.05))}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              <span>{icon}</span>
+              <span style={{ flex: 1, textAlign: 'left', color: colors.muted }}>{section}</span>
+              <span style={{ opacity: 0.6, fontSize: 10 }}>{isExpanded ? '▼' : '▶'}</span>
+            </button>
+
+            {isExpanded && (
+              <div style={{ display: 'grid', gap: 4, marginTop: 4, paddingLeft: 4 }}>
+                {items.map((item) => {
+                  const count = item.countKey && counts ? counts[item.countKey] : null;
+                  const active = isActive(item.href);
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '6px 8px',
+                        borderLeft: `2px solid ${active ? colors.primary : 'transparent'}`,
+                        background: active ? tint(colors.primary, 0.08) : 'transparent',
+                        color: active ? colors.primary : colors.text,
+                        borderRadius: '0.25rem',
+                        fontSize: '0.8125rem',
+                        textDecoration: 'none',
+                        transition: 'all .12s',
+                        cursor: 'pointer',
+                        fontWeight: active ? 600 : 500,
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!active) e.currentTarget.style.background = tint(colors.primary, 0.04);
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!active) e.currentTarget.style.background = 'transparent';
+                      }}
+                    >
+                      <span>{item.label}</span>
+                      {typeof count === 'number' && count > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: colors.danger, background: tint(colors.danger, 0.12), padding: '2px 5px', borderRadius: '999px' }}>{count}</span>}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
           </div>
         );
       })}

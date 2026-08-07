@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { getReconciliation, resolveBreak, formatNaira } from '@/services/staysAdminService';
 import type { ReconciliationSummary, ReconciliationBreak, BreakStatus, SupplierCode } from '@/types/staysAdmin';
-import { PageHeader, StaysTabs, Card, Kpi, Badge, FilterBar, btn, btnPrimary, th, td, label, select, input, StateBlock, DisclosureNote } from '../_ui';
+import { StaysTabs, Kpi, Badge, FilterBar, label, select, StateBlock, DisclosureNote } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell, tint } from '@/components/ui/vuexy';
 
 const STATUSES: BreakStatus[] = ['open', 'investigating', 'resolved'];
 const BREAK_TYPES: ReconciliationBreak['break_type'][] = ['net_rate', 'commission', 'refund', 'payout', 'missing_statement'];
@@ -42,11 +43,11 @@ export default function StaysReconciliationPage() {
   const breaks = data?.breaks ?? [];
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Reconciliation workbench"
         subtitle="Supplier statement vs Paymax ledger break management (PRD §12). Money is ₦ kobo; supplier rail + currency disclosed per break."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="money" />
 
@@ -58,10 +59,10 @@ export default function StaysReconciliationPage() {
         {data && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <Kpi label="Open breaks" value={data.open_breaks.toLocaleString('en-NG')} accent={data.open_breaks > 0 ? '#b91c1c' : undefined} />
+              <Kpi label="Open breaks" value={data.open_breaks.toLocaleString('en-NG')} accent={data.open_breaks > 0 ? colors.danger : undefined} />
               <Kpi label="Break value" value={formatNaira(data.break_value_kobo)} sub="Total unresolved variance" />
-              <Kpi label="SLA breached" value={data.sla_breached.toLocaleString('en-NG')} accent={data.sla_breached > 0 ? '#b91c1c' : undefined} />
-              <Kpi label="Matched (30d)" value={data.matched_30d.toLocaleString('en-NG')} accent="#15803d" />
+              <Kpi label="SLA breached" value={data.sla_breached.toLocaleString('en-NG')} accent={data.sla_breached > 0 ? colors.danger : undefined} />
+              <Kpi label="Matched (30d)" value={data.matched_30d.toLocaleString('en-NG')} accent={colors.success} />
               <Kpi label="Unmatched statement lines" value={data.unmatched_statement_lines.toLocaleString('en-NG')} sub="Supplier lines w/o ledger match" />
             </div>
 
@@ -91,56 +92,58 @@ export default function StaysReconciliationPage() {
               </FilterBar>
             </Card>
 
-            <Card title={`Breaks${breaks.length ? ` (${breaks.length})` : ''}`}>
-              {breaks.length === 0 ? <p style={{ color: '#6b7280' }}>No breaks match these filters.</p> : (
+            <Card>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
+                <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: colors.text }}>{`Breaks${breaks.length ? ` (${breaks.length})` : ''}`}</h2>
+              </div>
+              {breaks.length === 0 ? <p style={{ color: colors.muted }}>No breaks match these filters.</p> : (
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr>
-                        <th style={th()}>ID</th>
-                        <th style={th()}>Supplier</th>
-                        <th style={th()}>Rail</th>
-                        <th style={th()}>Type</th>
-                        <th style={th()}>Reservation</th>
-                        <th style={th()}>Paymax</th>
-                        <th style={th()}>Supplier</th>
-                        <th style={th()}>Delta</th>
-                        <th style={th()}>Currency</th>
-                        <th style={th()}>Status</th>
-                        <th style={th()}>Age</th>
-                        <th style={th()}>SLA</th>
-                        <th style={th()}>Detail</th>
-                        <th style={th()}>Resolve</th>
+                        <th style={thCell}>ID</th>
+                        <th style={thCell}>Supplier</th>
+                        <th style={thCell}>Rail</th>
+                        <th style={thCell}>Type</th>
+                        <th style={thCell}>Reservation</th>
+                        <th style={thCell}>Paymax</th>
+                        <th style={thCell}>Supplier</th>
+                        <th style={thCell}>Delta</th>
+                        <th style={thCell}>Currency</th>
+                        <th style={thCell}>Status</th>
+                        <th style={thCell}>Age</th>
+                        <th style={thCell}>SLA</th>
+                        <th style={thCell}>Detail</th>
+                        <th style={thCell}>Resolve</th>
                       </tr>
                     </thead>
                     <tbody>
                       {breaks.map((b) => (
-                        <tr key={b.id} style={b.sla_breached ? { background: '#fef2f2' } : undefined}>
-                          <td style={td()}><code style={{ fontSize: '0.78rem' }}>{b.id}</code></td>
-                          <td style={td()}><Badge status={b.supplier_code} /></td>
-                          <td style={td()}><Badge status={b.rail} /></td>
-                          <td style={td()}>{b.break_type.replace(/_/g, ' ')}</td>
-                          <td style={td()}>{b.reservation_id ? <code style={{ fontSize: '0.78rem' }}>{b.reservation_id}</code> : '—'}</td>
-                          <td style={td()}>{formatNaira(b.paymax_amount_kobo)}</td>
-                          <td style={td()}>{formatNaira(b.supplier_amount_kobo)}</td>
-                          <td style={{ ...td(), color: b.delta_kobo !== 0 ? '#b91c1c' : '#374151', fontWeight: b.delta_kobo !== 0 ? 600 : 400 }}>{formatNaira(b.delta_kobo)}</td>
-                          <td style={td()}>{b.currency}</td>
-                          <td style={td()}><Badge status={b.status} /></td>
-                          <td style={td()}>{b.age_hours}h</td>
-                          <td style={td()}>{b.sla_breached ? <Badge status="critical" label="Breached" /> : <Badge status="normal" label="OK" />}</td>
-                          <td style={{ ...td(), maxWidth: 260 }}>{b.detail}</td>
-                          <td style={td()}>
-                            {b.status === 'resolved' ? <span style={{ color: '#9ca3af', fontSize: '0.78rem' }}>—</span> : (
+                        <tr key={b.id} style={b.sla_breached ? { background: tint(colors.danger, 0.06) } : undefined}>
+                          <td style={tdCell}><code style={{ fontSize: '0.78rem' }}>{b.id}</code></td>
+                          <td style={tdCell}><Badge status={b.supplier_code} /></td>
+                          <td style={tdCell}><Badge status={b.rail} /></td>
+                          <td style={tdCell}>{b.break_type.replace(/_/g, ' ')}</td>
+                          <td style={tdCell}>{b.reservation_id ? <code style={{ fontSize: '0.78rem' }}>{b.reservation_id}</code> : '—'}</td>
+                          <td style={tdCell}>{formatNaira(b.paymax_amount_kobo)}</td>
+                          <td style={tdCell}>{formatNaira(b.supplier_amount_kobo)}</td>
+                          <td style={{ ...tdCell, color: b.delta_kobo !== 0 ? colors.danger : colors.text, fontWeight: b.delta_kobo !== 0 ? 600 : 400 }}>{formatNaira(b.delta_kobo)}</td>
+                          <td style={tdCell}>{b.currency}</td>
+                          <td style={tdCell}><Badge status={b.status} /></td>
+                          <td style={tdCell}>{b.age_hours}h</td>
+                          <td style={tdCell}>{b.sla_breached ? <Badge status="critical" label="Breached" /> : <Badge status="normal" label="OK" />}</td>
+                          <td style={{ ...tdCell, maxWidth: 260 }}>{b.detail}</td>
+                          <td style={tdCell}>
+                            {b.status === 'resolved' ? <span style={{ color: colors.muted, fontSize: '0.78rem' }}>—</span> : (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', minWidth: 180 }}>
-                                <input
-                                  style={input()}
+                                <Input
                                   placeholder="Resolution note"
                                   value={reasons[b.id] ?? ''}
                                   onChange={(e) => setReasons((m) => ({ ...m, [b.id]: e.target.value }))}
                                 />
                                 <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                                  <button disabled={busyId === b.id} onClick={() => resolve(b.id, 'investigating')} style={btn()}>Investigate</button>
-                                  <button disabled={busyId === b.id} onClick={() => resolve(b.id, 'resolved')} style={btnPrimary()}>Resolve</button>
+                                  <Button variant="outline" sm disabled={busyId === b.id} onClick={() => resolve(b.id, 'investigating')}>Investigate</Button>
+                                  <Button variant="primary" sm disabled={busyId === b.id} onClick={() => resolve(b.id, 'resolved')}>Resolve</Button>
                                 </div>
                               </div>
                             )}
@@ -155,6 +158,6 @@ export default function StaysReconciliationPage() {
           </>
         )}
       </StateBlock>
-    </div>
+    </Page>
   );
 }

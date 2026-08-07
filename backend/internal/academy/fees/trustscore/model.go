@@ -21,12 +21,12 @@ type TrustInputs struct {
 	TotalCollectedMinor int64 // SUM(succeeded payments) in the window
 
 	// On-time payment rate.
-	InvoicesDue     int64 // invoices that reached their due date in the window
+	InvoicesDue        int64 // invoices that reached their due date in the window
 	InvoicesPaidOnTime int64 // of those, paid in full on or before the due date
 
 	// Dispute rate.
-	PaymentsCount  int64 // total payments recorded in the window
-	DisputedCount  int64 // of those, disputed / charged-back / reversed
+	PaymentsCount int64 // total payments recorded in the window
+	DisputedCount int64 // of those, disputed / charged-back / reversed
 }
 
 // ── Output ───────────────────────────────────────────────────────────────────────
@@ -52,10 +52,10 @@ type TrustScore struct {
 	Components    []Component `json:"components"`
 
 	// Admin override (records who overrode + reason; the computed score is retained above).
-	Overridden       bool    `json:"overridden"`
-	OverrideScore    float64 `json:"overrideScore,omitempty"`
-	OverrideBy       string  `json:"overrideBy,omitempty"`
-	OverrideReason   string  `json:"overrideReason,omitempty"`
+	Overridden     bool    `json:"overridden"`
+	OverrideScore  float64 `json:"overrideScore,omitempty"`
+	OverrideBy     string  `json:"overrideBy,omitempty"`
+	OverrideReason string  `json:"overrideReason,omitempty"`
 }
 
 // OverrideRequest records an admin override of a school's computed trust score. actor + reason

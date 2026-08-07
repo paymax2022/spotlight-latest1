@@ -68,6 +68,34 @@ func requestHash(parts ...string) string {
 
 func (s *Service) ListSchools(ctx context.Context) ([]School, error) { return s.repo.ListSchools(ctx) }
 
+// AdminListSchools lists ALL schools (every status) for the admin oversight console.
+func (s *Service) AdminListSchools(ctx context.Context) ([]School, error) {
+	return s.repo.ListAllSchools(ctx)
+}
+
+// AdminListFeeSchedules lists ALL fee schedules (every status/school) for admin.
+func (s *Service) AdminListFeeSchedules(ctx context.Context) ([]FeeSchedule, error) {
+	return s.repo.ListAllFeeSchedules(ctx)
+}
+
+// AdminListDisbursements lists ALL disbursements (every payer) for admin.
+func (s *Service) AdminListDisbursements(ctx context.Context) ([]Disbursement, error) {
+	return s.repo.ListAllDisbursements(ctx)
+}
+
+// AdminListPots lists ALL savings pots (every user) for admin.
+func (s *Service) AdminListPots(ctx context.Context) ([]SavingsPot, error) {
+	return s.repo.ListAllPots(ctx)
+}
+
+// ListMyPots lists the caller's OWN savings pots (owner-scoped), with DERIVED balances.
+func (s *Service) ListMyPots(ctx context.Context, userID string) ([]SavingsPot, error) {
+	if userID == "" {
+		return nil, ErrNotFound
+	}
+	return s.repo.ListPots(ctx, userID)
+}
+
 // ListFeeSchedules filters by school and/or class code (either may be empty).
 func (s *Service) ListFeeSchedules(ctx context.Context, schoolID, classCode string) ([]FeeSchedule, error) {
 	return s.repo.ListFeeSchedules(ctx, schoolID, classCode)

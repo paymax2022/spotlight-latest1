@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Icons from 'lucide-react-native';
@@ -17,6 +17,7 @@ import {
   CONSENT_SCOPE_OPTIONS,
   NDPA_CONSENT_COPY,
 } from '@/features/health/constants/health.constants';
+import { alertAsync } from '@/lib/confirm';
 import type { ConsentScope } from '@/features/health/types';
 
 /**
@@ -58,11 +59,9 @@ export default function GrantConsentScreen() {
       },
       {
         onSuccess: () => {
-          Alert.alert('Access granted', 'A revocable consent grant was created.', [
-            { text: 'Done', onPress: () => router.back() },
-          ]);
+          alertAsync({ title: 'Access granted', message: 'A revocable consent grant was created.', buttonLabel: 'Done' }).then(() => router.back());
         },
-        onError: () => Alert.alert('Could not grant', 'Please try again.'),
+        onError: () => alertAsync({ title: 'Could not grant', message: 'Please try again.' }),
       },
     );
   };

@@ -124,14 +124,14 @@ type AcceptAiNoteSummaryResult struct {
 // free-form request body. Kept separate from opsPatch / clinicalPatch so nothing
 // shared is touched.
 type aiInput struct {
-	AppointmentID *string             `json:"appointmentId,omitempty"`
-	ResultID      *string             `json:"resultId,omitempty"`
-	PatientID     *string             `json:"patientId,omitempty"`
-	PetID         *string             `json:"petId,omitempty"`
-	Items         json.RawMessage     `json:"items,omitempty"`   // PrescriptionDrugItem[]
-	Notes         *string             `json:"notes,omitempty"`   // optional consult context
-	Context       json.RawMessage     `json:"context,omitempty"` // optional structured context
-	Edited        bool                `json:"edited,omitempty"`
+	AppointmentID *string              `json:"appointmentId,omitempty"`
+	ResultID      *string              `json:"resultId,omitempty"`
+	PatientID     *string              `json:"patientId,omitempty"`
+	PetID         *string              `json:"petId,omitempty"`
+	Items         json.RawMessage      `json:"items,omitempty"`   // PrescriptionDrugItem[]
+	Notes         *string              `json:"notes,omitempty"`   // optional consult context
+	Context       json.RawMessage      `json:"context,omitempty"` // optional structured context
+	Edited        bool                 `json:"edited,omitempty"`
 	Output        *AiNoteSummaryOutput `json:"output,omitempty"` // accepted (possibly edited) draft
 }
 

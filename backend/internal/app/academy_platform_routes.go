@@ -72,13 +72,17 @@ func RegisterAcademyPlatform(
 	g.POST("/verification-queue/:id/review", h.VerifySchool)
 	// SU-03 — Platform-Wide Collections
 	g.GET("/collections", h.Collections)
-	// SU-04 — Fraud & Risk (best-effort heuristic reads)
+	// SU-04 — Fraud & Risk (best-effort heuristic reads) + record a decision (audit-only,
+	// no risk-case status table exists — see actions.go).
 	g.GET("/risk", h.ListRisk)
+	g.POST("/risk/:id/action", h.ActionRiskCase)
 	// SU-05 — Gov/Regulator sync + SF-11 compliance-export log
 	g.GET("/gov-sync", h.ListGovSync)
 	g.GET("/compliance-exports", h.ListComplianceExports)
-	// SU-06 — Competition ops (real table academy_competitions)
+	// SU-06 — Competition ops (real table academy_competitions) + guarded state transition
+	// (reuses the feescompetition state machine — see actions.go).
 	g.GET("/competitions", h.ListCompetitions)
+	g.POST("/competitions/:id/transition", h.TransitionCompetition)
 	// SU-07 — Trust scores (+ override → academy_fees_trust_overrides)
 	g.GET("/trust-scores", h.ListTrustScores)
 	g.POST("/trust-scores/:schoolId/override", h.OverrideTrustScore)

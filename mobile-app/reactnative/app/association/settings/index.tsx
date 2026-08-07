@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import * as Icons from 'lucide-react-native';
 import { LogOut, Trash2, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -42,22 +43,22 @@ export default function SettingsHub() {
       rows: [
         { icon: 'LifeBuoy', label: 'Help center', to: '/association/support' },
         { icon: 'MessageSquare', label: 'My support tickets', to: '/association/support/tickets' },
-        { icon: 'FileText', label: 'Terms & privacy', onPress: () => Alert.alert('Terms & privacy', 'Opens the policy documents in the document vault.') },
+        { icon: 'FileText', label: 'Terms & privacy', onPress: () => alertAsync({ title: 'Terms & privacy', message: 'Opens the policy documents in the document vault.' }) },
       ],
     },
   ];
 
-  const confirmLogout = () =>
-    Alert.alert('Log out', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Log out', style: 'destructive', onPress: () => router.replace('/association') },
-    ]);
+  const confirmLogout = async () => {
+    const ok = await confirmAsync({ title: 'Log out', message: 'Are you sure you want to log out?', confirmLabel: 'Log out', destructive: true });
+    if (!ok) return;
+    router.replace('/association');
+  };
 
-  const confirmDelete = () =>
-    Alert.alert('Delete account', 'This permanently deletes your membership data. This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => Alert.alert('Request submitted', 'Account deletion is not available in this preview build.') },
-    ]);
+  const confirmDelete = async () => {
+    const ok = await confirmAsync({ title: 'Delete account', message: 'This permanently deletes your membership data. This cannot be undone.', confirmLabel: 'Delete', destructive: true });
+    if (!ok) return;
+    alertAsync({ title: 'Request submitted', message: 'Account deletion is not available in this preview build.' });
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

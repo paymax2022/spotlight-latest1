@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { alertAsync } from '@/lib/confirm';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Plus } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -45,7 +46,7 @@ export default function NewCarePlanScreen() {
 
   const handleSubmit = async () => {
     if (!canSubmit) {
-      Alert.alert('Incomplete', 'Add a condition, goal and review cadence.');
+      alertAsync({ title: 'Incomplete', message: 'Add a condition, goal and review cadence.' });
       return;
     }
     try {
@@ -56,11 +57,10 @@ export default function NewCarePlanScreen() {
         reviewEvery,
         milestones,
       });
-      Alert.alert('Care plan saved', `${result.ref} has been created.`, [
-        { text: 'Done', onPress: () => router.replace('/(doctor)/care-plans') },
-      ]);
+      await alertAsync({ title: 'Care plan saved', message: `${result.ref} has been created.`, buttonLabel: 'Done' });
+      router.replace('/(doctor)/care-plans');
     } catch {
-      Alert.alert('Failed', 'Could not save the care plan. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not save the care plan. Please try again.' });
     }
   };
 

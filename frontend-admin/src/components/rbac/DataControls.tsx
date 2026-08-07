@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import { colors, tint } from '@/components/ui/vuexy';
 
 /* ─── Filter chips ──────────────────────────────────────────────────────────── */
 
@@ -22,7 +23,7 @@ export function FilterChips({ chips, onClear, onClearAll }: {
   if (chips.length === 0) return null;
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginTop: 10 }}>
-      <span style={{ fontSize: 11, color: '#9a9a9a', textTransform: 'uppercase', letterSpacing: 0.5 }}>Active filters</span>
+      <span style={{ fontSize: 11, color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Active filters</span>
       {chips.map((c) => (
         <span
           key={c.key}
@@ -30,20 +31,21 @@ export function FilterChips({ chips, onClear, onClearAll }: {
             display: 'inline-flex',
             alignItems: 'center',
             gap: 6,
-            background: '#1f2937',
-            border: '1px solid #374151',
+            background: tint(colors.primary, 0.1),
+            border: `1px solid ${tint(colors.primary, 0.3)}`,
             borderRadius: 999,
             padding: '3px 8px 3px 10px',
             fontSize: 12,
+            color: colors.text,
           }}
         >
-          <span style={{ color: '#9ca3af' }}>{c.label}:</span>
-          <span style={{ fontWeight: 600 }}>{c.value}</span>
+          <span style={{ color: colors.muted }}>{c.label}:</span>
+          <span style={{ fontWeight: 600, color: colors.primary }}>{c.value}</span>
           <button
             type="button"
             aria-label={`Remove ${c.label} filter`}
             onClick={() => onClear(c.key)}
-            style={{ background: 'transparent', border: 'none', color: '#cbd5e1', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}
+            style={{ background: 'transparent', border: 'none', color: colors.muted, cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: 0 }}
           >
             ×
           </button>
@@ -53,7 +55,7 @@ export function FilterChips({ chips, onClear, onClearAll }: {
         <button
           type="button"
           onClick={onClearAll}
-          style={{ background: 'transparent', border: '1px solid #374151', color: '#cbd5e1', borderRadius: 999, padding: '3px 10px', fontSize: 12, cursor: 'pointer' }}
+          style={{ background: '#fff', border: `1px solid ${colors.inputBorder}`, color: colors.muted, borderRadius: 999, padding: '3px 10px', fontSize: 12, cursor: 'pointer' }}
         >
           Clear all
         </button>
@@ -116,7 +118,7 @@ export function SortHeaderButton({ label, active, dir, onClick }: {
       style={{
         background: 'transparent',
         border: 'none',
-        color: active ? '#fff' : '#cbd5e1',
+        color: active ? colors.primary : colors.muted,
         cursor: 'pointer',
         font: 'inherit',
         fontWeight: 600,
@@ -160,12 +162,12 @@ export function Pagination({ page, pageCount, total, pageSize, onPage }: {
       aria-label="Pagination"
       style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 14, flexWrap: 'wrap' }}
     >
-      <span style={{ fontSize: 12, color: '#9ca3af' }}>
+      <span style={{ fontSize: 12, color: colors.muted }}>
         Showing {from}–{to} of {total}
       </span>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
         <PagerButton label="‹ Prev" disabled={page <= 1} onClick={() => onPage(page - 1)} />
-        <span style={{ fontSize: 12, color: '#cbd5e1', padding: '0 6px' }}>
+        <span style={{ fontSize: 12, color: colors.text, padding: '0 6px' }}>
           Page {page} / {pageCount}
         </span>
         <PagerButton label="Next ›" disabled={page >= pageCount} onClick={() => onPage(page + 1)} />
@@ -181,13 +183,15 @@ function PagerButton({ label, disabled, onClick }: { label: string; disabled: bo
       onClick={onClick}
       disabled={disabled}
       style={{
-        background: disabled ? '#171717' : '#1f2937',
-        color: disabled ? '#555' : '#e5e7eb',
-        border: '1px solid #374151',
+        background: '#fff',
+        color: disabled ? '#b9b9c3' : colors.text,
+        border: `1px solid ${colors.inputBorder}`,
         borderRadius: 6,
         padding: '4px 10px',
         fontSize: 12,
+        fontWeight: 600,
         cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.7 : 1,
       }}
     >
       {label}

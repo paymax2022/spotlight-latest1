@@ -12,6 +12,7 @@ import {
   listStemCertificates,
   listStemSponsors,
 } from '@/services/stemService';
+import { Page, PageHeader, Card, Button, Input } from '@/components/ui/vuexy';
 
 export default function AdminStemSponsorsAwardsPage() {
   const [applicationId, setApplicationId] = useState('');
@@ -29,24 +30,27 @@ export default function AdminStemSponsorsAwardsPage() {
   }
 
   return (
-    <section>
-      <h1>STEM Sponsors, Certificates, and Badges</h1>
+    <Page>
+      <PageHeader title="STEM Sponsors, Certificates, and Badges" />
       <StemModuleLinks />
-      <button type="button" onClick={() => void load()}>Refresh</button>
-      <button type="button" onClick={() => void createStemSponsor({ name: 'Sponsor A', sponsorType: 'program', logoUrl: '', websiteUrl: '', campaignMessage: '', ctaUrl: '', isActive: true }).then(load)} style={{ marginLeft: 8 }}>Add Sponsor</button>
-      <button type="button" onClick={() => void createStemCertificate({ applicationId, certificateType: 'Participation', certificateNumber: `CERT-${Date.now()}`, issuedAt: '', fileUrl: '' }).then(load)} style={{ marginLeft: 8 }}>Issue Certificate</button>
-      <button type="button" onClick={() => void createStemBadge({ name: `Badge-${Date.now()}`, description: 'STEM badge', iconUrl: '' }).then(load)} style={{ marginLeft: 8 }}>Create Badge</button>
-      <div style={{ marginTop: 10 }}>
-        <input placeholder="Application ID" value={applicationId} onChange={(e) => setApplicationId(e.target.value)} />
-        <input placeholder="Badge ID" value={badgeId} onChange={(e) => setBadgeId(e.target.value)} style={{ marginLeft: 8 }} />
-        <button type="button" onClick={() => void awardStemBadge({ badgeId, applicationId, awardedAt: '', note: 'Auto-award' }).then(load)} style={{ marginLeft: 8 }}>
-          Award Badge
-        </button>
-      </div>
-      <p style={{ marginTop: 10 }}>
-        Sponsors: {counts.sponsors} · Certificates: {counts.certs} · Badges: {counts.badges} · Awards: {counts.awards}
-      </p>
-    </section>
+      <Card style={{ marginTop: 16 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Button variant="outline" onClick={() => void load()}>Refresh</Button>
+          <Button variant="primary" onClick={() => void createStemSponsor({ name: 'Sponsor A', sponsorType: 'program', logoUrl: '', websiteUrl: '', campaignMessage: '', ctaUrl: '', isActive: true }).then(load)}>Add Sponsor</Button>
+          <Button variant="primary" onClick={() => void createStemCertificate({ applicationId, certificateType: 'Participation', certificateNumber: `CERT-${Date.now()}`, issuedAt: '', fileUrl: '' }).then(load)}>Issue Certificate</Button>
+          <Button variant="primary" onClick={() => void createStemBadge({ name: `Badge-${Date.now()}`, description: 'STEM badge', iconUrl: '' }).then(load)}>Create Badge</Button>
+        </div>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Input placeholder="Application ID" value={applicationId} onChange={(e) => setApplicationId(e.target.value)} />
+          <Input placeholder="Badge ID" value={badgeId} onChange={(e) => setBadgeId(e.target.value)} />
+          <Button variant="primary" onClick={() => void awardStemBadge({ badgeId, applicationId, awardedAt: '', note: 'Auto-award' }).then(load)}>
+            Award Badge
+          </Button>
+        </div>
+        <p style={{ marginTop: 12, fontSize: 13 }}>
+          Sponsors: {counts.sponsors} · Certificates: {counts.certs} · Badges: {counts.badges} · Awards: {counts.awards}
+        </p>
+      </Card>
+    </Page>
   );
 }
-

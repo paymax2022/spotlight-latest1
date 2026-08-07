@@ -5,9 +5,10 @@ import { getPricing, updatePricing, getCommission, updateCommission } from '@/se
 import type { PricingConfig, CommissionConfig } from '@/types/mobility';
 import {
   PageHeader, MobilityTabs, Card, StateNote, AuditedNotice,
-  btn, btnPrimary, btnDisabled, th, td, input, naira,
+  btn, btnPrimary, btnDisabled, input, naira,
   useMobilityPermissions, MOBILITY_PERMS,
 } from '../_ui';
+import { colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 type Draft = Record<string, Partial<PricingConfig>>;
 
@@ -123,13 +124,13 @@ export default function MobilityPricingPage() {
           const dirty = !!draft[k] && Object.keys(draft[k]).length > 0;
           const valErr = dirty ? validate(p) : null;
           return (
-            <Card key={k} title={`${p.zone} · ${p.serviceType}`} right={<span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>v{p.version} · updated {new Date(p.updatedAt).toLocaleDateString()}</span>}>
+            <Card key={k} title={`${p.zone} · ${p.serviceType}`} right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>v{p.version} · updated {new Date(p.updatedAt).toLocaleDateString()}</span>}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '0.75rem' }}>
                 {FIELDS.map((f) => {
                   const val = fieldValue(p, f.key);
                   const display = f.kobo ? (val / 100) : val;
                   return (
-                    <label key={String(f.key)} style={{ fontSize: '0.78rem', fontWeight: 600, color: '#374151' }}>
+                    <label key={String(f.key)} style={{ fontSize: '0.78rem', fontWeight: 600, color: colors.text }}>
                       {f.label}{f.kobo ? ' (₦)' : ''}
                       <input
                         type="number"
@@ -137,13 +138,13 @@ export default function MobilityPricingPage() {
                         value={display}
                         disabled={!canManage}
                         onChange={(e) => setField(p, f.key, e.target.value)}
-                        style={{ ...input(), marginTop: 4, background: canManage ? '#fff' : '#f9fafb' }}
+                        style={{ ...input(), marginTop: 4, background: canManage ? colors.card : colors.headBg }}
                       />
                     </label>
                   );
                 })}
               </div>
-              {valErr && <p style={{ color: '#dc2626', fontSize: '0.8rem', marginTop: '0.5rem' }}>{valErr}</p>}
+              {valErr && <p style={{ color: colors.danger, fontSize: '0.8rem', marginTop: '0.5rem' }}>{valErr}</p>}
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.75rem', gap: '0.5rem' }}>
                 <button disabled={!canManage || !dirty || !!valErr || savingKey === k} style={!canManage || !dirty || !!valErr ? btnDisabled() : btnPrimary()} onClick={() => save(p)}>
                   {savingKey === k ? 'Saving…' : 'Save (audited)'}
@@ -157,8 +158,8 @@ export default function MobilityPricingPage() {
         {commission.length === 0 ? <StateNote kind="empty">No commission tiers.</StateNote> : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
-              <tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={th()}>Tier</th><th style={th()}>Driver %</th><th style={th()}>Platform %</th><th style={th()}>Updated</th><th style={th()}></th>
+              <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                <th style={thCell}>Tier</th><th style={thCell}>Driver %</th><th style={thCell}>Platform %</th><th style={thCell}>Updated</th><th style={thCell}></th>
               </tr>
             </thead>
             <tbody>
@@ -166,14 +167,14 @@ export default function MobilityPricingPage() {
                 const pct = commDraft[c.tier] ?? c.driverPct;
                 const dirty = commDraft[c.tier] !== undefined && commDraft[c.tier] !== c.driverPct;
                 return (
-                  <tr key={c.tier} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={td()}><strong style={{ textTransform: 'capitalize' }}>{c.tier}</strong></td>
-                    <td style={td()}>
-                      <input type="number" min={0} max={100} value={pct} disabled={!canManage} onChange={(e) => setCommDraft((d) => ({ ...d, [c.tier]: Number(e.target.value) }))} style={{ ...input(), width: 90, background: canManage ? '#fff' : '#f9fafb' }} />
+                  <tr key={c.tier} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <td style={tdCell}><strong style={{ textTransform: 'capitalize' }}>{c.tier}</strong></td>
+                    <td style={tdCell}>
+                      <input type="number" min={0} max={100} value={pct} disabled={!canManage} onChange={(e) => setCommDraft((d) => ({ ...d, [c.tier]: Number(e.target.value) }))} style={{ ...input(), width: 90, background: canManage ? colors.card : colors.headBg }} />
                     </td>
-                    <td style={td()}>{100 - pct}%</td>
-                    <td style={td()}>{new Date(c.updatedAt).toLocaleDateString()}</td>
-                    <td style={td()}>
+                    <td style={tdCell}>{100 - pct}%</td>
+                    <td style={tdCell}>{new Date(c.updatedAt).toLocaleDateString()}</td>
+                    <td style={tdCell}>
                       <button disabled={!canManage || !dirty || savingKey === `comm::${c.tier}`} style={!canManage || !dirty ? btnDisabled() : btnPrimary()} onClick={() => saveCommission(c)}>
                         {savingKey === `comm::${c.tier}` ? 'Saving…' : 'Save'}
                       </button>
@@ -184,7 +185,7 @@ export default function MobilityPricingPage() {
             </tbody>
           </table>
         )}
-        <p style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.75rem' }}>
+        <p style={{ fontSize: '0.75rem', color: colors.muted, marginTop: '0.75rem' }}>
           Splits are applied server-side at trip settlement. Fares are stored and computed in integer kobo (e.g. {naira(320000)} = ₦3,200).
         </p>
       </Card>

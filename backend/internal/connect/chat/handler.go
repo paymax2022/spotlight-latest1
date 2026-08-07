@@ -18,10 +18,12 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 // failures are 403 (deny-by-default), not 404, since the caller is authenticated.
 func statusFor(err error) int {
 	switch {
-	case errors.Is(err, ErrNoMatch), errors.Is(err, ErrBlocked):
+	case errors.Is(err, ErrNoMatch), errors.Is(err, ErrBlocked), errors.Is(err, ErrRestricted):
 		return http.StatusForbidden
 	case errors.Is(err, ErrConversationClosed):
 		return http.StatusConflict
+	case errors.Is(err, ErrSafetyUnavailable):
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError
 	}

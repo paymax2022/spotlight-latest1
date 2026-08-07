@@ -8,7 +8,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/escrow"
+	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
 	healthconsult "spotlight/backend/internal/health/consult"
@@ -27,19 +29,27 @@ import (
 // vertical and edits no existing file. All reuse is by import:
 //
 //   - escrow.Service          — HL-9 payment HELD→RELEASE→REFUND (idempotent).
+//
 //   - transport.Service       — home-visit dispatch (last-mile/MapService rail).
+//
 //   - healthscheduling.Service — appointment state machine (subject_type=PET).
+//
 //   - healthconsult.Service   — tele-consult engine + SOAP ClinicalNote.
+//
 //   - healthrx.Service        — e-prescription engine → pharmacy handoff (HL-3).
+//
 //   - healthrecords.Service   — HL-8 pet records vault (subject_type=PET).
+//
 //   - scheduler.Service       — vaccination reminders.
+//
 //   - finance/kyc.Service     — HL-10 payout KYC gating.
 //
 //   - member: /api/finance/health/vet/*  (member-authenticated; user_id mirrored)
+//
 //   - admin : /api/health/vet/admin/*    (per-route RBAC health.vet.*)
 //
 // Gated by FeatureHealthVetEnabled at the orchestrator. Auditing is nil-safe.
-func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config) {
 	if pool == nil {
 		log.Println("[health.vet] nil pool — skipping vet routes")
 		return
@@ -72,6 +82,16 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		nil, // audit sink injected by orchestrator (HL-12) — nil-safe here
 	)
 
+	// Central Commission & Profit recording at the vet appointment settlement point
+	// (CompleteConsult → escrow release). Best-effort + idempotent + nil-safe:
+	// constructed with a nil ledger so the earning row is appended WITHOUT re-posting
+	// to the ledger (vet's own escrow split already posts the platform cut). Reuses
+	// the shared commissionRecorderAdapter (marketplace_routes.go). Gated on the flag
+	// ⇒ off leaves the recorder nil ⇒ silent no-op.
+	if cfg.FeatureCommissionEnabled {
+		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+	}
+
 	isAdmin := func(c *gin.Context) bool { return isHealthVetAdmin(c, rbac) }
 	h := healthvet.NewHandler(svc, isAdmin)
 
@@ -81,26 +101,26 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 
 	// --- Member routes (/api/finance/health/vet) — HEALTH-BUILD §6 Veterinary ---
 	vg := member.Group("/health/vet")
-	vg.POST("/pets", h.CreatePet)                             // owner; seeds PET vault record (HL-8)
-	vg.GET("/pets", h.ListPets)                               // owner reads own pets (HL-8)
+	vg.POST("/pets", h.CreatePet)                            // owner; seeds PET vault record (HL-8)
+	vg.GET("/pets", h.ListPets)                              // owner reads own pets (HL-8)
 	vg.POST("/pets/:id/vaccinations", h.ScheduleVaccination) // reminder via scheduler
 	vg.GET("/vets", h.DiscoverVets)                          // map/list discovery (HL-2, PostGIS)
 	vg.POST("/services", h.UpsertService)                    // verified vet owner; fee governance
-	vg.POST("/appointments", h.Book)                        // tele/home/clinic; payment HELD (HL-9)
-	vg.GET("/appointments/:id", h.Get)                      // object-level authZ
-	vg.POST("/appointments/:id/accept", h.Accept)          // verified vet (HL-2)
-	vg.POST("/appointments/:id/confirm", h.Confirm)        // ACCEPTED → CONFIRMED
-	vg.POST("/appointments/:id/cancel", h.Cancel)          // owner/vet → refund HELD (HL-9)
-	vg.POST("/appointments/:id/dispatch", h.Dispatch)      // home visit on transport rail
-	vg.POST("/consults/:id/start", h.StartConsult)         // verified vet; consult engine (HL-2)
-	vg.POST("/consults/:id/complete", h.CompleteConsult)   // SOAP + e-Rx/lab handoff; RELEASE (HL-9)
-	vg.POST("/sos", h.EmergencySOS)                        // HL-11: nearest in-person vet + disclaimer
+	vg.POST("/appointments", h.Book)                         // tele/home/clinic; payment HELD (HL-9)
+	vg.GET("/appointments/:id", h.Get)                       // object-level authZ
+	vg.POST("/appointments/:id/accept", h.Accept)            // verified vet (HL-2)
+	vg.POST("/appointments/:id/confirm", h.Confirm)          // ACCEPTED → CONFIRMED
+	vg.POST("/appointments/:id/cancel", h.Cancel)            // owner/vet → refund HELD (HL-9)
+	vg.POST("/appointments/:id/dispatch", h.Dispatch)        // home visit on transport rail
+	vg.POST("/consults/:id/start", h.StartConsult)           // verified vet; consult engine (HL-2)
+	vg.POST("/consults/:id/complete", h.CompleteConsult)     // SOAP + e-Rx/lab handoff; RELEASE (HL-9)
+	vg.POST("/sos", h.EmergencySOS)                          // HL-11: nearest in-person vet + disclaimer
 
 	// --- Admin routes (/api/health/vet/admin, RBAC health.vet.*) ---
 	ag := admin.Group("")
-	ag.GET("/appointments", guard("health.vet.appointments"), h.AdminListAppointments) // appointment oversight
-	ag.GET("/vcn-audit", guard("health.vet.vcn"), h.AdminVCNAudit)                      // VCN credential audit (HL-2)
-	ag.GET("/erx-audit", guard("health.vet.erx"), h.AdminERxAudit)                      // e-prescription audit (HL-3)
+	ag.GET("/appointments", guard("health.vet.appointments"), h.AdminListAppointments)          // appointment oversight
+	ag.GET("/vcn-audit", guard("health.vet.vcn"), h.AdminVCNAudit)                              // VCN credential audit (HL-2)
+	ag.GET("/erx-audit", guard("health.vet.erx"), h.AdminERxAudit)                              // e-prescription audit (HL-3)
 	ag.POST("/services/:id/deactivate", guard("health.vet.services"), h.AdminDeactivateService) // service/fee governance
 
 	log.Println("[health.vet] vet routes registered — pets/vets/appointments/consults/dispatch/sos + admin")

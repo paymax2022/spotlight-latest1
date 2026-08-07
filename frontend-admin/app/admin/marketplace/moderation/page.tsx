@@ -5,10 +5,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { listModerationQueue, approveListing, rejectListing, formatKobo } from '@/services/marketplaceAdminService';
 import type { MktListing } from '@/types/marketplaceAdmin';
 import {
-  PageHeader, MarketplaceTabs, Card, StatusBadge, DisclosureNote, StateBlock, AuditNote,
-  PermissionBanner, btn, btnPrimary, btnDanger, btnDisabled, th, td, timeAgo,
+  MarketplaceTabs, StatusBadge, DisclosureNote, StateBlock, AuditNote,
+  PermissionBanner, timeAgo,
   MARKETPLACE_PERMS, useMarketplacePermission,
 } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function ModerationQueuePage() {
   const { allowed: canModerate } = useMarketplacePermission(MARKETPLACE_PERMS.moderation);
@@ -61,11 +62,11 @@ export default function ModerationQueuePage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Marketplace — Moderation Queue (M1)"
         subtitle="Pending-review listings. Approve or reject with a mandatory reason_code — the seller sees the rejection reason verbatim."
-        action={<button onClick={() => void load()} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={() => void load()}>Refresh</Button>}
       />
       <MarketplaceTabs active="moderation" />
       <DisclosureNote>
@@ -76,65 +77,65 @@ export default function ModerationQueuePage() {
       </DisclosureNote>
 
       {!canModerate && <PermissionBanner permission={MARKETPLACE_PERMS.moderation} />}
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
       {msg && <AuditNote>{msg}</AuditNote>}
 
-      <Card>
+      <Card style={{ overflow: 'auto' }}>
         <StateBlock loading={loading} error={null} empty={rows.length === 0} emptyText="No listings pending review.">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>
-              <th style={th()}>Listing</th><th style={th()}>Seller</th><th style={th()}>Price</th>
-              <th style={th()}>Price band (p25/p50/p75)</th><th style={th()}>Quality</th><th style={th()}>Escrow</th>
-              <th style={th()}>Submitted</th><th style={th()}>Action</th>
+              <th style={thCell}>Listing</th><th style={thCell}>Seller</th><th style={thCell}>Price</th>
+              <th style={thCell}>Price band (p25/p50/p75)</th><th style={thCell}>Quality</th><th style={thCell}>Escrow</th>
+              <th style={thCell}>Submitted</th><th style={thCell}>Action</th>
             </tr></thead>
             <tbody>
               {rows.map((l) => (
                 <tr key={l.id}>
-                  <td style={td()}>
-                    <Link href={`/admin/marketplace/moderation/${l.id}`} style={{ color: '#1d4ed8', textDecoration: 'none', fontWeight: 600 }}>{l.title}</Link>
-                    <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{l.id} · {l.category_name ?? l.category_id}</div>
+                  <td style={tdCell}>
+                    <Link href={`/admin/marketplace/moderation/${l.id}`} style={{ color: colors.primary, textDecoration: 'none', fontWeight: 600 }}>{l.title}</Link>
+                    <div style={{ fontSize: '0.72rem', color: colors.muted }}>{l.id} · {l.category_name ?? l.category_id}</div>
                     {l.media?.[0] && (
                       <img src={l.media[0].url_thumb} alt="" width={56} height={56} style={{ objectFit: 'cover', borderRadius: 4, marginTop: 4 }} />
                     )}
                   </td>
-                  <td style={td()}>
+                  <td style={tdCell}>
                     {l.seller?.tenure_label ?? '—'}
-                    <div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>trust {l.seller ? l.seller.trust_score.toFixed(2) : '—'} · {l.seller?.verified_id_badge ? 'ID verified' : 'unverified'}</div>
+                    <div style={{ fontSize: '0.72rem', color: colors.muted }}>trust {l.seller ? l.seller.trust_score.toFixed(2) : '—'} · {l.seller?.verified_id_badge ? 'ID verified' : 'unverified'}</div>
                   </td>
-                  <td style={td()}>{formatKobo(l.price_kobo)}</td>
-                  <td style={td()}>
+                  <td style={tdCell}>{formatKobo(l.price_kobo)}</td>
+                  <td style={tdCell}>
                     {l.fair_price_band ? (
                       <span style={{ fontSize: '0.78rem' }}>{formatKobo(l.fair_price_band.p25_kobo)} / {formatKobo(l.fair_price_band.p50_kobo)} / {formatKobo(l.fair_price_band.p75_kobo)}</span>
-                    ) : <span style={{ color: '#9ca3af' }}>no band</span>}
+                    ) : <span style={{ color: colors.muted }}>no band</span>}
                   </td>
-                  <td style={td()}>{l.quality_score != null ? l.quality_score.toFixed(2) : '—'}</td>
-                  <td style={td()}><StatusBadgeInline value={l.escrow_eligible} /></td>
-                  <td style={td()}>{timeAgo(l.created_at)}</td>
-                  <td style={td()}>
+                  <td style={tdCell}>{l.quality_score != null ? l.quality_score.toFixed(2) : '—'}</td>
+                  <td style={tdCell}><StatusBadgeInline value={l.escrow_eligible} /></td>
+                  <td style={tdCell}>{timeAgo(l.created_at)}</td>
+                  <td style={tdCell}>
                     {rejectingId === l.id ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', minWidth: 220 }}>
-                        <input
+                        <Input
                           autoFocus
                           placeholder="reason_code (mandatory, seller sees this)"
                           value={reasonDraft}
                           onChange={(e) => setReasonDraft(e.target.value)}
-                          style={{ padding: '0.3rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem', fontSize: '0.8rem' }}
                         />
                         <div style={{ display: 'flex', gap: '0.4rem' }}>
-                          <button
-                            style={reasonDraft.trim() && busyId !== l.id ? btnDanger() : btnDisabled()}
+                          <Button
+                            variant="danger"
+                            sm
                             disabled={!reasonDraft.trim() || busyId === l.id || !canReject}
                             onClick={() => void confirmReject(l)}
-                          >{busyId === l.id ? '…' : 'Confirm reject'}</button>
-                          <button style={btn()} onClick={() => setRejectingId(null)}>Cancel</button>
+                          >{busyId === l.id ? '…' : 'Confirm reject'}</Button>
+                          <Button variant="outline" sm onClick={() => setRejectingId(null)}>Cancel</Button>
                         </div>
                       </div>
                     ) : (
                       <div style={{ display: 'flex', gap: '0.4rem' }}>
-                        <button style={canApprove && busyId !== l.id ? btnPrimary() : btnDisabled()} disabled={!canApprove || busyId === l.id} onClick={() => void approve(l)}>
+                        <Button variant="primary" sm disabled={!canApprove || busyId === l.id} onClick={() => void approve(l)}>
                           {busyId === l.id ? '…' : 'Approve'}
-                        </button>
-                        <button style={canReject ? btnDanger() : btnDisabled()} disabled={!canReject || busyId === l.id} onClick={() => startReject(l)}>Reject</button>
+                        </Button>
+                        <Button variant="danger" sm disabled={!canReject || busyId === l.id} onClick={() => startReject(l)}>Reject</Button>
                       </div>
                     )}
                   </td>
@@ -144,10 +145,10 @@ export default function ModerationQueuePage() {
           </table>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }
 
 function StatusBadgeInline({ value }: { value: boolean }) {
-  return <span style={{ fontSize: '0.78rem', color: value ? '#15803d' : '#9ca3af' }}>{value ? 'Eligible' : 'Not eligible'}</span>;
+  return <span style={{ fontSize: '0.78rem', color: value ? colors.success : colors.muted }}>{value ? 'Eligible' : 'Not eligible'}</span>;
 }

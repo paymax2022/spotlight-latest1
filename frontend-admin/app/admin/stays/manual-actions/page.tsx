@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { listReservations, manualAction, formatNaira } from '@/services/staysAdminService';
 import type { ReservationSummary, ManualActionType, ManualActionResult } from '@/types/staysAdmin';
-import { PageHeader, StaysTabs, Card, Badge, btn, btnPrimary, btnDanger, th, td, label, select, input, fmtDate, StateBlock, DisclosureNote } from '../_ui';
+import { StaysTabs, Card, Badge, label, select, fmtDate, StateBlock, DisclosureNote } from '../_ui';
+import { Page, PageHeader, Button, Input, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const ACTIONS: { value: ManualActionType; label: string; danger?: boolean }[] = [
   { value: 'confirm', label: 'Confirm' },
@@ -52,11 +53,11 @@ export default function StaysManualActionsPage() {
   }
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Manual actions"
         subtitle="Operator overrides on the reservation state machine. Every action requires a reason and emits an audit event."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" sm onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="reservations" />
 
@@ -85,25 +86,25 @@ export default function StaysManualActionsPage() {
         <div style={{ marginBottom: '0.75rem' }}>
           <label style={label()}>Reason (required)</label>
           <textarea
-            style={{ ...input(), minHeight: 80, resize: 'vertical', fontFamily: 'inherit' }}
+            style={{ minHeight: 80, resize: 'vertical', fontFamily: 'inherit', width: '100%' }}
             placeholder="Why is this override needed? This is recorded in the audit log."
             value={reason}
             onChange={(e) => setReason(e.target.value)}
           />
         </div>
-        <button
+        <Button
+          variant={ACTIONS.find((a) => a.value === action)?.danger ? 'danger' : 'primary'}
           onClick={() => runAction(selectedId, action, reason)}
           disabled={submitting}
-          style={ACTIONS.find((a) => a.value === action)?.danger ? btnDanger() : btnPrimary()}
         >
           {submitting ? 'Working…' : `Run ${ACTIONS.find((a) => a.value === action)?.label}`}
-        </button>
-        {actionError && <p style={{ color: '#dc2626', fontSize: '0.85rem', marginTop: '0.6rem' }}>{actionError}</p>}
+        </Button>
+        {actionError && <p style={{ color: colors.danger, fontSize: '0.85rem', marginTop: '0.6rem' }}>{actionError}</p>}
         {result && (
-          <div style={{ marginTop: '0.75rem', border: '1px solid #dcfce7', background: '#f0fdf4', borderRadius: '0.5rem', padding: '0.6rem 0.8rem', fontSize: '0.82rem', color: '#15803d' }}>
+          <div style={{ marginTop: '0.75rem', border: `1px solid ${tint(colors.success, 0.3)}`, background: tint(colors.success, 0.08), borderRadius: '0.5rem', padding: '0.6rem 0.8rem', fontSize: '0.82rem', color: colors.success }}>
             <strong>{result.action}</strong> on <code>{result.reservation_id}</code> &rarr; new state <Badge status={result.new_state} />
             {result.ledger_ref ? <> &middot; ledger ref <code>{result.ledger_ref}</code></> : null}
-            <span style={{ color: '#6b7280' }}> &middot; {fmtDate(result.performed_at)}</span>
+            <span style={{ color: colors.muted }}> &middot; {fmtDate(result.performed_at)}</span>
           </div>
         )}
       </Card>
@@ -114,52 +115,54 @@ export default function StaysManualActionsPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>ID</th>
-                  <th style={th()}>Property</th>
-                  <th style={th()}>Rail</th>
-                  <th style={th()}>State</th>
-                  <th style={th()}>Gross</th>
-                  <th style={th()}>Quick actions</th>
+                  <th style={thCell}>ID</th>
+                  <th style={thCell}>Property</th>
+                  <th style={thCell}>Rail</th>
+                  <th style={thCell}>State</th>
+                  <th style={thCell}>Gross</th>
+                  <th style={thCell}>Quick actions</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id}>
-                    <td style={td()}>
-                      <Link href={`/admin/stays/reservations/${r.id}`} style={{ color: '#340075', fontWeight: 600, textDecoration: 'none' }}>{r.id}</Link>
+                    <td style={tdCell}>
+                      <Link href={`/admin/stays/reservations/${r.id}`} style={{ color: colors.primary, fontWeight: 600, textDecoration: 'none' }}>{r.id}</Link>
                     </td>
-                    <td style={td()}>{r.property_name}<div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>{r.city}</div></td>
-                    <td style={td()}><Badge status={r.rail} /></td>
-                    <td style={td()}><Badge status={r.state} /></td>
-                    <td style={td()}>{formatNaira(r.gross_amount_kobo)}</td>
-                    <td style={td()}>
+                    <td style={tdCell}>{r.property_name}<div style={{ fontSize: '0.75rem', color: colors.muted }}>{r.city}</div></td>
+                    <td style={tdCell}><Badge status={r.rail} /></td>
+                    <td style={tdCell}><Badge status={r.state} /></td>
+                    <td style={tdCell}>{formatNaira(r.gross_amount_kobo)}</td>
+                    <td style={tdCell}>
                       <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                         {ACTIONS.map((a) => (
-                          <button
+                          <Button
                             key={a.value}
+                            variant={a.danger ? 'danger' : 'outline'}
+                            sm
                             onClick={() => { setRowFor({ id: r.id, action: a.value }); setRowReason(''); setActionError(null); }}
-                            style={a.danger ? btnDanger() : btn()}
                           >
                             {a.label}
-                          </button>
+                          </Button>
                         ))}
                       </div>
                       {rowFor && rowFor.id === r.id && (
                         <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                          <input
-                            style={{ ...input(), width: 260 }}
+                          <Input
+                            style={{ width: 260 }}
                             placeholder={`Reason for ${ACTIONS.find((a) => a.value === rowFor.action)?.label} (required)`}
                             value={rowReason}
                             onChange={(e) => setRowReason(e.target.value)}
                           />
-                          <button
+                          <Button
+                            variant="primary"
+                            sm
                             onClick={() => runAction(rowFor.id, rowFor.action, rowReason)}
                             disabled={submitting}
-                            style={btnPrimary()}
                           >
                             {submitting ? 'Working…' : 'Confirm'}
-                          </button>
-                          <button onClick={() => setRowFor(null)} style={btn()}>Cancel</button>
+                          </Button>
+                          <Button variant="outline" sm onClick={() => setRowFor(null)}>Cancel</Button>
                         </div>
                       )}
                     </td>
@@ -170,6 +173,6 @@ export default function StaysManualActionsPage() {
           </div>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

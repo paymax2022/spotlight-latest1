@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, ScrollView, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, TextInput, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Check } from 'lucide-react-native';
@@ -12,6 +12,8 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useHoldings, useListFraction } from '@/features/fractionalre/hooks';
 import { formatNaira, makeIdempotencyKey } from '@/features/fractionalre/utils';
+import { sanitizeMoneyInput } from '@/utils/money';
+import { alertAsync } from '@/lib/confirm';
 import type { Holding } from '@/features/fractionalre/types';
 
 export default function ListFractionScreen() {
@@ -38,11 +40,10 @@ export default function ListFractionScreen() {
         input: { holdingId: selected.id, units: unitsNum, pricePerUnitKobo: priceKobo },
         idempotencyKey: makeIdempotencyKey('fre-list'),
       });
-      Alert.alert('Listed', 'Your fraction is now on the secondary market.', [
-        { text: 'OK', onPress: () => router.replace('/fractionalre/market/orders') },
-      ]);
+      await alertAsync({ title: 'Listed', message: 'Your fraction is now on the secondary market.' });
+      router.replace('/fractionalre/market/orders');
     } catch {
-      Alert.alert('Could not list', 'Please try again.');
+      alertAsync({ title: 'Could not list', message: 'Please try again.' });
     }
   };
 
@@ -79,7 +80,7 @@ export default function ListFractionScreen() {
                 {overUnits ? <Text style={styles.warn}>You only hold {selected.units} units.</Text> : null}
 
                 <Text style={styles.label}>Price per unit (₦)</Text>
-                <TextInput value={priceNaira} onChangeText={(t) => setPriceNaira(t.replace(/[^0-9.]/g, ''))} keyboardType="numeric" style={styles.input} placeholder={String(navPerUnitKobo / 100)} placeholderTextColor={Colors.onSurfaceVariant} />
+                <TextInput value={priceNaira} onChangeText={(t) => setPriceNaira(sanitizeMoneyInput(t))} keyboardType="decimal-pad" maxLength={13} style={styles.input} placeholder={String(navPerUnitKobo / 100)} placeholderTextColor={Colors.onSurfaceVariant} />
                 <Text style={styles.navHint}>Reference NAV: {formatNaira(navPerUnitKobo)} per unit. Listings far from NAV may take longer to fill.</Text>
 
                 {unitsNum > 0 && priceKobo > 0 ? (

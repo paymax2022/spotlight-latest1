@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { listTiers, updateTier, formatPoints } from '@/services/loyaltyAdminService';
 import type { TierConfig } from '@/types/loyaltyAdmin';
-import { PageHeader, LoyaltyTabs, Card, Badge, DisclosureNote, StateBlock, AuditNote, btn, btnPrimary, th, td, fmtDate } from '../../events/_ui';
+import { PageHeader, LoyaltyTabs, Card, Badge, DisclosureNote, StateBlock, AuditNote, fmtDate } from '../../events/_ui';
+import { Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function TiersPage() {
   const [rows, setRows] = useState<TierConfig[]>([]);
@@ -50,7 +51,7 @@ export default function TiersPage() {
 
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Tier configuration" subtitle="Tier thresholds, earn multipliers and benefits. Membership ladder TIER1 → TIER2 → TIER3 (Black added Phase 3)." action={<button onClick={load} style={btn()}>Refresh</button>} />
+      <PageHeader title="Tier configuration" subtitle="Tier thresholds, earn multipliers and benefits. Membership ladder TIER1 → TIER2 → TIER3 (Black added Phase 3)." action={<Button variant="outline" sm onClick={load}>Refresh</Button>} />
       <LoyaltyTabs active="tiers" />
       <DisclosureNote>Thresholds are in lifetime <strong>points</strong> (non-cash, NL-4). Changing a threshold or multiplier creates a new versioned config and re-evaluates members on their next earn. Every change is audited (NL-12).</DisclosureNote>
 
@@ -60,28 +61,28 @@ export default function TiersPage() {
         <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No tiers configured.">
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>
-              <th style={th()}>Tier</th><th style={th()}>Threshold</th><th style={th()}>Members</th><th style={th()}>Earn ×</th>
-              <th style={th()}>Benefits</th><th style={th()}>Status</th><th style={th()}>Config v</th><th style={th()}>Updated</th><th style={th()}>Actions</th>
+              <th style={thCell}>Tier</th><th style={thCell}>Threshold</th><th style={thCell}>Members</th><th style={thCell}>Earn ×</th>
+              <th style={thCell}>Benefits</th><th style={thCell}>Status</th><th style={thCell}>Config v</th><th style={thCell}>Updated</th><th style={thCell}>Actions</th>
             </tr></thead>
             <tbody>
               {rows.map((t) => (
                 <tr key={t.id}>
-                  <td style={td()}>{t.name}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>rank {t.rank} · {t.id}</div></td>
-                  <td style={td()}>{formatPoints(t.threshold_points)}</td>
-                  <td style={td()}>{t.members.toLocaleString('en-NG')}</td>
-                  <td style={td()}>{t.earn_multiplier.toFixed(2)}×</td>
-                  <td style={td()}>
+                  <td style={tdCell}>{t.name}<div style={{ fontSize: '0.72rem', color: colors.muted }}>rank {t.rank} · {t.id}</div></td>
+                  <td style={tdCell}>{formatPoints(t.threshold_points)}</td>
+                  <td style={tdCell}>{t.members.toLocaleString('en-NG')}</td>
+                  <td style={tdCell}>{t.earn_multiplier.toFixed(2)}×</td>
+                  <td style={tdCell}>
                     <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.8rem' }}>
                       {t.benefits.map((b, i) => <li key={i}>{b}</li>)}
                     </ul>
                   </td>
-                  <td style={td()}><Badge status={t.status} /></td>
-                  <td style={td()}>v{t.config_version}</td>
-                  <td style={td()}>{fmtDate(t.updated_at)}</td>
-                  <td style={td()}>
+                  <td style={tdCell}><Badge status={t.status} /></td>
+                  <td style={tdCell}>v{t.config_version}</td>
+                  <td style={tdCell}>{fmtDate(t.updated_at)}</td>
+                  <td style={tdCell}>
                     <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                      <button style={btnPrimary()} disabled={busy === t.id} onClick={() => editThreshold(t)}>{busy === t.id ? '…' : 'Threshold'}</button>
-                      <button style={btn()} disabled={busy === t.id} onClick={() => editMultiplier(t)}>Multiplier</button>
+                      <Button variant="primary" sm disabled={busy === t.id} onClick={() => editThreshold(t)}>{busy === t.id ? '…' : 'Threshold'}</Button>
+                      <Button variant="outline" sm disabled={busy === t.id} onClick={() => editMultiplier(t)}>Multiplier</Button>
                     </div>
                   </td>
                 </tr>

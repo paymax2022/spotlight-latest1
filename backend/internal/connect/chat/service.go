@@ -16,9 +16,16 @@ import (
 // a message can only be sent/read inside a conversation backed by a MUTUAL,
 // ACTIVE match where the caller is a participant — checked server-side here AND
 // re-asserted by the connect_messages RLS insert policy as a DB backstop.
+// thresholdLoader is the safety-config dependency SendMessage relies on. It is an
+// interface (satisfied by *connecttrust.ConfigReader) so a load FAILURE can be
+// exercised in a unit test to prove the fail-closed path (TS-013).
+type thresholdLoader interface {
+	Load(ctx context.Context) (connecttrust.Thresholds, error)
+}
+
 type Service struct {
 	db     *pgxpool.Pool
-	cfg    *connecttrust.ConfigReader
+	cfg    thresholdLoader
 	shield *connecttrust.ShieldStore
 	safety *connectsafety.Service
 }
@@ -43,8 +50,10 @@ type participantMatch struct {
 // server-side enforcement of "chat only after match".
 //
 // Sibling-owned schema (verified against 20260702000000_connect_phase1_core.sql):
-//   connect_matches(id, profile_a, profile_b, status, ...)   profile_* → connect_profiles.id
-//   connect_profiles(id, user_id UNIQUE → auth.users)
+//
+//	connect_matches(id, profile_a, profile_b, status, ...)   profile_* → connect_profiles.id
+//	connect_profiles(id, user_id UNIQUE → auth.users)
+//
 // So an auth user_id maps to a participant by joining through connect_profiles.
 // `status='matched'` means mutual. Queried defensively — a missing/renamed column
 // errors loudly rather than leaking access.
@@ -175,7 +184,14 @@ func (s *Service) SendMessage(ctx context.Context, convID, userID string, req Se
 		return nil, fmt.Errorf("connect: invalid message kind %q", kind)
 	}
 
-	thresholds, _ := s.cfg.Load(ctx) // detection fails OPEN (no warning) on cfg miss
+	// TS-013 / invariant 12: safety paths fail CLOSED. Missing config rows are a
+	// legitimate "no terms configured" state (empty lists, nil error) and may pass;
+	// but a genuine load ERROR means we cannot certify the message is safe, so we
+	// refuse to deliver it unscanned rather than failing open.
+	thresholds, err := s.cfg.Load(ctx)
+	if err != nil {
+		return nil, ErrSafetyUnavailable
+	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -191,15 +207,40 @@ func (s *Service) SendMessage(ctx context.Context, convID, userID string, req Se
 		return nil, ErrConversationClosed
 	}
 
+	// TS-009 / EC-005 / invariant 6: a suspended/banned user's access is severed
+	// everywhere — so the conversation is dead if EITHER participant is restricted
+	// (the banned sender can't message, and a partner can't message the banned
+	// recipient). Checked fail-closed inside the send tx so moderation cuts contact
+	// immediately mid-conversation.
+	var restricted bool
+	const restrictQ = `SELECT EXISTS(SELECT 1 FROM connect_account_restrictions r
+		WHERE r.user_id = ANY($1::uuid[]) AND r.active
+		  AND (r.expires_at IS NULL OR r.expires_at > now()))`
+	if err := tx.QueryRow(ctx, restrictQ, []string{userID, pm.otherUser}).Scan(&restricted); err != nil {
+		return nil, fmt.Errorf("connect: restriction check: %w", err)
+	}
+	if restricted {
+		return nil, ErrRestricted
+	}
+
 	// Inline safety hook (deterministic, no PII logged).
 	det := connecttrust.Scan(req.Body, thresholds)
+
+	// connect_messages.reason_codes is NOT NULL DEFAULT '{}'. Scan returns a nil
+	// slice for an unflagged message, and a nil []string encodes as SQL NULL —
+	// which would violate the NOT NULL constraint on EVERY normal (unflagged)
+	// message. Normalise nil to an empty array so the common path inserts cleanly.
+	reasonCodes := det.ReasonCodes
+	if reasonCodes == nil {
+		reasonCodes = []string{}
+	}
 
 	const ins = `INSERT INTO connect_messages
 		(conversation_id, sender_id, body, kind, flagged, reason_codes)
 		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6)
 		RETURNING id, conversation_id, sender_id, body, kind, flagged, reason_codes, created_at`
 	var m Message
-	if err := tx.QueryRow(ctx, ins, convID, userID, req.Body, kind, det.Flagged, det.ReasonCodes).Scan(
+	if err := tx.QueryRow(ctx, ins, convID, userID, req.Body, kind, det.Flagged, reasonCodes).Scan(
 		&m.ID, &m.ConversationID, &m.SenderID, &m.Body, &m.Kind, &m.Flagged, &m.ReasonCodes, &m.CreatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("connect: insert message: %w", err)

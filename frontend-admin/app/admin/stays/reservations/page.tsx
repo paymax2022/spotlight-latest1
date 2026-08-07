@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { listReservations, formatNaira } from '@/services/staysAdminService';
 import type { ReservationSummary, ReservationState, SourceRail, SupplierCode } from '@/types/staysAdmin';
-import { PageHeader, StaysTabs, Card, Badge, FilterBar, btn, th, td, input, label, select, fmtDate, timeAgo, StateBlock } from '../_ui';
+import { StaysTabs, Badge, FilterBar, label, select, fmtDate, timeAgo, StateBlock } from '../_ui';
+import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATES: ReservationState[] = [
   'OFFER_SELECTED', 'PREBOOK_OK', 'PAYMENT_HELD', 'BOOKING', 'CONFIRMED',
@@ -40,11 +41,11 @@ export default function StaysReservationsPage() {
   useEffect(() => { load(); }, [state, rail, supplier, q]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
       <PageHeader
         title="Reservations"
         subtitle="Search and inspect bookings across the bedbank and direct rails. Guest PII is masked; money is in ₦ (kobo minor units), supplier currency is disclosed on each booking."
-        action={<button onClick={load} style={btn()}>Refresh</button>}
+        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
       <StaysTabs active="reservations" />
 
@@ -52,7 +53,7 @@ export default function StaysReservationsPage() {
         <FilterBar>
           <div style={{ minWidth: 200, flex: 1 }}>
             <label style={label()}>Search</label>
-            <input style={input()} placeholder="ID, supplier ref, property or guest" value={q} onChange={(e) => setQ(e.target.value)} />
+            <Input placeholder="ID, supplier ref, property or guest" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
           <div style={{ minWidth: 180 }}>
             <label style={label()}>State</label>
@@ -84,38 +85,38 @@ export default function StaysReservationsPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>ID</th>
-                  <th style={th()}>Supplier ref</th>
-                  <th style={th()}>Property</th>
-                  <th style={th()}>Guest</th>
-                  <th style={th()}>Rail</th>
-                  <th style={th()}>State</th>
-                  <th style={th()}>Stay</th>
-                  <th style={th()}>Rooms</th>
-                  <th style={th()}>Gross</th>
-                  <th style={th()}>Created</th>
+                  <th style={thCell}>ID</th>
+                  <th style={thCell}>Supplier ref</th>
+                  <th style={thCell}>Property</th>
+                  <th style={thCell}>Guest</th>
+                  <th style={thCell}>Rail</th>
+                  <th style={thCell}>State</th>
+                  <th style={thCell}>Stay</th>
+                  <th style={thCell}>Rooms</th>
+                  <th style={thCell}>Gross</th>
+                  <th style={thCell}>Created</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id}>
-                    <td style={td()}>
-                      <Link href={`/admin/stays/reservations/${r.id}`} style={{ color: '#340075', fontWeight: 600, textDecoration: 'none' }}>
+                    <td style={tdCell}>
+                      <Link href={`/admin/stays/reservations/${r.id}`} style={{ color: colors.primary, fontWeight: 600, textDecoration: 'none' }}>
                         {r.id}
                       </Link>
                     </td>
-                    <td style={td()}>{r.supplier_ref || '—'}</td>
-                    <td style={td()}>
+                    <td style={tdCell}>{r.supplier_ref || '—'}</td>
+                    <td style={tdCell}>
                       <div style={{ fontWeight: 600 }}>{r.property_name}</div>
-                      <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>{r.city}</div>
+                      <div style={{ fontSize: '0.75rem', color: colors.muted }}>{r.city}</div>
                     </td>
-                    <td style={td()}>{r.guest_masked}</td>
-                    <td style={td()}><Badge status={r.rail} /></td>
-                    <td style={td()}><Badge status={r.state} /></td>
-                    <td style={td()}>{fmtDate(r.check_in)} &rarr; {fmtDate(r.check_out)}</td>
-                    <td style={td()}>{r.rooms}</td>
-                    <td style={td()}>{formatNaira(r.gross_amount_kobo)} <span style={{ color: '#9ca3af', fontSize: '0.72rem' }}>{r.currency}</span></td>
-                    <td style={td()}>{timeAgo(r.created_at)}</td>
+                    <td style={tdCell}>{r.guest_masked}</td>
+                    <td style={tdCell}><Badge status={r.rail} /></td>
+                    <td style={tdCell}><Badge status={r.state} /></td>
+                    <td style={tdCell}>{fmtDate(r.check_in)} &rarr; {fmtDate(r.check_out)}</td>
+                    <td style={tdCell}>{r.rooms}</td>
+                    <td style={tdCell}>{formatNaira(r.gross_amount_kobo)} <span style={{ color: colors.muted, fontSize: '0.72rem' }}>{r.currency}</span></td>
+                    <td style={tdCell}>{timeAgo(r.created_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -123,6 +124,6 @@ export default function StaysReservationsPage() {
           </div>
         </StateBlock>
       </Card>
-    </div>
+    </Page>
   );
 }

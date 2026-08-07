@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView, Alert } from 'react-native';
+import { Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Colors } from '@/constants/colors';
@@ -10,6 +10,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard } from '@/features/doctor/components';
 import { useChangePassword } from '@/features/doctor/hooks';
+import { alertAsync } from '@/lib/confirm';
 
 // ── Section AC — Change password (AC.8) ───────────────────────────────────────
 // NEW screen. Reuses TextInputField (secure) + PrimaryButton. Local validation
@@ -27,14 +28,15 @@ export default function ChangePasswordScreen() {
 
   const handleSubmit = async () => {
     if (!canSubmit) {
-      Alert.alert('Check your input', 'Use at least 8 characters and make sure both new passwords match.');
+      alertAsync({ title: 'Check your input', message: 'Use at least 8 characters and make sure both new passwords match.' });
       return;
     }
     try {
       await change.mutateAsync({ currentPassword, newPassword });
-      Alert.alert('Password changed', 'Your password has been updated.', [{ text: 'OK', onPress: () => router.back() }]);
+      await alertAsync({ title: 'Password changed', message: 'Your password has been updated.' });
+      router.back();
     } catch {
-      Alert.alert('Failed', 'Could not change your password. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not change your password. Please try again.' });
     }
   };
 

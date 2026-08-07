@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listContent, transitionContent, listLocalizations } from '@/services/academyAdminService';
 import type { ContentItem, ContentTransition, Localization } from '@/types/academyAdmin';
 import { PageHeader, AcademyTabs, Card, Badge, StateBlock, AuditNote, DisclosureNote, btn, btnPrimary, btnDanger, th, td, fmtDate, timeAgo } from '../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 // Forward-only publish workflow. Each status exposes only the transitions that
 // are valid from it; the UI renders exactly those buttons.
@@ -72,7 +73,7 @@ export default function ContentPage() {
                     <td style={td()}>v{c.version}</td>
                     <td style={td()}>{timeAgo(c.updated_at)}</td>
                     <td style={td()}>
-                      {actions.length === 0 ? <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>—</span> : (
+                      {actions.length === 0 ? <span style={{ color: colors.muted, fontSize: '0.8rem' }}>—</span> : (
                         <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
                           {actions.map((a) => (
                             <button key={a.action} onClick={() => transition(c.id, a.action, a.label)} disabled={busy === c.id} style={a.danger ? btnDanger() : btnPrimary()}>{a.label}</button>
@@ -85,11 +86,11 @@ export default function ContentPage() {
               })}
             </tbody>
           </table>
-          {notice && <p style={{ fontSize: '0.8rem', color: '#374151', marginTop: '0.6rem' }}>{notice}</p>}
+          {notice && <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: '0.6rem' }}>{notice}</p>}
           <AuditNote>Every publish-workflow transition is recorded to the immutable audit log with actor and timestamp.</AuditNote>
         </Card>
 
-        <Card title="Media variants & localization queue" right={<span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>English + Nigerian languages</span>}>
+        <Card title="Media variants & localization queue" right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>English + Nigerian languages</span>}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr><th style={th()}>Content</th><th style={th()}>Language</th><th style={th()}>Status</th><th style={th()}>Translator</th><th style={th()}>Coverage</th><th style={th()}>Updated</th></tr></thead>
             <tbody>

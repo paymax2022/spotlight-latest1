@@ -13,6 +13,7 @@ import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useRequestMoney } from '@/features/social/hooks';
 import { SocialColors, formatNaira, normalizeHandle, CASHTAG_REGEX } from '@/features/social/constants/social.constants';
+import { sanitizeMoneyInput } from '@/utils/money';
 
 export default function RequestMoney() {
   const { handle } = useLocalSearchParams<{ handle?: string }>();
@@ -58,7 +59,7 @@ export default function RequestMoney() {
       <ScreenHeader title="Request money" />
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <TextInputField label="Request from" placeholder="@cashtag" autoCapitalize="none" autoCorrect={false} value={from} onChangeText={setFrom} leftIcon={<AtSign size={18} color={SocialColors.muted} />} />
-        <TextInputField label="Amount" placeholder="0" keyboardType="numeric" value={amount} onChangeText={setAmount} />
+        <TextInputField label="Amount" placeholder="0" keyboardType="decimal-pad" maxLength={13} value={amount} onChangeText={(t) => setAmount(sanitizeMoneyInput(t))} />
         <TextInputField label="Note (optional)" placeholder="What's it for?" value={note} onChangeText={setNote} maxLength={80} />
 
         <View style={styles.infoCard}>

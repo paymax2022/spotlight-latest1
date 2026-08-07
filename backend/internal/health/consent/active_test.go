@@ -9,17 +9,17 @@ import (
 // sharing). Pure, deterministic assertions on the canonical active-grant rule that
 // HasActiveGrant enforces — no DB.
 
-func now() time.Time             { return time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC) }
+func now() time.Time      { return time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC) }
 func ptr(t time.Time) *time.Time { return &t }
 
 func TestGrantActive(t *testing.T) {
 	cases := []struct {
-		name    string
-		state   string
-		grant   string
-		expires *time.Time
-		want    string
-		expect  bool
+		name      string
+		state     string
+		grant     string
+		expires   *time.Time
+		want      string
+		expect    bool
 	}{
 		{"active exact scope, no expiry", "ACTIVE", "RECORDS", nil, "RECORDS", true},
 		{"ALL covers any scope", "ACTIVE", "ALL", nil, "LAB_RESULTS", true},

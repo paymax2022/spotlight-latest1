@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listServices, governService, formatNaira } from '@/services/healthVetAdminService';
 import type { VetService, VetServiceGovernanceAction } from '@/types/healthVetAdmin';
 import { PageHeader, VetTabs, Card, Badge, DisclosureNote, AuditNote, StateBlock, FilterBar, btn, btnPrimary, btnDanger, th, td, input, select, label, fmtDate, pct } from '../../_ui';
+import { colors } from '@/components/ui/vuexy';
 
 const STATUSES = ['', 'pending', 'approved', 'rejected', 'suspended'];
 const MODES = ['', 'tele', 'home', 'clinic'];
@@ -77,12 +78,12 @@ export default function VetServicesPage() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}><strong>{r.service_name}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.category} · {r.id}</div>{r.flagged_reason ? <div style={{ fontSize: '0.72rem', color: '#b91c1c', marginTop: 3 }}>{r.flagged_reason}</div> : null}</td>
+                  <td style={td()}><strong>{r.service_name}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.category} · {r.id}</div>{r.flagged_reason ? <div style={{ fontSize: '0.72rem', color: colors.danger, marginTop: 3 }}>{r.flagged_reason}</div> : null}</td>
                   <td style={td()}><Badge status={r.mode} /></td>
-                  <td style={td()}>{r.vet_masked}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{r.clinic_masked}</div></td>
+                  <td style={td()}>{r.vet_masked}<div style={{ fontSize: '0.72rem', color: colors.muted }}>{r.clinic_masked}</div></td>
                   <td style={td()}>{r.duration_minutes}m</td>
                   <td style={td()}>{formatNaira(r.fee_kobo)}</td>
-                  <td style={td()}><span style={{ color: r.platform_fee_pct > 0.1 ? '#b91c1c' : '#374151', fontWeight: r.platform_fee_pct > 0.1 ? 700 : 400 }}>{pct(r.platform_fee_pct)}</span></td>
+                  <td style={td()}><span style={{ color: r.platform_fee_pct > 0.1 ? colors.danger : colors.text, fontWeight: r.platform_fee_pct > 0.1 ? 700 : 400 }}>{pct(r.platform_fee_pct)}</span></td>
                   <td style={td()}><Badge status={r.status} /></td>
                   <td style={td()}>
                     {r.status === 'pending' || r.status === 'suspended' ? (
@@ -91,7 +92,7 @@ export default function VetServicesPage() {
                         {r.status !== 'suspended' && <button disabled={busy} style={btn()} onClick={() => govern(r.id, 'suspend')}>Suspend</button>}
                         <button disabled={busy} style={btnDanger()} onClick={() => govern(r.id, 'reject')}>Reject</button>
                       </div>
-                    ) : <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>—</span>}
+                    ) : <span style={{ color: colors.muted, fontSize: '0.8rem' }}>—</span>}
                   </td>
                 </tr>
               ))}
@@ -99,7 +100,7 @@ export default function VetServicesPage() {
           </table>
         </StateBlock>
       </Card>
-      <p style={{ fontSize: '0.72rem', color: '#9ca3af' }}>Listed {rows.length} service(s). Last governed {fmtDate(new Date().toISOString())}.</p>
+      <p style={{ fontSize: '0.72rem', color: colors.muted }}>Listed {rows.length} service(s). Last governed {fmtDate(new Date().toISOString())}.</p>
     </div>
   );
 }

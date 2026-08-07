@@ -5,9 +5,10 @@ import { getParcels, setParcelStatus, reviewParcelPod } from '@/services/mobilit
 import type { ParcelRow, ParcelStatus, PodStatus } from '@/types/mobilityModes';
 import {
   PageHeader, MobilityTabs, Card, Badge, StateNote, AuditedNotice, Kpi,
-  btn, btnPrimary, btnDisabled, th, td, input, nairaFull,
+  btn, btnPrimary, btnDisabled, input, nairaFull,
   useMobilityPermissions, MOBILITY_PERMS,
 } from '../_ui';
+import { colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUS_FILTER: Array<ParcelStatus | ''> = ['', 'created', 'courier_assigned', 'pickup_pin_verified', 'picked_up', 'in_transit', 'dropoff_verified', 'delivered', 'failed', 'disputed', 'cancelled'];
 // Sensitive transitions that always require an audited reason.
@@ -81,8 +82,8 @@ export default function MobilityParcelsPage() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
         <Kpi label="Total parcels" value={String(rows.length)} />
-        <Kpi label="In flight" value={String(inFlight)} accent="#1d4ed8" />
-        <Kpi label="Awaiting POD review" value={String(podReview)} accent={podReview ? '#dc2626' : '#16a34a'} />
+        <Kpi label="In flight" value={String(inFlight)} accent={colors.info} />
+        <Kpi label="Awaiting POD review" value={String(podReview)} accent={podReview ? colors.danger : colors.success} />
       </div>
 
       <Card
@@ -99,21 +100,21 @@ export default function MobilityParcelsPage() {
           : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
               <thead>
-                <tr style={{ textAlign: 'left', color: '#6b7280', borderBottom: '1px solid #e5e7eb' }}>
-                  <th style={th()}>Parcel</th><th style={th()}>Route</th><th style={th()}>Courier</th><th style={th()}>Status</th><th style={th()}>POD</th><th style={th()}>Escrow</th><th style={th()}>Fare</th><th style={th()}></th>
+                <tr style={{ textAlign: 'left', color: colors.muted, borderBottom: `1px solid ${colors.border}` }}>
+                  <th style={thCell}>Parcel</th><th style={thCell}>Route</th><th style={thCell}>Courier</th><th style={thCell}>Status</th><th style={thCell}>POD</th><th style={thCell}>Escrow</th><th style={thCell}>Fare</th><th style={thCell}></th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((p) => (
-                  <tr key={p.id} style={{ borderBottom: '1px solid #f3f4f6', background: p.status === 'disputed' ? '#fef2f2' : undefined }}>
-                    <td style={td()}><strong>{p.id}</strong><div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>{p.senderName} · {p.size}/{p.speed}</div></td>
-                    <td style={td()}>{p.pickupAddress}<div style={{ fontSize: '0.72rem', color: '#9ca3af' }}>→ {p.dropoffAddress}</div></td>
-                    <td style={td()}>{p.courierName ?? <span style={{ color: '#9ca3af' }}>unassigned</span>}</td>
-                    <td style={td()}><Badge status={p.status} /></td>
-                    <td style={td()}><Badge status={p.podStatus} /></td>
-                    <td style={td()}><Badge status={p.escrowStatus} /></td>
-                    <td style={td()}>{nairaFull(p.fareKobo)}</td>
-                    <td style={td()}><button style={btn()} onClick={() => openDetail(p)}>{canManage ? 'Manage' : 'View'}</button></td>
+                  <tr key={p.id} style={{ borderBottom: `1px solid ${colors.border}`, background: p.status === 'disputed' ? tint(colors.danger, 0.08) : undefined }}>
+                    <td style={tdCell}><strong>{p.id}</strong><div style={{ fontSize: '0.72rem', color: colors.muted }}>{p.senderName} · {p.size}/{p.speed}</div></td>
+                    <td style={tdCell}>{p.pickupAddress}<div style={{ fontSize: '0.72rem', color: colors.muted }}>→ {p.dropoffAddress}</div></td>
+                    <td style={tdCell}>{p.courierName ?? <span style={{ color: colors.muted }}>unassigned</span>}</td>
+                    <td style={tdCell}><Badge status={p.status} /></td>
+                    <td style={tdCell}><Badge status={p.podStatus} /></td>
+                    <td style={tdCell}><Badge status={p.escrowStatus} /></td>
+                    <td style={tdCell}>{nairaFull(p.fareKobo)}</td>
+                    <td style={tdCell}><button style={btn()} onClick={() => openDetail(p)}>{canManage ? 'Manage' : 'View'}</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -123,14 +124,14 @@ export default function MobilityParcelsPage() {
 
       {selected && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }} onClick={() => !busy && setSelected(null)}>
-          <div style={{ background: '#fff', borderRadius: '0.5rem', padding: '1.25rem', width: 'min(560px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: colors.card, borderRadius: '0.5rem', padding: '1.25rem', width: 'min(560px, 94vw)', maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: '0.5rem' }}>
               <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>{selected.id}</h2>
               <Badge status={selected.status} /><Badge status={selected.escrowStatus} />
             </div>
-            <p style={{ fontSize: '0.82rem', color: '#374151', margin: '0 0 0.25rem' }}>{selected.senderName} · {selected.category} · {selected.size}/{selected.speed}</p>
-            <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0 0 0.5rem' }}>{selected.pickupAddress} → {selected.dropoffAddress} · {selected.zone}</p>
-            <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0 0 1rem' }}>Fare {nairaFull(selected.fareKobo)} · Declared value {nairaFull(selected.declaredValueKobo)} · Courier {selected.courierName ?? '—'}</p>
+            <p style={{ fontSize: '0.82rem', color: colors.text, margin: '0 0 0.25rem' }}>{selected.senderName} · {selected.category} · {selected.size}/{selected.speed}</p>
+            <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 0.5rem' }}>{selected.pickupAddress} → {selected.dropoffAddress} · {selected.zone}</p>
+            <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 1rem' }}>Fare {nairaFull(selected.fareKobo)} · Declared value {nairaFull(selected.declaredValueKobo)} · Courier {selected.courierName ?? '—'}</p>
 
             {!canManage ? (
               <StateNote kind="restricted">Read-only — your role cannot update parcels.</StateNote>
@@ -139,7 +140,7 @@ export default function MobilityParcelsPage() {
                 <div style={{ ...input(), border: 'none', padding: 0, marginBottom: '0.75rem', fontSize: '0.85rem', fontWeight: 700 }}>Proof of delivery: <Badge status={selected.podStatus} /></div>
                 {selected.podProofUrl
                   ? <p style={{ fontSize: '0.8rem', margin: '0 0 0.75rem' }}><a href={selected.podProofUrl} target="_blank" rel="noreferrer">View POD proof →</a></p>
-                  : <p style={{ fontSize: '0.8rem', color: '#9ca3af', margin: '0 0 0.75rem' }}>No proof submitted yet.</p>}
+                  : <p style={{ fontSize: '0.8rem', color: colors.muted, margin: '0 0 0.75rem' }}>No proof submitted yet.</p>}
 
                 <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>Update status
                   <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as ParcelStatus }))} style={{ ...input(), marginTop: 4 }}>
@@ -152,8 +153,8 @@ export default function MobilityParcelsPage() {
                 </label>
 
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
-                  <button style={busy ? btnDisabled() : btnPrimary('#16a34a')} disabled={busy} onClick={() => void submitPod('approved')}>Approve POD</button>
-                  <button style={busy ? btnDisabled() : btnPrimary('#dc2626')} disabled={busy} onClick={() => void submitPod('rejected')}>Reject POD</button>
+                  <button style={busy ? btnDisabled() : btnPrimary(colors.success)} disabled={busy} onClick={() => void submitPod('approved')}>Approve POD</button>
+                  <button style={busy ? btnDisabled() : btnPrimary(colors.danger)} disabled={busy} onClick={() => void submitPod('rejected')}>Reject POD</button>
                 </div>
               </>
             )}

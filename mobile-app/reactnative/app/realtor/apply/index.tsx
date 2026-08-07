@@ -10,6 +10,7 @@ import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import SelectField from '@/components/SelectField';
 import SectionHeader from '@/components/SectionHeader';
 import { useApplyStore, EMPLOYMENT_OPTIONS } from '@/features/realtor/store/applyStore';
@@ -76,9 +77,11 @@ export default function ApplyScreen() {
         <TextInputField
           label="Monthly income (₦)"
           placeholder="e.g. 800000"
-          keyboardType="number-pad"
+          keyboardType="decimal-pad"
+          inputMode="decimal"
+          maxLength={13}
           value={incomeNaira}
-          onChangeText={(t) => set({ monthlyIncome: (Number(t.replace(/\D/g, '')) || 0) * 100 })}
+          onChangeText={(t) => set({ monthlyIncome: (Number(sanitizeMoneyInput(t)) || 0) * 100 })}
         />
 
         <SectionHeader title="Guarantor" style={styles.sectionFlush} />

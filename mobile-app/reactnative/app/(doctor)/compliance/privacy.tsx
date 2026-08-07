@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Platform, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { Lock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -40,32 +41,26 @@ export default function PrivacySettingsScreen() {
   const handleExport = async () => {
     try {
       await exportData.mutateAsync(undefined);
-      Alert.alert('Export requested', 'We will email you when your data export is ready to download.');
+      alertAsync({ title: 'Export requested', message: 'We will email you when your data export is ready to download.' });
     } catch {
-      Alert.alert('Failed', 'Could not request your data export. Please try again.');
+      alertAsync({ title: 'Failed', message: 'Could not request your data export. Please try again.' });
     }
   };
 
-  const handleDelete = () => {
-    Alert.alert(
-      'Delete account data?',
-      'This requests permanent deletion of your account and data. This cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Request deletion',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteAccount.mutateAsync(undefined);
-              Alert.alert('Deletion requested', 'Your account deletion request has been received.');
-            } catch {
-              Alert.alert('Failed', 'Could not submit your deletion request. Please try again.');
-            }
-          },
-        },
-      ],
-    );
+  const handleDelete = async () => {
+    const ok = await confirmAsync({
+      title: 'Delete account data?',
+      message: 'This requests permanent deletion of your account and data. This cannot be undone.',
+      confirmLabel: 'Request deletion',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteAccount.mutateAsync(undefined);
+      alertAsync({ title: 'Deletion requested', message: 'Your account deletion request has been received.' });
+    } catch {
+      alertAsync({ title: 'Failed', message: 'Could not submit your deletion request. Please try again.' });
+    }
   };
 
   return (

@@ -69,13 +69,13 @@ func (f *fakePayoutRail) Payout(_ context.Context, _, _, idemKey string, _ int64
 // tests assert: tutor lookup, status flips, append-only earnings + derived SUM(pending),
 // and the idempotent payout insert + guarded settle (covered earnings flip to paid).
 type fakeStore struct {
-	tutors     map[string]*Tutor   // by tutor id
-	byUser     map[string]string   // user id → tutor id
-	earnings   []Earning           // append-only
-	payouts    map[string]*Payout  // by payout id
-	byIdem     map[string]*Payout  // by idempotency key
-	insertCnt  int
-	settleCnt  int
+	tutors    map[string]*Tutor  // by tutor id
+	byUser    map[string]string  // user id → tutor id
+	earnings  []Earning          // append-only
+	payouts   map[string]*Payout // by payout id
+	byIdem    map[string]*Payout // by idempotency key
+	insertCnt int
+	settleCnt int
 }
 
 func newFakeStore() *fakeStore {

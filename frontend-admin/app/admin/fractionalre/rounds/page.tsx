@@ -6,7 +6,13 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { listRounds } from '@/services/fractionalreAdminService';
 import type { AdminRound } from '@/types/fractionalreAdmin';
-import { PageHeader, FractionalReTabs, Card, Badge, btn, th, td, money, timeAgo } from '../_ui';
+import { FractionalReTabs, money, timeAgo } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+const STATUS_COLOR: Record<string, string> = {
+  fundingopen: colors.info, funded: colors.success, closing: colors.warning, distributing: colors.warning,
+  refunding: colors.warning, closed: colors.secondary, cancelled: colors.danger,
+};
 
 export default function RoundsListPage() {
   const [rounds, setRounds] = useState<AdminRound[]>([]);
@@ -22,32 +28,32 @@ export default function RoundsListPage() {
   const pct = (r: AdminRound) => r.targetKobo ? Math.round((r.raisedKobo / r.targetKobo) * 100) : 0;
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
-      <PageHeader title="Funding rounds" subtitle="Setup, monitoring, extend/close/refund and allocation." action={<button onClick={load} style={btn()}>Refresh</button>} />
+    <Page>
+      <PageHeader title="Funding rounds" subtitle="Setup, monitoring, extend/close/refund and allocation." actions={<Button onClick={load}>Refresh</Button>} />
       <FractionalReTabs active="rounds" />
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
-      <Card>
-        {loading ? <p style={{ color: '#6b7280' }}>Loading rounds…</p> : rounds.length === 0 ? <p style={{ color: '#6b7280' }}>No rounds.</p> : (
+      <Card style={{ padding: 0, overflow: 'auto' }}>
+        {loading ? <p style={{ color: colors.muted, padding: 14 }}>Loading rounds…</p> : rounds.length === 0 ? <p style={{ color: colors.muted, padding: 14 }}>No rounds.</p> : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th()}>Asset</th><th style={th()}>Status</th><th style={th()}>Raised / target</th><th style={th()}>%</th><th style={th()}>Min threshold</th><th style={th()}>Investors</th><th style={th()}>Closes</th><th style={th()} /></tr></thead>
+            <thead><tr><th style={thCell}>Asset</th><th style={thCell}>Status</th><th style={thCell}>Raised / target</th><th style={thCell}>%</th><th style={thCell}>Min threshold</th><th style={thCell}>Investors</th><th style={thCell}>Closes</th><th style={thCell} /></tr></thead>
             <tbody>
               {rounds.map((r) => (
                 <tr key={r.id}>
-                  <td style={td()}>{r.assetName}</td>
-                  <td style={td()}><Badge status={r.status} /></td>
-                  <td style={td()}>{money(r.raisedKobo)} / {money(r.targetKobo)}</td>
-                  <td style={{ ...td(), color: pct(r) >= 100 ? '#15803d' : pct(r) >= 67 ? '#d97706' : '#dc2626' }}>{pct(r)}%</td>
-                  <td style={td()}>{money(r.minThresholdKobo)}</td>
-                  <td style={td()}>{r.investorCount.toLocaleString('en-NG')}</td>
-                  <td style={td()}>{timeAgo(r.closesAt)}</td>
-                  <td style={td()}><Link href={`/admin/fractionalre/rounds/${r.id}`} style={{ color: '#1d4ed8' }}>Manage →</Link></td>
+                  <td style={tdCell}>{r.assetName}</td>
+                  <td style={tdCell}><Badge text={r.status.replace(/_/g, ' ')} color={STATUS_COLOR[r.status.toLowerCase()] ?? colors.secondary} /></td>
+                  <td style={tdCell}>{money(r.raisedKobo)} / {money(r.targetKobo)}</td>
+                  <td style={{ ...tdCell, color: pct(r) >= 100 ? colors.success : pct(r) >= 67 ? colors.warning : colors.danger }}>{pct(r)}%</td>
+                  <td style={tdCell}>{money(r.minThresholdKobo)}</td>
+                  <td style={tdCell}>{r.investorCount.toLocaleString('en-NG')}</td>
+                  <td style={tdCell}>{timeAgo(r.closesAt)}</td>
+                  <td style={tdCell}><Link href={`/admin/fractionalre/rounds/${r.id}`} style={{ color: colors.info }}>Manage →</Link></td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

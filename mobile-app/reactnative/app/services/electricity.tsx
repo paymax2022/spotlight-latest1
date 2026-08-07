@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
-import BillReviewSecurityPanel, { calculateBillReview, formatNaira } from '@/components/BillReviewSecurityPanel';
+import BillReviewSecurityPanel, { calculateBillReview, formatNaira, CONVENIENCE_FEE_NAIRA } from '@/components/BillReviewSecurityPanel';
 import PaymentMethodSelector, { type PaymentMethod } from '@/components/PaymentMethodSelector';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -106,7 +106,7 @@ export default function ElectricityScreen() {
     onError: (err) => {
       setValidation(null);
       setValidateError('Unable to validate meter number. Please check the number and try again.');
-      console.log(err);
+      if (__DEV__) console.warn('Meter validation failed', err);
     },
   });
 
@@ -142,7 +142,7 @@ export default function ElectricityScreen() {
   const onConfirmWallet = () => {
     if (!pendingForm || !selectedDisco || !validation) return;
     if (confirmInFlightRef.current || paying) return;
-    const review = calculateBillReview(pendingForm.amount, wallet?.balance);
+    const review = calculateBillReview(pendingForm.amount, wallet?.balance, CONVENIENCE_FEE_NAIRA);
     if (review.insufficient) {
       setPinError('Top up your wallet before confirming this payment.');
       return;
@@ -341,6 +341,8 @@ export default function ElectricityScreen() {
           <SummaryRow label="Meter Type" value={meterType} />
           <SummaryRow label="Customer"   value={validation?.customerName ?? '—'} />
           <SummaryRow label="Amount"     value={amountValue ? `₦${Number(amountValue).toLocaleString()}` : '—'} />
+          <SummaryRow label="Convenience fee" value={formatNaira(CONVENIENCE_FEE_NAIRA)} />
+          <SummaryRow label="Total"      value={amountValue ? formatNaira(Number(amountValue) + CONVENIENCE_FEE_NAIRA) : '—'} highlight />
           {meterType === 'PREPAID' && <SummaryRow label="Token"   value="Instant delivery" />}
           <PaymentMethodSelector
             selected={paymentMethod}
@@ -395,11 +397,14 @@ export default function ElectricityScreen() {
               <SummaryRow label="Meter"      value={pendingForm?.meterNumber} />
               <SummaryRow label="Type"       value={meterType} />
               <SummaryRow label="Customer"   value={validation?.customerName} />
-              <SummaryRow label="Amount"     value={pendingForm?.amount ? formatNaira(pendingForm.amount) : '—'} highlight />
+              <SummaryRow label="Amount"     value={pendingForm?.amount ? formatNaira(pendingForm.amount) : '—'} />
+              <SummaryRow label="Convenience fee" value={formatNaira(CONVENIENCE_FEE_NAIRA)} />
+              <SummaryRow label="Total"      value={pendingForm?.amount ? formatNaira(pendingForm.amount + CONVENIENCE_FEE_NAIRA) : '—'} highlight />
               <SummaryRow label="Payment"    value={paymentMethod === 'WALLET' ? 'Wallet' : 'Paystack'} />
               {paymentMethod === 'WALLET' ? (
                 <BillReviewSecurityPanel
                   amount={pendingForm?.amount}
+                  fee={CONVENIENCE_FEE_NAIRA}
                   walletBalance={wallet?.balance}
                   pin={transactionPin}
                   onPinChange={(value) => { setTransactionPin(value); setPinError(''); }}
@@ -426,7 +431,7 @@ export default function ElectricityScreen() {
                 label={paymentMethod === 'WALLET' ? 'Confirm & Pay' : 'Pay with Paystack'}
                 onPress={onConfirm}
                 loading={paying || paystackLoading}
-                disabled={paymentMethod === 'WALLET' && calculateBillReview(pendingForm?.amount, wallet?.balance).insufficient}
+                disabled={paymentMethod === 'WALLET' && calculateBillReview(pendingForm?.amount, wallet?.balance, CONVENIENCE_FEE_NAIRA).insufficient}
               />
               <PrimaryButton label="Cancel" variant="ghost" onPress={() => setShowConfirm(false)} disabled={paying || paystackLoading} />
             </View>

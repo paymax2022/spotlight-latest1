@@ -47,23 +47,6 @@ func NewService(db *pgxpool.Pool) *Service {
 // can submit or be approved for that merchant role. Passing nil leaves it disabled.
 func (s *Service) SetBusinessGate(g BusinessGate) { s.businessGate = g }
 
-// businessGateBlocks reports whether the merchant-upgrade business gate should reject
-// an application for merchant type mt by userID. Centralizes the requires_business
-// decision so Submit and Approve stay in lockstep, and keeps it unit-testable without
-// a database (it touches only the injected gate). Fail-safe: with no gate configured
-// it never blocks (old behavior); a merchant type not flagged requires_business is
-// never blocked regardless of gate state.
-func (s *Service) businessGateBlocks(ctx context.Context, mt *MerchantType, userID string) bool {
-	return mt.RequiresBusiness && s.businessGate != nil && !s.businessGate.HasVerifiedBusiness(ctx, userID)
-}
-
-// errBusinessRequired is the field-scoped validation returned when the gate blocks.
-func errBusinessRequired() error {
-	return &ValidationError{Fields: map[string]string{
-		"business": "A verified CAC business is required to become a merchant. Verify or register your business first.",
-	}}
-}
-
 // ─── Catalogue reads ─────────────────────────────────────────────────────────
 
 func (s *Service) ListOpenModules(ctx context.Context) ([]Module, error) {
@@ -92,17 +75,6 @@ func (s *Service) CreateApplication(ctx context.Context, userID string, req Crea
 		return nil, err
 	}
 	if mt.Status != "open" {
-		return nil, ErrModuleClosed
-	}
-	// Also reject when the parent MODULE is closed. The merchant-type check above does
-	// not catch an open type under a closed module — the listing endpoints filter by
-	// module status, so a direct create must too (defense against a stale/deep-linked
-	// type id in a module that has since been closed).
-	mod, err := s.repo.GetModule(ctx, mt.ModuleID)
-	if err != nil {
-		return nil, err
-	}
-	if mod.Status != "open" {
 		return nil, ErrModuleClosed
 	}
 	dup, err := s.repo.HasActiveApplicationOrProfile(ctx, userID, req.MerchantTypeID)
@@ -176,8 +148,10 @@ func (s *Service) Submit(ctx context.Context, userID, id, idemKey string) (*Appl
 	if err != nil {
 		return nil, err
 	}
-	if s.businessGateBlocks(ctx, mt, userID) {
-		return nil, errBusinessRequired()
+	if mt.RequiresBusiness && s.businessGate != nil && !s.businessGate.HasVerifiedBusiness(ctx, userID) {
+		return nil, &ValidationError{Fields: map[string]string{
+			"business": "A verified CAC business is required to become a merchant. Verify or register your business first.",
+		}}
 	}
 	schema, err := s.repo.GetPublishedSchemaForType(ctx, app.MerchantTypeID)
 	if err != nil {
@@ -292,8 +266,10 @@ func (s *Service) Approve(ctx context.Context, reviewerID, id string) (*Applicat
 	// Defense-in-depth: a stale application must not be approved into a merchant role
 	// if the applicant lacks the required verified/registered CAC business. Nil gate =
 	// disabled (old behavior). Uses the applicant's user id, not the reviewer's.
-	if s.businessGateBlocks(ctx, mt, app.UserID) {
-		return nil, errBusinessRequired()
+	if mt.RequiresBusiness && s.businessGate != nil && !s.businessGate.HasVerifiedBusiness(ctx, app.UserID) {
+		return nil, &ValidationError{Fields: map[string]string{
+			"business": "A verified CAC business is required to become a merchant. Verify or register your business first.",
+		}}
 	}
 	workspaceRoute := fmt.Sprintf("/merchant/%s", mt.Slug)
 

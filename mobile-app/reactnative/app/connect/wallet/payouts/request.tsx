@@ -15,6 +15,7 @@ import TierLimitBar from '@/features/connect/components/TierLimitBar';
 import MoneyAmount from '@/features/connect/components/wallet-MoneyAmount';
 import { formatKobo } from '@/features/connect/constants/format';
 import { usePayoutEligibility, useRequestPayout } from '@/features/connect/wallet/hooks';
+import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 
 // WL-20 — Creator payout request. Tier2+ & KYC gated (server re-checks). The
 // request carries an Idempotency-Key (set in the api layer).
@@ -23,10 +24,7 @@ export default function PayoutRequest() {
   const request = useRequestPayout();
   const [naira, setNaira] = useState('');
 
-  const amountKobo = useMemo(() => {
-    const n = parseInt(naira.replace(/[^0-9]/g, ''), 10);
-    return Number.isFinite(n) ? n * 100 : 0;
-  }, [naira]);
+  const amountKobo = useMemo(() => nairaStringToKobo(naira), [naira]);
 
   if (elig.isLoading) {
     return (
@@ -89,10 +87,11 @@ export default function PayoutRequest() {
         <Text style={styles.label}>Amount (₦)</Text>
         <TextInputField
           value={naira}
-          onChangeText={(t) => setNaira(t.replace(/[^0-9]/g, ''))}
-          keyboardType="number-pad"
+          onChangeText={(t) => setNaira(sanitizeMoneyInput(t))}
+          keyboardType="decimal-pad"
           placeholder="0"
-          inputMode="numeric"
+          inputMode="decimal"
+          maxLength={13}
           error={amountKobo > 0 && !overMin ? `Minimum payout is ${formatKobo(e.minPayoutKobo)}` : overAvail ? 'Amount exceeds your available balance' : undefined}
         />
         <Pressable onPress={() => setNaira(String(Math.trunc(e.availableKobo / 100)))}>

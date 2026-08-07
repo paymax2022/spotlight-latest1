@@ -10,6 +10,7 @@ import { listRoutingRules } from '@/services/kycAdminService';
 import type { KycRoutingRule } from '@/types/kycAdmin';
 import { CHECK_TYPE_LABELS, TIER_LABELS } from '@/types/kycAdmin';
 import { PageHeader, Card, btn, th, td, ScaffoldNotice } from '../_ui';
+import { Page, colors } from '@/components/ui/vuexy';
 
 // Placeholder per-tier required-check matrix (until backend policy endpoint exists).
 const TIER_REQUIRED: Record<number, string[]> = {
@@ -33,7 +34,7 @@ export default function KycThresholdsPage() {
   useEffect(() => { void load(); }, [load]);
 
   return (
-    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader
         title="Thresholds & Tier Policy (AK7)"
         subtitle="Facial-match threshold, required checks per CBN tier, EDD rules. RBAC: finance.admin.kyc (Compliance)."
@@ -44,11 +45,11 @@ export default function KycThresholdsPage() {
         Functional shell. Thresholds shown read-only from routing rules; the per-tier required-check matrix below is a placeholder pending a policy endpoint. Editing lives in AK6 (Routing rules) for now.
       </ScaffoldNotice>
 
-      {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
       <Card title="Per-check thresholds (from routing rules)">
         {loading ? (
-          <p style={{ color: '#6b7280', margin: 0 }}>Loading…</p>
+          <p style={{ color: colors.muted, margin: 0 }}>Loading…</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -82,6 +83,6 @@ export default function KycThresholdsPage() {
           </tbody>
         </table>
       </Card>
-    </div>
+    </Page>
   );
 }

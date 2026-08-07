@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { createStemSchool, listStemSchools, updateStemSchoolVerification } from '@/services/stemService';
 import type { StemSchool } from '@/types/stem';
+import { Page, PageHeader, Card, Button, Input, colors } from '@/components/ui/vuexy';
 
 export default function AdminSchoolsPage() {
   const [rows, setRows] = useState<StemSchool[]>([]);
@@ -54,31 +55,24 @@ export default function AdminSchoolsPage() {
   };
 
   return (
-    <section>
-      <h1>Schools</h1>
-      <p>School onboarding and participation snapshot from STEM applications.</p>
-      {error ? <p style={{ marginTop: 8, color: '#fca5a5' }}>{error}</p> : null}
-      <div style={{ border: '1px solid #2a2a2a', padding: 12, marginTop: 12 }}>
-        <h2 style={{ marginTop: 0 }}>Create School Onboarding Record</h2>
-        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(3, minmax(0,1fr))' }}>
-          <input value={schoolName} onChange={(e) => setSchoolName(e.target.value)} placeholder="School name" />
-          <input value={state} onChange={(e) => setState(e.target.value)} placeholder="State" />
-          <input value={officialEmail} onChange={(e) => setOfficialEmail(e.target.value)} placeholder="Official email" />
+    <Page>
+      <PageHeader title="Schools" subtitle="School onboarding and participation snapshot from STEM applications." />
+      {error ? <p style={{ marginTop: 8, color: colors.danger }}>{error}</p> : null}
+      <Card title="Create School Onboarding Record" style={{ marginTop: 12 }}>
+        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(3, minmax(0,1fr))', marginTop: 14 }}>
+          <Input value={schoolName} onChange={(e) => setSchoolName(e.target.value)} placeholder="School name" />
+          <Input value={state} onChange={(e) => setState(e.target.value)} placeholder="State" />
+          <Input value={officialEmail} onChange={(e) => setOfficialEmail(e.target.value)} placeholder="Official email" />
         </div>
-        <button
-          type="button"
-          onClick={() => void onCreate()}
-          disabled={saving}
-          style={{ marginTop: 10, border: '1px solid #2a2a2a', padding: '6px 12px' }}
-        >
+        <Button variant="primary" style={{ marginTop: 10 }} onClick={() => void onCreate()} disabled={saving}>
           {saving ? 'Creating...' : 'Create School'}
-        </button>
-      </div>
-      {loading ? <p style={{ marginTop: 12 }}>Loading schools...</p> : null}
+        </Button>
+      </Card>
+      {loading ? <p style={{ marginTop: 12, color: colors.muted }}>Loading schools...</p> : null}
       <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
-        {!loading && rows.length === 0 ? <p>No schools found yet.</p> : null}
+        {!loading && rows.length === 0 ? <p style={{ color: colors.muted }}>No schools found yet.</p> : null}
         {rows.map((row) => (
-          <article key={`${row.id || row.name}-${row.state}`} style={{ border: '1px solid #2a2a2a', padding: 12 }}>
+          <Card key={`${row.id || row.name}-${row.state}`} style={{ padding: 12 }}>
             <p style={{ margin: 0, fontWeight: 700 }}>{row.name}</p>
             <p style={{ margin: '6px 0 0 0', fontSize: 12 }}>{row.state || '-'}</p>
             <p style={{ margin: '6px 0 0 0', fontSize: 12 }}>
@@ -107,9 +101,9 @@ export default function AdminSchoolsPage() {
                 <Link href={`/admin/schools/${row.id}`}>Open School Dashboard</Link>
               </p>
             ) : null}
-          </article>
+          </Card>
         ))}
       </div>
-    </section>
+    </Page>
   );
 }

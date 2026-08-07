@@ -121,12 +121,12 @@ func (g GeoResult) Point() Point { return Point{Lat: g.Lat, Lng: g.Lng, Source: 
 
 // Suggestion is one address autocomplete candidate.
 type Suggestion struct {
-	Label       string  `json:"label"`
-	PlaceID     string  `json:"place_id,omitempty"`
-	Lat         float64 `json:"lat,omitempty"`
-	Lng         float64 `json:"lng,omitempty"`
-	Provider    string  `json:"provider"`
-	Source      Source  `json:"source"`
+	Label    string  `json:"label"`
+	PlaceID  string  `json:"place_id,omitempty"`
+	Lat      float64 `json:"lat,omitempty"`
+	Lng      float64 `json:"lng,omitempty"`
+	Provider string  `json:"provider"`
+	Source   Source  `json:"source"`
 	// HasCoords is true when the suggestion already carries a usable pin.
 	HasCoords bool `json:"has_coords"`
 	// Confidence is the normalized 0..1 quality signal (v2; additive).
@@ -147,12 +147,12 @@ type Place struct {
 
 // Route is geometry + ETA for an origin→destination request.
 type Route struct {
-	DistanceM int     `json:"distance_m"`
-	DurationS int     `json:"duration_s"`
-	Polyline  string  `json:"polyline"` // encoded polyline (geometry)
-	Provider  string  `json:"provider"`
-	Source    Source  `json:"source"`
-	Degraded  bool    `json:"degraded,omitempty"` // true if served by a fallback provider
+	DistanceM int    `json:"distance_m"`
+	DurationS int    `json:"duration_s"`
+	Polyline  string `json:"polyline"` // encoded polyline (geometry)
+	Provider  string `json:"provider"`
+	Source    Source `json:"source"`
+	Degraded  bool   `json:"degraded,omitempty"` // true if served by a fallback provider
 }
 
 // MatrixCell is one origin→destination pairing in a distance matrix.
@@ -211,11 +211,11 @@ type PlusCodec interface {
 
 // Errors surfaced by the service/adapters.
 var (
-	ErrEmptyQuery        = errors.New("maps: empty query")
-	ErrNoProvider        = errors.New("maps: no provider configured for primitive")
-	ErrLicenseCoherence  = errors.New("maps: license coherence violation — google-sourced point cannot be rendered on the OpenStack basemap")
-	ErrNotCacheable      = errors.New("maps: refusing to cache a non-OpenStack (non-OSM) result")
-	ErrCapExceeded       = errors.New("maps: provider soft cap reached")
+	ErrEmptyQuery       = errors.New("maps: empty query")
+	ErrNoProvider       = errors.New("maps: no provider configured for primitive")
+	ErrLicenseCoherence = errors.New("maps: license coherence violation — google-sourced point cannot be rendered on the OpenStack basemap")
+	ErrNotCacheable     = errors.New("maps: refusing to cache a non-OpenStack (non-OSM) result")
+	ErrCapExceeded      = errors.New("maps: provider soft cap reached")
 )
 
 // MapService is the single interface the whole app depends on. Each method is

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { router } from 'expo-router';
 import { ShieldCheck, ChevronRight, Plus, FileCheck, MessageSquare, X, Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -10,6 +11,7 @@ import { Typography } from '@/constants/typography';
 import PrimaryButton from '@/components/PrimaryButton';
 import SelectField from '@/components/SelectField';
 import TextInputField from '@/components/TextInputField';
+import { sanitizeMoneyInput } from '@/utils/money';
 import { formatKobo } from '@/api/doctor.phase2.api';
 import { TeleHeader, DoctorAvatar } from '@/features/telemedicine/components';
 import { StateView, StatusBadge } from '@/features/doctor/components';
@@ -100,12 +102,10 @@ export default function ClaimsScreen() {
           try {
             const result = await submit.mutateAsync(input);
             setPreviewOpen(false);
-            Alert.alert('Claim submitted', `${result.ref} has been submitted.`, [
-              { text: 'View', onPress: () => router.push(`/(doctor)/claims/${result.claimId}`) },
-              { text: 'Done' },
-            ]);
+            const ok = await confirmAsync({ title: 'Claim submitted', message: `${result.ref} has been submitted.`, confirmLabel: 'View', cancelLabel: 'Done' });
+            if (ok) { router.push(`/(doctor)/claims/${result.claimId}`); }
           } catch {
-            Alert.alert('Failed', 'Could not submit the claim. Please try again.');
+            alertAsync({ title: 'Failed', message: 'Could not submit the claim. Please try again.' });
           }
         }}
       />
@@ -162,7 +162,7 @@ function SubmitSheet({ visible, pending, onClose, onSubmit }: {
         <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <SelectField label="Provider" placeholder="Select provider" value={provider} options={HMO_PROVIDER_OPTIONS} onChange={setProvider} />
           <TextInputField label="Service / line item" value={description} onChangeText={setDescription} placeholder="e.g. Teleconsultation" />
-          <TextInputField label="Amount (NGN)" value={naira} onChangeText={setNaira} keyboardType="number-pad" placeholder="e.g. 8000" />
+          <TextInputField label="Amount (NGN)" value={naira} onChangeText={(v) => setNaira(sanitizeMoneyInput(v))} keyboardType="decimal-pad" maxLength={13} placeholder="e.g. 8000" />
           {canSubmit && (
             <View style={styles.previewBox}>
               <View style={styles.previewRow}>

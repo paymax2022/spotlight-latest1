@@ -14,13 +14,13 @@ import (
 // a no-op (does NOT double-charge). This lets us prove the boost charge is
 // idempotent per Idempotency-Key without a live ledger.
 type fakeWallet struct {
-	calls      int
-	seenKeys   map[string]bool
-	gotUser    string
-	gotKey     string
-	gotCredit  string
-	gotAmount  int64
-	returnErr  error
+	calls     int
+	seenKeys  map[string]bool
+	gotUser   string
+	gotKey    string
+	gotCredit string
+	gotAmount int64
+	returnErr error
 }
 
 func newFakeWallet() *fakeWallet { return &fakeWallet{seenKeys: map[string]bool{}} }
@@ -68,8 +68,8 @@ func (f *fakeAudit) WriteAudit(context.Context, string, string, string, string, 
 // fakeBoostStore is an in-memory connect_boosts, idempotent on the idempotency key
 // so a replayed Insert yields the SAME boost (one charge → one boost row).
 type fakeBoostStore struct {
-	byKey    map[string]*Boost
-	inserts  int
+	byKey     map[string]*Boost
+	inserts   int
 	insertErr error
 }
 

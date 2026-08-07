@@ -22,12 +22,12 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 // EmbeddedProduct is the slice of the catalog the engine needs to resolve cover.
 type EmbeddedProduct struct {
-	Code               string
-	Provider           string
+	Code                string
+	Provider            string
 	ProviderProductCode string
-	UnderwriterDisplay string
-	Currency           string
-	SumInsuredRules    map[string]any
+	UnderwriterDisplay  string
+	Currency            string
+	SumInsuredRules     map[string]any
 }
 
 // ErrNoMapping is returned when no active embedded product exists for a line.

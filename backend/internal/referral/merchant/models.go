@@ -51,11 +51,11 @@ type MerchantCampaign struct {
 
 // PartnerKey is an issued (hashed) partner API key record.
 type PartnerKey struct {
-	ID         string         `json:"id"`
-	MerchantID string         `json:"merchant_id"`
-	KeyPrefix  string         `json:"key_prefix"`
-	Scopes     []string       `json:"scopes"`
-	Status     string         `json:"status"`
+	ID         string     `json:"id"`
+	MerchantID string     `json:"merchant_id"`
+	KeyPrefix  string     `json:"key_prefix"`
+	Scopes     []string   `json:"scopes"`
+	Status     string     `json:"status"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
 }

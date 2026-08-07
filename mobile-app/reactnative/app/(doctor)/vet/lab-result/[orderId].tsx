@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Alert, Modal, TextInput } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Modal, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowDown, ArrowUp, Minus, Sparkles, FlaskConical, AlertTriangle, FileText, X, Check } from 'lucide-react-native';
@@ -14,6 +14,7 @@ import { SectionCard, InfoRow, StateView, AlertCard } from '@/features/doctor/co
 import { usePetLabResult, useMarkPetLabResultReviewed, useAddPetLabInterpretation } from '@/features/doctor/hooks';
 import { PET_SPECIES_LABELS } from '@/features/doctor/constants';
 import type { PetLabResultValue } from '@/types/doctor.phase3';
+import { alertAsync } from '@/lib/confirm';
 
 const FLAG_CONFIG: Record<PetLabResultValue['flag'], { icon: LucideIcon; color: string; bg: string; label: string }> = {
   normal: { icon: Minus,    color: Colors.teal,      bg: Colors.iconBgTeal, label: 'Normal' },
@@ -38,15 +39,16 @@ export default function PetLabResultScreen() {
     if (!result) return;
     try {
       await markReviewed.mutateAsync({ resultId: result.id });
-      Alert.alert('Marked as reviewed', 'This result has been marked as reviewed.', [{ text: 'OK', onPress: () => router.back() }]);
+      await alertAsync({ title: 'Marked as reviewed', message: 'This result has been marked as reviewed.' });
+      router.back();
     } catch {
-      Alert.alert('Failed', 'Please try again.');
+      alertAsync({ title: 'Failed', message: 'Please try again.' });
     }
   };
 
   const handleInterpret = async () => {
     if (!result) return;
-    if (!interpretation.trim()) { Alert.alert('Add interpretation', 'Enter your interpretation of this result.'); return; }
+    if (!interpretation.trim()) { alertAsync({ title: 'Add interpretation', message: 'Enter your interpretation of this result.' }); return; }
     try {
       await addInterpretation.mutateAsync({
         resultId: result.id,
@@ -55,8 +57,8 @@ export default function PetLabResultScreen() {
         followUpNote: followUp ? followUpNote : undefined,
       });
       setInterpOpen(false);
-      Alert.alert('Interpretation saved', 'Your interpretation has been recorded.');
-    } catch { Alert.alert('Failed', 'Please try again.'); }
+      alertAsync({ title: 'Interpretation saved', message: 'Your interpretation has been recorded.' });
+    } catch { alertAsync({ title: 'Failed', message: 'Please try again.' }); }
   };
 
   return (

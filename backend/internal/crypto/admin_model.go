@@ -90,8 +90,8 @@ func deriveAddressReview(isActive bool, verifiedAt *time.Time) string {
 //   - ok      : a custody feed exists AND onchain_units == ledger_units.
 //   - drift   : a custody feed exists AND onchain_units != ledger_units (a break).
 //   - no_feed : no custody row stored for this asset yet — reported distinctly so a
-//               missing feed is never mistaken for a healthy "ok", and NOT counted
-//               as a break.
+//     missing feed is never mistaken for a healthy "ok", and NOT counted
+//     as a break.
 const (
 	ReconStatusOK     = "ok"
 	ReconStatusDrift  = "drift"

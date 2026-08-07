@@ -371,10 +371,10 @@ func (s *Service) DeliveryDetail(ctx context.Context, id, callerID string) (map[
 		FROM business_deliveries WHERE id=$1`
 	var (
 		did, businessID, pickup, dropoff, receiver, rphone, size, status string
-		batchID, courierID, failure, dropoffPin, proofURL               *string
-		sequence                                                        int
-		cod, fare                                                       int64
-		createdAt                                                       time.Time
+		batchID, courierID, failure, dropoffPin, proofURL                *string
+		sequence                                                         int
+		cod, fare                                                        int64
+		createdAt                                                        time.Time
 	)
 	if err := s.db.QueryRow(ctx, q, id).Scan(
 		&did, &batchID, &businessID, &courierID, &sequence, &pickup, &dropoff,

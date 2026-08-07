@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, TextInput, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Lock, ShieldCheck } from 'lucide-react-native';
@@ -11,6 +11,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { usePINStatus, useSetPIN } from '@/features/invest/hooks/useInvest';
+import { alertAsync } from '@/lib/confirm';
 
 export default function SetPINScreen() {
   const status = usePINStatus();
@@ -28,11 +29,9 @@ export default function SetPINScreen() {
   async function submit() {
     try {
       await setPin.mutateAsync({ pin, currentPin: hasPin ? current : undefined });
-      Alert.alert('PIN saved', 'Your transaction PIN is set. You can now confirm orders.', [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
+      alertAsync({ title: 'PIN saved', message: 'Your transaction PIN is set. You can now confirm orders.' }).then(() => router.back());
     } catch (e: any) {
-      Alert.alert('Could not save PIN', e?.response?.data?.error ?? 'Please try again.');
+      alertAsync({ title: 'Could not save PIN', message: e?.response?.data?.error ?? 'Please try again.' });
     }
   }
 

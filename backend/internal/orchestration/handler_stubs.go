@@ -18,6 +18,7 @@ package orchestration
 // which point delete the corresponding stub here.
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -184,12 +185,35 @@ func (h *Handler) GetTransferByReference(c *gin.Context) {
 // ─── Collections list (GET /collections and GET /collections/virtual-accounts)
 // Reads only; creation of virtual accounts is the real CreateCollection handler.
 
+// GET /collections — inbound collection events for the caller. Store-backed when
+// a CollectionStore is attached (currently an empty non-nil slice until a provider
+// collection feed lands), else the empty-slice stub.
 func (h *Handler) ListCollections(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"data": []any{}})
+	if h.coll == nil {
+		c.JSON(http.StatusOK, gin.H{"data": []any{}})
+		return
+	}
+	events, err := h.coll.ListCollectionEvents(c.Request.Context(), customerID(c))
+	if err != nil {
+		writeErr(c, asAPIError(err))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": events})
 }
 
+// GET /collections/virtual-accounts — the caller's virtual accounts, read from the
+// existing orch_collections persistence (CreateCollection writes it), else stub.
 func (h *Handler) ListVirtualAccounts(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"data": []any{}})
+	if h.coll == nil {
+		c.JSON(http.StatusOK, gin.H{"data": []any{}})
+		return
+	}
+	vas, err := h.coll.ListVirtualAccounts(c.Request.Context(), customerID(c))
+	if err != nil {
+		writeErr(c, asAPIError(err))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": vas})
 }
 
 // ─── Disputes (POST /transactions/:id/dispute) ───────────────────────────────
@@ -211,6 +235,79 @@ func (h *Handler) DisputeTransaction(c *gin.Context) {
 		"id": stubID("dsp"), "transactionId": txID, "reference": req.Reference,
 		"reason": req.Reason, "note": req.Note, "status": "submitted", "createdAt": nowISO(),
 	})
+}
+
+// ─── Customer verification / KYC (spec A, §16) ───────────────────────────────
+// Contract-shaped placeholders so the mobile FX KYC screens render against the
+// real backend. NOT persistence-backed yet: GetVerification always reports the
+// caller as "unstarted"; Submit/Restart echo the resulting status without storing
+// it. When the KYC subsystem lands (provider integration, document handling, tier
+// progression, admin review) these graduate to real handlers — delete these stubs.
+
+// defaultVerification returns the schema-complete "no record yet" Verification.
+func defaultVerification() gin.H {
+	return gin.H{"status": "unstarted", "accountType": "individual", "tier": 0}
+}
+
+// GetVerification (GET /customers/verification) — current KYC status for the caller.
+// Persistence-backed when a store is attached; the stub default otherwise.
+func (h *Handler) GetVerification(c *gin.Context) {
+	if h.verif == nil {
+		c.JSON(http.StatusOK, gin.H{"data": defaultVerification()})
+		return
+	}
+	rec, err := h.verif.Get(c.Request.Context(), customerID(c))
+	if err != nil {
+		writeErr(c, asAPIError(err))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rec})
+}
+
+// SubmitCustomer (POST /customers) — records a KYC submission and routes the status
+// (individuals → pending, businesses → manual review). Persists the full payload
+// when a store is attached; echoes the routed status otherwise.
+func (h *Handler) SubmitCustomer(c *gin.Context) {
+	raw, _ := c.GetRawData()
+	var req struct {
+		AccountType string `json:"accountType"`
+	}
+	_ = json.Unmarshal(raw, &req)
+	acct := strings.ToLower(strings.TrimSpace(req.AccountType))
+	if acct != "business" {
+		acct = "individual"
+	}
+	if h.verif == nil {
+		status := "pending"
+		if acct == "business" {
+			status = "review"
+		}
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{
+			"status": status, "accountType": acct, "tier": 1, "submittedAt": nowISO(),
+		}})
+		return
+	}
+	rec, err := h.verif.Submit(c.Request.Context(), customerID(c), acct, raw)
+	if err != nil {
+		writeErr(c, asAPIError(err))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rec})
+}
+
+// RestartVerification (POST /customers/verification/restart) — reset to unstarted so
+// the user can resubmit after a rejection.
+func (h *Handler) RestartVerification(c *gin.Context) {
+	if h.verif == nil {
+		c.JSON(http.StatusOK, gin.H{"data": defaultVerification()})
+		return
+	}
+	rec, err := h.verif.Restart(c.Request.Context(), customerID(c))
+	if err != nil {
+		writeErr(c, asAPIError(err))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rec})
 }
 
 // NOTE: rate-alert handlers (List/Create/Delete) are persistence-backed in
