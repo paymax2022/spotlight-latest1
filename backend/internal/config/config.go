@@ -230,6 +230,15 @@ type Config struct {
 	TradingFeeBps         int
 	TradingHurdleBps      int
 
+	// Business registry (CAC business-name verification + registration). DEFAULT
+	// OFF. Gates the /api/business[/admin] surface (internal/business): CAC-VAS
+	// lookup/registration via provider/cac, with a fee charged through the
+	// finance ledger. CACVAS* are the provider credentials (sandbox by default).
+	FeatureBusinessRegistryEnabled bool
+	CACVASBaseURL                  string
+	CACVASApiKey                   string
+	CACVASConsumerSecret           string
+
 	// Stricter SECOND gate over the AI decision surface inside internal/trading.
 	// DEFAULT OFF and independent of FeatureTradingEnabled: the paper Module-KYC +
 	// fund wallet can run with FEATURE_TRADING_ENABLED alone, while the deterministic
@@ -625,6 +634,10 @@ func Load() Config {
 		FeatureAITradingEnabled:               getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
 		TradingFeeBps:                         getEnvInt("TRADING_FEE_BPS", 2000),
 		TradingHurdleBps:                      getEnvInt("TRADING_HURDLE_BPS", 0),
+		FeatureBusinessRegistryEnabled:        getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
+		CACVASBaseURL:                         getEnv("CAC_VAS_BASE_URL", ""),
+		CACVASApiKey:                          getEnv("CAC_VAS_API_KEY", ""),
+		CACVASConsumerSecret:                  getEnv("CAC_VAS_CONSUMER_SECRET", ""),
 		FeatureInternalLedgerAPIEnabled:       getEnvBool("FEATURE_INTERNAL_LEDGER_API_ENABLED", false),
 		LedgerServiceToken:                    getEnv("LEDGER_SERVICE_TOKEN", ""),
 		FeatureLearnEnabled:                   getEnvBool("FEATURE_LEARN_ENABLED", false),
