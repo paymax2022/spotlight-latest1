@@ -60,7 +60,7 @@ func (s *Service) GetTopic(ctx context.Context, id string) (*Topic, error) {
 
 // LessonsForTopic bridges topic → objectives → content lessons (read-only).
 func (s *Service) LessonsForTopic(ctx context.Context, topicID string) ([]Lesson, error) {
-	return s.repo.ListLessonsByTopic(ctx, topicID)
+	return s.repo.ListTopicLessons(ctx, topicID)
 }
 
 // GetLesson returns a single content lesson by id (read-only).
@@ -96,14 +96,6 @@ func (s *Service) AdminTree(ctx context.Context) ([]VersionTree, error) {
 
 func (s *Service) GetObjectives(ctx context.Context, topicID string) ([]LearningObjective, error) {
 	return s.repo.ListObjectives(ctx, topicID)
-}
-
-func (s *Service) ListTopicLessons(ctx context.Context, topicID string) ([]Lesson, error) {
-	return s.repo.ListTopicLessons(ctx, topicID)
-}
-
-func (s *Service) GetLesson(ctx context.Context, id string) (*Lesson, error) {
-	return s.repo.GetLessonByID(ctx, id)
 }
 
 func (s *Service) ListStreams(ctx context.Context) ([]Stream, error) { return s.repo.ListStreams(ctx) }

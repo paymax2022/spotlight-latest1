@@ -214,32 +214,6 @@ func (s *Service) AttemptQuestions(ctx context.Context, userID, attemptID string
 	return out, nil
 }
 
-// GetAttemptResult returns the stored score/readiness/predicted projection for a
-// submitted/scored attempt the caller owns. 404 until the attempt is submitted.
-func (s *Service) GetAttemptResult(ctx context.Context, userID, attemptID string) (map[string]any, error) {
-	att, err := s.ownedAttempt(ctx, userID, attemptID)
-	if err != nil {
-		return nil, err
-	}
-	switch att.State {
-	case AttemptSubmitted, AttemptScored, AttemptReviewed:
-		// result is available
-	default:
-		return nil, ErrNotFound // not yet submitted → no result projection
-	}
-	res := map[string]any{}
-	for k, v := range att.Score { // subjects, overall, grade, late
-		res[k] = v
-	}
-	if att.Readiness != nil {
-		res["readiness"] = *att.Readiness
-	}
-	if att.Predicted != nil {
-		res["predicted"] = att.Predicted
-	}
-	return res, nil
-}
-
 // sectionCount coerces a jsonb section count (float64 from JSON, or int/string)
 // into an int; unparseable → 0.
 func sectionCount(v any) int {

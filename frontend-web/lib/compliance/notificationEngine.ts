@@ -541,7 +541,7 @@ Download: {{download_url}}`,
     delivered: number;
     failed: number;
     read: number;
-    byCh annel: Record<NotificationChannel, number>;
+    byChannel: Record<NotificationChannel, number>;
     byPriority: Record<NotificationPriority, number>;
   } {
     const notifications = Array.from(this.notifications.values());

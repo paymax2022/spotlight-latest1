@@ -27,6 +27,7 @@ type MockExamTemplate struct {
 // MockExamInstance represents a shuffled variant of a template
 type MockExamInstance struct {
 	ID             string          `json:"id"`
+	InstanceCode   string          `json:"instance_code"`   // human-readable code for the exam instance
 	TemplateID     string          `json:"template_id"`
 	ExamCode       string          `json:"exam_code"`
 	Variant        int             `json:"variant"`
@@ -53,6 +54,8 @@ type MockExamAttempt struct {
 	InstanceID         string          `json:"instance_id"`
 	TemplateID         string          `json:"template_id"`
 	Status             string          `json:"status"` // in_progress, submitted, graded
+	ScorePercent       int             `json:"score_percent"`   // percentage score (0-100)
+	TotalSeconds       int             `json:"total_seconds"`   // time taken in seconds
 	Answers            json.RawMessage `json:"answers"`
 	Performance        json.RawMessage `json:"performance"`
 	FlaggedQuestions   pq.StringArray  `json:"flagged_questions"`

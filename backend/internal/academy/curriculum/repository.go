@@ -411,61 +411,6 @@ func (r *Repository) UpdateObjective(ctx context.Context, id string, req UpdateO
 	return o, err
 }
 
-// ── Lessons (read-only bridge into the content package's academy_lessons) ───────
-//
-// Lessons are owned by the content package; the curriculum module reads them
-// read-only for the topic→objectives→lessons bridge and the single-lesson lookup.
-// Column set mirrors content.lessonCols exactly so the projection stays in sync.
-
-const lessonCols = `id, objective_id, title, type, version_id, media_ref, transcript, duration_s, status, created_at, updated_at`
-
-func scanLesson(row interface{ Scan(dest ...any) error }) (*Lesson, error) {
-	l := &Lesson{}
-	err := row.Scan(&l.ID, &l.ObjectiveID, &l.Title, &l.Type, &l.VersionID,
-		&l.MediaRef, &l.Transcript, &l.DurationS, &l.Status, &l.CreatedAt, &l.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return l, nil
-}
-
-// ListLessonsByTopic returns every lesson attached to any objective under a topic
-// (topic → academy_learning_objectives → academy_lessons), most-recent first.
-func (r *Repository) ListLessonsByTopic(ctx context.Context, topicID string) ([]Lesson, error) {
-	const q = `
-		SELECT ` + lessonColsPrefixed + `
-		FROM public.academy_lessons l
-		JOIN public.academy_learning_objectives o ON o.id = l.objective_id
-		WHERE o.topic_id = $1
-		ORDER BY l.updated_at DESC`
-	rows, err := r.db.Query(ctx, q, topicID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Lesson{}
-	for rows.Next() {
-		l, err := scanLesson(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *l)
-	}
-	return out, rows.Err()
-}
-
-// lessonColsPrefixed is lessonCols aliased to the `l` table for the topic join.
-const lessonColsPrefixed = `l.id, l.objective_id, l.title, l.type, l.version_id, l.media_ref, l.transcript, l.duration_s, l.status, l.created_at, l.updated_at`
-
-// GetLessonByID returns a single lesson row from the content-owned table.
-func (r *Repository) GetLessonByID(ctx context.Context, id string) (*Lesson, error) {
-	const q = `SELECT ` + lessonCols + ` FROM public.academy_lessons WHERE id = $1`
-	return scanLesson(r.db.QueryRow(ctx, q, id))
-}
-
 // ── Audit ─────────────────────────────────────────────────────────────────────
 
 // InsertAudit appends an immutable row to public.audit_logs (module academy.curriculum).
