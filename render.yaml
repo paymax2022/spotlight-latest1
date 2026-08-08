@@ -1,0 +1,212 @@
+services:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Backend API Service
+  # ─────────────────────────────────────────────────────────────────────────────
+  - type: web
+    name: spotlight-backend
+    plan: standard
+    runtime: docker
+    region: ohio
+    startCommand: /app/server
+    healthCheckPath: /api/v1/public/health
+    healthCheckInterval: 30
+    dockerfile: ./Dockerfile
+    dockerContext: ./
+    autoDeploy: true
+    maxInstances: 3
+    minInstances: 1
+
+    envVars:
+      - key: APP_PORT
+        value: 8080
+      - key: FEATURE_REFERRALS_ENABLED
+        value: "true"
+      - key: FEATURE_MARKETPLACE_ENABLED
+        value: "true"
+      - key: FEATURE_TRANSPORT_SCHEDULING_ENABLED
+        value: "false"
+      - key: RUN_WORKERS_INPROCESS
+        value: "false"
+
+      # Database (Supabase PostgreSQL)
+      - key: DATABASE_URL
+        fromDatabase:
+          name: spotlight-db
+          property: connectionString
+
+      # Redis (optional - for idempotency cache, Redlock, asynq queue)
+      - key: REDIS_URL
+        fromService:
+          name: spotlight-redis
+          property: connectionString
+
+      # Supabase REST API
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+
+      # Logging & monitoring
+      - key: LOG_LEVEL
+        value: info
+      - key: ENVIRONMENT
+        value: production
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Admin Dashboard (Next.js 15.1)
+  # ─────────────────────────────────────────────────────────────────────────────
+  - type: web
+    name: spotlight-admin
+    plan: standard
+    runtime: node
+    region: ohio
+    rootDir: frontend-admin
+    startCommand: npm run start
+    buildCommand: npm install && npm run build
+    buildFilter:
+      paths:
+        - frontend-admin/**
+        - package*.json
+    healthCheckPath: /
+    healthCheckInterval: 30
+    autoDeploy: true
+    maxInstances: 2
+    minInstances: 1
+
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          name: spotlight-backend
+          property: url
+          path: /api/v1
+      - key: NEXT_PUBLIC_ENVIRONMENT
+        value: production
+      - key: NODE_ENV
+        value: production
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Frontend Web (Next.js 14.2)
+  # Note: Alternatively deploy to cPanel Passenger with frontend-web/server.js
+  # ─────────────────────────────────────────────────────────────────────────────
+  - type: web
+    name: spotlight-frontend
+    plan: standard
+    runtime: node
+    region: ohio
+    rootDir: frontend-web
+    startCommand: npm run start
+    buildCommand: npm install && npm run build
+    buildFilter:
+      paths:
+        - frontend-web/**
+        - package*.json
+    healthCheckPath: /
+    healthCheckInterval: 30
+    autoDeploy: true
+    maxInstances: 2
+    minInstances: 1
+
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          name: spotlight-backend
+          property: url
+          path: /api/v1
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: NEXT_PUBLIC_ENVIRONMENT
+        value: production
+      - key: NODE_ENV
+        value: production
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Mobile Web (React Native/Expo Web)
+  # ─────────────────────────────────────────────────────────────────────────────
+  - type: web
+    name: spotlight-mobile
+    plan: standard
+    runtime: node
+    region: ohio
+    rootDir: mobile-app/reactnative
+    startCommand: npx expo start --web
+    buildCommand: npm install && npm run build:web
+    buildFilter:
+      paths:
+        - mobile-app/reactnative/**
+        - package*.json
+    healthCheckPath: /
+    healthCheckInterval: 30
+    autoDeploy: true
+    maxInstances: 1
+    minInstances: 1
+
+    envVars:
+      - key: REACT_APP_API_URL
+        fromService:
+          name: spotlight-backend
+          property: url
+          path: /api/v1
+      - key: REACT_APP_ENVIRONMENT
+        value: production
+      - key: NODE_ENV
+        value: production
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Redis (for idempotency, Redlock, asynq queue)
+  # ─────────────────────────────────────────────────────────────────────────────
+  - type: redis
+    name: spotlight-redis
+    plan: starter
+    region: ohio
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: Allow all (restrict in production)
+    maxmemoryPolicy: allkeys-lru
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # PostgreSQL Database (Supabase managed)
+  # Note: If using self-managed Postgres on Render instead:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # - type: pserv
+  #   name: spotlight-db
+  #   plan: starter
+  #   region: ohio
+  #   database: spotlight
+  #   user: postgres
+  #   ipAllowList:
+  #     - source: 0.0.0.0/0
+  #       description: Allow all (restrict in production)
+  #   preDeployCommand: supabase migration up
+
+databases:
+  - name: spotlight-db
+    plan: starter
+    region: ohio
+    version: 15
+    databaseName: spotlight
+    databaseUser: postgres
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: Allow all (restrict in production)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Environment Groups (optional - for shared config across services)
+# ─────────────────────────────────────────────────────────────────────────────
+envGroups:
+  - name: api-config
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: info
+
+  - name: frontend-config
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_ENVIRONMENT
+        value: production
