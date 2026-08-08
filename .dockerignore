@@ -1,0 +1,56 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Node/Frontend (not needed for backend build)
+frontend-web
+frontend-admin
+mobile-app
+node_modules
+npm-debug.log
+yarn-error.log
+.next
+dist
+build
+
+# Dev/test files
+.env
+.env.local
+.env.*.local
+*.test.go
+*_test.go
+*.spec.ts
+.vscode
+.idea
+.DS_Store
+
+# Documentation
+docs
+README.md
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# Database
+supabase
+migrations
+
+# Tools & scripts
+tools
+scripts
+Makefile
+
+# Build artifacts
+bin/
+dist/
+
+# Docker/compose
+docker-compose.yml
+.dockerignore
+Dockerfile
+
+# Agent work/temp
+.agentwork
+.claude
