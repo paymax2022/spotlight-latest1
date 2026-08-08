@@ -1,0 +1,27 @@
+{
+  "$schema": "https://railway.app/schema.json",
+  "services": {
+    "backend": {
+      "builder": "dockerfile",
+      "rootDirectory": ".",
+      "dockerfile": "Dockerfile"
+    },
+    "admin": {
+      "builder": "dockerfile",
+      "rootDirectory": "frontend-admin",
+      "dockerfile": "Dockerfile"
+    },
+    "mobile": {
+      "builder": "dockerfile",
+      "rootDirectory": "mobile-app/reactnative",
+      "dockerfile": "Dockerfile"
+    }
+  },
+  "postgres": {
+    "image": "postgres:15",
+    "variables": {
+      "POSTGRES_DB": "spotlight",
+      "POSTGRES_PASSWORD": "generate"
+    }
+  }
+}

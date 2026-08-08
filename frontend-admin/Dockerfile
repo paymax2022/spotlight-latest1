@@ -1,22 +1,29 @@
 # Multi-stage build for Next.js admin dashboard
-FROM node:20-alpine AS dependencies
+FROM node:20-alpine AS builder
 WORKDIR /app
+
+# Install dependencies
 COPY package*.json ./
 RUN npm ci
 
-FROM node:20-alpine AS builder
-WORKDIR /app
-COPY --from=dependencies /app/node_modules ./node_modules
+# Build application
 COPY . .
 RUN npm run build
 
-FROM node:20-alpine AS runtime
+# Runtime stage
+FROM node:20-alpine
 WORKDIR /app
+
 ENV NODE_ENV=production
-RUN npm install -g next
+ENV PORT=3001
+
+# Copy only necessary files from builder
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
+
 EXPOSE 3001
-CMD ["npm", "start"]
+
+# Start Next.js production server
+CMD ["node_modules/.bin/next", "start"]
