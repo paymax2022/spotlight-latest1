@@ -77,13 +77,15 @@ export default function KycUserProfilePage() {
 
       {profile && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-          <Card title="Tier & Status" style={{ margin: 0 }}>
-            <div style={{ display: 'grid', gap: '0.5rem', fontSize: '0.85rem' }}>
-              <div><span style={{ color: colors.muted }}>User ID:</span> <strong>{profile.userId}</strong></div>
-              <div><span style={{ color: colors.muted }}>Tier:</span> <strong>{profile.tier}</strong></div>
-              <div><span style={{ color: colors.muted }}>Status:</span> <strong style={{ color: colors.success }}>{profile.status}</strong></div>
-            </div>
-          </Card>
+          <div style={{ margin: 0 }}>
+            <Card title="Tier & Status">
+              <div style={{ display: 'grid', gap: '0.5rem', fontSize: '0.85rem' }}>
+                <div><span style={{ color: colors.muted }}>User ID:</span> <strong>{profile.userId}</strong></div>
+                <div><span style={{ color: colors.muted }}>Tier:</span> <strong>{profile.tier}</strong></div>
+                <div><span style={{ color: colors.muted }}>Status:</span> <strong style={{ color: colors.success }}>{profile.status}</strong></div>
+              </div>
+            </Card>
+          </div>
         </div>
       )}
 

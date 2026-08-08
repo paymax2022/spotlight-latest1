@@ -14,7 +14,7 @@ import { colors, tint } from '@/components/ui/vuexy';
 
 export const card = (): CSSProperties => ({ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card });
 export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadius: '0.375rem', border: `1px solid ${colors.inputBorder}`, background: colors.card, cursor: 'pointer', fontSize: '0.85rem' });
-export const btnPrimary = (bg = colors.primary): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: 'none', background: bg, color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 });
+export const btnPrimary = (bg?: string): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: 'none', background: bg ?? colors.primary, color: '#fff', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 });
 export const btnDanger = (): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: `1px solid ${colors.danger}`, background: colors.card, color: colors.danger, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 });
 export const btnDisabled = (): CSSProperties => ({ padding: '0.4rem 0.9rem', borderRadius: '0.375rem', border: `1px solid ${colors.border}`, background: colors.bg, color: colors.muted, cursor: 'not-allowed', fontSize: '0.85rem', fontWeight: 600 });
 export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: colors.muted, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3 });
@@ -205,6 +205,14 @@ export const MARKETPLACE_PERMS = {
   flagsAction: 'marketplace.admin.flags.action',
   auditRead: 'marketplace.admin.audit.read',
   ordersAging: 'marketplace.admin.orders.aging',
+  analytics: 'marketplace.admin.analytics',
+  taxonomy: 'marketplace.admin.taxonomy',
+  cms: 'marketplace.admin.cms',
+  pricing: 'marketplace.admin.pricing',
+  usersView: 'marketplace.admin.users.view',
+  usersAction: 'marketplace.admin.users.action',
+  appealsReview: 'marketplace.admin.appeals.review',
+  appealsDecide: 'marketplace.admin.appeals.decide',
 } as const;
 
 export function useMarketplaceUser(): AuthUser | null {

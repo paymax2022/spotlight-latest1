@@ -230,3 +230,389 @@ export async function rejectBoost(id: string, reasonCode: string): Promise<MktBo
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Boost reject failed'));
   return res.json();
 }
+
+// ─── Marketplace Analytics ───────────────────────────────────────────────────
+
+export async function getMarketplaceAnalytics(rangeDays?: number): Promise<any> {
+  if (USE_FIXTURES) {
+    return delay({
+      range_days: rangeDays || 30,
+      gmv_kobo: 15_000_000_000,
+      gmv_prev_kobo: 14_000_000_000,
+      revenue_kobo: 450_000_000,
+      active_listings: 2_847,
+      new_listings: 342,
+      dau: 12_450,
+      funnel: { views: 89_234, contacts: 8_923, deals: 1_234 },
+      gmv_series: Array.from({ length: rangeDays || 30 }, (_, i) => ({
+        date: new Date(Date.now() - (rangeDays || 30 - i) * 86400000).toISOString().split('T')[0],
+        gmv_kobo: Math.floor(Math.random() * 500_000_000 + 400_000_000),
+        deals: Math.floor(Math.random() * 50 + 20),
+      })),
+    });
+  }
+  const qs = rangeDays ? `?range_days=${rangeDays}` : '';
+  const res = await fetch(`${marketplaceAdminBase()}/analytics${qs}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Analytics fetch failed'));
+  return res.json();
+}
+
+// ─── Taxonomy (Categories) ───────────────────────────────────────────────────
+
+export async function listCategories(): Promise<any[]> {
+  if (USE_FIXTURES) return delay([]);
+  const res = await fetch(`${marketplaceAdminBase()}/taxonomy/categories`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Categories fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+export async function getCategory(id: string): Promise<any> {
+  if (USE_FIXTURES) return delay({});
+  const res = await fetch(`${marketplaceAdminBase()}/taxonomy/categories/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Category fetch failed'));
+  return res.json();
+}
+
+export async function createCategory(data: any): Promise<any> {
+  if (USE_FIXTURES) return delay({ ...data, id: 'cat_new' });
+  const res = await fetch(`${marketplaceAdminBase()}/taxonomy/categories`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Create category failed'));
+  return res.json();
+}
+
+export async function updateCategory(id: string, data: any, reasonCode?: string): Promise<any> {
+  if (USE_FIXTURES) return delay({ ...data, id });
+  const body = reasonCode ? { ...data, reason_code: reasonCode } : data;
+  const res = await fetch(`${marketplaceAdminBase()}/taxonomy/categories/${encodeURIComponent(id)}`, {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Update category failed'));
+  return res.json();
+}
+
+export async function setCategoryActive(id: string, active: boolean, reasonCode?: string): Promise<any> {
+  if (USE_FIXTURES) return delay({ id, active });
+  const res = await fetch(`${marketplaceAdminBase()}/taxonomy/categories/${encodeURIComponent(id)}/active`, {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ active, reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Set category active failed'));
+  return res.json();
+}
+
+// ─── CMS (Banners & Content) ──────────────────────────────────────────────────
+
+export async function listBanners(): Promise<any[]> {
+  if (USE_FIXTURES) return delay([]);
+  const res = await fetch(`${marketplaceAdminBase()}/cms/banners`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Banners fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+export async function createBanner(data: any): Promise<any> {
+  if (USE_FIXTURES) return delay({ ...data, id: 'bnr_new' });
+  const res = await fetch(`${marketplaceAdminBase()}/cms/banners`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Create banner failed'));
+  return res.json();
+}
+
+export async function updateBanner(id: string, data: any): Promise<any> {
+  if (USE_FIXTURES) return delay({ ...data, id });
+  const res = await fetch(`${marketplaceAdminBase()}/cms/banners/${encodeURIComponent(id)}`, {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Update banner failed'));
+  return res.json();
+}
+
+export async function setBannerStatus(id: string, status: string, reasonCode?: string): Promise<any> {
+  if (USE_FIXTURES) return delay({ id, status });
+  const res = await fetch(`${marketplaceAdminBase()}/cms/banners/${encodeURIComponent(id)}/status`, {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ status, reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Set banner status failed'));
+  return res.json();
+}
+
+export async function getCategoryContent(categoryId: string): Promise<any> {
+  if (USE_FIXTURES) return delay({});
+  const res = await fetch(`${marketplaceAdminBase()}/cms/categories/${encodeURIComponent(categoryId)}/content`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Category content fetch failed'));
+  return res.json();
+}
+
+export async function upsertCategoryContent(categoryId: string, data: any): Promise<any> {
+  if (USE_FIXTURES) return delay({ ...data, category_id: categoryId });
+  const res = await fetch(`${marketplaceAdminBase()}/cms/categories/${encodeURIComponent(categoryId)}/content`, {
+    method: 'PUT', headers: authHeaders(), body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Upsert category content failed'));
+  return res.json();
+}
+
+// ─── Pricing (Boosts, commissions, discounts) ─────────────────────────────────
+
+export async function listBoostPackages(): Promise<any[]> {
+  if (USE_FIXTURES) return delay([]);
+  const res = await fetch(`${marketplaceAdminBase()}/pricing/boosts`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Boost packages fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+export async function upsertBoostPackage(data: any, reasonCode?: string): Promise<any> {
+  if (USE_FIXTURES) return delay(data);
+  const body = reasonCode ? { ...data, reason_code: reasonCode } : data;
+  const res = await fetch(`${marketplaceAdminBase()}/pricing/boosts`, {
+    method: 'PUT', headers: authHeaders(), body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Upsert boost package failed'));
+  return res.json();
+}
+
+export async function getCommissionConfig(): Promise<any> {
+  if (USE_FIXTURES) return delay({ category_commissions: {} });
+  const res = await fetch(`${marketplaceAdminBase()}/pricing/commission`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Commission config fetch failed'));
+  return res.json();
+}
+
+export async function setCommissionConfig(data: any, reasonCode?: string): Promise<any> {
+  if (USE_FIXTURES) return delay(data);
+  const body = reasonCode ? { ...data, reason_code: reasonCode } : data;
+  const res = await fetch(`${marketplaceAdminBase()}/pricing/commission`, {
+    method: 'PUT', headers: authHeaders(), body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Set commission config failed'));
+  return res.json();
+}
+
+export async function listDiscountCodes(): Promise<any[]> {
+  if (USE_FIXTURES) return delay([]);
+  const res = await fetch(`${marketplaceAdminBase()}/pricing/discounts`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Discount codes fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+export async function createDiscountCode(data: any): Promise<any> {
+  if (USE_FIXTURES) return delay({ ...data, id: 'disc_new' });
+  const res = await fetch(`${marketplaceAdminBase()}/pricing/discounts`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Create discount code failed'));
+  return res.json();
+}
+
+export async function setDiscountCodeActive(id: string, active: boolean, reasonCode?: string): Promise<any> {
+  if (USE_FIXTURES) return delay({ id, active });
+  const res = await fetch(`${marketplaceAdminBase()}/pricing/discounts/${encodeURIComponent(id)}/active`, {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ active, reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Set discount code active failed'));
+  return res.json();
+}
+
+export async function listFeaturedSlots(): Promise<any[]> {
+  if (USE_FIXTURES) return delay([]);
+  const res = await fetch(`${marketplaceAdminBase()}/pricing/featured-slots`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Featured slots fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+export async function setFeaturedSlotCap(surface: string, maxSlots: number, reasonCode?: string): Promise<any> {
+  if (USE_FIXTURES) return delay({ surface, max_slots: maxSlots });
+  const res = await fetch(`${marketplaceAdminBase()}/pricing/featured-slots/${encodeURIComponent(surface)}`, {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ max_slots: maxSlots, reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Set featured slot cap failed'));
+  return res.json();
+}
+
+// ─── User Management ──────────────────────────────────────────────────────────
+
+export async function searchUsers(filters?: { q?: string; status?: string; minFraud?: number }): Promise<any[]> {
+  if (USE_FIXTURES) return delay([]);
+  const qs = new URLSearchParams();
+  if (filters?.q) qs.set('q', filters.q);
+  if (filters?.status) qs.set('status', filters.status);
+  if (filters?.minFraud !== undefined) qs.set('min_fraud', String(filters.minFraud));
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  const res = await fetch(`${marketplaceAdminBase()}/users${suffix}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Users search failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+export async function getUserAdmin(id: string): Promise<any> {
+  if (USE_FIXTURES) return delay({
+    id, display_name: 'User', email_masked: '***@***.***', phone_masked: '***-****', status: 'active',
+    kyc_tier: 'tier1_buy', kyc_pending: false, trust_score: 0.85, fraud_score: 0.05,
+    active_listings: 0, completed_deals: 12, open_flags: 0, created_at: new Date().toISOString(),
+    pending_action: null, pending_action_by: null, requires_dual_approval: false,
+  });
+  const res = await fetch(`${marketplaceAdminBase()}/users/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'User fetch failed'));
+  return res.json();
+}
+
+export async function setUserStatus(id: string, data: any): Promise<any> {
+  if (USE_FIXTURES) return delay({ id, status: data.action });
+  const res = await fetch(`${marketplaceAdminBase()}/users/${encodeURIComponent(id)}/status`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Set user status failed'));
+  return res.json();
+}
+
+export async function approveUserActionSecondSign(id: string, reasonCode?: string): Promise<any> {
+  if (USE_FIXTURES) return delay({ id, status: 'banned' });
+  const res = await fetch(`${marketplaceAdminBase()}/users/${encodeURIComponent(id)}/action/approve`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Approve user action failed'));
+  return res.json();
+}
+
+export async function reviewKyc(id: string, data: any): Promise<any> {
+  if (USE_FIXTURES) return delay({ id, kyc_tier: data.grant_tier || 'tier2_sell' });
+  const res = await fetch(`${marketplaceAdminBase()}/users/${encodeURIComponent(id)}/kyc/review`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Review KYC failed'));
+  return res.json();
+}
+
+export async function blacklistIdentifier(id: string, data: any): Promise<any> {
+  if (USE_FIXTURES) return delay({ id, blacklisted: true });
+  const res = await fetch(`${marketplaceAdminBase()}/users/${encodeURIComponent(id)}/blacklist`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Blacklist identifier failed'));
+  return res.json();
+}
+
+export async function logViewAs(id: string, reasonCode?: string): Promise<any> {
+  if (USE_FIXTURES) return delay({ id, view_as_logged: true });
+  const res = await fetch(`${marketplaceAdminBase()}/users/${encodeURIComponent(id)}/audit/view-as`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Log view as failed'));
+  return res.json();
+}
+
+// ─── Appeals ──────────────────────────────────────────────────────────────────
+
+export async function listAppeals(status?: string): Promise<any[]> {
+  if (USE_FIXTURES) return delay([]);
+  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+  const res = await fetch(`${marketplaceAdminBase()}/appeals${qs}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Appeals fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+export async function getAppeal(id: string): Promise<any> {
+  if (USE_FIXTURES) return delay({});
+  const res = await fetch(`${marketplaceAdminBase()}/appeals/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Appeal fetch failed'));
+  return res.json();
+}
+
+export async function createAppeal(data: any): Promise<any> {
+  if (USE_FIXTURES) return delay({ ...data, id: 'app_new' });
+  const res = await fetch(`${marketplaceAdminBase()}/appeals`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Create appeal failed'));
+  return res.json();
+}
+
+export async function updateAppealStatus(id: string, status: string): Promise<any> {
+  if (USE_FIXTURES) return delay({ id, status });
+  const res = await fetch(`${marketplaceAdminBase()}/appeals/${encodeURIComponent(id)}/status`, {
+    method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ status }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Update appeal status failed'));
+  return res.json();
+}
+
+export async function decideAppeal(id: string, data: { decision: string; reason_code: string; notes?: string }): Promise<any> {
+  if (USE_FIXTURES) return delay({ id, ...data });
+  const res = await fetch(`${marketplaceAdminBase()}/appeals/${encodeURIComponent(id)}/decide`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Decide appeal failed'));
+  return res.json();
+}
+
+export async function approveAppealSecondSign(id: string, reasonCode?: string): Promise<any> {
+  if (USE_FIXTURES) return delay({ id, approved: true });
+  const res = await fetch(`${marketplaceAdminBase()}/appeals/${encodeURIComponent(id)}/approve`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({ reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Approve appeal failed'));
+  return res.json();
+}
+
+// ─── Fraud Detection ───────────────────────────────────────────────────────────
+
+export async function listFraudSignals(severity?: string): Promise<any[]> {
+  if (USE_FIXTURES) return delay([]);
+  const qs = severity ? `?severity=${encodeURIComponent(severity)}` : '';
+  const res = await fetch(`${marketplaceAdminBase()}/fraud/signals${qs}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Fraud signals fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+// ─── Vendor Management ─────────────────────────────────────────────────────────
+
+export async function listVendorMetrics(): Promise<any[]> {
+  if (USE_FIXTURES) return delay([]);
+  const res = await fetch(`${marketplaceAdminBase()}/vendors/metrics`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Vendor metrics fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+export async function getVendorDetails(id: string): Promise<any> {
+  if (USE_FIXTURES) return delay({});
+  const res = await fetch(`${marketplaceAdminBase()}/vendors/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Vendor details fetch failed'));
+  return res.json();
+}
+
+export async function deleteVendor(id: string): Promise<any> {
+  if (USE_FIXTURES) return delay({ id, deleted: true });
+  const res = await fetch(`${marketplaceAdminBase()}/vendors/${encodeURIComponent(id)}`, {
+    method: 'DELETE', headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Delete vendor failed'));
+  return res.json();
+}
+
+// ─── Communications ───────────────────────────────────────────────────────────
+
+export async function listCommunications(): Promise<any[]> {
+  if (USE_FIXTURES) return delay([]);
+  const res = await fetch(`${marketplaceAdminBase()}/communications`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Communications fetch failed'));
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.data ?? [];
+}
+
+export async function createAnnouncement(data: any): Promise<any> {
+  if (USE_FIXTURES) return delay({ ...data, id: 'ann_new' });
+  const res = await fetch(`${marketplaceAdminBase()}/communications/announcements`, {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Create announcement failed'));
+  return res.json();
+}

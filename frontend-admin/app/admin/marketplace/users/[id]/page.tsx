@@ -54,7 +54,7 @@ export default function UserDetailPage() {
 
   function changeStatus(action: 'suspend' | 'ban' | 'reinstate') {
     if (!statusReason.trim()) { setError('reason_code is required to change status.'); return; }
-    void act(() => setUserStatus(id, { action, reason_code: statusReason.trim() }), (r) => {
+    void act(() => setUserStatus(id, { action, reason_code: statusReason.trim() }), (r: MktUserAdmin) => {
       setU(r);
       setMsg(r.pending_action === 'ban' ? 'Ban recorded — awaiting a second approver before it takes effect.' : `User ${action}d. Audit entry recorded.`);
       setStatusReason('');
@@ -62,12 +62,12 @@ export default function UserDetailPage() {
   }
 
   function secondSignBan() {
-    void act(() => approveUserActionSecondSign(id, statusReason.trim() || undefined), (r) => { setU(r); setMsg('Second approval recorded — the ban has taken effect.'); });
+    void act(() => approveUserActionSecondSign(id, statusReason.trim() || undefined), (r: MktUserAdmin) => { setU(r); setMsg('Second approval recorded — the ban has taken effect.'); });
   }
 
   function decideKyc(decision: 'approve' | 'reject') {
     if (!kycReason.trim()) { setError('reason_code is required to review KYC.'); return; }
-    void act(() => reviewKyc(id, { decision, reason_code: kycReason.trim(), grant_tier: decision === 'approve' ? grantTier : undefined }), (r) => { setU(r); setMsg(`KYC ${decision}d. Audit entry recorded.`); setKycReason(''); });
+    void act(() => reviewKyc(id, { decision, reason_code: kycReason.trim(), grant_tier: decision === 'approve' ? grantTier : undefined }), (r: MktUserAdmin) => { setU(r); setMsg(`KYC ${decision}d. Audit entry recorded.`); setKycReason(''); });
   }
 
   function doBlacklist() {
