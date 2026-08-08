@@ -95,15 +95,15 @@ export function useBackgroundSync(onEvent?: (event: SyncEvent) => void) {
 
           if (response?.ok) {
             // Remove from queue
-            await db.removeSyncQueueItem(item.id);
+            await db.removeSyncQueueItem(Number(item.id));
             successCount++;
           } else {
             // Retry with exponential backoff
             const maxRetries = 3;
             if (item.retries < maxRetries) {
-              await db.updateSyncQueueRetry(item.id, 'HTTP error');
+              await db.updateSyncQueueRetry(Number(item.id), 'HTTP error');
             } else {
-              await db.removeSyncQueueItem(item.id); // Give up after 3 retries
+              await db.removeSyncQueueItem(Number(item.id)); // Give up after 3 retries
               failureCount++;
             }
           }
@@ -113,9 +113,9 @@ export function useBackgroundSync(onEvent?: (event: SyncEvent) => void) {
           // Retry logic
           const maxRetries = 3;
           if (item.retries < maxRetries) {
-            await db.updateSyncQueueRetry(item.id, errorMsg);
+            await db.updateSyncQueueRetry(Number(item.id), errorMsg);
           } else {
-            await db.removeSyncQueueItem(item.id);
+            await db.removeSyncQueueItem(Number(item.id));
             failureCount++;
           }
         }
@@ -224,7 +224,7 @@ export function useOfflineQueue() {
       const db = await getExamDatabase();
       const queue = await db.getSyncQueue();
       for (const item of queue) {
-        await db.removeSyncQueueItem(item.id);
+        await db.removeSyncQueueItem(Number(item.id));
       }
       setQueueCount(0);
     } catch (error) {
@@ -289,7 +289,7 @@ export function useServiceWorkerSync() {
 
       navigator.serviceWorker.ready.then((registration) => {
         // Attempt to register background sync
-        registration.sync.register('exam-sync').catch((err) => {
+        (registration as any).sync?.register('exam-sync').catch((err: any) => {
           console.warn('Background sync registration failed:', err);
         });
       });

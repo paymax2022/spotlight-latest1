@@ -23,7 +23,7 @@ interface StagesResponse {
 
 export default function StagesDashboard() {
   const params = useParams();
-  const contestId = params.contestId as string;
+  const contestId = (params?.contestId as string) || 'default';
 
   const [stages, setStages] = useState<Stage[]>([]);
   const [loading, setLoading] = useState(true);

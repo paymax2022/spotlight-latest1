@@ -24,8 +24,8 @@ interface EvictionsResponse {
 
 export default function EvictionManagement() {
   const params = useParams();
-  const contestId = params.contestId as string;
-  const stageNum = params.stageNum as string;
+  const contestId = (params?.contestId as string) || 'default';
+  const stageNum = (params?.stageNum as string) || '1';
 
   const [evictions, setEvictions] = useState<Eviction[]>([]);
   const [loading, setLoading] = useState(true);

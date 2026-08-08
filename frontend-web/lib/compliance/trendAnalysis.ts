@@ -419,7 +419,7 @@ export class PredictiveCompliance {
         priority: 'high',
         daysToComplete: 3,
       });
-    } else if (forecast.trend === 'declining') {
+    } else if (forecast.trend.trend === 'declining') {
       priority = 'medium';
       timeframe = 'Soon (within 14 days)';
       actions.push({

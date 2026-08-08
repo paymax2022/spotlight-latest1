@@ -20,7 +20,7 @@ interface ContestantsResponse {
 
 export default function AdminVotingInterface() {
   const params = useParams();
-  const contestId = params.contestId as string;
+  const contestId = (params?.contestId as string) || 'default';
 
   const [contestants, setContestants] = useState<Contestant[]>([]);
   const [loading, setLoading] = useState(true);

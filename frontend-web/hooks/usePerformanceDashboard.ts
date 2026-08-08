@@ -179,7 +179,12 @@ export function usePerformanceAlerts(sessionId: string) {
   useEffect(() => {
     const checkPerformance = () => {
       const metrics = collector.getAverageMetrics();
-      const newAlerts = [];
+      const newAlerts: Array<{
+        id: string;
+        type: 'warning' | 'error';
+        message: string;
+        timestamp: number;
+      }> = [];
 
       // LCP check
       if (metrics.webVitals.lcp && metrics.webVitals.lcp > 4000) {

@@ -21,7 +21,7 @@ async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey>
   return crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt,
+      salt: salt as BufferSource,
       iterations: 100000,
       hash: 'SHA-256',
     },
@@ -183,7 +183,17 @@ export class EncryptedExamStorage {
     currentQuestion: number;
     timeSpent: number;
   }> {
-    return decryptData(encrypted, this.password, true);
+    return decryptData<{
+      answers: Record<number, string>;
+      flagged: number[];
+      currentQuestion: number;
+      timeSpent: number;
+    }>(encrypted, this.password, true) as Promise<{
+      answers: Record<number, string>;
+      flagged: number[];
+      currentQuestion: number;
+      timeSpent: number;
+    }>;
   }
 }
 

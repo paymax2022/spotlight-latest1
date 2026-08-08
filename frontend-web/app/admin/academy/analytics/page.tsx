@@ -258,7 +258,7 @@ export default function AdminAnalyticsPage() {
                     cx="50%"
                     cy="50%"
                     labelLine={false}
-                    label={({ grade, count }) => `${grade}: ${count}`}
+                    label={({ entry }: any) => `${entry.grade}: ${entry.count}`}
                     outerRadius={100}
                     fill="#8884d8"
                     dataKey="count"
