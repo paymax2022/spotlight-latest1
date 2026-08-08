@@ -1,0 +1,16 @@
+runtime: custom
+env: flex
+
+env_variables:
+  NODE_ENV: "production"
+
+automatic_scaling:
+  min_instances: 1
+  max_instances: 5
+  
+health_check:
+  check_interval_sec: 10
+  timeout_sec: 5
+  healthy_threshold: 2
+  unhealthy_threshold: 3
+  path: "/index.html"

@@ -1,0 +1,22 @@
+runtime: custom
+env: flex
+
+env_variables:
+  PORT: "8091"
+  ENV: "production"
+
+automatic_scaling:
+  min_instances: 1
+  max_instances: 10
+  cpu_throttling_enabled: false
+  
+health_check:
+  check_interval_sec: 10
+  timeout_sec: 5
+  healthy_threshold: 2
+  unhealthy_threshold: 3
+  path: "/health"
+
+resources:
+  cpu: 2
+  memory_gb: 2

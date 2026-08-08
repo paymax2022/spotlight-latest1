@@ -1,0 +1,20 @@
+runtime: custom
+env: flex
+
+env_variables:
+  NODE_ENV: "production"
+  NODE_OPTIONS: "--max-old-space-size=512"
+
+automatic_scaling:
+  min_instances: 1
+  max_instances: 10
+  
+health_check:
+  check_interval_sec: 10
+  timeout_sec: 5
+  healthy_threshold: 2
+  unhealthy_threshold: 3
+  path: "/"
+
+network:
+  session_affinity: "CLIENT_IP"
