@@ -18,9 +18,9 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { MarketColors, formatNaira, conditionLabel } from '@/features/marketplace';
 import { estimateFairPriceBand } from '@/features/marketplace/api/sell.api';
 import { useSellListing, useSellCategory, useUpdateListing } from '@/features/marketplace/sell.hooks';
-import AttributeFields, { normalizeSchema, missingRequired } from '../_components/AttributeFields';
-import { checkBannedPatterns, countWords } from '../_components/ComposerValidation';
-import FairPriceMeter from '../_components/FairPriceMeter';
+import AttributeFields, { normalizeSchema, missingRequired } from '@/features/marketplace/components/sell/AttributeFields';
+import { checkBannedPatterns, countWords } from '@/features/marketplace/components/sell/ComposerValidation';
+import FairPriceMeter from '@/features/marketplace/components/sell/FairPriceMeter';
 
 const MIN_DESC_WORDS = 8;
 

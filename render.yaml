@@ -85,6 +85,13 @@ services:
         value: production
       - key: NODE_ENV
         value: production
+      # Cap the V8 heap below the instance's 2 GB so the build GCs instead of
+      # aborting with SIGABRT. Measured peak RSS for `next build`: 2.02 GiB
+      # uncapped, 1.73 GiB at 1536, 1.42 GiB at 1024. Paired with
+      # experimental.cpus=1 in frontend-admin/next.config.mjs; raise both
+      # together if this service's plan is upgraded.
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=1024
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Frontend Web (Next.js 14.2)
