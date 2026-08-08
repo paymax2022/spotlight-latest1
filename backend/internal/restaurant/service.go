@@ -39,17 +39,27 @@ type RouteDistancer interface {
 	RouteDistanceKmEta(ctx context.Context, oLat, oLng, dLat, dLng float64) (km, etaMin float64, err error)
 }
 
+// TierLimiter is the fail-closed KYC-tier / daily-spend gate on restaurant money moves
+// (order escrow + merchant withdrawals). Modeled as a local interface so restaurant
+// never imports finance/tiers at compile time.
+type TierLimiter interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
 // Service manages restaurants, menus, and orders.
 type Service struct {
-	db         *pgxpool.Pool
-	settlement *settlement.Service
-	ledger     *ledger.Service // money path for payout-run disbursement (nil → payouts disabled)
-	geocoder   AddressGeocoder
-	distancer  RouteDistancer      // optional; nil → haversine straight-line distance
-	feeRepo    *DeliveryConfigRepo // distance-based delivery-fee config (nil-safe → defaults)
-	notifier   Notifier            // nil-safe via s.notify; defaults to LogNotifier
-	rt         *Realtime           // optional; nil → no WS fan-out
-	commission CommissionRecorder  // optional; nil ⇒ realized-profit recording is a no-op
+	db          *pgxpool.Pool
+	settlement  *settlement.Service
+	ledger      *ledger.Service // money path for payout-run disbursement (nil → payouts disabled)
+	geocoder    AddressGeocoder
+	distancer   RouteDistancer      // optional; nil → haversine straight-line distance
+	feeRepo     *DeliveryConfigRepo // distance-based delivery-fee config (nil-safe → defaults)
+	notifier    Notifier            // nil-safe via s.notify; defaults to LogNotifier
+	rt          *Realtime           // optional; nil → no WS fan-out
+	commission  CommissionRecorder  // optional; nil ⇒ realized-profit recording is a no-op
+	tiers       TierLimiter         // optional; fail-closed gate on order escrow + withdrawal debit
+	withdrawalsOn bool              // FEATURE_RESTAURANT_WITHDRAWALS_ENABLED
+	disburser   WithdrawalDisburser // optional; nil ⇒ NoopDisburser (default sandbox)
 }
 
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
@@ -82,6 +92,20 @@ func (s *Service) WithGeocoder(g AddressGeocoder) *Service {
 // delivery fees use real driving distance + ETA instead of straight-line.
 func (s *Service) WithDistancer(d RouteDistancer) *Service {
 	s.distancer = d
+	return s
+}
+
+// WithTiers attaches the fail-closed KYC-tier gate used for wallet debits
+// (order escrow + merchant withdrawals). Required for money-path operations.
+func (s *Service) WithTiers(t TierLimiter) *Service {
+	s.tiers = t
+	return s
+}
+
+// WithCommission attaches an optional profit-recording sink (app-wiring injects
+// a thin adapter over the finance commission service).
+func (s *Service) WithCommission(c CommissionRecorder) *Service {
+	s.commission = c
 	return s
 }
 
@@ -642,4 +666,27 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 	}
 	s.broadcastStatus(orderID, OrderCancelled)
 	return nil
+}
+
+// recordOrderEvent records an order's status transition in the audit log (best-effort).
+// Used by order FSM transitions (accept, reject, dispatch, delivery-fail, reassign, etc.)
+// for audit/analytics. Failures are silent to prevent status transitions from failing.
+func (s *Service) recordOrderEvent(ctx context.Context, orderID, actorID string, fromStatus, toStatus OrderStatus) {
+	// TODO: implement order event audit logging when audit infrastructure is wired.
+	// For now, this is a no-op stub that allows callers to record events.
+}
+
+// refundAndClose handles the money-path return of escrowed order funds to the customer
+// and updates the order to a terminal refunded state (rejected/dispatch_failed/cancelled).
+// It posts a balanced ledger reversal and emits audit events.
+func (s *Service) refundAndClose(ctx context.Context, orderID, actorID string, toStatus OrderStatus, reason string) error {
+	// TODO: implement the refund money-path (escrow → customer wallet reversal).
+	// For now this is a stub that allows the FSM to compile.
+	// Actual implementation requires:
+	// 1. Load the order and escrow amount
+	// 2. Post balanced ledger reversal (DR escrow_liability → CR customer_wallet)
+	// 3. Update order status to terminal state
+	// 4. Record audit event
+	// 5. Notify customer
+	return fmt.Errorf("restaurant: refundAndClose not yet implemented")
 }

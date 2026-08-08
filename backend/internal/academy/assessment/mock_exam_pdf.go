@@ -3,6 +3,7 @@ package assessment
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -137,17 +138,20 @@ func (s *PDFReportService) buildResultsHTML(attempt *MockExamAttempt, instance *
 	<div class="metrics">
 `)
 
-	// Parse performance data
+	// Parse performance data from RawMessage JSON
 	var correctAnswers, totalAnswered, unanswered int
-	if perf, ok := attempt.Performance.(map[string]interface{}); ok {
-		if c, ok := perf["correct_answers"].(float64); ok {
-			correctAnswers = int(c)
-		}
-		if t, ok := perf["total_answered"].(float64); ok {
-			totalAnswered = int(t)
-		}
-		if u, ok := perf["unanswered"].(float64); ok {
-			unanswered = int(u)
+	if len(attempt.Performance) > 0 {
+		var perf map[string]interface{}
+		if err := json.Unmarshal(attempt.Performance, &perf); err == nil {
+			if c, ok := perf["correct_answers"].(float64); ok {
+				correctAnswers = int(c)
+			}
+			if t, ok := perf["total_answered"].(float64); ok {
+				totalAnswered = int(t)
+			}
+			if u, ok := perf["unanswered"].(float64); ok {
+				unanswered = int(u)
+			}
 		}
 	}
 
@@ -361,6 +365,23 @@ func (s *PDFReportService) LearnerAnalyticsPDF(analytics *LearnerAnalytics) stri
 }
 
 // Helper functions
+
+// calculateGrade computes a letter grade from a percentage score
+func calculateGrade(percent int) string {
+	switch {
+	case percent >= 90:
+		return "A"
+	case percent >= 80:
+		return "B"
+	case percent >= 70:
+		return "C"
+	case percent >= 60:
+		return "D"
+	default:
+		return "F"
+	}
+}
+
 func getGradeColor(grade string) string {
 	colors := map[string]string{
 		"A": "#10b981",

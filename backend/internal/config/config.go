@@ -285,6 +285,10 @@ type Config struct {
 	// of the marketplace still functions. Consumed by app-wiring to build
 	// search.NewClient(...) and inject it via svc.SetSearcher(...).
 	ElasticsearchURL string
+	// RunWorkersInProcess enables in-process background workers (marketplace search
+	// indexer) for single-instance deploys (ADR-026 free-tier deployment).
+	// Default OFF — promote to dedicated worker dynos at scale. RUN_WORKERS_INPROCESS.
+	RunWorkersInProcess bool
 
 	// Top-5 expansion modules (no-new-licence; ride existing wallet/ledger rails).
 	// DEFAULT OFF. Each gates /api/finance/<mod> + /api/<mod>/admin (internal/<mod>).
@@ -626,6 +630,7 @@ func Load() Config {
 		FeaturePlacementEnabled:               getEnvBool("FEATURE_PLACEMENT_ENABLED", false),
 		FeatureMarketplaceEnabled:             getEnvBool("FEATURE_MARKETPLACE_ENABLED", false),
 		ElasticsearchURL:                      getEnv("ELASTICSEARCH_URL", ""),
+		RunWorkersInProcess:                   getEnvBool("RUN_WORKERS_INPROCESS", false),
 		FeatureSocialPayEnabled:               getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
 		FeatureP2PMarketEnabled:               getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
 		FeatureSavingsEnabled:                 getEnvBool("FEATURE_SAVINGS_ENABLED", false),

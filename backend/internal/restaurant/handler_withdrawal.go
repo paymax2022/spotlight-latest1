@@ -17,7 +17,9 @@ import (
 	"spotlight/backend/internal/finance/tiers"
 )
 
-func ownerErrStatus(err error) int {
+// ownerErrStatusWithdraw maps a withdrawal/bank-account service error to HTTP status
+// (renamed to avoid collision with handler_delivery.go's ownerErrStatus).
+func ownerErrStatusWithdraw(err error) int {
 	if strings.Contains(err.Error(), "not found") {
 		return http.StatusNotFound
 	}
@@ -52,7 +54,7 @@ func (h *Handler) ListBankAccounts(c *gin.Context) {
 func (h *Handler) SetDefaultBankAccount(c *gin.Context) {
 	userID := c.GetString("user_id")
 	if err := h.svc.SetDefaultBankAccount(c.Request.Context(), userID, c.Param("accountId")); err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatusWithdraw(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"updated": true})
@@ -61,7 +63,7 @@ func (h *Handler) SetDefaultBankAccount(c *gin.Context) {
 func (h *Handler) DeleteBankAccount(c *gin.Context) {
 	userID := c.GetString("user_id")
 	if err := h.svc.DeleteBankAccount(c.Request.Context(), userID, c.Param("accountId")); err != nil {
-		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		c.JSON(ownerErrStatusWithdraw(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"deleted": true})

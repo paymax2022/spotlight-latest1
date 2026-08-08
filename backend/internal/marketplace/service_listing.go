@@ -364,6 +364,17 @@ func (s *Service) ExpireDueListings(ctx context.Context) (int, error) {
 	return len(ids), nil
 }
 
+// CompleteDueBoosts is the cron helper (§2.4 boost completion): active boosts past
+// ends_at → completed. Returns count completed. Affected listing IDs are returned
+// (for re-indexing), but no outbox rows are emitted (boost_weight drops on next index).
+func (s *Service) CompleteDueBoosts(ctx context.Context) (int, error) {
+	ids, err := s.repo.CompleteDueBoosts(ctx, time.Now(), 200)
+	if err != nil {
+		return 0, err
+	}
+	return len(ids), nil
+}
+
 // searchPayload builds the outbox upsert payload Agent B's indexer consumes (mirrors
 // the §4 ES mapping fields). It includes boost_weight so paid boosts actually affect
 // ranking (§4 field_value_factor on boost_weight) — the weight is the strongest

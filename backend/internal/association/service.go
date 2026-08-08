@@ -27,6 +27,7 @@ type Service struct {
 	db         *pgxpool.Pool
 	ledger     *ledger.Service
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	cardKey    []byte             // HMAC key for membership card QR signing (set via SetCardSigningSecret)
 }
 
 func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {

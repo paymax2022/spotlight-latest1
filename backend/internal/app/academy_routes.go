@@ -246,9 +246,8 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 	// exam submission fires the gamification earn-path (XP + streak) via a nil-safe
 	// hook — engagement side-effects that never block the (already-persisted) score.
 	if examEnabled {
-		academyGamifier := academyGamifierAdapter{gam: gamification.NewService(gamification.NewRepository(pool), gamification.Config{})}
-		assessment.RegisterAcademyAssessment(memberAcad, adminAcad, pool, rbac, academyGamifier)
-		exam.RegisterAcademyExam(memberAcad, adminAcad, pool, rbac, academyGamifier)
+		assessment.RegisterAcademyAssessment(memberAcad, adminAcad, pool, rbac)
+		exam.RegisterAcademyExam(memberAcad, adminAcad, pool, rbac)
 	}
 
 	// EdTech School Fees (invoices, vault, promotion, competition, scholarship,
