@@ -1,0 +1,85 @@
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                       BUILD VERIFICATION QUICK REFERENCE                      ║
+╠═══════════════════════════════════════════════════════════════════════════════╣
+║                                                                               ║
+║  BRANCH STATUS:                                                              ║
+║  ✓ Merge Complete       new-main branch created, 82 commits ahead origin/main ║
+║  ✓ Conflicts Resolved   64 files, all resolved by taking feature branch       ║
+║  ✓ Route Consolidation  Fixed [attemptId] + [templateId] → [id]              ║
+║                                                                               ║
+╠═══════════════════════════════════════════════════════════════════════════════╣
+║                          BUILD RESULTS SUMMARY                                ║
+╠═══════════════════════════════════════════════════════════════════════════════╣
+║                                                                               ║
+║  TIER 1: FRONTEND-WEB (Production Build)                                      ║
+║  ═══════════════════════════════════════════════════════════════════════════ ║
+║  Status: ✅ BUILD SUCCEEDS                                                    ║
+║  Deploy: Ready (TypeScript errors ignored)                                    ║
+║  Issues: 18 TypeScript errors (not blocking)                                  ║
+║  Action: Low priority type fixes needed (params null checks, Recharts)        ║
+║                                                                               ║
+║  TIER 2: FRONTEND-ADMIN (Type Safety)                                         ║
+║  ═══════════════════════════════════════════════════════════════════════════ ║
+║  Status: ❌ TYPE-CHECK FAILS                                                  ║
+║  Deploy: Cannot pass CI/CD                                                    ║
+║  Issues: 70 TypeScript errors                                                 ║
+║  Breakdown:                                                                    ║
+║    • 30 errors: Missing marketplace admin service exports                     ║
+║    • 26 errors: Missing RBAC permission enum properties                       ║
+║    • 14 errors: Color hex type constraint violations                          ║
+║  Action: Medium priority - stub exports + RBAC enum expansion (1-2 hrs)       ║
+║                                                                               ║
+║  TIER 3: BACKEND (Go Compilation)                                             ║
+║  ═══════════════════════════════════════════════════════════════════════════ ║
+║  Status: ❌ BUILD FAILS                                                       ║
+║  Deploy: CANNOT DEPLOY                                                        ║
+║  Issues: ~45 compilation errors                                               ║
+║  Breakdown:                                                                    ║
+║    • 8 errors:  Duplicate declarations (Lesson, lessonCols, methods)          ║
+║    • 5 errors:  Missing type definitions (ServedQuestion, Err constants)      ║
+║    • 8 errors:  Missing struct fields (ScorePercent, TotalSeconds, etc.)      ║
+║    • 2 errors:  Undefined functions (calculateGrade, CompleteDueBoosts)       ║
+║    • 4 errors:  Type contract violations                                      ║
+║  Action: CRITICAL - must fix first to unblock CI (2-3 hrs)                    ║
+║                                                                               ║
+╠═══════════════════════════════════════════════════════════════════════════════╣
+║                          FIX PRIORITY ORDER                                    ║
+╠═══════════════════════════════════════════════════════════════════════════════╣
+║                                                                               ║
+║  PHASE 1 - CRITICAL (Backend) ─ Day 1                                         ║
+║  Files Affected: 10 files (curriculum, exam, restaurant, academy)             ║
+║  Est. Time: 2-3 hours                                                         ║
+║  Blocker: Prevents CI/CD, no compiled binary                                  ║
+║                                                                               ║
+║  PHASE 2 - MEDIUM (Frontend-Admin) ─ Day 2                                    ║
+║  Files Affected: 8 files (marketplace admin pages)                            ║
+║  Est. Time: 1-2 hours                                                         ║
+║  Blocker: Fails type-check in CI pipeline                                     ║
+║                                                                               ║
+║  PHASE 3 - LOW (Frontend-Web) ─ Day 3                                         ║
+║  Files Affected: 5 files (voting, academy, compliance)                        ║
+║  Est. Time: 1 hour                                                            ║
+║  Blocker: Quality/maintainability only (build already succeeds)               ║
+║                                                                               ║
+╠═══════════════════════════════════════════════════════════════════════════════╣
+║                      KEY FILES TO INVESTIGATE FIRST                            ║
+╠═══════════════════════════════════════════════════════════════════════════════╣
+║                                                                               ║
+║  BACKEND (High Priority):                                                     ║
+║  • backend/internal/academy/curriculum/model.go (duplicates, lines 87, 229)   ║
+║  • backend/internal/academy/curriculum/repository.go (5+ redeclared items)    ║
+║  • backend/internal/academy/exam/model.go (ServedQuestion missing)            ║
+║  • backend/internal/restaurant/service.go (missing methods/fields)            ║
+║  • backend/internal/finance/fees/invoice/handler.go (missing error type)      ║
+║                                                                               ║
+║  FRONTEND-ADMIN:                                                              ║
+║  • frontend-admin/src/services/marketplaceAdminService.ts (stub exports)      ║
+║  • frontend-admin/src/constants/rbac.ts (missing enum properties)             ║
+║  • frontend-admin/app/admin/marketplace/** (color hex adjustments)            ║
+║                                                                               ║
+║  FRONTEND-WEB:                                                                ║
+║  • frontend-web/app/admin/(dashboard)/voting/ (params null checks)            ║
+║  • frontend-web/app/admin/academy/analytics/page.tsx (Recharts props)         ║
+║  • frontend-web/hooks/useBackgroundSync.ts (type conversions)                 ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
