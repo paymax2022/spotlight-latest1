@@ -890,37 +890,6 @@ components:
           type: string
           nullable: true
 
-    BankTransfer:
-      type: object
-      required: [id, reference, amount_kobo, fee_kobo, status, created_at]
-      properties:
-        id:
-          type: string
-          format: uuid
-        reference:
-          type: string
-        amount_kobo:
-          type: integer
-          format: int64
-        fee_kobo:
-          type: integer
-          format: int64
-        account_name:
-          type: string
-        account_number_last4:
-          type: string
-        bank_name:
-          type: string
-        narration:
-          type: string
-          nullable: true
-        status:
-          type: string
-          enum: [funds_reserved, provider_initiated, successful, failed, reversed]
-        created_at:
-          type: string
-          format: date-time
-
     # ── Featured Placement (paid promotion of subjects into curated zones) ─────
     # Money fields are integers in minor units (kobo). Campaigns move through a
     # review → payment → serving state machine; the public landing resolver and
@@ -2568,19 +2537,6 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 
-    BusRoute:
-      type: object
-      properties:
-        id: { type: string, format: uuid }
-        operatorId: { type: string, format: uuid }
-        originTerminal: { type: string }
-        destTerminal: { type: string }
-        distanceM: { type: integer, nullable: true }
-        estDurationS: { type: integer, nullable: true }
-        category: { type: string }
-        status: { type: string, enum: [active, suspended] }
-        createdAt: { type: string, format: date-time }
-
     BusTicket:
       type: object
       properties:
@@ -2831,13 +2787,6 @@ components:
         count: { type: integer }
 
     # ── Bank transfers — multi-provider (ADR-011) ─────────────────────────────
-    Bank:
-      type: object
-      required: [code, name]
-      properties:
-        code: { type: string }
-        name: { type: string }
-        slug: { type: string }
     BankList:
       type: object
       required: [banks]
@@ -7039,96 +6988,6 @@ paths:
 
 # ── Go Finance API (/api/finance) ─────────────────────────────────────────────
 # All routes require Bearer JWT. Feature-flagged server-side (FEATURE_*_ENABLED).
-
-  /wallet/balance:
-    get:
-      summary: Get wallet balance
-      operationId: getWalletBalance
-      tags: [Wallet]
-      security: [{ bearerAuth: [] }]
-      responses:
-        '200':
-          description: Current balance in kobo
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  user_id: { type: string, format: uuid }
-                  balance_kobo: { type: integer, format: int64 }
-                  balance_naira: { type: number, format: double }
-        '401': { description: Unauthenticated }
-
-  /wallet/transactions:
-    get:
-      summary: List wallet transactions (paginated)
-      operationId: listWalletTransactions
-      tags: [Wallet]
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { name: limit, in: query, schema: { type: integer, default: 20 } }
-        - { name: offset, in: query, schema: { type: integer, default: 0 } }
-      responses:
-        '200':
-          description: Paginated ledger entries
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  transactions:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        id: { type: string, format: uuid }
-                        type: { type: string, enum: [credit, debit] }
-                        amount_kobo: { type: integer, format: int64 }
-                        reference: { type: string }
-                        created_at: { type: string, format: date-time }
-                  limit: { type: integer }
-                  offset: { type: integer }
-
-  /kyc/me:
-    get:
-      summary: Get current user's KYC profile
-      operationId: getKYCProfile
-      tags: [KYC]
-      security: [{ bearerAuth: [] }]
-      responses:
-        '200':
-          description: KYC profile
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/KYCProfile' }
-
-  /kyc/initiate:
-    post:
-      summary: Initiate KYC verification
-      operationId: initiateKYC
-      tags: [KYC]
-      security: [{ bearerAuth: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [requested_tier]
-              properties:
-                requested_tier: { type: integer, minimum: 1, maximum: 3 }
-                document_type: { type: string }
-                document_ref: { type: string }
-                bvn: { type: string }
-                nin: { type: string }
-      responses:
-        '200':
-          description: Updated KYC profile
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/KYCProfile' }
-        '400': { description: Validation error }
-
   /va/me:
     get:
       summary: Get or provision virtual account
@@ -7142,24 +7001,6 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/VirtualAccount' }
         '403': { description: KYC tier 0 — provisioning not allowed }
-
-  /referrals/me:
-    get:
-      summary: Get referral code and earnings summary
-      operationId: getReferralSummary
-      tags: [Referrals]
-      security: [{ bearerAuth: [] }]
-      responses:
-        '200':
-          description: Referral summary
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  code: { type: string }
-                  total_referrals: { type: integer }
-                  total_earned_kobo: { type: integer, format: int64 }
 
   /fx/quote:
     post:
@@ -8000,24 +7841,6 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/DoctorProfile' }
-
-  /telemedicine/appointments:
-    get:
-      operationId: listMyAppointments
-      summary: List the authenticated user's appointments
-      tags: [Telemedicine]
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { name: filter, in: query, schema: { type: string, enum: [upcoming, past] } }
-      responses:
-        '200':
-          description: Appointment list
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data: { type: array, items: { $ref: '#/components/schemas/Appointment' } }
 
   /telemedicine/appointments/{id}:
     get:

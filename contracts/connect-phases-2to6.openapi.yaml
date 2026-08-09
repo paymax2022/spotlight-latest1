@@ -342,14 +342,14 @@ paths:
       responses: { '201': { description: booked }, '402': { description: insufficient balance } }
 
   # ════════════════ Admin (RBAC-gated) ════════════════
-  /business/verification:
+  /admin/business/verification:
     post:
       summary: 'Admin: review business verification (RBAC connect.business.review)'
       requestBody:
         required: true
         content: { application/json: { schema: { type: object, required: [user_id], properties: { user_id: { type: string }, approve: { type: boolean }, reason: { type: string } } } } }
       responses: { '200': { description: OK }, '403': { description: forbidden } }
-  /creator/verification:
+  /admin/creator/verification:
     get:
       summary: 'Admin: list pending creator verifications (RBAC connect.creator.view)'
       responses: { '200': { description: OK }, '403': { description: forbidden } }

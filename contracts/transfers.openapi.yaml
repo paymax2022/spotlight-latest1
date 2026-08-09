@@ -30,7 +30,7 @@ servers:
     description: Transfers module routes (Next.js route handlers)
 
 tags:
-  - { name: Transfers, description: Wallet→bank & bank→bank payouts, beneficiaries, transaction PIN }
+  - { name: Transfers, description: "Wallet→bank & bank→bank payouts, beneficiaries, transaction PIN" }
 
 components:
   securitySchemes:
