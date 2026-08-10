@@ -4716,7 +4716,7 @@ paths:
                 size_bytes: { type: integer, format: int64, description: Validated against 25 MiB cap }
       responses:
         '201': { description: Document recorded }
-        '403': { description: Not an estate admin, or content type/size rejected }
+        '403': { description: "Not an estate admin, or content type/size rejected" }
   /api/finance/estate/{id}/vendors:
     get:
       operationId: estateListVendors
@@ -5126,7 +5126,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ShareTrackView' }
-        '404': { description: Token unknown, expired, or revoked }
+        '404': { description: "Token unknown, expired, or revoked" }
 
   /api/finance/mobility/trips/{id}/track:
     post:
@@ -10595,7 +10595,7 @@ paths:
               schema: { $ref: '#/components/schemas/BankTransfer' }
         '400': { description: Invalid request (missing targetId/direction) }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: PIN invalid, tier limit exceeded, or feature disabled }
+        '403': { description: "PIN invalid, tier limit exceeded, or feature disabled" }
         '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /api/finance/transfers/bank-to-bank:
     post:
@@ -10625,7 +10625,7 @@ paths:
               schema: { $ref: '#/components/schemas/BankTransfer' }
         '400': { description: Invalid request (missing targetId/direction) }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: PIN invalid, tier limit exceeded, or feature disabled }
+        '403': { description: "PIN invalid, tier limit exceeded, or feature disabled" }
         '422': { $ref: '#/components/responses/UnprocessableEntity' }
   /api/finance/transfers/beneficiaries:
     get:
