@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/provider/disbursement"
 )
 
 // lagosTZ is the delivery locale used to decide the night-fee window. Loaded once;
@@ -106,6 +107,17 @@ func (s *Service) WithTiers(t TierLimiter) *Service {
 // a thin adapter over the finance commission service).
 func (s *Service) WithCommission(c CommissionRecorder) *Service {
 	s.commission = c
+	return s
+}
+
+// WithDisbursementRegistry wires the provider disbursement registry so merchant
+// withdrawals are routed through a real payment provider (Paystack, Monnify, etc.)
+// instead of the default NoopDisburser (sandbox mode). nil-safe: if no registry
+// is attached, withdrawals default to NoopDisburser (funds stay reserved).
+func (s *Service) WithDisbursementRegistry(reg *disbursement.Registry) *Service {
+	if reg != nil {
+		s.disburser = NewRegistryDisburser(reg)
+	}
 	return s
 }
 
