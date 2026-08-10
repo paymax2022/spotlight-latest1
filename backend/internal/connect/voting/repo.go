@@ -131,18 +131,18 @@ func (r *Repository) Results(ctx context.Context, contestID string) ([]ResultRow
 
 // ContestStage represents a single contest stage with eviction config.
 type ContestStage struct {
-	ID                 string    `json:"id"`
-	ContestID          string    `json:"contest_id"`
-	StageNumber        int       `json:"stage_number"`
-	StageName          string    `json:"stage_name"`
-	StageDescription   *string   `json:"stage_description,omitempty"`
-	EvictionPercentage int       `json:"eviction_percentage"`
-	MinContestantsToEvict int    `json:"min_contestants_to_evict"`
-	VotingStartsAt     *time.Time `json:"voting_starts_at,omitempty"`
-	VotingEndsAt       *time.Time `json:"voting_ends_at,omitempty"`
-	IsActive           bool      `json:"is_active"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                    string     `json:"id"`
+	ContestID             string     `json:"contest_id"`
+	StageNumber           int        `json:"stage_number"`
+	StageName             string     `json:"stage_name"`
+	StageDescription      *string    `json:"stage_description,omitempty"`
+	EvictionPercentage    int        `json:"eviction_percentage"`
+	MinContestantsToEvict int        `json:"min_contestants_to_evict"`
+	VotingStartsAt        *time.Time `json:"voting_starts_at,omitempty"`
+	VotingEndsAt          *time.Time `json:"voting_ends_at,omitempty"`
+	IsActive              bool       `json:"is_active"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 // GetStages retrieves all stages for a contest, ordered by stage number.

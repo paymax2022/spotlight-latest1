@@ -69,7 +69,7 @@ func TestEvictionHandlersParameterBinding(t *testing.T) {
 				EvictionID:      "test-uuid",
 				AdditionalHours: 0,
 			},
-			expectError: false,  // Struct binding is valid; handler validates semantics
+			expectError: false, // Struct binding is valid; handler validates semantics
 			errorField:  "",
 		},
 	}
@@ -122,10 +122,10 @@ func TestEvictionResponseTypes(t *testing.T) {
 		{
 			name: "eviction response",
 			response: EvictionResponse{
-				ContestantID:   "contestant-1",
-				VoteCount:      100,
-				EvictionRank:   50,
-				EvictionID:     "eviction-1",
+				ContestantID: "contestant-1",
+				VoteCount:    100,
+				EvictionRank: 50,
+				EvictionID:   "eviction-1",
 			},
 			validate: func(r interface{}) bool {
 				er, ok := r.(EvictionResponse)
@@ -135,8 +135,8 @@ func TestEvictionResponseTypes(t *testing.T) {
 		{
 			name: "save response",
 			response: SaveResponse{
-				Success:     true,
-				Message:     "Contestant saved",
+				Success:      true,
+				Message:      "Contestant saved",
 				SaveRecordID: "save-1",
 			},
 			validate: func(r interface{}) bool {
@@ -247,10 +247,10 @@ func TestRouteRegistration(t *testing.T) {
 // TestErrorResponse verifies error responses are well-formed
 func TestErrorResponse(t *testing.T) {
 	tests := []struct {
-		name           string
-		statusCode     int
-		errorMessage   string
-		expectInJSON   bool
+		name         string
+		statusCode   int
+		errorMessage string
+		expectInJSON bool
 	}{
 		{
 			name:         "400 bad request",

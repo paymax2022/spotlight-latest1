@@ -10,9 +10,9 @@ import (
 
 // EvictionRequest for triggering evictions
 type EvictionRequest struct {
-	StageNumber         int    `json:"stage_number" binding:"required,gt=0"`
-	EvictionPercentage  int    `json:"eviction_percentage,omitempty"`
-	GracePeriodHours    int    `json:"grace_period_hours,omitempty"`
+	StageNumber        int `json:"stage_number" binding:"required,gt=0"`
+	EvictionPercentage int `json:"eviction_percentage,omitempty"`
+	GracePeriodHours   int `json:"grace_period_hours,omitempty"`
 }
 
 // SaveRequest for saving a contestant from eviction
@@ -23,8 +23,8 @@ type SaveRequest struct {
 
 // ExtendGracePeriodRequest for extending eviction grace periods
 type ExtendGracePeriodRequest struct {
-	EvictionID       string `json:"eviction_id" binding:"required"`
-	AdditionalHours  int    `json:"additional_hours,omitempty"`
+	EvictionID      string `json:"eviction_id" binding:"required"`
+	AdditionalHours int    `json:"additional_hours,omitempty"`
 }
 
 // FinalizEvictionsRequest for finalizing evictions
@@ -44,8 +44,8 @@ type EvictionResponse struct {
 
 // SaveResponse for save results
 type SaveResponse struct {
-	Success     bool   `json:"success"`
-	Message     string `json:"message"`
+	Success      bool   `json:"success"`
+	Message      string `json:"message"`
 	SaveRecordID string `json:"save_record_id"`
 }
 
@@ -84,7 +84,7 @@ func (h *Handler) TriggerEvictions(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"data": results,
+		"data":    results,
 		"message": "Evictions triggered successfully",
 	})
 }
