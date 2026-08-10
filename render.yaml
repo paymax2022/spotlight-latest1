@@ -55,43 +55,20 @@ services:
         value: production
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Admin Dashboard (Next.js 15.1)
+  # Admin Dashboard (Next.js 15.1) — MOVED TO RAILWAY
+  #
+  # The spotlight-admin service was removed from Render. It now deploys from
+  # frontend-admin/railway.json using frontend-admin/Dockerfile. Leaving the
+  # service defined here would have both platforms building the same app on
+  # every push to main.
+  #
+  # The build-memory guard that service carried lives on in the new home:
+  # experimental.cpus=1 in frontend-admin/next.config.mjs, and NODE_OPTIONS in
+  # the Dockerfile's builder stage.
+  #
+  # Delete the existing spotlight-admin service in the Render dashboard —
+  # removing it from this file does not tear down an already-created service.
   # ─────────────────────────────────────────────────────────────────────────────
-  - type: web
-    name: spotlight-admin
-    plan: standard
-    runtime: node
-    region: ohio
-    rootDir: frontend-admin
-    startCommand: npm run start
-    buildCommand: npm install && npm run build
-    buildFilter:
-      paths:
-        - frontend-admin/**
-        - package*.json
-    healthCheckPath: /
-    healthCheckInterval: 30
-    autoDeploy: true
-    maxInstances: 2
-    minInstances: 1
-
-    envVars:
-      - key: NEXT_PUBLIC_API_URL
-        fromService:
-          name: spotlight-backend
-          property: url
-          path: /api/v1
-      - key: NEXT_PUBLIC_ENVIRONMENT
-        value: production
-      - key: NODE_ENV
-        value: production
-      # Cap the V8 heap below the instance's 2 GB so the build GCs instead of
-      # aborting with SIGABRT. Measured peak RSS for `next build`: 2.02 GiB
-      # uncapped, 1.73 GiB at 1536, 1.42 GiB at 1024. Paired with
-      # experimental.cpus=1 in frontend-admin/next.config.mjs; raise both
-      # together if this service's plan is upgraded.
-      - key: NODE_OPTIONS
-        value: --max-old-space-size=1024
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Frontend Web (Next.js 14.2)
@@ -129,6 +106,11 @@ services:
         value: production
       - key: NODE_ENV
         value: production
+      # Same SIGABRT guard as spotlight-admin: this build peaked at 2.63 GiB
+      # uncapped, well over the instance's 2 GB. Paired with experimental.cpus=1
+      # and conditional source maps in frontend-web/next.config.mjs.
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=1024
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Mobile Web (React Native/Expo Web)

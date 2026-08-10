@@ -1,0 +1,11 @@
+{
+  "buildCommand": "npx expo export --platform web --output-dir dist",
+  "outputDirectory": "dist",
+  "installCommand": "npm install",
+  "public": false,
+  "env": {
+    "EXPO_PUBLIC_API_BASE_URL": "@expo_public_api_base_url",
+    "EXPO_PUBLIC_SUPABASE_URL": "@expo_public_supabase_url",
+    "EXPO_PUBLIC_SUPABASE_ANON_KEY": "@expo_public_supabase_anon_key"
+  }
+}

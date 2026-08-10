@@ -218,7 +218,7 @@ paths:
           description: Missing/invalid body field (incl. missing idempotencyKey)
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '401': { description: Not authenticated }
-        '403': { description: Wallet voting not enabled, or KYC gate failed }
+        '403': { description: "Wallet voting not enabled, or KYC gate failed" }
   /votes/paid/wallet:
     post:
       summary: Cast votes paid from the in-app wallet (atomic debit)

@@ -58,7 +58,7 @@ components:
 
   responses:
     Unauthorized: { description: Missing or invalid bearer token }
-    Forbidden: { description: Not a resident of the estate, or admin role required }
+    Forbidden: { description: "Not a resident of the estate, or admin role required" }
     NotFound: { description: Resource not found or not in caller's estate }
     BadRequest: { description: Validation failed }
 
