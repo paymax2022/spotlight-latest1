@@ -1,7 +1,6 @@
-# Deploy web apps (frontend-web + frontend-admin) to Vercel.
-# - PRs get a Preview deployment (URL commented by Vercel).
-# - Pushes to main promote to Production.
-# Replaces deploy-cpanel.yml — keep cPanel one release cycle as fallback, then delete.
+# Legacy Vercel deployment fallback. Railway is the active deployment target, so
+# this workflow is manual-only and cannot consume Actions minutes or deploy from
+# promotion branches. Re-enable only through an explicit hosting decision.
 #
 # Required repo/Environment config (see docs/launch/BRANCH-PROTECTION.md):
 #   secrets:   VERCEL_TOKEN, VERCEL_ORG_ID,
@@ -9,11 +8,6 @@
 name: deploy-web
 
 on:
-  push:
-    branches: [main]
-    paths: ["frontend-web/**", "frontend-admin/**", ".github/workflows/deploy-web.yml"]
-  pull_request:
-    paths: ["frontend-web/**", "frontend-admin/**"]
   workflow_dispatch:
 
 permissions:

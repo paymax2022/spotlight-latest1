@@ -70,7 +70,10 @@ jobs:
           FAIL=0
           for f in $FILES; do
             [ -f "$f" ] || continue
-            HITS=$(grep -iEn "$DESTRUCTIVE" "$f" | grep -ivE "$ALLOW" || true)
+            # Strip SQL line comments before scanning. The prior implementation
+            # treated documentation such as "no DROP TABLE" as destructive DDL,
+            # which made the guard fail on comments rather than executable SQL.
+            HITS=$(sed -E 's/--.*$//' "$f" | grep -iEn "$DESTRUCTIVE" | grep -ivE "$ALLOW" || true)
             if [ -n "$HITS" ]; then
               echo "::error file=$f::Destructive/narrowing DDL found (migrations must be additive-only)"
               echo "$HITS"

@@ -18,18 +18,20 @@ name: CI — CLAUDE.md gates
 # separately (push to main only, after this is green).
 
 on:
-  # Minute-thrift (private repo → metered Actions minutes): gate on PRs + pushes to
-  # main only. The full matrix already runs on every PR, so re-running it on every
-  # feature-branch push was pure waste. Docs-only changes are skipped on both.
+  # CI runs only on the deployable promotion branches. Railway performs native
+  # GitHub deployments from these branches after its per-environment branch mapping
+  # is configured: develop -> Development, staging -> Staging, prod -> Production.
+  # Docs-only changes are skipped to conserve private-repository Actions minutes.
   # NOTE: if ci.yml is ever made a REQUIRED status check, drop the pull_request
   # paths-ignore — GitHub reports a path-skipped required check as perpetually
   # pending, which would block docs-only PRs from merging.
   push:
-    branches: [main]
+    branches: [develop, staging, prod]
     paths-ignore:
       - '**.md'
       - 'docs/**'
   pull_request:
+    branches: [develop, staging, prod]
     paths-ignore:
       - '**.md'
       - 'docs/**'

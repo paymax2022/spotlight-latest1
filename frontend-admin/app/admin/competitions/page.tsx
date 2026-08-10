@@ -33,7 +33,18 @@ export default function AdminCompetitionsPage() {
   }, []);
 
   if (loading) return <Page><PageHeader title="Contests Dashboard" /><p style={{ color: colors.muted }}>Loading...</p></Page>;
-  if (!data) return <Page><PageHeader title="Contests Dashboard" /><p style={{ color: colors.danger }}>Failed to load dashboard data.</p></Page>;
+  if (!data) return (
+    <Page>
+      <PageHeader title="Contests Dashboard" />
+      <div style={{ padding: '1rem', background: '#fee2e2', border: `1px solid ${colors.danger}`, borderRadius: '0.5rem', color: colors.danger }}>
+        <p style={{ fontWeight: 600, marginBottom: '0.5rem' }}>⚠️ Cannot load dashboard data</p>
+        <p style={{ fontSize: '0.875rem', margin: 0 }}>
+          The Go backend API is not running. Please ensure the backend is started on port 8091.
+          <br />Check the browser console for detailed error information (press F12).
+        </p>
+      </div>
+    </Page>
+  );
 
   return (
     <Page>
