@@ -1,4 +1,4 @@
-openapi: 3.1.0
+openapi: 3.0.3
 info:
   title: Paymax × Spotlight — Estate Super-App Module API
   version: 1.0.0
@@ -1047,7 +1047,7 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/PresignUpload' }
-        '400': { description: Unsupported kind, content type, or extension }
+        '400': { description: "Unsupported kind, content type, or extension" }
         '403': { $ref: '#/components/responses/Forbidden' }
         '503': { description: Object storage (R2) is not configured }
 

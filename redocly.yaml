@@ -1,0 +1,18 @@
+# Redocly configuration for Spotlight/Paymax fintech APIs
+# Focuses strict validation on 5 authoritative contracts;
+# legacy contracts are excluded via .redoclyignore
+
+extends:
+  - recommended
+
+rules:
+  spec: error
+  operation-operationId-url-safe: error
+  path-parameters-defined: error
+  no-unresolved-refs: error
+  operation-4xx-response: warn
+  operation-description: warn
+  operation-summary: warn
+  parameter-description: warn
+  info-contact: warn
+  info-license: warn
