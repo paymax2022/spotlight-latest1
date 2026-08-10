@@ -38,7 +38,7 @@ security:
   - bearerAuth: []
 
 tags:
-  - { name: Identity, description: Academy identity, roles, profiles, guardianship & consent }
+  - { name: Identity, description: "Academy identity, roles, profiles, guardianship & consent" }
   - { name: Curriculum, description: Curriculum spine — versions, classes, subjects, topics, objectives }
   - { name: Assessment, description: Practice, mastery, progress & the question bank }
   - { name: Exam, description: CBT exam arenas, blueprints, attempts (money-idempotent) }

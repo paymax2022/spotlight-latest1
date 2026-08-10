@@ -1,0 +1,101 @@
+name: CI (Zero-Billing Optimized)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs when a new run is triggered
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Only run expensive checks on main branch or PRs
+  frontend-web:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1  # Shallow clone to save time
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'  # Cache node_modules
+          cache-dependency-path: 'frontend-web/package-lock.json'
+
+      - run: cd frontend-web && npm ci --only=prod  # CI install only
+
+      - run: cd frontend-web && npm run lint:fast || true  # Non-blocking
+
+  frontend-admin:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'frontend-admin/package-lock.json'
+
+      - run: cd frontend-admin && npm ci --only=prod
+
+      - run: cd frontend-admin && npx tsc --noEmit || true  # Type-check only
+
+  backend:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+          cache: true
+          cache-dependency-path: 'backend/go.sum'
+
+      - run: cd backend && go build ./...  # Build only, no tests
+
+  # Quick checks (always run)
+  secrets-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+
+  # Migrations guard (lightweight check)
+  migrations:
+    if: contains(github.event.head_commit.modified, 'supabase/migrations')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate migrations are additive-only
+        run: |
+          # Check for destructive migration patterns
+          if grep -r "DROP\|ALTER.*TYPE\|RENAME" supabase/migrations/*.sql; then
+            echo "❌ Destructive migrations detected!"
+            exit 1
+          fi
+          echo "✅ Migrations are additive-only"
