@@ -22,97 +22,100 @@ export default function CampaignCard({ campaign, onPress, onToggleSave, variant 
   const isCompact = variant === 'compact';
 
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`${campaign.title}. ${campaign.categoryLabel} campaign`}
-      style={({ pressed }) => [
-        styles.card,
-        isCompact && styles.cardCompact,
-        shadow1,
-        pressed && styles.pressed,
-        style,
-      ]}
-    >
-      <View style={[styles.imageWrap, isCompact && styles.imageWrapCompact]}>
-        {campaign.coverImage ? (
-          <Image source={{ uri: campaign.coverImage }} style={styles.image} resizeMode="cover" />
-        ) : (
-          <View style={styles.imagePlaceholder} />
-        )}
+    // Outer container is a plain View (renders as <div> on web) so the card button
+    // and the save button below are SIBLINGS, never button-nested-in-button.
+    <View style={[styles.wrap, isCompact && styles.cardCompact, style]}>
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={`${campaign.title}. ${campaign.categoryLabel} campaign`}
+        style={({ pressed }) => [styles.card, shadow1, pressed && styles.pressed]}
+      >
+        <View style={[styles.imageWrap, isCompact && styles.imageWrapCompact]}>
+          {campaign.coverImage ? (
+            <Image source={{ uri: campaign.coverImage }} style={styles.image} resizeMode="cover" />
+          ) : (
+            <View style={styles.imagePlaceholder} />
+          )}
 
-        {/* Top-left flags */}
-        <View style={styles.flagRow}>
-          {campaign.urgent && (
-            <View style={[styles.flag, styles.flagUrgent]}>
-              <Siren size={11} color={Colors.onError} strokeWidth={2.2} />
-              <Text style={styles.flagText}>Urgent</Text>
-            </View>
-          )}
-          {campaign.trending && !campaign.urgent && (
-            <View style={[styles.flag, styles.flagTrending]}>
-              <Flame size={11} color={Colors.onPrimary} strokeWidth={2.2} />
-              <Text style={styles.flagText}>Trending</Text>
-            </View>
-          )}
+          {/* Top-left flags */}
+          <View style={styles.flagRow}>
+            {campaign.urgent && (
+              <View style={[styles.flag, styles.flagUrgent]}>
+                <Siren size={11} color={Colors.onError} strokeWidth={2.2} />
+                <Text style={styles.flagText}>Urgent</Text>
+              </View>
+            )}
+            {campaign.trending && !campaign.urgent && (
+              <View style={[styles.flag, styles.flagTrending]}>
+                <Flame size={11} color={Colors.onPrimary} strokeWidth={2.2} />
+                <Text style={styles.flagText}>Trending</Text>
+              </View>
+            )}
+          </View>
         </View>
 
-        {onToggleSave && (
-          <Pressable
-            onPress={() => onToggleSave(!campaign.saved)}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel={campaign.saved ? 'Remove from saved' : 'Save campaign'}
-            style={styles.saveBtn}
-          >
-            <Heart
-              size={16}
-              color={campaign.saved ? Colors.error : Colors.white}
-              fill={campaign.saved ? Colors.error : 'transparent'}
-              strokeWidth={2}
+        <View style={styles.body}>
+          <View style={styles.metaRow}>
+            <Text style={styles.category}>{campaign.categoryLabel}</Text>
+            {campaign.verified && <VerificationBadge level="FULL" variant="icon" size={14} />}
+          </View>
+
+          <Text style={styles.title} numberOfLines={2}>{campaign.title}</Text>
+
+          {!isCompact && (
+            <Text style={styles.summary} numberOfLines={2}>{campaign.summary}</Text>
+          )}
+
+          <View style={styles.progressWrap}>
+            <CampaignProgress
+              raisedKobo={campaign.raisedKobo}
+              goalKobo={campaign.goalKobo}
+              contributorCount={campaign.contributorCount}
+              deadline={campaign.deadline}
+              compact
             />
-          </Pressable>
-        )}
-      </View>
+          </View>
 
-      <View style={styles.body}>
-        <View style={styles.metaRow}>
-          <Text style={styles.category}>{campaign.categoryLabel}</Text>
-          {campaign.verified && <VerificationBadge level="FULL" variant="icon" size={14} />}
+          <View style={styles.creatorRow}>
+            <Text style={styles.creator} numberOfLines={1}>by {campaign.creatorName}</Text>
+            {campaign.location && (
+              <View style={styles.loc}>
+                <MapPin size={11} color={Colors.onSurfaceVariant} strokeWidth={2} />
+                <Text style={styles.locText} numberOfLines={1}>{campaign.location}</Text>
+              </View>
+            )}
+          </View>
         </View>
+      </Pressable>
 
-        <Text style={styles.title} numberOfLines={2}>{campaign.title}</Text>
-
-        {!isCompact && (
-          <Text style={styles.summary} numberOfLines={2}>{campaign.summary}</Text>
-        )}
-
-        <View style={styles.progressWrap}>
-          <CampaignProgress
-            raisedKobo={campaign.raisedKobo}
-            goalKobo={campaign.goalKobo}
-            contributorCount={campaign.contributorCount}
-            deadline={campaign.deadline}
-            compact
+      {/* Save button is a sibling overlay, not a descendant of the card button, so it
+          stays a valid standalone <button> on web while still floating over the image. */}
+      {onToggleSave && (
+        <Pressable
+          onPress={() => onToggleSave(!campaign.saved)}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={campaign.saved ? 'Remove from saved' : 'Save campaign'}
+          style={styles.saveBtn}
+        >
+          <Heart
+            size={16}
+            color={campaign.saved ? Colors.error : Colors.white}
+            fill={campaign.saved ? Colors.error : 'transparent'}
+            strokeWidth={2}
           />
-        </View>
-
-        <View style={styles.creatorRow}>
-          <Text style={styles.creator} numberOfLines={1}>by {campaign.creatorName}</Text>
-          {campaign.location && (
-            <View style={styles.loc}>
-              <MapPin size={11} color={Colors.onSurfaceVariant} strokeWidth={2} />
-              <Text style={styles.locText} numberOfLines={1}>{campaign.location}</Text>
-            </View>
-          )}
-        </View>
-      </View>
-    </Pressable>
+        </Pressable>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  // Positioned container so the sibling save-button overlay anchors to the card bounds.
+  wrap: { position: 'relative' },
   card: {
+    width: '100%',
     backgroundColor: Colors.surfaceContainerLowest,
     borderRadius: Radius.xl,
     overflow: 'hidden',
