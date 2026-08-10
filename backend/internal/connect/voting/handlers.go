@@ -2,11 +2,13 @@ package connectvoting
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/internal/config"
 )
 
 // Handler exposes contests + free/paid voting over HTTP.
@@ -135,7 +137,7 @@ func (h *Handler) GetStages(c *gin.Context) {
 type PermissionGuard func(permission string) gin.HandlerFunc
 
 // Register wires the voting routes onto the auth-gated member group.
-func Register(member gin.IRouter, svc *Service) {
+func Register(member gin.IRouter, svc *Service, cfg config.Config) {
 	h := NewHandler(svc)
 	member.GET("/contests", h.ListContests)
 	member.GET("/contests/:id", h.GetContest)
@@ -144,8 +146,13 @@ func Register(member gin.IRouter, svc *Service) {
 	member.GET("/contests/:id/results", h.Results)
 	member.GET("/contests/:id/stages", h.GetStages)
 
-	// Stage eviction routes (admin/judge) — wired without RBAC guards here;
-	// admin routes with guards are in RegisterAdmin.
+	// Stage eviction routes — gated behind FEATURE_CONTEST_STAGE_EVICTION_ENABLED.
+	// Admin routes with RBAC guards are in RegisterAdmin.
+	if !cfg.FeatureContestStageEvictionEnabled {
+		log.Println("[connect-voting] FEATURE_CONTEST_STAGE_EVICTION_ENABLED is off — skipping eviction routes")
+		return
+	}
+
 	member.GET("/contests/:id/stages/:stageNum/contestants", h.GetContestantsByStage)
 	member.GET("/contests/:id/evictions", h.GetEvictions)
 	member.POST("/contests/:id/stages/:stageNum/evict", h.TriggerEvictions)
@@ -158,7 +165,13 @@ func Register(member gin.IRouter, svc *Service) {
 // RegisterAdmin wires admin eviction routes with RBAC permission guards.
 // The caller passes a guard factory (built from middleware.RequirePermission + the RBAC
 // service) so each route enforces its connect.contests.* permission.
-func RegisterAdmin(admin gin.IRouter, svc *Service, guard PermissionGuard) {
+// Gated behind FEATURE_CONTEST_STAGE_EVICTION_ENABLED.
+func RegisterAdmin(admin gin.IRouter, svc *Service, guard PermissionGuard, cfg config.Config) {
+	if !cfg.FeatureContestStageEvictionEnabled {
+		log.Println("[connect-voting-admin] FEATURE_CONTEST_STAGE_EVICTION_ENABLED is off — skipping admin eviction routes")
+		return
+	}
+
 	h := NewHandler(svc)
 	g := admin.Group("/contests")
 

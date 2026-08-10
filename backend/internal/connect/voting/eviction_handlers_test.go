@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/internal/config"
 )
 
 // TestEvictionHandlersParameterBinding verifies request parameter binding
@@ -218,7 +219,8 @@ func TestRouteRegistration(t *testing.T) {
 				t.Errorf("Register panicked: %v", r)
 			}
 		}()
-		Register(router, mockSvc)
+		cfg := config.Config{FeatureContestStageEvictionEnabled: true}
+		Register(router, mockSvc, cfg)
 		t.Log("✓ Register() executed without panic")
 	})
 
@@ -236,7 +238,8 @@ func TestRouteRegistration(t *testing.T) {
 		guard := func(permission string) gin.HandlerFunc {
 			return func(c *gin.Context) { c.Next() }
 		}
-		RegisterAdmin(adminGroup, mockSvc, guard)
+		cfg := config.Config{FeatureContestStageEvictionEnabled: true}
+		RegisterAdmin(adminGroup, mockSvc, guard, cfg)
 		t.Log("✓ RegisterAdmin() executed without panic")
 	})
 }
