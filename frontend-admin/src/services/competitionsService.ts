@@ -6,14 +6,34 @@ export async function getCompetitionOverview(): Promise<CompetitionOverview | nu
   const adminKey = process.env.NEXT_PUBLIC_ADMIN_API_KEY || '';
   if (adminKey) headers['x-admin-api-key'] = adminKey;
 
-  const res = await fetch(`${env.apiBaseUrl}/admin/competitions/overview`, {
-    cache: 'no-store',
-    credentials: 'include',
-    headers,
-  });
-  const payload = await res.json();
-  if (!res.ok || !payload?.success || !payload?.overview) return null;
-  return payload.overview as CompetitionOverview;
+  try {
+    const res = await fetch(`${env.apiBaseUrl}/admin/competitions/overview`, {
+      cache: 'no-store',
+      credentials: 'include',
+      headers,
+    });
+
+    if (!res.ok) {
+      console.error(`Competition overview fetch failed: ${res.status} ${res.statusText}`);
+      return null;
+    }
+
+    const payload = await res.json();
+    if (!payload?.success) {
+      console.error('Competition overview returned success: false', payload?.error);
+      return null;
+    }
+
+    // Return overview data or null if empty
+    return payload.overview as CompetitionOverview;
+  } catch (error) {
+    console.error('Failed to fetch competition overview:', error);
+    // Check if backend is accessible
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      console.error(`Cannot reach backend at ${env.apiBaseUrl}. Is the Go backend running on port 8091?`);
+    }
+    return null;
+  }
 }
 
 export async function listOpenMicCompetitions(limit = 100): Promise<OpenMicCompetition[]> {
