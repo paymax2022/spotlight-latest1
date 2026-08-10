@@ -120,6 +120,16 @@ func (h *Handler) Results(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
+// GetStages — GET /api/v1/connect/contests/:id/stages (member).
+func (h *Handler) GetStages(c *gin.Context) {
+	stages, err := h.svc.GetStages(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": stages})
+}
+
 // PermissionGuard mirrors middleware.RequirePermission: route file supplies
 // a factory that builds the per-permission gin.HandlerFunc.
 type PermissionGuard func(permission string) gin.HandlerFunc
@@ -132,6 +142,7 @@ func Register(member gin.IRouter, svc *Service) {
 	member.POST("/contests/:id/vote", h.FreeVote)      // free
 	member.POST("/contests/:id/paid-vote", h.PaidVote) // Idempotency-Key required
 	member.GET("/contests/:id/results", h.Results)
+	member.GET("/contests/:id/stages", h.GetStages)
 
 	// Stage eviction routes (admin/judge) — wired without RBAC guards here;
 	// admin routes with guards are in RegisterAdmin.

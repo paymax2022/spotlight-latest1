@@ -119,6 +119,11 @@ func (s *Service) Results(ctx context.Context, contestID string) ([]ResultRow, e
 	return s.repo.Results(ctx, contestID)
 }
 
+// GetStages retrieves all stages for a contest.
+func (s *Service) GetStages(ctx context.Context, contestID string) ([]ContestStage, error) {
+	return s.repo.GetStages(ctx, contestID)
+}
+
 // votingOpen reports whether a contest currently accepts votes.
 func votingOpen(c *Contest, now time.Time) bool {
 	if c.Status != "open" {
