@@ -9,13 +9,13 @@
 
 These contracts document the active Spotlight/Paymax fintech platform APIs and are validated by Redocly in CI pipelines.
 
-| Contract | Module(s) | Status | CI Gate | Notes |
+| Contract | Module(s) | Status | Redocly | Notes |
 |---|---|---|---|---|
-| **openapi.yaml** | Finance, Admin, Payments, Maps | 🟢 Active | ✅ Yes | Primary fintech contract; validated in maps-ci, fx-ci, visitor-election-ci |
-| **voting.openapi.yaml** | Spotlight Contests, Open Mic | 🟢 Active | ✅ Yes | Core Spotlight feature; 12 codebase references; frontend tests validated |
-| **estate.openapi.yaml** | Estate, Community | 🟢 Active | ✅ Yes | P3 vertical lane; CI-validated in visitor-election-ci |
-| **restaurant.openapi.yaml** | Restaurant, Delivery, Payouts | 🟡 In-Development | ✅ Yes | Major P3 vertical; active backend implementation |
-| **doctor.openapi.yaml** | Telemedicine, Health | 🟢 Active | ✅ Yes | Validated in doctor-ci; P3 roadmap |
+| **openapi.yaml** | Finance, Admin, Payments, Maps | 🟡 Refactoring | 🟡 41 errors | Primary fintech contract; structural YAML issues in inline descriptions (unquoted commas). Needs incremental refactoring of description strings and path params. |
+| **voting.openapi.yaml** | Spotlight Contests, Open Mic | 🟢 Active | ✅ Valid | Core Spotlight feature; 12 codebase references; frontend tests validated |
+| **estate.openapi.yaml** | Estate, Community | 🟢 Active | ✅ Valid | P3 vertical lane; CI-validated in visitor-election-ci |
+| **restaurant.openapi.yaml** | Restaurant, Delivery, Payouts | 🟡 In-Development | ✅ Valid | Major P3 vertical; active backend implementation |
+| **doctor.openapi.yaml** | Telemedicine, Health | 🟢 Active | ✅ Valid | Validated in doctor-ci; P3 roadmap |
 
 ---
 
@@ -50,6 +50,35 @@ Redocly validates ONLY these 5 contracts in CI pipelines:
 
 ### Legacy Contracts
 All other `.openapi.yaml` files in `/contracts/` are NOT validated by Redocly and must be explicitly excluded in CI rules.
+
+---
+
+## Known Issues
+
+### contracts/openapi.yaml (Primary Fintech Contract)
+**Status:** Refactoring in progress  
+**Errors:** 41 structural errors reported by Redocly (OpenAPI 3.0.3)
+
+**Issues:**
+1. **Unquoted descriptions with special characters** (30+ occurrences)
+   - Descriptions containing commas, colons, or arrows (→) are not quoted in flow-style objects
+   - Example: `{ description: Not an estate admin, or content type/size rejected }` should be `{ description: "Not an estate admin, or content type/size rejected" }`
+   - These cause YAML parser to treat description fragments as separate keys
+
+2. **Missing path parameter definition** (1 occurrence)
+   - Path `/mobility/scheduled/{id}/cancel` is missing the `{id}` parameter in the operation definition
+
+3. **Invalid operationId with URL-unsafe characters** (1 occurrence)
+   - Some operationIds contain characters not allowed in URLs
+
+**Recommended Fix Strategy:**
+1. Batch-process inline descriptions to add quotes around values with special characters
+2. Add missing path parameter definitions
+3. Rename problematic operationIds to use only alphanumeric + underscore
+4. Run `redocly lint contracts/openapi.yaml --config redocly.yaml` iteratively
+5. Once fixed, merge openapi.yaml refactoring into the main fintech API contract
+
+**Note:** The other 4 authoritative contracts (voting, estate, restaurant, doctor) already pass full Redocly validation with zero errors.
 
 ---
 
