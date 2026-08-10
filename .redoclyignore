@@ -1,0 +1,37 @@
+# Redocly validation ignore list
+# Legacy/archived contracts excluded from CI validation
+# See contracts/CONTRACTS_STATUS.md for categorization
+
+# ── Legacy Contracts (Not validated in CI) ──
+
+# Academy module (zero codebase references, not currently prioritized)
+contracts/academy.openapi.yaml
+
+# Connect phase-1 routes (superseded; routes now inline in backend/internal/app/router.go)
+contracts/connect-phase1-safety.openapi.yaml
+
+# Fractional RE (aspirational feature, zero active implementation)
+contracts/fractionalre.openapi.yaml
+
+# Intake module (no codebase references, unclear purpose)
+contracts/intake.openapi.yaml
+
+# Invest/crypto trading (separate Paymax system, not Spotlight core)
+contracts/invest.openapi.yaml
+
+# Nutrition module (abandoned, no active implementation)
+contracts/nutrition.openapi.yaml
+
+# Property module (incomplete, not actively maintained)
+contracts/property.openapi.yaml
+
+# Transfers (redundant; endpoints already in openapi.yaml)
+contracts/transfers.openapi.yaml
+
+# ── Authoritative Contracts (Validated in CI) ──
+# These are NOT ignored and must pass Redocly strict validation:
+#   - contracts/openapi.yaml (primary fintech)
+#   - contracts/voting.openapi.yaml (Spotlight contests)
+#   - contracts/estate.openapi.yaml (P3 vertical)
+#   - contracts/restaurant.openapi.yaml (P3 vertical, in development)
+#   - contracts/doctor.openapi.yaml (telemedicine, P3 roadmap)

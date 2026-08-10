@@ -1,0 +1,35 @@
+# Redocly configuration for Spotlight/Paymax fintech APIs
+# Focuses strict validation on 5 authoritative contracts;
+# legacy contracts are excluded via ignore patterns below
+
+extends:
+  - recommended
+
+# Ignore legacy/archived contracts from validation
+ignore:
+  - contracts/academy.openapi.yaml
+  - contracts/connect-phase1-safety.openapi.yaml
+  - contracts/fractionalre.openapi.yaml
+  - contracts/intake.openapi.yaml
+  - contracts/invest.openapi.yaml
+  - contracts/nutrition.openapi.yaml
+  - contracts/property.openapi.yaml
+  - contracts/transfers.openapi.yaml
+  - contracts/connect-phase1.openapi.yaml
+  - contracts/placement.openapi.yaml
+  - contracts/transport.openapi.yaml
+  - contracts/visitor.openapi.yaml
+  - contracts/associations.openapi.yaml
+  - contracts/connect-phases-2to6.openapi.yaml
+
+rules:
+  spec: error
+  operation-operationId-url-safe: error
+  path-parameters-defined: error
+  no-unresolved-refs: error
+  operation-4xx-response: warn
+  operation-description: warn
+  operation-summary: warn
+  parameter-description: warn
+  info-contact: warn
+  info-license: warn
