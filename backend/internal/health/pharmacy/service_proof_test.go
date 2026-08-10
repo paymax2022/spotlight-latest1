@@ -82,9 +82,3 @@ func TestProofRecorder_MockStorage(t *testing.T) {
 		t.Errorf("expected proof data to match, got %s", retrieved.ProofData)
 	}
 }
-
-// Helper (stringPtr defined in proof_of_delivery_test.go to avoid duplication)
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && len(s) >= 1 && s != ""
-}

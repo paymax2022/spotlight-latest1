@@ -128,3 +128,49 @@ func (r *Repository) Results(ctx context.Context, contestID string) ([]ResultRow
 	}
 	return out, rows.Err()
 }
+
+// ContestStage represents a single contest stage with eviction config.
+type ContestStage struct {
+	ID                 string    `json:"id"`
+	ContestID          string    `json:"contest_id"`
+	StageNumber        int       `json:"stage_number"`
+	StageName          string    `json:"stage_name"`
+	StageDescription   *string   `json:"stage_description,omitempty"`
+	EvictionPercentage int       `json:"eviction_percentage"`
+	MinContestantsToEvict int    `json:"min_contestants_to_evict"`
+	VotingStartsAt     *time.Time `json:"voting_starts_at,omitempty"`
+	VotingEndsAt       *time.Time `json:"voting_ends_at,omitempty"`
+	IsActive           bool      `json:"is_active"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+// GetStages retrieves all stages for a contest, ordered by stage number.
+func (r *Repository) GetStages(ctx context.Context, contestID string) ([]ContestStage, error) {
+	const q = `SELECT id, contest_id, stage_number, stage_name, stage_description,
+		eviction_percentage, min_contestants_to_evict, voting_starts_at, voting_ends_at,
+		is_active, created_at, updated_at
+	FROM public.contest_stages
+	WHERE contest_id = $1
+	ORDER BY stage_number ASC`
+	rows, err := r.db.Query(ctx, q, contestID)
+	if err != nil {
+		return nil, fmt.Errorf("get stages: %w", err)
+	}
+	defer rows.Close()
+
+	var stages []ContestStage
+	for rows.Next() {
+		var stage ContestStage
+		if err := rows.Scan(
+			&stage.ID, &stage.ContestID, &stage.StageNumber, &stage.StageName,
+			&stage.StageDescription, &stage.EvictionPercentage, &stage.MinContestantsToEvict,
+			&stage.VotingStartsAt, &stage.VotingEndsAt, &stage.IsActive,
+			&stage.CreatedAt, &stage.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan stage: %w", err)
+		}
+		stages = append(stages, stage)
+	}
+	return stages, rows.Err()
+}
