@@ -325,8 +325,15 @@ export function startRegistrationDraft(params: {
 }
 
 export function getRegistrationDraft(applicationId: string) {
+  if (!applicationId || typeof applicationId !== 'string') {
+    throw new Error('Invalid application ID');
+  }
   const store = getStore();
-  return store.drafts.get(applicationId) || null;
+  const draft = store.drafts.get(applicationId);
+  if (!draft) {
+    console.warn('[registration/store] draft not found for ID:', applicationId, 'available IDs:', Array.from(store.drafts.keys()));
+  }
+  return draft || null;
 }
 
 export function saveRegistrationStep(params: {
@@ -334,9 +341,22 @@ export function saveRegistrationStep(params: {
   stepKey: RegistrationStepKey;
   values: Record<string, unknown>;
 }) {
+  if (!params?.applicationId || typeof params.applicationId !== 'string') {
+    throw new Error('Invalid application ID');
+  }
+  if (!params?.stepKey) {
+    throw new Error('Step key is required');
+  }
+  if (!params?.values || typeof params.values !== 'object') {
+    throw new Error('Values must be a non-empty object');
+  }
+
   const store = getStore();
   const draft = store.drafts.get(params.applicationId);
-  if (!draft) throw new Error('Application not found.');
+  if (!draft) {
+    console.warn('[registration/store] saveRegistrationStep: draft not found for ID:', params.applicationId);
+    throw new Error('Application not found.');
+  }
 
   const mergedData = {
     ...draft.formData,
