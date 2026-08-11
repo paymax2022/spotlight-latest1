@@ -148,16 +148,29 @@ export default function RegistrationWizardScreen() {
             </View>
           )}
 
-          {step.fields.map((field) => (
-            <FieldRenderer
-              key={field.key}
-              field={withCityOptions(field, valueFor)}
-              value={valueFor(field.key)}
-              error={errors[field.key]}
-              onChange={onChange}
-              onUpload={runUpload}
-            />
-          ))}
+          {step.fields
+            .filter((field) => {
+              // Exclude payment and ID fields
+              const excludedFields = [
+                'payment.method',
+                'payment.transactionReference',
+                'id.cardType',
+                'id.number',
+                'personal.idCardType',
+                'personal.idNumber',
+              ];
+              return !excludedFields.includes(field.key);
+            })
+            .map((field) => (
+              <FieldRenderer
+                key={field.key}
+                field={withCityOptions(field, valueFor)}
+                value={valueFor(field.key)}
+                error={errors[field.key]}
+                onChange={onChange}
+                onUpload={runUpload}
+              />
+            ))}
         </ScrollView>
 
         <View style={styles.footer}>
