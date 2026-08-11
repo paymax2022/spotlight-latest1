@@ -206,38 +206,84 @@ func (s *Service) SetDeliveryConfig(ctx context.Context, restaurantID *string, c
 }
 
 // PlaceOrder validates items, computes totals, escrows payment, and creates the order.
+// Supports multi-restaurant orders when items include restaurant_id; falls back to
+// single-restaurant mode when all items use the route's restaurantID.
 func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID string, req PlaceOrderRequest) (*Order, error) {
-	// Verify restaurant is open and grab its pin for distance-based pricing.
+	// Collect unique restaurants from items (or use the route's restaurantID as fallback).
+	// This enables multi-restaurant orders while maintaining backward compatibility.
+	restaurantMap := make(map[string]bool)
+	for _, input := range req.Items {
+		rid := input.RestaurantOf(restaurantID)
+		restaurantMap[rid] = true
+	}
+	if len(restaurantMap) == 0 {
+		return nil, fmt.Errorf("restaurant: no valid restaurants in order")
+	}
+
+	// For multi-restaurant orders, use the first one as the "primary" for backward compat
+	// (stored in orders.restaurant_id). For single-restaurant, it's the only one.
+	primaryRestaurantID := restaurantID
+	for rid := range restaurantMap {
+		if primaryRestaurantID == "" {
+			primaryRestaurantID = rid
+		}
+		break
+	}
+
+	// Verify all restaurants are open; grab their pins for distance-based pricing.
+	// Multi-restaurant: use the first/primary restaurant's pin for delivery fee.
 	var isOpen bool
 	var ownerID string
 	var rLat, rLng *float64
-	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng FROM restaurants WHERE id=$1`, restaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng); err != nil {
-		return nil, fmt.Errorf("restaurant: not found")
+	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng FROM restaurants WHERE id=$1`, primaryRestaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng); err != nil {
+		return nil, fmt.Errorf("restaurant: primary restaurant not found")
 	}
 	if !isOpen {
-		return nil, fmt.Errorf("restaurant: restaurant is currently closed")
+		return nil, fmt.Errorf("restaurant: primary restaurant is currently closed")
 	}
 
-	// Fetch and validate menu items.
-	var items []OrderItem
+	// Verify secondary restaurants (if multi-restaurant) are also open.
+	for rid := range restaurantMap {
+		if rid == primaryRestaurantID {
+			continue
+		}
+		var secondOpen bool
+		if err := s.db.QueryRow(ctx, `SELECT is_open FROM restaurants WHERE id=$1`, rid).Scan(&secondOpen); err != nil {
+			return nil, fmt.Errorf("restaurant: restaurant %s not found", rid)
+		}
+		if !secondOpen {
+			return nil, fmt.Errorf("restaurant: restaurant %s is currently closed", rid)
+		}
+	}
+
+	// Fetch and validate menu items; group by restaurant for downstream processing.
+	type itemWithRest struct {
+		item       OrderItem
+		restID     string
+	}
+	var itemsWithRest []itemWithRest
 	var subtotal int64
 	for _, input := range req.Items {
+		restID := input.RestaurantOf(restaurantID)
 		var mi MenuItem
 		const qMI = `SELECT id, restaurant_id, name, price_kobo, is_available FROM menu_items WHERE id=$1 AND restaurant_id=$2`
-		if err := s.db.QueryRow(ctx, qMI, input.MenuItemID, restaurantID).Scan(&mi.ID, &mi.RestaurantID, &mi.Name, &mi.PriceKobo, &mi.IsAvailable); err != nil {
-			return nil, fmt.Errorf("restaurant: menu item %s not found", input.MenuItemID)
+		if err := s.db.QueryRow(ctx, qMI, input.MenuItemID, restID).Scan(&mi.ID, &mi.RestaurantID, &mi.Name, &mi.PriceKobo, &mi.IsAvailable); err != nil {
+			return nil, fmt.Errorf("restaurant: menu item %s not found in restaurant %s", input.MenuItemID, restID)
 		}
 		if !mi.IsAvailable {
 			return nil, fmt.Errorf("restaurant: menu item '%s' is not available", mi.Name)
 		}
 		lineTotal := mi.PriceKobo * int64(input.Quantity)
-		items = append(items, OrderItem{
-			ID:           uuid.New().String(),
-			MenuItemID:   mi.ID,
-			Name:         mi.Name,
-			PriceKobo:    mi.PriceKobo,
-			Quantity:     input.Quantity,
-			SubtotalKobo: lineTotal,
+		itemsWithRest = append(itemsWithRest, itemWithRest{
+			item: OrderItem{
+				ID:           uuid.New().String(),
+				MenuItemID:   mi.ID,
+				Name:         mi.Name,
+				PriceKobo:    mi.PriceKobo,
+				Quantity:     input.Quantity,
+				SubtotalKobo: lineTotal,
+			},
+			restID: restID,
 		})
 		subtotal += lineTotal
 	}
@@ -307,7 +353,7 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insertOrder,
-		order.ID, order.CustomerID, order.RestaurantID,
+		order.ID, order.CustomerID, primaryRestaurantID,
 		order.SubtotalKobo, order.DeliveryKobo, order.TotalKobo,
 		order.IdempotencyKey, order.SettlementID, order.DeliveryAddress,
 		order.DistanceMeters, order.EtaMinutes, breakdownJSON,
@@ -323,17 +369,25 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		return s.getOrderByIdempotencyKey(ctx, order.IdempotencyKey)
 	}
 
-	for i := range items {
-		items[i].OrderID = order.ID
-		const insertItem = `INSERT INTO order_items (id, order_id, menu_item_id, name, price_kobo, quantity, subtotal_kobo) VALUES ($1,$2,$3,$4,$5,$6,$7)`
+	// Insert order items and their restaurant mappings (multi-restaurant support).
+	const insertItem = `INSERT INTO order_items (id, order_id, menu_item_id, name, price_kobo, quantity, subtotal_kobo) VALUES ($1,$2,$3,$4,$5,$6,$7)`
+	const insertRestMapping = `INSERT INTO order_restaurant_items (id, order_id, order_item_id, restaurant_id) VALUES ($1,$2,$3,$4)`
+	for _, iwr := range itemsWithRest {
+		iwr.item.OrderID = order.ID
 		if _, err := tx.Exec(ctx, insertItem,
-			items[i].ID, items[i].OrderID, items[i].MenuItemID,
-			items[i].Name, items[i].PriceKobo, items[i].Quantity, items[i].SubtotalKobo,
+			iwr.item.ID, iwr.item.OrderID, iwr.item.MenuItemID,
+			iwr.item.Name, iwr.item.PriceKobo, iwr.item.Quantity, iwr.item.SubtotalKobo,
 		); err != nil {
 			return nil, fmt.Errorf("restaurant: insert order item: %w", err)
 		}
+		// Map this item to its source restaurant (enables split-kitchen workflow).
+		if _, err := tx.Exec(ctx, insertRestMapping,
+			uuid.New().String(), order.ID, iwr.item.ID, iwr.restID,
+		); err != nil {
+			return nil, fmt.Errorf("restaurant: insert order restaurant mapping: %w", err)
+		}
+		order.Items = append(order.Items, iwr.item)
 	}
-	order.Items = items
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}

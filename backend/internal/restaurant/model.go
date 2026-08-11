@@ -197,9 +197,14 @@ func (r PlaceOrderRequest) DeliveryCoords() (lat, lng float64, ok bool) {
 // canonical Order line are `menu_item_id`. We accept BOTH json tags and normalize
 // via MenuItem() so the client field name (`item_id`) works without a client change
 // while `menu_item_id` remains accepted for any other caller.
+//
+// RestaurantID (optional) specifies which restaurant provides this item. When omitted,
+// it defaults to the restaurantID from the route (single-restaurant backward compat).
+// When present, enables multi-restaurant orders.
 type OrderItemInput struct {
-	MenuItemID string `json:"menu_item_id"`
-	ItemID     string `json:"item_id"`
+	MenuItemID   string `json:"menu_item_id"`
+	ItemID       string `json:"item_id"`
+	RestaurantID string `json:"restaurant_id,omitempty"` // multi-restaurant support
 	// Quantity is accepted as either `quantity` (canonical) or `qty` (mobile client).
 	Quantity int `json:"quantity"`
 	Qty      int `json:"qty"`
@@ -224,4 +229,13 @@ func (i OrderItemInput) QtyOf() int {
 		return i.Quantity
 	}
 	return i.Qty
+}
+
+// RestaurantOf returns the restaurant ID for this item, using the provided fallback
+// if no explicit restaurant_id was set (backward compat for single-restaurant orders).
+func (i OrderItemInput) RestaurantOf(fallback string) string {
+	if i.RestaurantID != "" {
+		return i.RestaurantID
+	}
+	return fallback
 }

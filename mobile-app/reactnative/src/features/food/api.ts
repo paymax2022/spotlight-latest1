@@ -144,8 +144,10 @@ export async function placeOrder(req: PlaceOrderRequest): Promise<Order> {
         priceKobo: item?.priceKobo ?? 0,
       };
     });
+    // Multi-restaurant: use the first item's restaurant_id if present, else fall back to req.restaurantId.
+    const primaryRestId = req.items.find((i) => i.restaurantId)?.restaurantId || req.restaurantId;
     return makeOrder({
-      restaurantId: req.restaurantId,
+      restaurantId: primaryRestId,
       items,
       deliveryAddress: req.deliveryAddress,
       deliveryLocation: req.deliveryLocation ?? null,
@@ -156,7 +158,11 @@ export async function placeOrder(req: PlaceOrderRequest): Promise<Order> {
       await api.post(
         `${BASE}/${encodeURIComponent(req.restaurantId)}/orders`,
         {
-          items: req.items.map((i) => ({ item_id: i.itemId, qty: i.qty })),
+          items: req.items.map((i) => ({
+            item_id: i.itemId,
+            qty: i.qty,
+            restaurant_id: i.restaurantId, // multi-restaurant support
+          })),
           // Takeaway packaging is billed per physical package (the container).
           package_count: req.packageCount,
           packages: req.packages?.map((p) => ({ items: p.items.map((i) => ({ item_id: i.itemId, qty: i.qty })) })),
@@ -393,4 +399,42 @@ export async function postRiderLocation(orderId: string, loc: LatLng): Promise<v
     lat: loc.lat,
     lng: loc.lng,
   });
+}
+
+// ─── Cart Persistence ──────────────────────────────────────────────────────────
+
+export interface SavedCart {
+  restaurantId: string | null;
+  restaurantName: string | null;
+  packages: any[];
+  activePackageId: string | null;
+}
+
+/** Save cart to server for cross-device persistence. */
+export async function saveCartToServer(cart: SavedCart): Promise<void> {
+  if (USE_MOCK) {
+    await delay(200);
+    return; // mock always succeeds
+  }
+  try {
+    await api.post('/api/v1/food/cart', cart);
+  } catch (err) {
+    console.warn('Failed to save cart to server:', err);
+    // Silently fail — local storage is the primary persistence
+  }
+}
+
+/** Load cart from server (for cross-device sync). */
+export async function loadCartFromServer(): Promise<SavedCart | null> {
+  if (USE_MOCK) {
+    await delay(200);
+    return null; // no cart on mock
+  }
+  try {
+    const res = await api.get('/api/v1/food/cart');
+    return res.data?.data || null;
+  } catch (err) {
+    console.warn('Failed to load cart from server:', err);
+    return null; // fallback to local storage
+  }
 }

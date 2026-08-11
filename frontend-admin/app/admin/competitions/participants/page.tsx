@@ -1,7 +1,24 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+
+// Demo mode: allow preview without authentication if ?demo=1
+function useDemoMode() {
+  const router = useRouter();
+  const [isDemo, setIsDemo] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const isDemoParam = params.has('demo');
+      setIsDemo(isDemoParam);
+    }
+  }, []);
+
+  return isDemo;
+}
 
 type Participant = {
   id: string;
@@ -28,6 +45,8 @@ const statusColor: Record<string, string> = {
 };
 
 export default function ParticipantsPage() {
+  const router = useRouter();
+  const isDemo = useDemoMode();
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [selectedParticipant, setSelectedParticipant] = useState<Participant | null>(null);
@@ -98,8 +117,7 @@ export default function ParticipantsPage() {
                   <td style={{ ...tdCell, color: colors.muted, fontSize: '0.85rem' }}>{new Date(p.submissionDate).toLocaleDateString('en-NG')}</td>
                   <td style={tdCell}>
                     <div style={{ display: 'flex', gap: 6 }}>
-                      <Button variant="outline" sm onClick={() => setSelectedParticipant(p)}>View Entry</Button>
-                      {p.status === 'pending' && <Button variant="primary" sm onClick={() => setReviewingId(p.id)}>Review</Button>}
+                      <Button variant="outline" sm onClick={() => router.push(`/admin/voting/contestant/${p.id}`)}>🗳️ Vote</Button>
                     </div>
                   </td>
                 </tr>
