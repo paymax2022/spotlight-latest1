@@ -58,7 +58,9 @@ func (h *Handler) TriggerEvictions(c *gin.Context) {
 		return
 	}
 
-	// Check admin permission (implement your RBAC here)
+	// Permission is enforced by the connect.contests.manage guard on the admin
+	// route (see RegisterAdmin). This handler must never be mounted on a group
+	// without that guard.
 	// For now, we assume the endpoint is protected at the route level
 
 	contestID := c.Param("id")
@@ -217,7 +219,9 @@ func (h *Handler) AdminVote(c *gin.Context) {
 		return
 	}
 
-	// Verify admin status - implement your RBAC here
+	// Permission is enforced by the connect.contests.manage guard on the admin
+	// route (see RegisterAdmin). This handler must never be mounted on a group
+	// without that guard.
 
 	var req struct {
 		ContestantID string `json:"contestant_id" binding:"required"`

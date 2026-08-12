@@ -153,13 +153,14 @@ func Register(member gin.IRouter, svc *Service, cfg config.Config) {
 		return
 	}
 
+	// READ-ONLY for members. The eviction MUTATIONS (evict, save,
+	// extend-grace-period, finalize-evictions, admin-vote) are deliberately NOT
+	// registered here: the member group carries authentication but no RBAC, and
+	// the handlers themselves do not check permissions, so registering them on
+	// this group let any signed-in user evict contestants or cast admin votes.
+	// They live in RegisterAdmin only, each behind its connect.contests.* guard.
 	member.GET("/contests/:id/stages/:stageNum/contestants", h.GetContestantsByStage)
 	member.GET("/contests/:id/evictions", h.GetEvictions)
-	member.POST("/contests/:id/stages/:stageNum/evict", h.TriggerEvictions)
-	member.POST("/contests/:id/save", h.SaveContestant)
-	member.POST("/contests/:id/extend-grace-period", h.ExtendGracePeriod)
-	member.POST("/contests/:id/stages/:stageNum/finalize-evictions", h.FinalizeEvictions)
-	member.POST("/contests/:id/admin-vote", h.AdminVote)
 }
 
 // RegisterAdmin wires admin eviction routes with RBAC permission guards.
