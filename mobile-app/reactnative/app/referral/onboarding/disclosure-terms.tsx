@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
+import { showToast } from '@/store/toastStore';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
@@ -28,7 +29,21 @@ export default function DisclosureTerms() {
   const [accepted, setAccepted] = useState(false);
 
   const onAccept = () => {
-    record.mutate({ kind: 'terms', granted: true }, { onSuccess: () => router.push('/referral/onboarding/contacts-consent') });
+    // Only advance once the acceptance is actually recorded — proceeding on a
+    // failed write would onboard the user with no consent on file. Previously a
+    // failure did nothing at all, leaving Accept looking broken.
+    record.mutate(
+      { kind: 'terms', granted: true },
+      {
+        onSuccess: () => router.push('/referral/onboarding/contacts-consent'),
+        onError: () =>
+          showToast({
+            variant: 'error',
+            title: 'Could not record your acceptance',
+            message: 'Please try again.',
+          }),
+      },
+    );
   };
 
   return (

@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Icons from 'lucide-react-native';
 import { Sparkles } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
+import { showToast } from '@/store/toastStore';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
@@ -55,7 +56,17 @@ export default function CatalogRedeemScreen() {
               item={item}
               balance={result?.ok ? result.remainingPoints : data.pointsBalance}
               busy={redeem.isPending}
-              onRedeem={() => redeem.mutate(item.id, { onSuccess: setResult })}
+              onRedeem={() =>
+                redeem.mutate(item.id, {
+                  onSuccess: setResult,
+                  onError: () =>
+                    showToast({
+                      variant: 'error',
+                      title: 'Could not redeem that reward',
+                      message: 'Please try again.',
+                    }),
+                })
+              }
             />
           ))}
         </ScrollView>
