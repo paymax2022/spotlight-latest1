@@ -117,7 +117,11 @@ type Service struct {
 }
 
 func NewService(db *pgxpool.Pool, escrow EscrowHolder, rx RxGate, verifier RxVerifier, dispatch Dispatcher, prov ProviderGate, payout PayoutGate, audit Auditor) *Service {
-	return &Service{db: db, escrow: escrow, rx: rx, verifier: verifier, dispatch: dispatch, prov: prov, payout: payout, audit: audit}
+	// DP-006: the DB-backed proof recorder is on by default so delivery proofs
+	// are always persisted; SetProofRecorder can still override (or nil it) in
+	// wiring/tests.
+	return &Service{db: db, escrow: escrow, rx: rx, verifier: verifier, dispatch: dispatch, prov: prov, payout: payout, audit: audit,
+		proofRec: NewProofRepo(db)}
 }
 
 // SetReviewCaseOpener injects the optional symptom-search seam at wiring time.

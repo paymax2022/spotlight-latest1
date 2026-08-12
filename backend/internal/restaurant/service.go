@@ -288,6 +288,13 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		subtotal += lineTotal
 	}
 
+	// Min-order gate (CT-007): an undersized cart is rejected BEFORE escrow —
+	// no money moves for an order the restaurant would refuse.
+	var minOrderKobo int64
+	if err := s.db.QueryRow(ctx, `SELECT COALESCE(min_order_kobo,0) FROM restaurants WHERE id=$1`, restaurantID).Scan(&minOrderKobo); err == nil && minOrderKobo > 0 && subtotal < minOrderKobo {
+		return nil, fmt.Errorf("restaurant: cart subtotal %d kobo is below the restaurant's minimum order of %d kobo", subtotal, minOrderKobo)
+	}
+
 	// Delivery fee: distance-based when BOTH the restaurant pin AND the delivery
 	// coordinates are available; otherwise fall back to the flat DeliveryFeeKobo
 	// (back-compat for clients that don't send coords yet).
@@ -747,13 +754,49 @@ func (s *Service) recordOrderEvent(ctx context.Context, orderID, actorID string,
 // and updates the order to a terminal refunded state (rejected/dispatch_failed/cancelled).
 // It posts a balanced ledger reversal and emits audit events.
 func (s *Service) refundAndClose(ctx context.Context, orderID, actorID string, toStatus OrderStatus, reason string) error {
-	// TODO: implement the refund money-path (escrow → customer wallet reversal).
-	// For now this is a stub that allows the FSM to compile.
-	// Actual implementation requires:
-	// 1. Load the order and escrow amount
-	// 2. Post balanced ledger reversal (DR escrow_liability → CR customer_wallet)
-	// 3. Update order status to terminal state
-	// 4. Record audit event
-	// 5. Notify customer
-	return fmt.Errorf("restaurant: refundAndClose not yet implemented")
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("restaurant: begin refund tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var status, settlementID string
+	if err := tx.QueryRow(ctx,
+		`SELECT status, COALESCE(settlement_id::text,'') FROM orders WHERE id=$1 FOR UPDATE`, orderID).
+		Scan(&status, &settlementID); err != nil {
+		return fmt.Errorf("restaurant: order not found")
+	}
+	if status == string(toStatus) {
+		return tx.Commit(ctx) // already closed in this state — idempotent no-op
+	}
+	// Refund the escrow BEFORE committing the terminal status so an order is never
+	// closed without the money returned (mirrors cancelAndRefund). Refund is
+	// idempotent on the settlement status, so a retry cannot double-refund.
+	if settlementID != "" {
+		if err := s.settlement.Refund(ctx, settlementID, string(toStatus)+":"+reason); err != nil {
+			return fmt.Errorf("restaurant: refund order: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE orders SET status=$2, status_reason=$3 WHERE id=$1`,
+		orderID, string(toStatus), reason); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	s.recordOrderEvent(ctx, orderID, actorID, OrderStatus(status), toStatus)
+	customer, _, rider, _ := s.orderParties(ctx, orderID)
+	if customer != "" && customer != actorID {
+		s.notify(ctx, Notification{UserID: customer, Event: EventOrderCancelled, Title: "Order refunded",
+			Body: "Your order could not be fulfilled and has been refunded.",
+			Data: map[string]any{"order_id": orderID, "status": string(toStatus), "reason": reason}})
+	}
+	if rider != "" && rider != actorID {
+		s.notify(ctx, Notification{UserID: rider, Event: EventOrderCancelled, Title: "Order closed",
+			Body: "An assigned order was closed.", Data: map[string]any{"order_id": orderID}})
+	}
+	s.broadcastStatus(orderID, toStatus)
+	return nil
 }

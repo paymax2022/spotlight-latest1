@@ -75,8 +75,8 @@ func TestDeliveryProof_LiveDB(t *testing.T) {
 		driverID, driverID+"@seed.test")
 
 	// Seed pharmacy provider (HL-2 APPROVED)
-	seed(`INSERT INTO public.health_providers (id, user_id, provider_type, credential_status, credential_verified_at)
-	      VALUES ($1,$2,'PHARMACY','APPROVED',now()) ON CONFLICT DO NOTHING`,
+	seed(`INSERT INTO public.health_providers (id, owner_user_id, domain, provider_type, display_name, status)
+	      VALUES ($1,$2,'PHARMACY','pharmacy','Seed Pharmacy','APPROVED') ON CONFLICT DO NOTHING`,
 		pharmacyID, pharmacyID)
 
 	// Seed pharmacy order (DISPENSED state, delivery fulfillment)
@@ -196,8 +196,8 @@ func TestDeliveryProof_InvalidProof(t *testing.T) {
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		driverID, driverID+"@seed.test")
 
-	seed(`INSERT INTO public.health_providers (id, user_id, provider_type, credential_status, credential_verified_at)
-	      VALUES ($1,$2,'PHARMACY','APPROVED',now()) ON CONFLICT DO NOTHING`,
+	seed(`INSERT INTO public.health_providers (id, owner_user_id, domain, provider_type, display_name, status)
+	      VALUES ($1,$2,'PHARMACY','pharmacy','Seed Pharmacy','APPROVED') ON CONFLICT DO NOTHING`,
 		pharmacyID, pharmacyID)
 
 	seed(`INSERT INTO public.pharmacy_orders (id, patient_id, pharmacy_provider_id, state, fulfilment_method, total_kobo, idempotency_key, created_at)

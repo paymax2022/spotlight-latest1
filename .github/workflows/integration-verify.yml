@@ -33,7 +33,11 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        # PostGIS-enabled image required: the very first migration
+        # (20260101000000_enable_extensions.sql) runs CREATE EXTENSION postgis,
+        # which a plain postgres image can't satisfy. PG17 matches production
+        # (PostgreSQL 17 via Supabase).
+        image: postgis/postgis:17-3.4
         env:
           POSTGRES_USER: paymax
           POSTGRES_PASSWORD: paymax
@@ -62,6 +66,21 @@ jobs:
       - name: Bootstrap
         run: make bootstrap
 
+      # migrate-reset's `DROP SCHEMA public CASCADE` needs a lock per dropped
+      # object; the ~400-migration schema blows the default 64. Needs a server
+      # restart to take effect (ALTER SYSTEM + reload is not enough).
+      - name: Raise Postgres lock table (full-schema drop in migrate-reset)
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET max_locks_per_transaction = 512;"
+          docker restart ${{ job.services.postgres.id }}
+          timeout 90 bash -c 'until pg_isready -h localhost -p 5432 -U paymax >/dev/null 2>&1; do sleep 1; done'
+
+      # The migrations assume the surface Supabase provides at runtime (auth
+      # schema + auth.uid()/role(), storage schema, anon/authenticated/
+      # service_role). Shim it in — survives migrate-reset (drops public only).
+      - name: Supabase-compat prelude (plain-Postgres shim)
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f scripts/ci/supabase-compat-prelude.sql
+
       - name: Migrations apply cleanly (real Postgres)
         run: make migrate-up
 
@@ -74,7 +93,7 @@ jobs:
       - name: Full tsc --noEmit (both frontends)
         run: make tsc
 
-      - name: Migration clean re-apply / idempotency (additive, forward-only)
+      - name: Migration fresh replay from zero (clean-apply + RLS check)
         run: make migrate-reset
 
       - name: Security / dependency scan
