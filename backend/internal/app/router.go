@@ -88,21 +88,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		users := v1.Group("/users")
 		users.GET("/health", health.GenericHealth)
 
-		// Registration endpoints (public contests + user applications)
-		// All endpoints require bearer token auth (RequireAuthContext middleware).
-		registrationHandler := handlers.NewRegistrationHandler()
-		registrationAuth := v1.Group("/registration")
-		registrationAuth.Use(middleware.RequireAuthContext(supabase, rbacService))
-		registrationAuth.GET("/contests", registrationHandler.ListContests)
-		registrationAuth.GET("/applications", registrationHandler.ListApplications)
-		registrationAuth.POST("/applications", registrationHandler.CreateApplication)
-		registrationAuth.GET("/applications/:id", registrationHandler.GetApplication)
-		registrationAuth.PATCH("/applications/:id", registrationHandler.SaveStep)
-		registrationAuth.POST("/applications/:id/submit", registrationHandler.SubmitApplication)
-		registrationAuth.GET("/applications/:id/status", registrationHandler.GetStatus)
-		registrationAuth.POST("/applications/:id/withdraw", registrationHandler.WithdrawApplication)
-		registrationAuth.POST("/applications/:id/payment/initiate", registrationHandler.InitiatePayment)
-		registrationAuth.POST("/applications/:id/payment/verify", registrationHandler.VerifyPayment)
+		// Registration endpoints will be registered after pool is created (see below)
 
 		schools := v1.Group("/schools")
 		schools.Use(middleware.StemRateLimit(25, time.Minute))
@@ -407,6 +393,23 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		adminConsole.POST("/approvals/:id/reject", adminConsoleHandler.RejectApproval)
 		adminConsole.GET("/audit", adminConsoleHandler.GetAudit)
 		adminConsole.GET("/admins", adminConsoleHandler.GetAdmins)
+
+		// Registration endpoints — contest applications with Supabase persistence
+		// All endpoints require bearer token auth. Wired to RegistrationStore.
+		registrationStore := handlers.NewRegistrationStore(sharedPool)
+		registrationHandler := handlers.NewRegistrationHandler(registrationStore, auditService)
+		registrationAuth := v1.Group("/registration")
+		registrationAuth.Use(middleware.RequireAuthContext(supabase, rbacService))
+		registrationAuth.GET("/contests", registrationHandler.ListContests)
+		registrationAuth.GET("/applications", registrationHandler.ListApplications)
+		registrationAuth.POST("/applications", registrationHandler.CreateApplication)
+		registrationAuth.GET("/applications/:id", registrationHandler.GetApplication)
+		registrationAuth.PATCH("/applications/:id", registrationHandler.SaveStep)
+		registrationAuth.POST("/applications/:id/submit", registrationHandler.SubmitApplication)
+		registrationAuth.GET("/applications/:id/status", registrationHandler.GetStatus)
+		registrationAuth.POST("/applications/:id/withdraw", registrationHandler.WithdrawApplication)
+		registrationAuth.POST("/applications/:id/payment/initiate", registrationHandler.InitiatePayment)
+		registrationAuth.POST("/applications/:id/payment/verify", registrationHandler.VerifyPayment)
 	}
 
 	// Arena competition engine (ADR-014) — feature-flagged, default off. The merit
