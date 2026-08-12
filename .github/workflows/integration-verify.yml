@@ -33,7 +33,11 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        # PostGIS-enabled image required: the very first migration
+        # (20260101000000_enable_extensions.sql) runs CREATE EXTENSION postgis,
+        # which a plain postgres image can't satisfy. PG17 matches production
+        # (PostgreSQL 17 via Supabase).
+        image: postgis/postgis:17-3.4
         env:
           POSTGRES_USER: paymax
           POSTGRES_PASSWORD: paymax
