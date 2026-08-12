@@ -38,7 +38,7 @@ BEGIN
       'authenticated',
       'authenticated',
       'admin@spotlight.internal',
-      crypt('admin', gen_salt('bf', 10)),
+      extensions.crypt('admin', extensions.gen_salt('bf', 10)),
       now(), now(), now(),
       jsonb_build_object('full_name', 'Admin', 'role', 'admin'),
       jsonb_build_object('provider', 'email', 'providers', ARRAY['email']::TEXT[]),
@@ -47,7 +47,7 @@ BEGIN
     RAISE NOTICE 'Created admin auth user %', admin_id;
   ELSE
     UPDATE auth.users
-    SET encrypted_password = crypt('admin', gen_salt('bf', 10)),
+    SET encrypted_password = extensions.crypt('admin', extensions.gen_salt('bf', 10)),
         raw_user_meta_data = jsonb_build_object('full_name', 'Admin', 'role', 'admin'),
         email_confirmed_at = COALESCE(email_confirmed_at, now()),
         updated_at = now()
