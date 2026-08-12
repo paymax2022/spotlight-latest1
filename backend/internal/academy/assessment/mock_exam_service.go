@@ -160,9 +160,10 @@ func (s *MockExamService) SubmitExam(ctx context.Context, attemptID string, answ
 	// Grade the exam
 	result := s.gradeExam(ctx, instance, answers)
 
-	// Save performance
+	// Save final answers + performance
 	perfJSON, _ := json.Marshal(result.Performance)
-	if err := s.repo.SubmitAttempt(ctx, attemptID, perfJSON); err != nil {
+	answersJSON, _ := json.Marshal(answers)
+	if err := s.repo.SubmitAttempt(ctx, attemptID, answersJSON, perfJSON); err != nil {
 		return nil, fmt.Errorf("failed to submit exam: %w", err)
 	}
 
@@ -210,14 +211,27 @@ func (s *MockExamService) gradeExam(ctx context.Context, instance *MockExamInsta
 
 	grade := s.calculateGrade(scorePercent)
 
+	bySection := make(map[string]interface{}) // would be populated in full implementation
+
+	// Persisted shape of academy_mock_attempt_metadata.performance; score_pct
+	// feeds v_mock_attempt_scores.score_percent, the rest feeds analytics.
+	performance := map[string]interface{}{
+		"score_raw":       scoredMarks,
+		"score_pct":       scorePercent,
+		"grade":           grade,
+		"correct_answers": correctAnswers,
+		"total_answered":  totalAnswered,
+		"by_section":      bySection,
+	}
+
 	return &ExamGradingResult{
-		Score:           float64(scoredMarks),
-		ScorePercent:    scorePercent,
-		Grade:           grade,
-		CorrectAnswers:  correctAnswers,
-		TotalAnswered:   totalAnswered,
-		BySection:       make(map[string]interface{}), // would be populated in full implementation
-		Performance:     make(map[string]interface{}),
+		Score:          float64(scoredMarks),
+		ScorePercent:   scorePercent,
+		Grade:          grade,
+		CorrectAnswers: correctAnswers,
+		TotalAnswered:  totalAnswered,
+		BySection:      bySection,
+		Performance:    performance,
 	}
 }
 
