@@ -31,9 +31,10 @@ export default function DriverCard({ driver, subtitle, onCall, onMessage, compac
         </View>
         <View style={styles.metaRow}>
           <Star size={13} color={Colors.gold} fill={Colors.gold} strokeWidth={0} />
-          <Text style={styles.meta}>{driver.rating.toFixed(2)}</Text>
+          <Text style={styles.meta}>{(driver.rating ?? 0).toFixed(2)}</Text>
           <View style={styles.dot} />
-          <Text style={styles.meta}>{driver.tripsCount.toLocaleString('en-NG')} trips</Text>
+          {/* Live backend driver payload omits tripsCount — render 0 rather than crash. */}
+          <Text style={styles.meta}>{(driver.tripsCount ?? 0).toLocaleString('en-NG')} trips</Text>
         </View>
         {subtitle ? <Text style={styles.subtitle} numberOfLines={1}>{subtitle}</Text> : null}
       </View>

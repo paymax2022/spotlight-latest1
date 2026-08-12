@@ -17,6 +17,19 @@ type Restaurant struct {
 	Cuisine        string    `json:"cuisine,omitempty"`
 	DistanceMeters *float64  `json:"distance_meters,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
+
+	// Storefront terms the client DISPLAYS but must never compute. These are
+	// columns that already existed on `restaurants` (plus packaging_fee_kobo,
+	// added in 20261113000000) but were absent from this DTO — so the mobile
+	// module had no source for them and fell back to values invented in
+	// src/features/food/mock.ts. Money values are integer kobo.
+	MinOrderKobo     int64 `json:"min_order_kobo"`
+	PackagingFeeKobo int64 `json:"packaging_fee_kobo"`
+	PrepTimeMinutes  int   `json:"prep_time_minutes"`
+
+	// Store coordinates, for map rendering and the distance-based delivery quote.
+	GeoLat *float64 `json:"geo_lat,omitempty"`
+	GeoLng *float64 `json:"geo_lng,omitempty"`
 }
 
 // MenuCategory groups menu items (e.g. "Starters", "Mains").

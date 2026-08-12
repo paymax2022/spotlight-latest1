@@ -26,16 +26,21 @@ func (r *Repository) ListContests(ctx context.Context, limit int) ([]Contest, er
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	const q = `SELECT ` + contestColumns + ` FROM connect_contests
+	const q = `SELECT ` + contestColumns + `,
+			(SELECT COUNT(*) FROM contestants ct
+			  WHERE ct.connect_contest_id = connect_contests.id AND ct.is_active) AS contestant_count,
+			(SELECT COALESCE(SUM(quantity), 0) FROM connect_votes cv
+			  WHERE cv.contest_id = connect_contests.id) AS total_votes
+		FROM connect_contests
 		WHERE status IN ('open','closed') ORDER BY created_at DESC LIMIT $1`
 	rows, err := r.db.Query(ctx, q, limit)
 	if err != nil {
 		return nil, fmt.Errorf("voting: list contests: %w", err)
 	}
 	defer rows.Close()
-	var out []Contest
+	out := []Contest{}
 	for rows.Next() {
-		c, err := scanContest(rows)
+		c, err := scanContestWithCounts(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -60,6 +65,20 @@ func scanContest(s rowScanner) (*Contest, error) {
 	if err := s.Scan(
 		&c.ID, &c.Title, &c.Description, &c.Status, &c.PaidVoteKobo,
 		&c.FreeVotesPerUser, &c.VelocityPerMinute, &c.OpensAt, &c.ClosesAt, &c.CreatedAt,
+	); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// scanContestWithCounts scans a contest row that carries the roster/tally
+// summary columns appended by ListContests.
+func scanContestWithCounts(s rowScanner) (*Contest, error) {
+	c := &Contest{}
+	if err := s.Scan(
+		&c.ID, &c.Title, &c.Description, &c.Status, &c.PaidVoteKobo,
+		&c.FreeVotesPerUser, &c.VelocityPerMinute, &c.OpensAt, &c.ClosesAt, &c.CreatedAt,
+		&c.ContestantCount, &c.TotalVotes,
 	); err != nil {
 		return nil, err
 	}

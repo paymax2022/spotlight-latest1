@@ -72,7 +72,14 @@ export async function listRestaurants(): Promise<Restaurant[]> {
     await delay();
     return MOCK_RESTAURANTS;
   }
-  return unwrap<Restaurant[]>(await api.get(`${BASE}`));
+  // The Go discovery handler answers `{"restaurants": [...]}` (handler_delivery.go
+  // ListRestaurants) and the Next proxy forwards the body VERBATIM, so `unwrap`
+  // — which only peels a `data` envelope — hands back that OBJECT rather than an
+  // array. Every caller then does .filter/.map on it and throws. Peel the
+  // `restaurants` key here, tolerating a bare array in case the handler is ever
+  // flattened.
+  const raw = unwrap<Restaurant[] | { restaurants?: Restaurant[] }>(await api.get(`${BASE}`));
+  return Array.isArray(raw) ? raw : raw?.restaurants ?? [];
 }
 
 export async function getRestaurant(id: string): Promise<RestaurantDetail> {

@@ -136,8 +136,12 @@ export interface Trip {
   status: TripStatus;
   serviceType: ServiceType;
   pricingMode: PricingMode;
-  pickup: Place;
-  dest: Place;
+  // Mock trips carry full Place objects; live backend trips return flat
+  // pickupAddress/destAddress strings instead — screens must tolerate both.
+  pickup?: Place;
+  dest?: Place;
+  pickupAddress?: string;
+  destAddress?: string;
   distanceM: number;
   durationS: number;
   fareKobo: Kobo;                 // current agreed/escrowed fare

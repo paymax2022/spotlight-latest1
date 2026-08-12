@@ -36,6 +36,9 @@ export interface BackendContest {
   opens_at?: string | null;
   closes_at?: string | null;
   created_at?: string;
+  /** Roster/tally summary returned by the list endpoint. */
+  contestant_count?: number;
+  total_votes?: number;
 }
 
 /**
@@ -55,7 +58,11 @@ function mapStatus(status: string): ContestStatus {
   }
 }
 
-export function mapContest(raw: BackendContest, contestantCount = 0, totalVotes: number | null = null): Contest {
+export function mapContest(
+  raw: BackendContest,
+  contestantCount = raw.contestant_count ?? 0,
+  totalVotes: number | null = raw.total_votes ?? null,
+): Contest {
   return {
     id: raw.id,
     title: raw.title,

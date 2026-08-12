@@ -90,16 +90,19 @@ export async function getContest(contestId: string): Promise<Contest> {
   }
   const res = await api.get(`${CONNECT_VOTING_BASE}/contests/${contestId}`);
   const raw = (res.data?.data ?? res.data ?? {}) as BackendContest;
-  // contestantCount comes from the roster, which is the authoritative list of
-  // who is actually votable — a contest-level counter would drift from it.
-  let count = 0;
+  // The detail endpoint returns no summary columns, so derive the count from
+  // the roster — the authoritative list of who is actually votable.
+  let count = raw.contestant_count ?? 0;
+  let votes: number | null = raw.total_votes ?? null;
   try {
     const roster = await api.get(`${CONNECT_VOTING_BASE}/contests/${contestId}/contestants`);
-    count = ((roster.data?.data ?? []) as BackendRosterEntry[]).length;
+    const rows = (roster.data?.data ?? []) as BackendRosterEntry[];
+    count = rows.length;
+    votes = rows.reduce((sum, r) => sum + (r.total_votes ?? 0), 0);
   } catch {
     /* roster unavailable — show the contest without a count rather than failing */
   }
-  return normalizeContest(mapContest(raw, count) as unknown as Record<string, unknown>);
+  return normalizeContest(mapContest(raw, count, votes) as unknown as Record<string, unknown>);
 }
 
 // ─── Contestants ──────────────────────────────────────────────────────────────
