@@ -201,9 +201,12 @@ func (r *Repository) GetStages(ctx context.Context, contestID string) ([]Contest
 type RosterEntry struct {
 	ContestantID string `json:"contestant_id"`
 	Name         string `json:"name"`
+	StageName    string `json:"stage_name"`
 	Category     string `json:"category"`
+	State        string `json:"state"`
 	Bio          string `json:"bio"`
 	PhotoURL     string `json:"photo_url"`
+	MediaURL     string `json:"media_url"`
 	Status       string `json:"status"`
 	IsActive     bool   `json:"is_active"`
 	FreeVotes    int64  `json:"free_votes"`
@@ -220,8 +223,8 @@ type RosterEntry struct {
 // views need; the member-facing list passes false.
 func (r *Repository) ListRoster(ctx context.Context, contestID string, includeInactive bool) ([]RosterEntry, error) {
 	const q = `
-		SELECT c.id::text, c.name, c.category, c.bio, c.photo_url,
-		       c.status::text, c.is_active,
+		SELECT c.id::text, c.name, c.stage_name, c.category, c.state, c.bio,
+		       c.photo_url, c.media_url, c.status::text, c.is_active,
 		       COALESCE(v.free_votes, 0), COALESCE(v.paid_votes, 0)
 		FROM contestants c
 		LEFT JOIN (
@@ -245,7 +248,8 @@ func (r *Repository) ListRoster(ctx context.Context, contestID string, includeIn
 	out := []RosterEntry{}
 	for rows.Next() {
 		var e RosterEntry
-		if err := rows.Scan(&e.ContestantID, &e.Name, &e.Category, &e.Bio, &e.PhotoURL,
+		if err := rows.Scan(&e.ContestantID, &e.Name, &e.StageName, &e.Category, &e.State,
+			&e.Bio, &e.PhotoURL, &e.MediaURL,
 			&e.Status, &e.IsActive, &e.FreeVotes, &e.PaidVotes); err != nil {
 			return nil, fmt.Errorf("voting: scan roster entry: %w", err)
 		}

@@ -13,9 +13,12 @@ import type { Contest, Contestant, ContestStatus, LeaderboardEntry } from '../ty
 export interface BackendRosterEntry {
   contestant_id: string;
   name: string;
+  stage_name: string;
   category: string;
+  state: string;
   bio: string;
   photo_url: string;
+  media_url: string;
   status: string;
   is_active: boolean;
   free_votes: number;
@@ -83,8 +86,11 @@ export function mapContestant(raw: BackendRosterEntry, contestId: string): Conte
     id: raw.contestant_id,
     contestId,
     name: raw.name,
+    stageName: raw.stage_name || undefined,
     category: raw.category || undefined,
+    state: raw.state || undefined,
     photo: raw.photo_url || undefined,
+    mediaUrl: raw.media_url || undefined,
     bio: raw.bio || undefined,
     rank: raw.rank,
     votes: raw.total_votes,
