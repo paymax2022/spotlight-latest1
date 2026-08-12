@@ -2,6 +2,7 @@ package app
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/handlers"
 	"spotlight/backend/internal/services"
 )
@@ -9,9 +10,13 @@ import (
 // registerConnectWalletRoutes wires up all /api/v1/wallet/* and /api/v1/kyc/* endpoints
 // for the Paymax Connect module (wallet, gifting, KYC tier progression, payouts).
 // All endpoints are protected by RequireAuthContext + requireUserID.
-func registerConnectWalletRoutes(r *gin.Engine, supabase interface{}, rbac services.RBACService, authMiddleware gin.HandlerFunc) {
-	walletHandler := handlers.NewWalletConnectHandler()
-	giftingHandler := handlers.NewGiftingConnectHandler()
+func registerConnectWalletRoutes(r *gin.Engine, supabase interface{}, rbac services.RBACService, authMiddleware gin.HandlerFunc, db *pgxpool.Pool, auditSvc services.AuditService) {
+	// Create stores with pooled connections
+	walletStore := handlers.NewWalletStore(db)
+	giftingStore := handlers.NewGiftingStore(db)
+
+	walletHandler := handlers.NewWalletConnectHandler(walletStore, auditSvc)
+	giftingHandler := handlers.NewGiftingConnectHandler(giftingStore, auditSvc)
 	kycHandler := handlers.NewKYCConnectHandler()
 	payoutsHandler := handlers.NewPayoutsConnectHandler()
 

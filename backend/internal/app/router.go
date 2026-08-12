@@ -358,7 +358,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	// All endpoints require authentication (Bearer token). Requires shared pool.
 	if sharedPool != nil {
 		authMiddleware := middleware.RequireAuthContext(supabase, rbacService)
-		registerConnectWalletRoutes(r, supabase, rbacService, authMiddleware)
+		registerConnectWalletRoutes(r, supabase, rbacService, authMiddleware, sharedPool, auditService)
 	}
 
 	// Admin console — unified /api/v1/admin/* endpoints for mobile admin UI

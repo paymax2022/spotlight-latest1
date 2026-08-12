@@ -1,18 +1,25 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/internal/services"
 )
 
 // WalletConnectHandler handles /api/v1/wallet/* endpoints for Paymax Connect module.
 // All endpoints are gated behind auth (RequireAuthContext sets user_id in context).
-type WalletConnectHandler struct{}
+type WalletConnectHandler struct {
+	store      *WalletStore
+	auditSvc   services.AuditService
+}
 
-func NewWalletConnectHandler() *WalletConnectHandler {
-	return &WalletConnectHandler{}
+func NewWalletConnectHandler(store *WalletStore, auditSvc services.AuditService) *WalletConnectHandler {
+	return &WalletConnectHandler{
+		store:    store,
+		auditSvc: auditSvc,
+	}
 }
 
 // GetSummary — GET /api/v1/wallet/summary
@@ -24,21 +31,39 @@ func (h *WalletConnectHandler) GetSummary(c *gin.Context) {
 		return
 	}
 
-	// Mock data (Phase 2: query real ledger + tier)
+	summary, err := h.store.GetWalletSummary(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load wallet"})
+		return
+	}
+
+	// Calculate remaining limits
+	dailyRemaining := summary.DailyLimit - summary.DailySpent
+
+	tierLabels := map[int]string{
+		0: "Tier 0 (No KYC)",
+		1: "Tier 1",
+		2: "Tier 2",
+		3: "Tier 3",
+	}
+
+	canWithdraw := summary.Tier >= 2
+	canGoLive := summary.Tier >= 2
+
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"balanceKobo": 4_250_000,
-		"currency":    "NGN",
+		"balanceKobo": summary.BalanceKobo,
+		"currency":    summary.Currency,
 		"tier": gin.H{
-			"tier":               1,
-			"label":              "Tier 1",
-			"dailyLimitKobo":     3_000_000,
-			"remainingKobo":      1_850_000,
-			"canSend":            true,
-			"canReceive":         true,
-			"canWithdraw":        false,
-			"canGoLive":          false,
-			"nextTier":           2,
-			"nextTierUnlocks":    "Go live, earn & withdraw up to ₦500,000/day",
+			"tier":            summary.Tier,
+			"label":          tierLabels[summary.Tier],
+			"dailyLimitKobo": summary.DailyLimit,
+			"remainingKobo":  dailyRemaining,
+			"canSend":        summary.Tier >= 1,
+			"canReceive":     true,
+			"canWithdraw":    canWithdraw,
+			"canGoLive":      canGoLive,
+			"nextTier":       summary.Tier + 1,
+			"nextTierUnlocks": fmt.Sprintf("Higher limits and new features at Tier %d", summary.Tier+1),
 		},
 	}})
 }
@@ -71,13 +96,53 @@ func (h *WalletConnectHandler) FundWallet(c *gin.Context) {
 		return
 	}
 
-	// Mock data (Phase 2: post ledger entry, increment balance, check tier limits)
+	// Generate reference
+	reference := fmt.Sprintf("FUND-%d-%s", len(idemKey), generateShortID())
+
+	// Phase 2: Post ledger entry (Credit from Paymax revenue)
+	// ledger.Credit(ctx, userID, reference, idemKey, AccountPaymaxRevenue, body.AmountKobo)
+	// For now: Record in wallet_transactions table
+	txn, err := h.store.RecordFunding(c.Request.Context(), userID, reference, body.AmountKobo, idemKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fund wallet"})
+		return
+	}
+
+	// Get updated summary
+	summary, err := h.store.GetWalletSummary(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load wallet"})
+		return
+	}
+
+	// Emit audit event
+	if h.auditSvc != nil {
+		h.auditSvc.LogAction(userID, "", "fund_wallet", "wallet", "wallet",
+			userID, nil, map[string]interface{}{
+				"amount":    body.AmountKobo,
+				"reference": reference,
+			}, getIPAddress(c), c.Request.UserAgent(), "warning")
+	}
+
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
-		"ok":                 true,
-		"newBalanceKobo":     4_250_000 + body.AmountKobo,
-		"balanceKobo":        4_250_000 + body.AmountKobo,
-		"tier":               gin.H{"tier": 1, "label": "Tier 1", "dailyLimitKobo": 3_000_000, "remainingKobo": 1_850_000},
-		"entry":              gin.H{"id": "we_" + strconv.FormatInt(int64(c.Request.RequestURI[0]), 10), "kind": "fund", "direction": "credit", "amountKobo": body.AmountKobo, "status": "completed", "title": "Wallet top-up"},
+		"ok":             true,
+		"newBalanceKobo": summary.BalanceKobo,
+		"balanceKobo":    summary.BalanceKobo,
+		"tier": gin.H{
+			"tier":            summary.Tier,
+			"label":          fmt.Sprintf("Tier %d", summary.Tier),
+			"dailyLimitKobo": summary.DailyLimit,
+			"remainingKobo":  summary.DailyLimit - summary.DailySpent,
+		},
+		"entry": gin.H{
+			"id":           txn.ID,
+			"kind":        "fund",
+			"direction":   "credit",
+			"amountKobo": body.AmountKobo,
+			"status":     "completed",
+			"reference":  reference,
+			"title":      "Wallet top-up",
+		},
 	}})
 }
 
@@ -90,26 +155,40 @@ func (h *WalletConnectHandler) GetHistory(c *gin.Context) {
 		return
 	}
 
-	cursor := c.Query("cursor")
-	_ = cursor // Phase 2: use cursor for pagination
+	limit := 50
+	offset := 0
+	if l := c.Query("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	if o := c.Query("offset"); o != "" {
+		fmt.Sscanf(o, "%d", &offset)
+	}
 
-	// Mock data (Phase 2: query ledger entries for user)
+	transactions, total, err := h.store.GetTransactionHistory(c.Request.Context(), userID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load history"})
+		return
+	}
+
+	entries := []gin.H{}
+	for _, txn := range transactions {
+		entries = append(entries, gin.H{
+			"id":         txn.ID,
+			"ref":        txn.Reference,
+			"kind":       "transaction",
+			"direction":  txn.Type,
+			"amountKobo": txn.AmountKobo,
+			"status":     "completed",
+			"title":      txn.Description,
+			"createdAt":  txn.CreatedAt,
+		})
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"entries": []gin.H{
-			{
-				"id":                 "we_1",
-				"ref":                "PMX-9F2A11",
-				"kind":               "gift_received",
-				"direction":          "credit",
-				"amountKobo":         250_000,
-				"balanceAfterKobo":   4_250_000,
-				"status":             "completed",
-				"title":              "Gift from Tobi",
-				"counterpartyName":   "Tobi",
-				"note":               "Rose 🌹",
-				"createdAt":          "2026-08-10T10:30:00Z",
-			},
-		},
+		"entries": entries,
+		"total":   total,
+		"limit":   limit,
+		"offset":  offset,
 	}})
 }
 
@@ -124,18 +203,24 @@ func (h *WalletConnectHandler) GetHistoryEntry(c *gin.Context) {
 
 	id := c.Param("id")
 
-	// Mock data (Phase 2: query specific ledger entry for user)
+	txn, err := h.store.GetTransaction(c.Request.Context(), userID, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load transaction"})
+		return
+	}
+	if txn == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "transaction not found"})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"id":               id,
-		"ref":              "PMX-9F2A11",
-		"kind":             "gift_received",
-		"direction":        "credit",
-		"amountKobo":       250_000,
-		"balanceAfterKobo": 4_250_000,
-		"status":           "completed",
-		"title":            "Gift from Tobi",
-		"counterpartyName": "Tobi",
-		"note":             "Rose 🌹",
-		"createdAt":        "2026-08-10T10:30:00Z",
+		"id":           txn.ID,
+		"ref":          txn.Reference,
+		"kind":         "transaction",
+		"direction":    txn.Type,
+		"amountKobo":   txn.AmountKobo,
+		"status":       "completed",
+		"title":        txn.Description,
+		"createdAt":    txn.CreatedAt,
 	}})
 }
