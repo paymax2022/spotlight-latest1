@@ -107,8 +107,8 @@ export async function getBalance(userId: string): Promise<WalletBalance> {
     .from('ledger_accounts')
     .select('id')
     .eq('user_id', userId)
-    .in('type', ['wallet', 'user_wallet'])
-    .eq('currency', 'NGN');
+    .eq('currency', 'NGN')
+    .in('type', ['wallet', 'user_wallet']);
   const accountIds = (walletAccounts ?? []).map((a) => a.id as string);
   if (!accountIds.includes(accountId)) accountIds.push(accountId);
 
