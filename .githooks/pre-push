@@ -18,6 +18,9 @@ max_size_bytes=$((max_size_mb * 1024 * 1024))
 blocked_pattern='(^|/)\.next/|(^|/)\.npm-cache/|(^|/)node_modules/|(^|/)\.DS_Store$|\.tsbuildinfo$|(^|/).*\.pem$|(^|/).*\.key$|(^|/).*\.p12$|(^|/).*\.pfx$|(^|/).*\.jks$|(^|/)id_rsa$|(^|/)id_dsa$'
 
 tmp_refs="$(mktemp)"
+tmp_objects="$(mktemp)"
+trap 'rm -f "$tmp_refs" "$tmp_objects" "${tmp_objects}.uniq" "${tmp_objects}.check"' EXIT
+
 cat >"$tmp_refs"
 
 if [[ ! -s "$tmp_refs" ]]; then
@@ -25,7 +28,6 @@ if [[ ! -s "$tmp_refs" ]]; then
 fi
 
 zero_sha="0000000000000000000000000000000000000000"
-tmp_objects="$(mktemp)"
 
 while read -r local_ref local_sha remote_ref remote_sha; do
   # Branch deletion push; nothing to validate.
@@ -34,7 +36,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
 
   if [[ "$remote_sha" == "$zero_sha" ]]; then
-    git rev-list --objects "$local_sha" >>"$tmp_objects"
+    # New branch: only enumerate objects no remote already has. Without the
+    # negation this walks the full history (20k+ objects) on every new branch.
+    git rev-list --objects "$local_sha" --not --remotes >>"$tmp_objects"
   else
     git rev-list --objects "${remote_sha}..${local_sha}" >>"$tmp_objects"
   fi
@@ -46,10 +50,17 @@ fi
 
 sort -u "$tmp_objects" >"${tmp_objects}.uniq"
 
+# One batched cat-file resolves type+size for every object; the previous
+# per-object `git cat-file -t` / `-s` spawned two processes per object,
+# which took >10 minutes for a full-history object list on macOS.
+git cat-file --batch-check='%(objecttype) %(objectsize) %(rest)' \
+  <"${tmp_objects}.uniq" >"${tmp_objects}.check"
+
 violations=0
 declare -a messages=()
 
-while read -r oid path; do
+while read -r obj_type obj_size path; do
+  # Commits have no path; unknown oids print "<oid> missing" (empty path).
   [[ -z "${path:-}" ]] && continue
 
   if [[ "$path" =~ (^|/)\.env($|\.) ]] && [[ ! "$path" =~ \.env(\..*)?\.example$ ]]; then
@@ -64,16 +75,14 @@ while read -r oid path; do
     continue
   fi
 
-  obj_type="$(git cat-file -t "$oid" 2>/dev/null || true)"
   [[ "$obj_type" != "blob" ]] && continue
 
-  obj_size="$(git cat-file -s "$oid" 2>/dev/null || echo 0)"
   if (( obj_size > max_size_bytes )); then
     size_mb="$(awk "BEGIN { printf \"%.2f\", $obj_size / 1024 / 1024 }")"
     messages+=("large file: ${path} (${size_mb} MiB > ${max_size_mb} MiB limit)")
     violations=1
   fi
-done <"${tmp_objects}.uniq"
+done <"${tmp_objects}.check"
 
 if (( violations )); then
   echo "pre-push check failed:"
