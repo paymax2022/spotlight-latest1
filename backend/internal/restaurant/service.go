@@ -559,17 +559,18 @@ func canTransition(from, to OrderStatus) bool {
 	}
 	switch from {
 	case OrderPending:
-		return to == OrderConfirmed || to == OrderCancelled
+		return to == OrderConfirmed || to == OrderCancelled || to == OrderRejected
 	case OrderConfirmed:
-		return to == OrderPreparing || to == OrderCancelled
+		return to == OrderPreparing || to == OrderCancelled || to == OrderRejected
 	case OrderPreparing:
+		// Too late to reject once cooking — cancel (with refund) is the only exit.
 		return to == OrderReady || to == OrderCancelled
 	case OrderReady:
-		return to == OrderPickedUp || to == OrderCancelled
+		return to == OrderPickedUp || to == OrderCancelled || to == OrderDispatchFailed
 	case OrderPickedUp:
-		return to == OrderDelivered
+		return to == OrderDelivered || to == OrderDeliveryFailed
 	default:
-		// delivered / cancelled are terminal.
+		// delivered / cancelled / rejected / dispatch_failed / delivery_failed are terminal.
 		return false
 	}
 }
