@@ -149,6 +149,24 @@ func (h *Handler) ListRoster(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": roster})
 }
 
+// FreeVoteAllowance — GET /api/v1/connect/contests/:id/free-vote-allowance.
+// How many free votes the caller has left in this contest. Server-computed:
+// the client must not derive it, or two surfaces will disagree about how many
+// votes a user really has.
+func (h *Handler) FreeVoteAllowance(c *gin.Context) {
+	uid := userID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	a, err := h.svc.FreeVoteAllowanceFor(c.Request.Context(), c.Param("id"), uid)
+	if err != nil {
+		mapError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": a})
+}
+
 // GetStages — GET /api/v1/connect/contests/:id/stages (member).
 func (h *Handler) GetStages(c *gin.Context) {
 	stages, err := h.svc.GetStages(c.Request.Context(), c.Param("id"))
@@ -172,6 +190,7 @@ func Register(member gin.IRouter, svc *Service, cfg config.Config) {
 	member.POST("/contests/:id/paid-vote", h.PaidVote) // Idempotency-Key required
 	member.GET("/contests/:id/results", h.Results)
 	member.GET("/contests/:id/contestants", h.ListRoster)
+	member.GET("/contests/:id/free-vote-allowance", h.FreeVoteAllowance)
 	member.GET("/contests/:id/stages", h.GetStages)
 
 	// Stage eviction routes — gated behind FEATURE_CONTEST_STAGE_EVICTION_ENABLED.

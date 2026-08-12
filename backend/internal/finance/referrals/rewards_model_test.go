@@ -7,7 +7,7 @@ import (
 	"spotlight/backend/internal/finance/referrals"
 )
 
-// v1DefaultConfig mirrors the seed in 20260910000000_referral_direct_rewards.sql
+// v1DefaultConfig mirrors the seed in 20260910000001_referral_direct_rewards.sql
 // (PRD §2.2 tiers + §2.3 milestones, kobo). Kept in the test so the tier-lookup and
 // milestone maths are exercised without a DB.
 func v1DefaultConfig() referrals.ProgramConfig {

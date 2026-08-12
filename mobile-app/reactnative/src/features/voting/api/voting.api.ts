@@ -294,14 +294,15 @@ export async function getFreeVoteAllocation(
       resetsAt: nextLocalMidnightISO(),
     };
   }
-  // Live: the universal voting engine returns the per-contestant remaining +
-  // reset timestamp when contestantId is supplied.
-  const res = await api.get('/api/votes/remaining', { params: { contestId, contestantId } });
+  // Live: the Connect backend computes the allowance from the contest's
+  // per-user cap and the votes actually recorded, so this cannot disagree with
+  // what the vote endpoint enforces.
+  const res = await api.get(`${CONNECT_VOTING_BASE}/contests/${contestId}/free-vote-allowance`);
   const d = (res.data?.data ?? res.data) as Record<string, unknown>;
   return {
-    total: Number(d.freeVotesPerDay ?? d.free_votes_per_day ?? FREE_VOTE_CAP),
-    used: Number(d.freeVotesUsed ?? d.free_votes_used ?? 0),
-    remaining: Number(d.freeVotesRemaining ?? d.free_votes_remaining ?? 0),
+    total: Number(d.total ?? d.freeVotesPerDay ?? d.free_votes_per_day ?? FREE_VOTE_CAP),
+    used: Number(d.used ?? d.freeVotesUsed ?? d.free_votes_used ?? 0),
+    remaining: Number(d.remaining ?? d.freeVotesRemaining ?? d.free_votes_remaining ?? 0),
     resetsAt: String(d.resetAt ?? d.reset_at ?? nextLocalMidnightISO()),
   };
 }

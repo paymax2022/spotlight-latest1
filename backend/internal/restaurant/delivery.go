@@ -11,17 +11,21 @@ import (
 
 // ListOpenRestaurants returns the discovery list of open restaurants.
 func (s *Service) ListOpenRestaurants(ctx context.Context) ([]Restaurant, error) {
-	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at
+	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
+	                  min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng
 	           FROM restaurants WHERE is_open = TRUE ORDER BY created_at DESC`
 	rows, err := s.db.Query(ctx, q)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Restaurant
+	// Non-nil so the handler serialises `[]` rather than `null` on an empty
+	// result — a JSON null breaks array-typed clients.
+	out := []Restaurant{}
 	for rows.Next() {
 		var r Restaurant
-		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
+			&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -38,9 +42,13 @@ type RestaurantDetail struct {
 // GetRestaurantDetail returns a restaurant and its menu (categories + items).
 func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) (*RestaurantDetail, error) {
 	var r Restaurant
-	const qr = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, created_at
+	// Detail previously omitted rating and cuisine too, so a store page showed a
+	// zero rating even though the list showed the real one.
+	const qr = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
+	                   min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng
 	            FROM restaurants WHERE id=$1`
-	if err := s.db.QueryRow(ctx, qr, restaurantID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.CreatedAt); err != nil {
+	if err := s.db.QueryRow(ctx, qr, restaurantID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
+		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng); err != nil {
 		return nil, fmt.Errorf("restaurant: not found")
 	}
 
@@ -340,7 +348,8 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 // ListMyRestaurants returns every store owned by the caller (the merchant's own
 // stores), newest first. Used by the merchant app to load the store to manage.
 func (s *Service) ListMyRestaurants(ctx context.Context, ownerID string) ([]Restaurant, error) {
-	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, created_at
+	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
+	                  min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng
 	           FROM restaurants WHERE owner_id=$1 ORDER BY created_at DESC`
 	rows, err := s.db.Query(ctx, q, ownerID)
 	if err != nil {
@@ -350,7 +359,8 @@ func (s *Service) ListMyRestaurants(ctx context.Context, ownerID string) ([]Rest
 	out := []Restaurant{}
 	for rows.Next() {
 		var r Restaurant
-		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
+			&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -362,10 +372,12 @@ func (s *Service) ListMyRestaurants(ctx context.Context, ownerID string) ([]Rest
 // store-management mutations to echo the updated store back to the merchant.
 func (s *Service) getRestaurantCore(ctx context.Context, restaurantID string) (*Restaurant, error) {
 	var r Restaurant
-	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, created_at
+	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
+	                  min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng
 	           FROM restaurants WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, restaurantID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description,
-		&r.Address, &r.LogoURL, &r.IsOpen, &r.CreatedAt); err != nil {
+		&r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
+		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng); err != nil {
 		return nil, fmt.Errorf("restaurant: not found")
 	}
 	return &r, nil
