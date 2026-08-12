@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -198,7 +200,7 @@ func (s *RegistrationStore) GetApplication(ctx context.Context, userID string, a
 	err := row.Scan(&app.ID, &app.Reference, &app.ContestSlug, &app.Status, &app.Role,
 		&app.CreatedAt, &app.UpdatedAt, &app.CompletionPercent, &app.CurrentStep,
 		&fraudFlagsJSON, &formDataJSON)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil // Not found
 	}
 	if err != nil {
@@ -339,7 +341,7 @@ func (s *RegistrationStore) GetStatusTimeline(ctx context.Context, userID string
 	// First verify user owns the application
 	var owned bool
 	err := s.db.QueryRow(ctx, "SELECT true FROM registrations WHERE id = $1 AND user_id = $2", appID, userID).Scan(&owned)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("application not found")
 	}
 	if err != nil {

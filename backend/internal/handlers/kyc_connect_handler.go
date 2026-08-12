@@ -4,13 +4,20 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/internal/services"
 )
 
 // KYCConnectHandler handles /api/v1/kyc/* endpoints for tier progression.
-type KYCConnectHandler struct{}
+type KYCConnectHandler struct {
+	store    *KYCStore
+	auditSvc services.AuditService
+}
 
-func NewKYCConnectHandler() *KYCConnectHandler {
-	return &KYCConnectHandler{}
+func NewKYCConnectHandler(store *KYCStore, auditSvc services.AuditService) *KYCConnectHandler {
+	return &KYCConnectHandler{
+		store:    store,
+		auditSvc: auditSvc,
+	}
 }
 
 // GetStatus — GET /api/v1/kyc/status
@@ -22,62 +29,53 @@ func (h *KYCConnectHandler) GetStatus(c *gin.Context) {
 		return
 	}
 
-	// Mock data (Phase 2: query kyc_profiles for user)
+	profile, err := h.store.GetKYCStatus(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load kyc status"})
+		return
+	}
+
+	tierLabels := map[int]string{
+		0: "Tier 0 (No KYC)",
+		1: "Tier 1",
+		2: "Tier 2",
+		3: "Tier 3",
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"tier":         1,
-		"label":        "Tier 1",
-		"bvn":          "passed",
-		"nin":          "not_started",
-		"photoId":      "not_started",
-		"address":      "not_started",
-		"liveness":     "not_started",
-		"edd":          "not_started",
-		"reviewState":  "none",
+		"tier":               profile.Tier,
+		"label":             tierLabels[profile.Tier],
+		"status":            profile.Status,
+		"verificationStatus": profile.VerificationStatus,
+		"bvn":               profile.BVN,
+		"nin":               profile.NIN,
+		"verifiedAt":        profile.VerifiedAt,
+		"rejectionReason":   profile.RejectionReason,
 	}})
 }
 
 // GetLimits — GET /api/v1/kyc/limits
 // View tier limits ladder (display-only, mirrors backend config).
 func (h *KYCConnectHandler) GetLimits(c *gin.Context) {
-	// Mock data (Phase 2: return tier configuration from TIER_BENEFITS config)
-	c.JSON(http.StatusOK, gin.H{"data": []gin.H{
-		{
-			"tier":                0,
-			"label":               "Unverified",
-			"requirement":         "No verification required",
-			"dailyLimitKobo":      0,
-			"singleGiftMaxKobo":   0,
-			"withdrawDailyKobo":   0,
-			"privileges":          []string{"view", "learn"},
-		},
-		{
-			"tier":                1,
-			"label":               "Tier 1",
-			"requirement":         "BVN or NIN",
-			"dailyLimitKobo":      3_000_000,
-			"singleGiftMaxKobo":   1_000_000,
-			"withdrawDailyKobo":   0,
-			"privileges":          []string{"send", "receive", "gift"},
-		},
-		{
-			"tier":                2,
-			"label":               "Tier 2",
-			"requirement":         "Photo ID + proof of address",
-			"dailyLimitKobo":      15_000_000,
-			"singleGiftMaxKobo":   10_000_000,
-			"withdrawDailyKobo":   50_000_000,
-			"privileges":          []string{"send", "receive", "gift", "withdraw", "earn"},
-		},
-		{
-			"tier":                3,
-			"label":               "Tier 3",
-			"requirement":         "Liveness + EDD (source of funds + occupation)",
-			"dailyLimitKobo":      -1, // unlimited
-			"singleGiftMaxKobo":   -1, // unlimited
-			"withdrawDailyKobo":   -1, // unlimited
-			"privileges":          []string{"send", "receive", "gift", "withdraw", "earn", "unlimited"},
-		},
-	}})
+	limits, err := h.store.GetTierLimits(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load tier limits"})
+		return
+	}
+
+	data := []gin.H{}
+	for _, limit := range limits {
+		data = append(data, gin.H{
+			"tier":                 limit.Tier,
+			"label":                limit.Label,
+			"dailyLimitKobo":       limit.DailyLimitKobo,
+			"monthlyLimitKobo":     limit.MonthlyLimitKobo,
+			"transactionLimitKobo": limit.TransactionLimitKobo,
+			"requiredDocuments":    limit.RequiredDocuments,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": data})
 }
 
 // SubmitTier1 — POST /api/v1/kyc/tier1 (Idempotency-Key required)
@@ -109,12 +107,31 @@ func (h *KYCConnectHandler) SubmitTier1(c *gin.Context) {
 		return
 	}
 
-	// Mock data (Phase 2: call provider API, validate, create kyc_profile, emit audit)
+	// Phase 2: Call KYC provider to validate BVN/NIN
+	// kyc_provider.VerifyBVN(body.Identifier)
+	// For now: just record the submission
+
+	profile, err := h.store.SubmitTier1(c.Request.Context(), userID, body.Identifier, idemKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to submit tier1"})
+		return
+	}
+
+	// Emit audit event
+	if h.auditSvc != nil {
+		h.auditSvc.LogAction(userID, "", "submit_kyc", "kyc", "kyc_profile",
+			profile.UserID, nil, map[string]interface{}{
+				"tier": 1,
+				"status": profile.Status,
+			}, getIPAddress(c), c.Request.UserAgent(), "info")
+	}
+
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
 		"ok":         true,
-		"reviewState": "passed",
+		"tier":       profile.Tier,
+		"status":     profile.Status,
 		"targetTier": 1,
-		"message":    "BVN linked. Tier 1 active.",
+		"message":    "Tier 1 KYC submitted for verification.",
 	}})
 }
 
@@ -154,10 +171,31 @@ func (h *KYCConnectHandler) SubmitTier2(c *gin.Context) {
 		return
 	}
 
-	// Mock data (Phase 2: store documents, mark for review, update kyc_profile, emit audit)
+	// Phase 2: Store documents in R2, call KYC provider for verification
+
+	// For now: just get existing profile and update tier
+	existingProfile, _ := h.store.GetKYCStatus(c.Request.Context(), userID)
+	bvn := existingProfile.BVN
+
+	profile, err := h.store.SubmitTier2(c.Request.Context(), userID, bvn, "", idemKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to submit tier2"})
+		return
+	}
+
+	// Emit audit event
+	if h.auditSvc != nil {
+		h.auditSvc.LogAction(userID, "", "submit_kyc", "kyc", "kyc_profile",
+			profile.UserID, nil, map[string]interface{}{
+				"tier": 2,
+				"status": profile.Status,
+			}, getIPAddress(c), c.Request.UserAgent(), "info")
+	}
+
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
 		"ok":         true,
-		"reviewState": "pending",
+		"tier":       profile.Tier,
+		"status":     profile.Status,
 		"targetTier": 2,
 		"message":    "Documents submitted. Review takes up to 24 hours.",
 	}})
@@ -197,10 +235,32 @@ func (h *KYCConnectHandler) SubmitTier3(c *gin.Context) {
 		return
 	}
 
-	// Mock data (Phase 2: store liveness + EDD, mark for review, update kyc_profile, emit audit)
+	// Phase 2: Store liveness + EDD data, call compliance review
+
+	// For now: just get existing profile and update tier
+	existingProfile, _ := h.store.GetKYCStatus(c.Request.Context(), userID)
+	bvn := existingProfile.BVN
+	nin := existingProfile.NIN
+
+	profile, err := h.store.SubmitTier3(c.Request.Context(), userID, bvn, nin, body.SourceOfFunds, idemKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to submit tier3"})
+		return
+	}
+
+	// Emit audit event
+	if h.auditSvc != nil {
+		h.auditSvc.LogAction(userID, "", "submit_kyc", "kyc", "kyc_profile",
+			profile.UserID, nil, map[string]interface{}{
+				"tier": 3,
+				"status": profile.Status,
+			}, getIPAddress(c), c.Request.UserAgent(), "info")
+	}
+
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
 		"ok":         true,
-		"reviewState": "pending",
+		"tier":       profile.Tier,
+		"status":     profile.Status,
 		"targetTier": 3,
 		"message":    "EDD submitted. Our compliance team will review shortly.",
 	}})
@@ -215,17 +275,28 @@ func (h *KYCConnectHandler) GetTierStatus(c *gin.Context) {
 		return
 	}
 
-	// Mock data (Phase 2: query kyc_profiles + tiers for user)
+	profile, err := h.store.GetKYCStatus(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load tier status"})
+		return
+	}
+
+	tierLabels := map[int]string{
+		0: "Tier 0",
+		1: "Tier 1",
+		2: "Tier 2",
+		3: "Tier 3",
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"tier":               1,
-		"label":              "Tier 1",
-		"dailyLimitKobo":     3_000_000,
-		"remainingKobo":      1_850_000,
-		"canSend":            true,
-		"canReceive":         true,
-		"canWithdraw":        false,
-		"canGoLive":          false,
-		"nextTier":           2,
-		"nextTierUnlocks":    "Go live, earn & withdraw up to ₦500,000/day",
+		"tier":               profile.Tier,
+		"label":             tierLabels[profile.Tier],
+		"status":            profile.Status,
+		"verificationStatus": profile.VerificationStatus,
+		"canSend":           profile.Tier >= 1,
+		"canReceive":        true,
+		"canWithdraw":       profile.Tier >= 2,
+		"canGoLive":         profile.Tier >= 2,
+		"nextTier":          profile.Tier + 1,
 	}})
 }

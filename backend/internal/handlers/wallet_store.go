@@ -2,9 +2,10 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -34,20 +35,9 @@ type WalletSummary struct {
 func (s *WalletStore) GetWalletSummary(ctx context.Context, userID string) (*WalletSummary, error) {
 	row := s.db.QueryRow(ctx, `
 		SELECT
-			$1 as user_id,
-			COALESCE(
-				(SELECT COALESCE(SUM(amount_kobo), 0)
-				 FROM ledger_entries
-				 WHERE ledger_entries.user_id = $1
-				 AND type = 'credit'
-				 MINUS
-				 SELECT COALESCE(SUM(amount_kobo), 0)
-				 FROM ledger_entries
-				 WHERE ledger_entries.user_id = $1
-				 AND type = 'debit'
-				),
-				0
-			) as balance_kobo,
+			$1::text as user_id,
+			(SELECT COALESCE(SUM(CASE WHEN type = 'credit' THEN amount_kobo ELSE -amount_kobo END), 0)
+			 FROM ledger_entries le WHERE le.user_id = $1) as balance_kobo,
 			'NGN' as currency,
 			COALESCE(k.tier, 0) as tier,
 			COALESCE(
@@ -86,7 +76,7 @@ func (s *WalletStore) GetWalletSummary(ctx context.Context, userID string) (*Wal
 	var ws WalletSummary
 	err := row.Scan(&ws.UserID, &ws.BalanceKobo, &ws.Currency, &ws.Tier,
 		&ws.DailySpent, &ws.DailyLimit, &ws.MonthlySpent, &ws.MonthlyLimit)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// New user: return zero balance
 		return &WalletSummary{
 			UserID:       userID,
@@ -172,7 +162,7 @@ func (s *WalletStore) GetTransaction(ctx context.Context, userID string, txnID s
 	var t Transaction
 	err := row.Scan(&t.ID, &t.UserID, &t.Type, &t.AmountKobo,
 		&t.Currency, &t.Reference, &t.Description, &t.CreatedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil // Not found
 	}
 	if err != nil {

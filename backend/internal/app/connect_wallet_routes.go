@@ -14,11 +14,13 @@ func registerConnectWalletRoutes(r *gin.Engine, supabase interface{}, rbac servi
 	// Create stores with pooled connections
 	walletStore := handlers.NewWalletStore(db)
 	giftingStore := handlers.NewGiftingStore(db)
+	kycStore := handlers.NewKYCStore(db)
+	payoutsStore := handlers.NewPayoutsStore(db)
 
 	walletHandler := handlers.NewWalletConnectHandler(walletStore, auditSvc)
 	giftingHandler := handlers.NewGiftingConnectHandler(giftingStore, auditSvc)
-	kycHandler := handlers.NewKYCConnectHandler()
-	payoutsHandler := handlers.NewPayoutsConnectHandler()
+	kycHandler := handlers.NewKYCConnectHandler(kycStore, auditSvc)
+	payoutsHandler := handlers.NewPayoutsConnectHandler(payoutsStore, auditSvc)
 
 	// Base v1 group (all routes require auth)
 	v1 := r.Group("/api/v1")

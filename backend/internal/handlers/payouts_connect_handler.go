@@ -1,16 +1,24 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/internal/services"
 )
 
 // PayoutsConnectHandler handles /api/v1/wallet/payouts/* endpoints for creator earnings.
-type PayoutsConnectHandler struct{}
+type PayoutsConnectHandler struct {
+	store    *PayoutsStore
+	auditSvc services.AuditService
+}
 
-func NewPayoutsConnectHandler() *PayoutsConnectHandler {
-	return &PayoutsConnectHandler{}
+func NewPayoutsConnectHandler(store *PayoutsStore, auditSvc services.AuditService) *PayoutsConnectHandler {
+	return &PayoutsConnectHandler{
+		store:    store,
+		auditSvc: auditSvc,
+	}
 }
 
 // GetEligibility — GET /api/v1/wallet/payouts/eligibility
@@ -22,15 +30,18 @@ func (h *PayoutsConnectHandler) GetEligibility(c *gin.Context) {
 		return
 	}
 
-	// Mock data (Phase 2: query user tier + kyc status, check if tier >= 2)
+	elig, err := h.store.GetPayoutEligibility(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load eligibility"})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"eligible":           false,
-		"tier":               gin.H{"tier": 1, "label": "Tier 1"},
-		"availableKobo":      1_240_000,
-		"pendingKobo":        320_000,
-		"minPayoutKobo":      100_000,
-		"reason":             "Reach Tier 2 (ID + proof of address) to withdraw gift revenue.",
-		"payoutMethodMasked": nil,
+		"eligible":           elig.Eligible,
+		"tier":               gin.H{"tier": elig.Tier},
+		"currentBalanceKobo": elig.CurrentBalanceKobo,
+		"minimumBalanceKobo": elig.MinimumBalanceKobo,
+		"message":            elig.Message,
 	}})
 }
 
@@ -61,26 +72,51 @@ func (h *PayoutsConnectHandler) RequestPayout(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "minimum payout is ₦1,000"})
 		return
 	}
-	if body.AmountKobo > 1_240_000 {
+
+	// Check eligibility first
+	elig, err := h.store.GetPayoutEligibility(c.Request.Context(), userID)
+	if err != nil || !elig.Eligible {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not eligible for payouts: " + elig.Message})
+		return
+	}
+
+	if body.AmountKobo > elig.CurrentBalanceKobo {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "amount exceeds your available balance"})
 		return
 	}
 
-	// Mock data (Phase 2: check tier, post double-entry ledger, create payout_request, emit audit)
-	feeKobo := int64(5_000) // flat ₦50 fee
+	// Generate reference
+	reference := fmt.Sprintf("PAYOUT-%d-%s", len(idemKey), generateShortID())
+
+	// Phase 2: Post double-entry ledger (DEBIT earnings account, CREDIT user wallet)
+	// ledger.Debit(ctx, "", ref, idemKey, earningsAcct, amount)
+	// ledger.Credit(ctx, userID, ref, idemKey, walletAcct, amount)
+
+	payout, err := h.store.RequestPayout(c.Request.Context(), userID, body.AmountKobo, "", "", "", reference, idemKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to request payout"})
+		return
+	}
+
+	// Emit audit event
+	if h.auditSvc != nil {
+		h.auditSvc.LogAction(userID, "", "request_payout", "wallet", "payout",
+			payout.ID, nil, map[string]interface{}{
+				"amount":    body.AmountKobo,
+				"reference": reference,
+			}, getIPAddress(c), c.Request.UserAgent(), "warning")
+	}
+
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
 		"ok": true,
 		"request": gin.H{
-			"id":                   "po_1",
-			"ref":                  "PMX-PAY001",
-			"amountKobo":           body.AmountKobo,
-			"feeKobo":              feeKobo,
-			"netKobo":              body.AmountKobo - feeKobo,
-			"status":               "requested",
-			"payoutMethodMasked":   "GTBank ••• 4421",
-			"createdAt":            "2026-08-12T10:30:00Z",
+			"id":        payout.ID,
+			"ref":       reference,
+			"amountKobo": body.AmountKobo,
+			"status":    payout.Status,
+			"createdAt": payout.CreatedAt,
 		},
-		"availableKobo": 1_240_000 - body.AmountKobo,
+		"availableKobo": elig.CurrentBalanceKobo - body.AmountKobo,
 	}})
 }
 
@@ -93,27 +129,23 @@ func (h *PayoutsConnectHandler) GetHistory(c *gin.Context) {
 		return
 	}
 
-	// Mock data (Phase 2: query payout_requests for user)
-	c.JSON(http.StatusOK, gin.H{"data": []gin.H{
-		{
-			"id":                 "po_1",
-			"ref":                "PMX-PAY771",
-			"amountKobo":         500_000,
-			"feeKobo":            5_000,
-			"netKobo":            495_000,
-			"status":             "paid",
-			"payoutMethodMasked": "GTBank ••• 4421",
-			"createdAt":          "2026-08-07T14:00:00Z",
-		},
-		{
-			"id":                 "po_2",
-			"ref":                "PMX-PAY802",
-			"amountKobo":         300_000,
-			"feeKobo":            5_000,
-			"netKobo":            295_000,
-			"status":             "processing",
-			"payoutMethodMasked": "GTBank ••• 4421",
-			"createdAt":          "2026-08-12T06:00:00Z",
-		},
-	}})
+	payouts, total, err := h.store.GetPayoutHistory(c.Request.Context(), userID, 50, 0)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load payout history"})
+		return
+	}
+
+	data := []gin.H{}
+	for _, p := range payouts {
+		data = append(data, gin.H{
+			"id":         p.ID,
+			"ref":        p.Reference,
+			"amountKobo": p.AmountKobo,
+			"status":     p.Status,
+			"bankName":   p.BankName,
+			"createdAt":  p.CreatedAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": data, "total": total})
 }

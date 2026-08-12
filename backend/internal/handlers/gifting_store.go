@@ -2,9 +2,10 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -73,7 +74,7 @@ func (s *GiftingStore) GetCatalogItem(ctx context.Context, itemID string) (*Gift
 	var item GiftCatalogItem
 	err := row.Scan(&item.ID, &item.Name, &item.Description,
 		&item.AmountKobo, &item.Currency, &item.ImageURL, &item.Category, &item.Available)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -259,7 +260,7 @@ func (s *GiftingStore) GetGiftTransaction(ctx context.Context, userID string, tx
 	var gt GiftTransaction
 	err := row.Scan(&gt.ID, &gt.Reference, &gt.SenderID, &gt.RecipientID,
 		&gt.ItemID, &gt.AmountKobo, &gt.Currency, &gt.Message, &gt.Status, &gt.CreatedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

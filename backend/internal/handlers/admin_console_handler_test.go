@@ -2,20 +2,33 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 )
 
 // Test that all admin console endpoints are accessible and return valid responses.
 
-func setupAdminConsoleRouter() *gin.Engine {
+func setupAdminConsoleRouter(t *testing.T) *gin.Engine {
+	t.Helper()
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; admin console endpoints require a live database")
+	}
+	pool, err := pgxpool.New(context.Background(), dsn)
+	if err != nil {
+		t.Fatalf("connect test database: %v", err)
+	}
+	t.Cleanup(pool.Close)
 	r := gin.New()
-	handler := NewAdminConsoleHandler()
+	handler := NewAdminConsoleHandler(NewAdminStore(pool))
 
 	// Simulate the middleware that validates X-Admin-Role
 	r.Use(func(c *gin.Context) {
@@ -59,7 +72,7 @@ func setupAdminConsoleRouter() *gin.Engine {
 }
 
 func TestAdminConsole_Dashboard(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/dashboard", nil)
@@ -76,7 +89,7 @@ func TestAdminConsole_Dashboard(t *testing.T) {
 }
 
 func TestAdminConsole_GetUsers(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/users", nil)
@@ -92,7 +105,7 @@ func TestAdminConsole_GetUsers(t *testing.T) {
 }
 
 func TestAdminConsole_GetUser(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/users/usr_001", nil)
@@ -108,7 +121,7 @@ func TestAdminConsole_GetUser(t *testing.T) {
 }
 
 func TestAdminConsole_GetKycQueue(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/kyc", nil)
@@ -123,7 +136,7 @@ func TestAdminConsole_GetKycQueue(t *testing.T) {
 }
 
 func TestAdminConsole_ReviewKyc(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"decision":"approve","reason":"All checks passed"}`)
@@ -140,7 +153,7 @@ func TestAdminConsole_ReviewKyc(t *testing.T) {
 }
 
 func TestAdminConsole_GetAssets(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/assets", nil)
@@ -156,7 +169,7 @@ func TestAdminConsole_GetAssets(t *testing.T) {
 }
 
 func TestAdminConsole_UpdateAsset(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"buyEnabled":false,"feeBps":100}`)
@@ -174,7 +187,7 @@ func TestAdminConsole_UpdateAsset(t *testing.T) {
 }
 
 func TestAdminConsole_GetOrders(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/orders?filter=failed", nil)
@@ -191,7 +204,7 @@ func TestAdminConsole_GetOrders(t *testing.T) {
 }
 
 func TestAdminConsole_GetWithdrawals(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/withdrawals", nil)
@@ -206,7 +219,7 @@ func TestAdminConsole_GetWithdrawals(t *testing.T) {
 }
 
 func TestAdminConsole_ReviewWithdrawal(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"decision":"approve","reason":"Risk score acceptable"}`)
@@ -223,7 +236,7 @@ func TestAdminConsole_ReviewWithdrawal(t *testing.T) {
 }
 
 func TestAdminConsole_GetReconciliation(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/reconciliation", nil)
@@ -238,7 +251,7 @@ func TestAdminConsole_GetReconciliation(t *testing.T) {
 }
 
 func TestAdminConsole_GetProviders(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/providers", nil)
@@ -254,7 +267,7 @@ func TestAdminConsole_GetProviders(t *testing.T) {
 }
 
 func TestAdminConsole_GetRiskLimits(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/risk-limits", nil)
@@ -269,7 +282,7 @@ func TestAdminConsole_GetRiskLimits(t *testing.T) {
 }
 
 func TestAdminConsole_UpdateRiskLimit(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"valueMinor":20000000}`)
@@ -286,7 +299,7 @@ func TestAdminConsole_UpdateRiskLimit(t *testing.T) {
 }
 
 func TestAdminConsole_GetFees(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/fees", nil)
@@ -301,7 +314,7 @@ func TestAdminConsole_GetFees(t *testing.T) {
 }
 
 func TestAdminConsole_UpdateFee(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"bps":100}`)
@@ -318,7 +331,7 @@ func TestAdminConsole_UpdateFee(t *testing.T) {
 }
 
 func TestAdminConsole_GetFeatureFlags(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/feature-flags", nil)
@@ -333,7 +346,7 @@ func TestAdminConsole_GetFeatureFlags(t *testing.T) {
 }
 
 func TestAdminConsole_SetFeatureFlag(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"enabled":true}`)
@@ -350,7 +363,7 @@ func TestAdminConsole_SetFeatureFlag(t *testing.T) {
 }
 
 func TestAdminConsole_GetApprovals(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/approvals", nil)
@@ -366,7 +379,7 @@ func TestAdminConsole_GetApprovals(t *testing.T) {
 }
 
 func TestAdminConsole_Approve(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	body := []byte(`{}`)
@@ -383,7 +396,7 @@ func TestAdminConsole_Approve(t *testing.T) {
 }
 
 func TestAdminConsole_RejectApproval(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	body := []byte(`{"reason":"Insufficient supporting documentation"}`)
@@ -400,7 +413,7 @@ func TestAdminConsole_RejectApproval(t *testing.T) {
 }
 
 func TestAdminConsole_GetAudit(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/audit", nil)
@@ -415,7 +428,7 @@ func TestAdminConsole_GetAudit(t *testing.T) {
 }
 
 func TestAdminConsole_GetAdmins(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/admins", nil)
@@ -430,7 +443,7 @@ func TestAdminConsole_GetAdmins(t *testing.T) {
 }
 
 func TestAdminConsole_MissingRole(t *testing.T) {
-	r := setupAdminConsoleRouter()
+	r := setupAdminConsoleRouter(t)
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/dashboard", nil)
