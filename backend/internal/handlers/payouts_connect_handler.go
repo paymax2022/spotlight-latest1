@@ -5,19 +5,25 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/services"
 )
 
 // PayoutsConnectHandler handles /api/v1/wallet/payouts/* endpoints for creator earnings.
 type PayoutsConnectHandler struct {
-	store    *PayoutsStore
-	auditSvc services.AuditService
+	store     *PayoutsStore
+	walletSvc *wallet.Service
+	ledgerSvc *ledger.Service
+	auditSvc  services.AuditService
 }
 
-func NewPayoutsConnectHandler(store *PayoutsStore, auditSvc services.AuditService) *PayoutsConnectHandler {
+func NewPayoutsConnectHandler(store *PayoutsStore, walletSvc *wallet.Service, ledgerSvc *ledger.Service, auditSvc services.AuditService) *PayoutsConnectHandler {
 	return &PayoutsConnectHandler{
-		store:    store,
-		auditSvc: auditSvc,
+		store:     store,
+		walletSvc: walletSvc,
+		ledgerSvc: ledgerSvc,
+		auditSvc:  auditSvc,
 	}
 }
 
@@ -75,7 +81,11 @@ func (h *PayoutsConnectHandler) RequestPayout(c *gin.Context) {
 
 	// Check eligibility first
 	elig, err := h.store.GetPayoutEligibility(c.Request.Context(), userID)
-	if err != nil || !elig.Eligible {
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check payout eligibility"})
+		return
+	}
+	if !elig.Eligible {
 		c.JSON(http.StatusForbidden, gin.H{"error": "not eligible for payouts: " + elig.Message})
 		return
 	}
@@ -85,12 +95,19 @@ func (h *PayoutsConnectHandler) RequestPayout(c *gin.Context) {
 		return
 	}
 
-	// Generate reference
-	reference := fmt.Sprintf("PAYOUT-%d-%s", len(idemKey), generateShortID())
+	reference := fmt.Sprintf("PAYOUT-%s", generateShortID())
 
-	// Phase 2: Post double-entry ledger (DEBIT earnings account, CREDIT user wallet)
-	// ledger.Debit(ctx, "", ref, idemKey, earningsAcct, amount)
-	// ledger.Credit(ctx, userID, ref, idemKey, walletAcct, amount)
+	// Payout funds leave the user wallet into the settlement account, which the
+	// disbursement job draws against. Balanced journal, tier-gated, TOCTOU-safe.
+	settlement, err := h.ledgerSvc.GetOrCreateStandingAccount(c.Request.Context(), ledger.AccountSettlement)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "settlement account unavailable"})
+		return
+	}
+	if err := h.walletSvc.Debit(c.Request.Context(), userID, reference, idemKey, settlement.ID, body.AmountKobo); err != nil {
+		writeMoneyError(c, err)
+		return
+	}
 
 	payout, err := h.store.RequestPayout(c.Request.Context(), userID, body.AmountKobo, "", "", "", reference, idemKey)
 	if err != nil {
@@ -107,16 +124,23 @@ func (h *PayoutsConnectHandler) RequestPayout(c *gin.Context) {
 			}, getIPAddress(c), c.Request.UserAgent(), "warning")
 	}
 
+	// Read the post-debit balance back from the ledger rather than deriving it
+	// from the pre-check figure, which is stale by the time the journal posts.
+	availableKobo := elig.CurrentBalanceKobo - body.AmountKobo
+	if bal, balErr := h.walletSvc.GetBalance(c.Request.Context(), userID); balErr == nil {
+		availableKobo = bal.BalanceKobo
+	}
+
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
 		"ok": true,
 		"request": gin.H{
 			"id":        payout.ID,
-			"ref":       reference,
+			"ref":        reference,
 			"amountKobo": body.AmountKobo,
-			"status":    payout.Status,
-			"createdAt": payout.CreatedAt,
+			"status":     payout.Status,
+			"createdAt":  payout.CreatedAt,
 		},
-		"availableKobo": elig.CurrentBalanceKobo - body.AmountKobo,
+		"availableKobo": availableKobo,
 	}})
 }
 

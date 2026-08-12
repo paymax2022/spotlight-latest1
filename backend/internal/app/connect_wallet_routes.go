@@ -3,6 +3,9 @@ package app
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
+	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/handlers"
 	"spotlight/backend/internal/services"
 )
@@ -17,10 +20,16 @@ func registerConnectWalletRoutes(r *gin.Engine, supabase interface{}, rbac servi
 	kycStore := handlers.NewKYCStore(db)
 	payoutsStore := handlers.NewPayoutsStore(db)
 
-	walletHandler := handlers.NewWalletConnectHandler(walletStore, auditSvc)
-	giftingHandler := handlers.NewGiftingConnectHandler(giftingStore, auditSvc)
+	// Money mutations route through the shared finance services so every one of
+	// them posts a balanced double-entry journal and passes tier limits fail-closed.
+	ledgerSvc := ledger.NewService(ledger.NewRepository(db), nil)
+	tiersSvc := tiers.NewService(db)
+	walletSvc := wallet.NewService(ledgerSvc, tiersSvc)
+
+	walletHandler := handlers.NewWalletConnectHandler(walletStore, walletSvc, tiersSvc, auditSvc)
+	giftingHandler := handlers.NewGiftingConnectHandler(giftingStore, walletSvc, ledgerSvc, tiersSvc, auditSvc)
 	kycHandler := handlers.NewKYCConnectHandler(kycStore, auditSvc)
-	payoutsHandler := handlers.NewPayoutsConnectHandler(payoutsStore, auditSvc)
+	payoutsHandler := handlers.NewPayoutsConnectHandler(payoutsStore, walletSvc, ledgerSvc, auditSvc)
 
 	// Base v1 group (all routes require auth)
 	v1 := r.Group("/api/v1")
@@ -28,11 +37,11 @@ func registerConnectWalletRoutes(r *gin.Engine, supabase interface{}, rbac servi
 	v1.Use(requireUserID())
 
 	// --- Wallet routes ---
-	wallet := v1.Group("/wallet")
-	wallet.GET("/summary", walletHandler.GetSummary)
-	wallet.POST("/fund", walletHandler.FundWallet)
-	wallet.GET("/history", walletHandler.GetHistory)
-	wallet.GET("/history/:id", walletHandler.GetHistoryEntry)
+	walletGroup := v1.Group("/wallet")
+	walletGroup.GET("/summary", walletHandler.GetSummary)
+	walletGroup.POST("/fund", walletHandler.FundWallet)
+	walletGroup.GET("/history", walletHandler.GetHistory)
+	walletGroup.GET("/history/:id", walletHandler.GetHistoryEntry)
 
 	// --- Gifting routes ---
 	gifting := v1.Group("/wallet/gifting")

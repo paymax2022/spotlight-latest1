@@ -5,19 +5,28 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
+	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/services"
 )
 
 // GiftingConnectHandler handles /api/v1/wallet/gifting/* endpoints.
 type GiftingConnectHandler struct {
-	store    *GiftingStore
-	auditSvc services.AuditService
+	store     *GiftingStore
+	walletSvc *wallet.Service
+	ledgerSvc *ledger.Service
+	tiersSvc  *tiers.Service
+	auditSvc  services.AuditService
 }
 
-func NewGiftingConnectHandler(store *GiftingStore, auditSvc services.AuditService) *GiftingConnectHandler {
+func NewGiftingConnectHandler(store *GiftingStore, walletSvc *wallet.Service, ledgerSvc *ledger.Service, tiersSvc *tiers.Service, auditSvc services.AuditService) *GiftingConnectHandler {
 	return &GiftingConnectHandler{
-		store:    store,
-		auditSvc: auditSvc,
+		store:     store,
+		walletSvc: walletSvc,
+		ledgerSvc: ledgerSvc,
+		tiersSvc:  tiersSvc,
+		auditSvc:  auditSvc,
 	}
 }
 
@@ -109,16 +118,42 @@ func (h *GiftingConnectHandler) QuoteGift(c *gin.Context) {
 	productID := c.Query("productId")
 	recipientID := c.Query("recipientId")
 
-	// Mock data (Phase 2: validate productID exists, get user tier, check limit)
+	product, err := h.store.GetCatalogItem(c.Request.Context(), productID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load product"})
+		return
+	}
+	if product == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "gift not found"})
+		return
+	}
+
+	usage, err := h.tiersSvc.GetUsage(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load tier limits"})
+		return
+	}
+
+	// Gifting carries no fee today; total tracks amount so the client can render
+	// a fee line without a contract change when one is introduced.
+	withinLimit := usage.RemainingKobo < 0 || product.AmountKobo <= usage.RemainingKobo
+	remainingAfter := usage.RemainingKobo
+	if usage.RemainingKobo >= 0 {
+		remainingAfter = usage.RemainingKobo - product.AmountKobo
+		if remainingAfter < 0 {
+			remainingAfter = 0
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"product":              gin.H{"id": productID, "name": "Rose", "emoji": "🌹", "priceKobo": 50_000, "tierMin": 1},
-		"recipient":            gin.H{"id": recipientID, "displayName": "Zainab", "handle": "@zainab"},
-		"amountKobo":           50_000,
-		"feeKobo":              0,
-		"totalKobo":            50_000,
-		"tier":                 gin.H{"tier": 1, "label": "Tier 1", "dailyLimitKobo": 3_000_000, "remainingKobo": 1_850_000},
-		"remainingAfterKobo":   1_800_000,
-		"withinLimit":          true,
+		"product":            gin.H{"id": product.ID, "name": product.Name, "amountKobo": product.AmountKobo},
+		"recipient":          gin.H{"id": recipientID},
+		"amountKobo":         product.AmountKobo,
+		"feeKobo":            0,
+		"totalKobo":          product.AmountKobo,
+		"tier":               tierPayload(usage),
+		"remainingAfterKobo": remainingAfter,
+		"withinLimit":        withinLimit,
 	}})
 }
 
@@ -154,12 +189,30 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 		return
 	}
 
-	// Generate reference
-	reference := fmt.Sprintf("GIFT-%d-%s", len(idemKey), generateShortID())
+	if body.RecipientID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "recipient is required"})
+		return
+	}
+	if body.RecipientID == userID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "you cannot gift yourself"})
+		return
+	}
 
-	// Phase 2: Check tier limit, post double-entry ledger
-	// ledger.Debit(ctx, senderID, ref, idemKey, walletAcct, amount)
-	// ledger.Credit(ctx, recipientID, ref, idemKey, senderAcct, amount)
+	reference := fmt.Sprintf("GIFT-%s", generateShortID())
+
+	// Resolve the recipient's wallet so the journal has a real credit side.
+	recipientWallet, err := h.ledgerSvc.GetOrCreateUserWallet(c.Request.Context(), body.RecipientID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "recipient wallet unavailable"})
+		return
+	}
+
+	// Balanced journal: DR sender wallet -> CR recipient wallet. wallet.Debit
+	// enforces the tier limit fail-closed and the balance check is TOCTOU-safe.
+	if err := h.walletSvc.Debit(c.Request.Context(), userID, reference, idemKey, recipientWallet.ID, product.AmountKobo); err != nil {
+		writeMoneyError(c, err)
+		return
+	}
 
 	// Record gift transaction
 	gt, err := h.store.SendGift(c.Request.Context(), userID, body.RecipientID, body.ProductID, body.Message, product.AmountKobo, reference, idemKey)
@@ -178,6 +231,17 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 			}, getIPAddress(c), c.Request.UserAgent(), "warning")
 	}
 
+	bal, err := h.walletSvc.GetBalance(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load wallet"})
+		return
+	}
+	usage, err := h.tiersSvc.GetUsage(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load tier limits"})
+		return
+	}
+
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
 		"ok": true,
 		"transaction": gin.H{
@@ -190,8 +254,8 @@ func (h *GiftingConnectHandler) SendGift(c *gin.Context) {
 			"message":    body.Message,
 			"createdAt":  gt.CreatedAt,
 		},
-		"balanceKobo": 0, // Phase 2: query updated balance
-		"tier":        gin.H{"tier": 1, "dailyLimitKobo": 3_000_000, "remainingKobo": 1_800_000},
+		"balanceKobo": bal.BalanceKobo,
+		"tier":        tierPayload(usage),
 	}})
 }
 

@@ -33,24 +33,30 @@ type PayoutEligibility struct {
 
 // GetPayoutEligibility checks if user can request a payout.
 func (s *PayoutsStore) GetPayoutEligibility(ctx context.Context, userID string) (*PayoutEligibility, error) {
+	// Tier comes from user_profiles.kyc_tier — the same source finance/tiers
+	// enforces against — so the eligibility preview cannot disagree with the
+	// fail-closed gate that actually blocks the debit.
 	row := s.db.QueryRow(ctx, `
 		SELECT
-			u.id::text,
-			COALESCE(k.tier, 0) AS tier,
-			COALESCE(k.tier, 0) >= 2 AS eligible,
-			CASE COALESCE(k.tier, 0)
+			p.id::text,
+			COALESCE(p.kyc_tier, 0) AS tier,
+			COALESCE(p.kyc_tier, 0) >= 2 AS eligible,
+			CASE COALESCE(p.kyc_tier, 0)
 				WHEN 2 THEN 100000
 				WHEN 3 THEN 50000
 				ELSE 1000000
 			END AS minimum_balance_kobo,
 			(
-				SELECT COALESCE(SUM(CASE WHEN type = 'credit' THEN amount_kobo ELSE -amount_kobo END), 0)
+				SELECT COALESCE(SUM(
+					CASE WHEN le.type IN ('CREDIT', 'REVERSAL_DEBIT')
+					     THEN le.amount_kobo ELSE -le.amount_kobo END
+				), 0)
 				FROM ledger_entries le
-				WHERE le.user_id = u.id
+				JOIN ledger_accounts la ON la.id = le.account_id
+				WHERE la.user_id = p.id AND la.type = 'user_wallet'
 			) AS current_balance_kobo
-		FROM auth.users u
-		LEFT JOIN kyc_profiles k ON u.id = k.user_id
-		WHERE u.id = $1
+		FROM user_profiles p
+		WHERE p.id = $1
 	`, userID)
 
 	var elig PayoutEligibility

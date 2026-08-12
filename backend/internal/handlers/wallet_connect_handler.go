@@ -1,24 +1,59 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
+	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/services"
 )
 
 // WalletConnectHandler handles /api/v1/wallet/* endpoints for Paymax Connect module.
 // All endpoints are gated behind auth (RequireAuthContext sets user_id in context).
+//
+// Reads project the ledger through WalletStore; every money mutation goes through
+// wallet.Service so it posts a balanced journal and passes tier limits fail-closed.
 type WalletConnectHandler struct {
-	store      *WalletStore
-	auditSvc   services.AuditService
+	store     *WalletStore
+	walletSvc *wallet.Service
+	tiersSvc  *tiers.Service
+	auditSvc  services.AuditService
 }
 
-func NewWalletConnectHandler(store *WalletStore, auditSvc services.AuditService) *WalletConnectHandler {
+func NewWalletConnectHandler(store *WalletStore, walletSvc *wallet.Service, tiersSvc *tiers.Service, auditSvc services.AuditService) *WalletConnectHandler {
 	return &WalletConnectHandler{
-		store:    store,
-		auditSvc: auditSvc,
+		store:     store,
+		walletSvc: walletSvc,
+		tiersSvc:  tiersSvc,
+		auditSvc:  auditSvc,
+	}
+}
+
+var tierLabels = map[int]string{
+	0: "Tier 0 (No KYC)",
+	1: "Tier 1",
+	2: "Tier 2",
+	3: "Tier 3",
+}
+
+// tierPayload renders the shared tier/limits block used by several responses.
+func tierPayload(u tiers.Usage) gin.H {
+	t := int(u.Tier)
+	return gin.H{
+		"tier":            t,
+		"label":           tierLabels[t],
+		"dailyLimitKobo":  u.DailyLimitKobo,
+		"remainingKobo":   u.RemainingKobo,
+		"canSend":         t >= 1,
+		"canReceive":      true,
+		"canWithdraw":     t >= 2,
+		"canGoLive":       t >= 2,
+		"nextTier":        t + 1,
+		"nextTierUnlocks": fmt.Sprintf("Higher limits and new features at Tier %d", t+1),
 	}
 }
 
@@ -31,40 +66,22 @@ func (h *WalletConnectHandler) GetSummary(c *gin.Context) {
 		return
 	}
 
-	summary, err := h.store.GetWalletSummary(c.Request.Context(), userID)
+	bal, err := h.walletSvc.GetBalance(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load wallet"})
 		return
 	}
 
-	// Calculate remaining limits
-	dailyRemaining := summary.DailyLimit - summary.DailySpent
-
-	tierLabels := map[int]string{
-		0: "Tier 0 (No KYC)",
-		1: "Tier 1",
-		2: "Tier 2",
-		3: "Tier 3",
+	usage, err := h.tiersSvc.GetUsage(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load tier limits"})
+		return
 	}
 
-	canWithdraw := summary.Tier >= 2
-	canGoLive := summary.Tier >= 2
-
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"balanceKobo": summary.BalanceKobo,
-		"currency":    summary.Currency,
-		"tier": gin.H{
-			"tier":            summary.Tier,
-			"label":          tierLabels[summary.Tier],
-			"dailyLimitKobo": summary.DailyLimit,
-			"remainingKobo":  dailyRemaining,
-			"canSend":        summary.Tier >= 1,
-			"canReceive":     true,
-			"canWithdraw":    canWithdraw,
-			"canGoLive":      canGoLive,
-			"nextTier":       summary.Tier + 1,
-			"nextTierUnlocks": fmt.Sprintf("Higher limits and new features at Tier %d", summary.Tier+1),
-		},
+		"balanceKobo": bal.BalanceKobo,
+		"currency":    "NGN",
+		"tier":        tierPayload(usage),
 	}})
 }
 
@@ -96,26 +113,25 @@ func (h *WalletConnectHandler) FundWallet(c *gin.Context) {
 		return
 	}
 
-	// Generate reference
-	reference := fmt.Sprintf("FUND-%d-%s", len(idemKey), generateShortID())
+	reference := fmt.Sprintf("FUND-%s", generateShortID())
 
-	// Phase 2: Post ledger entry (Credit from Paymax revenue)
-	// ledger.Credit(ctx, userID, reference, idemKey, AccountPaymaxRevenue, body.AmountKobo)
-	// For now: Record in wallet_transactions table
-	txn, err := h.store.RecordFunding(c.Request.Context(), userID, reference, body.AmountKobo, idemKey)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fund wallet"})
+	// Balanced journal: DR provider_clearing -> CR user wallet.
+	if err := h.walletSvc.Credit(c.Request.Context(), userID, reference, idemKey, body.AmountKobo); err != nil {
+		writeMoneyError(c, err)
 		return
 	}
 
-	// Get updated summary
-	summary, err := h.store.GetWalletSummary(c.Request.Context(), userID)
+	bal, err := h.walletSvc.GetBalance(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load wallet"})
 		return
 	}
+	usage, err := h.tiersSvc.GetUsage(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load tier limits"})
+		return
+	}
 
-	// Emit audit event
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "fund_wallet", "wallet", "wallet",
 			userID, nil, map[string]interface{}{
@@ -126,18 +142,12 @@ func (h *WalletConnectHandler) FundWallet(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
 		"ok":             true,
-		"newBalanceKobo": summary.BalanceKobo,
-		"balanceKobo":    summary.BalanceKobo,
-		"tier": gin.H{
-			"tier":            summary.Tier,
-			"label":          fmt.Sprintf("Tier %d", summary.Tier),
-			"dailyLimitKobo": summary.DailyLimit,
-			"remainingKobo":  summary.DailyLimit - summary.DailySpent,
-		},
+		"newBalanceKobo": bal.BalanceKobo,
+		"balanceKobo":    bal.BalanceKobo,
+		"tier":           tierPayload(usage),
 		"entry": gin.H{
-			"id":           txn.ID,
-			"kind":        "fund",
-			"direction":   "credit",
+			"kind":       "fund",
+			"direction":  "credit",
 			"amountKobo": body.AmountKobo,
 			"status":     "completed",
 			"reference":  reference,
@@ -164,14 +174,20 @@ func (h *WalletConnectHandler) GetHistory(c *gin.Context) {
 		fmt.Sscanf(o, "%d", &offset)
 	}
 
-	transactions, total, err := h.store.GetTransactionHistory(c.Request.Context(), userID, limit, offset)
+	txns, err := h.walletSvc.ListTransactions(c.Request.Context(), userID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load history"})
+		return
+	}
+
+	total, err := h.store.CountTransactions(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load history"})
 		return
 	}
 
 	entries := []gin.H{}
-	for _, txn := range transactions {
+	for _, txn := range txns.Transactions {
 		entries = append(entries, gin.H{
 			"id":         txn.ID,
 			"ref":        txn.Reference,
@@ -179,7 +195,7 @@ func (h *WalletConnectHandler) GetHistory(c *gin.Context) {
 			"direction":  txn.Type,
 			"amountKobo": txn.AmountKobo,
 			"status":     "completed",
-			"title":      txn.Description,
+			"title":      txn.Reference,
 			"createdAt":  txn.CreatedAt,
 		})
 	}
@@ -187,8 +203,8 @@ func (h *WalletConnectHandler) GetHistory(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
 		"entries": entries,
 		"total":   total,
-		"limit":   limit,
-		"offset":  offset,
+		"limit":   txns.Limit,
+		"offset":  txns.Offset,
 	}})
 }
 
@@ -213,14 +229,37 @@ func (h *WalletConnectHandler) GetHistoryEntry(c *gin.Context) {
 		return
 	}
 
+	title := txn.Description
+	if title == "" {
+		title = txn.Reference
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"id":           txn.ID,
-		"ref":          txn.Reference,
-		"kind":         "transaction",
-		"direction":    txn.Type,
-		"amountKobo":   txn.AmountKobo,
-		"status":       "completed",
-		"title":        txn.Description,
-		"createdAt":    txn.CreatedAt,
+		"id":         txn.ID,
+		"ref":        txn.Reference,
+		"kind":       "transaction",
+		"direction":  txn.Type,
+		"amountKobo": txn.AmountKobo,
+		"status":     "completed",
+		"title":      title,
+		"createdAt":  txn.CreatedAt,
 	}})
+}
+
+// writeMoneyError maps money-path failures to HTTP responses. Tier and balance
+// rejections are client errors with actionable messages; everything else is
+// opaque so ledger internals never leak to the client.
+func writeMoneyError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ledger.ErrDuplicate):
+		c.JSON(http.StatusConflict, gin.H{"error": "this request was already processed"})
+	case errors.Is(err, ledger.ErrInsufficientFunds):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "insufficient wallet balance"})
+	case errors.Is(err, tiers.ErrWalletDisabled):
+		c.JSON(http.StatusForbidden, gin.H{"error": "complete KYC to activate your wallet"})
+	case errors.Is(err, tiers.ErrDailyLimitExceeded):
+		c.JSON(http.StatusForbidden, gin.H{"error": "daily limit exceeded for your tier"})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "transaction could not be completed"})
+	}
 }

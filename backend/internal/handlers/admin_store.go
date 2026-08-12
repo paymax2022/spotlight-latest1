@@ -35,10 +35,11 @@ func (s *AdminStore) GetDashboardStats(ctx context.Context) (*DashboardStats, er
 			(SELECT COUNT(*) FROM kyc_profiles WHERE tier = 0) as kyc_pending,
 			(SELECT COUNT(*) FROM orders WHERE status = 'active') as active_orders,
 			(SELECT COALESCE(SUM(amount_kobo), 0) FROM ledger_entries
-			 WHERE type = 'debit' AND created_at > NOW() - INTERVAL '24 hours') as total_volume,
+			 WHERE type = 'DEBIT' AND created_at > NOW() - INTERVAL '24 hours') as total_volume,
 			(SELECT COALESCE(AVG(amount_kobo), 0) FROM orders
 			 WHERE created_at > NOW() - INTERVAL '24 hours') as avg_order_value,
-			(SELECT COUNT(*) FROM ledger_entries WHERE type = 'reversal'
+			(SELECT COUNT(*) FROM ledger_entries
+			 WHERE type IN ('REVERSAL_CREDIT', 'REVERSAL_DEBIT')
 			 AND created_at > NOW() - INTERVAL '24 hours') as failed_txns
 	`)
 
@@ -318,8 +319,8 @@ func (s *AdminStore) GetFeesReport(ctx context.Context) ([]FeesReport, error) {
 			COUNT(*) as transactions,
 			COALESCE(AVG(amount_kobo), 0)::bigint as average_fee
 		FROM ledger_entries
-		WHERE type = 'debit'
-		  AND account_id = (SELECT id FROM ledger_accounts WHERE name = 'paymax_revenue' LIMIT 1)
+		WHERE type = 'CREDIT'
+		  AND account_id IN (SELECT id FROM ledger_accounts WHERE type = 'paymax_revenue')
 		  AND created_at > NOW() - INTERVAL '30 days'
 		GROUP BY DATE(created_at)
 		ORDER BY date DESC
