@@ -286,12 +286,25 @@ export async function claimCode(code: string): Promise<ClaimCodeResult> {
     );
     return { ok: true, attribution: mapAttribution(unwrap<BackendAttribution>(res)) };
   } catch (err: unknown) {
-    const status = (err as { response?: { status?: number } })?.response?.status;
+    const res = (err as { response?: { status?: number; data?: { reason?: string } } })?.response;
+    // The backend sends a machine-readable `reason`; status alone cannot
+    // separate a closed grace window from an existing referrer from having no
+    // attribution at all — all three answer 409.
+    const REASONS: Record<string, ClaimCodeResult['error']> = {
+      window_closed: 'window_closed',
+      self_referral: 'self_referral',
+      already_claimed: 'already_claimed',
+      no_attribution: 'no_attribution',
+      invalid_code: 'invalid',
+    };
+    const byReason = res?.data?.reason ? REASONS[res.data.reason] : undefined;
+    if (byReason) return { ok: false, error: byReason };
+
+    // Fallback for an older backend that sends no reason.
+    const status = res?.status;
     let error: ClaimCodeResult['error'] = 'invalid';
     if (status === 409) error = 'already_claimed';
     else if (status === 403) error = 'self_referral';
-    // TODO(referral phase3): backend does not distinguish 'window_closed' from
-    // 'already_claimed' — both surface as 409.
     return { ok: false, error };
   }
 }
