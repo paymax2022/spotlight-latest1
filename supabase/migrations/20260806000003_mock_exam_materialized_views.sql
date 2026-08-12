@@ -3,6 +3,25 @@
 -- Refresh strategy: nightly (or on-demand after significant events)
 
 -- ══════════════════════════════════════════════════════════════════════════════
+-- Attempt-metadata columns required by the views below and by the Go backend
+-- (backend/internal/academy/assessment/mock_exam_repository.go + _analytics.go).
+-- 20260806000000 created academy_mock_attempt_metadata without them; additive
+-- and idempotent so this is a no-op wherever they already exist.
+-- ══════════════════════════════════════════════════════════════════════════════
+
+ALTER TABLE public.academy_mock_attempt_metadata
+    ADD COLUMN IF NOT EXISTS user_id       uuid REFERENCES auth.users(id) ON DELETE CASCADE,
+    ADD COLUMN IF NOT EXISTS status        text NOT NULL DEFAULT 'in_progress',
+    ADD COLUMN IF NOT EXISTS answers       jsonb NOT NULL DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS score_percent numeric,
+    ADD COLUMN IF NOT EXISTS started_at    timestamptz,
+    ADD COLUMN IF NOT EXISTS submitted_at  timestamptz,
+    ADD COLUMN IF NOT EXISTS updated_at    timestamptz NOT NULL DEFAULT now();
+
+CREATE INDEX IF NOT EXISTS idx_academy_mock_metadata_user
+    ON public.academy_mock_attempt_metadata(user_id, submitted_at DESC);
+
+-- ══════════════════════════════════════════════════════════════════════════════
 -- Daily Learner Analytics - aggregates learner performance by day
 -- ══════════════════════════════════════════════════════════════════════════════
 
@@ -190,19 +209,27 @@ retention_days AS (
     FROM first_attempt fa
     JOIN academy_mock_attempt_metadata m ON fa.user_id = m.user_id
     WHERE m.status = 'graded'
+),
+cohort_sizes AS (
+    SELECT
+        DATE_TRUNC('week', first_attempt_date)::DATE as cohort_week,
+        COUNT(DISTINCT user_id) as cohort_size
+    FROM first_attempt
+    GROUP BY DATE_TRUNC('week', first_attempt_date)::DATE
 )
 SELECT
-    DATE_TRUNC('week', first_attempt_date)::DATE as cohort_week,
-    retention_bucket,
-    COUNT(DISTINCT user_id) as learner_count,
+    DATE_TRUNC('week', rd.first_attempt_date)::DATE as cohort_week,
+    rd.retention_bucket,
+    COUNT(DISTINCT rd.user_id) as learner_count,
     CAST(
-        CAST(COUNT(DISTINCT user_id) AS FLOAT)
-        / (SELECT COUNT(DISTINCT user_id) FROM first_attempt
-           WHERE DATE_TRUNC('week', first_attempt_date)::DATE = DATE_TRUNC('week', retention_days.first_attempt_date)::DATE)
+        CAST(COUNT(DISTINCT rd.user_id) AS FLOAT)
+        / cs.cohort_size
         * 100 AS NUMERIC(5, 2)
     ) as retention_rate
-FROM retention_days
-GROUP BY DATE_TRUNC('week', first_attempt_date), retention_bucket
+FROM retention_days rd
+JOIN cohort_sizes cs
+  ON cs.cohort_week = DATE_TRUNC('week', rd.first_attempt_date)::DATE
+GROUP BY DATE_TRUNC('week', rd.first_attempt_date)::DATE, rd.retention_bucket, cs.cohort_size
 WITH DATA;
 
 CREATE INDEX IF NOT EXISTS idx_mv_cohort_week

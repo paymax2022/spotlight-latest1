@@ -55,11 +55,7 @@ BEGIN
       template_idx,
       variant,
       (template_idx * 1000 + variant * 100) as seed_value
-    FROM (
-      SELECT
-        generate_series(1, 42) as template_idx,
-        (CASE WHEN generate_series(1, 42) % 3 = 0 THEN 4 ELSE 3 END) as max_variants
-    ) t
+    FROM generate_series(1, 42) AS t(template_idx)
     CROSS JOIN LATERAL generate_series(1, (CASE WHEN t.template_idx % 3 = 0 THEN 4 ELSE 3 END)) as variant
   )
   SELECT
