@@ -3,6 +3,29 @@
 -- Refresh strategy: nightly (or on-demand after significant events)
 
 -- ══════════════════════════════════════════════════════════════════════════════
+-- Bridge view (fresh-replay fix): the analytics below were authored against a
+-- flat attempt schema (user_id / submitted_at / status / score_percent columns
+-- on academy_mock_attempt_metadata) that never existed — the real table keeps
+-- the score inside the `performance` jsonb and the learner/submission fields
+-- on academy_attempts. Every fresh replay died with `column m.score_percent
+-- does not exist`. This view derives exactly those columns from the real
+-- schema; attempts in state scored/reviewed surface as status='graded'.
+-- ══════════════════════════════════════════════════════════════════════════════
+
+CREATE OR REPLACE VIEW v_mock_attempt_scores AS
+SELECT
+    m.id,
+    m.attempt_id,
+    m.instance_id,
+    m.template_id,
+    a.user_id,
+    a.submitted_at,
+    CASE WHEN a.state IN ('scored','reviewed') THEN 'graded' ELSE a.state END AS status,
+    NULLIF(m.performance->>'score_pct', '')::numeric AS score_percent
+FROM academy_mock_attempt_metadata m
+JOIN academy_attempts a ON a.id = m.attempt_id;
+
+-- ══════════════════════════════════════════════════════════════════════════════
 -- Daily Learner Analytics - aggregates learner performance by day
 -- ══════════════════════════════════════════════════════════════════════════════
 
@@ -21,7 +44,7 @@ SELECT
     ) as pass_rate,
     t.class_id,
     t.exam_type
-FROM academy_mock_attempt_metadata m
+FROM v_mock_attempt_scores m
 JOIN academy_mock_exam_instances inst ON m.instance_id = inst.id
 JOIN academy_mock_exam_templates t ON inst.template_id = t.id
 WHERE m.status = 'graded'
@@ -49,7 +72,7 @@ SELECT
         CAST(SUM(CASE WHEN m.score_percent >= 60 THEN 1 ELSE 0 END) AS FLOAT)
         / NULLIF(COUNT(*), 0) * 100 AS NUMERIC(5, 2)
     ) as system_pass_rate
-FROM academy_mock_attempt_metadata m
+FROM v_mock_attempt_scores m
 WHERE m.status = 'graded'
 GROUP BY DATE_TRUNC('week', m.submitted_at)
 WITH DATA;
@@ -82,7 +105,7 @@ SELECT
         / NULLIF(COUNT(*), 0) * 100 AS NUMERIC(5, 2)
     ) as fail_rate,
     MAX(m.submitted_at) as last_attempt
-FROM academy_mock_attempt_metadata m
+FROM v_mock_attempt_scores m
 JOIN academy_mock_exam_instances inst ON m.instance_id = inst.id
 JOIN academy_mock_exam_templates t ON inst.template_id = t.id
 WHERE m.status = 'graded'
@@ -118,7 +141,7 @@ SELECT
     ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) as popularity_rank,
     MAX(m.submitted_at) as last_attempt,
     COUNT(*) FILTER (WHERE DATE(m.submitted_at) >= CURRENT_DATE - INTERVAL '7 days') as weekly_attempts
-FROM academy_mock_attempt_metadata m
+FROM v_mock_attempt_scores m
 JOIN academy_mock_exam_instances inst ON m.instance_id = inst.id
 JOIN academy_mock_exam_templates t ON inst.template_id = t.id
 WHERE m.status = 'graded'
@@ -151,7 +174,7 @@ SELECT
         CAST(COUNT(*) AS FLOAT) / SUM(COUNT(*)) OVER (PARTITION BY DATE(m.submitted_at))
         * 100 AS NUMERIC(5, 2)
     ) as percentage
-FROM academy_mock_attempt_metadata m
+FROM v_mock_attempt_scores m
 WHERE m.status = 'graded'
 GROUP BY DATE(m.submitted_at), grade
 WITH DATA;
@@ -170,7 +193,7 @@ WITH first_attempt AS (
     SELECT
         user_id,
         DATE(MIN(submitted_at)) as first_attempt_date
-    FROM academy_mock_attempt_metadata
+    FROM v_mock_attempt_scores
     WHERE status = 'graded'
     GROUP BY user_id
 ),
@@ -188,21 +211,29 @@ retention_days AS (
             ELSE 'Day 90+'
         END as retention_bucket
     FROM first_attempt fa
-    JOIN academy_mock_attempt_metadata m ON fa.user_id = m.user_id
+    JOIN v_mock_attempt_scores m ON fa.user_id = m.user_id
     WHERE m.status = 'graded'
+),
+-- Cohort denominators as a joined CTE — the original correlated subquery
+-- referenced an ungrouped outer column (42803) and could never build.
+cohort_sizes AS (
+    SELECT
+        DATE_TRUNC('week', first_attempt_date)::DATE as cohort_week,
+        COUNT(DISTINCT user_id) as cohort_size
+    FROM first_attempt
+    GROUP BY DATE_TRUNC('week', first_attempt_date)::DATE
 )
 SELECT
-    DATE_TRUNC('week', first_attempt_date)::DATE as cohort_week,
-    retention_bucket,
-    COUNT(DISTINCT user_id) as learner_count,
+    DATE_TRUNC('week', rd.first_attempt_date)::DATE as cohort_week,
+    rd.retention_bucket,
+    COUNT(DISTINCT rd.user_id) as learner_count,
     CAST(
-        CAST(COUNT(DISTINCT user_id) AS FLOAT)
-        / (SELECT COUNT(DISTINCT user_id) FROM first_attempt
-           WHERE DATE_TRUNC('week', first_attempt_date)::DATE = DATE_TRUNC('week', retention_days.first_attempt_date)::DATE)
-        * 100 AS NUMERIC(5, 2)
+        CAST(COUNT(DISTINCT rd.user_id) AS FLOAT)
+        / NULLIF(cs.cohort_size, 0) * 100 AS NUMERIC(5, 2)
     ) as retention_rate
-FROM retention_days
-GROUP BY DATE_TRUNC('week', first_attempt_date), retention_bucket
+FROM retention_days rd
+JOIN cohort_sizes cs ON cs.cohort_week = DATE_TRUNC('week', rd.first_attempt_date)::DATE
+GROUP BY DATE_TRUNC('week', rd.first_attempt_date)::DATE, rd.retention_bucket, cs.cohort_size
 WITH DATA;
 
 CREATE INDEX IF NOT EXISTS idx_mv_cohort_week
@@ -226,7 +257,7 @@ SELECT
         / NULLIF(COUNT(*), 0) * 100 AS NUMERIC(5, 2)
     ) as pass_rate,
     ROW_NUMBER() OVER (PARTITION BY t.class_id ORDER BY AVG(m.score_percent) ASC) as difficulty_rank
-FROM academy_mock_attempt_metadata m
+FROM v_mock_attempt_scores m
 JOIN academy_mock_exam_instances inst ON m.instance_id = inst.id
 JOIN academy_mock_exam_templates t ON inst.template_id = t.id
 WHERE m.status = 'graded'
