@@ -81,6 +81,11 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
     CREATE ROLE service_role NOLOGIN BYPASSRLS;
   END IF;
+  -- Some migrations GRANT to "postgres" by name (the superuser on real
+  -- Supabase); the CI container's superuser is $POSTGRES_USER instead.
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres') THEN
+    CREATE ROLE postgres NOLOGIN;
+  END IF;
 END $$;
 
 -- ── storage schema (Supabase Storage in production) ─────────────────────────

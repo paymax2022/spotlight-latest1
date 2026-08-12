@@ -1,5 +1,5 @@
 -- RLS lockdown, wave 2 (same pattern as 20260703225152_rls_backend_only_lockdown.sql).
--- These 73 public tables were created by migrations timestamped AFTER the wave-1
+-- These 76 public tables were created by migrations timestamped AFTER the wave-1
 -- lockdown ran (its to_regclass guards no-op'd on then-missing tables), so they
 -- shipped without row-level security. All are reached ONLY by (a) the Go backend
 -- as owner 'postgres' or (b) the Next.js server via the service-role client —
@@ -78,6 +78,9 @@ DO $rls$ BEGIN IF to_regclass('public.mkt_saved_items') IS NOT NULL THEN EXECUTE
 DO $rls$ BEGIN IF to_regclass('public.mkt_saved_searches') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.mkt_saved_searches ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
 DO $rls$ BEGIN IF to_regclass('public.mkt_threads') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.mkt_threads ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
 DO $rls$ BEGIN IF to_regclass('public.mkt_trust_scores') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.mkt_trust_scores ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
+DO $rls$ BEGIN IF to_regclass('public.marketplace_activity_stream') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.marketplace_activity_stream ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
+DO $rls$ BEGIN IF to_regclass('public.marketplace_audit_logs') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.marketplace_audit_logs ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
+DO $rls$ BEGIN IF to_regclass('public.marketplace_metrics') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.marketplace_metrics ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
 DO $rls$ BEGIN IF to_regclass('public.orch_beneficiaries') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.orch_beneficiaries ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
 DO $rls$ BEGIN IF to_regclass('public.orch_fx_card_txns') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.orch_fx_card_txns ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
 DO $rls$ BEGIN IF to_regclass('public.orch_fx_cards') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.orch_fx_cards ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
@@ -157,6 +160,9 @@ BEGIN
     , 'mkt_saved_searches'
     , 'mkt_threads'
     , 'mkt_trust_scores'
+    , 'marketplace_activity_stream'
+    , 'marketplace_audit_logs'
+    , 'marketplace_metrics'
     , 'orch_beneficiaries'
     , 'orch_fx_card_txns'
     , 'orch_fx_cards'
