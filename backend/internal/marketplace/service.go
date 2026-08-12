@@ -13,15 +13,15 @@ import (
 
 // Service handles all marketplace operations with integrated audit logging.
 type Service struct {
-	db    *pgxpool.Pool
-	redis *redis.Client
+	Db    *pgxpool.Pool
+	Redis *redis.Client
 }
 
 // NewService creates a new marketplace service.
 func NewService(db *pgxpool.Pool, redis *redis.Client) *Service {
 	return &Service{
-		db:    db,
-		redis: redis,
+		Db:    db,
+		Redis: redis,
 	}
 }
 
@@ -108,7 +108,7 @@ func (s *Service) CreateListing(
 	listing := &Listing{}
 
 	// Start transaction for atomicity
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.Db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -157,7 +157,7 @@ func (s *Service) CreateListing(
 	}
 
 	// Invalidate cache
-	s.redis.Del(ctx, fmt.Sprintf("listings:%s", userID))
+	s.Redis.Del(ctx, fmt.Sprintf("listings:%s", userID))
 
 	// Publish real-time event
 	_ = s.PublishListingEvent(ctx, "listing.created", listing)
@@ -177,7 +177,7 @@ func (s *Service) GetListing(ctx context.Context, listingID string) (*Listing, e
 	`
 
 	listing := &Listing{}
-	err := s.db.QueryRow(ctx, query, listingID).Scan(
+	err := s.Db.QueryRow(ctx, query, listingID).Scan(
 		&listing.ID, &listing.UserID, &listing.Title, &listing.Description,
 		&listing.Category, &listing.PriceKobo, &listing.Currency,
 		&listing.Status, &listing.Condition, &listing.LocationLat, &listing.LocationLng,
@@ -205,7 +205,7 @@ func (s *Service) UpdateListing(
 	ipAddress string,
 	userAgent string,
 ) (*Listing, error) {
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.Db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -304,7 +304,7 @@ func (s *Service) UpdateListing(
 	}
 
 	// Invalidate cache
-	s.redis.Del(ctx, fmt.Sprintf("listings:%s", userID))
+	s.Redis.Del(ctx, fmt.Sprintf("listings:%s", userID))
 
 	// Publish real-time event
 	_ = s.PublishListingEvent(ctx, "listing.updated", newListing)
@@ -321,7 +321,7 @@ func (s *Service) DeleteListing(
 	ipAddress string,
 	userAgent string,
 ) error {
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.Db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -374,7 +374,7 @@ func (s *Service) DeleteListing(
 	}
 
 	// Invalidate cache
-	s.redis.Del(ctx, fmt.Sprintf("listings:%s", userID))
+	s.Redis.Del(ctx, fmt.Sprintf("listings:%s", userID))
 
 	// Publish real-time event
 	_ = s.PublishListingEvent(ctx, "listing.deleted", listing)
@@ -392,7 +392,7 @@ func (s *Service) GetAuditTrail(ctx context.Context, listingID string, limit int
 		LIMIT $2
 	`
 
-	rows, err := s.db.Query(ctx, query, listingID, limit)
+	rows, err := s.Db.Query(ctx, query, listingID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get audit trail: %w", err)
 	}
@@ -477,5 +477,5 @@ func (s *Service) PublishListingEvent(ctx context.Context, eventType string, lis
 	eventJSON, _ := json.Marshal(event)
 
 	// Publish to Redis pub/sub for real-time delivery
-	return s.redis.Publish(ctx, "marketplace:events", string(eventJSON)).Err()
+	return s.Redis.Publish(ctx, "marketplace:events", string(eventJSON)).Err()
 }
