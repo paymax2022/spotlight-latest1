@@ -167,6 +167,21 @@ func (h *Handler) FreeVoteAllowance(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": a})
 }
 
+// GetContestant — GET /api/v1/connect/contestants/:id (member).
+// One contestant with its live tally and rank, keyed on the contestant id alone.
+func (h *Handler) GetContestant(c *gin.Context) {
+	e, err := h.svc.GetContestant(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "contestant not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load contestant"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": e})
+}
+
 // GetStages — GET /api/v1/connect/contests/:id/stages (member).
 func (h *Handler) GetStages(c *gin.Context) {
 	stages, err := h.svc.GetStages(c.Request.Context(), c.Param("id"))
@@ -191,6 +206,7 @@ func Register(member gin.IRouter, svc *Service, cfg config.Config) {
 	member.GET("/contests/:id/results", h.Results)
 	member.GET("/contests/:id/contestants", h.ListRoster)
 	member.GET("/contests/:id/free-vote-allowance", h.FreeVoteAllowance)
+	member.GET("/contestants/:id", h.GetContestant)
 	member.GET("/contests/:id/stages", h.GetStages)
 
 	// Stage eviction routes — gated behind FEATURE_CONTEST_STAGE_EVICTION_ENABLED.

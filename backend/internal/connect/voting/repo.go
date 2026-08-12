@@ -2,9 +2,11 @@ package connectvoting
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -209,6 +211,7 @@ type RosterEntry struct {
 	MediaURL     string `json:"media_url"`
 	Status       string `json:"status"`
 	IsActive     bool   `json:"is_active"`
+	ContestID    string `json:"contest_id,omitempty"`
 	FreeVotes    int64  `json:"free_votes"`
 	PaidVotes    int64  `json:"paid_votes"`
 	TotalVotes   int64  `json:"total_votes"`
@@ -275,4 +278,58 @@ func (r *Repository) IsOnRoster(ctx context.Context, contestID, optionRef string
 		return false, fmt.Errorf("voting: check roster membership: %w", err)
 	}
 	return ok, nil
+}
+
+// GetRosterEntry returns one contestant by id, with its live tally. Keyed on the
+// contestant id alone (a UUID primary key), so the caller does not need to know
+// which contest it belongs to.
+//
+// Returns (nil, nil) when no such contestant exists.
+func (r *Repository) GetRosterEntry(ctx context.Context, contestantID string) (*RosterEntry, error) {
+	const q = `
+		SELECT c.id::text, c.name, c.stage_name, c.category, c.state, c.bio,
+		       c.photo_url, c.media_url, c.status::text, c.is_active,
+		       COALESCE(v.free_votes, 0), COALESCE(v.paid_votes, 0),
+		       COALESCE(c.connect_contest_id::text, '')
+		FROM contestants c
+		LEFT JOIN (
+			SELECT option_ref,
+			       SUM(CASE WHEN paid = false THEN quantity ELSE 0 END) AS free_votes,
+			       SUM(CASE WHEN paid = true  THEN quantity ELSE 0 END) AS paid_votes
+			FROM connect_votes
+			GROUP BY option_ref
+		) v ON v.option_ref = c.id::text
+		WHERE c.id::text = $1`
+
+	var e RosterEntry
+	var contestID string
+	err := r.db.QueryRow(ctx, q, contestantID).Scan(
+		&e.ContestantID, &e.Name, &e.StageName, &e.Category, &e.State, &e.Bio,
+		&e.PhotoURL, &e.MediaURL, &e.Status, &e.IsActive,
+		&e.FreeVotes, &e.PaidVotes, &contestID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("voting: get roster entry: %w", err)
+	}
+	e.TotalVotes = e.FreeVotes + e.PaidVotes
+	e.ContestID = contestID
+
+	// Rank is a property of the whole roster, so derive it from the contestant's
+	// own contest rather than reporting a meaningless 0.
+	if contestID != "" {
+		if err := r.db.QueryRow(ctx, `
+			SELECT COUNT(*) + 1
+			FROM contestants c2
+			LEFT JOIN (
+				SELECT option_ref, SUM(quantity) AS total
+				FROM connect_votes WHERE contest_id = $1 GROUP BY option_ref
+			) v2 ON v2.option_ref = c2.id::text
+			WHERE c2.connect_contest_id = $1 AND c2.is_active
+			  AND COALESCE(v2.total, 0) > $2`, contestID, e.TotalVotes).Scan(&e.Rank); err != nil {
+			return nil, fmt.Errorf("voting: rank roster entry: %w", err)
+		}
+	}
+	return &e, nil
 }

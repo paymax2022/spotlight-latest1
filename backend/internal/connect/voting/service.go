@@ -363,3 +363,16 @@ func (s *Service) FreeVoteAllowanceFor(ctx context.Context, contestID, voterID s
 	}
 	return FreeVoteAllowance{Total: total, Used: used, Remaining: remaining}, nil
 }
+
+// GetContestant returns one contestant with its live tally and rank, or
+// ErrNotFound when no such contestant exists.
+func (s *Service) GetContestant(ctx context.Context, contestantID string) (*RosterEntry, error) {
+	e, err := s.repo.GetRosterEntry(ctx, contestantID)
+	if err != nil {
+		return nil, err
+	}
+	if e == nil {
+		return nil, ErrNotFound
+	}
+	return e, nil
+}

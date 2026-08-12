@@ -147,8 +147,11 @@ export async function getContestant(contestantId: string): Promise<Contestant> {
     if (!found) throw new Error('Contestant not found');
     return found;
   }
-  const res = await api.get(`/voting/contestants/${contestantId}`);
-  return normalizeContestantTrend((res.data?.data ?? res.data ?? {}) as Record<string, unknown>);
+  const res = await api.get(`${CONNECT_VOTING_BASE}/contestants/${contestantId}`);
+  const raw = (res.data?.data ?? res.data ?? {}) as BackendRosterEntry & { contest_id?: string };
+  return normalizeContestantTrend(
+    mapContestant(raw, raw.contest_id ?? '') as unknown as Record<string, unknown>,
+  );
 }
 
 // ─── Leaderboard ──────────────────────────────────────────────────────────────
