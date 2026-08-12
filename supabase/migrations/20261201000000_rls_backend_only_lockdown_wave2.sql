@@ -1,5 +1,5 @@
 -- RLS lockdown, wave 2 (same pattern as 20260703225152_rls_backend_only_lockdown.sql).
--- These 76 public tables were created by migrations timestamped AFTER the wave-1
+-- These 78 public tables were created by migrations timestamped AFTER the wave-1
 -- lockdown ran (its to_regclass guards no-op'd on then-missing tables), so they
 -- shipped without row-level security. All are reached ONLY by (a) the Go backend
 -- as owner 'postgres' or (b) the Next.js server via the service-role client —
@@ -32,6 +32,8 @@ DO $rls$ BEGIN IF to_regclass('public.assoc_election_positions') IS NOT NULL THE
 DO $rls$ BEGIN IF to_regclass('public.assoc_election_results') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.assoc_election_results ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
 DO $rls$ BEGIN IF to_regclass('public.assoc_election_votes') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.assoc_election_votes ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
 DO $rls$ BEGIN IF to_regclass('public.assoc_elections') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.assoc_elections ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
+DO $rls$ BEGIN IF to_regclass('public.bridge_idempotency_keys') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.bridge_idempotency_keys ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
+DO $rls$ BEGIN IF to_regclass('public.bridge_outbox') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.bridge_outbox ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
 DO $rls$ BEGIN IF to_regclass('public.bus_departure_templates') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.bus_departure_templates ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
 DO $rls$ BEGIN IF to_regclass('public.connect_account_restrictions') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.connect_account_restrictions ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
 DO $rls$ BEGIN IF to_regclass('public.connect_credit_txns') IS NOT NULL THEN EXECUTE 'ALTER TABLE public.connect_credit_txns ENABLE ROW LEVEL SECURITY'; END IF; END $rls$;
@@ -114,6 +116,8 @@ BEGIN
     , 'assoc_election_results'
     , 'assoc_election_votes'
     , 'assoc_elections'
+    , 'bridge_idempotency_keys'
+    , 'bridge_outbox'
     , 'bus_departure_templates'
     , 'connect_account_restrictions'
     , 'connect_credit_txns'

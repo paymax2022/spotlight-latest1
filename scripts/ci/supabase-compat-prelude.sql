@@ -70,6 +70,15 @@ CREATE OR REPLACE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS $$
   SELECT COALESCE(NULLIF(current_setting('request.jwt.claims', true), ''), '{}')::jsonb
 $$;
 
+-- ── extensions schema (Supabase installs pgcrypto there; here it's in public)
+CREATE SCHEMA IF NOT EXISTS extensions;
+CREATE OR REPLACE FUNCTION extensions.crypt(text, text) RETURNS text
+LANGUAGE sql AS $$ SELECT public.crypt($1, $2) $$;
+CREATE OR REPLACE FUNCTION extensions.gen_salt(text) RETURNS text
+LANGUAGE sql AS $$ SELECT public.gen_salt($1) $$;
+CREATE OR REPLACE FUNCTION extensions.gen_salt(text, integer) RETURNS text
+LANGUAGE sql AS $$ SELECT public.gen_salt($1, $2) $$;
+
 -- ── API roles (Supabase-managed in production) ──────────────────────────────
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
