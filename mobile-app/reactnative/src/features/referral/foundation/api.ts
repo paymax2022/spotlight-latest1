@@ -425,10 +425,9 @@ export async function reportAbuse(report: AbuseReport): Promise<{ ok: true; tick
     return { ok: true, ticketId: `RPT-${Math.floor(Math.random() * 9000 + 1000)}` };
   }
   // POST /risk/report-abuse body { target_user_id, reason_code } → { alert: {...} }.
-  // TODO(referral phase3): the frontend AbuseReport has no target_user_id field —
-  // send an empty target so the backend attributes the report to the caller's
-  // most-recent attribution/referrer; category maps to reason_code, detail rides
-  // along for context.
+  // The target is deliberately empty: a member can only report whoever referred
+  // them, and the backend resolves that from their attribution. Sending a
+  // client-chosen id would let anyone open a fraud alert against any account.
   const res = await api.post(
     `${REFERRAL_API_BASE}/risk/report-abuse`,
     {
@@ -440,6 +439,16 @@ export async function reportAbuse(report: AbuseReport): Promise<{ ok: true; tick
   );
   const body = unwrap<{ alert?: { id?: string } }>(res);
   return { ok: true, ticketId: body.alert?.id ?? `RPT-${Date.now()}` };
+}
+
+/**
+ * True when a report failed because the caller has no referrer to report.
+ * The backend answers 409 with reason "no_referrer"; callers should show that
+ * as an explanation rather than a generic failure.
+ */
+export function isNoReferrerToReport(err: unknown): boolean {
+  const res = (err as { response?: { status?: number; data?: { reason?: string } } })?.response;
+  return res?.status === 409 && res?.data?.reason === 'no_referrer';
 }
 
 // ── Consent ──────────────────────────────────────────────────────────────────
