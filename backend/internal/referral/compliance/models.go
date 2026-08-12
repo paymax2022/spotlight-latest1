@@ -22,6 +22,11 @@ const (
 	ConsentEarningTerms = "earnings_terms"
 	ConsentMarketing    = "marketing"
 	ConsentOverride     = "override_disclosure"
+	// Collected by the referral settings screen. Kept distinct from
+	// ConsentMarketing on purpose: consent records are per-purpose, and folding
+	// contacts access into marketing would misstate what the user agreed to.
+	ConsentContacts = "contacts"
+	ConsentNudges   = "nudges"
 )
 
 // Disclosure is a versioned T&Cs / disclosure document.

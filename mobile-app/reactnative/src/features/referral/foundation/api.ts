@@ -466,6 +466,23 @@ export async function getConsent(): Promise<ConsentState> {
 
 // Reduce a list of backend consents into the frontend ConsentState. For each
 // consent_type keep the created_at of the most recent granted record.
+/**
+ * App consent kind -> backend consent_type.
+ *
+ * 'terms' is this app's name for the backend's long-standing 'earnings_terms'
+ * purpose. 'contacts' and 'nudges' are their own purposes server-side and are
+ * deliberately NOT folded into 'marketing': consent records are per-purpose, so
+ * conflating them would misstate what the user agreed to.
+ *
+ * Shared by the read and write paths — mapping in only one of them is how the
+ * write started succeeding while the toggle still read back as off.
+ */
+const CONSENT_TYPE: Record<ConsentKind, string> = {
+  terms: 'earnings_terms',
+  contacts: 'contacts',
+  nudges: 'nudges',
+};
+
 function consentStateFromList(consents: BackendConsent[]): ConsentState {
   const latest = (type: string): string | null => {
     let ts: string | null = null;
@@ -477,9 +494,9 @@ function consentStateFromList(consents: BackendConsent[]): ConsentState {
     return ts;
   };
   return {
-    termsAcceptedAt: latest('terms'),
-    contactsConsentAt: latest('contacts'),
-    nudgesConsentAt: latest('nudges'),
+    termsAcceptedAt: latest(CONSENT_TYPE.terms),
+    contactsConsentAt: latest(CONSENT_TYPE.contacts),
+    nudgesConsentAt: latest(CONSENT_TYPE.nudges),
   };
 }
 
@@ -498,10 +515,14 @@ export async function recordConsent(kind: ConsentKind, granted: boolean): Promis
   // POST /compliance/consents body { consent_type, disclosure_id, granted,
   // version, source } → { consent: Consent }. We POST the single toggled record,
   // then re-derive the full ConsentState (the write only returns one consent).
+  //
+  // 'terms' is the app's name for the backend's long-standing 'earnings_terms'
+  // purpose; 'contacts' and 'nudges' are their own purposes server-side and are
+  // deliberately NOT folded into 'marketing'.
   await api.post(
     `${REFERRAL_API_BASE}/compliance/consents`,
     {
-      consent_type: kind,
+      consent_type: CONSENT_TYPE[kind],
       // TODO(referral phase3): frontend has no disclosure/version context — send
       // stable defaults so the compliance record is well-formed. version is an
       // int on the backend (ConsentInput.Version int); v1 = 1.
