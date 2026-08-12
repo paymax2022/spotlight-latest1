@@ -22,10 +22,13 @@ package academy_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -53,6 +56,11 @@ func liveDBPool(t *testing.T) *pgxpool.Pool {
 // curriculum version → class → approved template → instance (with a marking
 // scheme whose keys the test answers against).
 func seedMockExam(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (userID, templateID, instanceID string) {
+	return seedMockExamWithScheme(t, ctx, pool,
+		`{"total_marks":100,"pass_mark":50,"answer_keys":{"q1":"B","q2":"C"}}`)
+}
+
+func seedMockExamWithScheme(t *testing.T, ctx context.Context, pool *pgxpool.Pool, markingScheme string) (userID, templateID, instanceID string) {
 	t.Helper()
 
 	userID = uuid.NewString()
@@ -88,9 +96,9 @@ func seedMockExam(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (userID
 
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO academy_mock_exam_instances (template_id, exam_code, variant, seed, marking_scheme)
-		VALUES ($1, $2, 1, 42, '{"total_marks":100,"pass_mark":50,"answer_keys":{"q1":"B","q2":"C"}}'::jsonb)
+		VALUES ($1, $2, 1, 42, $3::jsonb)
 		RETURNING id`,
-		templateID, "TEST-"+runTag).Scan(&instanceID); err != nil {
+		templateID, "TEST-"+runTag, markingScheme).Scan(&instanceID); err != nil {
 		t.Fatalf("seed instance: %v", err)
 	}
 
@@ -203,5 +211,91 @@ func TestLiveDB_MockExamAttemptLifecycle(t *testing.T) {
 	}
 	if admin.TotalAttempts < 1 {
 		t.Fatalf("admin analytics TotalAttempts = %d, want >= 1", admin.TotalAttempts)
+	}
+}
+
+// Regression for the two grading defects found live on 2026-08-12:
+//
+//  1. Integer mark distribution: on an exam whose question count does not
+//     divide 100 (like the seeded 60-question P4-MOCK-V1), a perfect run
+//     could not reach 100% — 45/60 correct returned 45 instead of 75.
+//  2. GET /results/:attempt_id returned top-level score / score_percent /
+//     total_time_sec zeros because it hydrated from performance keys that
+//     were never written (score/score_percent vs score_raw/score_pct).
+//
+// A 3-question key reproduces (1) at grading time, and driving the real
+// GetResults handler over httptest reproduces (2) on the read-back.
+func TestLiveDB_MockExamNonDivisorGradingAndResultsReadBack(t *testing.T) {
+	pool := liveDBPool(t)
+	ctx := context.Background()
+	userID, templateID, instanceID := seedMockExamWithScheme(t, ctx, pool,
+		`{"total_marks":100,"pass_mark":50,"answer_keys":{"q1":"A","q2":"B","q3":"C"}}`)
+
+	repo := assessment.NewMockExamRepository(pool)
+	svc := assessment.NewMockExamService(pool)
+
+	attempt, err := repo.CreateAttempt(ctx, userID, instanceID, templateID)
+	if err != nil {
+		t.Fatalf("CreateAttempt: %v", err)
+	}
+
+	// Backdate the start so total_time_sec on the read-back is observable.
+	if _, err := pool.Exec(ctx, `
+		UPDATE academy_attempts SET started_at = NOW() - interval '10 minutes'
+		WHERE id = (SELECT attempt_id FROM academy_mock_attempt_metadata WHERE id = $1)`,
+		attempt.ID); err != nil {
+		t.Fatalf("backdate started_at: %v", err)
+	}
+
+	// 2 of 3 correct: integer division scored this 66/100... as 2×(100/3)=66,
+	// but worse, 3 of 3 could only reach 99. Expect exact fraction math.
+	result, err := svc.SubmitExam(ctx, attempt.ID,
+		map[string]interface{}{"q1": "A", "q2": "B", "q3": "X"})
+	if err != nil {
+		t.Fatalf("SubmitExam: %v", err)
+	}
+	wantPct := 100.0 * 2 / 3
+	if diff := result.ScorePercent - wantPct; diff > 0.01 || diff < -0.01 {
+		t.Fatalf("SubmitExam ScorePercent = %v, want %v", result.ScorePercent, wantPct)
+	}
+
+	// Read back through the real gin handler — this is the path that
+	// returned zeros while the persisted performance JSON was correct.
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	h := assessment.NewMockExamHandler(svc, assessment.NewAnalyticsService(pool))
+	router.GET("/results/:attempt_id", h.GetResults)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/results/"+attempt.ID, nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET results status = %d, body %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Data struct {
+			Score        float64 `json:"score"`
+			ScorePercent float64 `json:"score_percent"`
+			Grade        string  `json:"grade"`
+			TotalTime    int     `json:"total_time_sec"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("results body not json: %v (%s)", err, rec.Body.String())
+	}
+	if diff := resp.Data.ScorePercent - wantPct; diff > 0.01 || diff < -0.01 {
+		t.Fatalf("read-back score_percent = %v, want %v", resp.Data.ScorePercent, wantPct)
+	}
+	if diff := resp.Data.Score - wantPct; diff > 0.01 || diff < -0.01 {
+		t.Fatalf("read-back score = %v, want %v", resp.Data.Score, wantPct)
+	}
+	if resp.Data.Grade != "D" {
+		t.Fatalf("read-back grade = %q, want D", resp.Data.Grade)
+	}
+	// Started 10 minutes before submit; allow slack for test wall time.
+	if resp.Data.TotalTime < 590 || resp.Data.TotalTime > 660 {
+		t.Fatalf("read-back total_time_sec = %d, want ~600", resp.Data.TotalTime)
 	}
 }
