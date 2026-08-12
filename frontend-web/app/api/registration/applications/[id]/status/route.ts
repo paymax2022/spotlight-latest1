@@ -1,5 +1,5 @@
 import { successResponse, handleApiError, errorResponse } from '@/src/lib/api/responses';
-import { getRegistrationDraft, getRegistrationStatusTimeline } from '@/src/server/registration/store';
+import { getRegistrationDraft, getRegistrationStatusTimeline } from '@/src/server/registration/supabase-store';
 import { requireUser } from '@/src/lib/auth/server';
 
 export async function GET(request: Request, { params }: { params: { id: string } }) {

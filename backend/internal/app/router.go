@@ -325,35 +325,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		rbacAdmin.POST("/users/:id/force-logout", middleware.RequirePermission(rbacService, "users.suspend"), sessionHandler.AdminForceLogout)
 		rbacAdmin.POST("/users/:id/force-password-reset", middleware.RequirePermission(rbacService, "users.suspend"), sessionHandler.AdminForcePasswordReset)
 
-		// Admin console — unified /api/v1/admin/* endpoints for mobile admin UI
-		// Gated by RBAC middleware (X-Admin-Role header). Each endpoint checks specific
-		// permissions (TODO: implement fine-grained permission checks per endpoint).
-		adminConsoleHandler := handlers.NewAdminConsoleHandler()
-		adminConsole := v1.Group("/admin")
-		adminConsole.Use(middleware.RequireAdminConsoleRole())
-		adminConsole.GET("/dashboard", adminConsoleHandler.Dashboard)
-		adminConsole.GET("/users", adminConsoleHandler.GetUsers)
-		adminConsole.GET("/users/:id", adminConsoleHandler.GetUser)
-		adminConsole.GET("/kyc", adminConsoleHandler.GetKycQueue)
-		adminConsole.POST("/kyc/:id/review", adminConsoleHandler.ReviewKyc)
-		adminConsole.GET("/assets", adminConsoleHandler.GetAssetControls)
-		adminConsole.PATCH("/assets/:id", adminConsoleHandler.UpdateAssetControl)
-		adminConsole.GET("/orders", adminConsoleHandler.GetOrders)
-		adminConsole.GET("/withdrawals", adminConsoleHandler.GetWithdrawalQueue)
-		adminConsole.POST("/withdrawals/:ref/review", adminConsoleHandler.ReviewWithdrawal)
-		adminConsole.GET("/reconciliation", adminConsoleHandler.GetReconciliation)
-		adminConsole.GET("/providers", adminConsoleHandler.GetProviders)
-		adminConsole.GET("/risk-limits", adminConsoleHandler.GetRiskLimits)
-		adminConsole.PATCH("/risk-limits/:id", adminConsoleHandler.UpdateRiskLimit)
-		adminConsole.GET("/fees", adminConsoleHandler.GetFees)
-		adminConsole.PATCH("/fees/:id", adminConsoleHandler.UpdateFee)
-		adminConsole.GET("/feature-flags", adminConsoleHandler.GetFeatureFlags)
-		adminConsole.PATCH("/feature-flags/:key", adminConsoleHandler.SetFeatureFlag)
-		adminConsole.GET("/approvals", adminConsoleHandler.GetApprovals)
-		adminConsole.POST("/approvals/:id/approve", adminConsoleHandler.Approve)
-		adminConsole.POST("/approvals/:id/reject", adminConsoleHandler.RejectApproval)
-		adminConsole.GET("/audit", adminConsoleHandler.GetAudit)
-		adminConsole.GET("/admins", adminConsoleHandler.GetAdmins)
+		// Admin console routes will be registered after pool is created (see below)
 
 		mobile := v1.Group("/mobile")
 		mobile.GET("/health", health.GenericHealth)
@@ -401,6 +373,40 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	if sharedPool != nil {
 		authMiddleware := middleware.RequireAuthContext(supabase, rbacService)
 		registerConnectWalletRoutes(r, supabase, rbacService, authMiddleware)
+	}
+
+	// Admin console — unified /api/v1/admin/* endpoints for mobile admin UI
+	// Gated by RBAC middleware (X-Admin-Role header). All endpoints are read-only
+	// for Phase 1, wired to Supabase queries via AdminStore. Requires shared pool.
+	if sharedPool != nil {
+		v1 := r.Group("/api/v1")
+		adminStore := handlers.NewAdminStore(sharedPool)
+		adminConsoleHandler := handlers.NewAdminConsoleHandler(adminStore)
+		adminConsole := v1.Group("/admin")
+		adminConsole.Use(middleware.RequireAdminConsoleRole())
+		adminConsole.GET("/dashboard", adminConsoleHandler.Dashboard)
+		adminConsole.GET("/users", adminConsoleHandler.GetUsers)
+		adminConsole.GET("/users/:id", adminConsoleHandler.GetUser)
+		adminConsole.GET("/kyc", adminConsoleHandler.GetKycQueue)
+		adminConsole.POST("/kyc/:id/review", adminConsoleHandler.ReviewKyc)
+		adminConsole.GET("/assets", adminConsoleHandler.GetAssetControls)
+		adminConsole.PATCH("/assets/:id", adminConsoleHandler.UpdateAssetControl)
+		adminConsole.GET("/orders", adminConsoleHandler.GetOrders)
+		adminConsole.GET("/withdrawals", adminConsoleHandler.GetWithdrawalQueue)
+		adminConsole.POST("/withdrawals/:ref/review", adminConsoleHandler.ReviewWithdrawal)
+		adminConsole.GET("/reconciliation", adminConsoleHandler.GetReconciliation)
+		adminConsole.GET("/providers", adminConsoleHandler.GetProviders)
+		adminConsole.GET("/risk-limits", adminConsoleHandler.GetRiskLimits)
+		adminConsole.PATCH("/risk-limits/:id", adminConsoleHandler.UpdateRiskLimit)
+		adminConsole.GET("/fees", adminConsoleHandler.GetFees)
+		adminConsole.PATCH("/fees/:id", adminConsoleHandler.UpdateFee)
+		adminConsole.GET("/feature-flags", adminConsoleHandler.GetFeatureFlags)
+		adminConsole.PATCH("/feature-flags/:key", adminConsoleHandler.SetFeatureFlag)
+		adminConsole.GET("/approvals", adminConsoleHandler.GetApprovals)
+		adminConsole.POST("/approvals/:id/approve", adminConsoleHandler.Approve)
+		adminConsole.POST("/approvals/:id/reject", adminConsoleHandler.RejectApproval)
+		adminConsole.GET("/audit", adminConsoleHandler.GetAudit)
+		adminConsole.GET("/admins", adminConsoleHandler.GetAdmins)
 	}
 
 	// Arena competition engine (ADR-014) — feature-flagged, default off. The merit

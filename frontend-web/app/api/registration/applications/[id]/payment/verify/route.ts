@@ -8,7 +8,7 @@ import {
   getRegistrationPaymentIntentByReference,
   markRegistrationPaymentIntentStatus,
   applyRegistrationPaymentSuccess,
-} from '@/src/server/registration/store';
+} from '@/src/server/registration/supabase-store';
 
 // Verifies a registration fee payment against Paystack's real verify API
 // (test mode) — never trusts the client's own account of what happened.

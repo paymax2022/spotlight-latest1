@@ -7,7 +7,7 @@ import {
   getRegistrationDraft,
   findRegistrationPaymentIntentByIdempotencyKey,
   createRegistrationPaymentIntent,
-} from '@/src/server/registration/store';
+} from '@/src/server/registration/supabase-store';
 
 // Registration fee payment — real Paystack gateway (test mode; the same
 // `initializePaystackPayment` helper the utility/bills module uses). This

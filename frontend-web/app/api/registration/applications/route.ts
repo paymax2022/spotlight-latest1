@@ -1,5 +1,5 @@
 import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/responses';
-import { listRegistrationApplications, startRegistrationDraft } from '@/src/server/registration/store';
+import { listRegistrationApplications, startRegistrationDraft } from '@/src/server/registration/supabase-store';
 import type { RegistrationListFilter } from '@/src/features/registration/types';
 import { requireUser } from '@/src/lib/auth/server';
 

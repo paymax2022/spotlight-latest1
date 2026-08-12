@@ -1,6 +1,6 @@
 import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { buildRegistrationSteps } from '@/src/features/registration/config';
-import { getRegistrationDraft, saveRegistrationStep } from '@/src/server/registration/store';
+import { getRegistrationDraft, saveRegistrationStep } from '@/src/server/registration/supabase-store';
 import type { RegistrationStepKey } from '@/src/features/registration/types';
 import { requireUser } from '@/src/lib/auth/server';
 

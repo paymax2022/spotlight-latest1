@@ -1,5 +1,5 @@
 import { successResponse, handleApiError, errorResponse } from '@/src/lib/api/responses';
-import { getRegistrationDraft, withdrawRegistrationApplication } from '@/src/server/registration/store';
+import { getRegistrationDraft, withdrawRegistrationApplication } from '@/src/server/registration/supabase-store';
 import { requireUser } from '@/src/lib/auth/server';
 
 export async function POST(request: Request, { params }: { params: { id: string } }) {

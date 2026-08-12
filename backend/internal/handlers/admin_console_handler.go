@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -10,12 +11,12 @@ import (
 // AdminConsoleHandler serves the unified /api/v1/admin/* endpoints for the mobile admin console.
 // All endpoints require X-Admin-Role header (set by client) and are gated by RBAC middleware.
 type AdminConsoleHandler struct {
-	// TODO: inject audit, rbac, and other services as needed
+	store *AdminStore
 }
 
 // NewAdminConsoleHandler creates a new admin console handler.
-func NewAdminConsoleHandler() *AdminConsoleHandler {
-	return &AdminConsoleHandler{}
+func NewAdminConsoleHandler(store *AdminStore) *AdminConsoleHandler {
+	return &AdminConsoleHandler{store: store}
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
@@ -23,32 +24,28 @@ func NewAdminConsoleHandler() *AdminConsoleHandler {
 // Dashboard returns a top-of-console snapshot: user counts, pending queues, revenue, provider health.
 // GET /api/v1/admin/dashboard
 func (h *AdminConsoleHandler) Dashboard(c *gin.Context) {
-	// TODO: Implement real dashboard aggregation:
-	// - Query user count from users table
-	// - Count pending KYC cases
-	// - Count pending withdrawals
-	// - Count failed orders (24h)
-	// - Count open reconciliation exceptions
-	// - Calculate revenue today/month from ledger
-	// - Query trading volume
-	// - Aggregate provider health status
+	stats, err := h.store.GetDashboardStats(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load dashboard stats"})
+		return
+	}
 
 	dashboard := gin.H{
-		"users": 12450,
-		"openKyc": 23,
-		"pendingWithdrawals": 15,
-		"failedOrders": 7,
-		"reconExceptions": 3,
+		"users": stats.TotalUsers,
+		"openKyc": stats.KYCPending,
+		"pendingWithdrawals": 15, // Phase 2: query payouts table
+		"failedOrders": stats.FailedTxns,
+		"reconExceptions": 0, // Phase 2: query reconciliation_exceptions table
 		"revenueToday": gin.H{
-			"amount": 2850000, // 28,500 NGN in kobo
+			"amount": 0, // Phase 2: sum fees from last 24h
 			"currency": "NGN",
 		},
 		"revenueMonth": gin.H{
-			"amount": 85600000, // 856,000 NGN in kobo
+			"amount": 0, // Phase 2: sum fees from last 30 days
 			"currency": "NGN",
 		},
 		"tradingVolume": gin.H{
-			"amount": 1240000000, // 12.4M NGN in kobo
+			"amount": stats.TotalVolume,
 			"currency": "NGN",
 		},
 		"providerSummary": []gin.H{
@@ -80,34 +77,39 @@ func (h *AdminConsoleHandler) Dashboard(c *gin.Context) {
 // GetUsers returns a paginated list of users.
 // GET /api/v1/admin/users
 func (h *AdminConsoleHandler) GetUsers(c *gin.Context) {
-	// TODO: Query users table with pagination, sorting, and filters
-	users := []gin.H{
-		{
-			"id": "usr_001",
-			"name": "Alice Johnson",
-			"email": "alice@example.com",
-			"status": "active",
-			"kycTier": 2,
-			"createdAt": time.Now().Add(-30*24*time.Hour).Format(time.RFC3339),
-		},
-		{
-			"id": "usr_002",
-			"name": "Bob Smith",
-			"email": "bob@example.com",
-			"status": "active",
-			"kycTier": 1,
-			"createdAt": time.Now().Add(-15*24*time.Hour).Format(time.RFC3339),
-		},
-		{
-			"id": "usr_003",
-			"name": "Carol Davis",
-			"email": "carol@example.com",
-			"status": "pending",
-			"kycTier": 0,
-			"createdAt": time.Now().Add(-2*24*time.Hour).Format(time.RFC3339),
-		},
+	limit := 50
+	offset := 0
+	if l := c.Query("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
 	}
-	c.JSON(http.StatusOK, users)
+	if o := c.Query("offset"); o != "" {
+		fmt.Sscanf(o, "%d", &offset)
+	}
+
+	users, total, err := h.store.ListUsers(c.Request.Context(), limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load users"})
+		return
+	}
+
+	result := []gin.H{}
+	for _, u := range users {
+		result = append(result, gin.H{
+			"id": u.ID,
+			"name": u.Name,
+			"email": u.Email,
+			"status": u.Status,
+			"kycTier": u.Tier,
+			"createdAt": u.CreatedAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"users": result,
+		"total": total,
+		"limit": limit,
+		"offset": offset,
+	})
 }
 
 // GetUser returns detailed information for a specific user.
@@ -145,28 +147,26 @@ func (h *AdminConsoleHandler) GetUser(c *gin.Context) {
 // GetKycQueue returns pending KYC cases awaiting review.
 // GET /api/v1/admin/kyc
 func (h *AdminConsoleHandler) GetKycQueue(c *gin.Context) {
-	// TODO: Query kyc_sessions table where status = 'pending', with risk flags from aml checks
-	cases := []gin.H{
-		{
-			"id": "kyc_001",
-			"userId": "usr_042",
-			"name": "Chinyere Okonkwo",
-			"status": "pending",
-			"tier": 2,
-			"submittedAt": time.Now().Add(-24*time.Hour).Format(time.RFC3339),
-			"riskFlags": []string{"address_mismatch"},
-		},
-		{
-			"id": "kyc_002",
-			"userId": "usr_089",
-			"name": "Tunde Oluwaseun",
-			"status": "pending",
-			"tier": 3,
-			"submittedAt": time.Now().Add(-18*time.Hour).Format(time.RFC3339),
-			"riskFlags": []string{"pep", "high_volume_first_txn"},
-		},
+	entries, err := h.store.GetKYCQueue(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load kyc queue"})
+		return
 	}
-	c.JSON(http.StatusOK, cases)
+
+	cases := []gin.H{}
+	for _, e := range entries {
+		cases = append(cases, gin.H{
+			"id": e.ID,
+			"userId": e.UserID,
+			"name": e.Name,
+			"status": e.Status,
+			"tier": e.Tier,
+			"submittedAt": e.SubmittedAt,
+			"riskFlags": []string{}, // Phase 2: query aml_checks table
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"cases": cases})
 }
 
 // ReviewKyc approves, rejects, or escalates a KYC case.
@@ -277,49 +277,40 @@ func (h *AdminConsoleHandler) UpdateAssetControl(c *gin.Context) {
 // GetOrders returns orders filtered by status or kind.
 // GET /api/v1/admin/orders?filter=all|failed|pending|crypto|stock
 func (h *AdminConsoleHandler) GetOrders(c *gin.Context) {
+	orders, err := h.store.ListOrders(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load orders"})
+		return
+	}
+
 	filter := c.DefaultQuery("filter", "all")
 
-	// TODO: Query orders table; filter by status/kind; sort by creation time descending
-	orders := []gin.H{
-		{
-			"ref": "PMX-CR-123456",
-			"user": "Alice Johnson",
-			"kind": "crypto",
-			"side": "buy",
-			"symbol": "BTC",
-			"status": "Filled",
-			"amount": gin.H{"amount": 5000000, "currency": "NGN"},
-			"createdAt": time.Now().Add(-6*time.Hour).Format(time.RFC3339),
-			"providerRef": "BINANCE-12345",
-		},
-		{
-			"ref": "PMX-ST-789012",
-			"user": "Bob Smith",
-			"kind": "stock",
-			"side": "sell",
-			"symbol": "AAPL",
-			"status": "Failed",
-			"amount": gin.H{"amount": 2500000, "currency": "NGN"},
-			"createdAt": time.Now().Add(-2*time.Hour).Format(time.RFC3339),
-			"providerRef": "TRADE-789",
-		},
-	}
-
-	// Filter by type if specified
-	if filter != "all" {
-		filtered := []gin.H{}
-		for _, o := range orders {
-			if (filter == "failed" && o["status"] == "Failed") ||
-				(filter == "pending" && (o["status"] == "Pending" || o["status"] == "Processing")) ||
-				(filter == "crypto" && o["kind"] == "crypto") ||
-				(filter == "stock" && o["kind"] == "stock") {
-				filtered = append(filtered, o)
+	result := []gin.H{}
+	for _, o := range orders {
+		// Apply filter
+		if filter != "all" {
+			if (filter == "failed" && o.Status != "failed") ||
+				(filter == "pending" && (o.Status != "pending" && o.Status != "processing")) ||
+				(filter == "crypto" && o.Type != "crypto") ||
+				(filter == "stock" && o.Type != "stock") {
+				continue
 			}
 		}
-		orders = filtered
+
+		result = append(result, gin.H{
+			"ref": o.ID,
+			"user": o.Email,
+			"kind": o.Type,
+			"side": "buy",
+			"symbol": "", // Phase 2: extract from order details
+			"status": o.Status,
+			"amount": gin.H{"amount": o.Amount, "currency": "NGN"},
+			"createdAt": o.CreatedAt,
+			"providerRef": "", // Phase 2: from provider_reference column
+		})
 	}
 
-	c.JSON(http.StatusOK, orders)
+	c.JSON(http.StatusOK, result)
 }
 
 // ── Withdrawal Review ───────────────────────────────────────────────────────
@@ -327,32 +318,28 @@ func (h *AdminConsoleHandler) GetOrders(c *gin.Context) {
 // GetWithdrawalQueue returns pending withdrawal requests awaiting review.
 // GET /api/v1/admin/withdrawals
 func (h *AdminConsoleHandler) GetWithdrawalQueue(c *gin.Context) {
-	// TODO: Query withdrawals table where status = 'pending'; include risk scoring
-	withdrawals := []gin.H{
-		{
-			"reference": "WD-001-XYZ",
-			"user": "Alice Johnson",
-			"symbol": "BTC",
-			"amount": gin.H{"amount": 500000, "currency": "BTC"},
-			"address": "1A1z7agoat4QJVA****",
-			"network": "bitcoin",
-			"riskScore": 15,
-			"status": "pending",
-			"createdAt": time.Now().Add(-8*time.Hour).Format(time.RFC3339),
-		},
-		{
-			"reference": "WD-002-ABC",
-			"user": "Carol Davis",
-			"symbol": "ETH",
-			"amount": gin.H{"amount": 2000000, "currency": "ETH"},
-			"address": "0x742d35Cc6634C0532925a3b844Bc5e8****",
-			"network": "ethereum",
-			"riskScore": 62,
-			"status": "pending",
-			"createdAt": time.Now().Add(-4*time.Hour).Format(time.RFC3339),
-		},
+	withdrawals, err := h.store.ListWithdrawals(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load withdrawals"})
+		return
 	}
-	c.JSON(http.StatusOK, withdrawals)
+
+	result := []gin.H{}
+	for _, w := range withdrawals {
+		result = append(result, gin.H{
+			"reference": w.ID,
+			"user": w.Email,
+			"symbol": "BTC", // Phase 2: extract currency
+			"amount": gin.H{"amount": w.Amount, "currency": "NGN"},
+			"address": w.Account,
+			"network": "bitcoin", // Phase 2: from withdrawal_network column
+			"riskScore": 0, // Phase 2: calculate from transaction history
+			"status": w.Status,
+			"createdAt": w.CreatedAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 // ReviewWithdrawal approves, rejects, or escalates a withdrawal request.
@@ -689,27 +676,27 @@ func (h *AdminConsoleHandler) RejectApproval(c *gin.Context) {
 // GetAudit returns the immutable audit log of all admin actions.
 // GET /api/v1/admin/audit
 func (h *AdminConsoleHandler) GetAudit(c *gin.Context) {
-	// TODO: Query audit_log table; sort by timestamp descending; paginate
-	entries := []gin.H{
-		{
-			"id": "aud_001",
-			"actor": "admin@paymax.co",
-			"action": "kyc.approve",
-			"entityType": "kyc_case",
-			"entityId": "kyc_001",
-			"reason": "All checks passed, no red flags",
-			"at": time.Now().Add(-2*time.Hour).Format(time.RFC3339),
-		},
-		{
-			"id": "aud_002",
-			"actor": "risk-admin@paymax.co",
-			"action": "risk.update",
-			"entityType": "risk_limit",
-			"entityId": "rl_001",
-			"reason": "Increased limit per user request",
-			"at": time.Now().Add(-4*time.Hour).Format(time.RFC3339),
-		},
+	logs, err := h.store.ListAuditLogs(c.Request.Context(), 100)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load audit logs"})
+		return
 	}
+
+	entries := []gin.H{}
+	for _, log := range logs {
+		entries = append(entries, gin.H{
+			"id": log.ID,
+			"actor": log.UserID,
+			"action": log.Action,
+			"module": log.Module,
+			"entityId": log.ResourceID,
+			"oldValues": log.OldValues,
+			"newValues": log.NewValues,
+			"at": log.Timestamp,
+			"severity": log.Severity,
+		})
+	}
+
 	c.JSON(http.StatusOK, entries)
 }
 
