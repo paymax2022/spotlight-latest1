@@ -378,66 +378,6 @@ func RegisterMarketplace(
 	a.POST("/flags/:id/action", guard("marketplace.admin.flags.action"), h.AdminActionFlag)
 	a.GET("/audit-log", guard("marketplace.admin.audit.read"), h.AdminAuditLog)
 
-	// ── Real-time metrics and audit trail (NEW) ──
-	// Live dashboard metrics and activity stream for admin marketplace monitoring
-	a.GET("/metrics", guard("marketplace.admin.moderation"), func(c *gin.Context) {
-		var totalActive, createdToday, gmvKobo, uniqueSellers, uniqueBuyers, messagesSent, offersMade, activityCount int64
-		err := svc.Db.QueryRow(c, "SELECT * FROM get_realtime_marketplace_metrics()").
-			Scan(&totalActive, &createdToday, &gmvKobo, &uniqueSellers, &uniqueBuyers, &messagesSent, &offersMade, &activityCount)
-		if err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(200, gin.H{
-			"total_active_listings": totalActive,
-			"listings_created_today": createdToday,
-			"total_gmv_kobo": gmvKobo,
-			"unique_sellers_today": uniqueSellers,
-			"unique_buyers_today": uniqueBuyers,
-			"messages_sent_today": messagesSent,
-			"offers_made_today": offersMade,
-			"recent_activity_count": activityCount,
-		})
-	})
-
-	a.GET("/activity-feed", guard("marketplace.admin.moderation"), func(c *gin.Context) {
-		rows, err := svc.Db.Query(c, `
-			SELECT id, event_type, entity_type, entity_id, actor_id, display_text,
-				listing_title, listing_price_kobo, actor_name, severity, created_at
-			FROM marketplace_activity_stream
-			ORDER BY created_at DESC
-			LIMIT 100
-		`)
-		if err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
-		}
-		defer rows.Close()
-
-		var activities []gin.H
-		for rows.Next() {
-			var id, eventType, entityType, entityID, actorID, displayText, listingTitle, actorName, severity, createdAt string
-			var listingPrice *int64
-			if err := rows.Scan(&id, &eventType, &entityType, &entityID, &actorID, &displayText,
-				&listingTitle, &listingPrice, &actorName, &severity, &createdAt); err != nil {
-				continue
-			}
-			activities = append(activities, gin.H{
-				"id": id,
-				"event_type": eventType,
-				"entity_type": entityType,
-				"entity_id": entityID,
-				"actor_id": actorID,
-				"display_text": displayText,
-				"listing_title": listingTitle,
-				"listing_price_kobo": listingPrice,
-				"actor_name": actorName,
-				"severity": severity,
-				"created_at": createdAt,
-			})
-		}
-		c.JSON(200, activities)
-	})
 
 	// Boost moderation — the SOLE live marketplace money path (§2.4). GET lists boosts
 	// platform-wide (read-scoped marketplace.admin.moderation); POST rejects+auto-refunds.

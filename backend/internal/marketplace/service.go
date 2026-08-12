@@ -2,480 +2,454 @@ package marketplace
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
+	"log"
+	"strconv"
+	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
+
+	"spotlight/backend/internal/finance/ledger"
 )
 
-// Service handles all marketplace operations with integrated audit logging.
+// Service is the single entry point for the marketplace domain. It owns the four
+// guarded FSMs (listing/order/dispute/boost) and REUSES the finance double-entry
+// ledger for every money movement (§ doctrine: the marketplace never stores a
+// balance; escrow is a ledger posting into ledger.AccountEscrow).
+//
+// Constructed in internal/app via NewService(pool, ledger, redis).
 type Service struct {
-	Db    *pgxpool.Pool
-	Redis *redis.Client
+	repo       *Repository
+	ledger     boostLedger     // concrete *ledger.Service in prod; a fake in unit tests
+	redis      *goredis.Client // optional; nil ⇒ DB-unique idempotency backstop only
+	notify     Notifier
+	audit      Auditor
+	searcher   Searcher           // optional; nil ⇒ GET /search returns 501 SEARCH_NOT_WIRED
+	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	realtime   RealtimePublisher  // optional; nil ⇒ no live push (clients poll instead)
+	// referralEmitter was removed in the listings-and-connect pivot (ADR-023): the
+	// marketplace no longer settles purchases (no escrow release), so there is nothing
+	// to emit to the Direct Referral Rewards engine. See marketplace_routes.go, where
+	// the RegisterMarketplace referralRewards param is now a no-op.
 }
 
-// NewService creates a new marketplace service.
-func NewService(db *pgxpool.Pool, redis *redis.Client) *Service {
+// Notifier emits buyer/seller notifications. Nil-safe.
+type Notifier interface {
+	Notify(ctx context.Context, userID, kind, message string)
+}
+
+// CommissionRecorder is the nil-safe seam into the central Commission & Profit
+// module (§ profit registry). app-wiring injects a thin adapter over the finance
+// commission service; when the commission feature is off (or no recorder is wired)
+// the field is nil and recording is a silent no-op. Modeled as a LOCAL interface so
+// marketplace never imports the commission package at compile time (mirrors the
+// Searcher/Notifier seams) — the adapter, which lives in app-wiring, discards the
+// returned earning row and surfaces only the error.
+//
+// This records realized profit ONLY; it never moves money. The marketplace's own
+// money movements (e.g. the boost wallet charge into ledger.AccountCommission) are
+// unchanged, and the injected recorder is deliberately constructed WITHOUT a ledger
+// so RecordFor never re-posts to the ledger (no double count of the commission
+// revenue account) — it appends the immutable earning row used by profit reports.
+type CommissionRecorder interface {
+	RecordFor(ctx context.Context, category, service, subtype string, grossKobo int64,
+		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
+}
+
+// SetCommissionRecorder injects the central profit-recording seam (app-wiring,
+// post-construction). Nil is accepted and disables recording.
+func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// recordCommissionSafe records realized Spotlight profit for a marketplace money
+// event. It is best-effort and MUST NEVER affect the caller's outcome: a nil
+// recorder is a no-op, and any error is logged and swallowed so a profit-registry
+// failure can never fail or reverse the underlying marketplace transaction. The
+// recorded breakdown is resolved server-side from the central rate card; the source
+// ref doubles as the idempotency key so retries never double-count.
+func (s *Service) recordCommissionSafe(ctx context.Context, category, service, subtype string, grossKobo int64,
+	sourceRef string, userID *string) {
+	if s.commission == nil || grossKobo <= 0 {
+		return
+	}
+	if err := s.commission.RecordFor(ctx, category, service, subtype, grossKobo,
+		"marketplace", sourceRef, userID, sourceRef); err != nil {
+		log.Printf("[marketplace] commission record (source=%s gross=%d) failed, continuing: %v", sourceRef, grossKobo, err)
+	}
+}
+
+// boostLedger is the NARROW finance-ledger seam the boost money-path (§2.4)
+// depends on — the sole live marketplace revenue path. Purchase debits the seller
+// wallet into the commission (ad-revenue) standing account; reject/auto-refund
+// posts a balanced reversal back to the seller wallet. The concrete
+// *ledger.Service (injected by app-wiring via NewService) satisfies it, and a small
+// in-memory fake implements it in service_boost_test.go so the charge/refund ledger
+// effect has an EXECUTED, DB-free unit test. Modeled as a LOCAL interface (mirrors
+// the Notifier/Searcher/CommissionRecorder seams); it is the ONLY finance-ledger
+// surface the marketplace uses (grep: s.ledger appears only in service_boost.go).
+type boostLedger interface {
+	GetOrCreateStandingAccount(ctx context.Context, accountType ledger.AccountType) (*ledger.Account, error)
+	GetOrCreateUserWallet(ctx context.Context, userID string) (*ledger.Account, error)
+	Debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error
+	PostReversal(ctx context.Context, restoreAccountID, releaseAccountID string, amountKobo int64, reference, idempotencyKey string) error
+}
+
+// NewService constructs the marketplace service. redis may be nil (dev/CI): the
+// durable idempotency backstop is the DB-side UNIQUE on mkt_orders.idempotency_key
+// and the ledger's own unique idempotency_key, so a nil redis never risks a double
+// money movement — it only forgoes cheap cached-body replay.
+func NewService(pool *pgxpool.Pool, ledgerSvc *ledger.Service, rdb *goredis.Client) *Service {
 	return &Service{
-		Db:    db,
-		Redis: redis,
+		repo:   NewRepository(pool),
+		ledger: ledgerSvc,
+		redis:  rdb,
 	}
 }
 
-// Listing represents a marketplace listing.
-type Listing struct {
-	ID           string    `json:"id"`
-	UserID       string    `json:"user_id"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	Category     string    `json:"category"`
-	PriceKobo    int64     `json:"price_kobo"`
-	Currency     string    `json:"currency"`
-	Status       string    `json:"status"` // DRAFT, PUBLISHED, SOLD, REMOVED
-	Condition    string    `json:"condition"`
-	LocationLat  float64   `json:"location_lat"`
-	LocationLng  float64   `json:"location_lng"`
-	LocationText string    `json:"location_text"`
-	ImageURLs    []string  `json:"image_urls"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	PublishedAt  *time.Time `json:"published_at"`
-	DeletedAt    *time.Time `json:"deleted_at"`
+// RealtimePublisher pushes a live event to a user's connected clients (SSE). It is
+// satisfied by internal/platform/realtime.Hub. Optional — when nil, chat still works
+// via the clients' polling/refetch; realtime is a best-effort accelerator.
+type RealtimePublisher interface {
+	PublishToUser(ctx context.Context, userID, eventType string, payload any) error
 }
 
-// CreateListingInput is the input for creating a new listing.
-type CreateListingInput struct {
-	Title       string   `json:"title" validate:"required,max=255"`
-	Description string   `json:"description" validate:"required,max=5000"`
-	Category    string   `json:"category" validate:"required"`
-	PriceKobo   int64    `json:"price_kobo" validate:"required,gt=0"`
-	Condition   string   `json:"condition"`
-	LocationLat float64  `json:"location_lat"`
-	LocationLng float64  `json:"location_lng"`
-	LocationText string  `json:"location_text"`
-	ImageURLs   []string `json:"image_urls"`
+// WithRealtime attaches an optional live-push sink for chat events.
+func (s *Service) WithRealtime(p RealtimePublisher) *Service { s.realtime = p; return s }
+
+// WithNotifier attaches an optional notification sink.
+func (s *Service) WithNotifier(n Notifier) *Service { s.notify = n; return s }
+
+// WithAuditor attaches an optional secondary audit sink (the primary immutable
+// trail is always mkt_admin_audit_log).
+func (s *Service) WithAuditor(a Auditor) *Service { s.audit = a; return s }
+
+// WithReferralEmitter was removed in the listings-and-connect pivot (ADR-023).
+
+// notifySafe is a nil-safe notification fan-out.
+func (s *Service) notifySafe(ctx context.Context, userID, kind, message string) {
+	if s.notify != nil {
+		s.notify.Notify(ctx, userID, kind, message)
+	}
 }
 
-// UpdateListingInput is the input for updating a listing.
-type UpdateListingInput struct {
-	Title       *string   `json:"title"`
-	Description *string   `json:"description"`
-	Category    *string   `json:"category"`
-	PriceKobo   *int64    `json:"price_kobo"`
-	Condition   *string   `json:"condition"`
-	LocationLat *float64  `json:"location_lat"`
-	LocationLng *float64  `json:"location_lng"`
-	LocationText *string  `json:"location_text"`
-	ImageURLs   []string  `json:"image_urls"`
+// ─── Search seam (§ integration contract) ────────────────────────────────────
+//
+// To avoid a compile cycle (`marketplace` must NOT import `search`), A defines this
+// tiny local interface and app-wiring injects Agent B's *search.Client, which must
+// satisfy Search(ctx, req) (results, error) with the documented signature:
+//
+//	Search(ctx context.Context, req search.SearchRequest) (search.SearchResults, error)
+//
+// Here the request/results are modeled as `any` so the two packages never share a
+// type at compile time; app-wiring adapts B's concrete client to this seam. When no
+// searcher is injected the GET /search handler returns 501 SEARCH_NOT_WIRED.
+type Searcher interface {
+	Search(ctx context.Context, req any) (any, error)
 }
 
-// AuditLog represents an audit log entry.
-type AuditLog struct {
-	ID        string                 `json:"id"`
-	EntityType string                `json:"entity_type"`
-	EntityID  string                 `json:"entity_id"`
-	ActorID   string                 `json:"actor_id"`
-	Action    string                 `json:"action"`
-	Changes   map[string]interface{} `json:"changes"`
-	CreatedAt time.Time              `json:"created_at"`
+// SetSearcher injects the search read-model client (app-wiring, post-construction).
+func (s *Service) SetSearcher(sr Searcher) { s.searcher = sr }
+
+// ─── Category + search read paths ────────────────────────────────────────────
+
+// ListCategories returns active categories for the market.
+func (s *Service) ListCategories(ctx context.Context, marketID string) ([]Category, error) {
+	if marketID == "" {
+		marketID = DefaultMarketID
+	}
+	return s.repo.ListCategories(ctx, marketID)
 }
 
-// CreateListing creates a new marketplace listing with audit logging.
-func (s *Service) CreateListing(
-	ctx context.Context,
-	userID string,
-	input CreateListingInput,
-	requestID string,
-	ipAddress string,
-	userAgent string,
-) (*Listing, error) {
-	const query = `
-		INSERT INTO marketplace_listings (
-			user_id, title, description, category, price_kobo, currency,
-			status, condition, location_lat, location_lng, location_text,
-			image_urls, created_at, updated_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
-		RETURNING
-			id, user_id, title, description, category, price_kobo, currency,
-			status, condition, location_lat, location_lng, location_text,
-			image_urls, created_at, updated_at, published_at, deleted_at
-	`
-
-	listing := &Listing{}
-
-	// Start transaction for atomicity
-	tx, err := s.Db.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	// Create listing
-	err = tx.QueryRow(ctx, query,
-		userID, input.Title, input.Description, input.Category,
-		input.PriceKobo, "NGN", "DRAFT", input.Condition,
-		input.LocationLat, input.LocationLng, input.LocationText,
-		input.ImageURLs,
-	).Scan(
-		&listing.ID, &listing.UserID, &listing.Title, &listing.Description,
-		&listing.Category, &listing.PriceKobo, &listing.Currency,
-		&listing.Status, &listing.Condition, &listing.LocationLat, &listing.LocationLng,
-		&listing.LocationText, (*pgx.Array[string])(&listing.ImageURLs),
-		&listing.CreatedAt, &listing.UpdatedAt, &listing.PublishedAt, &listing.DeletedAt,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create listing: %w", err)
-	}
-
-	// Log the action
-	displayText := fmt.Sprintf("%s created listing: %s", userID, input.Title)
-	logErr := s.logAction(ctx, tx, LogActionInput{
-		EntityType:  "listing",
-		EntityID:    listing.ID,
-		ActorID:     userID,
-		Action:      "CREATE",
-		Changes: map[string]interface{}{
-			"new": listing,
-		},
-		RequestID:   requestID,
-		IPAddress:   ipAddress,
-		UserAgent:   userAgent,
-		DisplayText: displayText,
-	})
-	if logErr != nil {
-		// Log errors shouldn't fail the transaction, just log them
-		fmt.Printf("Failed to log action: %v\n", logErr)
-	}
-
-	// Commit transaction
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	// Invalidate cache
-	s.Redis.Del(ctx, fmt.Sprintf("listings:%s", userID))
-
-	// Publish real-time event
-	_ = s.PublishListingEvent(ctx, "listing.created", listing)
-
-	return listing, nil
+// GetCategory returns one category.
+func (s *Service) GetCategory(ctx context.Context, id string) (*Category, error) {
+	return s.repo.GetCategory(ctx, id)
 }
 
-// GetListing retrieves a listing by ID with audit trail.
-func (s *Service) GetListing(ctx context.Context, listingID string) (*Listing, error) {
-	const query = `
-		SELECT
-			id, user_id, title, description, category, price_kobo, currency,
-			status, condition, location_lat, location_lng, location_text,
-			image_urls, created_at, updated_at, published_at, deleted_at
-		FROM marketplace_listings
-		WHERE id = $1 AND deleted_at IS NULL
-	`
-
-	listing := &Listing{}
-	err := s.Db.QueryRow(ctx, query, listingID).Scan(
-		&listing.ID, &listing.UserID, &listing.Title, &listing.Description,
-		&listing.Category, &listing.PriceKobo, &listing.Currency,
-		&listing.Status, &listing.Condition, &listing.LocationLat, &listing.LocationLng,
-		&listing.LocationText, (*pgx.Array[string])(&listing.ImageURLs),
-		&listing.CreatedAt, &listing.UpdatedAt, &listing.PublishedAt, &listing.DeletedAt,
-	)
-
-	if err == pgx.ErrNoRows {
-		return nil, fmt.Errorf("listing not found")
+// Search proxies to the injected Elasticsearch read-model client when one is wired.
+// When ELASTICSEARCH_URL is unset (no searcher), it degrades to a minimal Postgres
+// fallback (ILIKE title + category/condition/state/price filters, newest-first,
+// LIMIT-bounded) so the mobile search screen still returns real active listings
+// instead of a 501 dead-end. Full facets/relevance/geo ranking only ship with ES.
+func (s *Service) Search(ctx context.Context, req any) (any, error) {
+	if s.searcher != nil {
+		return s.searcher.Search(ctx, req)
 	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get listing: %w", err)
-	}
-
-	return listing, nil
-}
-
-// UpdateListing updates a marketplace listing with audit logging.
-func (s *Service) UpdateListing(
-	ctx context.Context,
-	listingID string,
-	userID string,
-	input UpdateListingInput,
-	requestID string,
-	ipAddress string,
-	userAgent string,
-) (*Listing, error) {
-	tx, err := s.Db.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	// Get current listing
-	oldListing, err := s.GetListing(ctx, listingID)
+	f := parseSearchFallback(req)
+	listings, err := s.repo.SearchListingsFallback(ctx, f)
 	if err != nil {
 		return nil, err
 	}
-
-	// Verify ownership (only owner can update)
-	if oldListing.UserID != userID {
-		return nil, fmt.Errorf("unauthorized: you can only update your own listings")
-	}
-
-	// Prepare update query dynamically
-	updates := map[string]interface{}{}
-	if input.Title != nil {
-		updates["title"] = *input.Title
-	}
-	if input.Description != nil {
-		updates["description"] = *input.Description
-	}
-	if input.Category != nil {
-		updates["category"] = *input.Category
-	}
-	if input.PriceKobo != nil {
-		updates["price_kobo"] = *input.PriceKobo
-	}
-	if input.Condition != nil {
-		updates["condition"] = *input.Condition
-	}
-	if input.ImageURLs != nil {
-		updates["image_urls"] = input.ImageURLs
-	}
-
-	if len(updates) == 0 {
-		return oldListing, nil // No changes
-	}
-
-	// Build SQL update query
-	query := "UPDATE marketplace_listings SET updated_at = NOW()"
-	args := []interface{}{listingID}
-	idx := 2
-
-	for key, value := range updates {
-		query += fmt.Sprintf(", %s = $%d", key, idx)
-		args = append(args, value)
-		idx++
-	}
-
-	query += " WHERE id = $1 RETURNING id, user_id, title, description, category, price_kobo, currency, status, condition, location_lat, location_lng, location_text, image_urls, created_at, updated_at, published_at, deleted_at"
-
-	newListing := &Listing{}
-	err = tx.QueryRow(ctx, query, args...).Scan(
-		&newListing.ID, &newListing.UserID, &newListing.Title, &newListing.Description,
-		&newListing.Category, &newListing.PriceKobo, &newListing.Currency,
-		&newListing.Status, &newListing.Condition, &newListing.LocationLat, &newListing.LocationLng,
-		&newListing.LocationText, (*pgx.Array[string])(&newListing.ImageURLs),
-		&newListing.CreatedAt, &newListing.UpdatedAt, &newListing.PublishedAt, &newListing.DeletedAt,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update listing: %w", err)
-	}
-
-	// Log the action
-	oldData, _ := json.Marshal(oldListing)
-	newData, _ := json.Marshal(newListing)
-	var oldMap, newMap map[string]interface{}
-	json.Unmarshal(oldData, &oldMap)
-	json.Unmarshal(newData, &newMap)
-
-	displayText := fmt.Sprintf("%s updated listing: %s", userID, newListing.Title)
-	logErr := s.logAction(ctx, tx, LogActionInput{
-		EntityType:  "listing",
-		EntityID:    listingID,
-		ActorID:     userID,
-		Action:      "UPDATE",
-		Changes: map[string]interface{}{
-			"old": oldMap,
-			"new": newMap,
-		},
-		RequestID:   requestID,
-		IPAddress:   ipAddress,
-		UserAgent:   userAgent,
-		DisplayText: displayText,
-	})
-	if logErr != nil {
-		fmt.Printf("Failed to log action: %v\n", logErr)
-	}
-
-	// Commit
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	// Invalidate cache
-	s.Redis.Del(ctx, fmt.Sprintf("listings:%s", userID))
-
-	// Publish real-time event
-	_ = s.PublishListingEvent(ctx, "listing.updated", newListing)
-
-	return newListing, nil
+	// Shape a search-response-like envelope the mobile client already understands
+	// (results + empty facets + no cursor). `degraded` flags the reduced mode.
+	return map[string]any{
+		"results":     listings,
+		"facets":      map[string]any{"categories": []any{}, "conditions": []any{}, "price_ranges": []any{}},
+		"next_cursor": nil,
+		"took_ms":     0,
+		"degraded":    true,
+	}, nil
 }
 
-// DeleteListing soft-deletes a listing with audit logging.
-func (s *Service) DeleteListing(
-	ctx context.Context,
-	listingID string,
-	userID string,
-	requestID string,
-	ipAddress string,
-	userAgent string,
-) error {
-	tx, err := s.Db.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+// parseSearchFallback extracts the Postgres-fallback filter set from the handler's
+// provider-agnostic request map (values are the raw query-param strings).
+func parseSearchFallback(req any) SearchFallbackFilter {
+	m, _ := req.(map[string]any)
+	f := SearchFallbackFilter{}
+	if m == nil {
+		return f
 	}
-	defer tx.Rollback(ctx)
+	getStr := func(k string) string {
+		if v, ok := m[k]; ok {
+			if s, ok := v.(string); ok {
+				return s
+			}
+		}
+		return ""
+	}
+	getKobo := func(k string) *int64 {
+		s := getStr(k)
+		if s == "" {
+			return nil
+		}
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return &n
+		}
+		return nil
+	}
+	f.Q = getStr("q")
+	f.CategoryID = getStr("category_id")
+	f.Condition = getStr("condition")
+	f.State = getStr("state")
+	f.LGA = getStr("lga")
+	f.PriceMin = getKobo("price_min")
+	f.PriceMax = getKobo("price_max")
+	if v, ok := m["limit"]; ok {
+		switch n := v.(type) {
+		case int:
+			f.Limit = n
+		case int64:
+			f.Limit = int(n)
+		case float64:
+			f.Limit = int(n)
+		}
+	}
+	return f
+}
 
-	// Get listing
-	listing, err := s.GetListing(ctx, listingID)
+// ─── Seller profile read paths ───────────────────────────────────────────────
+
+// SellerProfile returns a seller's trust card.
+func (s *Service) SellerProfile(ctx context.Context, sellerID string) (*TrustProfile, error) {
+	return s.repo.GetTrustProfile(ctx, sellerID)
+}
+
+// SellerListings returns a seller's listings.
+func (s *Service) SellerListings(ctx context.Context, sellerID string, limit, offset int) ([]Listing, error) {
+	return s.repo.ListSellerListings(ctx, sellerID, limit, offset)
+}
+
+// SellerReviews returns a seller's visible reviews.
+func (s *Service) SellerReviews(ctx context.Context, sellerID string, limit, offset int) ([]Review, error) {
+	return s.repo.ListSellerReviews(ctx, sellerID, limit, offset)
+}
+
+// ─── Verification (delegates to KYC provider elsewhere; badges are PERMANENT) ──
+
+// VerifyID marks the caller's verified_id_badge (§ trust_scores: permanent once true).
+// The real ID document check delegates to the existing SmileID/Dojah adapter; here we
+// record the badge grant. Idempotent (upsert).
+func (s *Service) VerifyID(ctx context.Context, userID string) error {
+	return s.repo.SetVerifiedBadge(ctx, userID, false)
+}
+
+// VerifyBusiness marks the caller's verified_business_badge (permanent).
+func (s *Service) VerifyBusiness(ctx context.Context, userID string) error {
+	return s.repo.SetVerifiedBadge(ctx, userID, true)
+}
+
+// ─── Offers (§3.3; guards + status, extrapolated from exemplar) ──────────────
+
+// CreateOffer places a pending offer on a listing.
+func (s *Service) CreateOffer(ctx context.Context, buyerID, listingID string, offerKobo int64, message string) (*Offer, error) {
+	l, err := s.repo.GetListing(ctx, listingID)
+	if err != nil {
+		return nil, err
+	}
+	if l.Status != ListingActive {
+		return nil, newErr(422, CodeListingNotActive, "listing is not active")
+	}
+	if l.SellerID == buyerID {
+		return nil, newErr(422, CodeSelfPurchaseNotAllowed, "cannot make an offer on your own listing")
+	}
+	if offerKobo <= 0 {
+		return nil, fieldErr(CodeValidation, "offer_price_kobo must be positive", "offer_price_kobo")
+	}
+	o, err := s.repo.InsertOffer(ctx, &Offer{ListingID: listingID, BuyerID: buyerID, OfferPriceKobo: offerKobo})
+	if err != nil {
+		return nil, err
+	}
+	// Best-effort: post an optional buyer note into the buyer↔seller deal thread so
+	// the offer and its message live together in the deal room. Never fail the offer
+	// if messaging errors — the offer is the durable record.
+	if strings.TrimSpace(message) != "" {
+		_, _ = s.StartOrGetThread(ctx, buyerID, listingID, message)
+	}
+	return o, nil
+}
+
+// AcceptOffer (seller) accepts a pending offer. OLA: caller must own the listing.
+// NON-BINDING (ADR-023 listings-and-connect pivot): accepting an offer ONLY marks it
+// "accepted" — it agrees a price for the two parties to meet on and does NOT create
+// an escrow order or move any money (the marketplace no longer holds funds). The old
+// order-creation link (CreateOrder reading an accepted offer's price) is gone with the
+// order routes; this transition has no money side-effect and never did in this method.
+func (s *Service) AcceptOffer(ctx context.Context, sellerID, offerID string) (*Offer, error) {
+	return s.transitionOffer(ctx, sellerID, offerID, "accepted", true)
+}
+
+// DeclineOffer (seller) declines a pending offer.
+func (s *Service) DeclineOffer(ctx context.Context, sellerID, offerID string) (*Offer, error) {
+	return s.transitionOffer(ctx, sellerID, offerID, "declined", true)
+}
+
+// CounterOffer (seller) counters with a new price, chaining the parent offer.
+func (s *Service) CounterOffer(ctx context.Context, sellerID, offerID string, counterKobo int64) (*Offer, error) {
+	o, err := s.repo.GetOffer(ctx, offerID)
+	if err != nil {
+		return nil, err
+	}
+	l, err := s.repo.GetListing(ctx, o.ListingID)
+	if err != nil {
+		return nil, err
+	}
+	if l.SellerID != sellerID {
+		return nil, ErrForbidden
+	}
+	if counterKobo <= 0 {
+		return nil, fieldErr(CodeValidation, "counter price must be positive", "offer_price_kobo")
+	}
+	_ = s.repo.SetOfferStatus(ctx, offerID, "countered")
+	parent := o.ID
+	return s.repo.InsertOffer(ctx, &Offer{ListingID: o.ListingID, BuyerID: o.BuyerID, OfferPriceKobo: counterKobo, ParentOfferID: &parent})
+}
+
+// ListOffersForListing returns the negotiation history for a listing, scoped to the
+// caller (object-level auth): the listing's seller sees every offer; any other caller
+// (a buyer) sees only the offers they themselves made. Ordered oldest→newest so the
+// deal room can render the counter-offer chain in sequence.
+func (s *Service) ListOffersForListing(ctx context.Context, callerID, listingID string) ([]Offer, error) {
+	l, err := s.repo.GetListing(ctx, listingID)
+	if err != nil {
+		return nil, err
+	}
+	if l.SellerID == callerID {
+		return s.repo.ListOffersByListing(ctx, listingID, "")
+	}
+	// Buyer view: only their own offers on this listing.
+	return s.repo.ListOffersByListing(ctx, listingID, callerID)
+}
+
+// transitionOffer applies an offer status change after an OLA check.
+func (s *Service) transitionOffer(ctx context.Context, sellerID, offerID, status string, requireSeller bool) (*Offer, error) {
+	o, err := s.repo.GetOffer(ctx, offerID)
+	if err != nil {
+		return nil, err
+	}
+	l, err := s.repo.GetListing(ctx, o.ListingID)
+	if err != nil {
+		return nil, err
+	}
+	if requireSeller && l.SellerID != sellerID {
+		return nil, ErrForbidden
+	}
+	if err := s.repo.SetOfferStatus(ctx, offerID, status); err != nil {
+		return nil, err
+	}
+	o.Status = status
+	return o, nil
+}
+
+// ─── Saved searches (§3.3) ───────────────────────────────────────────────────
+
+// CreateSavedSearch stores a saved search for the user.
+func (s *Service) CreateSavedSearch(ctx context.Context, userID string, in SavedSearch) (*SavedSearch, error) {
+	in.UserID = userID
+	if in.MarketID == "" {
+		in.MarketID = DefaultMarketID
+	}
+	return s.repo.InsertSavedSearch(ctx, &in)
+}
+
+// ListSavedSearches returns the user's saved searches.
+func (s *Service) ListSavedSearches(ctx context.Context, userID string) ([]SavedSearch, error) {
+	return s.repo.ListSavedSearches(ctx, userID)
+}
+
+// DeleteSavedSearch removes a saved search after an OLA check.
+func (s *Service) DeleteSavedSearch(ctx context.Context, userID, id string) error {
+	owner, err := s.repo.GetSavedSearchOwner(ctx, id)
 	if err != nil {
 		return err
 	}
-
-	// Verify ownership
-	if listing.UserID != userID {
-		return fmt.Errorf("unauthorized: you can only delete your own listings")
+	if owner != userID {
+		return ErrForbidden
 	}
+	return s.repo.DeleteSavedSearch(ctx, id)
+}
 
-	// Soft delete
-	const query = `
-		UPDATE marketplace_listings
-		SET deleted_at = NOW(), updated_at = NOW()
-		WHERE id = $1
-	`
-
-	_, err = tx.Exec(ctx, query, listingID)
+// ToggleSavedSearchAlert flips a saved search's alert flag after an OLA check.
+func (s *Service) ToggleSavedSearchAlert(ctx context.Context, userID, id string, enabled bool) error {
+	owner, err := s.repo.GetSavedSearchOwner(ctx, id)
 	if err != nil {
-		return fmt.Errorf("failed to delete listing: %w", err)
+		return err
 	}
+	if owner != userID {
+		return ErrForbidden
+	}
+	return s.repo.SetSavedSearchAlert(ctx, id, enabled)
+}
 
-	// Log the action
-	displayText := fmt.Sprintf("%s deleted listing: %s", userID, listing.Title)
-	logErr := s.logAction(ctx, tx, LogActionInput{
-		EntityType:  "listing",
-		EntityID:    listingID,
-		ActorID:     userID,
-		Action:      "DELETE",
-		Changes: map[string]interface{}{
-			"old": listing,
-		},
-		RequestID:   requestID,
-		IPAddress:   ipAddress,
-		UserAgent:   userAgent,
-		DisplayText: displayText,
+// ─── Reviews (§3.3; only after order released) ───────────────────────────────
+
+// ─── Admin: flags + aging (thin wrappers with audit) ────────────────────────
+
+// ActionFlag records an admin action on a moderation flag (audited).
+func (s *Service) ActionFlag(ctx context.Context, adminID, flagID, status, reasonCode string) error {
+	if err := requireReason(reasonCode); err != nil {
+		return err
+	}
+	if err := s.repo.ActionFlag(ctx, flagID, status, adminID); err != nil {
+		return err
+	}
+	return s.writeAudit(ctx, AuditEntry{
+		AdminID: adminID, Action: "mkt.flag.action", TargetType: "flag", TargetID: flagID, ReasonCode: reasonCode,
+		AfterState: map[string]any{"status": status},
 	})
-	if logErr != nil {
-		fmt.Printf("Failed to log action: %v\n", logErr)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	// Invalidate cache
-	s.Redis.Del(ctx, fmt.Sprintf("listings:%s", userID))
-
-	// Publish real-time event
-	_ = s.PublishListingEvent(ctx, "listing.deleted", listing)
-
-	return nil
 }
 
-// GetAuditTrail retrieves the audit trail for a listing.
-func (s *Service) GetAuditTrail(ctx context.Context, listingID string, limit int) ([]*AuditLog, error) {
-	const query = `
-		SELECT id, entity_type, entity_id, actor_id, action, changes, created_at
-		FROM marketplace_audit_logs
-		WHERE entity_type = 'listing' AND entity_id = $1
-		ORDER BY created_at DESC
-		LIMIT $2
-	`
+// AgingOrders returns non-terminal orders older than 72h (§8 admin aging board).
+func (s *Service) AgingOrders(ctx context.Context, limit, offset int) ([]Order, error) {
+	cutoff := time.Now().Add(-72 * time.Hour)
+	return s.repo.AgingOrders(ctx, cutoff, limit, offset)
+}
 
-	rows, err := s.Db.Query(ctx, query, listingID, limit)
+// SubmitReview records a buyer review for a released order. Transaction-gated by the
+// UNIQUE(order_id) constraint + the order-status guard here.
+func (s *Service) SubmitReview(ctx context.Context, buyerID, orderID string, rating *int, comment *string) (*Review, error) {
+	o, err := s.repo.GetOrder(ctx, orderID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get audit trail: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-
-	var logs []*AuditLog
-	for rows.Next() {
-		log := &AuditLog{}
-		var changesJSON []byte
-
-		err := rows.Scan(
-			&log.ID, &log.EntityType, &log.EntityID, &log.ActorID,
-			&log.Action, &changesJSON, &log.CreatedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan audit log: %w", err)
-		}
-
-		// Parse JSON changes
-		if changesJSON != nil {
-			err = json.Unmarshal(changesJSON, &log.Changes)
-			if err != nil {
-				fmt.Printf("Failed to unmarshal changes: %v\n", err)
-			}
-		}
-
-		logs = append(logs, log)
+	if o.BuyerID != buyerID {
+		return nil, newErr(403, CodeNotOrderBuyer, "only the buyer may review this order")
 	}
-
-	return logs, nil
-}
-
-// LogActionInput is the input for logging an action.
-type LogActionInput struct {
-	EntityType  string
-	EntityID    string
-	ActorID     string
-	Action      string
-	Changes     map[string]interface{}
-	RequestID   string
-	IPAddress   string
-	UserAgent   string
-	DisplayText string
-}
-
-// logAction logs an action to the audit table (must be called within a transaction).
-func (s *Service) logAction(ctx context.Context, tx pgx.Tx, input LogActionInput) error {
-	changesJSON, _ := json.Marshal(input.Changes)
-
-	const query = `
-		SELECT log_marketplace_action($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`
-
-	var logID string
-	err := tx.QueryRow(ctx, query,
-		input.EntityType,
-		input.EntityID,
-		input.ActorID,
-		input.Action,
-		changesJSON,
-		input.RequestID,
-		input.IPAddress,
-		input.UserAgent,
-		input.DisplayText,
-	).Scan(&logID)
-
-	if err != nil {
-		return fmt.Errorf("failed to log action: %w", err)
+	if o.Status != OrderReleased {
+		return nil, newErr(422, CodeOrderNotAcceptable, "reviews are only allowed after release")
 	}
-
-	return nil
-}
-
-// PublishListingEvent publishes a real-time listing event.
-func (s *Service) PublishListingEvent(ctx context.Context, eventType string, listing *Listing) error {
-	event := map[string]interface{}{
-		"type":      eventType,
-		"listing":   listing,
-		"timestamp": time.Now().Unix(),
+	rev := &Review{OrderID: orderID, ReviewerID: buyerID, RevieweeID: o.SellerID, Rating: rating, Comment: comment}
+	if err := s.repo.InsertReview(ctx, rev); err != nil {
+		return nil, err
 	}
-
-	eventJSON, _ := json.Marshal(event)
-
-	// Publish to Redis pub/sub for real-time delivery
-	return s.Redis.Publish(ctx, "marketplace:events", string(eventJSON)).Err()
+	return rev, nil
 }
