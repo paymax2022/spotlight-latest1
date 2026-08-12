@@ -78,7 +78,7 @@ export default function ArenaQuizBankPage() {
     void listCompetitions()
       .then((c) => {
         setCompetitions(c);
-        const wanted = searchParams.get('competitionId');
+        const wanted = searchParams?.get('competitionId') ?? null;
         const initial = (wanted && c.find((x) => x.id === wanted)?.id) || c[0]?.id || '';
         setCompetitionId(initial);
       })

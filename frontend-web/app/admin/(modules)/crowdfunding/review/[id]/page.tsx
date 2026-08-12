@@ -24,7 +24,7 @@ const DECISIONS: { value: CfReviewDecision; label: string; color: string; varian
 ];
 
 export default function CampaignReviewDetail() {
-  const { id } = useParams<{ id: string }>();
+  const { id } = useParams<{ id: string }>() ?? { id: '' };
   const router = useRouter();
   const [c, setC] = useState<CfReviewCampaign | null>(null);
   const [loading, setLoading] = useState(true);

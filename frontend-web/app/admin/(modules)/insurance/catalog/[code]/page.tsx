@@ -13,7 +13,7 @@ import { colors } from '@/components/ui/vuexy';
 
 export default function InsuranceProductEditorPage() {
   const params = useParams();
-  const code = params.code as string;
+  const code = params?.code as string;
 
   const [detail, setDetail] = useState<InsuranceProductDetail | null>(null);
   const [loading, setLoading] = useState(true);

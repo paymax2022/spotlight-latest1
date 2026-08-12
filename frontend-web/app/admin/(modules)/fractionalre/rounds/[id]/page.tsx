@@ -20,7 +20,7 @@ const STATUS_COLOR: Record<string, string> = {
 const labelStyle = { fontSize: '0.78rem', fontWeight: 600, color: colors.text, display: 'block', marginBottom: 4 } as const;
 
 export default function RoundDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const { id } = useParams<{ id: string }>() ?? { id: '' };
   const [round, setRound] = useState<AdminRound | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

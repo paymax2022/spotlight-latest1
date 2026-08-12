@@ -36,7 +36,7 @@ function statusColor(status: string): string {
 }
 
 export default function AssetDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const { id } = useParams<{ id: string }>() ?? { id: '' };
   const [asset, setAsset] = useState<AdminAsset | null>(null);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);

@@ -60,7 +60,7 @@ type OpenMicData = {
 export default function CreateCompetitionPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const competitionId = searchParams.get('id');
+  const competitionId = searchParams?.get('id') ?? null;
   const [formData, setFormData] = useState({
     title: '',
     description: '',

@@ -12,7 +12,7 @@ import { PageHeader, AssociationTabs, Card, Badge, DisclosureNote, StateBlock, A
 
 export default function ElectionManagePage() {
   const params = useParams<{ id: string }>();
-  const id = params.id;
+  const id = params?.id ?? '';
   const [election, setElection] = useState<AdminElectionDetail | null>(null);
   const [tally, setTally] = useState<AdminPositionResult[]>([]);
   const [handover, setHandover] = useState<ElectionHandoverResult | null>(null);
