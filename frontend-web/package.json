@@ -7,6 +7,7 @@
         "dev:clean": "rm -rf .next && next dev",
         "dev:reset": "sh -c 'for p in 3000 3001 3002; do lsof -ti tcp:$p | xargs kill -9 2>/dev/null || true; done; rm -rf .next; next dev'",
         "build": "next build",
+        "type-check": "tsc --noEmit",
         "start": "next start",
         "lint": "next lint",
         "test": "vitest run",
