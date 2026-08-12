@@ -23,6 +23,14 @@
       "runtimeArgs": ["run", "web"],
       "cwd": "mobile-app/reactnative",
       "port": 8083
+    },
+    {
+      "name": "expo-web-fx",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["expo", "start", "--web", "--port", "8085"],
+      "cwd": "mobile-app/reactnative",
+      "port": 8085,
+      "description": "Mobile web on a side port for FX QA"
     }
   ]
 }
