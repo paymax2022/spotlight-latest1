@@ -88,6 +88,22 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		users := v1.Group("/users")
 		users.GET("/health", health.GenericHealth)
 
+		// Registration endpoints (public contests + user applications)
+		// All endpoints require bearer token auth (RequireAuthContext middleware).
+		registrationHandler := handlers.NewRegistrationHandler()
+		registrationAuth := v1.Group("/registration")
+		registrationAuth.Use(middleware.RequireAuthContext(supabase, rbacService))
+		registrationAuth.GET("/contests", registrationHandler.ListContests)
+		registrationAuth.GET("/applications", registrationHandler.ListApplications)
+		registrationAuth.POST("/applications", registrationHandler.CreateApplication)
+		registrationAuth.GET("/applications/:id", registrationHandler.GetApplication)
+		registrationAuth.PATCH("/applications/:id", registrationHandler.SaveStep)
+		registrationAuth.POST("/applications/:id/submit", registrationHandler.SubmitApplication)
+		registrationAuth.GET("/applications/:id/status", registrationHandler.GetStatus)
+		registrationAuth.POST("/applications/:id/withdraw", registrationHandler.WithdrawApplication)
+		registrationAuth.POST("/applications/:id/payment/initiate", registrationHandler.InitiatePayment)
+		registrationAuth.POST("/applications/:id/payment/verify", registrationHandler.VerifyPayment)
+
 		schools := v1.Group("/schools")
 		schools.Use(middleware.StemRateLimit(25, time.Minute))
 		schools.GET("", stem.Schools)
@@ -309,6 +325,36 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		rbacAdmin.POST("/users/:id/force-logout", middleware.RequirePermission(rbacService, "users.suspend"), sessionHandler.AdminForceLogout)
 		rbacAdmin.POST("/users/:id/force-password-reset", middleware.RequirePermission(rbacService, "users.suspend"), sessionHandler.AdminForcePasswordReset)
 
+		// Admin console — unified /api/v1/admin/* endpoints for mobile admin UI
+		// Gated by RBAC middleware (X-Admin-Role header). Each endpoint checks specific
+		// permissions (TODO: implement fine-grained permission checks per endpoint).
+		adminConsoleHandler := handlers.NewAdminConsoleHandler()
+		adminConsole := v1.Group("/admin")
+		adminConsole.Use(middleware.RequireAdminConsoleRole())
+		adminConsole.GET("/dashboard", adminConsoleHandler.Dashboard)
+		adminConsole.GET("/users", adminConsoleHandler.GetUsers)
+		adminConsole.GET("/users/:id", adminConsoleHandler.GetUser)
+		adminConsole.GET("/kyc", adminConsoleHandler.GetKycQueue)
+		adminConsole.POST("/kyc/:id/review", adminConsoleHandler.ReviewKyc)
+		adminConsole.GET("/assets", adminConsoleHandler.GetAssetControls)
+		adminConsole.PATCH("/assets/:id", adminConsoleHandler.UpdateAssetControl)
+		adminConsole.GET("/orders", adminConsoleHandler.GetOrders)
+		adminConsole.GET("/withdrawals", adminConsoleHandler.GetWithdrawalQueue)
+		adminConsole.POST("/withdrawals/:ref/review", adminConsoleHandler.ReviewWithdrawal)
+		adminConsole.GET("/reconciliation", adminConsoleHandler.GetReconciliation)
+		adminConsole.GET("/providers", adminConsoleHandler.GetProviders)
+		adminConsole.GET("/risk-limits", adminConsoleHandler.GetRiskLimits)
+		adminConsole.PATCH("/risk-limits/:id", adminConsoleHandler.UpdateRiskLimit)
+		adminConsole.GET("/fees", adminConsoleHandler.GetFees)
+		adminConsole.PATCH("/fees/:id", adminConsoleHandler.UpdateFee)
+		adminConsole.GET("/feature-flags", adminConsoleHandler.GetFeatureFlags)
+		adminConsole.PATCH("/feature-flags/:key", adminConsoleHandler.SetFeatureFlag)
+		adminConsole.GET("/approvals", adminConsoleHandler.GetApprovals)
+		adminConsole.POST("/approvals/:id/approve", adminConsoleHandler.Approve)
+		adminConsole.POST("/approvals/:id/reject", adminConsoleHandler.RejectApproval)
+		adminConsole.GET("/audit", adminConsoleHandler.GetAudit)
+		adminConsole.GET("/admins", adminConsoleHandler.GetAdmins)
+
 		mobile := v1.Group("/mobile")
 		mobile.GET("/health", health.GenericHealth)
 
@@ -348,6 +394,14 @@ func NewRouter(cfg config.Config) *gin.Engine {
 
 	// Paymax Connect module — wired only when FEATURE_CONNECT_ENABLED + shared pool.
 	registerConnectRoutes(r, cfg, supabase, rbacService, sharedPool)
+
+	// Paymax Connect wallet endpoints (/api/v1/wallet/*, /api/v1/kyc/*, etc.)
+	// — member-facing wallet balance, gifting, tier progression, and payouts.
+	// All endpoints require authentication (Bearer token). Requires shared pool.
+	if sharedPool != nil {
+		authMiddleware := middleware.RequireAuthContext(supabase, rbacService)
+		registerConnectWalletRoutes(r, supabase, rbacService, authMiddleware)
+	}
 
 	// Arena competition engine (ADR-014) — feature-flagged, default off. The merit
 	// firewall lives inside: only the ScoringGateway holds signers. The shared Redis
