@@ -410,6 +410,22 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		registrationAuth.POST("/applications/:id/withdraw", registrationHandler.WithdrawApplication)
 		registrationAuth.POST("/applications/:id/payment/initiate", registrationHandler.InitiatePayment)
 		registrationAuth.POST("/applications/:id/payment/verify", registrationHandler.VerifyPayment)
+
+		// Admin review queue for the registration funnel. Approving here promotes
+		// the entry onto the voting roster in one transaction (see
+		// promote_registration_to_contestant), which is the seam that connects the
+		// mobile entry flow to what voters actually see.
+		//
+		// contestant.view gates the whole group; UpdateStatus additionally checks
+		// contestant.approve or contestant.reject per target status.
+		registrationAdminStore := handlers.NewRegistrationAdminStore(sharedPool)
+		registrationAdminHandler := handlers.NewRegistrationAdminHandler(registrationAdminStore, rbacService, auditService)
+		registrationAdmin := v1.Group("/admin/registrations")
+		registrationAdmin.Use(middleware.RequireAuthContext(supabase, rbacService))
+		registrationAdmin.Use(middleware.RequirePermission(rbacService, "contestant.view"))
+		registrationAdmin.GET("", registrationAdminHandler.List)
+		registrationAdmin.GET("/:id", registrationAdminHandler.Get)
+		registrationAdmin.PATCH("/:id/status", registrationAdminHandler.UpdateStatus)
 	}
 
 	// Arena competition engine (ADR-014) — feature-flagged, default off. The merit
