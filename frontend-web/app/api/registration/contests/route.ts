@@ -1,5 +1,5 @@
 import { successResponse, handleApiError } from '@/src/lib/api/responses';
-import { listRegistrationContests } from '@/src/server/registration/store';
+import { listRegistrationContests } from '@/src/server/registration/supabase-store';
 
 export async function GET() {
   try {

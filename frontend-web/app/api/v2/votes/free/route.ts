@@ -1,72 +1,84 @@
-import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
-import { bridgedCastFreeVote } from '@/src/server/voting-bridge/bridge';
-import { checkRateLimit } from '@/src/lib/voting/rate-limit';
-import type { CastFreeVoteRequest } from '@/src/features/voting/types';
+/**
+ * POST /api/v2/votes/free - Cast a free vote using the bridge
+ * Requires X-Idempotency-Key header for deduplication
+ */
 
-function getIp(request: Request): string {
-  return (
-    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    request.headers.get('x-real-ip') ||
-    '0.0.0.0'
-  );
-}
+import { NextRequest, NextResponse } from 'next/server';
+import { bridgedCastFreeVote } from '@/server/voting-bridge/bridge';
+import { validateRequest } from '@/lib/auth/request';
 
-function getDevice(request: Request): string {
-  return request.headers.get('x-device-fingerprint') || '';
-}
-
-async function tryGetUserId(request: Request): Promise<string | undefined> {
+export async function POST(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization') || '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
-    if (!token) return undefined;
-    const { createClient } = await import('@/lib/supabase/server');
-    const supabase = await createClient();
-    const { data } = await supabase.auth.getUser(token);
-    return data.user?.id;
-  } catch {
-    return undefined;
-  }
-}
+    // Get idempotency key from headers
+    const idempotencyKey = request.headers.get('X-Idempotency-Key');
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { error: 'X-Idempotency-Key header is required' },
+        { status: 400 }
+      );
+    }
 
-export async function POST(request: Request) {
-  const idempotencyKey = request.headers.get('X-Idempotency-Key') ?? undefined;
-  const userAgent = request.headers.get('user-agent') ?? '';
+    // Validate authentication
+    const { user, error: authError } = await validateRequest(request);
+    if (authError) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
 
-  let body: Partial<CastFreeVoteRequest>;
-  try {
-    body = await request.json();
-  } catch {
-    return errorResponse('Invalid JSON body', 400);
-  }
+    // Parse request body
+    const body = await request.json();
+    const { contestantId, contestId, shareCode } = body;
 
-  const { contestId, contestantId, voterIdentifier, captchaToken, shareCode, voteQuantity } = body;
+    if (!contestantId || !contestId) {
+      return NextResponse.json(
+        { error: 'Missing required fields: contestantId, contestId' },
+        { status: 400 }
+      );
+    }
 
-  if (!contestId || !contestantId) {
-    return errorResponse('contestId and contestantId are required', 400);
-  }
+    // Get request context
+    const ipAddress = request.headers.get('x-forwarded-for') ||
+                     request.headers.get('x-real-ip') ||
+                     'unknown';
+    const userAgent = request.headers.get('user-agent') || 'unknown';
+    const deviceFingerprint = request.headers.get('X-Device-Fingerprint') || undefined;
 
-  const ip = getIp(request);
-  const rateLimitResult = await checkRateLimit(`free-vote:${ip}:${contestId}:${contestantId}`, 30, 60_000);
-  if (!rateLimitResult.allowed) {
-    return errorResponse('Too many requests. Please slow down.', 429);
-  }
-
-  try {
-    const userId = await tryGetUserId(request);
-    const device = getDevice(request);
-
+    // Cast the vote via bridge
     const result = await bridgedCastFreeVote(
-      { contestId, contestantId, voterIdentifier, captchaToken, shareCode, voteQuantity },
-      ip,
-      device,
-      userAgent,
-      userId,
+      {
+        contestantId,
+        contestId,
+        shareCode,
+      },
+      user?.id,
       idempotencyKey,
+      {
+        ipAddress,
+        userAgent,
+        deviceFingerprint,
+      }
     );
 
-    return successResponse({ ...(result as unknown as Record<string, unknown>) });
-  } catch (err) {
-    return handleApiError(err);
+    if (!result.success) {
+      return NextResponse.json(
+        { error: result.error || 'Failed to cast vote' },
+        { status: 400 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      voteId: result.voteId,
+      totalVotes: result.totalVotes,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('[API] /api/v2/votes/free POST error:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }

@@ -15,6 +15,8 @@ import TierLimitBar from '@/features/connect/components/TierLimitBar';
 import MoneyAmount from '@/features/connect/components/wallet-MoneyAmount';
 import { formatKobo } from '@/features/connect/constants/format';
 import { usePayoutEligibility, useRequestPayout } from '@/features/connect/wallet/hooks';
+import { moneyErrorMessage, isDuplicateReplay } from '@/features/connect/wallet/errors';
+import { useIdempotencyKey } from '@/utils/idempotency';
 import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 
 // WL-20 — Creator payout request. Tier2+ & KYC gated (server re-checks). The
@@ -22,6 +24,8 @@ import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 export default function PayoutRequest() {
   const elig = usePayoutEligibility();
   const request = useRequestPayout();
+  // Stable across retries so a timeout replay is deduped, never double-posted.
+  const { key: idempotencyKey, reset: resetIdempotencyKey } = useIdempotencyKey();
   const [naira, setNaira] = useState('');
 
   const amountKobo = useMemo(() => nairaStringToKobo(naira), [naira]);
@@ -67,10 +71,21 @@ export default function PayoutRequest() {
   const onSubmit = () => {
     if (!valid) return;
     request.mutate(
-      { amountKobo },
+      { amountKobo, idempotencyKey },
       {
-        onSuccess: () => router.replace('/connect/wallet/payouts/history'),
-        onError: (err: unknown) => Alert.alert('Payout failed', err instanceof Error ? err.message : 'Please try again.'),
+        onSuccess: () => {
+          resetIdempotencyKey();
+          router.replace('/connect/wallet/payouts/history');
+        },
+        onError: (err: unknown) => {
+          // A 409 means the first attempt already registered the payout.
+          if (isDuplicateReplay(err)) {
+            resetIdempotencyKey();
+            router.replace('/connect/wallet/payouts/history');
+            return;
+          }
+          Alert.alert('Payout failed', moneyErrorMessage(err));
+        },
       },
     );
   };

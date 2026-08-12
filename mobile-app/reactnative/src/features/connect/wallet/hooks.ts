@@ -51,7 +51,8 @@ export function useWalletEntry(id: string) {
 export function useFundWallet() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (amountKobo: number) => walletApi.fundWallet(amountKobo),
+    mutationFn: ({ amountKobo, idempotencyKey }: { amountKobo: number; idempotencyKey?: string }) =>
+      walletApi.fundWallet(amountKobo, idempotencyKey),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: walletKeys.summary() });
       qc.invalidateQueries({ queryKey: walletKeys.history() });
@@ -92,7 +93,7 @@ export function useGiftQuote(productId?: string, recipientId?: string) {
 export function useSendGift() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: SendGiftInput) => walletApi.sendGift(input),
+    mutationFn: (input: SendGiftInput & { idempotencyKey?: string }) => walletApi.sendGift(input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: walletKeys.summary() });
       qc.invalidateQueries({ queryKey: walletKeys.history() });
@@ -169,7 +170,7 @@ export function usePayoutHistory() {
 export function useRequestPayout() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: PayoutRequestInput) => walletApi.requestPayout(input),
+    mutationFn: (input: PayoutRequestInput & { idempotencyKey?: string }) => walletApi.requestPayout(input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: walletKeys.payoutEligibility() });
       qc.invalidateQueries({ queryKey: walletKeys.payoutHistory() });

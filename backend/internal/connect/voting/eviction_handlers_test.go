@@ -296,3 +296,47 @@ func TestErrorResponse(t *testing.T) {
 		})
 	}
 }
+
+// TestEvictionMutationsAreNotOnMemberRouter guards a privilege escalation: the
+// member group authenticates but carries no RBAC, and these handlers do not
+// check permissions themselves. Registering any eviction MUTATION there lets any
+// signed-in user evict contestants, save them, or cast admin votes. Read-only
+// stage/eviction lookups are fine.
+func TestEvictionMutationsAreNotOnMemberRouter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	member := r.Group("")
+
+	Register(member, &Service{}, config.Config{FeatureContestStageEvictionEnabled: true})
+
+	forbidden := []struct{ method, path string }{
+		{"POST", "/contests/:id/stages/:stageNum/evict"},
+		{"POST", "/contests/:id/save"},
+		{"POST", "/contests/:id/extend-grace-period"},
+		{"POST", "/contests/:id/stages/:stageNum/finalize-evictions"},
+		{"POST", "/contests/:id/admin-vote"},
+	}
+
+	registered := map[string]bool{}
+	for _, ri := range r.Routes() {
+		registered[ri.Method+" "+ri.Path] = true
+	}
+
+	for _, f := range forbidden {
+		if registered[f.method+" "+f.path] {
+			t.Errorf("%s %s is registered on the member router without an RBAC guard — "+
+				"any authenticated user could call it; it belongs in RegisterAdmin only",
+				f.method, f.path)
+		}
+	}
+
+	// The read-only routes SHOULD still be there for members.
+	for _, want := range []string{
+		"GET /contests/:id/stages/:stageNum/contestants",
+		"GET /contests/:id/evictions",
+	} {
+		if !registered[want] {
+			t.Errorf("expected member read route %q to stay registered", want)
+		}
+	}
+}

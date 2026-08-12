@@ -20,6 +20,19 @@ export async function requireRequestUser(request: Request): Promise<RequestUser>
   return { id: data.user.id, email: data.user.email || undefined };
 }
 
+// Non-throwing variant for routes that branch on auth failure instead of
+// catching (the v2 vote routes use this shape).
+export async function validateRequest(
+  request: Request,
+): Promise<{ user: RequestUser | null; error: string | null }> {
+  try {
+    const user = await requireRequestUser(request);
+    return { user, error: null };
+  } catch {
+    return { user: null, error: 'UNAUTHORIZED' };
+  }
+}
+
 // Service-role client for role lookups — RLS is bypassed intentionally because
 // this is a server-side internal call, not a user-facing query.
 export async function getRequestUserRole(userId: string): Promise<string | null> {

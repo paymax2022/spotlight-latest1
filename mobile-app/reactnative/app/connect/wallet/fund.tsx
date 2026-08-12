@@ -15,6 +15,8 @@ import TierLimitBar from '@/features/connect/components/TierLimitBar';
 import MoneyAmount from '@/features/connect/components/wallet-MoneyAmount';
 import { formatKobo } from '@/features/connect/constants/format';
 import { useWalletSummary, useFundWallet } from '@/features/connect/wallet/hooks';
+import { moneyErrorMessage, isDuplicateReplay } from '@/features/connect/wallet/errors';
+import { useIdempotencyKey } from '@/utils/idempotency';
 import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 
 // WL-02 — Fund the Connect wallet FROM the Paymax super-app wallet (the only
@@ -24,6 +26,8 @@ const PRESETS_KOBO = [200_000, 500_000, 1_000_000, 2_500_000];
 export default function FundWallet() {
   const summary = useWalletSummary();
   const fund = useFundWallet();
+  // Stable across retries so a timeout replay is deduped, never double-posted.
+  const { key: idempotencyKey, reset: resetIdempotencyKey } = useIdempotencyKey();
   const [naira, setNaira] = useState('');
 
   const amountKobo = useMemo(() => nairaStringToKobo(naira), [naira]);
@@ -50,12 +54,20 @@ export default function FundWallet() {
 
   const onSubmit = () => {
     if (!valid) return;
-    fund.mutate(amountKobo, {
+    fund.mutate({ amountKobo, idempotencyKey }, {
       onSuccess: (r) => {
+        resetIdempotencyKey();
         router.replace({ pathname: '/connect/wallet/transaction-detail', params: { id: r.entry.id } });
       },
-      onError: (e: unknown) =>
-        Alert.alert('Funding failed', e instanceof Error ? e.message : 'Please try again.'),
+      onError: (e: unknown) => {
+        // A 409 means the first attempt already funded the wallet.
+        if (isDuplicateReplay(e)) {
+          resetIdempotencyKey();
+          router.replace('/connect/wallet');
+          return;
+        }
+        Alert.alert('Funding failed', moneyErrorMessage(e));
+      },
     });
   };
 

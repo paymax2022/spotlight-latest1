@@ -41,8 +41,14 @@ function unwrap<T>(res: { data?: { data?: T } & T }): T {
 }
 
 // On the live path every mutation must carry an Idempotency-Key (iron rule).
-function idemConfig() {
-  return { headers: { 'Idempotency-Key': generateIdempotencyKey() } };
+//
+// Callers on the money path MUST pass a key that is stable across retries of the
+// same logical operation (see useIdempotencyKey). Minting one per attempt means a
+// retry after a client-side timeout posts a SECOND debit instead of being deduped.
+// The fallback generation here exists only for non-money callers where a replay
+// is harmless; it is deliberately not the default for wallet mutations.
+function idemConfig(idempotencyKey?: string) {
+  return { headers: { 'Idempotency-Key': idempotencyKey ?? generateIdempotencyKey() } };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,7 +152,7 @@ export async function getWalletEntry(id: string): Promise<WalletEntry> {
 
 // Fund the Connect wallet FROM the Paymax super-app wallet (the only funding
 // rail — SAFETY INVARIANT: payments ONLY via Paymax wallet). Idempotent.
-export async function fundWallet(amountKobo: number): Promise<FundResult> {
+export async function fundWallet(amountKobo: number, idempotencyKey?: string): Promise<FundResult> {
   if (USE_MOCK) {
     await delay(600);
     if (amountKobo <= 0) throw new Error('Enter an amount greater than zero.');
@@ -160,7 +166,7 @@ export async function fundWallet(amountKobo: number): Promise<FundResult> {
     MOCK_HISTORY.unshift(entry);
     return { ok: true, entry, balanceKobo: mockState.balanceKobo, tier: cloneTier() };
   }
-  const res = await api.post(`${CONNECT_API_BASE}/wallet/fund`, { amountKobo }, idemConfig());
+  const res = await api.post(`${CONNECT_API_BASE}/wallet/fund`, { amountKobo }, idemConfig(idempotencyKey));
   return unwrap<FundResult>(res);
 }
 
@@ -237,7 +243,8 @@ export async function quoteGift(productId: string, recipientId: string): Promise
 
 // Wallet-to-wallet REAL Naira transfer. Idempotent. Server enforces the tier
 // limit fail-closed; the client double-checks only for UX.
-export async function sendGift(input: SendGiftInput): Promise<SendGiftResult> {
+export async function sendGift(input: SendGiftInput & { idempotencyKey?: string }): Promise<SendGiftResult> {
+  const { idempotencyKey, ...body } = input;
   if (USE_MOCK) {
     await delay(700);
     const product = MOCK_GIFTS.find((g) => g.id === input.productId) ?? MOCK_GIFTS[0];
@@ -271,7 +278,7 @@ export async function sendGift(input: SendGiftInput): Promise<SendGiftResult> {
     });
     return { ok: true, transaction, balanceKobo: mockState.balanceKobo, tier: cloneTier() };
   }
-  const res = await api.post(`${CONNECT_API_BASE}/wallet/gifting/send`, input, idemConfig());
+  const res = await api.post(`${CONNECT_API_BASE}/wallet/gifting/send`, body, idemConfig(idempotencyKey));
   return unwrap<SendGiftResult>(res);
 }
 
@@ -435,7 +442,8 @@ export async function getPayoutEligibility(): Promise<PayoutEligibility> {
 }
 
 // Idempotent payout request. Server re-checks Tier2+/KYC gate fail-closed.
-export async function requestPayout(input: PayoutRequestInput): Promise<PayoutRequestResult> {
+export async function requestPayout(input: PayoutRequestInput & { idempotencyKey?: string }): Promise<PayoutRequestResult> {
+  const { idempotencyKey, ...body } = input;
   if (USE_MOCK) {
     await delay(700);
     if (input.amountKobo < 100_000) throw new Error('Minimum payout is ₦1,000.');
@@ -449,7 +457,7 @@ export async function requestPayout(input: PayoutRequestInput): Promise<PayoutRe
     };
     return { ok: true, request, availableKobo: 1_240_000 - input.amountKobo };
   }
-  const res = await api.post(`${CONNECT_API_BASE}/wallet/payouts/request`, input, idemConfig());
+  const res = await api.post(`${CONNECT_API_BASE}/wallet/payouts/request`, body, idemConfig(idempotencyKey));
   return unwrap<PayoutRequestResult>(res);
 }
 

@@ -202,6 +202,8 @@ export interface MktFlagActionRequest {
   reason_code: string;
 }
 
+// Alias used by the real-time dashboard service/page.
+// (Same row shape as the console's audit entries.)
 export interface MktAdminAuditLogEntry {
   id: number;
   admin_id: string;
@@ -537,3 +539,6 @@ export interface MktCategoryContentInput {
   seo_description: string;
   reason_code: string;
 }
+
+
+export type AuditLog = MktAdminAuditLogEntry;

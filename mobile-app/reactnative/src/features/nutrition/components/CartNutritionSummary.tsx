@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Flame, Info, TriangleAlert } from 'lucide-react-native';
+import { Flame, Info } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Radius } from '@/constants/radius';
@@ -55,18 +55,6 @@ export default function CartNutritionSummary({ ids }: { ids: string[] }) {
       </View>
       <Text style={styles.worstNote}>Worst-case across your cart</Text>
 
-      {data.allergens.length > 0 ? (
-        <View style={styles.allergenRow}>
-          <TriangleAlert size={13} color={Colors.error} strokeWidth={2.2} />
-          <Text style={styles.allergenText}>
-            <Text style={styles.allergenStrong}>Allergens in cart: </Text>
-            {data.allergens
-              .map((a) => `${DECLARATION_LABEL[a.declaration_type].toLowerCase()} ${a.allergen}`)
-              .join(', ')}
-          </Text>
-        </View>
-      ) : null}
-
       <View style={styles.footer}>
         <Info size={12} color={Colors.onSurfaceVariant} strokeWidth={2} />
         <Text style={styles.disclaimer}>{data.disclaimer}</Text>
@@ -101,16 +89,6 @@ const styles = StyleSheet.create({
   trafficLabel: { ...Typography.caption, color: Colors.onSurface },
   trafficLevel: { ...Typography.caption, fontWeight: '700' as const },
   worstNote: { ...Typography.caption, color: Colors.onSurfaceVariant, marginTop: -4 },
-  allergenRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 6,
-    backgroundColor: Colors.errorContainer,
-    borderRadius: Radius.md,
-    padding: Spacing.sm,
-  },
-  allergenText: { ...Typography.bodySm, color: Colors.onSurface, flex: 1 },
-  allergenStrong: { ...Typography.labelSm, color: Colors.error },
   footer: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
   disclaimer: { ...Typography.caption, color: Colors.onSurfaceVariant, flex: 1 },
 });

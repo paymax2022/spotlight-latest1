@@ -8,11 +8,11 @@
 //	go test -tags=integration ./internal/top5events/...
 //
 // against a migrated Postgres with these applied in order (per schema-drift note in
-// supabase/migrations/20260902000000_events_schema_drift_fix.sql):
+// supabase/migrations/20260902000001_events_schema_drift_fix.sql):
 //  1. 20260616240000_events.sql            (legacy events/event_tickets shape)
 //  2. 20260726000200_events.sql            (top5events full schema: tiers, promos,
 //     orders, wallets, wallet ledger, vendors, vendor float/charges, settlements)
-//  3. 20260902000000_events_schema_drift_fix.sql (adds organiser_id/venue/state/
+//  3. 20260902000001_events_schema_drift_fix.sql (adds organiser_id/venue/state/
 //     fee_bps to events; tier_id/order_id/state/credential_id to event_tickets)
 //
 // Set TEST_DATABASE_URL (or DATABASE_URL). NOTE: GetOrCreateStandingAccount posts

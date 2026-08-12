@@ -2,7 +2,7 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { isBridgeEnabled } from '@/src/server/voting-bridge/feature-flag';
 import { checkAndClaimIdempotencyKey, storeIdempotencyResult } from '@/src/server/voting-bridge/idempotency';
-import { assertKycGate } from '@/src/server/voting-bridge/kyc-gate';
+import { assertKycTier } from '@/src/server/voting-bridge/kyc-gate';
 import { enqueueOutboxEvent } from '@/src/server/voting-bridge/outbox';
 import { castFreeVote } from '@/src/server/voting/free-vote.service';
 
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
 
   try {
     const user = await requireRequestUser(request);
-    await assertKycGate(user.id);
+    await assertKycTier(user.id, contestantId as string);
 
     const cacheKey = `wallet-vote:${idempotencyKey as string}`;
     const cached = await checkAndClaimIdempotencyKey(cacheKey);

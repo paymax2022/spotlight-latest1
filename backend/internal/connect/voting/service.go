@@ -157,6 +157,35 @@ func (s *Service) enforceVelocity(ctx context.Context, c *Contest, voterID strin
 // FreeVote casts a single free poll vote with integrity guards: contest must be
 // open, the user must not have exceeded the free-vote allowance, and the
 // per-minute velocity cap is enforced. No money moves.
+// ErrNotOnRoster is returned when a vote targets something that is not an
+// active contestant of a contest that HAS a roster.
+var ErrNotOnRoster = errors.New("voting: option is not an active contestant in this contest")
+
+// checkRosterTarget validates the vote target against the contest's roster.
+//
+// Contests without a roster are plain polls whose option_ref is a free-form
+// label, so they are left alone. Once a contest has contestants, though, an
+// arbitrary option_ref would create a tally row no roster entry can account
+// for — a phantom candidate accumulating real votes. Fail-closed: a lookup
+// error rejects the vote rather than admitting an unverifiable target.
+func (s *Service) checkRosterTarget(ctx context.Context, contestID, optionRef string) error {
+	roster, err := s.repo.ListRoster(ctx, contestID, true)
+	if err != nil {
+		return err
+	}
+	if len(roster) == 0 {
+		return nil // poll-style contest, no roster to enforce
+	}
+	ok, err := s.repo.IsOnRoster(ctx, contestID, optionRef)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotOnRoster
+	}
+	return nil
+}
+
 func (s *Service) FreeVote(ctx context.Context, contestID, voterID string, req FreeVoteRequest) (*Vote, error) {
 	c, err := s.repo.GetContest(ctx, contestID)
 	if err != nil {
@@ -179,6 +208,9 @@ func (s *Service) FreeVote(ctx context.Context, contestID, voterID string, req F
 		return nil, ErrFreeVoteUsed
 	}
 	if err := s.enforceVelocity(ctx, c, voterID, now); err != nil {
+		return nil, err
+	}
+	if err := s.checkRosterTarget(ctx, contestID, req.OptionRef); err != nil {
 		return nil, err
 	}
 
@@ -239,6 +271,12 @@ func (s *Service) PaidVote(ctx context.Context, contestID, voterID, idemKey stri
 		return nil, ErrInvalidAmount
 	}
 
+	// Validate the target BEFORE any money moves: a debit for a vote that then
+	// fails validation would have to be reversed.
+	if err := s.checkRosterTarget(ctx, contestID, req.OptionRef); err != nil {
+		return nil, err
+	}
+
 	if err := s.enforceVelocity(ctx, c, voterID, now); err != nil {
 		return nil, err
 	}
@@ -286,4 +324,55 @@ func (s *Service) PaidVote(ctx context.Context, contestID, voterID, idemKey stri
 	// revenue to the ledger; this appends the earning row only).
 	s.recordCommissionSafe(ctx, "Contest", "Voting", "", totalKobo, v.ID, &voterID)
 	return v, nil
+}
+
+// ListRoster returns a contest's active contestants ranked by total votes.
+func (s *Service) ListRoster(ctx context.Context, contestID string, includeInactive bool) ([]RosterEntry, error) {
+	if _, err := s.repo.GetContest(ctx, contestID); err != nil {
+		return nil, ErrNotFound
+	}
+	return s.repo.ListRoster(ctx, contestID, includeInactive)
+}
+
+// FreeVoteAllowance reports how many free votes a user has left in a contest.
+// Returned alongside a cast vote so the client never has to guess the remaining
+// count (or read it from a different voting plane that may disagree).
+type FreeVoteAllowance struct {
+	Total     int `json:"total"`
+	Used      int `json:"used"`
+	Remaining int `json:"remaining"`
+}
+
+// FreeVoteAllowanceFor computes the caller's remaining free-vote allowance.
+func (s *Service) FreeVoteAllowanceFor(ctx context.Context, contestID, voterID string) (FreeVoteAllowance, error) {
+	c, err := s.repo.GetContest(ctx, contestID)
+	if err != nil {
+		return FreeVoteAllowance{}, ErrNotFound
+	}
+	total := c.FreeVotesPerUser
+	if total <= 0 {
+		total = 1
+	}
+	used, err := s.repo.CountFreeVotes(ctx, contestID, voterID)
+	if err != nil {
+		return FreeVoteAllowance{}, err
+	}
+	remaining := total - used
+	if remaining < 0 {
+		remaining = 0
+	}
+	return FreeVoteAllowance{Total: total, Used: used, Remaining: remaining}, nil
+}
+
+// GetContestant returns one contestant with its live tally and rank, or
+// ErrNotFound when no such contestant exists.
+func (s *Service) GetContestant(ctx context.Context, contestantID string) (*RosterEntry, error) {
+	e, err := s.repo.GetRosterEntry(ctx, contestantID)
+	if err != nil {
+		return nil, err
+	}
+	if e == nil {
+		return nil, ErrNotFound
+	}
+	return e, nil
 }
