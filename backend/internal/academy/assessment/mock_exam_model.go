@@ -3,8 +3,6 @@ package assessment
 import (
 	"encoding/json"
 	"time"
-
-	"github.com/lib/pq"
 )
 
 // MockExamTemplate represents a reusable exam blueprint
@@ -15,7 +13,7 @@ type MockExamTemplate struct {
 	Name                   string          `json:"name"`
 	Description            string          `json:"description"`
 	ExamType               string          `json:"exam_type"` // class_mock, subject_mock, practice_drill
-	SubjectIDs             pq.StringArray  `json:"subject_ids"`
+	SubjectIDs             []string        `json:"subject_ids"`
 	Sections               json.RawMessage `json:"sections"`
 	TotalQuestions         int             `json:"total_questions"`
 	TotalSeconds           int             `json:"total_seconds"`
@@ -58,7 +56,7 @@ type MockExamAttempt struct {
 	TotalSeconds       int             `json:"total_seconds"`   // time taken in seconds
 	Answers            json.RawMessage `json:"answers"`
 	Performance        json.RawMessage `json:"performance"`
-	FlaggedQuestions   pq.StringArray  `json:"flagged_questions"`
+	FlaggedQuestions   []string        `json:"flagged_questions"`
 	StartedAt          time.Time       `json:"started_at"`
 	SubmittedAt        *time.Time      `json:"submitted_at"`
 	CreatedAt          time.Time       `json:"created_at"`
