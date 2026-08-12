@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+remote_name="${1:-origin}"
+
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
@@ -27,6 +29,15 @@ fi
 zero_sha="0000000000000000000000000000000000000000"
 tmp_objects="$(mktemp)"
 
+# For new-branch pushes, only scan objects the remote does not already have.
+# Prefer the pushing remote's tracking refs; fall back to all remotes.
+exclude_known=(--not)
+if [[ -n "$(git for-each-ref --count=1 "refs/remotes/${remote_name}")" ]]; then
+  exclude_known+=(--remotes="${remote_name}")
+else
+  exclude_known+=(--remotes)
+fi
+
 while read -r local_ref local_sha remote_ref remote_sha; do
   # Branch deletion push; nothing to validate.
   if [[ "$local_sha" == "$zero_sha" ]]; then
@@ -34,7 +45,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
 
   if [[ "$remote_sha" == "$zero_sha" ]]; then
-    git rev-list --objects "$local_sha" >>"$tmp_objects"
+    git rev-list --objects "$local_sha" "${exclude_known[@]}" >>"$tmp_objects"
   else
     git rev-list --objects "${remote_sha}..${local_sha}" >>"$tmp_objects"
   fi
@@ -49,7 +60,10 @@ sort -u "$tmp_objects" >"${tmp_objects}.uniq"
 violations=0
 declare -a messages=()
 
-while read -r oid path; do
+# One batch process resolves every object's type and size; %(rest) echoes back
+# the path that rev-list put after each oid. Non-blobs and pathless lines
+# (commits, "missing" entries) fall through the path/type guards below.
+while read -r obj_type obj_size path; do
   [[ -z "${path:-}" ]] && continue
 
   if [[ "$path" =~ (^|/)\.env($|\.) ]] && [[ ! "$path" =~ \.env(\..*)?\.example$ ]]; then
@@ -64,16 +78,14 @@ while read -r oid path; do
     continue
   fi
 
-  obj_type="$(git cat-file -t "$oid" 2>/dev/null || true)"
   [[ "$obj_type" != "blob" ]] && continue
 
-  obj_size="$(git cat-file -s "$oid" 2>/dev/null || echo 0)"
   if (( obj_size > max_size_bytes )); then
     size_mb="$(awk "BEGIN { printf \"%.2f\", $obj_size / 1024 / 1024 }")"
     messages+=("large file: ${path} (${size_mb} MiB > ${max_size_mb} MiB limit)")
     violations=1
   fi
-done <"${tmp_objects}.uniq"
+done < <(git cat-file --batch-check='%(objecttype) %(objectsize) %(rest)' <"${tmp_objects}.uniq")
 
 if (( violations )); then
   echo "pre-push check failed:"

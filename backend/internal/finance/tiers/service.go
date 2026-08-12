@@ -45,6 +45,50 @@ func (s *Service) getDailyDebited(ctx context.Context, userID string) (int64, er
 	return total, err
 }
 
+// Usage summarises a user's tier and how much of today's debit allowance is left.
+type Usage struct {
+	Tier            Tier
+	DailyLimitKobo  int64 // 0 = unlimited (Tier3) or disabled (Tier0); check Tier to disambiguate
+	DailyUsedKobo   int64
+	RemainingKobo   int64 // -1 when unlimited
+	WalletDisabled  bool
+}
+
+// GetUsage returns the user's tier alongside today's debit usage. Read-only —
+// callers that are about to move money must still call EnforceWalletDebitLimit,
+// which is the fail-closed gate.
+func (s *Service) GetUsage(ctx context.Context, userID string) (Usage, error) {
+	tier, err := s.GetUserTier(ctx, userID)
+	if err != nil {
+		return Usage{}, err
+	}
+	cfg := GetConfig(tier)
+
+	used, err := s.getDailyDebited(ctx, userID)
+	if err != nil {
+		return Usage{}, fmt.Errorf("tiers: get daily debited: %w", err)
+	}
+
+	u := Usage{
+		Tier:           tier,
+		DailyLimitKobo: cfg.DailyDebitLimitKobo,
+		DailyUsedKobo:  used,
+		WalletDisabled: cfg.DailyDebitLimitKobo == 0 && tier == Tier0,
+	}
+	switch {
+	case u.WalletDisabled:
+		u.RemainingKobo = 0
+	case cfg.DailyDebitLimitKobo == 0:
+		u.RemainingKobo = -1 // unlimited
+	default:
+		u.RemainingKobo = cfg.DailyDebitLimitKobo - used
+		if u.RemainingKobo < 0 {
+			u.RemainingKobo = 0
+		}
+	}
+	return u, nil
+}
+
 // EnforceWalletDebitLimit checks tier limits before a wallet debit.
 // Fail-closed: any DB error blocks the operation.
 func (s *Service) EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error {

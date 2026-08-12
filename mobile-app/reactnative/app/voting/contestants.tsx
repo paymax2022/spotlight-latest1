@@ -10,6 +10,7 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { useContestants } from '@/features/voting/hooks/useContestants';
+import { useVotingRealtime } from '@/features/voting/hooks/useVotingRealtime';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import ContestantCard from '@/features/voting/components/ContestantCard';
 
@@ -19,6 +20,8 @@ export default function ContestantGridScreen() {
 
   const { data: contest } = useContestDetails(contestId ?? '');
   const { data, isLoading, refetch, isRefetching } = useContestants(contestId ?? '', { search });
+  // Live: an admin approving an entry adds a contestant here without a reload.
+  useVotingRealtime(contestId);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

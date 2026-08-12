@@ -24,6 +24,12 @@ import type {
   OrderDispute,
   DisputeStatus,
   ResolveDisputeRequest,
+  RestaurantDetail,
+  MenuCategory,
+  MenuItem,
+  UpdateRestaurantRequest,
+  CreateMenuItemRequest,
+  UpdateMenuItemRequest,
 } from '@/types/restaurantAdmin';
 
 const USE_MOCK = (process.env.NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
@@ -73,7 +79,15 @@ const MOCK_ORDERS: Order[] = [
 
 export async function listRestaurants(): Promise<Restaurant[]> {
   if (USE_MOCK) { await delay(); return MOCK_RESTAURANTS; }
-  return req<Restaurant[]>('/');
+  // No trailing slash: the Go route is registered as "" on the /restaurant group,
+  // so `/` produced `/api/finance/restaurant/` and relied on Gin's
+  // RedirectTrailingSlash 301 to land. That redirect drops the Authorization
+  // header on some clients, which surfaced as a spurious 401.
+  //
+  // The handler answers `{"restaurants": [...]}`; req() only peels a `data`
+  // envelope, so without this the page received an object and .map'd over it.
+  const raw = await req<Restaurant[] | { restaurants?: Restaurant[] }>('');
+  return Array.isArray(raw) ? raw : raw?.restaurants ?? [];
 }
 
 // Admin order monitoring. There is no admin-wide order feed on the backend yet,
@@ -136,6 +150,142 @@ async function reqAt<T>(url: string, init?: RequestInit): Promise<T> {
   if (!res.ok) throw new Error(body?.error || `Request failed (${res.status})`);
   return (body?.data ?? body) as T;
 }
+
+// ── Store & menu management (restaurant.manage) ──────────────────────────────
+//
+// Backed by /api/restaurant/admin/restaurants/* — operator-scoped mirrors of the
+// owner-only member routes. The member routes enforce ownership
+// (Service.assertOwner) with no operator exemption, so the console MUST use these
+// or every mutation 403s. See backend/internal/restaurant/handler_admin_store.go.
+
+function storeBase(): string {
+  return `${adminBase()}/restaurants`;
+}
+
+export async function getRestaurantDetail(id: string): Promise<RestaurantDetail> {
+  if (USE_MOCK) {
+    await delay();
+    const r = MOCK_RESTAURANTS.find((x) => x.id === id) ?? MOCK_RESTAURANTS[0];
+    return { restaurant: r, categories: MOCK_MENU };
+  }
+  return reqAt<RestaurantDetail>(`${storeBase()}/${encodeURIComponent(id)}`);
+}
+
+export async function updateRestaurant(id: string, patch: UpdateRestaurantRequest): Promise<Restaurant> {
+  if (USE_MOCK) {
+    await delay();
+    const r = MOCK_RESTAURANTS.find((x) => x.id === id)!;
+    Object.assign(r, patch);
+    return r;
+  }
+  return reqAt<Restaurant>(`${storeBase()}/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+/** Operator force-open / force-close. */
+export async function setRestaurantAvailability(id: string, isOpen: boolean): Promise<Restaurant> {
+  if (USE_MOCK) {
+    await delay();
+    const r = MOCK_RESTAURANTS.find((x) => x.id === id)!;
+    r.is_open = isOpen;
+    return r;
+  }
+  return reqAt<Restaurant>(`${storeBase()}/${encodeURIComponent(id)}/availability`, {
+    method: 'PATCH',
+    body: JSON.stringify({ is_open: isOpen }),
+  });
+}
+
+export async function createMenuCategory(restaurantId: string, name: string): Promise<MenuCategory> {
+  if (USE_MOCK) {
+    await delay();
+    const c: MenuCategory = { id: `c-${MOCK_MENU.length + 1}`, restaurant_id: restaurantId, name, items: [] };
+    MOCK_MENU.push(c);
+    return c;
+  }
+  return reqAt<MenuCategory>(`${storeBase()}/${encodeURIComponent(restaurantId)}/menu/categories`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteMenuCategory(restaurantId: string, categoryId: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay();
+    const i = MOCK_MENU.findIndex((c) => c.id === categoryId);
+    if (i >= 0) MOCK_MENU.splice(i, 1);
+    return;
+  }
+  await reqAt<{ deleted: boolean }>(
+    `${storeBase()}/${encodeURIComponent(restaurantId)}/menu/categories/${encodeURIComponent(categoryId)}`,
+    { method: 'DELETE' },
+  );
+}
+
+export async function createMenuItem(restaurantId: string, req: CreateMenuItemRequest): Promise<MenuItem> {
+  if (USE_MOCK) {
+    await delay();
+    const it: MenuItem = { id: `i-${Date.now()}`, restaurant_id: restaurantId, is_available: true, ...req };
+    MOCK_MENU.find((c) => c.id === req.category_id)?.items?.push(it);
+    return it;
+  }
+  return reqAt<MenuItem>(`${storeBase()}/${encodeURIComponent(restaurantId)}/menu/items`, {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+export async function updateMenuItem(
+  restaurantId: string,
+  itemId: string,
+  patch: UpdateMenuItemRequest,
+): Promise<MenuItem> {
+  if (USE_MOCK) {
+    await delay();
+    for (const c of MOCK_MENU) {
+      const it = c.items?.find((x) => x.id === itemId);
+      if (it) { Object.assign(it, patch); return it; }
+    }
+    throw new Error('item not found');
+  }
+  return reqAt<MenuItem>(
+    `${storeBase()}/${encodeURIComponent(restaurantId)}/menu/items/${encodeURIComponent(itemId)}`,
+    { method: 'PATCH', body: JSON.stringify(patch) },
+  );
+}
+
+export async function deleteMenuItem(restaurantId: string, itemId: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay();
+    for (const c of MOCK_MENU) {
+      const i = c.items?.findIndex((x) => x.id === itemId) ?? -1;
+      if (i >= 0) { c.items!.splice(i, 1); return; }
+    }
+    return;
+  }
+  await reqAt<{ deleted: boolean }>(
+    `${storeBase()}/${encodeURIComponent(restaurantId)}/menu/items/${encodeURIComponent(itemId)}`,
+    { method: 'DELETE' },
+  );
+}
+
+const MOCK_MENU: MenuCategory[] = [
+  {
+    id: 'c-1', restaurant_id: 'r1', name: 'Soups',
+    items: [
+      { id: 'i-1', category_id: 'c-1', restaurant_id: 'r1', name: 'Egusi Soup', description: 'Melon seed soup', price_kobo: 350_000, is_available: true, dietary_tags: [] },
+      { id: 'i-2', category_id: 'c-1', restaurant_id: 'r1', name: 'Afang Soup', description: 'With periwinkle', price_kobo: 380_000, is_available: false, dietary_tags: [] },
+    ],
+  },
+  {
+    id: 'c-2', restaurant_id: 'r1', name: 'Rice',
+    items: [
+      { id: 'i-3', category_id: 'c-2', restaurant_id: 'r1', name: 'Jollof Rice', description: 'Smoky party jollof', price_kobo: 250_000, is_available: true, dietary_tags: [] },
+    ],
+  },
+];
 
 // ── Rider dispatch board ─────────────────────────────────────────────────────
 
@@ -260,20 +410,133 @@ const MOCK_PAYOUT_LINES: Record<string, PayoutLine[]> = {
   ],
 };
 
+// ── Backend payout DTOs ──────────────────────────────────────────────────────
+// The Go module (backend/internal/restaurant/payout.go) models a run as ONE
+// PROVIDER for ONE PERIOD, with append-only lines that are SETTLEMENTS. The
+// admin types above were written against a different, imagined shape: a run
+// spanning many payees, with one line PER PAYEE. The adapters below translate;
+// fields the backend genuinely does not carry are left undefined rather than
+// invented, so the UI can render "unknown" instead of a confident wrong number.
+type ApiPayoutRun = {
+  id: string;
+  period_key: string;
+  provider_type: 'restaurant' | 'rider';
+  provider_id: string;
+  gross_minor: number;
+  fee_minor: number;
+  net_minor: number;
+  status: 'draft' | 'processing' | 'paid' | 'failed';
+  idempotency_key: string;
+  ledger_reference?: string | null;
+  created_at: string;
+  processed_at?: string | null;
+};
+type ApiPayoutLine = {
+  id: string;
+  run_id: string;
+  order_id?: string | null;
+  settlement_id?: string | null;
+  amount_minor: number;
+  created_at: string;
+};
+type ApiPayoutRunDetail = ApiPayoutRun & { lines: ApiPayoutLine[] };
+
+function toPayoutRun(r: ApiPayoutRun, lines?: ApiPayoutLine[]): PayoutRun {
+  // A run only has a ledger reference once ProcessRun has posted its balanced
+  // transfer. So: draft/processing → reconciliation is not yet meaningful
+  // (undefined, which leaves the Process button enabled); paid WITHOUT a
+  // reference → a real anomaly worth flagging red.
+  const settled = r.ledger_reference ? r.net_minor : undefined;
+  const reconciled =
+    r.status === 'paid' ? Boolean(r.ledger_reference) : undefined;
+
+  return {
+    id: r.id,
+    payee_type: r.provider_type,
+    // The backend stores an opaque period_key (e.g. "2026-W28"), not a date
+    // range. Surfacing the key in both slots is honest; parsing it into
+    // fabricated dates would not be.
+    period_start: r.period_key,
+    period_end: r.period_key,
+    status: r.status,
+    lines_count: lines?.length ?? 0, // only known on the detail response
+    total_net_kobo: r.net_minor,
+    created_at: r.created_at,
+    processed_at: r.processed_at ?? null,
+    ledger_settled_kobo: settled,
+    reconciled,
+  };
+}
+
 export async function listPayoutRuns(payeeType?: PayeeType | ''): Promise<PayoutRun[]> {
   if (USE_MOCK) {
     await delay();
     return payeeType ? MOCK_PAYOUT_RUNS.filter((p) => p.payee_type === payeeType) : MOCK_PAYOUT_RUNS;
   }
-  const qs = payeeType ? `?payee_type=${payeeType}` : '';
-  // TARGET: GET /api/restaurant/admin/payouts (restaurant.admin.payouts)
-  return reqAt<PayoutRun[]>(`${adminBase()}/payouts${qs}`);
+  // The Go handler filters on provider_type, not payee_type.
+  const qs = payeeType ? `?provider_type=${encodeURIComponent(payeeType)}` : '';
+  const runs = await reqAt<ApiPayoutRun[]>(`${adminBase()}/payouts${qs}`);
+  return (runs ?? []).map((r) => toPayoutRun(r));
 }
 
 export async function getPayoutLines(runId: string): Promise<PayoutLine[]> {
   if (USE_MOCK) { await delay(); return MOCK_PAYOUT_LINES[runId] ?? []; }
-  // TARGET: GET /api/restaurant/admin/payouts/:id/lines (restaurant.admin.payouts)
-  return reqAt<PayoutLine[]>(`${adminBase()}/payouts/${runId}/lines`);
+  // There is no /payouts/:id/lines route — that path 404'd. Lines come embedded
+  // in the run detail (PayoutRunDetail = PayoutRun + lines).
+  const detail = await reqAt<ApiPayoutRunDetail>(`${adminBase()}/payouts/${encodeURIComponent(runId)}`);
+  const lines = detail?.lines ?? [];
+
+  // Every line in a backend run belongs to the SAME payee (the run's provider),
+  // so payee_id/payee_type are taken from the run. A line is one settlement, not
+  // a per-payee aggregate: orders_count is therefore 1, gross == net, and fees
+  // are 0 because the platform cut was already withheld upstream at settlement.
+  // bank_account is not exposed by this endpoint and stays undefined.
+  return lines.map((l) => ({
+    id: l.id,
+    payee_id: detail.provider_id,
+    payee_name: detail.provider_id,
+    payee_type: detail.provider_type,
+    orders_count: 1,
+    gross_kobo: l.amount_minor,
+    fees_kobo: 0,
+    net_kobo: l.amount_minor,
+    status: detail.status,
+  }));
+}
+
+// Build a draft run for one provider + period. Aggregates settled-but-unpaid
+// settlements; idempotent per (provider, period); no money moves at build time.
+// The backend has always exposed this — the console simply had no way to call it,
+// so operators could process runs but never create one.
+export async function buildPayoutRun(input: {
+  periodKey: string;
+  providerType: PayeeType;
+  providerId: string;
+}): Promise<PayoutRun> {
+  if (USE_MOCK) {
+    await delay();
+    const run: PayoutRun = {
+      id: `pr-${input.providerType}-${input.periodKey}`,
+      payee_type: input.providerType,
+      period_start: input.periodKey,
+      period_end: input.periodKey,
+      status: 'draft',
+      lines_count: 0,
+      total_net_kobo: 0,
+      created_at: new Date().toISOString(),
+    };
+    MOCK_PAYOUT_RUNS.unshift(run);
+    return run;
+  }
+  const run = await reqAt<ApiPayoutRun>(`${adminBase()}/payouts/build`, {
+    method: 'POST',
+    body: JSON.stringify({
+      period_key: input.periodKey,
+      provider_type: input.providerType,
+      provider_id: input.providerId,
+    }),
+  });
+  return toPayoutRun(run);
 }
 
 // Process a pending payout run. Money path: requires Idempotency-Key server-side.

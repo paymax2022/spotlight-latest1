@@ -4,10 +4,12 @@
 //   • At most MAX_SAME_FOOD_PER_PACKAGE (2) portions of the SAME food per package
 //     — a 3rd portion needs another package.
 //   • The user can add extra packages; packaging fee is charged per package.
-// Single-restaurant cart: adding from a different restaurant resets the cart.
+// Multi-restaurant: each item includes its restaurantId; no reset on restaurant switch.
 // Money stays integer kobo; the SERVER computes the authoritative total.
 
 import { create } from 'zustand';
+import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { CartLine, CartPackage, MenuItem } from './types';
 
 export const MAX_SAME_FOOD_PER_PACKAGE = 2;
@@ -97,14 +99,13 @@ export const useCartStore = create<CartState>((set) => ({
   addItem: (restaurantId, restaurantName, item, packageId, opts) => {
     const autoOverflow = opts?.autoOverflow === true;
     const isProtein = item.foodType === 'protein';
-    const newLine = (): CartLine => ({ itemId: item.id, name: item.name, priceKobo: item.priceKobo, qty: 1, isProtein });
+    const newLine = (): CartLine => ({ itemId: item.id, name: item.name, priceKobo: item.priceKobo, qty: 1, isProtein, restaurantId });
     let result: AddItemResult = { ok: true };
 
     set((st) => {
-      // Switching restaurants resets the cart (single-restaurant carts only).
-      const switching = st.restaurantId != null && st.restaurantId !== restaurantId;
-      let packages = switching ? [] : st.packages.slice();
-      const active = switching ? null : st.activePackageId;
+      // Multi-restaurant: no reset on restaurant switch; each line tracks its own restaurantId.
+      let packages = st.packages.slice();
+      const active = st.activePackageId;
 
       // Resolve the target package: explicit → active → last → create one.
       let targetId = packageId ?? active ?? packages[packages.length - 1]?.id ?? null;
@@ -135,7 +136,12 @@ export const useCartStore = create<CartState>((set) => ({
         const overflowId = newPkgId();
         packages = [...packages, { id: overflowId, lines: [newLine()] }];
         result = { ok: true, overflowed: true, packageId: overflowId, packageIndex: idxOf(overflowId) };
-        return { restaurantId, restaurantName, packages, activePackageId: overflowId };
+        return {
+          restaurantId: st.restaurantId || restaurantId,
+          restaurantName: st.restaurantName || restaurantName,
+          packages,
+          activePackageId: overflowId,
+        };
       }
 
       // Target accepts: add or increment in place.
@@ -147,7 +153,13 @@ export const useCartStore = create<CartState>((set) => ({
           : { ...p, lines: [...p.lines, newLine()] };
       });
       result = { ok: true, packageId: targetId!, packageIndex: idxOf(targetId!) };
-      return { restaurantId, restaurantName, packages, activePackageId: targetId };
+      // Multi-restaurant: keep the previous restaurantId/restaurantName if already set, or update if empty.
+      return {
+        restaurantId: st.restaurantId || restaurantId,
+        restaurantName: st.restaurantName || restaurantName,
+        packages,
+        activePackageId: targetId,
+      };
     });
     return result;
   },
@@ -211,7 +223,7 @@ export function aggregateCartLines(packages: CartPackage[]): CartLine[] {
     for (const l of p.lines) {
       const cur = byId.get(l.itemId);
       if (cur) cur.qty += l.qty;
-      else byId.set(l.itemId, { ...l });
+      else byId.set(l.itemId, { ...l, restaurantId: l.restaurantId });
     }
   }
   return Array.from(byId.values());

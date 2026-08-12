@@ -44,7 +44,7 @@ func main() {
 	if pool != nil {
 		votingRepo := connectvoting.NewRepository(pool)
 		votingSvc := connectvoting.NewService(votingRepo, nil, nil, nil, nil)
-		connectvoting.Register(r.Group("/api/v1/connect"), votingSvc)
+		connectvoting.Register(r.Group("/api/v1/connect"), votingSvc, cfg)
 		log.Println("Voting routes registered")
 	} else {
 		log.Println("Skipping voting routes - database required")

@@ -217,18 +217,6 @@ export default function FoodDiscoveryScreen() {
           </View>
         ) : null}
 
-        {/* Role entry points (rider / restaurant) */}
-        <View style={s.roleRow}>
-          <Pressable style={({ pressed }) => [s.roleCard, shadow1, pressed && { opacity: 0.85 }]} onPress={() => router.push('/food/rider')}>
-            <Icons.Bike size={18} color={Colors.secondary} strokeWidth={2} />
-            <Text style={s.roleLabel}>I'm a rider</Text>
-          </Pressable>
-          <Pressable style={({ pressed }) => [s.roleCard, shadow1, pressed && { opacity: 0.85 }]} onPress={() => router.push('/food/restaurant')}>
-            <Icons.Store size={18} color={Colors.secondary} strokeWidth={2} />
-            <Text style={s.roleLabel}>Restaurant queue</Text>
-          </Pressable>
-        </View>
-
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chips} contentContainerStyle={s.chipsContent}>
           {CUISINE_FILTERS.map((f) => (
             <Pressable key={f.key} onPress={() => setCuisine(f.key)} style={[s.chip, cuisine === f.key && s.chipActive]}>
@@ -318,20 +306,6 @@ const s = StyleSheet.create({
     paddingVertical: Spacing.xs,
   },
   viewPillLabel: { ...Typography.labelMd, color: Colors.white },
-  roleRow: { flexDirection: 'row', gap: Spacing.sm, paddingHorizontal: Spacing.containerMargin, marginTop: Spacing.lg },
-  roleCard: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.sm,
-    backgroundColor: Colors.surfaceContainerLowest,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: Colors.surfaceContainerHigh,
-    paddingVertical: Spacing.md,
-  },
-  roleLabel: { ...Typography.labelMd, color: Colors.onSurface },
   chips: { flexGrow: 0, marginTop: Spacing.lg },
   chipsContent: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.sm },
   chip: { paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs, borderRadius: Radius.full, backgroundColor: Colors.surfaceContainerLow, borderWidth: 1, borderColor: Colors.outlineVariant },

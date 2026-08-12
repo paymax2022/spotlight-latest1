@@ -11,6 +11,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
 import { useLeaderboardState } from '@/features/voting/hooks/useLeaderboard';
+import { useVotingRealtime } from '@/features/voting/hooks/useVotingRealtime';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import TopThreePodium from '@/features/voting/components/TopThreePodium';
 import LeaderboardRow from '@/features/voting/components/LeaderboardRow';
@@ -21,6 +22,8 @@ export default function LeaderboardScreen() {
   const { contestId } = useLocalSearchParams<{ contestId: string }>();
   const { data: contest } = useContestDetails(contestId ?? '');
   const { data: lbState, isLoading, refetch, isRefetching } = useLeaderboardState(contestId ?? '');
+  // Live: a vote cast anywhere re-ranks this board without a pull-to-refresh.
+  useVotingRealtime(contestId);
 
   // Admin can hide the leaderboard for the contest or its active phase.
   const hidden = lbState?.hidden === true || contest?.showLeaderboard === false;

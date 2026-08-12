@@ -14,23 +14,38 @@ import TierLimitBar from '@/features/connect/components/TierLimitBar';
 import SolicitationGuard from '@/features/connect/components/wallet-SolicitationGuard';
 import { formatKobo } from '@/features/connect/constants/format';
 import { useGiftQuote, useSendGift } from '@/features/connect/wallet/hooks';
+import { moneyErrorMessage, isDuplicateReplay } from '@/features/connect/wallet/errors';
+import { useIdempotencyKey } from '@/utils/idempotency';
 
 // WL-07 — Confirm a gift. Shows the server-computed tier remaining BEFORE the
-// POST. The send carries an Idempotency-Key (set in the api layer).
+// POST. The send carries an Idempotency-Key minted once for this screen, so a
+// retry after a timeout is deduped server-side rather than debiting twice.
 export default function ConfirmGift() {
   const { productId, recipientId, message } = useLocalSearchParams<{ productId: string; recipientId: string; message?: string }>();
   const quote = useGiftQuote(productId, recipientId);
   const send = useSendGift();
+  // One key for this confirm screen: retries after a timeout replay it and are
+  // deduped server-side instead of posting a second debit.
+  const { key: idempotencyKey, reset: resetIdempotencyKey } = useIdempotencyKey();
 
   const onSend = () => {
     if (!productId || !recipientId) return;
     send.mutate(
-      { productId, recipientId, message },
+      { productId, recipientId, message, idempotencyKey },
       {
-        onSuccess: (r) =>
-          router.replace({ pathname: '/connect/wallet/gifting/sent', params: { highlightId: r.transaction.id } }),
-        onError: (e: unknown) =>
-          Alert.alert('Gift not sent', e instanceof Error ? e.message : 'Please try again.'),
+        onSuccess: (r) => {
+          resetIdempotencyKey();
+          router.replace({ pathname: '/connect/wallet/gifting/sent', params: { highlightId: r.transaction.id } });
+        },
+        onError: (e: unknown) => {
+          // A 409 means the first attempt already went through — treat it as success.
+          if (isDuplicateReplay(e)) {
+            resetIdempotencyKey();
+            router.replace('/connect/wallet/gifting/sent');
+            return;
+          }
+          Alert.alert('Gift not sent', moneyErrorMessage(e));
+        },
       },
     );
   };

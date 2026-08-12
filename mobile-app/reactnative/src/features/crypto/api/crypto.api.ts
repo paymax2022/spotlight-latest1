@@ -49,7 +49,17 @@ const USE_MOCK = (process.env.EXPO_PUBLIC_CRYPTO_USE_MOCK ?? 'true').toLowerCase
 
 /** Simulated network latency so loading states render in mock mode. */
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
-const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
+
+// Backend wraps success payloads as { success: true, [key]: value }. This unwrap
+// extracts the actual data by looking for a nested 'data' field (if present) or
+// returning the payload as-is. This matches the fx.api.ts pattern.
+const unwrap = <T>(res: { data: unknown }): T => {
+  const body = res?.data;
+  if (body && typeof body === 'object' && !Array.isArray(body) && 'data' in body) {
+    return (body as { data: T }).data;
+  }
+  return body as T;
+};
 
 /**
  * Normalise a thrown axios error into an Error carrying the Go backend's real
@@ -184,8 +194,7 @@ export async function executeBuy(quote: CryptoQuote, idempotencyKey: string): Pr
       { asset_id: quote.assetId, cash_kobo: quote.totalFiat.amount },
       { headers: { 'Idempotency-Key': idempotencyKey } },
     );
-    const body = unwrap<{ order: CryptoOrder }>(res);
-    return (body as unknown as { order?: CryptoOrder }).order ?? (body as unknown as CryptoOrder);
+    return unwrap<CryptoOrder>(res);
   } catch (err) {
     throw toCryptoError(err);
   }
@@ -199,8 +208,7 @@ export async function executeSell(quote: CryptoQuote, idempotencyKey: string): P
       { asset_id: quote.assetId, units: quote.crypto.amount },
       { headers: { 'Idempotency-Key': idempotencyKey } },
     );
-    const body = unwrap<{ order: CryptoOrder }>(res);
-    return (body as unknown as { order?: CryptoOrder }).order ?? (body as unknown as CryptoOrder);
+    return unwrap<CryptoOrder>(res);
   } catch (err) {
     throw toCryptoError(err);
   }
@@ -324,10 +332,11 @@ export async function getTransactions(side?: 'buy' | 'sell'): Promise<CryptoTran
       .map(({ allInRate, fees, totalFiat, provider, providerReference, liquidityProvider, custodyProvider, statusHistory, failureReason, ...summary }) => summary);
   }
   const res = await api.get('/api/v1/crypto/orders');
-  const body = unwrap<{ orders: CryptoTransactionSummary[] }>(res);
-  let list = (body as unknown as { orders?: CryptoTransactionSummary[] }).orders ?? (body as unknown as CryptoTransactionSummary[]);
-  if (side) list = list.filter((t) => t.side === side);
-  return list;
+  const list = unwrap<CryptoTransactionSummary[]>(res);
+  // Ensure we have an array even if the response is null/undefined
+  const arr = Array.isArray(list) ? list : [];
+  if (side) return arr.filter((t) => t.side === side);
+  return arr;
 }
 
 export async function getTransaction(id: string): Promise<CryptoTransactionDetail> {

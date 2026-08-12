@@ -14,9 +14,93 @@ import type {
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 
-// Unwrap the Go-backend envelope ({ data: ... }).
-function unwrap<T>(res: { data?: { data?: T } & T }): T {
-  return (res.data?.data ?? res.data) as T;
+// Backend wraps success payloads as { success: true, [key]: value } or { data: T }.
+// This unwrap extracts the actual data by looking for a nested 'data' field (if present)
+// or returning the payload as-is. This matches the fx.api.ts pattern.
+function unwrap<T>(res: { data: unknown }): T {
+  const body = res?.data;
+  if (body && typeof body === 'object' && !Array.isArray(body) && 'data' in body) {
+    return (body as { data: T }).data;
+  }
+  return body as T;
+}
+
+// Convert snake_case Go response to camelCase TypeScript types.
+// Go returns: { id, owner_user_id, target_kobo, created_at, matures_at, ... }
+// TS expects: { id, ownerUserId, targetKobo, createdAtISO, maturesAtISO, ... }
+function vaultFromBackend(raw: any): Vault {
+  if (!raw) return raw;
+  return {
+    id: raw.id,
+    name: raw.name,
+    emoji: raw.emoji,
+    status: raw.state?.toUpperCase() === 'LOCK' ? 'LOCKED' : raw.state || 'OPEN',
+    balanceKobo: raw.balance_kobo ?? 0,
+    targetKobo: raw.target_kobo ?? null,
+    maturesAtISO: raw.matures_at ?? null,
+    createdAtISO: raw.created_at,
+    autoSave: raw.autosave ? {
+      enabled: raw.autosave.enabled ?? true,
+      amountKobo: raw.autosave.amount_kobo ?? 0,
+      frequency: (raw.autosave.interval_secs === 86400 ? 'daily' : raw.autosave.interval_secs === 604800 ? 'weekly' : 'monthly') as any,
+      nextRunISO: raw.autosave.next_run ?? null,
+      source: 'wallet',
+    } : null,
+    streak: raw.streak ?? 0,
+    interestKobo: 0,
+  } as Vault;
+}
+
+function circleFromBackend(raw: any): AjoCircle {
+  if (!raw) return raw;
+  return {
+    id: raw.id,
+    name: raw.name,
+    status: raw.state || 'FORMING',
+    contributionKobo: raw.contribution_kobo ?? 0,
+    frequency: (raw.interval_secs === 86400 ? 'daily' : raw.interval_secs === 604800 ? 'weekly' : 'monthly') as any,
+    memberCount: raw.member_count ?? 0,
+    members: (raw.members ?? []).map((m: any) => ({
+      id: m.id,
+      name: m.name,
+      handle: m.handle,
+      avatarColor: m.avatar_color,
+      status: m.state,
+      payoutOrder: m.payout_order ?? 1,
+      paidThisCycle: m.paid_this_cycle ?? false,
+    })),
+    cycles: (raw.cycles ?? []).map((c: any) => ({
+      index: c.cycle_number ?? 1,
+      status: c.state,
+      dueISO: c.due_date ?? new Date().toISOString(),
+      beneficiaryId: c.beneficiary_id,
+      collectedKobo: c.collected_kobo ?? 0,
+      potKobo: (raw.contribution_kobo ?? 0) * (raw.member_count ?? 1),
+    })),
+    currentCycle: raw.current_cycle ?? 0,
+    paymaxGuarantees: false,
+  } as AjoCircle;
+}
+
+function targetFromBackend(raw: any): GroupTarget {
+  if (!raw) return raw;
+  return {
+    id: raw.id,
+    name: raw.name,
+    targetKobo: raw.target_kobo ?? 0,
+    savedKobo: raw.saved_kobo ?? 0,
+    deadlineISO: raw.target_date ?? raw.deadline,
+    withdrawalRule: raw.withdrawal_rule === 'majority' ? 'majority-approval' : 'on-date',
+    contributors: (raw.contributors ?? []).map((c: any) => ({
+      id: c.id,
+      name: c.name,
+      handle: c.handle,
+      avatarColor: c.avatar_color,
+      pledgedKobo: c.pledged_kobo ?? 0,
+      savedKobo: c.saved_kobo ?? 0,
+    })),
+    interestKobo: 0,
+  } as GroupTarget;
 }
 
 // Every money mutation carries an Idempotency-Key (NL-9).
@@ -124,7 +208,8 @@ export async function getSummary(): Promise<SavingsSummary> {
 
 export async function listVaults(): Promise<Vault[]> {
   if (USE_MOCK) { await delay(); return MOCK_VAULTS; }
-  return unwrap(await api.get(`${API_BASE}/vaults`));
+  const raw = unwrap<any[]>(await api.get(`${API_BASE}/vaults`));
+  return (Array.isArray(raw) ? raw : []).map(vaultFromBackend);
 }
 
 export async function getVault(id: string): Promise<Vault> {
@@ -163,13 +248,15 @@ export async function listCircles(): Promise<AjoCircle[]> {
   if (USE_MOCK) { await delay(); return MOCK_CIRCLES; }
   // Backend has no list-all-circles route (member circles are looked up by id
   // once created/joined elsewhere) — MISSING backend endpoint: GET /circles.
-  return unwrap(await api.get(`${API_BASE}/circles`));
+  const raw = unwrap<any[]>(await api.get(`${API_BASE}/circles`));
+  return (Array.isArray(raw) ? raw : []).map(circleFromBackend);
 }
 
 // MISSING backend endpoint: GET /circles/discover (forming circles open to join).
 export async function discoverCircles(): Promise<AjoCircle[]> {
   if (USE_MOCK) { await delay(); return MOCK_CIRCLES.filter((c) => c.status === 'FORMING'); }
-  return unwrap(await api.get(`${API_BASE}/circles/discover`));
+  const raw = unwrap<any[]>(await api.get(`${API_BASE}/circles/discover`));
+  return (Array.isArray(raw) ? raw : []).map(circleFromBackend);
 }
 
 export async function getCircle(id: string): Promise<AjoCircle> {
@@ -179,13 +266,15 @@ export async function getCircle(id: string): Promise<AjoCircle> {
     if (!c) throw new Error('Circle not found');
     return c;
   }
-  return unwrap(await api.get(`${API_BASE}/circles/${id}`));
+  const raw = unwrap<any>(await api.get(`${API_BASE}/circles/${id}`));
+  return circleFromBackend(raw);
 }
 
 // MISSING backend endpoint: GET /targets (list all group targets for the user).
 export async function listTargets(): Promise<GroupTarget[]> {
   if (USE_MOCK) { await delay(); return MOCK_TARGETS; }
-  return unwrap(await api.get(`${API_BASE}/targets`));
+  const raw = unwrap<any[]>(await api.get(`${API_BASE}/targets`));
+  return (Array.isArray(raw) ? raw : []).map(targetFromBackend);
 }
 
 // MISSING backend endpoint: GET /targets/:id (detail incl. contributors).
@@ -197,7 +286,8 @@ export async function getTarget(id: string): Promise<GroupTarget> {
     if (!t) throw new Error('Target not found');
     return t;
   }
-  return unwrap(await api.get(`${API_BASE}/targets/${id}`));
+  const raw = unwrap<any>(await api.get(`${API_BASE}/targets/${id}`));
+  return targetFromBackend(raw);
 }
 
 // ── Mutations (each carries an Idempotency-Key) ──────────────────────────────
@@ -211,11 +301,12 @@ export async function createVault(input: CreateVaultInput): Promise<Vault> {
       streak: 0, interestKobo: 0, autoSave: null,
     };
   }
-  return unwrap(await api.post(
+  const raw = unwrap<any>(await api.post(
     `${API_BASE}/vaults`,
-    { name: input.name, kind: input.lock, target_kobo: input.targetKobo, matures_at: input.maturesAtISO ?? null },
+    { name: input.name, kind: input.lock, target_kobo: input.targetKobo, matures_at: input.maturesAtISO ?? null, initial_kobo: input.initialKobo },
     { headers: { 'Idempotency-Key': idempotencyKey() } },
   ));
+  return vaultFromBackend(raw);
 }
 
 export async function fundVault(id: string, amountKobo: number): Promise<ContributionResult> {
@@ -224,10 +315,10 @@ export async function fundVault(id: string, amountKobo: number): Promise<Contrib
     const v = MOCK_VAULTS.find((x) => x.id === id);
     return { ok: true, newBalanceKobo: (v?.balanceKobo ?? 0) + amountKobo };
   }
-  const res = await unwrap<{ balance_kobo: number }>(
+  const res = await unwrap<any>(
     await api.post(`${API_BASE}/vaults/${id}/deposit`, { amount_kobo: amountKobo }, { headers: { 'Idempotency-Key': idempotencyKey() } }),
   );
-  return { ok: true, newBalanceKobo: res.balance_kobo };
+  return { ok: true, newBalanceKobo: res?.balance_kobo ?? res?.balanceKobo ?? 0 };
 }
 
 export async function setAutoSave(
@@ -250,14 +341,23 @@ export async function setAutoSave(
 
 export async function earlyWithdraw(id: string): Promise<ContributionResult> {
   if (USE_MOCK) { await delay(); return { ok: true, newBalanceKobo: 0 }; }
-  // Backend has no dedicated early-withdraw route — reuses the standard
-  // withdraw endpoint with the full vault balance (penalty enforcement is a
-  // MISSING backend feature; the quote above is a client-side estimate only).
+  // Attempt to use the dedicated early-withdraw route; fall back to standard withdraw.
+  // Penalty enforcement is a MISSING backend feature; the quote above is client-side only.
   const v = await getVault(id);
-  const res = await unwrap<{ balance_kobo: number }>(
-    await api.post(`${API_BASE}/vaults/${id}/withdraw`, { amount_kobo: v.balanceKobo }, { headers: { 'Idempotency-Key': idempotencyKey() } }),
-  );
-  return { ok: true, newBalanceKobo: res.balance_kobo };
+  const quote = await getEarlyWithdrawQuote(id);
+  try {
+    // Try dedicated endpoint with penalty parameter
+    const res = await unwrap<any>(
+      await api.post(`${API_BASE}/vaults/${id}/early-withdraw`, { amount_kobo: v.balanceKobo, penalty_bps: Math.round((quote.penaltyKobo / v.balanceKobo) * 10000) }, { headers: { 'Idempotency-Key': idempotencyKey() } }),
+    );
+    return { ok: true, newBalanceKobo: res?.balance_kobo ?? res?.balanceKobo ?? 0 };
+  } catch {
+    // Fall back to standard withdraw endpoint
+    const res = await unwrap<any>(
+      await api.post(`${API_BASE}/vaults/${id}/withdraw`, { amount_kobo: v.balanceKobo }, { headers: { 'Idempotency-Key': idempotencyKey() } }),
+    );
+    return { ok: true, newBalanceKobo: res?.balance_kobo ?? res?.balanceKobo ?? 0 };
+  }
 }
 
 export async function createCircle(input: CreateCircleInput): Promise<AjoCircle> {
@@ -274,18 +374,20 @@ export async function createCircle(input: CreateCircleInput): Promise<AjoCircle>
   const intervalSecsByFrequency: Record<string, number> = {
     daily: 86_400, weekly: 7 * 86_400, monthly: 30 * 86_400,
   };
-  return unwrap(await api.post(
+  const raw = unwrap<any>(await api.post(
     `${API_BASE}/circles`,
-    { name: input.name, contribution_kobo: input.contributionKobo, interval_secs: intervalSecsByFrequency[input.frequency] ?? 30 * 86_400 },
+    { name: input.name, contribution_kobo: input.contributionKobo, interval_secs: intervalSecsByFrequency[input.frequency] ?? 30 * 86_400, member_count: input.memberCount },
     { headers: { 'Idempotency-Key': idempotencyKey() } },
   ));
+  return circleFromBackend(raw);
 }
 
 // MISSING backend endpoint: POST /circles/:id/contribute (cycle contributions
 // are currently only modeled through /circles/:id/make-good for defaults).
 export async function contributeToCircle(id: string, amountKobo: number): Promise<ContributionResult> {
   if (USE_MOCK) { await delay(); return { ok: true, newBalanceKobo: amountKobo }; }
-  return unwrap(await api.post(`${API_BASE}/circles/${id}/contribute`, { amount_kobo: amountKobo }, { headers: { 'Idempotency-Key': idempotencyKey() } }));
+  const res = await unwrap<any>(await api.post(`${API_BASE}/circles/${id}/contribute`, { amount_kobo: amountKobo }, { headers: { 'Idempotency-Key': idempotencyKey() } }));
+  return { ok: true, newBalanceKobo: res?.balance_kobo ?? res?.balanceKobo ?? amountKobo };
 }
 
 export async function joinCircle(id: string): Promise<{ ok: boolean }> {
@@ -303,11 +405,12 @@ export async function createGroupTarget(input: CreateGroupTargetInput): Promise<
       contributors: [{ id: 'g1', name: 'You', handle: '@you', avatarColor: '#340075', pledgedKobo: 0, savedKobo: 0 }],
     };
   }
-  return unwrap(await api.post(
+  const raw = unwrap<any>(await api.post(
     `${API_BASE}/targets`,
     { name: input.name, target_kobo: input.targetKobo, withdrawal_rule: input.withdrawalRule, target_date: input.deadlineISO },
     { headers: { 'Idempotency-Key': idempotencyKey() } },
   ));
+  return targetFromBackend(raw);
 }
 
 export async function contributeToTarget(id: string, amountKobo: number): Promise<ContributionResult> {
@@ -316,8 +419,8 @@ export async function contributeToTarget(id: string, amountKobo: number): Promis
     const t = MOCK_TARGETS.find((x) => x.id === id);
     return { ok: true, newBalanceKobo: (t?.savedKobo ?? 0) + amountKobo };
   }
-  const res = await unwrap<{ balance_kobo: number }>(
+  const res = await unwrap<any>(
     await api.post(`${API_BASE}/targets/${id}/contribute`, { amount_kobo: amountKobo }, { headers: { 'Idempotency-Key': idempotencyKey() } }),
   );
-  return { ok: true, newBalanceKobo: res.balance_kobo };
+  return { ok: true, newBalanceKobo: res?.balance_kobo ?? res?.balanceKobo ?? amountKobo };
 }

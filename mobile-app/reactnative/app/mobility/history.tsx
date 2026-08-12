@@ -63,7 +63,7 @@ function rebook(trip: Trip) {
 function HistoryRow({ trip }: { trip: Trip }) {
   const date = new Date(trip.createdAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' });
   const canRate = trip.phase === 'completed' && !trip.rated;
-  const destLabel = trip.dest.label ?? trip.dest.address;
+  const destLabel = trip.dest?.label ?? trip.dest?.address ?? trip.destAddress ?? 'destination';
   return (
     <View style={styles.row}>
       <View style={styles.iconWrap}>

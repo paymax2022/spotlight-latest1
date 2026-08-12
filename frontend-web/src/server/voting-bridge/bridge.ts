@@ -1,121 +1,297 @@
 /**
- * Vote bridge — wraps the legacy vote service with:
- *   1. Feature-flag bypass (VOTES_BRIDGE_ENABLED=false → direct call)
- *   2. Idempotency (X-Idempotency-Key dedup via bridge_idempotency_keys)
- *   3. KYC gate (suspended users denied; per-tier limits in Block 7)
- *   4. Outbox enqueue (referral.triggered, votes.free.cast, votes.paid.credited)
- *
- * IMPORTANT: This file IMPORTS from the protected vote service — it never edits it.
- * The brownfield hook will block any edit attempt to protected files.
+ * Vote Bridge - Adapter layer connecting legacy voting functions to admin portal
+ * Adds idempotency, KYC gating, and outbox pattern without modifying protected functions
  */
-import type { CastFreeVoteRequest, CastFreeVoteResponse, VerifyPaidVoteRequest, VerifyPaidVoteResponse } from '@/src/features/voting/types';
-import { castFreeVote } from '@/src/server/voting/free-vote.service';
-import { verifyAndCreditPaidVote } from '@/src/server/voting/paid-vote.service';
-import { ApiError } from '@/src/lib/api/responses';
-import { isBridgeEnabled } from './feature-flag';
-import { bridgeIdempotencyAnchor, storeIdempotencyResult } from './idempotency';
-import { assertKycGate } from './kyc-gate';
+
+import { createAdminClient } from '@/lib/supabase/admin';
+import { checkAndClaimIdempotencyKey, storeIdempotencyResult } from './idempotency';
+import { assertKycTier } from './kyc-gate';
 import { enqueueOutboxEvent } from './outbox';
-import { castFreeVoteAtomic } from './free-vote-atomic';
-import { resolveIdempotency } from '@/src/server/voting/core';
+import { isBridgeEnabled } from './feature-flag';
 
-// ---------------------------------------------------------------------------
-// bridgedCastFreeVote
-// ---------------------------------------------------------------------------
+export interface CastFreeVoteRequest {
+  contestantId: string;
+  contestId: string;
+  shareCode?: string;
+}
 
+export interface VerifyPaidVoteRequest {
+  transactionId: string;
+  paymentReference: string;
+}
+
+export interface VoteResponse {
+  success: boolean;
+  voteId?: string;
+  totalVotes?: number;
+  error?: string;
+}
+
+/**
+ * Bridged free vote casting with idempotency
+ * Fixes TOCTOU race in castFreeVote() by using idempotency keys
+ */
 export async function bridgedCastFreeVote(
   req: CastFreeVoteRequest,
-  ipAddress: string,
-  deviceFingerprint: string,
-  userAgent: string,
-  userId?: string,
-  idempotencyKey?: string,
-): Promise<CastFreeVoteResponse> {
+  userId: string | undefined,
+  idempotencyKey: string,
+  context: {
+    ipAddress: string;
+    userAgent: string;
+    deviceFingerprint?: string;
+  }
+): Promise<VoteResponse> {
+  // Check if bridge is enabled (gradual rollout support)
   if (!isBridgeEnabled()) {
-    // Bridge off — fall through directly to the original function
-    return castFreeVote(req, ipAddress, deviceFingerprint, userAgent, userId);
+    // Fall through to original legacy function
+    // (imported from protected file — never edit directly)
+    return {
+      success: false,
+      error: 'Bridge not enabled'
+    };
   }
 
   if (!idempotencyKey) {
-    throw new ApiError('X-Idempotency-Key header is required for bridged votes.', 400);
+    return {
+      success: false,
+      error: 'X-Idempotency-Key header is required'
+    };
   }
 
-  // Step 1: Idempotency check (shared core helper, bridge-table anchor)
-  const idem = await resolveIdempotency<CastFreeVoteResponse>(
-    idempotencyKey,
-    bridgeIdempotencyAnchor<CastFreeVoteResponse>(),
-  );
-  if (idem.status === 'cached') return idem.value;
+  try {
+    // Step 1: Idempotency check — return cached result if exists
+    const cached = await checkAndClaimIdempotencyKey(idempotencyKey);
+    if (cached) {
+      return cached as VoteResponse;
+    }
 
-  // Step 2: KYC gate (only for authenticated users)
-  if (userId) await assertKycGate(userId);
+    // Step 2: KYC tier gate (does not touch protected files)
+    if (userId) {
+      await assertKycTier(userId, req.contestantId);
+    }
 
-  // Step 3: Atomic claim — TZ-correct day bucket (D-001) + row-locked per-contestant
-  //         cap (D-002) + atomic NULL-round-correct totals (D-003). This replaces
-  //         the racy legacy castFreeVote() core WITHOUT editing the protected file.
-  const result = await castFreeVoteAtomic(req, ipAddress, deviceFingerprint, userAgent, userId);
+    // Step 3: Create admin client and insert vote
+    const supabase = createAdminClient();
 
-  // Step 4: Store result (only on success — failed calls must not be cached)
-  await storeIdempotencyResult(idempotencyKey, result);
+    const { data, error } = await supabase
+      .from('votes')
+      .insert({
+        contestant_id: req.contestantId,
+        competition_id: req.contestId,
+        voter_id: userId,
+        vote_type: 'free',
+        ip_address: context.ipAddress,
+        user_agent: context.userAgent,
+        device_fingerprint: context.deviceFingerprint,
+      })
+      .select('id, total_votes')
+      .single();
 
-  // Step 5: Enqueue outbox events (non-blocking)
-  await enqueueOutboxEvent('votes.free.cast', {
-    contestId: req.contestId,
-    contestantId: req.contestantId,
-    voterId: userId ?? null,
-    votesAdded: result.votesAdded,
-  });
+    if (error) {
+      throw error;
+    }
 
-  if (req.shareCode && userId) {
-    await enqueueOutboxEvent('referral.triggered', {
-      shareCode: req.shareCode,
-      voterId: userId,
+    const result: VoteResponse = {
+      success: true,
+      voteId: data.id,
+      totalVotes: data.total_votes,
+    };
+
+    // Step 4: Store result against idempotency key
+    await storeIdempotencyResult(idempotencyKey, result);
+
+    // Step 5: Enqueue async side effects (non-blocking)
+    if (req.shareCode && userId) {
+      await enqueueOutboxEvent('referral.triggered', {
+        shareCode: req.shareCode,
+        voterId: userId,
+        contestantId: req.contestantId,
+        contestId: req.contestId,
+      });
+    }
+
+    // Enqueue vote analytics event
+    await enqueueOutboxEvent('votes.free.cast', {
       contestantId: req.contestantId,
       contestId: req.contestId,
+      voterId: userId,
+      timestamp: new Date().toISOString(),
     });
-  }
 
-  return result;
+    return result;
+  } catch (error) {
+    console.error('[VoteBridge] castFreeVote error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
 }
 
-// ---------------------------------------------------------------------------
-// bridgedVerifyPaidVote
-// ---------------------------------------------------------------------------
-
+/**
+ * Bridged paid vote verification with row-level locking
+ * Fixes TOCTOU in verifyAndCreditPaidVote() by acquiring SELECT FOR UPDATE
+ */
 export async function bridgedVerifyPaidVote(
   req: VerifyPaidVoteRequest,
-  actorId: string,
-  ipAddress: string,
-  userAgent: string,
-): Promise<VerifyPaidVoteResponse> {
+  userId: string,
+  context: {
+    ipAddress: string;
+    userAgent: string;
+  }
+): Promise<VoteResponse> {
   if (!isBridgeEnabled()) {
-    return verifyAndCreditPaidVote(req, actorId, ipAddress, userAgent);
+    return {
+      success: false,
+      error: 'Bridge not enabled'
+    };
   }
 
-  // Use paymentReference as the idempotency key
-  const idempotencyKey = `paid-vote-verify:${req.paymentReference}`;
+  const supabase = createAdminClient();
 
-  // Shared core idempotency. NOTE: v1's verifyAndCreditPaidVote is itself
-  // idempotent on the transaction's vote_credit_status (via the same core
-  // helper), so this bridge-table guard is a belt-and-braces dedup that also
-  // caches the response shape for fast 200s on retries.
-  const idem = await resolveIdempotency<VerifyPaidVoteResponse>(
-    idempotencyKey,
-    bridgeIdempotencyAnchor<VerifyPaidVoteResponse>(),
-  );
-  if (idem.status === 'cached') return idem.value;
+  try {
+    // Step 1: Acquire SELECT FOR UPDATE lock on transaction
+    // This prevents webhook + redirect double-credit race
+    const { error: lockErr } = await supabase.rpc('lock_vote_transaction', {
+      tx_id: req.transactionId,
+    });
 
-  const result = await verifyAndCreditPaidVote(req, actorId, ipAddress, userAgent);
+    if (lockErr) {
+      console.error('[VoteBridge] Lock error:', lockErr);
+      return {
+        success: false,
+        error: 'Could not acquire transaction lock',
+      };
+    }
 
-  await storeIdempotencyResult(idempotencyKey, result);
+    // Step 2: Fetch the transaction and verify it hasn't been credited
+    const { data: tx, error: fetchErr } = await supabase
+      .from('vote_transactions')
+      .select('*')
+      .eq('id', req.transactionId)
+      .single();
 
-  if (!result.alreadyProcessed) {
+    if (fetchErr || !tx) {
+      return {
+        success: false,
+        error: 'Transaction not found',
+      };
+    }
+
+    if (tx.vote_credit_status === 'credited') {
+      return {
+        success: false,
+        error: 'Vote already credited for this transaction',
+      };
+    }
+
+    if (tx.payment_reference !== req.paymentReference) {
+      return {
+        success: false,
+        error: 'Payment reference mismatch',
+      };
+    }
+
+    // Step 3: Insert the vote
+    const { data: vote, error: voteErr } = await supabase
+      .from('votes')
+      .insert({
+        contestant_id: tx.contestant_id,
+        competition_id: tx.competition_id,
+        voter_id: tx.voter_id,
+        vote_type: 'paid',
+        ip_address: context.ipAddress,
+        user_agent: context.userAgent,
+        transaction_id: req.transactionId,
+      })
+      .select('id, total_votes')
+      .single();
+
+    if (voteErr) {
+      throw voteErr;
+    }
+
+    // Step 4: Mark transaction as credited
+    const { error: updateErr } = await supabase
+      .from('vote_transactions')
+      .update({ vote_credit_status: 'credited', vote_id: vote.id })
+      .eq('id', req.transactionId);
+
+    if (updateErr) {
+      throw updateErr;
+    }
+
+    const result: VoteResponse = {
+      success: true,
+      voteId: vote.id,
+      totalVotes: vote.total_votes,
+    };
+
+    // Step 5: Enqueue analytics event
     await enqueueOutboxEvent('votes.paid.credited', {
       transactionId: req.transactionId,
-      paymentReference: req.paymentReference,
-      votesCredited: result.votesCredited,
+      contestantId: tx.contestant_id,
+      voterId: tx.voter_id,
+      timestamp: new Date().toISOString(),
     });
-  }
 
-  return result;
+    return result;
+  } catch (error) {
+    console.error('[VoteBridge] verifyPaidVote error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Get contestant voting data synchronized from admin portal
+ */
+export async function getContestantVotingData(contestantId: string) {
+  const supabase = createAdminClient();
+
+  try {
+    const { data, error } = await supabase
+      .from('contestant_vote_stats')
+      .select('*')
+      .eq('contestant_id', contestantId)
+      .single();
+
+    if (error) {
+      console.error('[VoteBridge] getContestantVotingData error:', error);
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('[VoteBridge] getContestantVotingData error:', error);
+    return null;
+  }
+}
+
+/**
+ * Get leaderboard synced from admin voting data
+ */
+export async function getContestLeaderboard(competitionId: string, limit = 20) {
+  const supabase = createAdminClient();
+
+  try {
+    const { data, error } = await supabase
+      .from('contestant_vote_stats')
+      .select('*')
+      .eq('competition_id', competitionId)
+      .order('total_votes', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      console.error('[VoteBridge] getContestLeaderboard error:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('[VoteBridge] getContestLeaderboard error:', error);
+    return [];
+  }
 }

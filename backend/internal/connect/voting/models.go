@@ -29,6 +29,12 @@ type Contest struct {
 	OpensAt           *time.Time `json:"opens_at,omitempty"`
 	ClosesAt          *time.Time `json:"closes_at,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
+
+	// Roster/tally summary, populated by the list + detail queries so a client
+	// rendering a contest card does not have to fetch the whole roster to show
+	// "N contestants / M votes" (which would be an N+1 across the list).
+	ContestantCount int   `json:"contestant_count"`
+	TotalVotes      int64 `json:"total_votes"`
 }
 
 // Vote mirrors a row of public.connect_votes (immutable). A free vote has

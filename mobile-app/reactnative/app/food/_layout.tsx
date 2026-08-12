@@ -1,7 +1,11 @@
 import { Stack } from 'expo-router';
 import { Colors } from '@/constants/colors';
+import { useCartSync } from '@/features/food/useCartSync';
 
 export default function FoodLayout() {
+  // Sync cart with server and localStorage on mount and on changes
+  useCartSync();
+
   return (
     <Stack
       screenOptions={{
