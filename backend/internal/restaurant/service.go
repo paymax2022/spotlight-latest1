@@ -235,7 +235,11 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	var isOpen bool
 	var ownerID string
 	var rLat, rLng *float64
-	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng FROM restaurants WHERE id=$1`, primaryRestaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng); err != nil {
+	// packaging_fee_kobo is read here (never taken from the request) so the unit
+	// price is always the store's own, at order time.
+	var packagingFeeKobo int64
+	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng, packaging_fee_kobo FROM restaurants WHERE id=$1`,
+		primaryRestaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng, &packagingFeeKobo); err != nil {
 		return nil, fmt.Errorf("restaurant: primary restaurant not found")
 	}
 	if !isOpen {
@@ -306,7 +310,26 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		etaMinutes = &em
 	}
 
-	total := subtotal + deliveryKobo
+	// Takeaway packaging: the store's per-pack fee x the number of packs. The
+	// client decides how the food is packed and sends package_count; the pack
+	// count is clamped server-side (see packagingKobo) so it can neither be
+	// under-reported to dodge the charge nor inflated to pad the merchant's take.
+	// The unit fee is read from the DB, never from the request.
+	//
+	// Every store defaults to packaging_fee_kobo = 0, so this is a no-op until a
+	// store opts in — the migration alone reprices nothing.
+	//
+	// SETTLEMENT: packaging needs NO change in settlement.Settle. That function
+	// computes providerKobo as the REMAINDER of the escrowed total after the
+	// platform and rider legs, so the extra kobo flows to the restaurant, which
+	// is exactly who buys the packs. Conservation holds by construction.
+	var totalQty int
+	for _, it := range itemsWithRest {
+		totalQty += it.item.Quantity
+	}
+	packagingKoboAmt := packagingKobo(req.PackageCount, totalQty, packagingFeeKobo)
+
+	total := subtotal + deliveryKobo + packagingKoboAmt
 	orderID := uuid.New().String()
 	ref := "order:" + orderID
 
@@ -322,6 +345,7 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		RestaurantID:      restaurantID,
 		SubtotalKobo:      subtotal,
 		DeliveryKobo:      deliveryKobo,
+		PackagingKobo:     packagingKoboAmt,
 		TotalKobo:         total,
 		Status:            OrderPending,
 		IdempotencyKey:    req.IdempotencyKey,
@@ -349,12 +373,12 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	defer tx.Rollback(ctx)
 
 	const insertOrder = `
-		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown)
-		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12)
+		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, packaging_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,$10,$11,$12,$13)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insertOrder,
 		order.ID, order.CustomerID, primaryRestaurantID,
-		order.SubtotalKobo, order.DeliveryKobo, order.TotalKobo,
+		order.SubtotalKobo, order.DeliveryKobo, order.PackagingKobo, order.TotalKobo,
 		order.IdempotencyKey, order.SettlementID, order.DeliveryAddress,
 		order.DistanceMeters, order.EtaMinutes, breakdownJSON,
 	)

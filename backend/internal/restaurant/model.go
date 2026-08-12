@@ -97,6 +97,11 @@ type Order struct {
 	// DiscountKobo is the promo discount taken off the item subtotal; PromoID and
 	// PromoFunder snapshot which promo applied and who bore it. TotalKobo (escrowed) =
 	// SubtotalKobo − DiscountKobo + DeliveryKobo + TipKobo.
+	// PackagingKobo is the takeaway-packaging charge on this order (the store's
+	// per-pack fee x pack count, snapshotted at order time so a later fee change
+	// cannot rewrite a historical total). Part of TotalKobo; settles to the
+	// restaurant via the provider remainder.
+	PackagingKobo   int64       `json:"packaging_kobo"`
 	DiscountKobo    int64       `json:"discount_kobo"`
 	PromoID         *string     `json:"promo_id,omitempty"`
 	PromoFunder     *string     `json:"promo_funder,omitempty"`
@@ -169,6 +174,12 @@ type PlaceOrderRequest struct {
 	// settlement. It is escrowed with the order total. Negative values are clamped
 	// to 0 by PlaceOrder (never trusted from the client for money math).
 	TipKobo int64 `json:"tip_kobo,omitempty"`
+
+	// PackageCount is how many takeaway packs the cart built. The mobile client has
+	// always sent `package_count`, but no field bound it here, so it was silently
+	// dropped and packaging was never charged. Clamped server-side in packagingKobo
+	// — never trusted as sent (see the note there).
+	PackageCount int `json:"package_count,omitempty"`
 
 	// PromoCode, when set, is validated against the restaurant's (or a platform-wide)
 	// promos and applied as a discount to the item subtotal. An unusable code fails

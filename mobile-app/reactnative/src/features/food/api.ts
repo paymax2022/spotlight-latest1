@@ -79,7 +79,26 @@ export async function listRestaurants(): Promise<Restaurant[]> {
   // `restaurants` key here, tolerating a bare array in case the handler is ever
   // flattened.
   const raw = unwrap<Restaurant[] | { restaurants?: Restaurant[] }>(await api.get(`${BASE}`));
-  return Array.isArray(raw) ? raw : raw?.restaurants ?? [];
+  const rows = Array.isArray(raw) ? raw : raw?.restaurants ?? [];
+  return rows.map(mapRestaurant);
+}
+
+/**
+ * Normalize the Go DTO's snake_case money/ops fields onto the camelCase view
+ * model. The server now emits `packaging_fee_kobo`, `min_order_kobo` and
+ * `prep_time_minutes`; without this the client reads `undefined` and falls back
+ * to 0 — which on checkout means SHOWING a total the server does not charge.
+ * Money is server-authoritative: these are only ever read, never computed here.
+ */
+function mapRestaurant(raw: Restaurant): Restaurant {
+  const r = raw as Restaurant & Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === 'number' ? v : undefined);
+  return {
+    ...raw,
+    isOpen: (r.isOpen ?? (r['is_open'] as boolean)) ?? false,
+    packagingFeeKobo: r.packagingFeeKobo ?? num(r['packaging_fee_kobo']) ?? 0,
+    minOrderKobo: r.minOrderKobo ?? num(r['min_order_kobo']) ?? 0,
+  };
 }
 
 export async function getRestaurant(id: string): Promise<RestaurantDetail> {
@@ -87,7 +106,17 @@ export async function getRestaurant(id: string): Promise<RestaurantDetail> {
     await delay(280);
     return mockRestaurantDetail(id);
   }
-  return unwrap<RestaurantDetail>(await api.get(`${BASE}/${encodeURIComponent(id)}`));
+  // Detail answers {restaurant, categories}; the view model is a flat
+  // RestaurantDetail (Restaurant + menu), so flatten and normalize here.
+  const raw = unwrap<RestaurantDetail | { restaurant?: Restaurant; categories?: unknown[] }>(
+    await api.get(`${BASE}/${encodeURIComponent(id)}`),
+  );
+  const nested = (raw as { restaurant?: Restaurant }).restaurant;
+  if (nested) {
+    const cats = (raw as { categories?: unknown[] }).categories ?? [];
+    return { ...mapRestaurant(nested), menu: cats } as RestaurantDetail;
+  }
+  return mapRestaurant(raw as RestaurantDetail) as RestaurantDetail;
 }
 
 // ─── Delivery quote ─────────────────────────────────────────────────────────
