@@ -32,7 +32,8 @@ func (s *AdminStore) GetDashboardStats(ctx context.Context) (*DashboardStats, er
 	row := s.db.QueryRow(ctx, `
 		SELECT
 			(SELECT COUNT(*) FROM auth.users) as total_users,
-			(SELECT COUNT(*) FROM kyc_profiles WHERE tier = 0) as kyc_pending,
+			(SELECT COUNT(*) FROM user_profiles
+			 WHERE kyc_status IN ('submitted', 'pending')) as kyc_pending,
 			(SELECT COUNT(*) FROM orders WHERE status = 'active') as active_orders,
 			(SELECT COALESCE(SUM(amount_kobo), 0) FROM ledger_entries
 			 WHERE type = 'DEBIT' AND created_at > NOW() - INTERVAL '24 hours') as total_volume,
@@ -79,15 +80,14 @@ func (s *AdminStore) ListUsers(ctx context.Context, limit int, offset int) ([]Us
 		SELECT
 			u.id,
 			u.email,
-			COALESCE(p.name, '') as name,
+			COALESCE(p.full_name, '') as name,
 			COALESCE(p.phone, '') as phone,
-			COALESCE(k.tier, 0) as tier,
+			COALESCE(p.kyc_tier, 0) as tier,
 			u.user_metadata->>'status' as status,
 			u.created_at::text,
 			COALESCE(u.last_sign_in_at::text, '') as last_login
 		FROM auth.users u
-		LEFT JOIN profiles p ON u.id = p.user_id
-		LEFT JOIN kyc_profiles k ON u.id = k.user_id
+		LEFT JOIN user_profiles p ON u.id = p.id
 		ORDER BY u.created_at DESC
 		LIMIT $1 OFFSET $2
 	`, limit, offset)
@@ -125,24 +125,23 @@ type KYCEntry struct {
 func (s *AdminStore) GetKYCQueue(ctx context.Context) ([]KYCEntry, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT
-			k.id,
-			k.user_id,
+			p.id::text as id,
+			p.id::text as user_id,
 			u.email,
-			COALESCE(p.name, 'Unknown') as name,
-			CASE k.tier
+			COALESCE(p.full_name, 'Unknown') as name,
+			CASE COALESCE(p.kyc_requested_tier, 0)
 				WHEN 1 THEN 'pending_tier1'
 				WHEN 2 THEN 'pending_tier2'
 				WHEN 3 THEN 'pending_tier3'
-				ELSE 'unknown'
+				ELSE 'pending'
 			END as status,
-			k.tier,
-			COALESCE(k.document_type, '') as document,
-			k.created_at::text
-		FROM kyc_profiles k
-		JOIN auth.users u ON k.user_id = u.id
-		LEFT JOIN profiles p ON k.user_id = p.user_id
-		WHERE k.status = 'pending'
-		ORDER BY k.created_at ASC
+			COALESCE(p.kyc_requested_tier, 0) as tier,
+			COALESCE(p.document_type, '') as document,
+			COALESCE(p.kyc_submitted_at::text, '') as submitted_at
+		FROM user_profiles p
+		JOIN auth.users u ON p.id = u.id
+		WHERE p.kyc_status IN ('submitted', 'pending')
+		ORDER BY p.kyc_submitted_at ASC NULLS LAST
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("query kyc queue: %w", err)

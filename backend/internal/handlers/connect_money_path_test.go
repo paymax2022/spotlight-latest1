@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -77,3 +78,43 @@ type errWrapper struct{ err error }
 
 func (e errWrapper) Error() string { return "wallet: " + e.err.Error() }
 func (e errWrapper) Unwrap() error { return e.err }
+
+// TestKYCLimitsLadder_MatchesEnforcedConfig guards the tier source split that
+// this handler previously had: the displayed ladder must come from the same
+// tiers config the wallet enforces, so a user can never be shown an allowance
+// the debit gate will refuse.
+func TestKYCLimitsLadder_MatchesEnforcedConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/kyc/limits", nil)
+
+	// GetLimits reads only the tiers config — no DB, so a nil service is fine.
+	(&KYCConnectHandler{}).GetLimits(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var body struct {
+		Data []struct {
+			Tier           int   `json:"tier"`
+			DailyLimitKobo int64 `json:"dailyLimitKobo"`
+			MaxBalanceKobo int64 `json:"maxBalanceKobo"`
+			WalletEnabled  bool  `json:"walletEnabled"`
+		} `json:"data"`
+	}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Len(t, body.Data, 4)
+
+	for _, row := range body.Data {
+		cfg := tiers.GetConfig(tiers.Tier(row.Tier))
+		assert.Equal(t, cfg.DailyDebitLimitKobo, row.DailyLimitKobo,
+			"tier %d daily limit must match the enforced config", row.Tier)
+		assert.Equal(t, cfg.MaxBalanceKobo, row.MaxBalanceKobo,
+			"tier %d max balance must match the enforced config", row.Tier)
+	}
+
+	// Tier 0 has no wallet; every other tier does.
+	assert.False(t, body.Data[0].WalletEnabled)
+	assert.True(t, body.Data[1].WalletEnabled)
+}

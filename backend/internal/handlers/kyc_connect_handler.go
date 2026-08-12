@@ -4,20 +4,57 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/internal/finance/kyc"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/services"
 )
 
 // KYCConnectHandler handles /api/v1/kyc/* endpoints for tier progression.
+//
+// Tier state lives in user_profiles.kyc_tier — the single source of truth that
+// finance/tiers enforces limits against and that referrals, virtual accounts,
+// marketplace, and academy all read. Everything here delegates to kyc.Service so
+// submissions land in that column, hash BVN/NIN before storage, and emit a
+// kyc_events audit row.
 type KYCConnectHandler struct {
-	store    *KYCStore
+	kycSvc   *kyc.Service
+	tiersSvc *tiers.Service
 	auditSvc services.AuditService
 }
 
-func NewKYCConnectHandler(store *KYCStore, auditSvc services.AuditService) *KYCConnectHandler {
+func NewKYCConnectHandler(kycSvc *kyc.Service, tiersSvc *tiers.Service, auditSvc services.AuditService) *KYCConnectHandler {
 	return &KYCConnectHandler{
-		store:    store,
+		kycSvc:   kycSvc,
+		tiersSvc: tiersSvc,
 		auditSvc: auditSvc,
 	}
+}
+
+// kycProfilePayload renders a kyc.Profile for the mobile client.
+func kycProfilePayload(p *kyc.Profile) gin.H {
+	tier := int(p.Tier)
+	out := gin.H{
+		"tier":               tier,
+		"label":              tierLabels[tier],
+		"status":             string(p.Status),
+		"verificationStatus": string(p.Status),
+		"phoneVerified":      p.PhoneVerified,
+		"canSend":            tier >= 1,
+		"canReceive":         true,
+		"canWithdraw":        tier >= 2,
+		"canGoLive":          tier >= 2,
+		"nextTier":           tier + 1,
+	}
+	if p.VerifiedAt != nil {
+		out["verifiedAt"] = p.VerifiedAt
+	}
+	if p.RequestedTier != nil {
+		out["requestedTier"] = *p.RequestedTier
+	}
+	if p.DocumentType != nil {
+		out["documentType"] = *p.DocumentType
+	}
+	return out
 }
 
 // GetStatus — GET /api/v1/kyc/status
@@ -29,67 +66,89 @@ func (h *KYCConnectHandler) GetStatus(c *gin.Context) {
 		return
 	}
 
-	profile, err := h.store.GetKYCStatus(c.Request.Context(), userID)
+	profile, err := h.kycSvc.GetProfile(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load kyc status"})
 		return
 	}
 
-	tierLabels := map[int]string{
-		0: "Tier 0 (No KYC)",
-		1: "Tier 1",
-		2: "Tier 2",
-		3: "Tier 3",
-	}
-
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"tier":               profile.Tier,
-		"label":             tierLabels[profile.Tier],
-		"status":            profile.Status,
-		"verificationStatus": profile.VerificationStatus,
-		"bvn":               profile.BVN,
-		"nin":               profile.NIN,
-		"verifiedAt":        profile.VerifiedAt,
-		"rejectionReason":   profile.RejectionReason,
-	}})
+	c.JSON(http.StatusOK, gin.H{"data": kycProfilePayload(profile)})
 }
 
 // GetLimits — GET /api/v1/kyc/limits
-// View tier limits ladder (display-only, mirrors backend config).
+// View the tier limits ladder. Values come from the same tiers config the
+// wallet enforces, so what is displayed cannot drift from what is enforced.
 func (h *KYCConnectHandler) GetLimits(c *gin.Context) {
-	limits, err := h.store.GetTierLimits(c.Request.Context())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load tier limits"})
-		return
+	requiredDocs := map[int][]string{
+		0: {},
+		1: {"BVN"},
+		2: {"BVN", "Photo ID", "Proof of address"},
+		3: {"BVN", "NIN", "Photo ID", "Liveness check", "Source of funds"},
 	}
 
 	data := []gin.H{}
-	for _, limit := range limits {
+	for t := 0; t <= 3; t++ {
+		cfg := tiers.GetConfig(tiers.Tier(t))
 		data = append(data, gin.H{
-			"tier":                 limit.Tier,
-			"label":                limit.Label,
-			"dailyLimitKobo":       limit.DailyLimitKobo,
-			"monthlyLimitKobo":     limit.MonthlyLimitKobo,
-			"transactionLimitKobo": limit.TransactionLimitKobo,
-			"requiredDocuments":    limit.RequiredDocuments,
+			"tier":              t,
+			"label":             tierLabels[t],
+			"dailyLimitKobo":    cfg.DailyDebitLimitKobo, // 0 = unlimited (T3) / disabled (T0)
+			"maxBalanceKobo":    cfg.MaxBalanceKobo,      // 0 = unlimited
+			"walletEnabled":     t > 0,
+			"requiredDocuments": requiredDocs[t],
 		})
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": data})
 }
 
+// requireSubmitContext validates the auth + idempotency preconditions shared by
+// every tier submission. Returns false when it has already written a response.
+func requireSubmitContext(c *gin.Context) bool {
+	if c.GetString("user_id") == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return false
+	}
+	if c.GetHeader("Idempotency-Key") == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
+		return false
+	}
+	return true
+}
+
+// submitTier is the shared body of the three tier submission endpoints. Each
+// tier differs only in the payload it validates and what it forwards to
+// kyc.Initiate, which does the hashing, the write, and the audit event.
+func (h *KYCConnectHandler) submitTier(c *gin.Context, targetTier int, req kyc.InitiateRequest, message string) {
+	userID := c.GetString("user_id")
+
+	profile, err := h.kycSvc.Initiate(c.Request.Context(), userID, req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to submit kyc"})
+		return
+	}
+
+	if h.auditSvc != nil {
+		h.auditSvc.LogAction(userID, "", "submit_kyc", "kyc", "user_profile",
+			userID, nil, map[string]interface{}{
+				"targetTier": targetTier,
+				"status":     string(profile.Status),
+			}, getIPAddress(c), c.Request.UserAgent(), "info")
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
+		"ok":         true,
+		"tier":       int(profile.Tier),
+		"status":     string(profile.Status),
+		"targetTier": targetTier,
+		"message":    message,
+	}})
+}
+
 // SubmitTier1 — POST /api/v1/kyc/tier1 (Idempotency-Key required)
 // Submit BVN/NIN for Tier 1.
 func (h *KYCConnectHandler) SubmitTier1(c *gin.Context) {
-	userID := c.GetString("user_id")
-	idemKey := c.GetHeader("Idempotency-Key")
-
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
-		return
-	}
-	if idemKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
+	if !requireSubmitContext(c) {
 		return
 	}
 
@@ -101,67 +160,41 @@ func (h *KYCConnectHandler) SubmitTier1(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-
 	if len(body.Identifier) != 11 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "enter a valid 11-digit identifier"})
 		return
 	}
 
-	// Phase 2: Call KYC provider to validate BVN/NIN
-	// kyc_provider.VerifyBVN(body.Identifier)
-	// For now: just record the submission
-
-	profile, err := h.store.SubmitTier1(c.Request.Context(), userID, body.Identifier, idemKey)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to submit tier1"})
-		return
+	// The identifier is a BVN unless the client says otherwise. kyc.Initiate
+	// hashes it — the raw value is never persisted.
+	req := kyc.InitiateRequest{RequestedTier: 1}
+	if body.IdentifierType == "nin" {
+		req.NIN = &body.Identifier
+	} else {
+		req.BVN = &body.Identifier
 	}
 
-	// Emit audit event
-	if h.auditSvc != nil {
-		h.auditSvc.LogAction(userID, "", "submit_kyc", "kyc", "kyc_profile",
-			profile.UserID, nil, map[string]interface{}{
-				"tier": 1,
-				"status": profile.Status,
-			}, getIPAddress(c), c.Request.UserAgent(), "info")
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
-		"ok":         true,
-		"tier":       profile.Tier,
-		"status":     profile.Status,
-		"targetTier": 1,
-		"message":    "Tier 1 KYC submitted for verification.",
-	}})
+	h.submitTier(c, 1, req, "Tier 1 KYC submitted for verification.")
 }
 
 // SubmitTier2 — POST /api/v1/kyc/tier2 (Idempotency-Key required)
 // Submit ID + address for Tier 2.
 func (h *KYCConnectHandler) SubmitTier2(c *gin.Context) {
-	userID := c.GetString("user_id")
-	idemKey := c.GetHeader("Idempotency-Key")
-
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
-		return
-	}
-	if idemKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
+	if !requireSubmitContext(c) {
 		return
 	}
 
 	var body struct {
-		IdDocumentUri    string `json:"idDocumentUri"`
+		IdDocumentUri     string `json:"idDocumentUri"`
 		ProofOfAddressUri string `json:"proofOfAddressUri"`
-		AddressLine      string `json:"addressLine"`
-		City             string `json:"city"`
-		State            string `json:"state"`
+		AddressLine       string `json:"addressLine"`
+		City              string `json:"city"`
+		State             string `json:"state"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-
 	if body.IdDocumentUri == "" || body.ProofOfAddressUri == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "upload both a photo ID and proof of address"})
 		return
@@ -171,48 +204,20 @@ func (h *KYCConnectHandler) SubmitTier2(c *gin.Context) {
 		return
 	}
 
-	// Phase 2: Store documents in R2, call KYC provider for verification
-
-	// For now: just get existing profile and update tier
-	existingProfile, _ := h.store.GetKYCStatus(c.Request.Context(), userID)
-	bvn := existingProfile.BVN
-
-	profile, err := h.store.SubmitTier2(c.Request.Context(), userID, bvn, "", idemKey)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to submit tier2"})
-		return
+	docType := "government_id"
+	req := kyc.InitiateRequest{
+		RequestedTier: 2,
+		DocumentType:  &docType,
+		DocumentRef:   &body.IdDocumentUri,
 	}
 
-	// Emit audit event
-	if h.auditSvc != nil {
-		h.auditSvc.LogAction(userID, "", "submit_kyc", "kyc", "kyc_profile",
-			profile.UserID, nil, map[string]interface{}{
-				"tier": 2,
-				"status": profile.Status,
-			}, getIPAddress(c), c.Request.UserAgent(), "info")
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
-		"ok":         true,
-		"tier":       profile.Tier,
-		"status":     profile.Status,
-		"targetTier": 2,
-		"message":    "Documents submitted. Review takes up to 24 hours.",
-	}})
+	h.submitTier(c, 2, req, "Documents submitted. Review takes up to 24 hours.")
 }
 
 // SubmitTier3 — POST /api/v1/kyc/tier3 (Idempotency-Key required)
 // Submit liveness + EDD (source of funds + occupation) for Tier 3.
 func (h *KYCConnectHandler) SubmitTier3(c *gin.Context) {
-	userID := c.GetString("user_id")
-	idemKey := c.GetHeader("Idempotency-Key")
-
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
-		return
-	}
-	if idemKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
+	if !requireSubmitContext(c) {
 		return
 	}
 
@@ -225,7 +230,6 @@ func (h *KYCConnectHandler) SubmitTier3(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-
 	if body.LivenessUri == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "complete the liveness check"})
 		return
@@ -235,39 +239,18 @@ func (h *KYCConnectHandler) SubmitTier3(c *gin.Context) {
 		return
 	}
 
-	// Phase 2: Store liveness + EDD data, call compliance review
-
-	// For now: just get existing profile and update tier
-	existingProfile, _ := h.store.GetKYCStatus(c.Request.Context(), userID)
-	bvn := existingProfile.BVN
-	nin := existingProfile.NIN
-
-	profile, err := h.store.SubmitTier3(c.Request.Context(), userID, bvn, nin, body.SourceOfFunds, idemKey)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to submit tier3"})
-		return
+	docType := "liveness"
+	req := kyc.InitiateRequest{
+		RequestedTier: 3,
+		DocumentType:  &docType,
+		DocumentRef:   &body.LivenessUri,
 	}
 
-	// Emit audit event
-	if h.auditSvc != nil {
-		h.auditSvc.LogAction(userID, "", "submit_kyc", "kyc", "kyc_profile",
-			profile.UserID, nil, map[string]interface{}{
-				"tier": 3,
-				"status": profile.Status,
-			}, getIPAddress(c), c.Request.UserAgent(), "info")
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
-		"ok":         true,
-		"tier":       profile.Tier,
-		"status":     profile.Status,
-		"targetTier": 3,
-		"message":    "EDD submitted. Our compliance team will review shortly.",
-	}})
+	h.submitTier(c, 3, req, "EDD submitted. Our compliance team will review shortly.")
 }
 
 // GetTierStatus — GET /api/v1/me/tier
-// Get current tier status.
+// Get current tier status alongside today's remaining allowance.
 func (h *KYCConnectHandler) GetTierStatus(c *gin.Context) {
 	userID := c.GetString("user_id")
 	if userID == "" {
@@ -275,28 +258,17 @@ func (h *KYCConnectHandler) GetTierStatus(c *gin.Context) {
 		return
 	}
 
-	profile, err := h.store.GetKYCStatus(c.Request.Context(), userID)
+	profile, err := h.kycSvc.GetProfile(c.Request.Context(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load tier status"})
 		return
 	}
 
-	tierLabels := map[int]string{
-		0: "Tier 0",
-		1: "Tier 1",
-		2: "Tier 2",
-		3: "Tier 3",
+	payload := kycProfilePayload(profile)
+	if usage, err := h.tiersSvc.GetUsage(c.Request.Context(), userID); err == nil {
+		payload["dailyLimitKobo"] = usage.DailyLimitKobo
+		payload["remainingKobo"] = usage.RemainingKobo
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"tier":               profile.Tier,
-		"label":             tierLabels[profile.Tier],
-		"status":            profile.Status,
-		"verificationStatus": profile.VerificationStatus,
-		"canSend":           profile.Tier >= 1,
-		"canReceive":        true,
-		"canWithdraw":       profile.Tier >= 2,
-		"canGoLive":         profile.Tier >= 2,
-		"nextTier":          profile.Tier + 1,
-	}})
+	c.JSON(http.StatusOK, gin.H{"data": payload})
 }

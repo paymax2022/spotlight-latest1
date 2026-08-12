@@ -3,6 +3,7 @@ package app
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
@@ -17,7 +18,6 @@ func registerConnectWalletRoutes(r *gin.Engine, supabase interface{}, rbac servi
 	// Create stores with pooled connections
 	walletStore := handlers.NewWalletStore(db)
 	giftingStore := handlers.NewGiftingStore(db)
-	kycStore := handlers.NewKYCStore(db)
 	payoutsStore := handlers.NewPayoutsStore(db)
 
 	// Money mutations route through the shared finance services so every one of
@@ -28,7 +28,7 @@ func registerConnectWalletRoutes(r *gin.Engine, supabase interface{}, rbac servi
 
 	walletHandler := handlers.NewWalletConnectHandler(walletStore, walletSvc, tiersSvc, auditSvc)
 	giftingHandler := handlers.NewGiftingConnectHandler(giftingStore, walletSvc, ledgerSvc, tiersSvc, auditSvc)
-	kycHandler := handlers.NewKYCConnectHandler(kycStore, auditSvc)
+	kycHandler := handlers.NewKYCConnectHandler(kyc.NewService(db), tiersSvc, auditSvc)
 	payoutsHandler := handlers.NewPayoutsConnectHandler(payoutsStore, walletSvc, ledgerSvc, auditSvc)
 
 	// Base v1 group (all routes require auth)
