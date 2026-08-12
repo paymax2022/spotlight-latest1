@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { listOrders, listRestaurants } from '@/services/restaurantAdminService';
 import type { Order, OrderStatus, Restaurant } from '@/types/restaurantAdmin';
 import { naira } from './_ui';
@@ -38,6 +39,7 @@ function KpiTile({ label, value, accent, sub }: { label: string; value: string; 
 }
 
 export default function RestaurantAdminPage() {
+  const router = useRouter();
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [status, setStatus] = useState<OrderStatus | ''>('');
@@ -96,6 +98,7 @@ export default function RestaurantAdminPage() {
                   <th style={thCell}>Address</th>
                   <th style={thCell}>State</th>
                   <th style={thCell}>Rating</th>
+                  <th style={thCell}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -106,6 +109,13 @@ export default function RestaurantAdminPage() {
                     <td style={tdCell}>{r.address || '—'}</td>
                     <td style={tdCell}><StatusBadge status={r.is_open ? 'delivered' : 'cancelled'} label={r.is_open ? 'Open' : 'Closed'} /></td>
                     <td style={tdCell}>{r.rating?.toFixed(1) ?? '—'} ({r.rating_count ?? 0})</td>
+                    {/* The list was read-only with no way into a store. This is the
+                        entry point to profile edit, force open/close and menu CRUD. */}
+                    <td style={tdCell}>
+                      <Button variant="outline" sm onClick={() => router.push(`/admin/restaurant/${r.id}`)}>
+                        Manage
+                      </Button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -158,6 +158,13 @@ type Config struct {
 	FeatureEstateEnabled          bool
 	FeatureCrowdfundingEnabled    bool
 	FeatureRestaurantEnabled      bool
+	// FeatureRestaurantWithdrawalsEnabled gates the merchant WITHDRAWAL money path
+	// (bank-account capture + payout requests + admin settle/reverse). Default OFF:
+	// RequestWithdrawal reserves a balanced ledger post (DR merchant wallet → CR
+	// failed_transfer_suspense) under a per-wallet advisory lock, and the admin
+	// settle/reverse pair moves real money, so the module must never become
+	// reachable implicitly. See backend/internal/restaurant/withdrawal.go.
+	FeatureRestaurantWithdrawalsEnabled bool
 	FeatureNutritionEnabled       bool // Nutrition Resolution Engine (NRE)
 	FeatureTelemedicineEnabled    bool
 	FeatureVoteBridgeEnabled      bool
@@ -580,6 +587,7 @@ func Load() Config {
 		FeatureEstateEnabled:                  getEnvBool("FEATURE_ESTATE_ENABLED", false),
 		FeatureCrowdfundingEnabled:            getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:              getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
+		FeatureRestaurantWithdrawalsEnabled:   getEnvBool("FEATURE_RESTAURANT_WITHDRAWALS_ENABLED", false),
 		FeatureNutritionEnabled:               getEnvBool("FEATURE_NUTRITION_ENABLED", false),
 		FeatureTelemedicineEnabled:            getEnvBool("FEATURE_TELEMEDICINE_ENABLED", false),
 		FeatureVoteBridgeEnabled:              getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),

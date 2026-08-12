@@ -234,10 +234,37 @@ func (s *Service) ListOrders(ctx context.Context, userID, role string) ([]Order,
 
 // ── Menu management (owner only) ──────────────────────────────────────────────
 
+// ctxKeyAdminOverride marks a call as made by a PLATFORM OPERATOR rather than the
+// store owner. It is the single, greppable bypass of the ownership check below.
+type ctxKeyAdminOverride struct{}
+
+// WithAdminOverride marks ctx as an admin-authenticated call, allowing the store
+// mutations below to run for an operator who does not own the store.
+//
+// SECURITY: only ever call this from a route already fail-closed behind
+// middleware.RequirePermission(rbac, "restaurant.manage") — the RBAC check IS the
+// security boundary for those routes, and ownership is deliberately not a second
+// gate there (an operator is meant to be able to fix any merchant's store). It is
+// set in exactly one place: the /api/restaurant/admin/restaurants/* group in
+// internal/app/finance_routes.go. Never set it on a member route.
+func WithAdminOverride(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ctxKeyAdminOverride{}, true)
+}
+
+func isAdminOverride(ctx context.Context) bool {
+	v, _ := ctx.Value(ctxKeyAdminOverride{}).(bool)
+	return v
+}
+
 func (s *Service) assertOwner(ctx context.Context, restaurantID, userID string) error {
 	var ownerID string
 	if err := s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID); err != nil {
 		return fmt.Errorf("restaurant: not found")
+	}
+	// The existence check above still runs for admins, so a bad id is a 404 for
+	// operators too rather than a silent success.
+	if isAdminOverride(ctx) {
+		return nil
 	}
 	if ownerID != userID {
 		return fmt.Errorf("restaurant: only the owner may manage the menu")

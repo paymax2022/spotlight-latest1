@@ -1382,6 +1382,34 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restPublicWS := r.Group("/api/finance/restaurant")
 		restPublicWS.GET("/orders/:orderId/ws", restaurantHandler.ServeOrderWS)
 
+		// ── Food disputes (party-scoped) ──────────────────────────────────────
+		// Purpose-built food dispute rails. disputes_handler.go, its service and its
+		// migration (20261019000000_restaurant_disputes.sql) all shipped without any
+		// route registration, so the admin console fell back to the GENERIC finance
+		// dispute endpoints — which don't carry food-specific context (order parties,
+		// refundable ceiling from the escrowed total).
+		restGroup.POST("/orders/:orderId/dispute", restaurantHandler.RaiseFoodDispute)
+		restGroup.GET("/disputes/:id", restaurantHandler.GetFoodDispute)
+
+		// ── KYB (owner) ───────────────────────────────────────────────────────
+		// Merchant business verification. Distinct from the onboarding QUEUE the ops
+		// console reviews: this is where the merchant actually supplies the records.
+		// kyb_handler.go + kyb_service.go + 20261018000000_restaurant_kyb.sql existed
+		// with no HTTP surface, so the review queue had nothing real to read.
+		restGroup.GET("/:id/kyb", restaurantHandler.GetKYB)
+		restGroup.PUT("/:id/kyb", restaurantHandler.SaveKYB)
+		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
+		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
+
+		// ── Group & scheduled orders ──────────────────────────────────────────
+		// A host opens a group order, contributors add items, the host finalizes it
+		// into a normal order (money path reuses PlaceOrder's escrow + idempotency).
+		// Static "group" segment is a sibling of the ":id" param, same as "orders".
+		restGroup.POST("/:id/group", restaurantHandler.CreateGroupOrder)
+		restGroup.GET("/group/:groupId", restaurantHandler.GetGroupOrder)
+		restGroup.POST("/group/:groupId/items", restaurantHandler.AddGroupItem)
+		restGroup.POST("/group/:groupId/finalize", restaurantHandler.FinalizeGroupOrder)
+
 		// Ratings.
 		restGroup.POST("/orders/:orderId/rate", restaurantHandler.RateOrder)
 
@@ -1400,6 +1428,43 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// projections over existing tables; the two mutations drive existing
 		// idempotent transitions (manual assign, onboarding is_open gate). Disputes
 		// are NOT here — the console reuses /api/finance/{disputes,admin/disputes}.
+		// Store & menu management for platform operators (restaurant.manage).
+		//
+		// These mirror the owner-facing routes on /api/finance/restaurant/:id/* but
+		// run under restaurant.WithAdminOverride, which relaxes the ownership check
+		// in Service.assertOwner. That check compares the caller against
+		// restaurants.owner_id with NO operator exemption, so without these an admin
+		// could view a merchant's store in the console but got 403 on every fix —
+		// a wrong price, an out-of-stock dish, or force-closing a store that is
+		// taking orders it cannot fulfil.
+		//
+		// RBAC is the security boundary here, not ownership: every route below is
+		// fail-closed behind RequirePermission, and WithAdminOverride is set ONLY in
+		// these handlers (grep `adminCtx(` in handler_admin_store.go). The store
+		// existence check still runs, so a bad id is a 404 for operators too.
+		//
+		// Mounted under the static "restaurants" segment so they cannot collide with
+		// the sibling ":id" params on /orders, /onboarding and /payouts.
+		restStore := restAdmin.Group("/restaurants", middleware.RequirePermission(rbac, "restaurant.manage"))
+		restStore.GET("/:id", restaurantHandler.AdminGetRestaurant)
+		restStore.PATCH("/:id", restaurantHandler.AdminUpdateRestaurant)
+		restStore.PATCH("/:id/availability", restaurantHandler.AdminSetAvailability)
+		restStore.POST("/:id/menu/categories", restaurantHandler.AdminCreateCategory)
+		restStore.DELETE("/:id/menu/categories/:categoryId", restaurantHandler.AdminDeleteCategory)
+		restStore.POST("/:id/menu/items", restaurantHandler.AdminCreateItem)
+		restStore.PATCH("/:id/menu/items/:itemId", restaurantHandler.AdminUpdateItem)
+		restStore.DELETE("/:id/menu/items/:itemId", restaurantHandler.AdminDeleteItem)
+
+		// Food-specific dispute queue. Previously unregistered, so the console used
+		// the generic /api/finance/{disputes,admin/disputes} rails instead.
+		restAdmin.GET("/disputes", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminListFoodDisputes)
+		restAdmin.POST("/disputes/:id/resolve", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminResolveFoodDispute)
+
+		// Releases scheduled orders whose window has arrived into the normal pipeline.
+		// Ops-triggered (a cron/worker can call it too); gated with the dispatch slug
+		// because what it actually does is push orders into rider sourcing.
+		restAdmin.POST("/activate-scheduled", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminActivateScheduled)
+
 		restAdmin.GET("/riders", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminListRiders)
 		restAdmin.GET("/dispatch/queue", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminDispatchQueue)
 		restAdmin.POST("/orders/:id/assign", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminAssignRider)
@@ -1421,6 +1486,50 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.POST("/payouts/build", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminBuildPayoutRun)
 		restAdmin.GET("/payouts/:id", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminGetPayoutRun)
 		restAdmin.POST("/payouts/:id/process", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminProcessPayoutRun)
+
+		// ── Merchant withdrawals (MONEY PATH — flag-gated, default OFF) ───────
+		//
+		// handler_withdrawal.go, withdrawal.go, bankaccount.go and their migrations
+		// (20261101000100 / 20261101000200) all shipped with NO route registration,
+		// so a merchant could accrue food earnings but had no way to withdraw them.
+		//
+		// Gated separately from FEATURE_RESTAURANT_ENABLED because this moves real
+		// money: RequestWithdrawal reserves ONE balanced post (DR merchant wallet →
+		// CR failed_transfer_suspense) keyed on the Idempotency-Key header under a
+		// per-wallet advisory lock, and the admin settle/reverse pair is mutually
+		// exclusive under a withdrawal-row lock so a payout can never be both paid
+		// and reversed. Default OFF means enabling it is a deliberate act, and it
+		// can be switched off again without a code change.
+		//
+		// The disburser seam defaults to NoopDisburser — rows rest at `processing`
+		// and nothing is actually sent to a bank until a real disburser is wired.
+		if cfg.FeatureRestaurantWithdrawalsEnabled {
+			// Bank-account capture (NOT a money path — mask-on-read).
+			// Caller-scoped: these act on the authenticated merchant's own records,
+			// so there is no restaurant :id in the path.
+			restGroup.POST("/bank-accounts", restaurantHandler.AddBankAccount)
+			restGroup.GET("/bank-accounts", restaurantHandler.ListBankAccounts)
+			restGroup.PATCH("/bank-accounts/:accountId/default", restaurantHandler.SetDefaultBankAccount)
+			restGroup.DELETE("/bank-accounts/:accountId", restaurantHandler.DeleteBankAccount)
+
+			// Withdrawal requests. POST requires an Idempotency-Key header and fails
+			// closed without one (ErrWithdrawMissingIdem → 400).
+			restGroup.POST("/withdrawals", restaurantHandler.RequestWithdrawal)
+			restGroup.GET("/withdrawals", restaurantHandler.ListWithdrawals)
+			restGroup.GET("/withdrawals/:withdrawalId", restaurantHandler.GetWithdrawal)
+
+			// Admin settle / reverse — the provider-webhook outcomes, driven manually
+			// from the ops console. Guarded by restaurant.admin.payouts: same
+			// least-privilege family as processing a payout run, since both disburse.
+			restAdmin.POST("/withdrawals/:withdrawalId/settle",
+				middleware.RequirePermission(rbac, "restaurant.admin.payouts"),
+				restaurantHandler.AdminSettleWithdrawal)
+			restAdmin.POST("/withdrawals/:withdrawalId/reverse",
+				middleware.RequirePermission(rbac, "restaurant.admin.payouts"),
+				restaurantHandler.AdminReverseWithdrawal)
+
+			log.Println("[restaurant] merchant withdrawals ENABLED (money path; disburser seam = Noop unless wired)")
+		}
 
 		// Crash-recovery settlement reconciliation (money-path durability): an order
 		// marked delivered whose escrow never released (process died / Settle errored

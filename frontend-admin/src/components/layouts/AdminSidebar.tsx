@@ -356,6 +356,10 @@ const navItemsBase: NavItem[] = [
   { label: 'Rider Dispatch', href: '/admin/restaurant/dispatch', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.dispatch'] },
   { label: 'Onboarding / KYC', href: '/admin/restaurant/onboarding', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.onboarding'] },
   { label: 'Payouts', href: '/admin/restaurant/payouts', section: 'Restaurant', permissions: ['restaurant.admin.payouts'] },
+  // Merchant withdrawal settle/reverse. Server routes are gated by
+  // FEATURE_RESTAURANT_WITHDRAWALS_ENABLED (default OFF) — the page explains that
+  // when a call 404s, so the entry is safe to show regardless of the flag.
+  { label: 'Withdrawals', href: '/admin/restaurant/withdrawals', section: 'Restaurant', permissions: ['restaurant.admin.payouts'] },
   { label: 'Refunds & Disputes', href: '/admin/restaurant/disputes', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.disputes'] },
   // ── Maps (MapService v2 cost/coverage + OSM contribution review) ─────────────
   { label: 'Maps Cost & Coverage', href: '/admin/maps', section: 'Platform', permissions: ['map.admin.review'] },
