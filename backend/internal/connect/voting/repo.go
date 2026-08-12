@@ -174,3 +174,82 @@ func (r *Repository) GetStages(ctx context.Context, contestID string) ([]Contest
 	}
 	return stages, rows.Err()
 }
+
+// RosterEntry is one contestant on a contest's voting roster, with the live
+// tally for that contestant. Votes reference a contestant by its id in
+// connect_votes.option_ref, which is what lets the roster and the tally join
+// without a schema change to the immutable vote log.
+type RosterEntry struct {
+	ContestantID string `json:"contestant_id"`
+	Name         string `json:"name"`
+	Category     string `json:"category"`
+	Bio          string `json:"bio"`
+	PhotoURL     string `json:"photo_url"`
+	Status       string `json:"status"`
+	IsActive     bool   `json:"is_active"`
+	FreeVotes    int64  `json:"free_votes"`
+	PaidVotes    int64  `json:"paid_votes"`
+	TotalVotes   int64  `json:"total_votes"`
+	Rank         int    `json:"rank"`
+}
+
+// ListRoster returns the active contestants for a contest ordered by total
+// votes, highest first. Only contestants promoted from an approved registration
+// (or otherwise linked to this contest) appear.
+//
+// includeInactive surfaces evicted/rejected contestants too, which the admin
+// views need; the member-facing list passes false.
+func (r *Repository) ListRoster(ctx context.Context, contestID string, includeInactive bool) ([]RosterEntry, error) {
+	const q = `
+		SELECT c.id::text, c.name, c.category, c.bio, c.photo_url,
+		       c.status::text, c.is_active,
+		       COALESCE(v.free_votes, 0), COALESCE(v.paid_votes, 0)
+		FROM contestants c
+		LEFT JOIN (
+			SELECT option_ref,
+			       SUM(CASE WHEN paid = false THEN quantity ELSE 0 END) AS free_votes,
+			       SUM(CASE WHEN paid = true  THEN quantity ELSE 0 END) AS paid_votes
+			FROM connect_votes
+			WHERE contest_id = $1
+			GROUP BY option_ref
+		) v ON v.option_ref = c.id::text
+		WHERE c.connect_contest_id = $1
+		  AND ($2 OR c.is_active = true)
+		ORDER BY (COALESCE(v.free_votes, 0) + COALESCE(v.paid_votes, 0)) DESC, c.name ASC`
+
+	rows, err := r.db.Query(ctx, q, contestID, includeInactive)
+	if err != nil {
+		return nil, fmt.Errorf("voting: list roster: %w", err)
+	}
+	defer rows.Close()
+
+	out := []RosterEntry{}
+	for rows.Next() {
+		var e RosterEntry
+		if err := rows.Scan(&e.ContestantID, &e.Name, &e.Category, &e.Bio, &e.PhotoURL,
+			&e.Status, &e.IsActive, &e.FreeVotes, &e.PaidVotes); err != nil {
+			return nil, fmt.Errorf("voting: scan roster entry: %w", err)
+		}
+		e.TotalVotes = e.FreeVotes + e.PaidVotes
+		e.Rank = len(out) + 1
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// IsOnRoster reports whether optionRef identifies an active contestant of the
+// contest. Votes must land on a real, active contestant — without this an
+// arbitrary option_ref string creates a phantom tally row that no roster entry
+// can ever account for.
+func (r *Repository) IsOnRoster(ctx context.Context, contestID, optionRef string) (bool, error) {
+	var ok bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM contestants
+			WHERE connect_contest_id = $1 AND id::text = $2 AND is_active = true
+		)`, contestID, optionRef).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("voting: check roster membership: %w", err)
+	}
+	return ok, nil
+}
