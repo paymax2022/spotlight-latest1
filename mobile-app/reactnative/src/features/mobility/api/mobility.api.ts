@@ -95,19 +95,24 @@ export async function getHome(): Promise<MobilityHome> {
       safetyReminder: 'Always confirm the plate number and your trip PIN before getting in.',
     };
   }
-  // Backend home is { activeTrip, profile, quickTiles: string[], safetyReminder }.
-  // activeTrip is a trip envelope (or null); flatten it for the screens.
+  // Backend home is snake_case: { active_trip, profile, quick_tiles, safety_reminder }
+  // (Go gin.H keys — see backend/internal/transport/customer_handler.go:Home).
+  // active_trip is a trip envelope (or null); flatten it for the screens.
   const body = unwrap<{
+    active_trip?: TripEnvelope | null;
     activeTrip?: TripEnvelope | null;
     profile?: MobilityHome['profile'];
+    quick_tiles?: string[];
     quickTiles?: string[];
+    safety_reminder?: string;
     safetyReminder?: string;
   }>(await api.get(`${BASE}/mobility/home`));
+  const active = body?.active_trip ?? body?.activeTrip;
   return {
-    activeTrip: body?.activeTrip ? flattenTrip(body.activeTrip) : null,
+    activeTrip: active ? flattenTrip(active) : null,
     profile: body?.profile ?? null,
-    quickTiles: body?.quickTiles ?? [],
-    safetyReminder: body?.safetyReminder ?? '',
+    quickTiles: body?.quick_tiles ?? body?.quickTiles ?? [],
+    safetyReminder: body?.safety_reminder ?? body?.safetyReminder ?? '',
   };
 }
 

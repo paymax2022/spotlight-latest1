@@ -205,11 +205,118 @@ function pushAudit(action: string, target: string, reason: string | null) {
   ];
 }
 
+// ─── Live-mode helpers & response adapters ────────────────────────────────────
+// The Go admin handlers return snake_case rows inside envelopes ({drivers:[…]},
+// {trips:[…]}, {tiers:[…]}…) while the console types are camelCase — these
+// helpers fetch (throwing on !res.ok) and map to the UI contract. Fields the
+// backend does not track yet (zones, expiries, per-day series) get honest
+// defaults rather than fabricated values.
+
+async function getJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  return (await res.json()) as T;
+}
+async function sendJson(path: string, method: 'POST' | 'PATCH', body: unknown): Promise<{ ok: boolean }> {
+  const res = await fetch(`${adminBase()}${path}`, { method, headers: authHeaders(), body: JSON.stringify(body) });
+  if (!res.ok) {
+    let msg = `Request failed (${res.status})`;
+    try { const j = await res.json(); if (j?.error) msg = String(j.error); } catch { /* keep status message */ }
+    throw new Error(msg);
+  }
+  return { ok: true };
+}
+
+type Row = Record<string, any>;
+
+const VEHICLE_STATUS_MAP: Record<string, VehicleStatus> = {
+  approved: 'active', pending: 'inactive', rejected: 'suspended', suspended: 'suspended',
+};
+const COMPLIANCE_MAP: Record<string, string> = { passed: 'valid' };
+
+function mapDriverSummary(d: Row): DriverSummary {
+  const completed = d.completed_trips ?? 0;
+  const cancelled = d.cancelled_trips ?? 0;
+  return {
+    id: d.id,
+    name: d.name ?? '',
+    phone: d.phone ?? '',
+    email: d.email ?? '',
+    verificationStatus: (d.verification_status ?? 'submitted') as DriverVerificationStatus,
+    online: d.status != null && d.status !== 'offline',
+    zone: d.zone ?? 'default',
+    serviceCategories: d.service_categories ?? ['ride_hailing'],
+    completedTrips: completed,
+    rating: d.rating ?? 0,
+    cancelRate: completed + cancelled > 0 ? Math.round((cancelled / (completed + cancelled)) * 1000) / 10 : 0,
+    commissionTier: (d.commission_tier ?? 'standard') as DriverSummary['commissionTier'],
+    createdAt: d.created_at ?? '',
+  };
+}
+
+function mapVehicle(v: Row): VehicleComplianceRow {
+  return {
+    id: v.id,
+    driverId: v.driverId ?? v.driver_id ?? '',
+    driverName: v.driverName ?? v.driver_name ?? '—',
+    plateNumber: v.plateNumber ?? v.plate_number ?? '',
+    make: v.make ?? '',
+    model: v.model ?? '',
+    year: v.year ?? 0,
+    category: v.category ?? '',
+    status: VEHICLE_STATUS_MAP[v.status] ?? (v.status as VehicleStatus) ?? 'inactive',
+    inspectionStatus: (COMPLIANCE_MAP[v.inspectionStatus ?? v.inspection_status] ?? v.inspectionStatus ?? v.inspection_status ?? 'pending') as VehicleComplianceRow['inspectionStatus'],
+    insuranceStatus: (COMPLIANCE_MAP[v.insuranceStatus ?? v.insurance_status] ?? v.insuranceStatus ?? v.insurance_status ?? 'pending') as VehicleComplianceRow['insuranceStatus'],
+    inspectionExpiry: v.inspectionExpiry ?? v.inspection_expiry ?? null,
+    insuranceExpiry: v.insuranceExpiry ?? v.insurance_expiry ?? null,
+  };
+}
+
+function mapTrip(t: Row): TripRow {
+  return {
+    id: t.id,
+    riderName: t.rider_name ?? (t.rider_id ? `rider ${String(t.rider_id).slice(0, 8)}` : '—'),
+    driverName: t.driver_name ?? (t.driver_id ? `driver ${String(t.driver_id).slice(0, 8)}` : null),
+    driverId: t.driver_id ?? null,
+    phase: (t.phase ?? 'requested') as TripPhase,
+    fareKobo: t.fare_kobo ?? 0,
+    pickupAddress: t.pickup_address ?? '',
+    destAddress: t.dest_address ?? '',
+    zone: t.zone ?? 'default',
+    serviceType: t.service_type ?? 'ride_hailing',
+    sos: t.safety_status != null && t.safety_status !== 'normal',
+    stuck: Boolean(t.stuck),
+    createdAt: t.created_at ?? '',
+    updatedAt: t.updated_at ?? t.created_at ?? '',
+  };
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 export async function getDashboard(): Promise<MobilityDashboard> {
   if (USE_MOCK) { await delay(); return DASHBOARD; }
-  const res = await fetch(`${adminBase()}/dashboard`, { headers: authHeaders() });
-  return res.json();
+  // Backend /dashboard has no live-trip/verification counts — fill them from
+  // /dispatch/live and /drivers?status=submitted in the same round trip.
+  const [d, live, pending] = await Promise.all([
+    getJson<Row>('/dashboard'),
+    getJson<{ active_trips?: Row[]; online_drivers?: Row[] }>('/dispatch/live').catch(() => ({ active_trips: [], online_drivers: [] })),
+    getJson<{ drivers?: Row[] }>('/drivers?status=submitted').catch(() => ({ drivers: [] })),
+  ]);
+  return {
+    totalTrips: d.total_trips ?? 0,
+    completedTrips: d.completed_trips ?? 0,
+    cancelledTrips: d.cancelled_trips ?? 0,
+    gbvKobo: d.gbv_kobo ?? 0,
+    platformRevenueKobo: d.revenue_kobo ?? 0,
+    driverEarningsKobo: d.driver_earnings_kobo ?? 0,
+    completionRate: d.completion_rate ?? 0,
+    cancellationRate: d.cancel_rate ?? 0,
+    openSafetyIncidents: d.open_safety_incidents ?? 0,
+    activeDrivers: d.active_drivers ?? 0,
+    onlineDrivers: (live.online_drivers ?? []).length,
+    pendingVerifications: (pending.drivers ?? []).length,
+    liveTrips: (live.active_trips ?? []).length,
+    topZones: [], // zones not tracked server-side yet
+  };
 }
 
 // ─── Drivers ──────────────────────────────────────────────────────────────────
@@ -221,8 +328,8 @@ export async function getDrivers(status?: DriverVerificationStatus | ''): Promis
     return list;
   }
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/drivers${q}`, { headers: authHeaders() });
-  return res.json();
+  const j = await getJson<{ drivers?: Row[] }>(`/drivers${q}`);
+  return (j.drivers ?? []).map(mapDriverSummary);
 }
 
 export async function getDriver(id: string): Promise<DriverDetail> {
@@ -232,8 +339,35 @@ export async function getDriver(id: string): Promise<DriverDetail> {
     if (!d) throw new Error('Driver not found');
     return d;
   }
-  const res = await fetch(`${adminBase()}/drivers/${id}`, { headers: authHeaders() });
-  return res.json();
+  const d = await getJson<Row>(`/drivers/${id}`);
+  const vehicle = Array.isArray(d.vehicles) && d.vehicles.length ? d.vehicles[0] : null;
+  return {
+    ...mapDriverSummary(d),
+    photoUrl: d.photo_url ?? null,
+    documents: (d.documents ?? []).map((doc: Row) => ({
+      id: doc.id,
+      type: doc.type ?? doc.doc_type ?? 'document',
+      label: doc.label ?? doc.type ?? doc.doc_type ?? 'Document',
+      fileUrl: doc.file_url ?? doc.fileUrl ?? '#',
+      status: (COMPLIANCE_MAP[doc.status] ?? doc.status ?? 'pending') as DriverDetail['documents'][number]['status'],
+      expiryDate: doc.expiry_date ?? doc.expiryDate ?? null,
+    })),
+    vehicle: vehicle
+      ? {
+          id: vehicle.id,
+          plateNumber: vehicle.plateNumber ?? vehicle.plate_number ?? '',
+          make: vehicle.make ?? '', model: vehicle.model ?? '', year: vehicle.year ?? 0, color: vehicle.color ?? '',
+          category: vehicle.category ?? '', capacity: vehicle.capacity ?? 4,
+          status: VEHICLE_STATUS_MAP[vehicle.status] ?? 'inactive',
+          inspectionStatus: (COMPLIANCE_MAP[vehicle.inspectionStatus] ?? vehicle.inspectionStatus ?? 'pending') as NonNullable<DriverDetail['vehicle']>['inspectionStatus'],
+          insuranceStatus: (COMPLIANCE_MAP[vehicle.insuranceStatus] ?? vehicle.insuranceStatus ?? 'pending') as NonNullable<DriverDetail['vehicle']>['insuranceStatus'],
+        }
+      : null,
+    grossEarningsKobo: d.gross_earnings_kobo ?? 0,
+    platformFeeKobo: d.platform_fee_kobo ?? 0,
+    netEarningsKobo: d.net_earnings_kobo ?? 0,
+    notes: d.notes ?? null,
+  };
 }
 
 export async function setDriverVerification(id: string, decision: DriverVerificationDecision): Promise<{ ok: boolean }> {
@@ -243,8 +377,7 @@ export async function setDriverVerification(id: string, decision: DriverVerifica
     pushAudit(`driver.verification.${decision.status}`, id, decision.reason);
     return { ok: true };
   }
-  await fetch(`${adminBase()}/drivers/${id}/verification`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(decision) });
-  return { ok: true };
+  return sendJson(`/drivers/${id}/verification`, 'PATCH', decision);
 }
 
 // ─── Vehicles ─────────────────────────────────────────────────────────────────
@@ -256,8 +389,8 @@ export async function getVehicles(status?: VehicleStatus | ''): Promise<VehicleC
     return list;
   }
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/vehicles${q}`, { headers: authHeaders() });
-  return res.json();
+  const j = await getJson<{ vehicles?: Row[] }>(`/vehicles${q}`);
+  return (j.vehicles ?? []).map(mapVehicle);
 }
 
 export async function setVehicleStatus(id: string, patch: VehicleStatusPatch): Promise<{ ok: boolean }> {
@@ -275,8 +408,14 @@ export async function setVehicleStatus(id: string, patch: VehicleStatusPatch): P
     pushAudit('vehicle.status.updated', id, patch.reason);
     return { ok: true };
   }
-  await fetch(`${adminBase()}/vehicles/${id}/status`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
-  return { ok: true };
+  // Backend PATCH expects snake_case + reverse status mapping (active→approved).
+  const statusOut = patch.status === 'active' ? 'approved' : patch.status === 'inactive' ? 'pending' : patch.status;
+  return sendJson(`/vehicles/${id}/status`, 'PATCH', {
+    ...(statusOut ? { status: statusOut } : {}),
+    ...(patch.inspectionStatus ? { inspection_status: patch.inspectionStatus === 'valid' ? 'passed' : patch.inspectionStatus } : {}),
+    ...(patch.insuranceStatus ? { insurance_status: patch.insuranceStatus } : {}),
+    reason: patch.reason,
+  });
 }
 
 // ─── Trips / Dispatch ─────────────────────────────────────────────────────────
@@ -288,8 +427,8 @@ export async function getTrips(phase?: TripPhase | ''): Promise<TripRow[]> {
     return list;
   }
   const q = phase ? `?phase=${phase}` : '';
-  const res = await fetch(`${adminBase()}/trips${q}`, { headers: authHeaders() });
-  return res.json();
+  const j = await getJson<{ trips?: Row[] }>(`/trips${q}`);
+  return (j.trips ?? []).map(mapTrip);
 }
 
 export async function getDispatchLive(): Promise<DispatchLive> {
@@ -298,8 +437,20 @@ export async function getDispatchLive(): Promise<DispatchLive> {
     const activeTrips = TRIPS.filter((t) => !['completed', 'cancelled', 'no_show'].includes(t.phase));
     return { activeTrips, onlineDrivers: ONLINE_DRIVERS };
   }
-  const res = await fetch(`${adminBase()}/dispatch/live`, { headers: authHeaders() });
-  return res.json();
+  const j = await getJson<{ active_trips?: Row[]; online_drivers?: Row[] }>('/dispatch/live');
+  return {
+    activeTrips: (j.active_trips ?? []).map(mapTrip),
+    onlineDrivers: (j.online_drivers ?? []).map((d) => ({
+      id: d.driverId ?? d.id,
+      name: d.name ?? '',
+      zone: d.zone ?? 'default',
+      rating: d.rating ?? 0,
+      serviceCategories: d.serviceCategories ?? ['ride_hailing'],
+      lat: d.currentLat ?? d.lat ?? 0,
+      lng: d.currentLng ?? d.lng ?? 0,
+      activeTripId: d.activeTripId ?? null,
+    })),
+  };
 }
 
 export async function assignDriver(tripId: string, driverId: string): Promise<{ ok: boolean }> {
@@ -311,15 +462,36 @@ export async function assignDriver(tripId: string, driverId: string): Promise<{ 
     pushAudit('dispatch.manual_assign', `${tripId} → ${driverId}`, 'Manual dispatch by operations.');
     return { ok: true };
   }
-  await fetch(`${adminBase()}/dispatch/${tripId}/assign`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ driver_id: driverId }) });
-  return { ok: true };
+  return sendJson(`/dispatch/${tripId}/assign`, 'POST', { driver_id: driverId });
 }
 
 // ─── Pricing & Commission ─────────────────────────────────────────────────────
 export async function getPricing(): Promise<PricingConfig[]> {
   if (USE_MOCK) { await delay(); return PRICING; }
-  const res = await fetch(`${adminBase()}/pricing`, { headers: authHeaders() });
-  return res.json();
+  // Backend GET /pricing returns ONE config (zone=default, service=ride_hailing
+  // unless queried). Fetch each seeded service class so the console shows all rows.
+  const services = ['ride_hailing', 'economy', 'comfort', 'xl', 'premium', 'parcel', 'towing', 'car_hire'];
+  const rows = await Promise.all(
+    services.map((s) =>
+      getJson<Row>(`/pricing?zone=default&service_type=${s}`).catch(() => null),
+    ),
+  );
+  return rows
+    .filter((p): p is Row => Boolean(p && p.zone))
+    .map((p) => ({
+      zone: p.zone,
+      serviceType: p.serviceType ?? p.service_type ?? '',
+      baseFareKobo: p.baseFareKobo ?? 0,
+      perKmKobo: p.perKmKobo ?? 0,
+      perMinKobo: p.perMinKobo ?? 0,
+      minFareKobo: p.minFareKobo ?? 0,
+      fareFloorPct: p.fareFloorPct ?? 0,
+      fareCeilingPct: p.fareCeilingPct ?? 0,
+      driverProfitFloorKobo: p.driverProfitFloorKobo ?? 0,
+      surgeMultiplier: p.surgeMultiplier ?? 1,
+      version: p.version ?? 1,
+      updatedAt: p.updatedAt ?? p.updated_at ?? '',
+    }));
 }
 
 export async function updatePricing(zone: string, serviceType: string, patch: Partial<PricingConfig>): Promise<{ ok: boolean }> {
@@ -329,14 +501,32 @@ export async function updatePricing(zone: string, serviceType: string, patch: Pa
     pushAudit('pricing.updated', `${zone} / ${serviceType}`, 'Pricing config updated.');
     return { ok: true };
   }
-  await fetch(`${adminBase()}/pricing?zone=${encodeURIComponent(zone)}&service_type=${encodeURIComponent(serviceType)}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
-  return { ok: true };
+  // Backend PATCH /pricing takes zone/service_type + snake_case kobo fields in the body.
+  return sendJson('/pricing', 'PATCH', {
+    zone,
+    service_type: serviceType,
+    ...(patch.baseFareKobo != null ? { base_fare_kobo: patch.baseFareKobo } : {}),
+    ...(patch.perKmKobo != null ? { per_km_kobo: patch.perKmKobo } : {}),
+    ...(patch.perMinKobo != null ? { per_min_kobo: patch.perMinKobo } : {}),
+    ...(patch.minFareKobo != null ? { min_fare_kobo: patch.minFareKobo } : {}),
+    ...(patch.fareFloorPct != null ? { fare_floor_pct: patch.fareFloorPct } : {}),
+    ...(patch.fareCeilingPct != null ? { fare_ceiling_pct: patch.fareCeilingPct } : {}),
+    ...(patch.driverProfitFloorKobo != null ? { driver_profit_floor_kobo: patch.driverProfitFloorKobo } : {}),
+    ...(patch.surgeMultiplier != null ? { surge_multiplier: patch.surgeMultiplier } : {}),
+  });
 }
 
 export async function getCommission(): Promise<CommissionConfig[]> {
   if (USE_MOCK) { await delay(); return COMMISSION; }
-  const res = await fetch(`${adminBase()}/commission`, { headers: authHeaders() });
-  return res.json();
+  // Backend returns {tiers:[{tier, providerPct: 0.80, platformPct: 0.20}]} as
+  // FRACTIONS — the console renders whole percentages.
+  const j = await getJson<{ tiers?: Row[] }>('/commission');
+  return (j.tiers ?? []).map((t) => ({
+    tier: t.tier as CommissionConfig['tier'],
+    driverPct: Math.round((t.providerPct ?? 0) * 100),
+    platformPct: Math.round((t.platformPct ?? 0) * 100),
+    updatedAt: t.updatedAt ?? t.updated_at ?? '',
+  }));
 }
 
 export async function updateCommission(tier: CommissionConfig['tier'], driverPct: number): Promise<{ ok: boolean }> {
@@ -346,8 +536,12 @@ export async function updateCommission(tier: CommissionConfig['tier'], driverPct
     pushAudit('commission.updated', tier, `Driver split set to ${driverPct}%.`);
     return { ok: true };
   }
-  await fetch(`${adminBase()}/commission/${tier}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ driverPct }) });
-  return { ok: true };
+  // Backend expects fractions: provider_pct + platform_pct must sum to 1.0.
+  return sendJson(`/commission/${tier}`, 'PATCH', {
+    provider_pct: driverPct / 100,
+    platform_pct: (100 - driverPct) / 100,
+    reason: `Driver split set to ${driverPct}% from admin console.`,
+  });
 }
 
 // ─── Safety ───────────────────────────────────────────────────────────────────
@@ -359,8 +553,23 @@ export async function getIncidents(status?: IncidentStatus | ''): Promise<Safety
     return list;
   }
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/safety/incidents${q}`, { headers: authHeaders() });
-  return res.json();
+  const j = await getJson<{ incidents?: Row[] | null }>(`/safety/incidents${q}`);
+  return (j.incidents ?? []).map((i) => ({
+    id: i.id,
+    type: (i.type ?? 'sos') as SafetyIncidentRow['type'],
+    status: (i.status ?? 'open') as SafetyIncidentRow['status'],
+    severity: (i.severity ?? 'medium') as SafetyIncidentRow['severity'],
+    tripId: i.trip_id ?? i.tripId ?? null,
+    riderName: i.rider_name ?? (i.rider_id ? `rider ${String(i.rider_id).slice(0, 8)}` : '—'),
+    driverName: i.driver_name ?? (i.driver_id ? `driver ${String(i.driver_id).slice(0, 8)}` : null),
+    zone: i.zone ?? 'default',
+    description: i.description ?? '',
+    assignedAdmin: i.assigned_admin ?? i.assignedAdmin ?? null,
+    resolutionNote: i.resolution_note ?? i.resolutionNote ?? null,
+    lat: i.lat ?? null,
+    lng: i.lng ?? null,
+    createdAt: i.created_at ?? i.createdAt ?? '',
+  }));
 }
 
 export async function updateIncident(id: string, patch: SafetyIncidentPatch): Promise<{ ok: boolean }> {
@@ -370,19 +579,36 @@ export async function updateIncident(id: string, patch: SafetyIncidentPatch): Pr
     pushAudit('safety.incident.updated', id, patch.resolutionNote ?? patch.status ?? null);
     return { ok: true };
   }
-  await fetch(`${adminBase()}/safety/incidents/${id}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
-  return { ok: true };
+  return sendJson(`/safety/incidents/${id}`, 'PATCH', {
+    ...(patch.status ? { status: patch.status } : {}),
+    ...(patch.assignedAdmin ? { assigned_admin: patch.assignedAdmin } : {}),
+    ...(patch.resolutionNote ? { resolution_note: patch.resolutionNote } : {}),
+  });
 }
 
 // ─── Reports & Audit ──────────────────────────────────────────────────────────
 export async function getReports(): Promise<ReportSummary> {
   if (USE_MOCK) { await delay(); return REPORTS; }
-  const res = await fetch(`${adminBase()}/reports/summary`, { headers: authHeaders() });
-  return res.json();
+  // Backend summary is a flat aggregate (no zone/day breakdowns yet) — surface
+  // it as a single "default" row so the console renders real figures.
+  const r = await getJson<Row>('/reports/summary');
+  return {
+    revenueByZone: [{ zone: 'default', gbvKobo: r.gross_revenue_kobo ?? 0, revenueKobo: r.commission_kobo ?? 0, trips: r.total_trips ?? 0 }],
+    commissionByTier: [],
+    tripsByDay: [],
+    cancellation: { byRider: 0, byDriver: 0, bySystem: 0, total: r.cancelled_trips ?? 0 },
+  };
 }
 
 export async function getAudit(): Promise<MobilityAuditEntry[]> {
   if (USE_MOCK) { await delay(); return AUDIT; }
-  const res = await fetch(`${adminBase()}/audit`, { headers: authHeaders() });
-  return res.json();
+  const j = await getJson<{ audit?: Row[] }>('/audit');
+  return (j.audit ?? []).map((a) => ({
+    id: a.id,
+    action: a.action ?? '',
+    target: [a.entity_type, a.entity_id].filter(Boolean).join(' ') || '—',
+    actor: a.admin_id ? `admin ${String(a.admin_id).slice(0, 8)}` : '—',
+    reason: a.reason ?? null,
+    createdAt: a.created_at ?? '',
+  }));
 }
