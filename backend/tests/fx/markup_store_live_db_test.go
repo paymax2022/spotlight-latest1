@@ -234,3 +234,41 @@ func TestMarkupStore_RejectsOutOfRange(t *testing.T) {
 		t.Error("table CHECK allowed a 100% markup; the ceiling must be enforced in the schema too")
 	}
 }
+
+// The audit endpoint takes a caller-supplied page size. It must bound what it
+// returns — and, since the value reaches an allocation, must never let a caller
+// size that allocation (CodeQL go/uncontrolled-allocation-size).
+func TestMarkupStore_AuditLimitIsBounded(t *testing.T) {
+	ctx := context.Background()
+	pool := liveDBPool(t)
+	t.Cleanup(pool.Close)
+
+	store := fx.NewMarkupStore(pool)
+	corridor := isolateCorridor(t, ctx, pool)
+	actor := uuid.NewString()
+
+	// Three changes => three audit rows for this corridor.
+	for _, bps := range []int{100, 150, 200} {
+		if _, err := store.SetRate(ctx, corridor, "", bps, true, "", actor, "bound test"); err != nil {
+			t.Fatalf("SetRate(%d): %v", bps, err)
+		}
+	}
+
+	for _, limit := range []int{0, -1, 1, 200, 999_999, 1 << 30} {
+		entries, err := store.ListAudit(ctx, corridor, limit)
+		if err != nil {
+			t.Errorf("ListAudit(limit=%d): %v", limit, err)
+			continue
+		}
+		if len(entries) > 3 {
+			t.Errorf("ListAudit(limit=%d) returned %d rows; only 3 exist", limit, len(entries))
+		}
+		// limit=1 must actually narrow the page; the rest see all three.
+		if limit == 1 && len(entries) != 1 {
+			t.Errorf("ListAudit(limit=1) returned %d rows, want 1", len(entries))
+		}
+		if limit != 1 && len(entries) != 3 {
+			t.Errorf("ListAudit(limit=%d) returned %d rows, want 3", limit, len(entries))
+		}
+	}
+}

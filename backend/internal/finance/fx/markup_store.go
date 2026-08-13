@@ -205,10 +205,18 @@ func (s *MarkupStore) SetRate(ctx context.Context, corridor, tier string, bps in
 	return rate, nil
 }
 
+// Audit page sizing. maxAuditLimit bounds what a caller may request; the SQL
+// LIMIT uses the clamped value, but the slice capacity below deliberately does
+// NOT — see the allocation comment.
+const (
+	defaultAuditLimit = 50
+	maxAuditLimit     = 200
+)
+
 // ListAudit returns the change history, newest first. corridor "" means all.
 func (s *MarkupStore) ListAudit(ctx context.Context, corridor string, limit int) ([]*MarkupAudit, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
+	if limit <= 0 || limit > maxAuditLimit {
+		limit = defaultAuditLimit
 	}
 	corridor = NormalizeCorridor(corridor)
 	rows, err := s.db.Query(ctx, `
@@ -222,7 +230,12 @@ func (s *MarkupStore) ListAudit(ctx context.Context, corridor string, limit int)
 		return nil, fmt.Errorf("fx: list markup audit: %w", err)
 	}
 	defer rows.Close()
-	out := make([]*MarkupAudit, 0, limit)
+	// Capacity is a FIXED hint, never derived from the caller's limit. Sizing an
+	// allocation from a request parameter is an uncontrolled-allocation risk
+	// (CodeQL go/uncontrolled-allocation-size) even where the value is clamped —
+	// the clamp is one refactor away from being lost, and the capacity is only a
+	// growth hint, so nothing is gained by threading user input into it.
+	out := make([]*MarkupAudit, 0, defaultAuditLimit)
 	for rows.Next() {
 		a := &MarkupAudit{}
 		if err := rows.Scan(&a.ID, &a.Corridor, &a.Tier, &a.BeforeBPS, &a.AfterBPS,
