@@ -484,14 +484,18 @@ const CONSENT_TYPE: Record<ConsentKind, string> = {
 };
 
 function consentStateFromList(consents: BackendConsent[]): ConsentState {
+  // The table is append-only: a withdrawal is a NEW row with granted=false, not
+  // an edit of the grant. So "is this consent currently held?" is the granted
+  // flag on the MOST RECENT row for the type — not "does any granted row
+  // exist". Scanning only granted rows would find the older grant after a
+  // withdrawal and leave the toggle stuck on.
+  //
+  // The backend returns rows newest-first (ordered by seq, which is monotonic;
+  // created_at ties because now() is transaction-constant), so the first match
+  // is the current one.
   const latest = (type: string): string | null => {
-    let ts: string | null = null;
-    for (const c of consents) {
-      if (c.consent_type === type && c.granted) {
-        if (!ts || c.created_at > ts) ts = c.created_at;
-      }
-    }
-    return ts;
+    const current = consents.find((c) => c.consent_type === type);
+    return current && current.granted ? current.created_at : null;
   };
   return {
     termsAcceptedAt: latest(CONSENT_TYPE.terms),
