@@ -350,6 +350,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if pool != nil {
 			referralMember := finance.Group("/referral")
 			referralAdmin := r.Group("/api/referral/admin")
+			// RequireAuthContext must run FIRST — it is what sets user_id.
+			// requireUserID alone only checks for a value nothing ever wrote, so
+			// every referral admin route 401'd even with a valid token (the same
+			// bug the finance group carried; see the note above line 284).
+			referralAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
 			referralAdmin.Use(requireUserID())
 			RegisterReferral(referralMember, referralAdmin, pool, rbac)      // attribution/house/ledger/config (§7A)
 			RegisterReferralEcon(referralMember, referralAdmin, pool, rbac)  // campaigns/gamification/overrides/merchant
