@@ -75,29 +75,10 @@ jobs:
       - name: Typecheck whole app (belt-and-braces)
         run: npx tsc --noEmit -p tsconfig.json
 
+  # Shared guard: diffs migrations changed in this PR/push (merge-base aware) and
+  # strips SQL comments before the destructive-DDL grep. The previous inline copy
+  # ls'd ALL *connect* migrations on every run and matched comment headers like
+  # "-- NO DROP TABLE", failing unrelated PRs.
   migration-guard:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Reject destructive DDL in connect migrations (additive-only)
-        run: |
-          set -e
-          FILES=$(ls supabase/migrations/*connect*.sql 2>/dev/null || true)
-          if [ -z "$FILES" ]; then echo "no connect migrations"; exit 0; fi
-          # Allow idempotent "DROP POLICY/TRIGGER IF EXISTS" (RLS/trigger re-create pattern);
-          # reject real destructive DDL. Strip "--" comments first so migration headers
-          # that merely document the additive-only rule don't trip the guard.
-          FAIL=0
-          for f in $FILES; do
-            MATCHES=$(sed 's/--.*//' "$f" \
-              | grep -iEn '\b(drop\s+(table|column|type)|alter\s+[a-z_."]+\s+drop|drop\s+not\s+null|rename\s+(column|to))\b' \
-              | grep -ivE 'drop\s+(policy|trigger)\s+if\s+exists' || true)
-            if [ -n "$MATCHES" ]; then
-              echo "$MATCHES" | sed "s|^|$f:|"
-              FAIL=1
-            fi
-          done
-          if [ "$FAIL" -ne 0 ]; then
-            echo "::error::Destructive DDL found in connect migration (must be additive-only)"; exit 1;
-          fi
-          echo "Additive-only guard passed for: $FILES"
+    name: migrations (additive-only guard)
+    uses: ./.github/workflows/_reusable-migration-guard.yml
