@@ -7,7 +7,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import AddressAutocompleteInput, { type SelectedAddress } from '@/components/AddressAutocompleteInput';
 import { withPlusCode } from '@/lib/addressLookup';
-import type { LatLng } from '@/features/food/types';
+import type { CartPackage, LatLng } from '@/features/food/types';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';

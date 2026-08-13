@@ -46,7 +46,7 @@ export async function clearPersistedCart() {
  * - On cart change: debounce and save both locally and to server
  */
 export function useCartSync() {
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const initialLoadDoneRef = useRef(false);
   const lastSavedRef = useRef<string>('');
 
