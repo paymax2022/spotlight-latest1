@@ -11,7 +11,7 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 )
 
-// Rider tip clawback on post-settlement food disputes (ADR-030).
+// Rider tip clawback on post-settlement food disputes (ADR-031).
 //
 // A food dispute resolves only on a DELIVERED order, so settlement has already paid the
 // rider 100% of the customer's tip. The platform-funded refund is capped at the non-tip

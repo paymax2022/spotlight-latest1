@@ -735,7 +735,7 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 
 	// This rider has just been paid, so their wallet is at its high-water mark — the best
 	// moment to discharge any tip they owe back from an upheld dispute on an EARLIER
-	// delivery (ADR-030). Best-effort and non-fatal: the settlement above is already
+	// delivery (ADR-031). Best-effort and non-fatal: the settlement above is already
 	// committed, and anything not recoverable now stays queued for the next payout.
 	if riderID != nil {
 		s.recoverRiderTipDebts(ctx, *riderID)

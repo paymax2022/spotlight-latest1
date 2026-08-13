@@ -2,7 +2,7 @@ package restaurant
 
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for the POST-SETTLEMENT dispute refund tip policy
-// (ADR-030).
+// (ADR-031).
 //
 // A food dispute resolves only on a DELIVERED order — i.e. AFTER settlement has
 // already paid the rider 100% of the customer's tip, with no provider clawback on
@@ -28,10 +28,12 @@ package restaurant
 import (
 	"context"
 	"testing"
+	"time"
 
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/finance/ledger"
@@ -315,7 +317,7 @@ func TestLiveDB_DisputePartialRefundInheritsTipCap(t *testing.T) {
 // restaurant/platform and the rider never sees it. Clawing it back off that rider would be
 // a real, uncompensated loss to a third party.
 //
-// The conservative outcome here is deliberate (ADR-030's (a) fallback): no clawback, so the
+// The conservative outcome here is deliberate (ADR-031's (a) fallback): no clawback, so the
 // customer is refunded the non-tip basis only.
 func TestLiveDB_DisputeNoClawbackWhenRiderNeverPaidTip(t *testing.T) {
 	pool := tipPool(t)
@@ -441,8 +443,15 @@ func TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("raise second dispute: %v", err)
 	}
-	if _, err := f.svc.AdminResolveFoodDispute(ctx, d2.ID, admin, FoodRefundFull, 0, "upheld again"); err != nil {
-		t.Fatalf("resolve second dispute: %v", err)
+	// The first dispute already drew the whole platform basis, so the second has no budget
+	// left: refund_full must be REJECTED outright rather than refunding one order twice.
+	if _, err := f.svc.AdminResolveFoodDispute(ctx, d2.ID, admin, FoodRefundFull, 0, "upheld again"); err == nil {
+		t.Error("a second refund_full on a fully-refunded order was accepted — the platform " +
+			"would refund one order twice")
+	}
+	// Resolving it without money must still work — ops has to be able to close the ticket.
+	if _, err := f.svc.AdminResolveFoodDispute(ctx, d2.ID, admin, FoodDismissed, 0, "already refunded in full"); err != nil {
+		t.Fatalf("dismissing a second dispute on a fully-refunded order: %v", err)
 	}
 
 	riderEnd, _ := led.GetBalance(ctx, f.rider)
@@ -451,16 +460,10 @@ func TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder(t *testing.T) {
 			"must be clawed back at most once (double-debited by %d)",
 			riderAfterFirst, riderEnd, riderAfterFirst-riderEnd)
 	}
-	// The TIP must not be credited twice. Deliberately NOT asserting the exact customer
-	// delta here: the platform-funded leg is keyed per dispute (`dispute-refund:<id>`), so
-	// a second upheld dispute refunds the basis AGAIN. That is a real pre-existing leak on
-	// the 90% leg — it predates ADR-030 and is recorded in its Known gaps — and this test
-	// must not pin it down as intended behaviour. What it does assert is that whatever the
-	// platform leg does, no part of it is the tip.
 	custEnd, _ := led.GetBalance(ctx, f.customer)
-	if delta := custEnd - custAfterFirst; delta >= f.basis+f.tip {
-		t.Errorf("customer gained %d on the second dispute — at or above basis %d + tip %d, "+
-			"so the tip was credited a second time", delta, f.basis, f.tip)
+	if custEnd != custAfterFirst {
+		t.Errorf("customer balance moved %d → %d on the second dispute, want no movement",
+			custAfterFirst, custEnd)
 	}
 	if moved := creditLegKobo(t, ctx, pool, tipClawbackKey(d2.ID)); moved != 0 {
 		t.Errorf("second dispute posted a %d kobo tip clawback of its own, want none", moved)
@@ -472,6 +475,208 @@ func TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder(t *testing.T) {
 	}
 	if clawbacks != 1 {
 		t.Errorf("order has %d clawback rows, want exactly 1", clawbacks)
+	}
+}
+
+// TestLiveDB_DisputeRefundBudgetIsCumulativePerOrder: the platform-funded refund budget is
+// per ORDER and cumulative across its disputes (ADR-031). A second dispute may draw what
+// earlier ones left — that is the point of a cumulative cap rather than a
+// one-refund-per-order rule — but the total across all of them can never exceed
+// total_kobo − tip_kobo.
+//
+// Regression guard: `dispute-refund:<disputeID>` is keyed per dispute, so before this each
+// upheld refund_full credited the customer the whole basis again, N times for N disputes.
+func TestLiveDB_DisputeRefundBudgetIsCumulativePerOrder(t *testing.T) {
+	pool := tipPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
+
+	const tip int64 = 50_000
+	f := newDisputeTipFixture(t, ctx, pool, led, "Cumulative Cap Kitchen", tip)
+
+	admin := uuid.New().String()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, admin, admin+"@seed.test"); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	custBefore, _ := led.GetBalance(ctx, f.customer)
+	revBefore := platformRevenueBalance(t, ctx, led)
+
+	// --- Dispute 1: a partial for a missing item. ---
+	const first int64 = 400_000
+	if _, err := f.svc.AdminResolveFoodDispute(ctx, f.disputeID, admin, FoodRefundPartial, first, "missing side"); err != nil {
+		t.Fatalf("resolve first partial: %v", err)
+	}
+
+	// --- Dispute 2: the rest of the order turns out to be wrong. The remainder is still
+	// available — a cumulative cap must not lock the customer out of being made whole. ---
+	d2, err := f.svc.RaiseFoodDispute(ctx, f.orderID, f.customer, "wrong_item",
+		"the remainder of this order was also completely wrong")
+	if err != nil {
+		t.Fatalf("raise second dispute: %v", err)
+	}
+	remaining := f.basis - first
+	// Anything above the remainder must be rejected, even though it is far below the
+	// order's own basis — the budget is what is LEFT, not the basis.
+	for _, over := range []int64{remaining, remaining + 1, f.basis - 1} {
+		if _, err := f.svc.AdminResolveFoodDispute(ctx, d2.ID, admin, FoodRefundPartial, over, "too much"); err == nil {
+			t.Errorf("second partial of %d accepted — only %d remains of the %d basis after the "+
+				"first %d refund", over, remaining, f.basis, first)
+		}
+	}
+	// refund_full on the second dispute pays exactly the remainder, not the whole basis.
+	got, err := f.svc.AdminResolveFoodDispute(ctx, d2.ID, admin, FoodRefundFull, 0, "the rest was wrong too")
+	if err != nil {
+		t.Fatalf("resolve second full: %v", err)
+	}
+	if got.RefundKobo != remaining {
+		t.Errorf("second refund_full = %d, want the %d remainder — not the whole %d basis",
+			got.RefundKobo, remaining, f.basis)
+	}
+
+	// --- Across BOTH disputes the platform paid exactly the basis, once. ---
+	if delta := revBefore - platformRevenueBalance(t, ctx, led); delta != f.basis {
+		t.Errorf("platform revenue fell by %d across two disputes, want exactly the basis %d "+
+			"(a delta of %d would be the order refunded twice)", delta, f.basis, 2*f.basis)
+	}
+	custAfter, _ := led.GetBalance(ctx, f.customer)
+	if delta := custAfter - custBefore; delta != f.basis+tip {
+		t.Errorf("customer credited %d across two disputes, want %d (basis %d once + tip %d once)",
+			delta, f.basis+tip, f.basis, tip)
+	}
+	var summed int64
+	if err := pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(refund_kobo),0) FROM restaurant_dispute_refunds WHERE order_id=$1`,
+		f.orderID).Scan(&summed); err != nil {
+		t.Fatalf("sum recorded refunds: %v", err)
+	}
+	if summed != f.basis {
+		t.Errorf("recorded refunds sum to %d, want the basis %d", summed, f.basis)
+	}
+
+	// --- The DB trigger is the storage-layer backstop: a direct insert past the cap is
+	// rejected even with the service's advisory lock bypassed entirely. ---
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO restaurant_dispute_refunds (dispute_id, order_id, resolution, refund_kobo, resolved_by, note)
+		 VALUES ($1,$2,'refund_partial',$3,$4,'direct insert past the cap')`,
+		uuid.New().String(), f.orderID, int64(1), admin); err == nil {
+		t.Error("a direct INSERT pushing the order past its refund cap was accepted — the " +
+			"storage-layer backstop is not enforcing the invariant")
+	}
+	// ...but a ZERO-kobo row must still be insertable, on any order, at any point. Ops has
+	// to be able to close a ticket as dismissed/replacement even when the budget is spent —
+	// and on legacy orders whose historical refunds already exceed the cap, a blanket check
+	// would make their tickets permanently unclosable.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO restaurant_dispute_refunds (dispute_id, order_id, resolution, refund_kobo, resolved_by, note)
+		 VALUES ($1,$2,'dismissed',0,$3,'dismissed on an exhausted order')`,
+		uuid.New().String(), f.orderID, admin); err != nil {
+		t.Errorf("a zero-kobo resolution was rejected on a fully-refunded order: %v — ops "+
+			"could never close the ticket", err)
+	}
+}
+
+// TestLiveDB_DisputeRefundCapHoldsUnderConcurrency: the DB backstop must be a real
+// constraint, not just a serial check. A plain recompute-and-compare is not: at READ
+// COMMITTED two overlapping inserts for one order each see only committed rows plus their
+// own, so both pass and the order lands over cap. The trigger takes the same per-order
+// advisory lock the service does, which is what makes the read-modify-write serial.
+func TestLiveDB_DisputeRefundCapHoldsUnderConcurrency(t *testing.T) {
+	pool := tipPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
+
+	f := newDisputeTipFixture(t, ctx, pool, led, "Concurrent Cap Kitchen", 0)
+	admin := uuid.New().String()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, admin, admin+"@seed.test"); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+
+	// Each insert is 60% of the cap, so the two together must not both survive.
+	//
+	// The interleaving has to be forced, not hoped for: A inserts and holds its transaction
+	// OPEN while B inserts. Without the trigger's advisory lock, B's recompute at READ
+	// COMMITTED cannot see A's uncommitted row, so B passes the check and both commit. With
+	// the lock, B's insert blocks until A commits and then correctly sees the full sum.
+	each := f.basis*6/10 + 1
+	insertRefund := func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`INSERT INTO restaurant_dispute_refunds (dispute_id, order_id, resolution, refund_kobo, resolved_by, note)
+			 VALUES ($1,$2,'refund_partial',$3,$4,'concurrent')`,
+			uuid.New().String(), f.orderID, each, admin)
+		return err
+	}
+
+	// A holds its transaction open until B is demonstrably INSIDE its insert. B cannot
+	// signal completion — with the lock in place its insert blocks — so it signals just
+	// BEFORE calling it, and A waits for that plus a grace window. Without the lock B's
+	// insert returns in ~ms and commits inside the window, so both succeed and the bug is
+	// caught; with it B blocks until A commits and then correctly sees the full sum.
+	//
+	// The grace window is what makes this deterministic. An earlier version had A simply
+	// sleep after its own insert, which let a slow B commit AFTER A — passing even against
+	// the broken trigger.
+	aInserted := make(chan struct{})
+	bAboutToInsert := make(chan struct{})
+	aDone := make(chan error, 1)
+	bDone := make(chan error, 1)
+
+	go func() { // A: insert, announce, hold open across B's insert, then commit.
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			close(aInserted)
+			aDone <- err
+			return
+		}
+		defer tx.Rollback(ctx)
+		if err := insertRefund(tx); err != nil {
+			close(aInserted)
+			aDone <- err
+			return
+		}
+		close(aInserted)
+		<-bAboutToInsert
+		time.Sleep(500 * time.Millisecond)
+		aDone <- tx.Commit(ctx)
+	}()
+
+	go func() { // B: start only once A's row exists but is still uncommitted.
+		<-aInserted
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			close(bAboutToInsert)
+			bDone <- err
+			return
+		}
+		defer tx.Rollback(ctx)
+		close(bAboutToInsert)
+		if err := insertRefund(tx); err != nil {
+			bDone <- err
+			return
+		}
+		bDone <- tx.Commit(ctx)
+	}()
+
+	okCount := 0
+	for _, err := range []error{<-aDone, <-bDone} {
+		if err == nil {
+			okCount++
+		}
+	}
+	if okCount != 1 {
+		t.Errorf("%d of 2 overlapping over-cap inserts succeeded, want exactly 1 — the trigger "+
+			"must take the per-order advisory lock, or its recompute is not a constraint", okCount)
+	}
+	var summed int64
+	if err := pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(refund_kobo),0) FROM restaurant_dispute_refunds WHERE order_id=$1`,
+		f.orderID).Scan(&summed); err != nil {
+		t.Fatalf("sum refunds: %v", err)
+	}
+	if summed > f.basis {
+		t.Errorf("cumulative refunds %d exceed the cap %d — two concurrent inserts raced past "+
+			"the trigger, so it is not enforcing the invariant", summed, f.basis)
 	}
 }
 

@@ -58,7 +58,7 @@ func TestFoodRefundNeverExceedsTotal(t *testing.T) {
 }
 
 // TestPlatformRefundableKobo: the platform-funded dispute refund is computed on the
-// order total LESS the tip (ADR-030). Disputes resolve only on DELIVERED orders, so the
+// order total LESS the tip (ADR-031). Disputes resolve only on DELIVERED orders, so the
 // rider has already been paid 100% of the tip and the platform never held it.
 func TestPlatformRefundableKobo(t *testing.T) {
 	cases := []struct {
@@ -112,6 +112,64 @@ func TestFoodRefundPartialInheritsTipCap(t *testing.T) {
 	}
 	if got >= total {
 		t.Errorf("full refund %d reaches the tip-inclusive total %d — the platform would fund the tip", got, total)
+	}
+}
+
+// TestRemainingRefundableKobo: the platform-funded budget is CUMULATIVE per order, so a
+// second dispute may only draw what earlier ones left behind (ADR-031).
+func TestRemainingRefundableKobo(t *testing.T) {
+	cases := []struct {
+		name         string
+		cap, already int64
+		want         int64
+	}{
+		{"nothing refunded yet → whole cap", 1_016_285, 0, 1_016_285},
+		{"partial already taken", 1_016_285, 400_000, 616_285},
+		{"exactly exhausted → 0", 1_016_285, 1_016_285, 0},
+		{"over-refunded (legacy data) → 0, never negative", 1_016_285, 2_000_000, 0},
+		{"one kobo left", 1_016_285, 1_016_284, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := remainingRefundableKobo(c.cap, c.already); got != c.want {
+				t.Fatalf("remainingRefundableKobo(%d,%d) = %d, want %d", c.cap, c.already, got, c.want)
+			}
+		})
+	}
+}
+
+// TestFoodRefundExhaustedBudget: once an order's platform-funded basis is spent, neither
+// branch may pay out again — a second upheld dispute must not refund one order twice.
+func TestFoodRefundExhaustedBudget(t *testing.T) {
+	// A zero budget yields a zero refund, NOT an error. foodRefundKobo cannot tell
+	// "exhausted by earlier disputes" from "this order never had a platform-refundable
+	// basis" — only the caller knows what has been drawn — so the exhausted-budget
+	// rejection lives in AdminResolveFoodDispute, gated on alreadyRefunded > 0. Erroring
+	// here would abort the resolve on an all-tip order that was never refunded, taking the
+	// rider tip clawback with it and leaving the customer with nothing.
+	if got, err := foodRefundKobo(FoodRefundFull, 0, 0); err != nil || got != 0 {
+		t.Errorf("refund_full against a zero budget = %d,%v — want 0 with no error so an "+
+			"all-tip order still resolves and its tip clawback runs", got, err)
+	}
+	if _, err := foodRefundKobo(FoodRefundPartial, 1, 0); !errors.Is(err, ErrDisputeInvalid) {
+		t.Errorf("refund_partial against a zero budget must be rejected, got %v", err)
+	}
+	// Non-money resolutions always work — ops must be able to record "replacement sent" or
+	// "not upheld" on an order with no budget left.
+	for _, res := range []FoodDisputeResolution{FoodReplacement, FoodDismissed} {
+		if got, err := foodRefundKobo(res, 0, 0); err != nil || got != 0 {
+			t.Errorf("%s against an exhausted budget = %d,%v — want 0 with no error", res, got, err)
+		}
+	}
+	// A second dispute draws only the remainder, never the whole basis again.
+	const cap int64 = 1_016_285
+	remaining := remainingRefundableKobo(cap, 400_000)
+	got, err := foodRefundKobo(FoodRefundFull, 0, remaining)
+	if err != nil {
+		t.Fatalf("second full refund: %v", err)
+	}
+	if got != 616_285 {
+		t.Errorf("second refund_full = %d, want the %d remainder — not the whole %d basis", got, remaining, cap)
 	}
 }
 

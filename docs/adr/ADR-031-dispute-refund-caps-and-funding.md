@@ -1,6 +1,10 @@
-# ADR-030 — Post-settlement dispute refunds: the tip is rider-funded, not platform-funded
+# ADR-031 — Post-settlement dispute refunds: what may be refunded, and who funds it
 
 **Date:** 2026-08-13
+**Numbering:** ADR-030 is taken by PR #98 (wallet-plane double entry), which was itself
+renumbered off 029 when PR #95 claimed that for the FX orch ledger. Three branches collided
+on 029/030; check `docs/adr/` on the latest `develop` **and** the open PRs before claiming a
+number. The gap at 030 in this branch's history is that collision, not an off-by-one.
 **Status:** Accepted
 **Deciders:** Product owner (money policy) + Restaurant/Delivery
 **Scope:** `backend/internal/restaurant` (`disputes.go`, `disputes_service.go`, new
@@ -94,7 +98,25 @@ Concretely:
    rider never delivers again. In exchange the platform carries no tip exposure on any
    disputed order, recoverable or not.
 
-5. **The clawback does NOT fire on `refund_partial`.** A partial refund is characteristically
+5. **The platform-funded budget is capped per ORDER and is CUMULATIVE across its disputes.**
+   `remainingRefundableKobo` subtracts what the order's other disputes have already drawn
+   from `platformRefundableKobo(total, tip)`, and a resolution may only spend the remainder.
+   A cumulative cap rather than a one-refund-per-order rule: a customer refunded ₦500 for a
+   missing item who later establishes the whole order was wrong should still be able to be
+   made whole — one-per-order would lock them out and ops would simply work around it. What
+   can never happen is the total across an order's disputes exceeding what the platform took
+   in. `refund_full` on an exhausted budget is rejected outright rather than silently paying
+   zero; `replacement`/`dismissed` still resolve, so ops can always close a ticket.
+
+6. **The clawback fires on the order ENDING UP fully refunded, not on the `refund_full`
+   label.** Since the budget is cumulative, `refund_full` means "whatever is left" — after a
+   1,016,284 partial it pays 1 kobo — so the label alone no longer implies the customer got
+   the whole order back, and taking a third party's tip on the strength of it would be
+   wrong. The gate is `res == FoodRefundFull && alreadyRefunded + refund >= orderCap`: the
+   customer has been made whole on the entire non-tip basis. A zero-basis order satisfies it
+   trivially, which is what keeps the tip recoverable there.
+
+7. **The clawback does NOT fire on `refund_partial`.** A partial refund is characteristically
    a *kitchen* fault (`wrong_item`, quality, missing items), and taking a rider's tip for the
    restaurant's mistake is indefensible. Partials remain purely platform-funded — and remain
    bounded by the non-tip basis, so this exemption cannot be used to refund the tip by another
@@ -188,6 +210,53 @@ wallet, so `recoverRiderTipDebts` re-proves payment for each debt before drawing
 Nothing that changes about the order or its settlement in the interim can turn a queued debt
 into a wrongful debit.
 
+**Spending the budget is serialised per order, and backstopped in the DB.** Computing the
+remainder and spending it must not interleave with another resolution on the same order —
+two admins resolving two tickets concurrently would both read the same "already refunded"
+figure and both pay out against it. `AdminResolveFoodDispute` therefore takes a
+`pg_advisory_xact_lock` keyed on the order and holds it across read → compute → credit →
+record, so the amount just spent is visible to the next resolver the moment it acquires the
+lock. The lock spans the ledger credit, which runs on a second connection from the same
+pool. No *lock-ordering* deadlock is possible — the ledger's advisory locks live in the
+`wallet:` namespace, `Credit` takes none at all, and the clawback runs only after this tx
+commits — but the nesting does hold one pooled connection while acquiring another, so enough
+simultaneous resolves could exhaust the pool and stall until their contexts cancel. Dispute
+resolution is a low-concurrency admin path and this mirrors the existing pattern in
+`withdrawal.go`; the real fix is a tx-aware ledger credit so both legs share one transaction.
+
+A constraint trigger on `restaurant_dispute_refunds` then makes the invariant true at the
+storage layer, so a writer that forgets the lock — or any direct insert — still cannot
+exceed the cap.
+
+**The trigger takes that same advisory lock itself, and must.** A bare recompute-and-compare
+is not a constraint: at READ COMMITTED two overlapping inserts for one order each see only
+the committed rows plus their own, so both pass and the order lands over cap. This was not
+theoretical — the first version of this trigger had exactly that hole, and
+`TestLiveDB_DisputeRefundCapHoldsUnderConcurrency` reproduces it (2 of 2 inserts succeed,
+cumulative 1,140,002 against a 950,000 cap) the moment the lock is removed. The lock is
+re-entrant within a session, so the service path, which already holds it, is unaffected. The
+two keys must be byte-identical, so the service lowercases the order id to match the
+trigger's `lower(NEW.order_id::text)` — `orderID` comes from `disputes.reference` (TEXT),
+whose casing is not guaranteed even though the FK lookup tolerates it.
+
+**The trigger is gated on the new row actually moving money.** A zero-kobo row — a
+`dismissed` or `replacement` resolution — can never push an order over its cap, and must be
+insertable even on an order whose *historical* refunds already exceed it. Those legacy orders
+are exactly what this change exists to stop growing, and ops still has to be able to close
+their tickets; an ungated check would make the admin endpoint fail forever on precisely that
+data. Deploying this needs a prior audit for such orders (query in the migration header):
+money has already left on any that exist, and remediation is a product decision.
+
+**The ledger, not the record table, is authoritative on a retry.** Because the budget is
+derived from `restaurant_dispute_refunds`, a row that disagrees with the money silently
+changes what is spendable. Two ways that could happen, both closed: `ledger.Credit` returning
+`ErrDuplicate` is not proof it posted (the Redis idempotency lock is taken before the write,
+10s TTL), so the resolve now confirms against the ledger and refuses to record a refund that
+never moved; and a retry that resolves *differently* — a smaller partial, or `dismissed` —
+would otherwise record a figure the ledger does not match, so when a credit already exists
+under `dispute-refund:<disputeID>` its posted amount is used verbatim and the recomputation
+is discarded.
+
 **Uniqueness is per ORDER, not per dispute.** The shared `disputes` table blocks only a
 concurrently *active* ticket on an order, and `orders.disputed_at` is a marker rather than a
 gate — so once a dispute resolves, a second one is raisable on the same delivered order.
@@ -222,9 +291,22 @@ gated on `TEST_DATABASE_URL`) — all three fail on the pre-change code and pass
 - `TestLiveDB_DisputeNoClawbackWhenRiderNeverPaidTip` — diverges the escrow so `settleOrder`
   drops the tip leg, then resolves `refund_full` and asserts the rider's wallet does not move
   and no clawback is queued.
-- `TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder` — resolves a full refund, then raises and
-  resolves a SECOND dispute on the same delivered order, asserting the rider is not debited
-  twice, the customer is not credited the tip twice, and the order has exactly one clawback row.
+- `TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder` — resolves a full refund, then raises a
+  SECOND dispute on the same delivered order: a second `refund_full` is rejected (no budget
+  left), `dismissed` still closes the ticket, the rider is not debited twice, and the order
+  has exactly one clawback row.
+- `TestLiveDB_DisputeRefundBudgetIsCumulativePerOrder` — a ₦4,000 partial, then a second
+  dispute: everything above the remainder is rejected (including amounts well under the
+  order's own basis), `refund_full` pays exactly the remainder, platform revenue falls by
+  exactly the basis across BOTH disputes rather than twice it, recorded refunds sum to the
+  basis, a direct `INSERT` past the cap is rejected by the trigger with the service bypassed,
+  and a zero-kobo `dismissed` row is still accepted on the exhausted order.
+- `TestLiveDB_DisputeRefundCapHoldsUnderConcurrency` — two deliberately overlapping
+  transactions each inserting 60% of the cap, with the first holding its transaction open
+  across the second's insert. Exactly one may survive. Removing the trigger's advisory lock
+  fails it 2-of-2 at 1,140,002 against a 950,000 cap; an earlier version of this test that
+  merely started both goroutines together passed even against the broken trigger, because
+  the two transactions serialised naturally — forcing the overlap is what makes it a guard.
 
 Pure: `TestPlatformRefundableKobo`, `TestFoodRefundPartialInheritsTipCap`.
 
@@ -235,17 +317,6 @@ first three; dropping the `order_id` unique index fails the double-clawback test
 
 ## Known gaps (out of scope, deliberately)
 
-- **⚠️ The PLATFORM-funded leg has no per-order cap — a second dispute refunds the basis
-  again.** `dispute-refund:<disputeID>` is keyed per *dispute*, and (as established above) a
-  second dispute is raisable on the same delivered order once the first resolves. Each upheld
-  `refund_full` therefore credits the customer another `total − tip` out of
-  `AccountPaymaxRevenue`, N times for N disputes. This **predates ADR-030** — before it, the
-  repeat refund was the tipped total — and the fix here caps only the tip leg per order. It is
-  the larger of the two exposures by an order of magnitude and wants the same treatment
-  (a per-order guard on `restaurant_dispute_refunds`), but that is a product decision about
-  whether a second dispute may refund at all, not a tip question, so it is deliberately not
-  taken here. `TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder` explicitly does **not** assert
-  the repeat basis refund as correct.
 - **Sub-case (b) declines a tip that is arguably still recoverable.** When an order is
   `delivered` but its settlement is still `escrowed`, the tip has not been paid to anyone —
   it is in escrow, and the reconciler will later pay it to the rider. The clawback declines
@@ -257,13 +328,22 @@ first three; dropping the `order_id` unique index fails the double-clawback test
   before debiting). Not done here because it widens a money path for a narrow crash window —
   an admin must resolve a dispute inside the reconciler's grace period on an order whose
   settle failed.
-- **The dispute resolve path is not one transaction.** `foodDisputeResolvable` and the closing
-  `UPDATE` are separate statements, so two admins can pass the gate concurrently with different
-  resolutions, and a failure after the money moves leaves the ticket open with the refund
-  already posted. This predates ADR-030 and affects the platform-funded leg identically; the
-  per-order clawback uniqueness bounds the new third-party exposure, but the underlying TOCTOU
-  is a separate fix (claim the ticket with a guarded `UPDATE`, read the resolution back on
-  conflict).
+- **The ticket-status gate is still read outside the refund lock.** The advisory lock closes
+  the money-relevant race — two admins resolving *different* disputes on one order are now
+  serialised, and the second sees the first's spend — but `foodDisputeResolvable` is checked
+  before the lock is taken, so two admins can still both pass the gate on the *same* dispute
+  with different resolutions. That is money-safe: the ledger credit is keyed
+  `dispute-refund:<disputeID>` so the second is a duplicate no-op, and the record insert is
+  `ON CONFLICT (dispute_id) DO NOTHING`. The residue is cosmetic — the loser's returned
+  `FoodDispute` reports the amount it computed rather than the one actually recorded. The
+  clean fix is to claim the ticket with a guarded `UPDATE ... WHERE status IN
+  ('open','investigating')` and read the winning resolution back on conflict; not taken here
+  because it is a wider refactor of the resolve path than this change warrants.
+- **A crash between the commit and the ticket close leaves an open ticket with the refund
+  already recorded and posted.** A retry converges — the record insert is a no-op, the budget
+  read excludes this dispute so the amount recomputes identically, and the credit is
+  idempotent — but until then `AdminListFoodDisputes` shows an open ticket whose money has
+  already moved.
 - **A long-`pending` clawback is a collections question, not a ledger one** — a rider who took a
   tip on a repudiated delivery and has not delivered since. No eligibility or dunning policy is
   defined here.

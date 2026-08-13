@@ -1,5 +1,5 @@
 -- Restaurant / Delivery — rider tip clawback on post-settlement food disputes
--- (additive-only). See docs/adr/ADR-030-dispute-refund-tip-policy.md.
+-- (additive-only). See docs/adr/ADR-031-dispute-refund-caps-and-funding.md.
 --
 -- Context: once the customer tip became real (escrowed in orders.total_kobo, paid 100%
 -- to the rider at settlement), the post-settlement dispute refund path was refunding a
