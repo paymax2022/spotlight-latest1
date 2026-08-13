@@ -24,10 +24,19 @@ type Service struct {
 	provider   *maplerad.Client
 	redis      *goredis.Client    // for quote reservation
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	markup     *Markup            // Paymax FX markup; never nil after NewService
 }
 
 func NewService(db *pgxpool.Pool, ledger *ledger.Service, provider *maplerad.Client, redis *goredis.Client) *Service {
-	return &Service{db: db, ledger: ledger, provider: provider, redis: redis}
+	return &Service{db: db, ledger: ledger, provider: provider, redis: redis, markup: DefaultMarkup()}
+}
+
+// SetMarkup overrides the Paymax FX markup table (app-wiring / tests). A nil
+// argument is ignored so the service can never end up without one.
+func (s *Service) SetMarkup(m *Markup) {
+	if m != nil {
+		s.markup = m
+	}
 }
 
 // CommissionRecorder is the nil-safe seam into the central Commission & Profit
@@ -105,6 +114,12 @@ func (s *Service) GetQuote(ctx context.Context, userID string, req QuoteRequest)
 		return nil, fmt.Errorf("fx: get quote: %w", err)
 	}
 
+	// Maplerad returns no fee — its margin is priced into the rate — so the fee
+	// the customer pays is OUR markup, computed on the source principal. Quoted
+	// here and persisted, so Convert debits exactly what was disclosed even if the
+	// markup table changes between quote and execution.
+	feeKobo := s.markup.FeeMinor(req.SourceCurrency, req.TargetCurrency, req.AmountKobo)
+
 	expiresAt := time.Now().Add(quoteTTL)
 	q := &FXQuote{
 		ID:                uuid.New().String(),
@@ -115,7 +130,7 @@ func (s *Service) GetQuote(ctx context.Context, userID string, req QuoteRequest)
 		SourceAmountKobo:  req.AmountKobo,
 		TargetAmountMinor: providerResp.TargetAmountMinor,
 		Rate:              providerResp.Rate,
-		FeeKobo:           providerResp.Fee,
+		FeeKobo:           feeKobo,
 		ExpiresAt:         expiresAt,
 		CreatedAt:         time.Now(),
 	}
