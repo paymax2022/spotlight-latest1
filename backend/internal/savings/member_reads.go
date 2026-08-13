@@ -30,6 +30,10 @@ func (s *VaultService) GetVault(ctx context.Context, ownerID, vaultID string) (*
 	if err != nil {
 		return nil, 0, err
 	}
+	// Populate the projection on the vault too. The handler also returns bal
+	// beside it; if the embedded field were left at 0 the same response would
+	// carry two contradictory balances for one vault.
+	v.BalanceKobo = bal
 	return v, bal, nil
 }
 
