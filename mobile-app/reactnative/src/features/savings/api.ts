@@ -221,8 +221,9 @@ export async function getVault(id: string): Promise<Vault> {
     if (!v) throw new Error('Vault not found');
     return v;
   }
-  // GET /vaults/:id → { success, vault, balance_kobo }. This route is the ONLY
-  // source of a vault's balance; the list endpoint cannot supply one.
+  // GET /vaults/:id → { success, vault, balance_kobo }. Since PR #102 the list
+  // endpoint projects a balance too, and the two are the same ledger sum — this
+  // route is no longer the only source of one.
   return vaultFromBackend(envelope.vaultDetail(await api.get(`${API_BASE}/vaults/${id}`)));
 }
 
