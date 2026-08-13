@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/jackc/pgx/v5"
+
 	"spotlight/backend/internal/finance/ledger"
 )
 
@@ -52,20 +54,53 @@ func tipClawbackKey(disputeID string) string { return "dispute-tip-clawback:" + 
 //     crash-recovery reconciler exists). A dispute can be raised AND resolved inside it,
 //     and the tip is still sitting in escrow, not in the rider's wallet.
 //
-// The predicate below mirrors settleOrder's own decision to pay the tip leg: the
-// settlement must be SETTLED and its escrowed total must equal the order total. If
-// settleOrder would have dropped the tip, we do not claw it.
-func (s *Service) riderWasPaidTip(ctx context.Context, settlementID string, orderTotalKobo int64) (bool, error) {
-	if settlementID == "" {
+// The predicate has two halves, and needs both:
+//
+//   - The settlement must be SETTLED with its escrowed total equal to the order total.
+//     This mirrors settleOrder's own decision and is what establishes that the tip leg
+//     was INCLUDED in the payout rather than dropped.
+//   - The rider settlement leg must exist ON THIS RIDER'S WALLET (idempotency key
+//     `settle:<settlementID>:rider:credit`, written by settlement.Settle). This is what
+//     establishes the payee. orders.rider_id is not evidence of who was paid: AcceptDelivery
+//     guards only on there being no existing rider, not on order status, so a rider can be
+//     attached to an already-settled order — one that settled through the RIDER-LESS branch,
+//     which orphans the tip 90/10 to restaurant/platform. Without this half, that newly
+//     attached rider would be debited for a tip that went to the restaurant.
+//
+// Amount alone would not do: a rider's plain percentage share can exceed a small tip, so
+// `leg >= tip` proves nothing about whether the tip was in it.
+func (s *Service) riderWasPaidTip(ctx context.Context, settlementID, riderID string, orderTotalKobo int64) (bool, error) {
+	if settlementID == "" || riderID == "" {
 		return false, nil
 	}
 	var status string
 	var escrowedKobo int64
 	if err := s.db.QueryRow(ctx,
 		`SELECT status, total_kobo FROM settlements WHERE id=$1`, settlementID).Scan(&status, &escrowedKobo); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// A dangling settlement_id. Treat exactly like "no settlement": decline the
+			// clawback, do NOT error — this runs AFTER the platform refund has posted, so
+			// returning an error here would leave the ticket permanently unresolvable with
+			// real money already moved and no resolution record to show for it.
+			return false, nil
+		}
 		return false, fmt.Errorf("restaurant: load settlement for tip clawback: %w", err)
 	}
-	return status == "settled" && escrowedKobo == orderTotalKobo, nil
+	if status != "settled" || escrowedKobo != orderTotalKobo {
+		return false, nil
+	}
+	riderAcc, err := s.ledger.GetOrCreateUserWallet(ctx, riderID)
+	if err != nil {
+		return false, err
+	}
+	var paid bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM ledger_entries
+		                WHERE idempotency_key=$1 AND type='CREDIT' AND account_id=$2)`,
+		"settle:"+settlementID+":rider:credit", riderAcc.ID).Scan(&paid); err != nil {
+		return false, fmt.Errorf("restaurant: confirm rider settlement leg: %w", err)
+	}
+	return paid, nil
 }
 
 // recordTipClawback durably records the obligation to return `tipKobo` to the customer out
@@ -78,22 +113,27 @@ func (s *Service) riderWasPaidTip(ctx context.Context, settlementID string, orde
 // rider the same tip twice and crediting the customer twice. A tip can be clawed back at
 // most once per order, ever; the DB unique index on order_id is the hard guarantee and
 // this read-back is how the caller learns it lost the race.
-func (s *Service) recordTipClawback(ctx context.Context, disputeID, orderID, riderID, customerID string, tipKobo int64) (owns bool, err error) {
+// Also returns the RECORDED tip amount, which is authoritative over the caller's freshly
+// read orders.tip_kobo: on a retry the row may already exist from an earlier attempt, and
+// the ledger pair is keyed to the debt, so the debt's own amount is what must move.
+func (s *Service) recordTipClawback(ctx context.Context, disputeID, orderID, riderID, customerID string, tipKobo int64) (owns bool, recordedKobo int64, err error) {
 	// Untargeted ON CONFLICT so BOTH the dispute_id primary key and the order_id unique
 	// index are absorbed as no-ops rather than erroring.
 	if _, err := s.db.Exec(ctx,
 		`INSERT INTO restaurant_dispute_tip_clawbacks (dispute_id, order_id, rider_id, customer_id, tip_kobo, status)
 		 VALUES ($1,$2,$3,$4,$5,'pending') ON CONFLICT DO NOTHING`,
 		disputeID, orderID, riderID, customerID, tipKobo); err != nil {
-		return false, fmt.Errorf("restaurant: record tip clawback: %w", err)
+		return false, 0, fmt.Errorf("restaurant: record tip clawback: %w", err)
 	}
-	var exists bool
 	if err := s.db.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM restaurant_dispute_tip_clawbacks WHERE dispute_id=$1)`,
-		disputeID).Scan(&exists); err != nil {
-		return false, fmt.Errorf("restaurant: read back tip clawback: %w", err)
+		`SELECT tip_kobo FROM restaurant_dispute_tip_clawbacks WHERE dispute_id=$1`,
+		disputeID).Scan(&recordedKobo); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, 0, nil // an earlier dispute on this order owns the clawback
+		}
+		return false, 0, fmt.Errorf("restaurant: read back tip clawback: %w", err)
 	}
-	return exists, nil
+	return true, recordedKobo, nil
 }
 
 // settleTipClawback attempts the actual money move for one recorded clawback: a single
@@ -192,7 +232,7 @@ func (s *Service) markTipClawbackRecovered(ctx context.Context, disputeID string
 //
 // Reports whether the customer has been credited the tip already.
 func (s *Service) clawBackDisputedTip(ctx context.Context, disputeID, orderID, riderID, customerID string, tipKobo int64) (bool, error) {
-	owns, err := s.recordTipClawback(ctx, disputeID, orderID, riderID, customerID, tipKobo)
+	owns, recordedKobo, err := s.recordTipClawback(ctx, disputeID, orderID, riderID, customerID, tipKobo)
 	if err != nil {
 		return false, err
 	}
@@ -203,14 +243,22 @@ func (s *Service) clawBackDisputedTip(ctx context.Context, disputeID, orderID, r
 			disputeID, orderID, tipKobo)
 		return false, nil
 	}
-	recovered, err := s.settleTipClawback(ctx, disputeID, riderID, customerID, tipKobo)
+	// Move the RECORDED amount, not the freshly-read one — they differ if this is a retry
+	// of an attempt whose row was written before orders.tip_kobo was corrected.
+	recovered, err := s.settleTipClawback(ctx, disputeID, riderID, customerID, recordedKobo)
 	if err != nil {
 		return false, err
 	}
 	if recovered {
-		if _, err := s.markTipClawbackRecovered(ctx, disputeID); err != nil {
+		// Report the tip as newly credited ONLY if this call performed the flip. On a retry
+		// of a dispute left open by a mid-path error, settleTipClawback short-circuits on
+		// Posted and reports recovered without moving anything; announcing it again would
+		// tell the customer money arrived that did not.
+		stamped, err := s.markTipClawbackRecovered(ctx, disputeID)
+		if err != nil {
 			return false, err
 		}
+		return stamped, nil
 	} else {
 		log.Printf("[restaurant] dispute %s: rider %s cannot cover the %d kobo tip clawback — queued for recovery at their next settlement",
 			disputeID, riderID, tipKobo)
@@ -237,24 +285,37 @@ func (s *Service) recoverRiderTipDebts(ctx context.Context, riderID string) {
 	if s.ledger == nil || riderID == "" {
 		return
 	}
+	// The contract above says this must never fail the settlement that triggered it. An
+	// error return is not the only way to break that — a panic here would surface as a
+	// failed delivery transition on an order that is already delivered AND settled.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[restaurant] rider %s: tip clawback sweep panicked: %v", riderID, r)
+		}
+	}()
+
 	rows, err := s.db.Query(ctx,
-		`SELECT dispute_id, customer_id, tip_kobo
-		   FROM restaurant_dispute_tip_clawbacks
-		  WHERE rider_id=$1 AND status='pending'
-		  ORDER BY created_at`, riderID)
+		`SELECT c.dispute_id, c.customer_id, c.tip_kobo,
+		        COALESCE(o.settlement_id::text,''), o.total_kobo
+		   FROM restaurant_dispute_tip_clawbacks c
+		   JOIN orders o ON o.id = c.order_id
+		  WHERE c.rider_id=$1 AND c.status='pending'
+		  ORDER BY c.created_at`, riderID)
 	if err != nil {
 		log.Printf("[restaurant] rider %s: list pending tip clawbacks: %v", riderID, err)
 		return
 	}
 	type debt struct {
-		disputeID  string
-		customerID string
-		tipKobo    int64
+		disputeID    string
+		customerID   string
+		tipKobo      int64
+		settlementID string
+		orderTotal   int64
 	}
 	var debts []debt
 	for rows.Next() {
 		var d debt
-		if err := rows.Scan(&d.disputeID, &d.customerID, &d.tipKobo); err != nil {
+		if err := rows.Scan(&d.disputeID, &d.customerID, &d.tipKobo, &d.settlementID, &d.orderTotal); err != nil {
 			rows.Close()
 			log.Printf("[restaurant] rider %s: scan pending tip clawback: %v", riderID, err)
 			return
@@ -268,6 +329,20 @@ func (s *Service) recoverRiderTipDebts(ctx context.Context, riderID string) {
 	}
 
 	for _, d := range debts {
+		// RE-VERIFY before every debit, not just at recording time. A debt can sit pending
+		// for days, and this is the last gate before a third party's wallet is drawn down;
+		// re-proving payment here means no change to the order or its settlement in the
+		// interim can turn a queued debt into a wrongful debit.
+		paid, perr := s.riderWasPaidTip(ctx, d.settlementID, riderID, d.orderTotal)
+		if perr != nil {
+			log.Printf("[restaurant] dispute %s: re-verify rider tip payment: %v", d.disputeID, perr)
+			continue
+		}
+		if !paid {
+			log.Printf("[restaurant] dispute %s: rider %s no longer evidenced as paid the %d kobo tip — skipping clawback",
+				d.disputeID, riderID, d.tipKobo)
+			continue
+		}
 		recovered, err := s.settleTipClawback(ctx, d.disputeID, riderID, d.customerID, d.tipKobo)
 		if err != nil {
 			log.Printf("[restaurant] dispute %s: tip clawback recovery failed: %v", d.disputeID, err)

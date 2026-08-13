@@ -451,10 +451,19 @@ func TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder(t *testing.T) {
 			"must be clawed back at most once (double-debited by %d)",
 			riderAfterFirst, riderEnd, riderAfterFirst-riderEnd)
 	}
+	// The TIP must not be credited twice. Deliberately NOT asserting the exact customer
+	// delta here: the platform-funded leg is keyed per dispute (`dispute-refund:<id>`), so
+	// a second upheld dispute refunds the basis AGAIN. That is a real pre-existing leak on
+	// the 90% leg — it predates ADR-030 and is recorded in its Known gaps — and this test
+	// must not pin it down as intended behaviour. What it does assert is that whatever the
+	// platform leg does, no part of it is the tip.
 	custEnd, _ := led.GetBalance(ctx, f.customer)
-	if delta := custEnd - custAfterFirst; delta != f.basis {
-		t.Errorf("customer gained %d on the second dispute, want just the platform basis %d — "+
-			"the tip must not be credited twice", delta, f.basis)
+	if delta := custEnd - custAfterFirst; delta >= f.basis+f.tip {
+		t.Errorf("customer gained %d on the second dispute — at or above basis %d + tip %d, "+
+			"so the tip was credited a second time", delta, f.basis, f.tip)
+	}
+	if moved := creditLegKobo(t, ctx, pool, tipClawbackKey(d2.ID)); moved != 0 {
+		t.Errorf("second dispute posted a %d kobo tip clawback of its own, want none", moved)
 	}
 	var clawbacks int
 	if err := pool.QueryRow(ctx,

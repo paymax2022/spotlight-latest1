@@ -158,7 +158,7 @@ func (s *Service) AdminResolveFoodDispute(ctx context.Context, disputeID, adminI
 		// rider for a tip that went 90/10 to the restaurant and platform — or that is
 		// still sitting in escrow — would be a real loss to a third party with nothing
 		// anywhere to offset it.
-		paid, perr := s.riderWasPaidTip(ctx, settlementID, totalKobo)
+		paid, perr := s.riderWasPaidTip(ctx, settlementID, *riderID, totalKobo)
 		if perr != nil {
 			return nil, perr
 		}

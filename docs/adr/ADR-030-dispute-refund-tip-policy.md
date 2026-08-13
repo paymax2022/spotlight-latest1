@@ -170,11 +170,23 @@ diverge, `settleOrder` drops the tip leg and releases the tip through the percen
 `orders.tip_kobo` nonzero. (ii) `transitionInternal` commits `status='delivered'` and only
 then calls `settleOrder`, outside any transaction, so a settle failure leaves a delivered
 order whose escrow is still held (the window the crash-recovery reconciler exists to close);
-a dispute can be raised and resolved inside it. In both, debiting the rider would be an
-uncompensated loss to a third party. `riderWasPaidTip` therefore gates the clawback on the
-settlement being `settled` with `settlements.total_kobo = orders.total_kobo` — the same
-predicate `settleOrder` uses to decide whether to pay the tip leg at all. Where the gate
-fails, the outcome degrades to option (a): platform refunds the basis, no clawback.
+a dispute can be raised and resolved inside it. `riderWasPaidTip` therefore requires two things, and needs both: the settlement must be
+`settled` with `settlements.total_kobo = orders.total_kobo` (the same predicate `settleOrder`
+uses to decide whether to pay the tip leg — this establishes the tip was *in* the payout),
+**and** the rider settlement leg `settle:<settlementID>:rider:credit` must exist on *this
+rider's* wallet account (this establishes the *payee*). `orders.rider_id` is not evidence of
+who was paid: `AcceptDelivery` guards only on there being no existing rider, not on order
+status, so a rider can be attached to an already-settled order — one that settled through the
+rider-less branch, which orphans the tip 90/10 to restaurant/platform. Amount alone would not
+do either: a rider's plain percentage share can exceed a small tip, so `leg >= tip` proves
+nothing. Where the gate fails, the outcome degrades to option (a): platform refunds the
+basis, no clawback.
+
+**The gate is re-checked before every debit, not only at recording time.** A debt can sit
+pending for days, and the sweep is the last thing standing between it and a third party's
+wallet, so `recoverRiderTipDebts` re-proves payment for each debt before drawing it down.
+Nothing that changes about the order or its settlement in the interim can turn a queued debt
+into a wrongful debit.
 
 **Uniqueness is per ORDER, not per dispute.** The shared `disputes` table blocks only a
 concurrently *active* ticket on an order, and `orders.disputed_at` is a marker rather than a
@@ -223,6 +235,28 @@ first three; dropping the `order_id` unique index fails the double-clawback test
 
 ## Known gaps (out of scope, deliberately)
 
+- **⚠️ The PLATFORM-funded leg has no per-order cap — a second dispute refunds the basis
+  again.** `dispute-refund:<disputeID>` is keyed per *dispute*, and (as established above) a
+  second dispute is raisable on the same delivered order once the first resolves. Each upheld
+  `refund_full` therefore credits the customer another `total − tip` out of
+  `AccountPaymaxRevenue`, N times for N disputes. This **predates ADR-030** — before it, the
+  repeat refund was the tipped total — and the fix here caps only the tip leg per order. It is
+  the larger of the two exposures by an order of magnitude and wants the same treatment
+  (a per-order guard on `restaurant_dispute_refunds`), but that is a product decision about
+  whether a second dispute may refund at all, not a tip question, so it is deliberately not
+  taken here. `TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder` explicitly does **not** assert
+  the repeat basis refund as correct.
+- **Sub-case (b) declines a tip that is arguably still recoverable.** When an order is
+  `delivered` but its settlement is still `escrowed`, the tip has not been paid to anyone —
+  it is in escrow, and the reconciler will later pay it to the rider. The clawback declines
+  outright there, so the customer permanently loses the tip in that window. Note this is a
+  *different* justification from sub-case (a): in (a) debiting the rider would be an
+  uncompensated third-party loss, whereas in (b) it is merely premature. Recording the debt
+  as pending in (b) would be discharged automatically (the reconciler's `settleOrder` pays the
+  rider and then runs the recovery sweep in the same call, and the sweep re-verifies payment
+  before debiting). Not done here because it widens a money path for a narrow crash window —
+  an admin must resolve a dispute inside the reconciler's grace period on an order whose
+  settle failed.
 - **The dispute resolve path is not one transaction.** `foodDisputeResolvable` and the closing
   `UPDATE` are separate statements, so two admins can pass the gate concurrently with different
   resolutions, and a failure after the money moves leaves the ticket open with the refund
