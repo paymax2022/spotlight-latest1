@@ -208,9 +208,9 @@ export async function getSummary(): Promise<SavingsSummary> {
 
 export async function listVaults(): Promise<Vault[]> {
   if (USE_MOCK) { await delay(); return MOCK_VAULTS; }
-  // NOTE: the list endpoint's Vault rows carry NO balance (the Go struct has no
-  // balance field), so every vault here has balanceKobo 0. Only GET /vaults/:id
-  // returns a balance — see getVault.
+  // Vault rows carry balance_kobo, projected from the append-only ledger by
+  // the list query itself (NL-8 — never a stored column). Before PR #102 the
+  // list returned no balance at all and every tile rendered 0.
   return envelope.list(await api.get(`${API_BASE}/vaults`), 'vaults').map(vaultFromBackend);
 }
 
