@@ -21,7 +21,7 @@ const code: React.CSSProperties = { fontSize: '0.78rem', background: colors.bord
 
 export default function PolicyDetailPage() {
   const params = useParams();
-  const id = params.id as string;
+  const id = params?.id as string;
 
   const [data, setData] = useState<PolicyDetail | null>(null);
   const [loading, setLoading] = useState(true);

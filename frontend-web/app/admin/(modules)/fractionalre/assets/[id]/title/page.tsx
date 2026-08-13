@@ -15,7 +15,7 @@ import { Page, PageHeader, Card, Button, Input, Badge, colors } from '@/componen
 const labelStyle = { fontSize: '0.78rem', fontWeight: 600, color: colors.text, display: 'block', marginBottom: 4 } as const;
 
 export default function TitleVerificationPage() {
-  const { id } = useParams<{ id: string }>();
+  const { id } = useParams<{ id: string }>() ?? { id: '' };
   const [tv, setTv] = useState<TitleVerification | null>(null);
   const [checklist, setChecklist] = useState<TitleCheckItem[]>([]);
   const [registryRef, setRegistryRef] = useState('');

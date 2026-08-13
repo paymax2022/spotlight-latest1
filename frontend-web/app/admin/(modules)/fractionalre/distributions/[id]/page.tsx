@@ -13,7 +13,7 @@ import { FractionalReTabs, Kpi, SodNote, money } from '../../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function DistributionDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const { id } = useParams<{ id: string }>() ?? { id: '' };
   const [preview, setPreview] = useState<DistributionPreview | null>(null);
   const [dist, setDist] = useState<AdminDistribution | null>(null);
   const [loading, setLoading] = useState(true);

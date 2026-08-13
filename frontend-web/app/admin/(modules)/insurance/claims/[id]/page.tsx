@@ -21,7 +21,7 @@ const code: React.CSSProperties = { fontSize: '0.78rem', background: colors.bord
 
 export default function ClaimDetailPage() {
   const params = useParams();
-  const id = params.id as string;
+  const id = params?.id as string;
 
   const [data, setData] = useState<ClaimDetail | null>(null);
   const [loading, setLoading] = useState(true);

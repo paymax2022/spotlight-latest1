@@ -8,4 +8,7 @@ export const env = {
   mapsBaseUrl:
     process.env.NEXT_PUBLIC_MAPS_BASE_URL ||
     apiBaseUrl.replace(/\/api\/v1\/?$/, '') + '/api/finance/maps',
+  // Old admin console, still serving routes the consolidated portal hasn't
+  // absorbed yet (the /admin/[...slug] bridge page links here).
+  legacyAdminBaseUrl: process.env.NEXT_PUBLIC_LEGACY_ADMIN_BASE_URL || 'http://localhost:4028',
 };

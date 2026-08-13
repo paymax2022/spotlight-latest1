@@ -19,7 +19,7 @@ const SOURCE_COLOR: Record<string, string> = { primary: colors.info, secondary: 
 const labelStyle = { fontSize: '0.78rem', fontWeight: 600, color: colors.text, display: 'block', marginBottom: 4 } as const;
 
 export default function InvestorDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const { id } = useParams<{ id: string }>() ?? { id: '' };
   const [inv, setInv] = useState<AdminInvestorDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

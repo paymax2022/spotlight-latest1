@@ -21,7 +21,7 @@ const code: React.CSSProperties = { fontSize: '0.78rem', background: tint(colors
 
 export default function StaysReservationDetailPage() {
   const params = useParams();
-  const id = params.id as string;
+  const id = params?.id as string;
 
   const [data, setData] = useState<ReservationDetail | null>(null);
   const [loading, setLoading] = useState(true);
