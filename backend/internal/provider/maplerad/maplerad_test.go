@@ -478,3 +478,95 @@ func TestImplementsPorts(t *testing.T) {
 	var _ provider.VirtualAccountProvider = c
 	var _ provider.PaymentProvider = c
 }
+
+// --- FX rate board (GET /fx/rates) ---
+
+// fxRatesPayload mirrors the real sandbox response: a corridor LIST (the endpoint
+// ignores source/target/amount query params), each entry priced against a fixed
+// sample amount in minor units, with a major→major `rate`.
+const fxRatesPayload = `{"status":true,"message":"successfully","data":[
+  {"reference":"","source":{"currency":"NGN","amount":100,"human_readable_amount":1},"target":{"currency":"USD","amount":0,"human_readable_amount":0},"rate":0.00158730158},
+  {"reference":"","source":{"currency":"USD","amount":100,"human_readable_amount":1},"target":{"currency":"NGN","amount":60000,"human_readable_amount":600},"rate":600},
+  {"reference":"","source":{"currency":"USD","amount":100,"human_readable_amount":1},"target":{"currency":"KES","amount":11660,"human_readable_amount":116.6},"rate":116.6}
+]}`
+
+func fxRatesServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/fx/rates") {
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(fxRatesPayload))
+	}))
+}
+
+// TestGetFXQuote_PicksCorridorFromList is the regression guard for the live
+// breakage: the client used to decode `data` as a single object, so every live
+// call failed with "cannot unmarshal array into Go struct field .data". It must
+// select the requested pair out of the board — not the first entry.
+func TestGetFXQuote_PicksCorridorFromList(t *testing.T) {
+	srv := fxRatesServer(t)
+	defer srv.Close()
+
+	q, err := newTestClient(srv).GetFXQuote(context.Background(), maplerad.FXQuoteRequest{
+		SourceCurrency: "USD", TargetCurrency: "NGN", AmountKobo: 100_000, // $1,000.00
+	})
+	if err != nil {
+		t.Fatalf("GetFXQuote: %v", err)
+	}
+	if q.Rate != 600 {
+		t.Errorf("rate = %v, want 600 (USD→NGN, not the leading NGN→USD entry)", q.Rate)
+	}
+	// $1,000.00 × 600 = ₦600,000.00 → 60,000,000 kobo.
+	if q.TargetAmountMinor != 60_000_000 {
+		t.Errorf("target = %d, want 60000000", q.TargetAmountMinor)
+	}
+	if q.SourceAmountKobo != 100_000 {
+		t.Errorf("source echoed = %d, want 100000", q.SourceAmountKobo)
+	}
+	// The rate board carries no quote id / fee / expiry — these must stay zero
+	// rather than be invented, since the orchestrator prices fees itself.
+	if q.QuoteID != "" || q.Fee != 0 || q.ExpiresAt != "" {
+		t.Errorf("rate board must not synthesize quote_id/fee/expiry, got %+v", q)
+	}
+}
+
+// TestGetFXQuote_CaseInsensitiveAndUnknownCorridor covers currency casing and the
+// fail-loud path when a corridor is not published (previously an empty struct).
+func TestGetFXQuote_CaseInsensitiveAndUnknownCorridor(t *testing.T) {
+	srv := fxRatesServer(t)
+	defer srv.Close()
+	cli := newTestClient(srv)
+
+	if _, err := cli.GetFXQuote(context.Background(), maplerad.FXQuoteRequest{
+		SourceCurrency: "usd", TargetCurrency: "kes", AmountKobo: 1_000,
+	}); err != nil {
+		t.Errorf("lowercase currencies should match: %v", err)
+	}
+
+	_, err := cli.GetFXQuote(context.Background(), maplerad.FXQuoteRequest{
+		SourceCurrency: "USD", TargetCurrency: "ZAR", AmountKobo: 1_000,
+	})
+	if err == nil {
+		t.Fatal("expected an error for an unpublished corridor")
+	}
+	if !strings.Contains(err.Error(), "no USD→ZAR rate published") {
+		t.Errorf("error should name the missing corridor, got %v", err)
+	}
+}
+
+// TestGetFXQuote_APIError surfaces a status:false body as an error.
+func TestGetFXQuote_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":false,"message":"Unauthorized","data":[]}`))
+	}))
+	defer srv.Close()
+
+	_, err := newTestClient(srv).GetFXQuote(context.Background(), maplerad.FXQuoteRequest{
+		SourceCurrency: "USD", TargetCurrency: "NGN", AmountKobo: 100,
+	})
+	if err == nil || !strings.Contains(err.Error(), "Unauthorized") {
+		t.Fatalf("want the provider message surfaced, got %v", err)
+	}
+}

@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"spotlight/backend/internal/provider"
@@ -92,22 +94,78 @@ type FXQuoteResponse struct {
 	ExpiresAt         string  `json:"expires_at"`
 }
 
-// GetFXQuote retrieves an indicative FX rate from Maplerad.
-func (c *Client) GetFXQuote(ctx context.Context, req FXQuoteRequest) (*FXQuoteResponse, error) {
-	path := fmt.Sprintf("/fx/rates?source=%s&target=%s&amount=%d",
-		req.SourceCurrency, req.TargetCurrency, req.AmountKobo)
-	var resp struct {
-		Status  bool            `json:"status"`
-		Data    FXQuoteResponse `json:"data"`
-		Message string          `json:"message"`
+// fxRateEntry is one element of Maplerad's GET /fx/rates payload. The endpoint
+// ignores source/target/amount query params and always returns the full corridor
+// list, each entry priced against a fixed sample amount:
+//
+//	{"reference":"","source":{"currency":"USD","amount":100,"human_readable_amount":1},
+//	 "target":{"currency":"NGN","amount":60000,"human_readable_amount":600},"rate":600}
+//
+// amount fields are minor units; rate is major-unit → major-unit.
+type fxRateEntry struct {
+	Reference string `json:"reference"`
+	Source    struct {
+		Currency string `json:"currency"`
+		Amount   int64  `json:"amount"`
+	} `json:"source"`
+	Target struct {
+		Currency string `json:"currency"`
+		Amount   int64  `json:"amount"`
+	} `json:"target"`
+	Rate float64 `json:"rate"`
+}
+
+// targetMinor converts amountMinor of the source currency using a rate entry.
+// `rate` is major→major, so applying it straight to minor units is only correct
+// when both currencies share a minor exponent. The entry's own sample encodes any
+// exponent difference (sample minor ratio ÷ rate ≈ a power of ten), so derive the
+// scale from it — and ignore the sample when it is too coarse to be informative
+// (e.g. KES→USD samples 100 → 0, which rounds the ratio to zero).
+func targetMinor(amountMinor int64, e fxRateEntry) int64 {
+	scale := 1.0
+	if e.Rate > 0 && e.Source.Amount > 0 && e.Target.Amount > 0 {
+		if p := math.Round(math.Log10((float64(e.Target.Amount) / float64(e.Source.Amount)) / e.Rate)); math.Abs(p) <= 4 {
+			scale = math.Pow(10, p)
+		}
 	}
-	if err := c.get(ctx, path, &resp); err != nil {
+	return int64(math.Round(float64(amountMinor) * e.Rate * scale))
+}
+
+// GetFXQuote retrieves an indicative FX rate from Maplerad for one corridor.
+//
+// NOTE: /fx/rates is a rate *board*, not a quote service — it returns no quote id,
+// fee or expiry, so those stay zero-valued here rather than being invented. The
+// orchestration layer prices spread/fees itself and treats Rate as the provider's
+// indicative mid.
+func (c *Client) GetFXQuote(ctx context.Context, req FXQuoteRequest) (*FXQuoteResponse, error) {
+	var resp struct {
+		Status  bool          `json:"status"`
+		Data    []fxRateEntry `json:"data"`
+		Message string        `json:"message"`
+	}
+	if err := c.get(ctx, "/fx/rates", &resp); err != nil {
 		return nil, err
 	}
 	if !resp.Status {
 		return nil, fmt.Errorf("maplerad: get fx quote: %s", resp.Message)
 	}
-	return &resp.Data, nil
+	for _, e := range resp.Data {
+		if !strings.EqualFold(e.Source.Currency, req.SourceCurrency) ||
+			!strings.EqualFold(e.Target.Currency, req.TargetCurrency) {
+			continue
+		}
+		if e.Rate <= 0 {
+			return nil, fmt.Errorf("maplerad: get fx quote: non-positive rate for %s→%s",
+				req.SourceCurrency, req.TargetCurrency)
+		}
+		return &FXQuoteResponse{
+			Rate:              e.Rate,
+			SourceAmountKobo:  req.AmountKobo,
+			TargetAmountMinor: targetMinor(req.AmountKobo, e),
+		}, nil
+	}
+	return nil, fmt.Errorf("maplerad: get fx quote: no %s→%s rate published",
+		req.SourceCurrency, req.TargetCurrency)
 }
 
 // ConvertFXRequest parameters.
