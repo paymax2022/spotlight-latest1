@@ -667,3 +667,54 @@ export async function setAmbassadorStatus(id: string, status: AmbassadorDecision
   });
   if (!res.ok) throw new Error(await readAmbErr(res));
 }
+
+
+// ── Override policies (live) ─────────────────────────────────────────────────
+// GET /api/referral/admin/network/override-policies  (referral.network.view)
+//
+// The older getOverridePolicy() above targets /ambassadors/override-policy,
+// which no backend route serves, and its shape carries policy-level flags
+// (activity_based_only, max_depth, recruitment_earnings_blocked,
+// house_excluded_from_overrides) that no endpoint returns — they were mock
+// inventions. They are NOT reproduced here: rendering an unsourced
+// "Recruitment earnings: Blocked" tile asserts a compliance property the
+// system never actually reported.
+
+export interface OverridePolicyRow {
+  id: string;
+  tier: string;
+  /** Override rate in basis points; 200 bps = 2%. */
+  overrideBps: number;
+  perMemberCapKobo: number;
+  monthlyCapKobo: number;
+  isActive: boolean;
+}
+
+interface BackendOverridePolicy {
+  id: string;
+  tier: string;
+  override_bps: number;
+  per_member_cap_kobo: number;
+  monthly_cap_kobo: number;
+  is_active: boolean;
+}
+
+export async function listOverridePolicies(): Promise<OverridePolicyRow[]> {
+  const res = await fetch(`${adminBase()}/network/override-policies`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await readAmbErr(res));
+  const body = await res.json();
+  const rows = (body?.policies ?? body?.data?.policies ?? []) as BackendOverridePolicy[];
+  return rows
+    .map((p) => ({
+      id: p.id,
+      tier: p.tier,
+      overrideBps: p.override_bps ?? 0,
+      perMemberCapKobo: p.per_member_cap_kobo ?? 0,
+      monthlyCapKobo: p.monthly_cap_kobo ?? 0,
+      isActive: !!p.is_active,
+    }))
+    // The API returns tiers alphabetically (bronze, gold, platinum, silver),
+    // which reads as arbitrary in a ladder. Order by rate so the table climbs
+    // in tier order without hardcoding tier names the backend may add to.
+    .sort((a, b) => a.overrideBps - b.overrideBps);
+}
