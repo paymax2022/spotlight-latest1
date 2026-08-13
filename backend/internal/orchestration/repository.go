@@ -58,6 +58,47 @@ func (s *sqlStore) SeedBalance(ctx context.Context, customer, currency string, a
 	return err
 }
 
+// entryLeg is one side of a double-entry posting into orch_ledger_entries. The
+// idemSuffix keeps every leg of a single money move distinct under the
+// orch_ledger_idem_uniq index while still replaying as a unit.
+type entryLeg struct {
+	account    string
+	currency   string
+	entryType  string // DEBIT | CREDIT
+	amount     int64
+	idemSuffix string
+}
+
+// splitSpread apportions sourceTotal between retained FX markup (paymax_spread)
+// and the amount handed to the provider (provider_clearing). The quoted spread is
+// only recognised when it is a sane fraction of the total — a zero, negative, or
+// over-large spread degrades to "everything is provider clearing", which keeps the
+// currency balanced either way. Callers must post BOTH returned amounts.
+func splitSpread(spreadMinor, sourceTotalMinor int64) (spread, clearing int64) {
+	if spreadMinor <= 0 || spreadMinor >= sourceTotalMinor {
+		return 0, sourceTotalMinor
+	}
+	return spreadMinor, sourceTotalMinor - spreadMinor
+}
+
+// postLedgerLegs writes each leg, skipping zero/negative amounts (the table's
+// amount_minor CHECK forbids them, and a skipped leg never unbalances a currency
+// because both sides of a pair carry the same amount and skip together).
+func postLedgerLegs(ctx context.Context, tx pgx.Tx, customerID, reference, idemKey string, legs []entryLeg) error {
+	const q = `
+		INSERT INTO orch_ledger_entries (customer_id, account, currency, type, amount_minor, reference, idempotency_key)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)`
+	for _, l := range legs {
+		if l.amount <= 0 {
+			continue
+		}
+		if _, err := tx.Exec(ctx, q, customerID, l.account, l.currency, l.entryType, l.amount, reference, idemKey+l.idemSuffix); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *sqlStore) ApplyConversion(ctx context.Context, c *Conversion, sourceTotalMinor int64) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -87,17 +128,27 @@ func (s *sqlStore) ApplyConversion(ctx context.Context, c *Conversion, sourceTot
 		return err
 	}
 
-	// Double-entry: debit source balance, credit destination balance.
-	if _, err = tx.Exec(ctx, `
-		INSERT INTO orch_ledger_entries (customer_id, account, currency, type, amount_minor, reference, idempotency_key)
-		VALUES ($1,'customer_balance',$2,'DEBIT',$3,$4,$5)`,
-		c.CustomerID, c.Source.Currency, sourceTotalMinor, c.Reference, c.IdempotencyKey+":src"); err != nil {
-		return err
+	// Double-entry, balanced WITHIN EACH CURRENCY (ADR-029). A conversion touches two
+	// Paymax-held customer balances, so both currencies get a full debit/credit pair:
+	//
+	//   source: DR customer_balance sourceTotal
+	//           CR paymax_spread    spread          (FX markup revenue, may be 0)
+	//           CR provider_clearing sourceTotal-spread
+	//   dest:   DR provider_clearing destAmount
+	//           CR customer_balance  destAmount
+	//
+	// provider_clearing carries the resulting FX position (long source / short dest)
+	// until the provider settles. Posting only the two customer_balance legs would
+	// leave each currency single-sided — the pre-ADR-029 bug.
+	spread, clearing := splitSpread(feeAmount(c.Fees, FeeSpread), sourceTotalMinor)
+	legs := []entryLeg{
+		{"customer_balance", c.Source.Currency, "DEBIT", sourceTotalMinor, ":src"},
+		{"paymax_spread", c.Source.Currency, "CREDIT", spread, ":src-spread"},
+		{"provider_clearing", c.Source.Currency, "CREDIT", clearing, ":src-clearing"},
+		{"provider_clearing", c.Destination.Currency, "DEBIT", c.Destination.AmountMinor, ":dst-clearing"},
+		{"customer_balance", c.Destination.Currency, "CREDIT", c.Destination.AmountMinor, ":dst"},
 	}
-	if _, err = tx.Exec(ctx, `
-		INSERT INTO orch_ledger_entries (customer_id, account, currency, type, amount_minor, reference, idempotency_key)
-		VALUES ($1,'customer_balance',$2,'CREDIT',$3,$4,$5)`,
-		c.CustomerID, c.Destination.Currency, c.Destination.AmountMinor, c.Reference, c.IdempotencyKey+":dst"); err != nil {
+	if err = postLedgerLegs(ctx, tx, c.CustomerID, c.Reference, c.IdempotencyKey, legs); err != nil {
 		return err
 	}
 
@@ -130,10 +181,21 @@ func (s *sqlStore) ApplyTransfer(ctx context.Context, t *Transfer, sourceTotalMi
 	if _, err = tx.Exec(ctx, `UPDATE orch_balances SET balance_minor = balance_minor - $3, updated_at=now() WHERE customer_id=$1 AND currency=$2`, t.CustomerID, t.Source.Currency, sourceTotalMinor); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `
-		INSERT INTO orch_ledger_entries (customer_id, account, currency, type, amount_minor, reference, idempotency_key)
-		VALUES ($1,'customer_balance',$2,'DEBIT',$3,$4,$5)`,
-		t.CustomerID, t.Source.Currency, sourceTotalMinor, t.Reference, t.IdempotencyKey+":out"); err != nil {
+	// Double-entry, balanced within the source currency (ADR-029). A payout only ever
+	// touches ONE Paymax-held balance: the destination amount is paid to an external
+	// beneficiary out of the provider's float, so there is no dest-currency leg here
+	// (that exposure is tracked by the treasury reserve, not orch_ledger_entries).
+	//
+	//   DR customer_balance  sourceTotal
+	//   CR paymax_spread     spread                (FX markup revenue, may be 0)
+	//   CR provider_clearing sourceTotal-spread
+	spread, clearing := splitSpread(feeAmount(t.Fees, FeeSpread), sourceTotalMinor)
+	legs := []entryLeg{
+		{"customer_balance", t.Source.Currency, "DEBIT", sourceTotalMinor, ":out"},
+		{"paymax_spread", t.Source.Currency, "CREDIT", spread, ":out-spread"},
+		{"provider_clearing", t.Source.Currency, "CREDIT", clearing, ":out-clearing"},
+	}
+	if err = postLedgerLegs(ctx, tx, t.CustomerID, t.Reference, t.IdempotencyKey, legs); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `
