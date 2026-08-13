@@ -311,11 +311,23 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		Scan(&isOpen, &ownerID, &rLat, &rLng, &pricingCfg.ServiceFeeBp, &pricingCfg.SurgeBp); err != nil {
 		return nil, fmt.Errorf("restaurant: primary restaurant not found")
 	}
-	if !isOpen {
+
+	// A scheduled order books a FUTURE slot, so it is gated on that slot falling inside
+	// the restaurant's weekly hours (SG-001/002) rather than on the restaurant being open
+	// at this instant — people schedule precisely when the place is shut. Validated here,
+	// before any money moves, so an impossible slot never reaches the escrow.
+	scheduledFor, serr := s.resolveScheduledFor(ctx, primaryRestaurantID, req.ScheduledFor, time.Now())
+	if serr != nil {
+		return nil, serr
+	}
+	// "Open right now" therefore only gates IMMEDIATE orders. For a scheduled one, whether
+	// the kitchen is open when the slot arrives is settled by ActivateScheduledOrders,
+	// which releases it into the live queue or auto-cancels AND REFUNDS it (SG-002).
+	if !isOpen && scheduledFor == nil {
 		return nil, fmt.Errorf("restaurant: primary restaurant is currently closed")
 	}
 
-	// Verify secondary restaurants (if multi-restaurant) are also open.
+	// Verify secondary restaurants (if multi-restaurant) are also open — same rule.
 	for rid := range restaurantMap {
 		if rid == primaryRestaurantID {
 			continue
@@ -324,7 +336,7 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		if err := s.db.QueryRow(ctx, `SELECT is_open FROM restaurants WHERE id=$1`, rid).Scan(&secondOpen); err != nil {
 			return nil, fmt.Errorf("restaurant: restaurant %s not found", rid)
 		}
-		if !secondOpen {
+		if !secondOpen && scheduledFor == nil {
 			return nil, fmt.Errorf("restaurant: restaurant %s is currently closed", rid)
 		}
 	}
@@ -619,6 +631,11 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		PromoID:           promoID,
 		PromoFunder:       promoFunder,
 		TotalKobo:         total,
+		// Free text from the client, so it is normalized rather than trusted: control
+		// characters stripped, whitespace runs collapsed, length capped (CT-009). It
+		// reaches the kitchen's screen and the rider's app, both of which render it.
+		SpecialInstructions: sanitizeInstructions(req.SpecialInstructions),
+		ScheduledFor:        scheduledFor,
 		Status:            OrderPending,
 		IdempotencyKey:    req.IdempotencyKey,
 		SettlementID:      sett.ID,
@@ -639,8 +656,8 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	}
 
 	const insertOrder = `
-		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, promo_id, promo_funder, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18)
+		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, promo_id, promo_funder, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, special_instructions, scheduled_for)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insertOrder,
 		order.ID, order.CustomerID, primaryRestaurantID,
@@ -648,6 +665,7 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		order.DiscountKobo, order.PromoID, order.PromoFunder, order.TotalKobo,
 		order.IdempotencyKey, order.SettlementID, order.DeliveryAddress,
 		order.DistanceMeters, order.EtaMinutes, breakdownJSON,
+		nullIfEmpty(order.SpecialInstructions), order.ScheduledFor,
 	)
 	if err != nil {
 		s.releasePromoReservationSafe(ctx, promoID, orderID)

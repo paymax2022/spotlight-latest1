@@ -116,11 +116,13 @@ func (s *Service) GetOrder(ctx context.Context, orderID, userID string) (*Order,
 	var o Order
 	const q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, total_kobo,
 	                  status, idempotency_key, COALESCE(settlement_id::text,''), delivery_address,
-	                  COALESCE(dispatch_status,'none'), delivery_code, promo_id::text, promo_funder, created_at
+	                  COALESCE(dispatch_status,'none'), delivery_code, promo_id::text, promo_funder,
+	                  COALESCE(special_instructions,''), scheduled_for, created_at
 	           FROM orders WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.CustomerID, &o.RestaurantID, &o.RiderID,
 		&o.SubtotalKobo, &o.DeliveryKobo, &o.SurgeKobo, &o.ServiceFeeKobo, &o.TipKobo, &o.DiscountKobo, &o.TotalKobo, &o.Status, &o.IdempotencyKey, &o.SettlementID,
-		&o.DeliveryAddress, &o.DispatchStatus, &o.DeliveryCode, &o.PromoID, &o.PromoFunder, &o.CreatedAt); err != nil {
+		&o.DeliveryAddress, &o.DispatchStatus, &o.DeliveryCode, &o.PromoID, &o.PromoFunder,
+		&o.SpecialInstructions, &o.ScheduledFor, &o.CreatedAt); err != nil {
 		return nil, fmt.Errorf("restaurant: order not found")
 	}
 	items, err := s.loadOrderItems(ctx, orderID)

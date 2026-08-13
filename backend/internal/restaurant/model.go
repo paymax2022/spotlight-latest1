@@ -94,6 +94,10 @@ type Order struct {
 	SurgeKobo           int64  `json:"surge_kobo"`
 	ServiceFeeKobo      int64  `json:"service_fee_kobo"`
 	SpecialInstructions string `json:"special_instructions,omitempty"`
+	// ScheduledFor is the future slot this order was booked for, or nil for an immediate
+	// order. While set, the order waits in `pending`; ActivateScheduledOrders clears it
+	// at the slot (releasing it into the live queue) or cancels + refunds it (SG-002).
+	ScheduledFor *time.Time `json:"scheduled_for,omitempty"`
 	// DiscountKobo is the promo discount taken off the item subtotal; PromoID and
 	// PromoFunder snapshot which promo applied and who bore it. TotalKobo (escrowed) =
 	// SubtotalKobo − DiscountKobo + DeliveryKobo + TipKobo.
