@@ -98,6 +98,30 @@ jobs:
       - name: Check live-DB tests gate on TEST_DATABASE_URL only
         run: bash scripts/ci/check-live-db-gate.sh
 
+  # Catches workflow-level startup failures — a run that dies before any job
+  # exists, so it reports no annotation and no check-run and looks like an
+  # unexplained red X. deploy-web.yml failed this way 198 times in 11 days
+  # (invalid `matrix` context in a workflow-level `concurrency.group`) before
+  # anyone traced it. actionlint validates context availability statically.
+  workflow-lint:
+    name: workflows (actionlint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      # Pinned version, built from source — no curl|bash installer.
+      - name: Install actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      # shellcheck/pyflakes integration is off: this gate is scoped to workflow
+      # validity (context availability, expression syntax, action versions),
+      # which is the class that produces a jobless red run. Linting the `run:`
+      # shell of all 27 workflows is a separate, larger cleanup — enable by
+      # dropping the two empty flags once that backlog is clear.
+      - name: Lint workflows
+        run: actionlint -no-color -oneline -shellcheck= -pyflakes=
+
   # Railway deployment is deliberately manual. The repository variable remains
   # an emergency kill switch, while the inputs and branch tests prevent an
   # environment from being deployed from the wrong promotion branch.
@@ -109,7 +133,7 @@ jobs:
       inputs.confirm_deploy == 'DEPLOY' &&
       github.ref == 'refs/heads/develop' &&
       vars.RAILWAY_DEPLOY_ENABLED == 'true'
-    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene]
+    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene, workflow-lint]
     runs-on: ubuntu-latest
     environment: development
     strategy:
@@ -158,7 +182,7 @@ jobs:
       inputs.confirm_deploy == 'DEPLOY' &&
       github.ref == 'refs/heads/staging' &&
       vars.RAILWAY_DEPLOY_ENABLED == 'true'
-    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene]
+    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene, workflow-lint]
     runs-on: ubuntu-latest
     environment: staging
     strategy:
@@ -207,7 +231,7 @@ jobs:
       inputs.confirm_deploy == 'DEPLOY' &&
       github.ref == 'refs/heads/prod' &&
       vars.RAILWAY_DEPLOY_ENABLED == 'true'
-    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene]
+    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene, workflow-lint]
     runs-on: ubuntu-latest
     environment: production
     strategy:
