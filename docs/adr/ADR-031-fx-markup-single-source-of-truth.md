@@ -36,7 +36,7 @@ table gained a `tier` column (`''` = any tier) and the unique index widened to
 `(corridor, tier)`. `min_bps`/`max_bps` were added to preserve `SpreadRule`'s
 per-corridor guard band.
 
-This ships as its **own** migration, `20261205000000_fx_markup_rates_tier.sql`.
+This ships as its **own** migration, `20261205000001_fx_markup_rates_tier.sql`.
 ADR-030's `20261204000000_fx_markup_rates.sql` is left frozen exactly as
 reviewed. An earlier draft folded the change into that file on the grounds that
 it had not yet left the branch; keeping it frozen is the better call — a
