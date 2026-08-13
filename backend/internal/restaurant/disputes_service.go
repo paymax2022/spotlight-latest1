@@ -75,10 +75,18 @@ func (s *Service) RaiseFoodDispute(ctx context.Context, orderID, actorID, dtype,
 // AdminResolveFoodDispute resolves a food dispute (platform ops only — enforced by the
 // restaurant.admin.disputes permission on the route). A refund resolution credits the
 // customer with a PLATFORM-FUNDED reversing entry (debit paymax_revenue → credit
-// customer wallet); it never claws back the restaurant/rider, so no wallet goes
-// negative. Idempotent: the resolution record is keyed by dispute id, and the ledger
-// credit is idempotent on the same key, so a retry neither double-refunds nor
-// double-records.
+// customer wallet), computed on the order total LESS the customer tip; it never claws
+// back the restaurant, so neither wallet goes negative. Idempotent: the resolution record
+// is keyed by dispute id, and the ledger credit is idempotent on the same key, so a retry
+// neither double-refunds nor double-records.
+//
+// The TIP is the one exception to "no clawback" (ADR-030). It is escrowed with the order
+// total and paid 100% to the rider at settlement — which has always already happened
+// here, since only a DELIVERED order can be disputed. Refunding it from platform revenue
+// would mean funding the rider's tip out of the platform's own pocket, so on a full
+// refund the tip is instead recovered FROM THE RIDER: debited immediately when their
+// wallet covers it, otherwise queued and taken off their next delivery settlement. The
+// rider's wallet is never driven negative either way.
 func (s *Service) AdminResolveFoodDispute(ctx context.Context, disputeID, adminID string, res FoodDisputeResolution, requestedRefundKobo int64, note string) (*FoodDispute, error) {
 	if s.ledger == nil {
 		return nil, fmt.Errorf("restaurant: dispute refunds require the ledger (not configured)")
@@ -98,14 +106,20 @@ func (s *Service) AdminResolveFoodDispute(ctx context.Context, disputeID, adminI
 	}
 	orderID := reference
 
-	// Resolve the order → customer + total, and compute the (capped) refund.
+	// Resolve the order → customer + total + tip + rider, and compute the (capped) refund.
 	var customerID string
-	var totalKobo int64
-	if err := s.db.QueryRow(ctx, `SELECT customer_id, total_kobo FROM orders WHERE id=$1`, orderID).
-		Scan(&customerID, &totalKobo); err != nil {
+	var riderID *string
+	var totalKobo, tipKobo int64
+	if err := s.db.QueryRow(ctx,
+		`SELECT customer_id, rider_id, total_kobo, COALESCE(tip_kobo,0) FROM orders WHERE id=$1`, orderID).
+		Scan(&customerID, &riderID, &totalKobo, &tipKobo); err != nil {
 		return nil, fmt.Errorf("restaurant: dispute order not found")
 	}
-	refundKobo, err := foodRefundKobo(res, requestedRefundKobo, totalKobo)
+	// The PLATFORM-funded refund is computed on the non-tip basis (ADR-030). The tip was
+	// paid straight through to the rider at settlement — which has already happened, since
+	// only a DELIVERED order can be disputed — so the platform never held it and must not
+	// refund it. The tip comes back to the customer via the rider clawback below.
+	refundKobo, err := foodRefundKobo(res, requestedRefundKobo, platformRefundableKobo(totalKobo, tipKobo))
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +134,22 @@ func (s *Service) AdminResolveFoodDispute(ctx context.Context, disputeID, adminI
 		key := "dispute-refund:" + disputeID
 		if cerr := s.ledger.Credit(ctx, customerID, key, key, revAcc.ID, refundKobo); cerr != nil && !errors.Is(cerr, ledger.ErrDuplicate) {
 			return nil, fmt.Errorf("restaurant: dispute refund credit: %w", cerr)
+		}
+	}
+
+	// The TIP leg (ADR-030). A full refund repudiates the delivery outright, so the tip
+	// follows it — clawed back from the rider who was paid it, never from the platform.
+	// Recovered immediately if the rider's wallet covers it, otherwise queued against
+	// their next delivery settlement. Deliberately NOT run for refund_partial: that is
+	// characteristically a kitchen fault, and the rider should not fund it.
+	tipRefundedKobo := int64(0)
+	if res == FoodRefundFull && tipKobo > 0 && riderID != nil && *riderID != "" {
+		recovered, cerr := s.clawBackDisputedTip(ctx, disputeID, orderID, *riderID, customerID, tipKobo)
+		if cerr != nil {
+			return nil, cerr
+		}
+		if recovered {
+			tipRefundedKobo = tipKobo
 		}
 	}
 
@@ -143,10 +173,15 @@ func (s *Service) AdminResolveFoodDispute(ctx context.Context, disputeID, adminI
 	}
 	_, _ = s.db.Exec(ctx, `UPDATE orders SET disputed_at=COALESCE(disputed_at, now()) WHERE id=$1`, orderID)
 
-	// Tell the customer the outcome.
-	if refundKobo > 0 {
+	// Tell the customer the outcome. credited is what actually landed in their wallet
+	// now — the platform-funded refund plus the tip if the rider could cover it this
+	// instant. A tip still queued against the rider's next delivery is NOT announced as
+	// credited; the recovery sweep notifies separately when it lands.
+	credited := refundKobo + tipRefundedKobo
+	if credited > 0 {
 		s.notify(ctx, Notification{UserID: customerID, Event: EventOrderCancelled, Title: "Dispute resolved — refund issued",
-			Body: "Your dispute was resolved and a refund was credited to your wallet.", Data: map[string]any{"order_id": orderID, "refund_kobo": refundKobo}})
+			Body: "Your dispute was resolved and a refund was credited to your wallet.",
+			Data: map[string]any{"order_id": orderID, "refund_kobo": credited}})
 	}
 	resStr := string(res)
 	return &FoodDispute{ID: disputeID, OrderID: orderID, Type: "", Status: "resolved", Resolution: &resStr, RefundKobo: refundKobo}, nil

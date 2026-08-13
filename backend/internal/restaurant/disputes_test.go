@@ -57,6 +57,64 @@ func TestFoodRefundNeverExceedsTotal(t *testing.T) {
 	}
 }
 
+// TestPlatformRefundableKobo: the platform-funded dispute refund is computed on the
+// order total LESS the tip (ADR-030). Disputes resolve only on DELIVERED orders, so the
+// rider has already been paid 100% of the tip and the platform never held it.
+func TestPlatformRefundableKobo(t *testing.T) {
+	cases := []struct {
+		name       string
+		total, tip int64
+		want       int64
+	}{
+		{"untipped → whole total", 100_000, 0, 100_000},
+		{"tipped → total less tip", 1_066_285, 50_000, 1_016_285},
+		{"negative tip ignored", 100_000, -1, 100_000},
+		// Only reachable if tip_kobo and total_kobo have diverged; must fail closed to a
+		// zero basis rather than produce a negative refund.
+		{"tip == total → no basis", 50_000, 50_000, 0},
+		{"tip > total → no basis", 50_000, 60_000, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := platformRefundableKobo(c.total, c.tip); got != c.want {
+				t.Fatalf("platformRefundableKobo(%d,%d) = %d, want %d", c.total, c.tip, got, c.want)
+			}
+		})
+	}
+}
+
+// TestFoodRefundPartialInheritsTipCap is the loophole guard. The partial branch derives
+// its ceiling from the SAME basis as the full branch, so capping only refund_full would
+// leave refund_partial able to refund the tip. Anything at or above the non-tip basis
+// must be rejected — including amounts that are legal against the raw order total.
+func TestFoodRefundPartialInheritsTipCap(t *testing.T) {
+	const total, tip int64 = 1_066_285, 50_000
+	basis := platformRefundableKobo(total, tip) // 1_016_285
+
+	// The whole tip band [basis, total) is legal against the raw total but must NOT be.
+	for _, requested := range []int64{basis, basis + 1, total - 1} {
+		if got, err := foodRefundKobo(FoodRefundPartial, requested, basis); !errors.Is(err, ErrDisputeInvalid) {
+			t.Errorf("partial %d against basis %d = %d,%v — must be rejected; a partial "+
+				"must not reach into the tip the platform never held", requested, basis, got, err)
+		}
+	}
+	// Just under the basis is still a valid partial.
+	if got, err := foodRefundKobo(FoodRefundPartial, basis-1, basis); err != nil || got != basis-1 {
+		t.Errorf("partial %d = %d,%v, want %d with no error", basis-1, got, err, basis-1)
+	}
+	// And the full branch pays exactly the basis — never the tip-inclusive total.
+	got, err := foodRefundKobo(FoodRefundFull, 0, basis)
+	if err != nil {
+		t.Fatalf("full refund: %v", err)
+	}
+	if got != basis {
+		t.Errorf("full refund = %d, want %d (the non-tip basis)", got, basis)
+	}
+	if got >= total {
+		t.Errorf("full refund %d reaches the tip-inclusive total %d — the platform would fund the tip", got, total)
+	}
+}
+
 func TestFoodDisputeResolvable(t *testing.T) {
 	for _, ok := range []string{"open", "investigating"} {
 		if !foodDisputeResolvable(ok) {
