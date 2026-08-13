@@ -36,6 +36,7 @@ import type {
   Badge,
   Challenge,
   LeaderboardEntry,
+  ClassLeaderboard,
   RewardBalance,
   RewardLedgerEntry,
   RewardCatalogItem,
@@ -111,6 +112,9 @@ import type {
   SchoolOverview,
   EcceHome,
 } from './types';
+import { adaptClassLeaderboard, type GoClassLeaderboard } from './gamificationAdapters';
+import { upsertBookmark } from './bookmarks';
+import type { SpendConsentState } from './consent';
 import * as M from './api/academy.mock';
 import * as P2 from './api/academy.phase2.mock';
 import * as P3 from './api/academy.phase3.mock';
@@ -934,6 +938,23 @@ export async function getLeaderboard(id = 'national'): Promise<LeaderboardEntry[
   return rows.map((e) => ({ rank: e.rank ?? 0, name: e.user_id, xp: e.score ?? 0, isMe: false }));
 }
 
+export async function getClassLeaderboard(): Promise<ClassLeaderboard> {
+  if (USE_MOCK) {
+    await delay();
+    return {
+      classCode: profile.classCode ?? '',
+      periodKey: 'all-time',
+      myRank: M.MOCK_LEADERBOARD.find((e) => e.isMe)?.rank ?? 0,
+      entries: M.MOCK_LEADERBOARD,
+    };
+  }
+  // GET /academy/gamification/leaderboard/class → ClassLeaderboard BARE (snake_case:
+  // {class_code, period_key, my_rank, entries[{rank, name, xp, is_me}]}). Child-safe
+  // by construction server-side: classmates only, first names, no user ids.
+  const res = await api.get(`${B}/gamification/leaderboard/class`);
+  return adaptClassLeaderboard(unwrap<GoClassLeaderboard>(res) ?? {});
+}
+
 // ── Rewards ──────────────────────────────────────────────────────────────────
 export async function getRewardBalance(): Promise<RewardBalance> {
   if (USE_MOCK) { await delay(); return rewardBalance; }
@@ -1582,6 +1603,18 @@ export async function getBookmarks(): Promise<Bookmark[]> {
 export async function removeBookmark(id: string): Promise<void> {
   if (USE_MOCK) { await delay(200); bookmarks = bookmarks.filter((b) => b.id !== id); return; }
   await api.delete(`${B}/learner/bookmarks/${id}`);
+}
+
+export async function addBookmark(input: Omit<Bookmark, 'id' | 'ts'>): Promise<Bookmark> {
+  if (USE_MOCK) {
+    await delay(200);
+    // Deduped by canonical href (upsertBookmark) so a double-tap can't create two rows.
+    const bm: Bookmark = { ...input, id: `bm_${Date.now()}`, ts: new Date().toISOString() };
+    bookmarks = upsertBookmark(bookmarks, bm);
+    return bm;
+  }
+  const { data } = await api.post<Bookmark>(`${B}/learner/bookmarks`, input);
+  return data;
 }
 
 export async function getNotes(): Promise<LessonNote[]> {
@@ -2375,6 +2408,16 @@ function issueCredentialLocal(trackSlug: TradeSlug | undefined, trackId: string,
   credentials = [cred, ...credentials];
   track('credential_issued', { credential: cred.id, track: trackId, score: scorePct });
   return cred;
+}
+
+/**
+ * Snapshot of the shared academy profile's consent state, for spend gates that
+ * live outside this module (fees/competition redeem). Fail-closed by default:
+ * the mock profile is a minor with consent 'pending' until getMe/recordConsent
+ * update it.
+ */
+export function spendConsentState(): SpendConsentState {
+  return { isMinor: profile.isMinor, guardianConsent: profile.guardianConsent };
 }
 
 /** Fail-closed gate: minors must have guardian consent before spending/redeeming. */
