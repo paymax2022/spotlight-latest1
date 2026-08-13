@@ -732,6 +732,14 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 	s.db.QueryRow(ctx, `SELECT total_kobo, customer_id FROM orders WHERE id=$1`, orderID).Scan(&grossKobo, &customerID)
 	grossKobo -= split.TipKobo
 	s.recordCommissionSafe(ctx, "Lifestyle", "Restaurant", "", grossKobo, orderID, &customerID)
+
+	// This rider has just been paid, so their wallet is at its high-water mark — the best
+	// moment to discharge any tip they owe back from an upheld dispute on an EARLIER
+	// delivery (ADR-031). Best-effort and non-fatal: the settlement above is already
+	// committed, and anything not recoverable now stays queued for the next payout.
+	if riderID != nil {
+		s.recoverRiderTipDebts(ctx, *riderID)
+	}
 	return nil
 }
 
