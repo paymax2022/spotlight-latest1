@@ -122,7 +122,7 @@ func (s *Service) CreateQuote(ctx context.Context, customerID, tier string, req 
 		rail = defaultRail(req.Intent)
 	}
 
-	// Pull the current spread rule card once per quote (ADR-031): the markup lives
+	// Pull the current spread rule card once per quote (ADR-032): the markup lives
 	// in fx_markup_rates, shared with the legacy FX service, so an admin change is
 	// live on the very next quote. One query per quote, not one per candidate.
 	//

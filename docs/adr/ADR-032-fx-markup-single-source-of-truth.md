@@ -1,7 +1,8 @@
-# ADR-031 — One FX markup table for both FX surfaces
+# ADR-032 — One FX markup table for both FX surfaces
 
 **Date:** 2026-08-13
 **Status:** Accepted
+**Renumbered:** shipped as ADR-031, renumbered to ADR-032 after merge — ADR-031 was taken concurrently by [dispute refund caps](ADR-031-dispute-refund-caps-and-funding.md) (PR #103) and both landed the same day. See *Renumbering note* below.
 **Deciders:** FX
 **Scope:** `backend/internal/orchestration` (`spread.go`, new `spread_source.go`, `service.go`), `backend/internal/finance/fx` (tier-aware resolution), the orchestration wiring in `finance_routes.go`, and the `fx_markup_rates` schema. Extends **ADR-030**, which introduced the table.
 
@@ -36,7 +37,9 @@ table gained a `tier` column (`''` = any tier) and the unique index widened to
 `(corridor, tier)`. `min_bps`/`max_bps` were added to preserve `SpreadRule`'s
 per-corridor guard band.
 
-This ships as its **own** migration, `20261205000001_fx_markup_rates_tier.sql`.
+This ships as its **own** migration, `20261205000001_fx_markup_rates_tier.sql`
+(originally stamped `20261205000000`, bumped in `ef99013b` when develop claimed
+that stamp for the restaurant tip-clawback migration).
 ADR-030's `20261204000000_fx_markup_rates.sql` is left frozen exactly as
 reviewed. An earlier draft folded the change into that file on the grounds that
 it had not yet left the branch; keeping it frozen is the better call — a
@@ -137,3 +140,23 @@ discovered.
 never called anywhere in the backend — so the table models no fixed-fee
 component. If a fixed component is ever wanted, it needs a column, a UI, and its
 own decision; it should not be quietly revived from the struct field.
+
+## Renumbering note
+
+This ADR was written and merged as **ADR-031**. PR #103 independently landed
+`ADR-031-dispute-refund-caps-and-funding.md` on the same day, so two different
+decisions briefly shared one number. This document moved to **ADR-032**; the
+dispute ADR keeps 031, since its migrations and a dozen `restaurant/*` source
+comments cite it and those are the older, more widely referenced set.
+
+**One reference was deliberately left pointing at ADR-031:**
+`supabase/migrations/20261205000001_fx_markup_rates_tier.sql`. Its header comment
+and the `notes` text it seeds into `fx_markup_rates` both say "ADR-031". That
+migration is **merged and already applied to live databases**, so editing it now
+would make the file disagree with what actually ran — the precise failure mode
+that kept `20261204000000` frozen in the first place (see *Schema* above). The
+seeded `notes` strings are data, not documentation; rewriting them would also
+clobber any row an operator has since edited.
+
+So: if you arrive at this ADR from that migration's "ADR-031", you are in the
+right place — the number moved after the migration shipped.

@@ -608,7 +608,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		}
 		// Spread rule card comes from public.fx_markup_rates — the SAME table the
 		// legacy wallet FX service prices from — so one admin change at
-		// PUT /api/finance/admin/fx/markup moves BOTH FX surfaces (ADR-031).
+		// PUT /api/finance/admin/fx/markup moves BOTH FX surfaces (ADR-032).
 		// Reloaded once per quote, so a change is live with no restart.
 		//
 		// The in-code rules below are only the bootstrap value used before the first

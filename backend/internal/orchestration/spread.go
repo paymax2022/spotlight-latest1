@@ -21,7 +21,7 @@ type SpreadRule struct {
 // SpreadSource loads the spread rule card from durable storage. Implemented by
 // the pgx-backed source over public.fx_markup_rates — the SAME table the legacy
 // wallet FX service prices from, so one admin change moves both surfaces
-// (ADR-031). A nil source leaves the engine on its in-code rules, which is what
+// (ADR-032). A nil source leaves the engine on its in-code rules, which is what
 // unit tests and any non-DB wiring use.
 type SpreadSource interface {
 	LoadRules(ctx context.Context) (defaultBPS int, rules []SpreadRule, err error)
