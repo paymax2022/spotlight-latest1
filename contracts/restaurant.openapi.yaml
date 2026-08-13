@@ -142,6 +142,23 @@ components:
         unit_price_kobo: { $ref: '#/components/schemas/Money' }
         quantity: { type: integer }
         notes: { type: string }
+        modifiers_kobo:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          description: >-
+            Per-unit surcharge from the chosen modifiers. The line's subtotal is
+            (unit_price_kobo + modifiers_kobo) × quantity.
+        modifiers:
+          type: array
+          description: >-
+            Immutable snapshot of the options chosen on this line, with the name and
+            price delta as they were at order time — a later menu edit never rewrites
+            what the customer was charged.
+          items:
+            type: object
+            properties:
+              modifier_id: { type: string }
+              name: { type: string }
+              price_delta_kobo: { $ref: '#/components/schemas/Money' }
     Order:
       type: object
       properties:
@@ -458,6 +475,16 @@ paths:
                       item_id: { type: string }
                       quantity: { type: integer }
                       notes: { type: string }
+                      modifier_ids:
+                        type: array
+                        items: { type: string }
+                        description: >-
+                          Chosen menu_modifiers for this line. Validated fail-closed
+                          against the item's own modifier groups — an unknown or
+                          unavailable option, a duplicate, or a group whose
+                          required/min_select/max_select rule is broken rejects the
+                          whole order with 400, before anything is escrowed. Each
+                          chosen option adds its price_delta_kobo per unit.
                 delivery_address: { type: string }
                 delivery_lat: { type: number }
                 delivery_lng: { type: number }
@@ -487,6 +514,7 @@ paths:
                     discount exceeds what the declared funder's settlement share can bear.
       responses:
         '201': { description: Order placed (also returned for an idempotent replay of the same Idempotency-Key), content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '400': { description: "Malformed cart — missing item_id/quantity, or an invalid modifier selection" }
         '401': { description: Not authenticated }
         '402': { description: Insufficient wallet balance }
         '403': { description: KYC tier forbids this debit — wallet disabled (Tier 0) or daily debit limit exceeded }

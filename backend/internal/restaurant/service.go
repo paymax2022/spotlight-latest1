@@ -353,15 +353,43 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		if input.Quantity > maxLineQuantity {
 			return nil, fmt.Errorf("restaurant: quantity %d for '%s' exceeds the per-line maximum of %d", input.Quantity, mi.Name, maxLineQuantity)
 		}
-		lineTotal := mi.PriceKobo * int64(input.Quantity)
+
+		// Chosen modifiers price the line. resolveLineModifiers is fail-closed against
+		// the item's OWN groups: an unknown or 86'd option, a duplicate, or a group whose
+		// min/max (or `required`) is violated rejects the order — before any money moves.
+		// That matters both ways round: an unpriced add-on is money the restaurant never
+		// gets, and a required "Size" left unchosen is an order the kitchen cannot make.
+		//
+		// The groups are loaded per line rather than once per menu item because the same
+		// item may legitimately appear twice in a cart with different options; the extra
+		// reads are bounded by the cart size and happen before the escrow.
+		groups, gerr := s.loadItemModifierGroups(ctx, mi.ID)
+		if gerr != nil {
+			return nil, fmt.Errorf("restaurant: load modifiers for '%s': %w", mi.Name, gerr)
+		}
+		chosen, modifiersKobo, merr := resolveLineModifiers(groups, input.ModifierIDs)
+		if merr != nil {
+			return nil, merr
+		}
+		// modifiersKobo is a PER-UNIT surcharge, so it multiplies with the quantity —
+		// two burgers with extra cheese are charged for two lots of cheese.
+		lineTotal := (mi.PriceKobo + modifiersKobo) * int64(input.Quantity)
+		snapshot := make([]OrderItemModifier, 0, len(chosen))
+		for _, m := range chosen {
+			snapshot = append(snapshot, OrderItemModifier{
+				ModifierID: m.ID, Name: m.Name, PriceDeltaKobo: m.PriceDeltaKobo,
+			})
+		}
 		itemsWithRest = append(itemsWithRest, itemWithRest{
 			item: OrderItem{
-				ID:           uuid.New().String(),
-				MenuItemID:   mi.ID,
-				Name:         mi.Name,
-				PriceKobo:    mi.PriceKobo,
-				Quantity:     input.Quantity,
-				SubtotalKobo: lineTotal,
+				ID:            uuid.New().String(),
+				MenuItemID:    mi.ID,
+				Name:          mi.Name,
+				PriceKobo:     mi.PriceKobo,
+				Quantity:      input.Quantity,
+				ModifiersKobo: modifiersKobo,
+				Modifiers:     snapshot,
+				SubtotalKobo:  lineTotal,
 			},
 			restID: restID,
 		})
@@ -646,6 +674,7 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	// Insert order items and their restaurant mappings (multi-restaurant support).
 	const insertItem = `INSERT INTO order_items (id, order_id, menu_item_id, name, price_kobo, quantity, subtotal_kobo) VALUES ($1,$2,$3,$4,$5,$6,$7)`
 	const insertRestMapping = `INSERT INTO order_restaurant_items (id, order_id, order_item_id, restaurant_id) VALUES ($1,$2,$3,$4)`
+	const insertItemModifier = `INSERT INTO order_item_modifiers (id, order_item_id, modifier_id, name, price_delta_kobo) VALUES ($1,$2,$3,$4,$5)`
 	for _, iwr := range itemsWithRest {
 		iwr.item.OrderID = order.ID
 		if _, err := tx.Exec(ctx, insertItem,
@@ -654,6 +683,19 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		); err != nil {
 			s.releasePromoReservationSafe(ctx, promoID, orderID)
 			return nil, fmt.Errorf("restaurant: insert order item: %w", err)
+		}
+		// Snapshot the chosen options onto the line. This is what makes the line's price
+		// reproducible: order_item_modifiers stores the NAME and DELTA as they were at
+		// order time, so a later menu edit (re-price an extra, rename it, 86 it) can never
+		// rewrite what this customer was charged. It is also the read model — GetOrder
+		// derives OrderItem.ModifiersKobo by summing these rows, so without them a paid-for
+		// modifier is invisible to the customer, the kitchen and any dispute.
+		for _, m := range iwr.item.Modifiers {
+			if _, err := tx.Exec(ctx, insertItemModifier,
+				uuid.New().String(), iwr.item.ID, m.ModifierID, m.Name, m.PriceDeltaKobo,
+			); err != nil {
+				return nil, fmt.Errorf("restaurant: insert order item modifier: %w", err)
+			}
 		}
 		// Map this item to its source restaurant (enables split-kitchen workflow).
 		if _, err := tx.Exec(ctx, insertRestMapping,
