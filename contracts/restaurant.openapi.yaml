@@ -157,6 +157,11 @@ components:
         subtotal_kobo: { $ref: '#/components/schemas/Money' }
         delivery_fee_kobo: { $ref: '#/components/schemas/Money' }
         service_fee_kobo: { $ref: '#/components/schemas/Money' }
+        tip_kobo:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          description: >-
+            Rider tip, escrowed with the order total and paid 100% to the rider at
+            settlement (the 80/10/10 percentages price total − tip).
         total_kobo: { $ref: '#/components/schemas/Money' }
         delivery_address: { type: string }
         delivery_lat: { type: number }
@@ -412,6 +417,15 @@ paths:
                 delivery_address: { type: string }
                 delivery_lat: { type: number }
                 delivery_lng: { type: number }
+                tip_kobo:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  description: >-
+                    Optional rider tip in whole kobo. Escrowed with the order total and
+                    paid 100% to the rider at settlement. A negative value is clamped to
+                    0; a tip greater than the order's own value (subtotal + delivery) is
+                    rejected.
       responses:
         '200': { description: Order placed, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
         '401': { description: Not authenticated }

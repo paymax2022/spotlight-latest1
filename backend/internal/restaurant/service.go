@@ -313,11 +313,26 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		etaMinutes = &em
 	}
 
-	total := subtotal + deliveryKobo
+	// Rider tip: escrowed WITH the order total and paid 100% to the rider at
+	// settlement (settlement.Split.TipKobo). This is the ONE client-supplied amount on
+	// the order, so it is bounded on both sides before it can reach the escrow debit:
+	//   - negative is clamped to 0 (never a discount; also violates orders_tip_kobo_nonneg);
+	//   - it may not exceed the order's own value, which rejects fat-finger/hostile
+	//     amounts up front and keeps `total` far from int64 overflow.
+	tipKobo := req.TipKobo
+	if tipKobo < 0 {
+		tipKobo = 0
+	}
+	if tipKobo > subtotal+deliveryKobo {
+		return nil, fmt.Errorf("restaurant: tip of %d kobo exceeds the order value of %d kobo", tipKobo, subtotal+deliveryKobo)
+	}
+
+	total := subtotal + deliveryKobo + tipKobo
 	orderID := uuid.New().String()
 	ref := "order:" + orderID
 
-	// Escrow full amount: 80% restaurant, 10% rider, 10% platform.
+	// Escrow full amount: 80% restaurant, 10% rider, 10% platform (the tip rides on
+	// top of that split — the percentages price total − tip).
 	sett, err := s.settlement.Escrow(ctx, customerID, ref, req.IdempotencyKey, "food_delivery", total)
 	if err != nil {
 		return nil, fmt.Errorf("restaurant: escrow payment: %w", err)
@@ -329,6 +344,7 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		RestaurantID:      restaurantID,
 		SubtotalKobo:      subtotal,
 		DeliveryKobo:      deliveryKobo,
+		TipKobo:           tipKobo,
 		TotalKobo:         total,
 		Status:            OrderPending,
 		IdempotencyKey:    req.IdempotencyKey,
@@ -356,12 +372,12 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	defer tx.Rollback(ctx)
 
 	const insertOrder = `
-		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown)
-		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12)
+		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, tip_kobo, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,$10,$11,$12,$13)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insertOrder,
 		order.ID, order.CustomerID, primaryRestaurantID,
-		order.SubtotalKobo, order.DeliveryKobo, order.TotalKobo,
+		order.SubtotalKobo, order.DeliveryKobo, order.TipKobo, order.TotalKobo,
 		order.IdempotencyKey, order.SettlementID, order.DeliveryAddress,
 		order.DistanceMeters, order.EtaMinutes, breakdownJSON,
 	)
@@ -625,6 +641,9 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 // settleOrder releases an order's escrow with the standard split: 80% restaurant
 // owner / 10% rider / 10% platform, folding the rider share back into the
 // restaurant (90/10) when no rider is assigned so escrow is fully released.
+// A customer tip (orders.tip_kobo, escrowed with the total at placement) rides on
+// top of that split and is paid 100% to the rider — the percentages price the
+// non-tip base (total − tip), so a tip never inflates the restaurant or platform cut.
 //
 // IDEMPOTENT: it drives settlement.Settle, which is guarded WHERE the settlement
 // row is 'escrowed' (a duplicate no-ops with a "cannot settle" error) and posts
@@ -633,7 +652,34 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 // live UpdateStatus(delivered) path and the crash-recovery reconciler.
 func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settlementID string) error {
 	var riderID *string
-	s.db.QueryRow(ctx, `SELECT rider_id FROM orders WHERE id=$1`, orderID).Scan(&riderID)
+	var tipKobo, orderTotal int64
+	// Fail closed on a read error: a silent scan failure would settle the order as
+	// rider-less (90/10, no rider payout) on what may be a perfectly good delivery.
+	if err := s.db.QueryRow(ctx,
+		`SELECT rider_id, COALESCE(tip_kobo,0), total_kobo FROM orders WHERE id=$1`, orderID).
+		Scan(&riderID, &tipKobo, &orderTotal); err != nil {
+		return fmt.Errorf("restaurant: load order for settlement: %w", err)
+	}
+	// The tip is a leg of the ESCROW, but it is read off the order row — so pay it only
+	// when the escrow actually covers the order it belongs to. The two can diverge: if
+	// PlaceOrder crashes between Escrow and the order insert, a retry on the same
+	// Idempotency-Key re-uses the FIRST attempt's escrow row (ON CONFLICT DO NOTHING)
+	// while inserting the SECOND attempt's amounts — a replay that raised the tip would
+	// otherwise pay the rider a tip out of the restaurant's share, and one that raised it
+	// past the escrow would wedge the settlement forever (Settle rejects tip > total).
+	// Fail safe: drop the tip leg, keeping the escrow fully released via the percentages.
+	if tipKobo > 0 {
+		var escrowedKobo int64
+		if err := s.db.QueryRow(ctx,
+			`SELECT total_kobo FROM settlements WHERE id=$1`, settlementID).Scan(&escrowedKobo); err != nil {
+			return fmt.Errorf("restaurant: load escrow for settlement: %w", err)
+		}
+		if escrowedKobo != orderTotal {
+			log.Printf("[restaurant] order %s: escrowed %d != order total %d — dropping the %d kobo tip leg from the split",
+				orderID, escrowedKobo, orderTotal, tipKobo)
+			tipKobo = 0
+		}
+	}
 	var ownerID string
 	s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID)
 	split := settlement.Split{
@@ -642,10 +688,27 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 		PlatformPct: 0.10,
 		RiderID:     riderID,
 		RiderPct:    0.10,
+		// The tip was escrowed with the order total at placement; Settle pays it 100%
+		// to the rider on top of the percentage split (which prices total − tip, so
+		// neither the restaurant nor the platform takes a cut of it).
+		TipKobo: tipKobo,
 	}
 	if riderID == nil {
 		split.ProviderPct = 0.90
 		split.RiderPct = 0
+		// No rider ⇒ no payee for the tip (Split.Validate rejects a tip without a
+		// rider). Unreachable via the live flow — ConfirmHandoff is the only path to
+		// `delivered` and it requires the assigned rider — but the crash-recovery
+		// reconciler can re-drive a rider-less delivered row. Drop the tip leg so the
+		// escrow is still fully released rather than stranding money in escrow. Be
+		// precise about what that means: with no tip leg the percentages price the
+		// WHOLE escrowed total, so the orphaned tip is released 90% to the restaurant
+		// and 10% to the platform. Logged loudly because it is money landing somewhere
+		// the customer did not intend — ops should reconcile it.
+		if tipKobo > 0 {
+			log.Printf("[restaurant] order %s settled with NO rider — orphaned tip %d kobo released 90/10 to restaurant/platform", orderID, tipKobo)
+		}
+		split.TipKobo = 0
 	}
 	if err := s.settlement.Settle(ctx, settlementID, split); err != nil {
 		return err
@@ -655,16 +718,19 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 	// This is the food-delivery settlement point (shared by the live UpdateStatus
 	// (delivered) path and the crash-recovery reconciler re-drive). Best-effort +
 	// idempotent: the order id doubles as source ref + idempotency key, so retries /
-	// reconciliation never double-count. gross = the full order value the customer
-	// paid (total_kobo = food subtotal + delivery fee) — the SAME basis restaurant's
-	// own 10% platform cut is computed on (the escrow split above applies its
-	// PlatformPct to this same escrowed total). A recorder failure is logged and
+	// reconciliation never double-count. gross = the order value the platform actually
+	// prices (total_kobo = food subtotal + delivery fee + tip, LESS the tip leg that
+	// was paid straight through to the rider) — the SAME basis restaurant's own 10%
+	// platform cut is computed on (the escrow split above applies its PlatformPct to
+	// total − TipKobo). Recording the tip as realized profit would overstate earnings
+	// on money the platform never took a cut of. A recorder failure is logged and
 	// swallowed — it must NEVER fail the settlement above (restaurant's own settle
 	// already posted the platform cut to the ledger; this appends the earning row
 	// only). userID is the paying customer.
 	var grossKobo int64
 	var customerID string
 	s.db.QueryRow(ctx, `SELECT total_kobo, customer_id FROM orders WHERE id=$1`, orderID).Scan(&grossKobo, &customerID)
+	grossKobo -= split.TipKobo
 	s.recordCommissionSafe(ctx, "Lifestyle", "Restaurant", "", grossKobo, orderID, &customerID)
 	return nil
 }

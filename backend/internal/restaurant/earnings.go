@@ -9,7 +9,7 @@ import (
 // EarningsLine is one settled order's contribution to a restaurant's earnings (PY-008).
 type EarningsLine struct {
 	OrderID      string    `json:"order_id"`
-	GrossKobo    int64     `json:"gross_kobo"`    // order total escrowed
+	GrossKobo    int64     `json:"gross_kobo"`    // order total escrowed, net of any rider tip
 	ProviderKobo int64     `json:"provider_kobo"` // the restaurant's settled share
 	FeeKobo      int64     `json:"fee_kobo"`      // platform commission on this order
 	SettledAt    time.Time `json:"settled_at"`
@@ -37,8 +37,13 @@ func (s *Service) EarningsStatement(ctx context.Context, restaurantID, userID st
 	if to.Before(from) {
 		return nil, fmt.Errorf("restaurant: `to` must be on or after `from`")
 	}
+	// Gross is reported NET of any rider tip: the tip is escrowed in st.total_kobo but
+	// paid straight through to the rider, and the percentages that produced
+	// provider_kobo/fee_kobo priced total − tip. Including it would inflate the
+	// merchant's gross by money that was never theirs, and the statement would stop
+	// tying out against the restaurant's own share + the platform cut.
 	const q = `
-		SELECT o.id, st.total_kobo, st.provider_kobo, st.fee_kobo, st.settled_at
+		SELECT o.id, st.total_kobo - COALESCE(o.tip_kobo,0), st.provider_kobo, st.fee_kobo, st.settled_at
 		FROM settlements st
 		JOIN orders o ON o.id = replace(st.reference, 'order:', '')::uuid
 		WHERE st.module_type = 'food_delivery'
