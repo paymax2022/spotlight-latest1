@@ -13,6 +13,16 @@ concurrency:
 
 jobs:
   deploy:
+    # Skip (not fail) unless the deploy is explicitly switched on — same pattern as
+    # deploy.yml's GCP gate. Set repo variable CPANEL_DEPLOY_ENABLED=true to activate.
+    #
+    # Why this exists: this job uploads a built frontend straight onto the live host
+    # and restarts the app, with no environment/approval gate. It had been failing
+    # harmlessly at `npm ci` (main's lockfile was out of sync) since 2026-08-10, so
+    # a fix to that lockfile would silently resume real production deploys on every
+    # push to main. The gate makes going live a deliberate act instead of a
+    # side effect of an unrelated merge.
+    if: ${{ vars.CPANEL_DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
