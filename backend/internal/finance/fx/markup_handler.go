@@ -23,10 +23,14 @@ func NewMarkupHandler(store *MarkupStore) *MarkupHandler { return &MarkupHandler
 //
 // RatePercent is a json.Number so the submitted literal survives parsing: "1.15"
 // stays "1.15" and converts to exactly 115 bps, where a float64 round-trip yields
-// 114.999…. Corridor defaults to the DEFAULT row. Active defaults to true when
-// omitted, so the common case ("set the rate to 1%") is a one-field body.
+// 114.999…. Corridor defaults to the DEFAULT row and Tier to "" (any tier), so
+// the common case ("set the platform rate to 1%") is a one-field body.
+//
+// Tier only affects the orchestration surface, which prices per customer tier;
+// the legacy wallet FX service always resolves the tier-agnostic rows (ADR-031).
 type SetMarkupRequest struct {
 	Corridor    string      `json:"corridor"`
+	Tier        string      `json:"tier"`
 	RatePercent json.Number `json:"ratePercent" binding:"required"`
 	Active      *bool       `json:"active"`
 	Notes       string      `json:"notes"`
@@ -70,7 +74,7 @@ func (h *MarkupHandler) SetRate(c *gin.Context) {
 		active = *req.Active
 	}
 
-	rate, err := h.store.SetRate(c.Request.Context(), corridor, bps, active,
+	rate, err := h.store.SetRate(c.Request.Context(), corridor, req.Tier, bps, active,
 		req.Notes, c.GetString("user_id"), req.Note)
 	if err != nil {
 		if errors.Is(err, ErrMarkupOutOfRange) {

@@ -606,11 +606,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			evsProvider,
 			mplProvider,
 		}
-		spreadEngine := orchestration.NewSpreadEngine(105,
+		// Spread rule card comes from public.fx_markup_rates — the SAME table the
+		// legacy wallet FX service prices from — so one admin change at
+		// PUT /api/finance/admin/fx/markup moves BOTH FX surfaces (ADR-031).
+		// Reloaded once per quote, so a change is live with no restart.
+		//
+		// The in-code rules below are only the bootstrap value used before the first
+		// refresh; they are the same rows the migration seeds, so the two agree even
+		// in that window. The DB is authoritative from the first quote onward.
+		spreadEngine := orchestration.NewSpreadEngine(fx.DefaultMarkupBPS,
 			orchestration.SpreadRule{Corridor: "USD-NGN", Tier: "business", BPS: 75, MinBPS: 50, MaxBPS: 150},
 			orchestration.SpreadRule{Corridor: "USD-NGN", BPS: 120, MinBPS: 80, MaxBPS: 200},
 			orchestration.SpreadRule{Corridor: "USD-XAF", BPS: 150, MinBPS: 100, MaxBPS: 250},
-		)
+		).WithSource(orchestration.NewSQLSpreadSource(pool))
 		treasury := orchestration.NewTreasury([]orchestration.FloatBucket{
 			{Provider: "eversend", Currency: "USD", BalanceMinor: 820_000_00, LowWaterMinor: 200_000_00, HighWaterMinor: 1_000_000_00, ExposureLimitMinor: 5_000_000_00},
 			{Provider: "eversend", Currency: "NGN", BalanceMinor: 1_800_000_000_00, LowWaterMinor: 250_000_000_00, HighWaterMinor: 9_000_000_000_00, ExposureLimitMinor: 50_000_000_000_00},

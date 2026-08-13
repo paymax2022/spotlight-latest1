@@ -110,7 +110,7 @@ func TestMarkupStore_AdminChangeTakesEffectImmediately(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PercentToBPS: %v", err)
 	}
-	rate, err := store.SetRate(ctx, corridor, bps, true, "", actor, "raise for volatility")
+	rate, err := store.SetRate(ctx, corridor, "", bps, true, "", actor, "raise for volatility")
 	if err != nil {
 		t.Fatalf("SetRate: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestMarkupStore_AdminChangeTakesEffectImmediately(t *testing.T) {
 	}
 
 	// Changing it again moves the charge again.
-	if _, err := store.SetRate(ctx, corridor, 50, true, "", actor, "settle back down"); err != nil {
+	if _, err := store.SetRate(ctx, corridor, "", 50, true, "", actor, "settle back down"); err != nil {
 		t.Fatalf("SetRate second change: %v", err)
 	}
 	if fee, err := store.FeeMinor(ctx, src, tgt, 100_000); err != nil || fee != 500 {
@@ -136,7 +136,7 @@ func TestMarkupStore_AdminChangeTakesEffectImmediately(t *testing.T) {
 	}
 
 	// Deactivating falls back to DEFAULT — never silently to zero.
-	if _, err := store.SetRate(ctx, corridor, 50, false, "", actor, "retire override"); err != nil {
+	if _, err := store.SetRate(ctx, corridor, "", 50, false, "", actor, "retire override"); err != nil {
 		t.Fatalf("SetRate deactivate: %v", err)
 	}
 	if fee, err := store.FeeMinor(ctx, src, tgt, 100_000); err != nil || fee != 1_000 {
@@ -154,10 +154,10 @@ func TestMarkupStore_EveryChangeIsAudited(t *testing.T) {
 	corridor := isolateCorridor(t, ctx, pool)
 	actor := uuid.NewString()
 
-	if _, err := store.SetRate(ctx, corridor, 100, true, "", actor, "create"); err != nil {
+	if _, err := store.SetRate(ctx, corridor, "", 100, true, "", actor, "create"); err != nil {
 		t.Fatalf("SetRate create: %v", err)
 	}
-	if _, err := store.SetRate(ctx, corridor, 250, true, "", actor, "raise"); err != nil {
+	if _, err := store.SetRate(ctx, corridor, "", 250, true, "", actor, "raise"); err != nil {
 		t.Fatalf("SetRate raise: %v", err)
 	}
 
@@ -208,7 +208,7 @@ func TestMarkupStore_RejectsOutOfRange(t *testing.T) {
 	corridor := isolateCorridor(t, ctx, pool)
 
 	for _, bps := range []int{-1, fx.MaxMarkupBPS + 1, 10_000} {
-		if _, err := store.SetRate(ctx, corridor, bps, true, "", "", ""); !errors.Is(err, fx.ErrMarkupOutOfRange) {
+		if _, err := store.SetRate(ctx, corridor, "", bps, true, "", "", ""); !errors.Is(err, fx.ErrMarkupOutOfRange) {
 			t.Errorf("SetRate(%d bps) error = %v, want ErrMarkupOutOfRange", bps, err)
 		}
 	}
