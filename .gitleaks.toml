@@ -1,0 +1,64 @@
+# Gitleaks allowlist — curated baseline for the security.yml secret-scan lane.
+#
+# Every entry below was hand-triaged (2026-08-13, follow-up to PR #84's pinned-CLI
+# fix). Categories:
+#   1. History-only leaks: files removed from HEAD whose secrets are covered by
+#      the rotation runbook (VSCode .history/ snapshots, .agentwork/ worktree
+#      copies, committed build artifacts). Git-history rewriting is out of scope
+#      (additive-only repo culture), so these are suppressed by path.
+#   2. Test fixtures: obviously-fake credentials in *_test.go files.
+#   3. Docs/templates: placeholder tokens in runbooks and quick-start guides.
+#   4. Public-by-design values: Supabase publishable (anon) keys.
+#
+# RULES FOR EDITING THIS FILE:
+#   - Never add a path that currently exists at HEAD and holds a real credential.
+#     Fix the file instead; only suppress what is provably fake or history-only.
+#   - Prefer the narrowest matcher: exact path > secret regex > commit sha.
+#   - Note the triage rationale in a comment next to every entry.
+
+title = "spotlight-latest1 gitleaks config"
+
+[extend]
+# Keep the full upstream default ruleset; we only add allowlist entries.
+useDefault = true
+
+[allowlist]
+description = "Triaged false positives and history-only findings (see header)"
+
+paths = [
+    # -- History-only (removed from HEAD; real secrets therein are on the
+    #    rotation runbook) -------------------------------------------------
+    '''(^|/)\.history/''',            # VSCode Local History snapshots of frontend-web/.env*.local
+    '''^\.agentwork/''',              # archived agent worktrees (duplicate .history trees + test fixtures)
+    '''^frontend-web/\.next/''',      # committed Next.js build output (build-time encryption keys, not external creds)
+    '''^frontend-web/\.npm-cache/''', # npm cacache blobs (dependency-shipped test private key)
+
+    # -- Test fixtures (fake credentials asserted in unit tests) -----------
+    '''^backend/internal/config/validate_test\.go$''',            # fake Paystack/Maplerad/Monnify keys for config validation
+    '''^backend/internal/credential/credential_test\.go$''',      # "s3cr…" style dummy secrets
+    '''^backend/internal/integrations/rtc/agora_test\.go$''',     # deterministic expected token built from fake creds
+    '''^mobile-app/reactnative/backend/internal/auth/auth_test\.go$''', # "test…1234" dummy secret
+
+    # -- Docs / templates with placeholder tokens --------------------------
+    '''^MARKETPLACE_QUICK_START\.md$''',
+    '''^RAILWAY_CONFIG_TEMPLATE\.md$''',
+    '''^REGISTRATION_E2E_TEST_RESULTS\.md$''',
+    '''^docs/qa/modules/cashtag\.md$''',
+    '''^frontend-web/src/server/voting-bridge/README\.md$''',
+]
+
+# Matched against the detected SECRET value (gitleaks default regexTarget).
+regexes = [
+    '''^idem-[a-z0-9-]+$''',              # staysAdminService mock idempotency keys ("idem-…")
+    '''^KYC_[A-Z_]+=\d+$''',              # env-var doc text in backend/.env.example misread as a secret
+    '''^sb_publishable_[A-Za-z0-9_-]+$''',# Supabase publishable (anon) keys are public by design
+    '''^sb_secret_[A-Za-z0-9_-]+$''',     # local-dev Supabase service key (URL 127.0.0.1:54321 only; useless off-machine)
+]
+
+commits = [
+    # backend/.env.example + mobile-app/reactnative/backend/.env.example once
+    # carried real Alpaca Broker *sandbox* keys. Values replaced with
+    # placeholders at HEAD; sandbox keys are on the rotation runbook. This sha
+    # is the introduction commit — nothing after it re-adds the values.
+    "2cc173b0c5d773a93c3fdc995fdb86ee562955c9",
+]
