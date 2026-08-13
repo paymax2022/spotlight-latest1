@@ -301,7 +301,14 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	var isOpen bool
 	var ownerID string
 	var rLat, rLng *float64
-	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng FROM restaurants WHERE id=$1`, primaryRestaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng); err != nil {
+	// service_fee_bp / surge_bp are the platform's pricing knobs (SetPricingConfig).
+	// Read here, at order time, so the order is priced by the config in force when it
+	// was placed — a later ops change must never reprice an order retroactively.
+	var pricingCfg PricingConfig
+	if err := s.db.QueryRow(ctx,
+		`SELECT is_open, owner_id, geo_lat, geo_lng, COALESCE(service_fee_bp,0), COALESCE(surge_bp,0) FROM restaurants WHERE id=$1`,
+		primaryRestaurantID).
+		Scan(&isOpen, &ownerID, &rLat, &rLng, &pricingCfg.ServiceFeeBp, &pricingCfg.SurgeBp); err != nil {
 		return nil, fmt.Errorf("restaurant: primary restaurant not found")
 	}
 	if !isOpen {
@@ -339,6 +346,13 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		if !mi.IsAvailable {
 			return nil, fmt.Errorf("restaurant: menu item '%s' is not available", mi.Name)
 		}
+		// Sanity-bound the line before it is multiplied. Quantity was only bounded below
+		// (>= 1), and the pricing that follows multiplies before it divides — see
+		// maxLineQuantity. order_items.quantity is a Postgres INT, but that constraint
+		// only fires on the INSERT, long after the escrow debit is posted.
+		if input.Quantity > maxLineQuantity {
+			return nil, fmt.Errorf("restaurant: quantity %d for '%s' exceeds the per-line maximum of %d", input.Quantity, mi.Name, maxLineQuantity)
+		}
 		lineTotal := mi.PriceKobo * int64(input.Quantity)
 		itemsWithRest = append(itemsWithRest, itemWithRest{
 			item: OrderItem{
@@ -352,6 +366,14 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 			restID: restID,
 		})
 		subtotal += lineTotal
+	}
+
+	// Aggregate sanity bound: many bounded lines can still add up past what the
+	// basis-point pricing below can multiply without overflowing int64. Checked once
+	// here so every derived amount (surge, service fee, percentage discount, total) is
+	// computed on a subtotal that is known to be safe.
+	if subtotal > maxOrderSubtotalKobo {
+		return nil, fmt.Errorf("restaurant: cart subtotal %d kobo exceeds the maximum order value of %d kobo", subtotal, maxOrderSubtotalKobo)
 	}
 
 	// Min-order gate (CT-007): an undersized cart is rejected BEFORE escrow —
@@ -379,6 +401,22 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		etaMinutes = &em
 	}
 
+	// Platform pricing knobs, applied to the item subtotal in a fixed order because the
+	// service fee prices what the customer is actually charged for food:
+	//
+	//	surge       inflates the item subtotal (peak dynamic pricing). It is food revenue,
+	//	            so it sits INSIDE the settlement gross and splits 80/10/10 like any
+	//	            other item money — the restaurant shares in it.
+	//	service fee is a 100%-PLATFORM leg (settlement.Split.ServiceFeeKobo, the mirror of
+	//	            a rider tip). It rides on TOP of the percentages, so the restaurant and
+	//	            the rider take no cut of it and it never inflates their shares. It is
+	//	            charged on the surged item subtotal — the price the customer sees.
+	//
+	// applyBp floors, so neither can round UP past its exact basis-point fraction.
+	surgeKobo := applyBp(subtotal, pricingCfg.SurgeBp)
+	itemsKobo := subtotal + surgeKobo
+	serviceFeeKobo := applyBp(itemsKobo, pricingCfg.ServiceFeeBp)
+
 	// Rider tip: escrowed WITH the order total and paid 100% to the rider at
 	// settlement (settlement.Split.TipKobo). This is the ONE client-supplied amount on
 	// the order, so it is bounded on both sides before it can reach the escrow debit:
@@ -389,18 +427,23 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	if tipKobo < 0 {
 		tipKobo = 0
 	}
-	if tipKobo > subtotal+deliveryKobo {
-		return nil, fmt.Errorf("restaurant: tip of %d kobo exceeds the order value of %d kobo", tipKobo, subtotal+deliveryKobo)
+	if tipKobo > itemsKobo+deliveryKobo {
+		return nil, fmt.Errorf("restaurant: tip of %d kobo exceeds the order value of %d kobo", tipKobo, itemsKobo+deliveryKobo)
 	}
 
-	// Promo discount. `grossKobo` is the value the 80/10/10 percentages price (items +
-	// delivery, before any discount and excluding the tip, which is a fixed rider leg on
-	// top) — the same `gross` settlement.Settle reconstructs at release time.
+	// Promo discount. `grossKobo` is the value the 80/10/10 percentages price (surged
+	// items + delivery, before any discount, and excluding both the tip and the service
+	// fee, which are fixed legs on top) — the same `gross` settlement.Settle reconstructs
+	// at release time.
 	//
 	// A supplied code is resolved BEFORE anything is escrowed and FAILS the order when it
 	// cannot be applied (ErrPromoInvalid → 422). Silently ignoring a bad code — what this
 	// path did while resolvePromo went uncalled — charges the customer the undiscounted
 	// price they never agreed to, which is the worse failure by far.
+	//
+	// The surge is INSIDE the gross, so a percentage promo discounts the surged price the
+	// customer is actually quoted (and min_subtotal_kobo gates on it too). The service fee
+	// is OUTSIDE it: a discount is never taken off the platform's fixed fee.
 	//
 	// KNOWN SCOPING LIMIT on a multi-restaurant cart: the code is resolved against the
 	// PRIMARY restaurant and discounts the whole cart's subtotal, and the discount lands
@@ -409,11 +452,11 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	// unmodelled behaviour — but a restaurant-scoped code will discount another
 	// restaurant's items. Per-restaurant promo scoping needs per-restaurant settlement
 	// first.
-	grossKobo := subtotal + deliveryKobo
+	grossKobo := itemsKobo + deliveryKobo
 	var discountKobo int64
 	var promoID, promoFunder *string
 	if code := strings.TrimSpace(req.PromoCode); code != "" {
-		ap, perr := s.resolvePromo(ctx, primaryRestaurantID, customerID, code, subtotal, deliveryKobo, time.Now())
+		ap, perr := s.resolvePromo(ctx, primaryRestaurantID, customerID, code, itemsKobo, deliveryKobo, time.Now())
 		if perr != nil {
 			return nil, perr
 		}
@@ -428,10 +471,10 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		promoID, promoFunder = &pid, &funder
 	}
 
-	// What the customer actually pays and what is escrowed: the discounted gross plus
-	// the tip. settlement.Settle reverses exactly this at release
-	// (base = total − tip; gross = base + discount).
-	total := grossKobo - discountKobo + tipKobo
+	// What the customer actually pays and what is escrowed: the discounted gross plus the
+	// two fixed legs that ride on top of the percentages. settlement.Settle reverses
+	// exactly this at release (base = total − tip − serviceFee; gross = base + discount).
+	total := grossKobo - discountKobo + serviceFeeKobo + tipKobo
 	orderID := uuid.New().String()
 	ref := "order:" + orderID
 
@@ -541,6 +584,8 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		RestaurantID:      restaurantID,
 		SubtotalKobo:      subtotal,
 		DeliveryKobo:      deliveryKobo,
+		SurgeKobo:         surgeKobo,
+		ServiceFeeKobo:    serviceFeeKobo,
 		TipKobo:           tipKobo,
 		DiscountKobo:      discountKobo,
 		PromoID:           promoID,
@@ -566,12 +611,12 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	}
 
 	const insertOrder = `
-		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, tip_kobo, discount_kobo, promo_id, promo_funder, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending',$11,$12,$13,$14,$15,$16)
+		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, promo_id, promo_funder, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insertOrder,
 		order.ID, order.CustomerID, primaryRestaurantID,
-		order.SubtotalKobo, order.DeliveryKobo, order.TipKobo,
+		order.SubtotalKobo, order.DeliveryKobo, order.SurgeKobo, order.ServiceFeeKobo, order.TipKobo,
 		order.DiscountKobo, order.PromoID, order.PromoFunder, order.TotalKobo,
 		order.IdempotencyKey, order.SettlementID, order.DeliveryAddress,
 		order.DistanceMeters, order.EtaMinutes, breakdownJSON,
@@ -907,12 +952,12 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settlementID string) error {
 	var riderID *string
 	var promoFunder *string
-	var tipKobo, discountKobo, orderTotal int64
+	var tipKobo, discountKobo, serviceFeeKobo, orderTotal int64
 	// Fail closed on a read error: a silent scan failure would settle the order as
 	// rider-less (90/10, no rider payout) on what may be a perfectly good delivery.
 	if err := s.db.QueryRow(ctx,
-		`SELECT rider_id, COALESCE(tip_kobo,0), COALESCE(discount_kobo,0), promo_funder, total_kobo FROM orders WHERE id=$1`, orderID).
-		Scan(&riderID, &tipKobo, &discountKobo, &promoFunder, &orderTotal); err != nil {
+		`SELECT rider_id, COALESCE(tip_kobo,0), COALESCE(discount_kobo,0), COALESCE(service_fee_kobo,0), promo_funder, total_kobo FROM orders WHERE id=$1`, orderID).
+		Scan(&riderID, &tipKobo, &discountKobo, &serviceFeeKobo, &promoFunder, &orderTotal); err != nil {
 		return fmt.Errorf("restaurant: load order for settlement: %w", err)
 	}
 	// The tip and the discount are both properties of the ESCROW, but they are read off
@@ -929,17 +974,18 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 	// percentages. That is always fully releasable (gross == base == the escrowed total,
 	// no leg can go negative) — value is conserved, it is simply apportioned as if the
 	// order carried neither.
-	if tipKobo > 0 || discountKobo > 0 {
+	if tipKobo > 0 || discountKobo > 0 || serviceFeeKobo > 0 {
 		var escrowedKobo int64
 		if err := s.db.QueryRow(ctx,
 			`SELECT total_kobo FROM settlements WHERE id=$1`, settlementID).Scan(&escrowedKobo); err != nil {
 			return fmt.Errorf("restaurant: load escrow for settlement: %w", err)
 		}
 		if escrowedKobo != orderTotal {
-			log.Printf("[restaurant] order %s: escrowed %d != order total %d — dropping the %d kobo tip and %d kobo discount legs from the split",
-				orderID, escrowedKobo, orderTotal, tipKobo, discountKobo)
+			log.Printf("[restaurant] order %s: escrowed %d != order total %d — dropping the %d kobo tip, %d kobo discount and %d kobo service-fee legs from the split",
+				orderID, escrowedKobo, orderTotal, tipKobo, discountKobo, serviceFeeKobo)
 			tipKobo = 0
 			discountKobo = 0
+			serviceFeeKobo = 0
 		}
 	}
 	var ownerID string
@@ -962,6 +1008,11 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 		// who paid for an order that already settled its terms.
 		DiscountKobo:             discountKobo,
 		DiscountFundedByPlatform: promoFunder != nil && *promoFunder == string(FunderPlatform),
+		// The platform service fee was escrowed on top of the gross at placement and is
+		// paid 100% to the platform — the mirror of the tip. Like the tip it sits OUTSIDE
+		// the percentages, so neither the restaurant nor the rider takes a cut of it, and
+		// it never inflates the gross their shares are computed from.
+		ServiceFeeKobo: serviceFeeKobo,
 	}
 	if riderID == nil {
 		split.ProviderPct = splitProviderPctNoRider
@@ -991,21 +1042,21 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 	// reconciliation never double-count. gross is the SAME basis restaurant's own 10%
 	// platform cut is computed on, i.e. exactly the `gross` Settle reconstructs above:
 	//
-	//	gross = total_kobo − TipKobo + DiscountKobo
+	//	gross = total_kobo − TipKobo − ServiceFeeKobo + DiscountKobo
 	//
-	// less the tip leg that was paid straight through to the rider (recording it would
-	// overstate earnings on money the platform never took a cut of), plus the promo
-	// discount added back (the percentages price the PRE-discount value, so a discounted
-	// order still generated that much business).
+	// The tip and the service fee come off because both are fixed legs paid straight
+	// through (to the rider and to the platform respectively) that the percentages never
+	// priced; the promo discount goes back on because the percentages price the
+	// PRE-discount value, so a discounted order still generated that much business.
 	//
-	// KNOWN LIMITATION, deliberately not papered over: for a PLATFORM-funded promo the
-	// platform's realized take is PlatformPct×gross − discount, but RecordFor only accepts
-	// a gross and derives the cut from the central rate card — there is no way to express
-	// "and we gave this much back". Such orders are therefore recorded at their full gross
-	// and the registry overstates profit by the funded discount. The LEDGER is unaffected
-	// and remains the source of truth (Settle already posted the reduced platform leg);
-	// this is an analytics row only. Netting it needs a RecordFor variant that takes an
-	// explicit realized-fee amount — tracked as follow-up, not fixable from here.
+	// KNOWN LIMITATION, deliberately not papered over: RecordFor accepts only a gross and
+	// derives the cut from the central rate card, so two components of the platform's
+	// ACTUAL take cannot be expressed here — the service fee it keeps in full (under-
+	// recorded) and a platform-funded promo discount it gave back (over-recorded). The
+	// LEDGER is unaffected and remains the source of truth: Settle already posted the
+	// exact platform leg, service fee and all. This is an analytics row only. Fixing it
+	// needs a RecordFor variant that takes an explicit realized-fee amount — tracked as
+	// follow-up, not fixable from inside this module.
 	//
 	// A recorder failure is logged and swallowed — it must NEVER fail the settlement above
 	// (restaurant's own settle already posted the platform cut to the ledger; this appends
@@ -1013,7 +1064,7 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 	var grossKobo int64
 	var customerID string
 	s.db.QueryRow(ctx, `SELECT total_kobo, customer_id FROM orders WHERE id=$1`, orderID).Scan(&grossKobo, &customerID)
-	grossKobo = grossKobo - split.TipKobo + split.DiscountKobo
+	grossKobo = grossKobo - split.TipKobo - split.ServiceFeeKobo + split.DiscountKobo
 	s.recordCommissionSafe(ctx, "Lifestyle", "Restaurant", "", grossKobo, orderID, &customerID)
 	return nil
 }

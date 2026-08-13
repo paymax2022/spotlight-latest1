@@ -156,7 +156,20 @@ components:
           items: { $ref: '#/components/schemas/OrderItem' }
         subtotal_kobo: { $ref: '#/components/schemas/Money' }
         delivery_fee_kobo: { $ref: '#/components/schemas/Money' }
-        service_fee_kobo: { $ref: '#/components/schemas/Money' }
+        surge_kobo:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          description: >-
+            Peak dynamic pricing added to the item subtotal from the restaurant's
+            surge_bp at order time. It sits INSIDE the settlement gross, so it splits
+            80/10/10 like any other food revenue.
+        service_fee_kobo:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          description: >-
+            Platform service fee from the restaurant's service_fee_bp at order time,
+            charged on the surged item subtotal. Escrowed on top of the gross and paid
+            100% to the platform at settlement (the mirror of a rider tip), so neither
+            the restaurant nor the rider takes a cut of it. Both knobs are snapshotted
+            at placement — a later config change never reprices an existing order.
         tip_kobo:
           allOf: [{ $ref: '#/components/schemas/Money' }]
           description: >-
