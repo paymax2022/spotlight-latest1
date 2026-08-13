@@ -1959,16 +1959,26 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	}
 
 	// --- Admin finance routes ---
+	// Mounted on the root engine, so RequireAuthContext must run HERE — it is what
+	// validates the bearer token and sets user_id. Without it requireUserID saw an
+	// empty user_id and every route below 401'd even for a super-admin, which is
+	// why the admin console's wallet lookup could never load. Same defect the base
+	// `finance` group fixed above.
+	//
+	// Authentication alone is not enough: these routes take an arbitrary :user_id,
+	// so each one is also RBAC-gated fail-closed. Otherwise any signed-in member
+	// could read any other member's balance and ledger.
 	adminFinance := r.Group("/api/finance/admin")
+	adminFinance.Use(mapsAuth()) // RequireAuthContext — validates token, sets user_id
 	adminFinance.Use(requireUserID())
 	if cfg.FeatureKYCEnabled {
-		adminFinance.GET("/kyc/pending", kycHandler.ListPending)
-		adminFinance.POST("/kyc/users/:user_id/approve", kycHandler.Approve)
-		adminFinance.POST("/kyc/users/:user_id/reject", kycHandler.Reject)
+		adminFinance.GET("/kyc/pending", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.ListPending)
+		adminFinance.POST("/kyc/users/:user_id/approve", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.Approve)
+		adminFinance.POST("/kyc/users/:user_id/reject", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.Reject)
 	}
 	if cfg.FeatureWalletEnabled {
-		adminFinance.GET("/wallets/:user_id/balance", walletHandler.AdminGetBalance)
-		adminFinance.GET("/wallets/:user_id/transactions", walletHandler.AdminListTransactions)
+		adminFinance.GET("/wallets/:user_id/balance", middleware.RequirePermission(rbac, "finance.admin.wallets"), walletHandler.AdminGetBalance)
+		adminFinance.GET("/wallets/:user_id/transactions", middleware.RequirePermission(rbac, "finance.admin.wallets"), walletHandler.AdminListTransactions)
 	}
 
 	// --- Merchant Onboarding & Role-Upgrade routes ---

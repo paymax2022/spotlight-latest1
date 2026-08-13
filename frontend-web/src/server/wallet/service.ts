@@ -7,6 +7,11 @@ import { enforceWalletLimit } from '@/src/server/tiers/service';
 
 const MIN_TOPUP_KOBO = 10_000; // ₦100 minimum
 
+// Reserved / non-routable TLDs (RFC 2606 + RFC 6761) plus the .internal suffix
+// used by our own fixtures. Paystack rejects these with a generic 400, so we
+// catch them here and return an actionable error instead of an opaque 502.
+const NON_ROUTABLE_TLDS = ['internal', 'local', 'localhost', 'test', 'invalid', 'example'];
+
 // ---------------------------------------------------------------------------
 // Account management
 // ---------------------------------------------------------------------------
@@ -335,6 +340,45 @@ export interface TopupIntentResult {
   amountKobo: number;
 }
 
+/**
+ * Resolve the email Paystack should bill against.
+ *
+ * The session email is preferred, but phone-only signups have none, so we fall
+ * back to the profile email before giving up. Paystack rejects anything that
+ * is not a routable address, so the result is shape-checked here — otherwise
+ * the failure surfaces as an opaque 502 from the provider.
+ */
+export async function resolveBillingEmail(userId: string, sessionEmail: string): Promise<string> {
+  let email = sessionEmail.trim();
+
+  if (!isBillableEmail(email)) {
+    const supabase = createAdminClient();
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('email')
+      .eq('id', userId)
+      .maybeSingle();
+
+    const profileEmail = typeof profile?.email === 'string' ? profile.email.trim() : '';
+    if (isBillableEmail(profileEmail)) email = profileEmail;
+  }
+
+  if (!isBillableEmail(email)) {
+    throw new ApiError(
+      'A valid email address is required to fund your wallet. Add one to your profile and try again.',
+      400,
+    );
+  }
+
+  return email;
+}
+
+function isBillableEmail(email: string): boolean {
+  if (!email || !/^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(email)) return false;
+  const tld = email.split('.').pop()?.toLowerCase() ?? '';
+  return !NON_ROUTABLE_TLDS.includes(tld);
+}
+
 export async function createTopupIntent(
   userId: string,
   email: string,
@@ -349,10 +393,42 @@ export async function createTopupIntent(
     );
   }
 
-  // Idempotency — return existing intent if key already used
+  const billingEmail = await resolveBillingEmail(userId, email);
+
+  // Idempotency — return existing intent if key already used.
+  // An intent with no authorization_url never reached Paystack (init failed), so
+  // it is re-driven below against its ORIGINAL reference rather than replayed as
+  // a success: returning it as-is would hand the app an empty checkout URL and
+  // permanently strand that idempotency key.
   const existing = await checkTopupIdempotencyKey(input.idempotencyKey);
-  if (existing) {
+  if (existing?.authorizationUrl) {
     return { alreadyProcessed: true, ...existing };
+  }
+
+  if (existing) {
+    if (existing.amountKobo !== input.amountKobo) {
+      throw new ApiError(
+        'This Idempotency-Key was already used for a different amount.',
+        409,
+      );
+    }
+
+    const retryUrl = await initializeTopupWithPaystack({
+      intentId: existing.intentId,
+      reference: existing.paymentReference,
+      email: billingEmail,
+      amountKobo: existing.amountKobo,
+      callbackUrl: input.callbackUrl,
+      userId,
+    });
+
+    return {
+      alreadyProcessed: false,
+      intentId: existing.intentId,
+      paymentReference: existing.paymentReference,
+      authorizationUrl: retryUrl,
+      amountKobo: existing.amountKobo,
+    };
   }
 
   const paymentReference = `TOPUP_${crypto.randomUUID().replace(/-/g, '').slice(0, 16).toUpperCase()}`;
@@ -378,24 +454,14 @@ export async function createTopupIntent(
     throw new ApiError('Failed to create topup intent', 500);
   }
 
-  // Call Paystack initialize
-  const authorizationUrl = await initializePaystackPayment({
+  const authorizationUrl = await initializeTopupWithPaystack({
+    intentId,
     reference: paymentReference,
-    email,
+    email: billingEmail,
     amountKobo: input.amountKobo,
     callbackUrl: input.callbackUrl,
-    metadata: {
-      type: 'wallet_topup',
-      topup_intent_id: intentId,
-      user_id: userId,
-    },
+    userId,
   });
-
-  // Store the authorization URL
-  await supabase
-    .from('wallet_topup_intents')
-    .update({ authorization_url: authorizationUrl })
-    .eq('id', intentId);
 
   return {
     alreadyProcessed: false,
@@ -409,6 +475,52 @@ export async function createTopupIntent(
 // ---------------------------------------------------------------------------
 // Paystack initialization (wallet-owned, independent of voting module)
 // ---------------------------------------------------------------------------
+
+/**
+ * Drive Paystack initialize for an intent row that already exists, persisting
+ * the outcome either way. A provider failure marks the intent 'failed' with its
+ * reason so the row does not sit at 'pending' forever with nothing recorded.
+ */
+async function initializeTopupWithPaystack(input: {
+  intentId: string;
+  reference: string;
+  email: string;
+  amountKobo: number;
+  callbackUrl?: string;
+  userId: string;
+}): Promise<string> {
+  const supabase = createAdminClient();
+
+  try {
+    const authorizationUrl = await initializePaystackPayment({
+      reference: input.reference,
+      email: input.email,
+      amountKobo: input.amountKobo,
+      callbackUrl: input.callbackUrl,
+      metadata: {
+        type: 'wallet_topup',
+        topup_intent_id: input.intentId,
+        user_id: input.userId,
+      },
+    });
+
+    await supabase
+      .from('wallet_topup_intents')
+      .update({ authorization_url: authorizationUrl, error_message: null })
+      .eq('id', input.intentId);
+
+    return authorizationUrl;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    await supabase
+      .from('wallet_topup_intents')
+      .update({ status: 'failed', error_message: message, updated_at: new Date().toISOString() })
+      .eq('id', input.intentId);
+
+    throw err;
+  }
+}
 
 async function initializePaystackPayment(input: {
   reference: string;
@@ -439,7 +551,10 @@ async function initializePaystackPayment(input: {
   });
 
   if (!res.ok) {
-    throw new ApiError(`Paystack initialization failed: ${res.statusText}`, 502);
+    // Paystack puts the actionable reason in the body ("Invalid Email Address
+    // Passed", "Amount too low"…); res.statusText is always a bare "Bad Request".
+    const reason = await readPaystackError(res);
+    throw new ApiError(`Paystack initialization failed: ${reason}`, 502);
   }
 
   const json = await res.json() as { status: boolean; data?: { authorization_url?: string } };
@@ -449,6 +564,16 @@ async function initializePaystackPayment(input: {
   }
 
   return authorizationUrl;
+}
+
+async function readPaystackError(res: Response): Promise<string> {
+  try {
+    const body = await res.json() as { message?: string };
+    if (typeof body.message === 'string' && body.message.trim()) return body.message.trim();
+  } catch {
+    // Non-JSON error body — fall through to the status line.
+  }
+  return res.statusText || `HTTP ${res.status}`;
 }
 
 // ---------------------------------------------------------------------------

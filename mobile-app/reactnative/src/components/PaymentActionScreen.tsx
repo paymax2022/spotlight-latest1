@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -22,6 +22,7 @@ import {
 import { fetchBanks } from '@/features/transfers/api';
 import BankPicker from '@/features/transfers/components/BankPicker';
 import type { TransferRecipient, WalletTransfer, Beneficiary, BankTransferResult } from '@/types/wallet';
+import { alertAsync } from '@/lib/confirm';
 import { showToast } from '@/store/toastStore';
 import { normalizeApiError } from '@/utils/errorMapper';
 import { sanitizeMoneyInput } from '@/utils/money';
@@ -202,18 +203,18 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     },
     onSuccess: async (result) => {
       if (!result.authorizationUrl) {
-        Alert.alert('Funding Started', `Reference: ${result.reference}`);
+        void alertAsync({ title: 'Funding Started', message: `Reference: ${result.reference}` });
         return;
       }
       const canOpen = await Linking.canOpenURL(result.authorizationUrl);
       if (canOpen) {
         await Linking.openURL(result.authorizationUrl);
       } else {
-        Alert.alert('Funding Link Ready', result.authorizationUrl);
+        void alertAsync({ title: 'Funding Link Ready', message: result.authorizationUrl });
       }
     },
     onError: (error) => {
-      Alert.alert('Could not start funding', error instanceof Error ? error.message : 'Please try again.');
+      void alertAsync({ title: 'Could not start funding', message: normalizeApiError(error).message });
     },
   });
 
@@ -248,11 +249,11 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     onError: (error) => {
       const msg = error instanceof Error ? error.message : 'Transfer failed. Please try again.';
       if (msg.toLowerCase().includes('insufficient')) {
-        Alert.alert('Insufficient Balance', 'Fund your wallet to continue.');
+        void alertAsync({ title: 'Insufficient Balance', message: 'Fund your wallet to continue.' });
       } else if (msg.toLowerCase().includes('limit')) {
-        Alert.alert('Daily Limit Reached', 'You have reached your daily transfer limit. Upgrade your KYC to increase limits.');
+        void alertAsync({ title: 'Daily Limit Reached', message: 'You have reached your daily transfer limit. Upgrade your KYC to increase limits.' });
       } else {
-        Alert.alert('Transfer Failed', msg);
+        void alertAsync({ title: 'Transfer Failed', message: msg });
       }
     },
   });
@@ -331,11 +332,11 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
     onError: (error) => {
       const msg = error instanceof Error ? error.message : 'Transfer failed. Please try again.';
       if (msg.toLowerCase().includes('insufficient')) {
-        Alert.alert('Insufficient Balance', 'Top up your wallet to continue.');
+        void alertAsync({ title: 'Insufficient Balance', message: 'Top up your wallet to continue.' });
       } else if (msg.toLowerCase().includes('limit')) {
-        Alert.alert('Daily Limit Reached', 'Upgrade your KYC to increase your daily limit.');
+        void alertAsync({ title: 'Daily Limit Reached', message: 'Upgrade your KYC to increase your daily limit.' });
       } else {
-        Alert.alert('Transfer Failed', msg);
+        void alertAsync({ title: 'Transfer Failed', message: msg });
       }
     },
   });
@@ -377,7 +378,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
       if (bankStep === 'confirm') { bankTransferMutation.mutate(); return; }
       if (bankStep === 'success') { resetBankFlow(); return; }
     }
-    Alert.alert(config.title, 'This feature is coming soon.');
+    void alertAsync({ title: config.title, message: 'This feature is coming soon.' });
   };
 
   const primaryLabel = () => {

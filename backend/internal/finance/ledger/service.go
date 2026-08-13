@@ -160,6 +160,19 @@ func (s *Service) PostReversal(ctx context.Context, restoreAccountID, releaseAcc
 	return s.repo.PostReversalPair(ctx, restoreAccountID, releaseAccountID, amountKobo, reference, idempotencyKey)
 }
 
+// GetBalanceAcrossPots returns a user's balance summed over every pot they hold
+// ('user_wallet' and the Next.js wallet's 'wallet'). Reporting-only — read-only
+// and unlocked, so it must never gate a debit.
+func (s *Service) GetBalanceAcrossPots(ctx context.Context, userID string) (int64, error) {
+	return s.repo.GetBalanceAcrossUserPots(ctx, userID)
+}
+
+// ListTransactionsAcrossPots returns a user's ledger entries from every pot they
+// hold, newest first. Reporting-only counterpart to ListTransactions.
+func (s *Service) ListTransactionsAcrossPots(ctx context.Context, userID string, limit, offset int) ([]Entry, error) {
+	return s.repo.ListEntriesAcrossUserPots(ctx, userID, limit, offset)
+}
+
 // ListTransactions returns paginated ledger entries for a user.
 func (s *Service) ListTransactions(ctx context.Context, userID string, limit, offset int) ([]Entry, error) {
 	acc, err := s.GetOrCreateUserWallet(ctx, userID)

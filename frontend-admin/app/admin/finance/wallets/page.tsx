@@ -5,7 +5,11 @@ import { getAdminWalletBalance, getAdminWalletTransactions, formatKobo } from '@
 import type { WalletBalance, LedgerEntry } from '@/types/fintech';
 import { Page, PageHeader, Card, Button, Input, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
+// Keyed on the lowercase credit/debit the Go handler emits. The uppercase raw
+// ledger types are kept so a future richer projection still colours correctly.
 const TYPE_COLOR: Record<string, string> = {
+  credit: colors.success,
+  debit: colors.danger,
   CREDIT: colors.success,
   DEBIT: colors.danger,
   REVERSAL_CREDIT: colors.info,
@@ -31,7 +35,7 @@ export default function WalletLookupPage() {
         getAdminWalletTransactions(userId.trim()),
       ]);
       setBalance(bal);
-      setEntries(txs.entries ?? []);
+      setEntries(txs.transactions ?? []);
     } catch (e) {
       setError(String(e));
     } finally {

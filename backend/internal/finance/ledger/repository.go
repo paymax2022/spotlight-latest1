@@ -292,3 +292,57 @@ func (r *Repository) ListEntries(ctx context.Context, accountID string, limit, o
 	}
 	return entries, rows.Err()
 }
+
+// userPotTypes are the ledger account types that together hold a user's
+// spendable balance. Two exist for historical reasons: the Go finance modules
+// post to 'user_wallet', while the Next.js wallet (Paystack top-ups, transfers)
+// posts to 'wallet'. Reporting must span both or it under-reports the user.
+var userPotTypes = []string{string(AccountUserWallet), "wallet"}
+
+// GetBalanceAcrossUserPots projects a user's balance over every pot they hold.
+// Read-only reporting accessor — like GetBalance it takes no lock and MUST NOT
+// gate a debit.
+func (r *Repository) GetBalanceAcrossUserPots(ctx context.Context, userID string) (int64, error) {
+	const q = `
+		SELECT COALESCE(SUM(
+			CASE WHEN e.type IN ('CREDIT','REVERSAL_DEBIT') THEN e.amount_kobo
+			     ELSE -e.amount_kobo END
+		), 0)
+		FROM ledger_entries e
+		JOIN ledger_accounts a ON a.id = e.account_id
+		WHERE a.user_id = $1 AND a.type = ANY($2)`
+
+	var balance int64
+	if err := r.db.QueryRow(ctx, q, userID, userPotTypes).Scan(&balance); err != nil {
+		return 0, fmt.Errorf("ledger: get balance across pots user=%s: %w", userID, err)
+	}
+	return balance, nil
+}
+
+// ListEntriesAcrossUserPots returns a user's ledger entries from every pot they
+// hold, newest first. Read-only reporting accessor.
+func (r *Repository) ListEntriesAcrossUserPots(ctx context.Context, userID string, limit, offset int) ([]Entry, error) {
+	const q = `
+		SELECT e.id, e.account_id, e.type, e.amount_kobo, e.reference, e.idempotency_key, e.created_at
+		FROM ledger_entries e
+		JOIN ledger_accounts a ON a.id = e.account_id
+		WHERE a.user_id = $1 AND a.type = ANY($2)
+		ORDER BY e.created_at DESC
+		LIMIT $3 OFFSET $4`
+
+	rows, err := r.db.Query(ctx, q, userID, userPotTypes, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: list entries across pots: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []Entry
+	for rows.Next() {
+		var e Entry
+		if err := rows.Scan(&e.ID, &e.AccountID, &e.Type, &e.AmountKobo, &e.Reference, &e.IdempotencyKey, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}

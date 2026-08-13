@@ -397,4 +397,140 @@ describe('createTopupIntent', () => {
       }),
     ).rejects.toThrow(/Paystack initialization failed/i);
   });
+
+  // Paystack answers a bad email with a bare 400, so an unusable address used to
+  // surface as an opaque 502 after a wasted round-trip and a stranded intent row.
+  it('rejects a non-routable email before calling Paystack', async () => {
+    const { maybySingle } = setupMock();
+    maybySingle.mockResolvedValueOnce({ data: null, error: null }); // profile lookup: no email
+    global.fetch = vi.fn();
+
+    await expect(
+      createTopupIntent(USER_ID, 'rider@spotlight.internal', {
+        amountKobo: 50_000,
+        idempotencyKey: 'topup-req-bad-email',
+      }),
+    ).rejects.toThrow(/valid email address is required/i);
+
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the profile email when the session has none', async () => {
+    const { maybySingle, insertFn, updateEq } = setupMock();
+    maybySingle
+      .mockResolvedValueOnce({ data: { email: 'profile@example.com' }, error: null }) // profile lookup
+      .mockResolvedValueOnce({ data: null, error: null });                            // idempotency miss
+    insertFn.mockResolvedValueOnce({ error: null });
+    updateEq.mockResolvedValueOnce({ error: null });
+
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: true, data: { authorization_url: 'https://checkout.paystack.com/p' } }),
+    } as Response);
+
+    const result = await createTopupIntent(USER_ID, '', {
+      amountKobo: 50_000,
+      idempotencyKey: 'topup-req-profile-email',
+    });
+
+    expect(result.authorizationUrl).toBe('https://checkout.paystack.com/p');
+    const body = JSON.parse(vi.mocked(global.fetch).mock.calls[0][1]!.body as string);
+    expect(body.email).toBe('profile@example.com');
+  });
+
+  it("surfaces Paystack's reason instead of the bare status line", async () => {
+    const { maybySingle, insertFn } = setupMock();
+    maybySingle.mockResolvedValueOnce({ data: null, error: null });
+    insertFn.mockResolvedValueOnce({ error: null });
+
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      statusText: 'Bad Request',
+      json: async () => ({ status: false, message: 'Invalid Email Address Passed' }),
+    } as unknown as Response);
+
+    await expect(
+      createTopupIntent(USER_ID, 'user@example.com', {
+        amountKobo: 50_000,
+        idempotencyKey: 'topup-req-reason',
+      }),
+    ).rejects.toThrow(/Invalid Email Address Passed/);
+  });
+
+  it('marks the intent failed when Paystack initialization errors', async () => {
+    const { maybySingle, insertFn, updateFn } = setupMock();
+    maybySingle.mockResolvedValueOnce({ data: null, error: null });
+    insertFn.mockResolvedValueOnce({ error: null });
+
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      statusText: 'Bad Request',
+      json: async () => ({ status: false, message: 'Amount too low' }),
+    } as unknown as Response);
+
+    await expect(
+      createTopupIntent(USER_ID, 'user@example.com', {
+        amountKobo: 50_000,
+        idempotencyKey: 'topup-req-mark-failed',
+      }),
+    ).rejects.toThrow(/Amount too low/);
+
+    expect(updateFn).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'failed', error_message: expect.stringContaining('Amount too low') }),
+    );
+  });
+
+  // An intent whose Paystack init failed has no authorization_url. Replaying it
+  // as a success would hand the app an empty checkout URL and strand the key.
+  it('re-drives Paystack for an existing intent that never got a checkout URL', async () => {
+    const { maybySingle, updateEq } = setupMock();
+    maybySingle.mockResolvedValueOnce({
+      data: {
+        id: 'intent-stranded',
+        payment_reference: 'TOPUP_STRANDED',
+        authorization_url: null,
+        amount_kobo: 50_000,
+      },
+      error: null,
+    });
+    updateEq.mockResolvedValueOnce({ error: null });
+
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: true, data: { authorization_url: 'https://checkout.paystack.com/retry' } }),
+    } as Response);
+
+    const result = await createTopupIntent(USER_ID, 'user@example.com', {
+      amountKobo: 50_000,
+      idempotencyKey: 'topup-req-stranded',
+    });
+
+    expect(result.authorizationUrl).toBe('https://checkout.paystack.com/retry');
+    expect(result.intentId).toBe('intent-stranded');
+    // Same reference — a retry must never mint a second chargeable reference.
+    expect(result.paymentReference).toBe('TOPUP_STRANDED');
+  });
+
+  it('rejects reusing an idempotency key for a different amount', async () => {
+    const { maybySingle } = setupMock();
+    maybySingle.mockResolvedValueOnce({
+      data: {
+        id: 'intent-stranded',
+        payment_reference: 'TOPUP_STRANDED',
+        authorization_url: null,
+        amount_kobo: 50_000,
+      },
+      error: null,
+    });
+    global.fetch = vi.fn();
+
+    await expect(
+      createTopupIntent(USER_ID, 'user@example.com', {
+        amountKobo: 90_000,
+        idempotencyKey: 'topup-req-stranded',
+      }),
+    ).rejects.toThrow(/already used for a different amount/i);
+
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
 });
