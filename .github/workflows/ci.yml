@@ -109,13 +109,23 @@ jobs:
       - name: Deploy ${{ matrix.service }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
-        run: >-
-          railway up ${{ matrix.path }} --path-as-root
-          --service ${{ matrix.service }}
-          --environment development
-          --project e7dca861-3667-4d9a-8090-6d2f4d179ec2
-          --ci
-          --message "${{ github.sha }}"
+        run: |
+          railway up ${{ matrix.path }} --path-as-root \
+            --service ${{ matrix.service }} \
+            --environment development \
+            --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
+            --detach \
+            --message "${{ github.sha }}"
+          for attempt in {1..40}; do
+            status="$(railway deployment list --service ${{ matrix.service }} --environment development --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 10 --json | jq -r --arg message "${{ github.sha }}" '[.[] | select(.meta.cliMessage == $message)] | first | .status // empty')"
+            case "$status" in
+              SUCCESS) exit 0 ;;
+              FAILED|CRASHED|REMOVED) echo "Railway deployment ended with $status"; exit 1 ;;
+              *) echo "Waiting for Railway deployment (attempt $attempt/40; status: ${status:-not-found})"; sleep 15 ;;
+            esac
+          done
+          echo "Timed out waiting for Railway deployment"
+          exit 1
 
   deploy-staging:
     name: deploy Staging (${{ matrix.service }})
@@ -146,13 +156,23 @@ jobs:
       - name: Deploy ${{ matrix.service }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
-        run: >-
-          railway up ${{ matrix.path }} --path-as-root
-          --service ${{ matrix.service }}
-          --environment staging
-          --project e7dca861-3667-4d9a-8090-6d2f4d179ec2
-          --ci
-          --message "${{ github.sha }}"
+        run: |
+          railway up ${{ matrix.path }} --path-as-root \
+            --service ${{ matrix.service }} \
+            --environment staging \
+            --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
+            --detach \
+            --message "${{ github.sha }}"
+          for attempt in {1..40}; do
+            status="$(railway deployment list --service ${{ matrix.service }} --environment staging --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 10 --json | jq -r --arg message "${{ github.sha }}" '[.[] | select(.meta.cliMessage == $message)] | first | .status // empty')"
+            case "$status" in
+              SUCCESS) exit 0 ;;
+              FAILED|CRASHED|REMOVED) echo "Railway deployment ended with $status"; exit 1 ;;
+              *) echo "Waiting for Railway deployment (attempt $attempt/40; status: ${status:-not-found})"; sleep 15 ;;
+            esac
+          done
+          echo "Timed out waiting for Railway deployment"
+          exit 1
 
   deploy-production:
     name: deploy Production (${{ matrix.service }})
@@ -183,10 +203,20 @@ jobs:
       - name: Deploy ${{ matrix.service }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
-        run: >-
-          railway up ${{ matrix.path }} --path-as-root
-          --service ${{ matrix.service }}
-          --environment production
-          --project e7dca861-3667-4d9a-8090-6d2f4d179ec2
-          --ci
-          --message "${{ github.sha }}"
+        run: |
+          railway up ${{ matrix.path }} --path-as-root \
+            --service ${{ matrix.service }} \
+            --environment production \
+            --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
+            --detach \
+            --message "${{ github.sha }}"
+          for attempt in {1..40}; do
+            status="$(railway deployment list --service ${{ matrix.service }} --environment production --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 10 --json | jq -r --arg message "${{ github.sha }}" '[.[] | select(.meta.cliMessage == $message)] | first | .status // empty')"
+            case "$status" in
+              SUCCESS) exit 0 ;;
+              FAILED|CRASHED|REMOVED) echo "Railway deployment ended with $status"; exit 1 ;;
+              *) echo "Waiting for Railway deployment (attempt $attempt/40; status: ${status:-not-found})"; sleep 15 ;;
+            esac
+          done
+          echo "Timed out waiting for Railway deployment"
+          exit 1
