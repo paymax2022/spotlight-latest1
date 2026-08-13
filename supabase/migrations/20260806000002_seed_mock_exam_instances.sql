@@ -55,12 +55,16 @@ BEGIN
       template_idx,
       variant,
       (template_idx * 1000 + variant * 100) as seed_value
+    -- generate_series may not appear inside a CASE arm (42804: "argument of
+    -- CASE/WHEN must not return a set") — produce the series first, then CASE
+    -- over the resulting column.
     FROM (
       SELECT
-        generate_series(1, 42) as template_idx,
-        (CASE WHEN generate_series(1, 42) % 3 = 0 THEN 4 ELSE 3 END) as max_variants
+        gs as template_idx,
+        (CASE WHEN gs % 3 = 0 THEN 4 ELSE 3 END) as max_variants
+      FROM generate_series(1, 42) as gs
     ) t
-    CROSS JOIN LATERAL generate_series(1, (CASE WHEN t.template_idx % 3 = 0 THEN 4 ELSE 3 END)) as variant
+    CROSS JOIN LATERAL generate_series(1, t.max_variants) as variant
   )
   SELECT
     t.id,

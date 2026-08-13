@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/provider/disbursement"
 )
 
 // lagosTZ is the delivery locale used to decide the night-fee window. Loaded once;
@@ -109,6 +110,17 @@ func (s *Service) WithCommission(c CommissionRecorder) *Service {
 	return s
 }
 
+// WithDisbursementRegistry wires the provider disbursement registry so merchant
+// withdrawals are routed through a real payment provider (Paystack, Monnify, etc.)
+// instead of the default NoopDisburser (sandbox mode). nil-safe: if no registry
+// is attached, withdrawals default to NoopDisburser (funds stay reserved).
+func (s *Service) WithDisbursementRegistry(reg *disbursement.Registry) *Service {
+	if reg != nil {
+		s.disburser = NewRegistryDisburser(reg)
+	}
+	return s
+}
+
 // computeDeliveryFee prices a delivery using real driving distance + ETA when a
 // routing provider is available, falling back to straight-line haversine.
 func (s *Service) computeDeliveryFee(ctx context.Context, rLat, rLng, dLat, dLng float64, night, weather bool, cfg DeliveryFeeConfig) DeliveryFeeBreakdown {
@@ -194,40 +206,93 @@ func (s *Service) SetDeliveryConfig(ctx context.Context, restaurantID *string, c
 }
 
 // PlaceOrder validates items, computes totals, escrows payment, and creates the order.
+// Supports multi-restaurant orders when items include restaurant_id; falls back to
+// single-restaurant mode when all items use the route's restaurantID.
 func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID string, req PlaceOrderRequest) (*Order, error) {
-	// Verify restaurant is open and grab its pin for distance-based pricing.
+	// Collect unique restaurants from items (or use the route's restaurantID as fallback).
+	// This enables multi-restaurant orders while maintaining backward compatibility.
+	restaurantMap := make(map[string]bool)
+	for _, input := range req.Items {
+		rid := input.RestaurantOf(restaurantID)
+		restaurantMap[rid] = true
+	}
+	if len(restaurantMap) == 0 {
+		return nil, fmt.Errorf("restaurant: no valid restaurants in order")
+	}
+
+	// For multi-restaurant orders, use the first one as the "primary" for backward compat
+	// (stored in orders.restaurant_id). For single-restaurant, it's the only one.
+	primaryRestaurantID := restaurantID
+	for rid := range restaurantMap {
+		if primaryRestaurantID == "" {
+			primaryRestaurantID = rid
+		}
+		break
+	}
+
+	// Verify all restaurants are open; grab their pins for distance-based pricing.
+	// Multi-restaurant: use the first/primary restaurant's pin for delivery fee.
 	var isOpen bool
 	var ownerID string
 	var rLat, rLng *float64
-	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng FROM restaurants WHERE id=$1`, restaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng); err != nil {
-		return nil, fmt.Errorf("restaurant: not found")
+	if err := s.db.QueryRow(ctx, `SELECT is_open, owner_id, geo_lat, geo_lng FROM restaurants WHERE id=$1`, primaryRestaurantID).Scan(&isOpen, &ownerID, &rLat, &rLng); err != nil {
+		return nil, fmt.Errorf("restaurant: primary restaurant not found")
 	}
 	if !isOpen {
-		return nil, fmt.Errorf("restaurant: restaurant is currently closed")
+		return nil, fmt.Errorf("restaurant: primary restaurant is currently closed")
 	}
 
-	// Fetch and validate menu items.
-	var items []OrderItem
+	// Verify secondary restaurants (if multi-restaurant) are also open.
+	for rid := range restaurantMap {
+		if rid == primaryRestaurantID {
+			continue
+		}
+		var secondOpen bool
+		if err := s.db.QueryRow(ctx, `SELECT is_open FROM restaurants WHERE id=$1`, rid).Scan(&secondOpen); err != nil {
+			return nil, fmt.Errorf("restaurant: restaurant %s not found", rid)
+		}
+		if !secondOpen {
+			return nil, fmt.Errorf("restaurant: restaurant %s is currently closed", rid)
+		}
+	}
+
+	// Fetch and validate menu items; group by restaurant for downstream processing.
+	type itemWithRest struct {
+		item       OrderItem
+		restID     string
+	}
+	var itemsWithRest []itemWithRest
 	var subtotal int64
 	for _, input := range req.Items {
+		restID := input.RestaurantOf(restaurantID)
 		var mi MenuItem
 		const qMI = `SELECT id, restaurant_id, name, price_kobo, is_available FROM menu_items WHERE id=$1 AND restaurant_id=$2`
-		if err := s.db.QueryRow(ctx, qMI, input.MenuItemID, restaurantID).Scan(&mi.ID, &mi.RestaurantID, &mi.Name, &mi.PriceKobo, &mi.IsAvailable); err != nil {
-			return nil, fmt.Errorf("restaurant: menu item %s not found", input.MenuItemID)
+		if err := s.db.QueryRow(ctx, qMI, input.MenuItemID, restID).Scan(&mi.ID, &mi.RestaurantID, &mi.Name, &mi.PriceKobo, &mi.IsAvailable); err != nil {
+			return nil, fmt.Errorf("restaurant: menu item %s not found in restaurant %s", input.MenuItemID, restID)
 		}
 		if !mi.IsAvailable {
 			return nil, fmt.Errorf("restaurant: menu item '%s' is not available", mi.Name)
 		}
 		lineTotal := mi.PriceKobo * int64(input.Quantity)
-		items = append(items, OrderItem{
-			ID:           uuid.New().String(),
-			MenuItemID:   mi.ID,
-			Name:         mi.Name,
-			PriceKobo:    mi.PriceKobo,
-			Quantity:     input.Quantity,
-			SubtotalKobo: lineTotal,
+		itemsWithRest = append(itemsWithRest, itemWithRest{
+			item: OrderItem{
+				ID:           uuid.New().String(),
+				MenuItemID:   mi.ID,
+				Name:         mi.Name,
+				PriceKobo:    mi.PriceKobo,
+				Quantity:     input.Quantity,
+				SubtotalKobo: lineTotal,
+			},
+			restID: restID,
 		})
 		subtotal += lineTotal
+	}
+
+	// Min-order gate (CT-007): an undersized cart is rejected BEFORE escrow —
+	// no money moves for an order the restaurant would refuse.
+	var minOrderKobo int64
+	if err := s.db.QueryRow(ctx, `SELECT COALESCE(min_order_kobo,0) FROM restaurants WHERE id=$1`, restaurantID).Scan(&minOrderKobo); err == nil && minOrderKobo > 0 && subtotal < minOrderKobo {
+		return nil, fmt.Errorf("restaurant: cart subtotal %d kobo is below the restaurant's minimum order of %d kobo", subtotal, minOrderKobo)
 	}
 
 	// Delivery fee: distance-based when BOTH the restaurant pin AND the delivery
@@ -295,7 +360,7 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insertOrder,
-		order.ID, order.CustomerID, order.RestaurantID,
+		order.ID, order.CustomerID, primaryRestaurantID,
 		order.SubtotalKobo, order.DeliveryKobo, order.TotalKobo,
 		order.IdempotencyKey, order.SettlementID, order.DeliveryAddress,
 		order.DistanceMeters, order.EtaMinutes, breakdownJSON,
@@ -311,17 +376,25 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		return s.getOrderByIdempotencyKey(ctx, order.IdempotencyKey)
 	}
 
-	for i := range items {
-		items[i].OrderID = order.ID
-		const insertItem = `INSERT INTO order_items (id, order_id, menu_item_id, name, price_kobo, quantity, subtotal_kobo) VALUES ($1,$2,$3,$4,$5,$6,$7)`
+	// Insert order items and their restaurant mappings (multi-restaurant support).
+	const insertItem = `INSERT INTO order_items (id, order_id, menu_item_id, name, price_kobo, quantity, subtotal_kobo) VALUES ($1,$2,$3,$4,$5,$6,$7)`
+	const insertRestMapping = `INSERT INTO order_restaurant_items (id, order_id, order_item_id, restaurant_id) VALUES ($1,$2,$3,$4)`
+	for _, iwr := range itemsWithRest {
+		iwr.item.OrderID = order.ID
 		if _, err := tx.Exec(ctx, insertItem,
-			items[i].ID, items[i].OrderID, items[i].MenuItemID,
-			items[i].Name, items[i].PriceKobo, items[i].Quantity, items[i].SubtotalKobo,
+			iwr.item.ID, iwr.item.OrderID, iwr.item.MenuItemID,
+			iwr.item.Name, iwr.item.PriceKobo, iwr.item.Quantity, iwr.item.SubtotalKobo,
 		); err != nil {
 			return nil, fmt.Errorf("restaurant: insert order item: %w", err)
 		}
+		// Map this item to its source restaurant (enables split-kitchen workflow).
+		if _, err := tx.Exec(ctx, insertRestMapping,
+			uuid.New().String(), order.ID, iwr.item.ID, iwr.restID,
+		); err != nil {
+			return nil, fmt.Errorf("restaurant: insert order restaurant mapping: %w", err)
+		}
+		order.Items = append(order.Items, iwr.item)
 	}
-	order.Items = items
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -493,17 +566,18 @@ func canTransition(from, to OrderStatus) bool {
 	}
 	switch from {
 	case OrderPending:
-		return to == OrderConfirmed || to == OrderCancelled
+		return to == OrderConfirmed || to == OrderCancelled || to == OrderRejected
 	case OrderConfirmed:
-		return to == OrderPreparing || to == OrderCancelled
+		return to == OrderPreparing || to == OrderCancelled || to == OrderRejected
 	case OrderPreparing:
+		// Too late to reject once cooking — cancel (with refund) is the only exit.
 		return to == OrderReady || to == OrderCancelled
 	case OrderReady:
-		return to == OrderPickedUp || to == OrderCancelled
+		return to == OrderPickedUp || to == OrderCancelled || to == OrderDispatchFailed
 	case OrderPickedUp:
-		return to == OrderDelivered
+		return to == OrderDelivered || to == OrderDeliveryFailed
 	default:
-		// delivered / cancelled are terminal.
+		// delivered / cancelled / rejected / dispatch_failed / delivery_failed are terminal.
 		return false
 	}
 }
@@ -680,13 +754,49 @@ func (s *Service) recordOrderEvent(ctx context.Context, orderID, actorID string,
 // and updates the order to a terminal refunded state (rejected/dispatch_failed/cancelled).
 // It posts a balanced ledger reversal and emits audit events.
 func (s *Service) refundAndClose(ctx context.Context, orderID, actorID string, toStatus OrderStatus, reason string) error {
-	// TODO: implement the refund money-path (escrow → customer wallet reversal).
-	// For now this is a stub that allows the FSM to compile.
-	// Actual implementation requires:
-	// 1. Load the order and escrow amount
-	// 2. Post balanced ledger reversal (DR escrow_liability → CR customer_wallet)
-	// 3. Update order status to terminal state
-	// 4. Record audit event
-	// 5. Notify customer
-	return fmt.Errorf("restaurant: refundAndClose not yet implemented")
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("restaurant: begin refund tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var status, settlementID string
+	if err := tx.QueryRow(ctx,
+		`SELECT status, COALESCE(settlement_id::text,'') FROM orders WHERE id=$1 FOR UPDATE`, orderID).
+		Scan(&status, &settlementID); err != nil {
+		return fmt.Errorf("restaurant: order not found")
+	}
+	if status == string(toStatus) {
+		return tx.Commit(ctx) // already closed in this state — idempotent no-op
+	}
+	// Refund the escrow BEFORE committing the terminal status so an order is never
+	// closed without the money returned (mirrors cancelAndRefund). Refund is
+	// idempotent on the settlement status, so a retry cannot double-refund.
+	if settlementID != "" {
+		if err := s.settlement.Refund(ctx, settlementID, string(toStatus)+":"+reason); err != nil {
+			return fmt.Errorf("restaurant: refund order: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE orders SET status=$2, status_reason=$3 WHERE id=$1`,
+		orderID, string(toStatus), reason); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	s.recordOrderEvent(ctx, orderID, actorID, OrderStatus(status), toStatus)
+	customer, _, rider, _ := s.orderParties(ctx, orderID)
+	if customer != "" && customer != actorID {
+		s.notify(ctx, Notification{UserID: customer, Event: EventOrderCancelled, Title: "Order refunded",
+			Body: "Your order could not be fulfilled and has been refunded.",
+			Data: map[string]any{"order_id": orderID, "status": string(toStatus), "reason": reason}})
+	}
+	if rider != "" && rider != actorID {
+		s.notify(ctx, Notification{UserID: rider, Event: EventOrderCancelled, Title: "Order closed",
+			Body: "An assigned order was closed.", Data: map[string]any{"order_id": orderID}})
+	}
+	s.broadcastStatus(orderID, toStatus)
+	return nil
 }

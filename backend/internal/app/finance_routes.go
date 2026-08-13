@@ -350,6 +350,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if pool != nil {
 			referralMember := finance.Group("/referral")
 			referralAdmin := r.Group("/api/referral/admin")
+			// RequireAuthContext must run FIRST — it is what sets user_id.
+			// requireUserID alone only checks for a value nothing ever wrote, so
+			// every referral admin route 401'd even with a valid token (the same
+			// bug the finance group carried; see the note above line 284).
+			referralAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
 			referralAdmin.Use(requireUserID())
 			RegisterReferral(referralMember, referralAdmin, pool, rbac)      // attribution/house/ledger/config (§7A)
 			RegisterReferralEcon(referralMember, referralAdmin, pool, rbac)  // campaigns/gamification/overrides/merchant
@@ -1400,6 +1405,33 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// projections over existing tables; the two mutations drive existing
 		// idempotent transitions (manual assign, onboarding is_open gate). Disputes
 		// are NOT here — the console reuses /api/finance/{disputes,admin/disputes}.
+		// Store & menu management for platform operators (restaurant.manage).
+		//
+		// These mirror the owner-facing routes on /api/finance/restaurant/:id/* but
+		// run under restaurant.WithAdminOverride, which relaxes the ownership check
+		// in Service.assertOwner. That check compares the caller against
+		// restaurants.owner_id with NO operator exemption, so without these an admin
+		// could view a merchant's store in the console but got 403 on every fix —
+		// a wrong price, an out-of-stock dish, or force-closing a store that is
+		// taking orders it cannot fulfil.
+		//
+		// RBAC is the security boundary here, not ownership: every route below is
+		// fail-closed behind RequirePermission, and WithAdminOverride is set ONLY in
+		// these handlers (grep `adminCtx(` in handler_admin_store.go). The store
+		// existence check still runs, so a bad id is a 404 for operators too.
+		//
+		// Mounted under the static "restaurants" segment so they cannot collide with
+		// the sibling ":id" params on /orders, /onboarding and /payouts.
+		restStore := restAdmin.Group("/restaurants", middleware.RequirePermission(rbac, "restaurant.manage"))
+		restStore.GET("/:id", restaurantHandler.AdminGetRestaurant)
+		restStore.PATCH("/:id", restaurantHandler.AdminUpdateRestaurant)
+		restStore.PATCH("/:id/availability", restaurantHandler.AdminSetAvailability)
+		restStore.POST("/:id/menu/categories", restaurantHandler.AdminCreateCategory)
+		restStore.DELETE("/:id/menu/categories/:categoryId", restaurantHandler.AdminDeleteCategory)
+		restStore.POST("/:id/menu/items", restaurantHandler.AdminCreateItem)
+		restStore.PATCH("/:id/menu/items/:itemId", restaurantHandler.AdminUpdateItem)
+		restStore.DELETE("/:id/menu/items/:itemId", restaurantHandler.AdminDeleteItem)
+
 		restAdmin.GET("/riders", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminListRiders)
 		restAdmin.GET("/dispatch/queue", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminDispatchQueue)
 		restAdmin.POST("/orders/:id/assign", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminAssignRider)

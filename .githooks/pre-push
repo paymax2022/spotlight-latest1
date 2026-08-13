@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+remote_name="${1:-origin}"
+
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
@@ -29,6 +31,15 @@ fi
 
 zero_sha="0000000000000000000000000000000000000000"
 
+# For new-branch pushes, only scan objects the remote does not already have.
+# Prefer the pushing remote's tracking refs; fall back to all remotes.
+exclude_known=(--not)
+if [[ -n "$(git for-each-ref --count=1 "refs/remotes/${remote_name}")" ]]; then
+  exclude_known+=(--remotes="${remote_name}")
+else
+  exclude_known+=(--remotes)
+fi
+
 while read -r local_ref local_sha remote_ref remote_sha; do
   # Branch deletion push; nothing to validate.
   if [[ "$local_sha" == "$zero_sha" ]]; then
@@ -36,9 +47,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
 
   if [[ "$remote_sha" == "$zero_sha" ]]; then
-    # New branch: only enumerate objects no remote already has. Without the
-    # negation this walks the full history (20k+ objects) on every new branch.
-    git rev-list --objects "$local_sha" --not --remotes >>"$tmp_objects"
+    # New branch: only enumerate objects the remote does not already have.
+    # Without the negation this walks the full history (20k+ objects) on
+    # every new branch.
+    git rev-list --objects "$local_sha" "${exclude_known[@]}" >>"$tmp_objects"
   else
     git rev-list --objects "${remote_sha}..${local_sha}" >>"$tmp_objects"
   fi
@@ -59,8 +71,10 @@ git cat-file --batch-check='%(objecttype) %(objectsize) %(rest)' \
 violations=0
 declare -a messages=()
 
+# One batch process resolves every object's type and size; %(rest) echoes back
+# the path that rev-list put after each oid. Non-blobs and pathless lines
+# (commits, "missing" entries) fall through the path/type guards below.
 while read -r obj_type obj_size path; do
-  # Commits have no path; unknown oids print "<oid> missing" (empty path).
   [[ -z "${path:-}" ]] && continue
 
   if [[ "$path" =~ (^|/)\.env($|\.) ]] && [[ ! "$path" =~ \.env(\..*)?\.example$ ]]; then

@@ -93,6 +93,16 @@ func (r *Repository) ListMerchantTypes(ctx context.Context, moduleID string) ([]
 	return scanMerchantTypes(rows)
 }
 
+// GetModuleStatus returns the parent module's status for the given module id.
+func (r *Repository) GetModuleStatus(ctx context.Context, moduleID string) (string, error) {
+	var status string
+	err := r.db.QueryRow(ctx, `SELECT status FROM onb_module WHERE id = $1`, moduleID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return status, err
+}
+
 func (r *Repository) GetMerchantType(ctx context.Context, id string) (*MerchantType, error) {
 	const q = `
 		SELECT t.id, t.module_id, m.name, t.slug, t.name, COALESCE(t.description,''),

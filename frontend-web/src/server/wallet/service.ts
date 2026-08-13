@@ -98,13 +98,30 @@ export async function getBalance(userId: string): Promise<WalletBalance> {
   await migrateLegacyMobileBalanceIfNeeded(userId, accountId);
   const supabase = createAdminClient();
 
-  const { data } = await supabase
+  // The user's spendable funds live across TWO ledger account types: 'wallet'
+  // (this Next.js wallet) and 'user_wallet' (the Go finance ledger — the
+  // money-path authority that transport/gifting/payouts debit). Read-only sum
+  // of both so the displayed balance reflects real spendable money; mutations
+  // still go through each system's own ledger.
+  const { data: walletAccounts } = await supabase
+    .from('ledger_accounts')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('currency', 'NGN')
+    .in('type', ['wallet', 'user_wallet']);
+  const accountIds = (walletAccounts ?? []).map((a) => a.id as string);
+  if (!accountIds.includes(accountId)) accountIds.push(accountId);
+
+  const { data: balances } = await supabase
     .from('wallet_balance')
     .select('available_kobo, currency, account_id')
-    .eq('account_id', accountId)
-    .maybeSingle();
+    .in('account_id', accountIds);
 
-  const availableKobo = (data?.available_kobo as number) ?? 0;
+  const availableKobo = (balances ?? []).reduce(
+    (sum, row) => sum + ((row.available_kobo as number) ?? 0),
+    0,
+  );
+  const data = (balances ?? []).find((row) => row.account_id === accountId) ?? null;
   const { count: ledgerEntryCount } = await supabase
     .from('ledger_entries')
     .select('id', { count: 'exact', head: true })

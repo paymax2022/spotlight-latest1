@@ -7,7 +7,7 @@ import {
   getRegistrationDraft,
   findRegistrationPaymentIntentByIdempotencyKey,
   createRegistrationPaymentIntent,
-} from '@/src/server/registration/store';
+} from '@/src/server/registration/supabase-store';
 
 // Registration fee payment — real Paystack gateway (test mode; the same
 // `initializePaystackPayment` helper the utility/bills module uses). This
@@ -34,7 +34,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
     const limited = checkRateLimit(`registration:payment-initiate:${user.id}`, 10, 60_000);
     if (!limited.allowed) return errorResponse('Too many payment attempts. Please slow down.', 429);
 
-    const draft = getRegistrationDraft(params.id);
+    const draft = await getRegistrationDraft(params.id);
     if (!draft) return errorResponse('Application not found', 404);
     if (draft.userId !== user.id) return errorResponse('Forbidden', 403);
 

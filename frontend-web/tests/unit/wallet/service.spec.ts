@@ -58,13 +58,27 @@ function setupMock() {
 describe('getBalance', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  // getBalance reads spendable funds across BOTH wallet-type ledger accounts
+  // ('wallet' + Go money-path 'user_wallet'). Its two list queries terminate in
+  // .in(...), so tests queue promise returns on mock.in:
+  //   in#1 → ledger_accounts (account id list), in#2 → wallet_balance rows.
+  function queueListQueries(
+    mock: { in: ReturnType<typeof vi.fn> },
+    accounts: { id: string }[],
+    balances: { available_kobo: number; currency: string; account_id: string }[],
+  ) {
+    mock.in
+      .mockReturnValueOnce(Promise.resolve({ data: accounts, error: null }))
+      .mockReturnValueOnce(Promise.resolve({ data: balances, error: null }));
+  }
+
   it('returns available_kobo=0 for a new account with no entries', async () => {
-    const { maybySingle } = setupMock();
+    const { mock, maybySingle } = setupMock();
     maybySingle
       .mockResolvedValueOnce({ data: existingAccount(), error: null }) // account lookup
       .mockResolvedValueOnce({ data: null, error: null })              // mobile_fintech (migrate)
-      .mockResolvedValueOnce({ data: null, error: null })              // wallet_balance (no row)
       .mockResolvedValueOnce({ data: null, error: null });             // mobile_fintech (balance=0 path)
+    queueListQueries(mock, [existingAccount()], []);
 
     const result = await getBalance(USER_ID);
     expect(result.available_kobo).toBe(0);
@@ -72,23 +86,40 @@ describe('getBalance', () => {
   });
 
   it('returns the correct balance from the wallet_balance view', async () => {
-    const { maybySingle } = setupMock();
+    const { mock, maybySingle } = setupMock();
     maybySingle
       .mockResolvedValueOnce({ data: existingAccount(), error: null }) // account lookup
-      .mockResolvedValueOnce({ data: null, error: null })              // mobile_fintech (migrate)
-      .mockResolvedValueOnce({ data: balanceRow(250_000), error: null }); // wallet_balance
+      .mockResolvedValueOnce({ data: null, error: null });             // mobile_fintech (migrate)
+    queueListQueries(mock, [existingAccount()], [balanceRow(250_000)]);
 
     const result = await getBalance(USER_ID);
     expect(result.available_kobo).toBe(250_000);
   });
 
+  it('sums the wallet and user_wallet ledger pots into one balance', async () => {
+    const { mock, maybySingle } = setupMock();
+    const goPotId = 'account-uuid-go-pot';
+    maybySingle
+      .mockResolvedValueOnce({ data: existingAccount(), error: null }) // account lookup
+      .mockResolvedValueOnce({ data: null, error: null });             // mobile_fintech (migrate)
+    queueListQueries(
+      mock,
+      [existingAccount(), { id: goPotId }],
+      [balanceRow(150_000), { available_kobo: 100_000, currency: 'NGN', account_id: goPotId }],
+    );
+
+    const result = await getBalance(USER_ID);
+    expect(result.available_kobo).toBe(250_000); // 150k 'wallet' + 100k 'user_wallet'
+    expect(result.account_id).toBe(ACCOUNT_ID);  // primary account id unchanged
+  });
+
   it('creates a new account when one does not exist', async () => {
-    const { maybySingle, insertFn } = setupMock();
+    const { mock, maybySingle, insertFn } = setupMock();
     maybySingle
       .mockResolvedValueOnce({ data: null, error: null })             // no existing account
       .mockResolvedValueOnce({ data: null, error: null })             // mobile_fintech (migrate)
-      .mockResolvedValueOnce({ data: null, error: null })             // wallet_balance (new acct)
       .mockResolvedValueOnce({ data: null, error: null });            // mobile_fintech (balance=0)
+    queueListQueries(mock, [], []); // new account: list query misses, id backfilled locally
     insertFn.mockResolvedValueOnce({ error: null });
 
     const result = await getBalance(USER_ID);

@@ -17,6 +17,19 @@ type Restaurant struct {
 	Cuisine        string    `json:"cuisine,omitempty"`
 	DistanceMeters *float64  `json:"distance_meters,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
+
+	// Storefront terms the client DISPLAYS but must never compute. These are
+	// columns that already existed on `restaurants` (plus packaging_fee_kobo,
+	// added in 20261113000000) but were absent from this DTO — so the mobile
+	// module had no source for them and fell back to values invented in
+	// src/features/food/mock.ts. Money values are integer kobo.
+	MinOrderKobo     int64 `json:"min_order_kobo"`
+	PackagingFeeKobo int64 `json:"packaging_fee_kobo"`
+	PrepTimeMinutes  int   `json:"prep_time_minutes"`
+
+	// Store coordinates, for map rendering and the distance-based delivery quote.
+	GeoLat *float64 `json:"geo_lat,omitempty"`
+	GeoLng *float64 `json:"geo_lng,omitempty"`
 }
 
 // MenuCategory groups menu items (e.g. "Starters", "Mains").
@@ -197,9 +210,14 @@ func (r PlaceOrderRequest) DeliveryCoords() (lat, lng float64, ok bool) {
 // canonical Order line are `menu_item_id`. We accept BOTH json tags and normalize
 // via MenuItem() so the client field name (`item_id`) works without a client change
 // while `menu_item_id` remains accepted for any other caller.
+//
+// RestaurantID (optional) specifies which restaurant provides this item. When omitted,
+// it defaults to the restaurantID from the route (single-restaurant backward compat).
+// When present, enables multi-restaurant orders.
 type OrderItemInput struct {
-	MenuItemID string `json:"menu_item_id"`
-	ItemID     string `json:"item_id"`
+	MenuItemID   string `json:"menu_item_id"`
+	ItemID       string `json:"item_id"`
+	RestaurantID string `json:"restaurant_id,omitempty"` // multi-restaurant support
 	// Quantity is accepted as either `quantity` (canonical) or `qty` (mobile client).
 	Quantity int `json:"quantity"`
 	Qty      int `json:"qty"`
@@ -224,4 +242,13 @@ func (i OrderItemInput) QtyOf() int {
 		return i.Quantity
 	}
 	return i.Qty
+}
+
+// RestaurantOf returns the restaurant ID for this item, using the provided fallback
+// if no explicit restaurant_id was set (backward compat for single-restaurant orders).
+func (i OrderItemInput) RestaurantOf(fallback string) string {
+	if i.RestaurantID != "" {
+		return i.RestaurantID
+	}
+	return fallback
 }

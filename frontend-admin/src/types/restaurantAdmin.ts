@@ -26,6 +26,64 @@ export interface Restaurant {
   rating: number;
   rating_count: number;
   created_at: string;
+  // Storefront terms, integer kobo. Added to the Go DTO alongside the
+  // packaging-fee migration; absent on older payloads, hence optional.
+  min_order_kobo?: number;
+  packaging_fee_kobo?: number;
+  prep_time_minutes?: number;
+}
+
+// ── Menu (admin store management) ────────────────────────────────────────────
+// Mirrors backend/internal/restaurant/model.go MenuCategory / MenuItem.
+
+export interface MenuItem {
+  id: string;
+  category_id: string;
+  restaurant_id: string;
+  name: string;
+  description?: string;
+  /** Integer kobo. Never a float, never a string for math. */
+  price_kobo: number;
+  image_url?: string | null;
+  is_available: boolean;
+  dietary_tags?: string[];
+}
+
+export interface MenuCategory {
+  id: string;
+  restaurant_id: string;
+  name: string;
+  items?: MenuItem[];
+}
+
+/** Response shape of GET /api/restaurant/admin/restaurants/:id. */
+export interface RestaurantDetail {
+  restaurant: Restaurant;
+  categories: MenuCategory[];
+}
+
+/** Partial store-profile edit; omitted fields are left unchanged server-side. */
+export interface UpdateRestaurantRequest {
+  name?: string;
+  description?: string;
+  address?: string;
+  cuisine?: string;
+  logo_url?: string | null;
+}
+
+export interface CreateMenuItemRequest {
+  category_id: string;
+  name: string;
+  description?: string;
+  price_kobo: number;
+  image_url?: string | null;
+  dietary_tags?: string[];
+}
+
+export interface UpdateMenuItemRequest {
+  price_kobo?: number;
+  is_available?: boolean;
+  dietary_tags?: string[];
 }
 
 export interface OrderItem {

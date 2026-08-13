@@ -3,6 +3,7 @@ package risk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -640,4 +641,31 @@ func (r *Repository) Dashboard(ctx context.Context) (*DashboardCounts, error) {
 		return nil, fmt.Errorf("risk: dashboard: %w", err)
 	}
 	return &d, nil
+}
+
+// ReferrerOf returns the user's currently attributed referrer, or "" when they
+// have no attribution or are attributed to the house.
+//
+// Used to resolve the target of a member abuse report: the report is about
+// whoever referred the reporter, and the client neither knows nor should send
+// that id — letting a client name an arbitrary target would make it trivial to
+// open fraud alerts against any account.
+func (r *Repository) ReferrerOf(ctx context.Context, userID string) (string, error) {
+	var referrer *string
+	err := r.db.QueryRow(ctx, `
+		SELECT referrer_id::text
+		FROM referral_attributions
+		WHERE referred_user_id = $1 AND COALESCE(is_house, false) = false
+		ORDER BY id DESC
+		LIMIT 1`, userID).Scan(&referrer)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("risk: resolve referrer: %w", err)
+	}
+	if referrer == nil {
+		return "", nil
+	}
+	return *referrer, nil
 }

@@ -262,6 +262,31 @@ func (s *Service) RecordPayment(ctx context.Context, actorID, invoiceID, guardia
 		return nil, ErrInvoiceNotPayable
 	}
 
+	// An idempotency key is scoped to ONE invoice: the same key against a different
+	// invoice is a conflict, never a silent replay of the other invoice's payment.
+	existing, lerr := s.store.GetPaymentByIdempotencyKey(ctx, idempotencyKey)
+	switch {
+	case lerr == nil && existing != nil && existing.InvoiceID != invoiceID:
+		return nil, ErrIdempotencyKeyConflict
+	case lerr != nil && !errors.Is(lerr, ErrNotFound):
+		return nil, lerr
+	}
+
+	// Overpayment guard on the DERIVED balance — you cannot pay more than you owe.
+	// Skipped on a replay (existing != nil): that payment is already inside `paid`,
+	// so re-checking would wrongly reject replays of the final payment. Concurrent
+	// first-time payments can still race past this check; the derived-balance model
+	// (SF-2) keeps the ledger consistent, and the state machine caps status at paid.
+	if existing == nil {
+		paid, perr := s.store.SumSucceededPayments(ctx, invoiceID)
+		if perr != nil {
+			return nil, perr
+		}
+		if amountMinor > inv.TotalAmountMinor-paid {
+			return nil, ErrOverpayment
+		}
+	}
+
 	// APPEND the payment (idempotent on idempotency_key). Payment is recorded 'succeeded'
 	// here because the money move is either already settled by E3's adapter (ledgerReference
 	// set) or, in the record-only path, treated as the source of truth for the invoice.

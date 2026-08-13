@@ -86,6 +86,18 @@ type PayoutGate interface {
 	PayoutEligible(ctx context.Context, ownerUserID string) (bool, error)
 }
 
+// ProofRecorder is the DP-006 seam for storing and retrieving proof-of-delivery
+// records. Nil-safe: when nil, proofs are not stored (delivery completes anyway
+// but unverified). Satisfied by a thin repository over pharmacy_delivery_proofs.
+type ProofRecorder interface {
+	// RecordProof stores an immutable proof-of-delivery record. Returns the stored
+	// proof with ID and timestamps filled in.
+	RecordProof(ctx context.Context, proof DeliveryProof) (*DeliveryProof, error)
+	// GetProofForOrder retrieves the proof-of-delivery for an order (if any).
+	// Returns nil, nil if no proof has been recorded yet.
+	GetProofForOrder(ctx context.Context, orderID string) (*DeliveryProof, error)
+}
+
 // Service is the PharmacyOrder + catalog + Rx-verification engine.
 type Service struct {
 	db         *pgxpool.Pool
@@ -100,10 +112,16 @@ type Service struct {
 	qty        QuantityGate       // optional (nil-safe), injected via SetQuantityGate (PRD §5.5)
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	rxItems    RxItems            // optional; nil ⇒ dispensed-item↔Rx match check is skipped (DP-002)
+	proofRec   ProofRecorder      // optional (DP-006); nil ⇒ proofs not stored (delivery still allowed)
+	proofVer   ProofVerifier      // optional (DP-006); nil ⇒ proofs recorded but not verified
 }
 
 func NewService(db *pgxpool.Pool, escrow EscrowHolder, rx RxGate, verifier RxVerifier, dispatch Dispatcher, prov ProviderGate, payout PayoutGate, audit Auditor) *Service {
-	return &Service{db: db, escrow: escrow, rx: rx, verifier: verifier, dispatch: dispatch, prov: prov, payout: payout, audit: audit}
+	// DP-006: the DB-backed proof recorder is on by default so delivery proofs
+	// are always persisted; SetProofRecorder can still override (or nil it) in
+	// wiring/tests.
+	return &Service{db: db, escrow: escrow, rx: rx, verifier: verifier, dispatch: dispatch, prov: prov, payout: payout, audit: audit,
+		proofRec: NewProofRepo(db)}
 }
 
 // SetReviewCaseOpener injects the optional symptom-search seam at wiring time.
@@ -145,6 +163,14 @@ type RxItems interface {
 // SetRxItems injects the prescribed-items seam used by the DP-002 dispense-match
 // safety gate (app-wiring, post-construction). Nil disables the check.
 func (s *Service) SetRxItems(r RxItems) { s.rxItems = r }
+
+// SetProofRecorder injects the DP-006 proof-of-delivery storage seam (app-wiring,
+// post-construction). Nil disables proof storage (delivery completes without recording).
+func (s *Service) SetProofRecorder(pr ProofRecorder) { s.proofRec = pr }
+
+// SetProofVerifier injects the optional DP-006 proof verification seam (app-wiring,
+// post-construction). Nil disables verification (proofs recorded but VerifiedAt stays nil).
+func (s *Service) SetProofVerifier(pv ProofVerifier) { s.proofVer = pv }
 
 // dispensedRxLines returns the Rx-required dispensed lines of an order joined to
 // their product's NAFDAC reference — the identity checked against the prescription.
@@ -676,6 +702,50 @@ func (s *Service) Complete(ctx context.Context, actorID, orderID, pickupCode str
 		to = StateCollected
 	default:
 		return nil, fmt.Errorf("pharmacy: order not ready to complete, is %s", o.State)
+	}
+
+	// DP-006: for delivery orders, require proof-of-delivery before DELIVERED transition.
+	// Proof is captured by the courier/driver and validated before this call. If a
+	// ProofRecorder is wired, store the proof (actorID assumed to be the driver).
+	if o.State == StateInDelivery {
+		if o.DeliveryRef == nil || *o.DeliveryRef == "" {
+			return nil, fmt.Errorf("pharmacy: missing delivery reference (not dispatched)")
+		}
+		// For MVP, proof is passed via pickupCode (reuse that field as proof OTP).
+		// In a real flow, the driver app captures OTP/photo/signature and passes a structured proof.
+		// For now, validate that pickupCode is a 6-digit OTP.
+		if pickupCode == "" {
+			return nil, fmt.Errorf("pharmacy: proof-of-delivery required before delivery completion (DP-006) — %w", ErrProofRequired)
+		}
+		proof := DeliveryProof{
+			OrderID:    orderID,
+			ProofType:  ProofOTP,
+			ProofData:  pickupCode,
+			CapturedBy: actorID,
+		}
+		if err := ValidateProofOfDelivery(proof); err != nil {
+			return nil, fmt.Errorf("pharmacy: invalid delivery proof (DP-006): %w", err)
+		}
+		// Store the proof if a recorder is wired.
+		if s.proofRec != nil {
+			stored, serr := s.proofRec.RecordProof(ctx, proof)
+			if serr != nil {
+				return nil, fmt.Errorf("pharmacy: failed to record delivery proof (DP-006): %w", serr)
+			}
+			// Optional: verify the proof if a verifier is wired (e.g., check OTP against sent code).
+			if s.proofVer != nil && stored != nil {
+				verified, verr := s.proofVer.VerifyProof(*stored)
+				if verr != nil {
+					return nil, fmt.Errorf("pharmacy: proof verification error (DP-006): %w", verr)
+				}
+				if !verified {
+					return nil, fmt.Errorf("pharmacy: proof verification failed — invalid or mismatched (DP-006)")
+				}
+				// Mark the proof as verified.
+				now := time.Now()
+				stored.VerifiedAt = &now
+			}
+		}
 	}
 
 	// HL-10: gate the payee on KYC before releasing funds.

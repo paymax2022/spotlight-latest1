@@ -8,7 +8,7 @@ import {
   getRegistrationPaymentIntentByReference,
   markRegistrationPaymentIntentStatus,
   applyRegistrationPaymentSuccess,
-} from '@/src/server/registration/store';
+} from '@/src/server/registration/supabase-store';
 
 // Verifies a registration fee payment against Paystack's real verify API
 // (test mode) — never trusts the client's own account of what happened.
@@ -22,7 +22,7 @@ export async function GET(request: Request, { params }: { params: { id: string }
     const limited = checkRateLimit(`registration:payment-verify:${user.id}`, 20, 60_000);
     if (!limited.allowed) return errorResponse('Too many verification attempts. Please slow down.', 429);
 
-    const draft = getRegistrationDraft(params.id);
+    const draft = await getRegistrationDraft(params.id);
     if (!draft) return errorResponse('Application not found', 404);
     if (draft.userId !== user.id) return errorResponse('Forbidden', 403);
 

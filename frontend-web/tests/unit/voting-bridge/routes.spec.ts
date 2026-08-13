@@ -4,7 +4,13 @@
  *   POST /api/v2/votes/paid/verify
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { NextRequest } from 'next/server';
 import { makeRequest } from '../golden-path/_fixtures';
+
+// Route handlers are typed against NextRequest; the fixture builds a plain
+// Request (sufficient at runtime — handlers only read headers/body/url).
+const makeNextRequest = (...args: Parameters<typeof makeRequest>) =>
+  makeRequest(...args) as unknown as NextRequest;
 
 vi.mock('@/src/server/voting-bridge/bridge', () => ({
   bridgedCastFreeVote: vi.fn(),
@@ -54,7 +60,7 @@ describe('POST /api/v2/votes/free', () => {
   it('returns 200 with vote result on success', async () => {
     vi.mocked(bridgedCastFreeVote).mockResolvedValue(FREE_VOTE_RESULT as any);
 
-    const req = makeRequest('/api/v2/votes/free', {
+    const req = makeNextRequest('/api/v2/votes/free', {
       body: { contestId: 'contest-001', contestantId: 'contestant-001' },
     });
     const res = await postFreeVote(req);
@@ -66,7 +72,7 @@ describe('POST /api/v2/votes/free', () => {
   });
 
   it('returns 400 when contestId is missing', async () => {
-    const req = makeRequest('/api/v2/votes/free', {
+    const req = makeNextRequest('/api/v2/votes/free', {
       body: { contestantId: 'contestant-001' },
     });
     const res = await postFreeVote(req);
@@ -75,7 +81,7 @@ describe('POST /api/v2/votes/free', () => {
 
   it('returns 429 when rate limited', async () => {
     vi.mocked(checkRateLimit).mockResolvedValueOnce({ allowed: false } as any);
-    const req = makeRequest('/api/v2/votes/free', {
+    const req = makeNextRequest('/api/v2/votes/free', {
       body: { contestId: 'c-001', contestantId: 'cont-001' },
     });
     const res = await postFreeVote(req);
@@ -87,7 +93,7 @@ describe('POST /api/v2/votes/free', () => {
     vi.mocked(bridgedCastFreeVote).mockRejectedValue(
       new ApiError('Account suspended.', 403),
     );
-    const req = makeRequest('/api/v2/votes/free', {
+    const req = makeNextRequest('/api/v2/votes/free', {
       body: { contestId: 'c-001', contestantId: 'cont-001' },
     });
     const res = await postFreeVote(req);
@@ -104,7 +110,7 @@ describe('POST /api/v2/votes/paid/verify', () => {
   it('returns 200 with verify result on success', async () => {
     vi.mocked(bridgedVerifyPaidVote).mockResolvedValue(VERIFY_RESULT as any);
 
-    const req = makeRequest('/api/v2/votes/paid/verify', {
+    const req = makeNextRequest('/api/v2/votes/paid/verify', {
       body: { transactionId: 'tx-001', paymentReference: 'PAY_ref_001' },
     });
     const res = await postPaidVerify(req);
@@ -115,7 +121,7 @@ describe('POST /api/v2/votes/paid/verify', () => {
   });
 
   it('returns 400 when transactionId is missing', async () => {
-    const req = makeRequest('/api/v2/votes/paid/verify', {
+    const req = makeNextRequest('/api/v2/votes/paid/verify', {
       body: { paymentReference: 'PAY_ref_001' },
     });
     const res = await postPaidVerify(req);
@@ -124,7 +130,7 @@ describe('POST /api/v2/votes/paid/verify', () => {
 
   it('returns 401 when unauthenticated', async () => {
     vi.mocked(requireRequestUser).mockRejectedValue(new Error('UNAUTHORIZED'));
-    const req = makeRequest('/api/v2/votes/paid/verify', {
+    const req = makeNextRequest('/api/v2/votes/paid/verify', {
       body: { transactionId: 'tx-001', paymentReference: 'PAY_ref_001' },
     });
     const res = await postPaidVerify(req);
