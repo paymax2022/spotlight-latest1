@@ -1278,7 +1278,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Restaurant & Delivery routes ---
 	if cfg.FeatureRestaurantEnabled {
 		settlementSvcR := settlement.NewService(pool, ledgerSvc)
-		restaurantSvc := restaurant.NewService(pool, settlementSvcR).WithLedger(ledgerSvc)
+		// WithTiers is NOT optional here: both restaurant money paths (the customer
+		// order escrow in PlaceOrder and the merchant withdrawal reserve) refuse with
+		// ErrTierGateUnwired when no gate is attached, so an unwired deployment serves
+		// 503 on every order rather than escrowing past the KYC daily cap (ADR-030).
+		restaurantSvc := restaurant.NewService(pool, settlementSvcR).
+			WithLedger(ledgerSvc).
+			WithTiers(tiersSvc)
 
 		// ── Central Commission & Profit recording (§ profit registry) ──
 		// When the commission feature is on, inject a nil-safe recorder so realized
