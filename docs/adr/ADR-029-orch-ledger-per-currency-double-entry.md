@@ -4,9 +4,11 @@
 **Status:** Accepted
 **Deciders:** FX/Orchestration
 **Scope:** `backend/internal/orchestration/repository.go` (`sqlStore.ApplyConversion`,
-`sqlStore.ApplyTransfer`) and one new live-DB invariant suite. **No migration, no API contract
-change, no balance/projection change.** Does not touch the main finance ledger
-(`backend/internal/finance/ledger`), which was already balanced.
+`sqlStore.ApplyTransfer`), two live-DB invariant suites, and one INSERT-only backfill migration
+for historical rows (`20261205000000`, see "Historical backfill" below). **No API contract change,
+no balance/projection change, no DDL on any existing table.** Does not touch the main finance
+ledger (`backend/internal/finance/ledger`) — that plane's own single-sided-writer problem is
+ADR-030.
 
 ## Context
 
@@ -115,9 +117,9 @@ pair carry the same amount and skip together.
   time. They are named after the table's schema comment; the main finance ledger's equivalents are
   `fx_spread_income` and `provider_clearing` (`finance/ledger/model.go`). The names differ because
   the two ledgers are separate; unifying them is out of scope here.
-- **Historical rows are left as-is.** The existing single-sided entries are pre-fix QA data on a
-  dev database. Ledger entries are immutable and corrections must be reversing entries — a
-  backfill of production rows, if any exist, is a separate migration with its own review.
+- **Historical rows are reconstructed by a follow-on migration** (see "Historical backfill"
+  below). Ledger entries stay immutable — the backfill only INSERTs the legs that were never
+  written.
 
 ## Alternatives rejected
 
@@ -149,3 +151,53 @@ pair carry the same amount and skip together.
 
 All four fail against the pre-fix code with `"<CUR> ledger is single-sided"` and pass after.
 Run: `cd backend && DATABASE_URL=... go test ./tests/fx/... -run OrchLedger -v`.
+
+## Historical backfill and the whole-table invariant
+
+Fixing the writers is necessary but not sufficient. Every conversion written *before* this ADR is
+still single-sided per currency, and while those rows exist the property cannot be asserted over
+the table at all — which is why every assertion in
+`orch_ledger_invariants_live_db_test.go` is scoped to a synthetic customer the test created. A
+per-writer test cannot catch a writer nobody thought to test, a hand-run repair, or history.
+
+`supabase/migrations/20261205000000_orch_ledger_conservation_backfill.sql` closes that:
+
+- For every `(customer_id, reference, currency)` group that does not net to zero, it posts ONE
+  reconstructed leg on `provider_clearing` for the residual. This is not an arbitrary plug — it is
+  **exactly** the leg the fixed `ApplyConversion` now writes (`CR provider_clearing` in the source
+  currency, `DR provider_clearing` in the destination), with the spread taken as 0. Retained markup
+  is not recoverable after the fact, and guessing it would overstate `paymax_spread` revenue;
+  leaving the whole amount in clearing understates nothing. `splitSpread` already degrades the same
+  way when a spread is absent or nonsensical.
+- INSERT-only, no DDL, and `orch_balances` is untouched — customer spendable balances were always
+  correct (the same transactions that wrote the lopsided entries maintained them), so rewriting
+  them would move real money.
+- Balanced pairs written by `cards_store.go` net to zero and are left alone.
+- Idempotent: the reconstructed leg's key carries the residual it closes, so a re-run is a no-op
+  while a gap re-opening at a different amount still gets its own leg. The migration re-checks
+  per-currency conservation before `COMMIT` and aborts if it was not reached.
+- It also creates `public.orch_ledger_conservation_check` — one row per currency, `residual_minor`
+  must be 0 — as `security_invoker` with `anon`/`authenticated` revoked, since a platform-wide FX
+  position is not public data.
+
+⚠ **Deploy order:** the migration must land with or after the Go build carrying this ADR. If the
+old single-sided `ApplyConversion` is still running, it re-opens the gap.
+
+Applied to the QA database (`:54322`), it reconstructed 8 legs across 4 legacy conversions and took
+`NGN -106669225 / USD +67668` to `0 / 0`.
+
+`backend/tests/fx/orch_global_conservation_live_db_test.go` then guards the whole table:
+
+- `TestOrchGlobalConservation_EveryCurrencyBalances` — every currency in the table conserves,
+  whatever wrote it. Verified to have teeth: injecting a lone `GBP CREDIT 12345` reds it with
+  `currency GBP: residual -12345`.
+- `TestOrchGlobalConservation_CheckViewAgrees` — pins the ops-facing view to the same projection,
+  so a query drift in the view is caught.
+- `TestOrchGlobalConservation_SurvivesPosting` — captures the residuals, drives a real conversion
+  at a non-1:1 rate, and re-checks; this is the regression that would have caught the original bug.
+
+It lives in `package fx_test` deliberately: `TestOrchLedger_LegacyShapeIsRejected` inserts an
+unbalanced fixture on purpose, and Go runs tests within a package sequentially, so a whole-table
+assertion in the same package can never observe it mid-flight. `backend/tests/fx` and
+`backend/internal/orchestration` are the only packages that touch `orch_*` tables, so no other
+parallel package can race it either.
