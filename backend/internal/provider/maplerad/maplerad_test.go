@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -568,5 +569,131 @@ func TestGetFXQuote_APIError(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "Unauthorized") {
 		t.Fatalf("want the provider message surfaced, got %v", err)
+	}
+}
+
+// --- FX quote booking + exchange (POST /fx/quote, POST /fx) ---
+
+// TestCreateFXQuote_ReturnsReference pins the firm-quote contract: the reference
+// is what POST /fx consumes, so it must survive as QuoteID. The rate board
+// (GetFXQuote) deliberately returns no id — see TestGetFXQuote_PicksCorridorFromList.
+func TestCreateFXQuote_ReturnsReference(t *testing.T) {
+	var gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = w.Write([]byte(`{"status":true,"message":"Quote generated successfully","data":{
+			"reference":"79b6436c657e406d805cf93d7fee6d13",
+			"source":{"currency":"KES","amount":100000,"human_readable_amount":1000},
+			"target":{"currency":"USD","amount":860,"human_readable_amount":8.6},"rate":0.0086}}`))
+	}))
+	defer srv.Close()
+
+	q, err := newTestClient(srv).CreateFXQuote(context.Background(), maplerad.FXQuoteRequest{
+		SourceCurrency: "kes", TargetCurrency: "usd", AmountKobo: 100_000,
+	})
+	if err != nil {
+		t.Fatalf("CreateFXQuote: %v", err)
+	}
+	if gotPath != "/fx/quote" {
+		t.Errorf("path = %q, want /fx/quote", gotPath)
+	}
+	// Currencies must be upper-cased and the amount sent in minor units.
+	for _, want := range []string{`"source_currency":"KES"`, `"target_currency":"USD"`, `"amount":100000`} {
+		if !strings.Contains(gotBody, want) {
+			t.Errorf("request body %s missing %s", gotBody, want)
+		}
+	}
+	if q.QuoteID != "79b6436c657e406d805cf93d7fee6d13" {
+		t.Errorf("QuoteID = %q, want the provider reference", q.QuoteID)
+	}
+	if q.Rate != 0.0086 || q.TargetAmountMinor != 860 || q.SourceAmountKobo != 100_000 {
+		t.Errorf("quote amounts/rate mismatch: %+v", q)
+	}
+}
+
+// TestCreateFXQuote_BusinessErrorIsHTTP200 guards the trap that Maplerad reports
+// business failures as HTTP 200 with status:false ("NGN exchanges are not enabled
+// for this business", "could not convert" for an unsupported pair).
+func TestCreateFXQuote_BusinessErrorIsHTTP200(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":false,"message":"NGN exchanges are not enabled for this business"}`))
+	}))
+	defer srv.Close()
+
+	_, err := newTestClient(srv).CreateFXQuote(context.Background(), maplerad.FXQuoteRequest{
+		SourceCurrency: "NGN", TargetCurrency: "USD", AmountKobo: 100_000,
+	})
+	if err == nil {
+		t.Fatal("a status:false body must be an error even on HTTP 200")
+	}
+	if !strings.Contains(err.Error(), "not enabled for this business") {
+		t.Errorf("provider message should be surfaced, got %v", err)
+	}
+}
+
+// TestConvertFX_SendsQuoteReference pins the exchange contract: POST /fx with ONLY
+// quote_reference, and the reference echoed back as the provider ref (the payload
+// carries no transaction id of its own).
+func TestConvertFX_SendsQuoteReference(t *testing.T) {
+	var gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = w.Write([]byte(`{"status":true,"message":"Exchange successful","data":{
+			"source":{"currency":"KES","amount":100000,"human_readable_amount":1000},
+			"target":{"currency":"USD","amount":860,"human_readable_amount":8.6},
+			"rate":0.0086,"created_at":"2026-08-13T09:30:53Z","updated_at":"2026-08-13T09:30:53Z"}}`))
+	}))
+	defer srv.Close()
+
+	res, err := newTestClient(srv).ConvertFX(context.Background(), maplerad.ConvertFXRequest{
+		QuoteID: "79b6436c657e406d805cf93d7fee6d13",
+	})
+	if err != nil {
+		t.Fatalf("ConvertFX: %v", err)
+	}
+	if gotPath != "/fx" {
+		t.Errorf("path = %q, want /fx (the old /fx/convert 404s)", gotPath)
+	}
+	if !strings.Contains(gotBody, `"quote_reference":"79b6436c657e406d805cf93d7fee6d13"`) {
+		t.Errorf("body must carry quote_reference, got %s", gotBody)
+	}
+	if res.TransactionID != "79b6436c657e406d805cf93d7fee6d13" {
+		t.Errorf("ProviderRef should fall back to the quote reference, got %q", res.TransactionID)
+	}
+	if res.TargetAmountMinor != 860 || res.Rate != 0.0086 || res.Status != "settled" {
+		t.Errorf("unexpected normalized result: %+v", res)
+	}
+}
+
+// TestConvertFX_RejectsEmptyReference is the regression guard for the original
+// gap: the rate board issues no quote id, so the adapter used to post an empty
+// one. Fail before the network call instead.
+func TestConvertFX_RejectsEmptyReference(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("must not reach the provider with an empty quote reference")
+	}))
+	defer srv.Close()
+
+	if _, err := newTestClient(srv).ConvertFX(context.Background(), maplerad.ConvertFXRequest{QuoteID: "  "}); err == nil {
+		t.Fatal("expected an error for a blank quote reference")
+	}
+}
+
+// TestConvertFX_SpentReference covers the single-use guarantee: a replayed
+// reference comes back as "could not find quote" (HTTP 200, status:false).
+func TestConvertFX_SpentReference(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":false,"message":"could not find quote"}`))
+	}))
+	defer srv.Close()
+
+	_, err := newTestClient(srv).ConvertFX(context.Background(), maplerad.ConvertFXRequest{QuoteID: "spent"})
+	if err == nil || !strings.Contains(err.Error(), "could not find quote") {
+		t.Fatalf("want the single-use rejection surfaced, got %v", err)
 	}
 }

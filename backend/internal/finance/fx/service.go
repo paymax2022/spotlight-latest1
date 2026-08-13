@@ -92,7 +92,11 @@ func (s *Service) GetOrCreateCurrencyWallet(ctx context.Context, userID, currenc
 
 // GetQuote obtains an FX rate from Maplerad, stores it, and reserves it in Redis.
 func (s *Service) GetQuote(ctx context.Context, userID string, req QuoteRequest) (*FXQuote, error) {
-	providerResp, err := s.provider.GetFXQuote(ctx, maplerad.FXQuoteRequest{
+	// CreateFXQuote (not the /fx/rates board): this quote is persisted and
+	// exchanged later by Convert, which needs a provider reference — the board
+	// issues none. Maplerad's reference is single-use and expires, so a Convert
+	// after our own quoteTTL fails closed with "could not find quote".
+	providerResp, err := s.provider.CreateFXQuote(ctx, maplerad.FXQuoteRequest{
 		SourceCurrency: req.SourceCurrency,
 		TargetCurrency: req.TargetCurrency,
 		AmountKobo:     req.AmountKobo,
@@ -189,12 +193,11 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 	}
 
 	// Execute conversion via Maplerad.
+	// Only the provider quote reference is sent — currencies and amount are fixed
+	// by the quote, and Maplerad's exchange endpoint has no client-reference field
+	// (our `reference` guards the ledger legs above, not the provider call).
 	convResp, err := s.provider.ConvertFX(ctx, maplerad.ConvertFXRequest{
-		QuoteID:        q.ProviderQuoteID,
-		SourceCurrency: q.SourceCurrency,
-		TargetCurrency: q.TargetCurrency,
-		AmountKobo:     q.SourceAmountKobo,
-		Reference:      reference,
+		QuoteID: q.ProviderQuoteID,
 	})
 	if err != nil {
 		// Conversion failed after debit — post reversal (fail-closed) and return.

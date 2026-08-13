@@ -168,16 +168,58 @@ func (c *Client) GetFXQuote(ctx context.Context, req FXQuoteRequest) (*FXQuoteRe
 		req.SourceCurrency, req.TargetCurrency)
 }
 
-// ConvertFXRequest parameters.
-type ConvertFXRequest struct {
-	QuoteID        string
-	SourceCurrency string
-	TargetCurrency string
-	AmountKobo     int64
-	Reference      string
+// CreateFXQuote books a firm, single-use quote (POST /fx/quote).
+//
+// This — not the /fx/rates board — is what an exchange runs against: it returns a
+// `reference` that ConvertFX consumes. The reference is SINGLE USE: once exchanged
+// (or expired) Maplerad answers "could not find quote", so never replay one, and
+// book the quote as late as possible before exchanging.
+func (c *Client) CreateFXQuote(ctx context.Context, req FXQuoteRequest) (*FXQuoteResponse, error) {
+	body := map[string]any{
+		"source_currency": strings.ToUpper(req.SourceCurrency),
+		"target_currency": strings.ToUpper(req.TargetCurrency),
+		"amount":          req.AmountKobo,
+	}
+	var resp struct {
+		Status  bool        `json:"status"`
+		Data    fxRateEntry `json:"data"`
+		Message string      `json:"message"`
+	}
+	if err := c.post(ctx, "/fx/quote", body, &resp); err != nil {
+		return nil, err
+	}
+	// Maplerad answers HTTP 200 with status:false for business errors ("NGN
+	// exchanges are not enabled for this business", "could not convert"), so the
+	// status flag — never the HTTP code — decides success.
+	if !resp.Status {
+		return nil, fmt.Errorf("maplerad: create fx quote: %s", resp.Message)
+	}
+	if resp.Data.Reference == "" {
+		return nil, fmt.Errorf("maplerad: create fx quote: provider returned no quote reference")
+	}
+	return &FXQuoteResponse{
+		QuoteID:           resp.Data.Reference,
+		Rate:              resp.Data.Rate,
+		SourceAmountKobo:  resp.Data.Source.Amount,
+		TargetAmountMinor: resp.Data.Target.Amount,
+	}, nil
 }
 
-// ConvertFXResponse is the result of an executed FX conversion.
+// ConvertFXRequest identifies the quote to exchange.
+//
+// Maplerad's exchange endpoint takes ONLY the quote reference: currencies and
+// amounts are fixed by the quote, and there is no client-reference or
+// idempotency-key field — so replay protection must live on our side. The one
+// guarantee the provider gives is that a reference is single-use.
+type ConvertFXRequest struct {
+	QuoteID string // the `reference` returned by CreateFXQuote
+}
+
+// ConvertFXResponse is the normalized result of an executed FX conversion. It is
+// assembled by ConvertFX rather than unmarshalled — Maplerad's exchange payload
+// nests source/target objects and carries no transaction id, fee or status — so
+// the field tags describe OUR shape, not the provider's wire format. FeeKobo is
+// always zero: the provider prices the spread into the rate.
 type ConvertFXResponse struct {
 	TransactionID     string  `json:"transaction_id"`
 	Rate              float64 `json:"rate"`
@@ -187,27 +229,37 @@ type ConvertFXResponse struct {
 	Status            string  `json:"status"`
 }
 
-// ConvertFX executes a currency conversion using a previously obtained quote.
+// ConvertFX exchanges a quote booked by CreateFXQuote (POST /fx).
 func (c *Client) ConvertFX(ctx context.Context, req ConvertFXRequest) (*ConvertFXResponse, error) {
-	body := map[string]any{
-		"quote_id":        req.QuoteID,
-		"source_currency": req.SourceCurrency,
-		"target_currency": req.TargetCurrency,
-		"amount":          req.AmountKobo,
-		"reference":       req.Reference,
+	if strings.TrimSpace(req.QuoteID) == "" {
+		// Fail here rather than let the provider reject an empty reference: an
+		// empty quote id means the caller quoted off the rate board, which issues
+		// none. Book one with CreateFXQuote first.
+		return nil, fmt.Errorf("maplerad: convert fx: quote reference is required")
 	}
+	body := map[string]any{"quote_reference": req.QuoteID}
 	var resp struct {
-		Status  bool              `json:"status"`
-		Data    ConvertFXResponse `json:"data"`
-		Message string            `json:"message"`
+		Status  bool        `json:"status"`
+		Data    fxRateEntry `json:"data"`
+		Message string      `json:"message"`
 	}
-	if err := c.post(ctx, "/fx/convert", body, &resp); err != nil {
+	if err := c.post(ctx, "/fx", body, &resp); err != nil {
 		return nil, err
 	}
 	if !resp.Status {
+		// Includes the single-use guard: exchanging a spent or expired reference
+		// comes back as "could not find quote".
 		return nil, fmt.Errorf("maplerad: convert fx: %s", resp.Message)
 	}
-	return &resp.Data, nil
+	return &ConvertFXResponse{
+		// The exchange response carries no id of its own, so the (single-use)
+		// quote reference is the provider-side identifier for this exchange.
+		TransactionID:     req.QuoteID,
+		Rate:              resp.Data.Rate,
+		SourceAmountKobo:  resp.Data.Source.Amount,
+		TargetAmountMinor: resp.Data.Target.Amount,
+		Status:            "settled",
+	}, nil
 }
 
 // --- PaymentProvider implementation (reuses for FX payouts) ---
