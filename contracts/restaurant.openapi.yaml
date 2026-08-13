@@ -162,6 +162,23 @@ components:
           description: >-
             Rider tip, escrowed with the order total and paid 100% to the rider at
             settlement (the 80/10/10 percentages price total − tip).
+        discount_kobo:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          description: >-
+            Promo discount applied at placement and already deducted from total_kobo.
+            At settlement the pre-discount gross is reconstructed and the discount is
+            charged wholly to promo_funder; the other parties settle on the full gross.
+        promo_id:
+          type: string
+          nullable: true
+          description: The promo that was applied, or null when no code was used.
+        promo_funder:
+          type: string
+          nullable: true
+          enum: [platform, restaurant]
+          description: >-
+            Snapshot of who bore the discount, taken at placement. Later edits to the
+            promo never move who paid for an order that has already settled its terms.
         total_kobo: { $ref: '#/components/schemas/Money' }
         delivery_address: { type: string }
         delivery_lat: { type: number }
@@ -440,12 +457,27 @@ paths:
                     paid 100% to the rider at settlement. A negative value is clamped to
                     0; a tip greater than the order's own value (subtotal + delivery) is
                     rejected.
+                promo_code:
+                  type: string
+                  description: >-
+                    Optional discount code, matched case-insensitively against this
+                    restaurant's promos and platform-wide ones. The discount is deducted
+                    from the escrowed total, snapshotted onto the order
+                    (discount_kobo / promo_id / promo_funder) and a redemption is
+                    recorded so usage_limit / per_user_limit are enforced.
+
+
+                    A code that cannot be applied FAILS the order with 422 — it is never
+                    silently ignored, which would charge the customer full price. Reasons:
+                    unknown code, inactive or outside its window, order below the promo's
+                    minimum, usage limit reached, the discount rounds to zero, or the
+                    discount exceeds what the declared funder's settlement share can bear.
       responses:
         '201': { description: Order placed (also returned for an idempotent replay of the same Idempotency-Key), content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
         '401': { description: Not authenticated }
         '402': { description: Insufficient wallet balance }
         '403': { description: KYC tier forbids this debit — wallet disabled (Tier 0) or daily debit limit exceeded }
-        '422': { description: Item unavailable (86'd) / validation error }
+        '422': { description: Item unavailable (86'd) / promo code cannot be applied / validation error }
         '503': { description: Tier gate not wired on this deployment — ordering is disabled fail-closed }
   /orders/{orderId}:
     get:

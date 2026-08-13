@@ -72,6 +72,16 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 	}
 	order, err := h.svc.PlaceOrder(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
+		// An unusable promo code is the CLIENT's input being wrong (unknown code, out
+		// of window, under the minimum, at its usage cap, or a discount the funder
+		// cannot bear) — not a server fault. 422 so the app can surface "that code
+		// doesn't apply" and let the customer retry without it, instead of the generic
+		// 500 that made every rejection look like an outage.
+		if errors.Is(err, ErrPromoInvalid) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+			return
+		}
+		// Tier-gate and wallet-state rejections carry their own statuses (402/403/…).
 		if code, ok := escrowErrStatus(err); ok {
 			c.JSON(code, gin.H{"error": err.Error()})
 			return
