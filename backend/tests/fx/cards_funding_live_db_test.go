@@ -85,7 +85,9 @@ func cardTxnCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cust, c
 func TestCardFunding_LiveDB(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t) // skips when no DB
-	defer pool.Close()
+	t.Cleanup(pool.Close) // registered first => closes LAST, after the row cleanup below.
+	// `defer pool.Close()` would run BEFORE any t.Cleanup and leave
+	// this test's rows stranded in the money tables.
 
 	cust := "fxcardtest_" + uuid.NewString()
 	const cur = "USD"
