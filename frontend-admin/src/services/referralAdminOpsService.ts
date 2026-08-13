@@ -718,3 +718,53 @@ export async function listOverridePolicies(): Promise<OverridePolicyRow[]> {
     // in tier order without hardcoding tier names the backend may add to.
     .sort((a, b) => a.overrideBps - b.overrideBps);
 }
+
+
+// ── Agent networks (live) ────────────────────────────────────────────────────
+// GET /api/referral/admin/network/networks  (referral.amb.view)
+//
+// The older listNetworks() above targets /ambassadors/networks, which no
+// backend route served — the admin endpoint did not exist until it was added
+// alongside this. Its shape also carried depth / max_depth_cap /
+// verified_activity_kobo / override_paid_kobo, none of which the API returns.
+
+export interface AgentNetworkRow {
+  id: string;
+  leadUserId: string;
+  name: string;
+  networkType: string;
+  status: string;
+  memberCount: number;
+  /** Members excluded from override chains (house-attributed, §7A.2). */
+  houseAttributedCount: number;
+  createdAt: string;
+}
+
+interface BackendNetworkSummary {
+  id: string;
+  lead_user_id: string;
+  name: string;
+  network_type: string;
+  status: string;
+  created_at: string;
+  member_count: number;
+  house_attributed_count: number;
+}
+
+export async function listAgentNetworks(status?: string): Promise<AgentNetworkRow[]> {
+  const qs = status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : '';
+  const res = await fetch(`${adminBase()}/network/networks${qs}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await readAmbErr(res));
+  const body = await res.json();
+  const rows = (body?.networks ?? body?.data?.networks ?? []) as BackendNetworkSummary[];
+  return rows.map((n) => ({
+    id: n.id,
+    leadUserId: n.lead_user_id,
+    name: n.name,
+    networkType: n.network_type,
+    status: n.status,
+    memberCount: n.member_count ?? 0,
+    houseAttributedCount: n.house_attributed_count ?? 0,
+    createdAt: n.created_at,
+  }));
+}
