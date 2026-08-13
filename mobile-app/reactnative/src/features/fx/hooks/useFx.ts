@@ -61,7 +61,9 @@ export function useLockQuote() {
 export function useExecuteConversion() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (quote: Quote) => fx.executeConversion(quote, newIdempotencyKey('cv')),
+    // Idempotency key derives from the quote id, not per-attempt randomness:
+    // a retry or double-tap replays the SAME key, so the backend executes once.
+    mutationFn: (quote: Quote) => fx.executeConversion(quote, `cv-${quote.id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [KEY, 'balances'] });
       qc.invalidateQueries({ queryKey: [KEY, 'transactions'] });
@@ -73,7 +75,7 @@ export function useExecuteTransfer() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ draft, quote, beneficiary }: { draft: SendDraft; quote: Quote; beneficiary: Beneficiary }) =>
-      fx.executeTransfer(draft, quote, beneficiary, newIdempotencyKey('tr')),
+      fx.executeTransfer(draft, quote, beneficiary, `tr-${quote.id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [KEY, 'balances'] });
       qc.invalidateQueries({ queryKey: [KEY, 'transactions'] });

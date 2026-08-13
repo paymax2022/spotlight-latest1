@@ -247,8 +247,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	kycSvc.WithVAProvisioner(vaSvc)
 
 	var fxHandler *fx.Handler
+	var fxMarkupHandler *fx.MarkupHandler
 	if mapleradClient != nil {
 		fxSvc := fx.NewService(pool, ledgerSvc, mapleradClient, redisClient)
+		// Operator-tunable Paymax FX markup (ADR-030). Maplerad returns no fee —
+		// it prices its margin into the rate — so the customer-facing fee is ours,
+		// and it lives in fx_markup_rates where an admin can change it at runtime
+		// (no restart, no cache: resolved per quote). Seeded at 1%.
+		fxMarkupStore := fx.NewMarkupStore(pool)
+		fxSvc.SetMarkup(fxMarkupStore)
+		fxMarkupHandler = fx.NewMarkupHandler(fxMarkupStore)
 		// Central Commission & Profit recording (§ profit registry). Nil-safe, gated on
 		// the flag, built WITHOUT a ledger (no double-post — the conversion's own legs
 		// already move money). Records under Finance/Currency Exchange. RATE NOTE: this
@@ -550,6 +558,21 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		fxGroup.GET("/wallets/:currency", fxHandler.GetWallet)
 	}
 
+	// --- Admin FX markup console (RBAC finance.admin.fx_markup) ---
+	// Mounted on the root engine with mapsAuth() so the permission middleware can
+	// read the caller, matching the transfers/KYC admin consoles. Deliberately a
+	// SEPARATE grant from finance.admin.transfers: changing what every customer
+	// pays on FX has a wider blast radius than working a queue. Registered
+	// independently of FeatureFXEnabled so the rate stays readable and correctable
+	// even while the customer-facing FX surface is switched off.
+	if fxMarkupHandler != nil {
+		fxAdmin := r.Group("/api/finance/admin/fx")
+		fxAdmin.Use(mapsAuth()) // RequireAuthContext + mirror user_id
+		fxAdmin.GET("/markup", middleware.RequirePermission(rbac, "finance.admin.fx_markup"), fxMarkupHandler.ListRates)
+		fxAdmin.PUT("/markup", middleware.RequirePermission(rbac, "finance.admin.fx_markup"), fxMarkupHandler.SetRate)
+		fxAdmin.GET("/markup/audit", middleware.RequirePermission(rbac, "finance.admin.fx_markup"), fxMarkupHandler.ListAudit)
+	}
+
 	// --- FX Orchestration (normalized, provider-agnostic /v1 API) ---
 	// Smart order routing across Eversend + Maplerad, spread engine, treasury,
 	// unified multi-currency ledger, quote->lock->execute with idempotency.
@@ -583,11 +606,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			evsProvider,
 			mplProvider,
 		}
-		spreadEngine := orchestration.NewSpreadEngine(105,
+		// Spread rule card comes from public.fx_markup_rates — the SAME table the
+		// legacy wallet FX service prices from — so one admin change at
+		// PUT /api/finance/admin/fx/markup moves BOTH FX surfaces (ADR-031).
+		// Reloaded once per quote, so a change is live with no restart.
+		//
+		// The in-code rules below are only the bootstrap value used before the first
+		// refresh; they are the same rows the migration seeds, so the two agree even
+		// in that window. The DB is authoritative from the first quote onward.
+		spreadEngine := orchestration.NewSpreadEngine(fx.DefaultMarkupBPS,
 			orchestration.SpreadRule{Corridor: "USD-NGN", Tier: "business", BPS: 75, MinBPS: 50, MaxBPS: 150},
 			orchestration.SpreadRule{Corridor: "USD-NGN", BPS: 120, MinBPS: 80, MaxBPS: 200},
 			orchestration.SpreadRule{Corridor: "USD-XAF", BPS: 150, MinBPS: 100, MaxBPS: 250},
-		)
+		).WithSource(orchestration.NewSQLSpreadSource(pool))
 		treasury := orchestration.NewTreasury([]orchestration.FloatBucket{
 			{Provider: "eversend", Currency: "USD", BalanceMinor: 820_000_00, LowWaterMinor: 200_000_00, HighWaterMinor: 1_000_000_00, ExposureLimitMinor: 5_000_000_00},
 			{Provider: "eversend", Currency: "NGN", BalanceMinor: 1_800_000_000_00, LowWaterMinor: 250_000_000_00, HighWaterMinor: 9_000_000_000_00, ExposureLimitMinor: 50_000_000_000_00},
@@ -1336,8 +1367,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Reads / discovery.
 		restGroup.GET("", restaurantHandler.ListRestaurants)
 		restGroup.POST("", restaurantHandler.Create)
-		restGroup.GET("/mine", restaurantHandler.MyRestaurants)      // caller's own stores (static sibling of :id)
-		restGroup.GET("/earnings", restaurantHandler.Earnings)       // caller's food-delivery earnings
+		restGroup.GET("/mine", restaurantHandler.MyRestaurants) // caller's own stores (static sibling of :id)
+		restGroup.GET("/earnings", restaurantHandler.Earnings)  // caller's food-delivery earnings
 		restGroup.GET("/:id", restaurantHandler.GetRestaurant)
 
 		// Store management (owner only): edit profile + operational open/close.

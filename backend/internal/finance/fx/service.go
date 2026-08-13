@@ -24,10 +24,20 @@ type Service struct {
 	provider   *maplerad.Client
 	redis      *goredis.Client    // for quote reservation
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	markup     MarkupResolver     // Paymax FX markup; never nil after NewService
 }
 
 func NewService(db *pgxpool.Pool, ledger *ledger.Service, provider *maplerad.Client, redis *goredis.Client) *Service {
-	return &Service{db: db, ledger: ledger, provider: provider, redis: redis}
+	return &Service{db: db, ledger: ledger, provider: provider, redis: redis, markup: DefaultMarkup()}
+}
+
+// SetMarkup overrides the Paymax FX markup resolver (app-wiring injects the
+// DB-backed MarkupStore; tests pin a static Markup). A nil argument is ignored so
+// the service can never end up without one.
+func (s *Service) SetMarkup(m MarkupResolver) {
+	if m != nil {
+		s.markup = m
+	}
 }
 
 // CommissionRecorder is the nil-safe seam into the central Commission & Profit
@@ -92,13 +102,29 @@ func (s *Service) GetOrCreateCurrencyWallet(ctx context.Context, userID, currenc
 
 // GetQuote obtains an FX rate from Maplerad, stores it, and reserves it in Redis.
 func (s *Service) GetQuote(ctx context.Context, userID string, req QuoteRequest) (*FXQuote, error) {
-	providerResp, err := s.provider.GetFXQuote(ctx, maplerad.FXQuoteRequest{
+	// CreateFXQuote (not the /fx/rates board): this quote is persisted and
+	// exchanged later by Convert, which needs a provider reference — the board
+	// issues none. Maplerad's reference is single-use and expires, so a Convert
+	// after our own quoteTTL fails closed with "could not find quote".
+	providerResp, err := s.provider.CreateFXQuote(ctx, maplerad.FXQuoteRequest{
 		SourceCurrency: req.SourceCurrency,
 		TargetCurrency: req.TargetCurrency,
 		AmountKobo:     req.AmountKobo,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("fx: get quote: %w", err)
+	}
+
+	// Maplerad returns no fee — its margin is priced into the rate — so the fee
+	// the customer pays is OUR markup, computed on the source principal. Quoted
+	// here and persisted, so Convert debits exactly what was disclosed even if the
+	// admin changes the markup between quote and execution.
+	//
+	// Fail closed: if the rate cannot be resolved we do not quote. Falling back to
+	// some other rate would charge a fee nobody configured.
+	feeKobo, err := s.markup.FeeMinor(ctx, req.SourceCurrency, req.TargetCurrency, req.AmountKobo)
+	if err != nil {
+		return nil, fmt.Errorf("fx: resolve markup: %w", err)
 	}
 
 	expiresAt := time.Now().Add(quoteTTL)
@@ -111,7 +137,7 @@ func (s *Service) GetQuote(ctx context.Context, userID string, req QuoteRequest)
 		SourceAmountKobo:  req.AmountKobo,
 		TargetAmountMinor: providerResp.TargetAmountMinor,
 		Rate:              providerResp.Rate,
-		FeeKobo:           providerResp.Fee,
+		FeeKobo:           feeKobo,
 		ExpiresAt:         expiresAt,
 		CreatedAt:         time.Now(),
 	}
@@ -189,12 +215,11 @@ func (s *Service) Convert(ctx context.Context, userID string, req ConvertRequest
 	}
 
 	// Execute conversion via Maplerad.
+	// Only the provider quote reference is sent — currencies and amount are fixed
+	// by the quote, and Maplerad's exchange endpoint has no client-reference field
+	// (our `reference` guards the ledger legs above, not the provider call).
 	convResp, err := s.provider.ConvertFX(ctx, maplerad.ConvertFXRequest{
-		QuoteID:        q.ProviderQuoteID,
-		SourceCurrency: q.SourceCurrency,
-		TargetCurrency: q.TargetCurrency,
-		AmountKobo:     q.SourceAmountKobo,
-		Reference:      reference,
+		QuoteID: q.ProviderQuoteID,
 	})
 	if err != nil {
 		// Conversion failed after debit — post reversal (fail-closed) and return.

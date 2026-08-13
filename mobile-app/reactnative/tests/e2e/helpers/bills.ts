@@ -63,6 +63,19 @@ async function requestJson(route: Route) {
 }
 
 export async function mockBillsCatalog(page: Page, captured = createCapturedRequests()) {
+  // Provider logos are fetched by every /services/* screen. getProviderLogos()
+  // swallows its own errors, but the axios interceptor in src/api/client.ts runs
+  // FIRST and signs the user out on any 401 — so leaving this unmocked bounced
+  // the whole bills suite to /login mid-flow. Serving an empty list is enough:
+  // the screens fall back to their built-in provider art.
+  await page.route('**/api/v1/utility/logos**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { services: [] } }),
+    });
+  });
+
   await page.route('**/rest/v1/utility_billers**', async (route) => {
     const url = route.request().url();
     if (url.includes('code=eq.MTN')) return fulfillRaw(route, { id: 'net-mtn' });
