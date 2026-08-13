@@ -1,4 +1,5 @@
 name: CI — CLAUDE.md gates
+# Deployment-trigger commit: this workflow change intentionally starts a fresh Development CI run.
 
 # Single PR gate that runs every quality gate required by CLAUDE.md.
 # Per-module workflows (doctor-ci.yml, connect-ci.yml, …) remain as scoped,
