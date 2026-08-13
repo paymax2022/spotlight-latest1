@@ -162,7 +162,11 @@ export default function AmbassadorApplyScreen() {
         <Pressable
           onPress={() => setAccepted((v) => !v)}
           accessibilityRole="checkbox"
+          // accessibilityState alone does not emit aria-checked on react-native-web
+          // 0.21, so a screen reader could not tell whether the disclosure had been
+          // accepted — on a consent control, that is the one thing it must convey.
           accessibilityState={{ checked: accepted }}
+          aria-checked={accepted}
           accessibilityLabel="I accept the ambassador disclosure"
           style={styles.acceptRow}
         >
