@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -107,13 +108,20 @@ func (s *Service) AdminResolveFoodDispute(ctx context.Context, disputeID, adminI
 	orderID := reference
 
 	// Resolve the order → customer + total + tip + rider, and compute the (capped) refund.
-	var customerID string
+	var customerID, settlementID string
 	var riderID *string
 	var totalKobo, tipKobo int64
 	if err := s.db.QueryRow(ctx,
-		`SELECT customer_id, rider_id, total_kobo, COALESCE(tip_kobo,0) FROM orders WHERE id=$1`, orderID).
-		Scan(&customerID, &riderID, &totalKobo, &tipKobo); err != nil {
+		`SELECT customer_id, rider_id, total_kobo, COALESCE(tip_kobo,0), COALESCE(settlement_id::text,'')
+		   FROM orders WHERE id=$1`, orderID).
+		Scan(&customerID, &riderID, &totalKobo, &tipKobo, &settlementID); err != nil {
 		return nil, fmt.Errorf("restaurant: dispute order not found")
+	}
+	// orders.tip_kobo is what the CUSTOMER was charged; it is not proof of what the rider
+	// was PAID. Clamp it to the order total so diverged data can never claw back more than
+	// the customer ever paid.
+	if tipKobo > totalKobo {
+		tipKobo = totalKobo
 	}
 	// The PLATFORM-funded refund is computed on the non-tip basis (ADR-030). The tip was
 	// paid straight through to the rider at settlement — which has already happened, since
@@ -144,12 +152,28 @@ func (s *Service) AdminResolveFoodDispute(ctx context.Context, disputeID, adminI
 	// characteristically a kitchen fault, and the rider should not fund it.
 	tipRefundedKobo := int64(0)
 	if res == FoodRefundFull && tipKobo > 0 && riderID != nil && *riderID != "" {
-		recovered, cerr := s.clawBackDisputedTip(ctx, disputeID, orderID, *riderID, customerID, tipKobo)
-		if cerr != nil {
-			return nil, cerr
+		// Only claw back a tip the rider DEMONSTRABLY received. See riderWasPaidTip: an
+		// order can be `delivered` with its escrow still held, and settleOrder drops the
+		// tip leg outright when the escrow and the order total have diverged. Debiting a
+		// rider for a tip that went 90/10 to the restaurant and platform — or that is
+		// still sitting in escrow — would be a real loss to a third party with nothing
+		// anywhere to offset it.
+		paid, perr := s.riderWasPaidTip(ctx, settlementID, totalKobo)
+		if perr != nil {
+			return nil, perr
 		}
-		if recovered {
-			tipRefundedKobo = tipKobo
+		if !paid {
+			log.Printf("[restaurant] dispute %s: order %s carries a %d kobo tip the rider was never paid "+
+				"(settlement %q not settled, or escrow diverged from the order total) — no clawback",
+				disputeID, orderID, tipKobo, settlementID)
+		} else {
+			recovered, cerr := s.clawBackDisputedTip(ctx, disputeID, orderID, *riderID, customerID, tipKobo)
+			if cerr != nil {
+				return nil, cerr
+			}
+			if recovered {
+				tipRefundedKobo = tipKobo
+			}
 		}
 	}
 

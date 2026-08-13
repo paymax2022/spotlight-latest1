@@ -309,6 +309,163 @@ func TestLiveDB_DisputePartialRefundInheritsTipCap(t *testing.T) {
 	}
 }
 
+// TestLiveDB_DisputeNoClawbackWhenRiderNeverPaidTip: orders.tip_kobo records what the
+// CUSTOMER was charged, not what the rider was PAID. When the escrow and the order total
+// diverge, settleOrder drops the tip leg entirely — the tip is released 90/10 to
+// restaurant/platform and the rider never sees it. Clawing it back off that rider would be
+// a real, uncompensated loss to a third party.
+//
+// The conservative outcome here is deliberate (ADR-030's (a) fallback): no clawback, so the
+// customer is refunded the non-tip basis only.
+func TestLiveDB_DisputeNoClawbackWhenRiderNeverPaidTip(t *testing.T) {
+	pool := tipPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
+	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led)
+
+	owner := uuid.New().String()
+	customer := uuid.New().String()
+	rider := uuid.New().String()
+	for _, u := range []string{owner, customer, rider} {
+		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
+			t.Fatalf("seed user: %v", err)
+		}
+	}
+	restID := uuid.New().String()
+	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Unpaid Tip Kitchen','1 St',TRUE)`, restID, owner); err != nil {
+		t.Fatalf("seed restaurant: %v", err)
+	}
+	cat, err := svc.CreateCategory(ctx, restID, owner, "Mains")
+	if err != nil {
+		t.Fatalf("category: %v", err)
+	}
+	item, err := svc.CreateItem(ctx, restID, owner, CreateItemRequest{CategoryID: cat.ID, Name: "Suya", PriceKobo: 450_000})
+	if err != nil {
+		t.Fatalf("create item: %v", err)
+	}
+	revAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		t.Fatalf("standing acct: %v", err)
+	}
+	if err := led.Credit(ctx, customer, "seed-fund", "unpaidtip-"+customer, revAcc.ID, 5_000_000); err != nil {
+		t.Fatalf("fund customer: %v", err)
+	}
+
+	const tip int64 = 50_000
+	order, err := svc.PlaceOrder(ctx, restID, customer, PlaceOrderRequest{
+		Items:           []OrderItemInput{{MenuItemID: item.ID, Quantity: 2}},
+		DeliveryAddress: "Victoria Island",
+		TipKobo:         tip,
+		IdempotencyKey:  "unpaidtip-" + uuid.New().String(),
+	})
+	if err != nil {
+		t.Fatalf("place tipped order: %v", err)
+	}
+	// Diverge the escrow so settleOrder drops the tip leg (the PR #96 crash-replay shape).
+	if _, err := pool.Exec(ctx, `UPDATE settlements SET total_kobo=$2 WHERE id=$1`, order.SettlementID, order.TotalKobo-tip); err != nil {
+		t.Fatalf("diverge escrow: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE orders SET rider_id=$2, status='picked_up', dispatch_status='assigned', delivery_code='5555' WHERE id=$1`,
+		order.ID, rider); err != nil {
+		t.Fatalf("assign rider: %v", err)
+	}
+	if err := svc.ConfirmHandoff(ctx, order.ID, rider, "5555"); err != nil {
+		t.Fatalf("confirm handoff: %v", err)
+	}
+	// Precondition: the rider was NOT paid the tip — their leg is the bare percentage.
+	riderLeg := creditLegKobo(t, ctx, pool, "settle:order:"+order.ID+":rider")
+	if want := (order.TotalKobo - tip) / 10; riderLeg != want {
+		t.Fatalf("rider leg = %d, want %d — this test needs a rider who was NOT paid the tip", riderLeg, want)
+	}
+
+	d, err := svc.RaiseFoodDispute(ctx, order.ID, customer, "non_delivery",
+		"the order never arrived and the rider marked it delivered anyway")
+	if err != nil {
+		t.Fatalf("raise dispute: %v", err)
+	}
+	admin := uuid.New().String()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, admin, admin+"@seed.test"); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	riderBefore, _ := led.GetBalance(ctx, rider)
+
+	if _, err := svc.AdminResolveFoodDispute(ctx, d.ID, admin, FoodRefundFull, 0, "upheld"); err != nil {
+		t.Fatalf("resolve dispute: %v", err)
+	}
+
+	riderAfter, _ := led.GetBalance(ctx, rider)
+	if riderAfter != riderBefore {
+		t.Errorf("rider wallet moved %d → %d — a rider who was never paid the tip must not be "+
+			"clawed back for it (the tip went 90/10 to restaurant/platform at settlement)",
+			riderBefore, riderAfter)
+	}
+	var clawbacks int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM restaurant_dispute_tip_clawbacks WHERE order_id=$1`, order.ID).Scan(&clawbacks); err != nil {
+		t.Fatalf("count clawbacks: %v", err)
+	}
+	if clawbacks != 0 {
+		t.Errorf("queued %d clawback(s) against a rider who never received the tip", clawbacks)
+	}
+}
+
+// TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder: the shared disputes table blocks only a
+// concurrently ACTIVE ticket per order, so once a dispute resolves a second one is
+// raisable on the same delivered order. Keyed by dispute id alone, that second ticket
+// would mint a fresh idempotency key and debit the rider the same tip twice. The tip comes
+// back at most once per order.
+func TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder(t *testing.T) {
+	pool := tipPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
+
+	const tip int64 = 50_000
+	f := newDisputeTipFixture(t, ctx, pool, led, "Double Clawback Kitchen", tip)
+
+	admin := uuid.New().String()
+	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, admin, admin+"@seed.test"); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	if _, err := f.svc.AdminResolveFoodDispute(ctx, f.disputeID, admin, FoodRefundFull, 0, "upheld"); err != nil {
+		t.Fatalf("resolve first dispute: %v", err)
+	}
+	riderAfterFirst, _ := led.GetBalance(ctx, f.rider)
+	custAfterFirst, _ := led.GetBalance(ctx, f.customer)
+
+	// A SECOND dispute on the same, still-delivered order.
+	d2, err := f.svc.RaiseFoodDispute(ctx, f.orderID, f.customer, "wrong_item",
+		"raising a second complaint about this very same delivered order")
+	if err != nil {
+		t.Fatalf("raise second dispute: %v", err)
+	}
+	if _, err := f.svc.AdminResolveFoodDispute(ctx, d2.ID, admin, FoodRefundFull, 0, "upheld again"); err != nil {
+		t.Fatalf("resolve second dispute: %v", err)
+	}
+
+	riderEnd, _ := led.GetBalance(ctx, f.rider)
+	if riderEnd != riderAfterFirst {
+		t.Errorf("rider wallet moved %d → %d on a SECOND dispute for the same order — the tip "+
+			"must be clawed back at most once (double-debited by %d)",
+			riderAfterFirst, riderEnd, riderAfterFirst-riderEnd)
+	}
+	custEnd, _ := led.GetBalance(ctx, f.customer)
+	if delta := custEnd - custAfterFirst; delta != f.basis {
+		t.Errorf("customer gained %d on the second dispute, want just the platform basis %d — "+
+			"the tip must not be credited twice", delta, f.basis)
+	}
+	var clawbacks int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM restaurant_dispute_tip_clawbacks WHERE order_id=$1`, f.orderID).Scan(&clawbacks); err != nil {
+		t.Fatalf("count clawbacks: %v", err)
+	}
+	if clawbacks != 1 {
+		t.Errorf("order has %d clawback rows, want exactly 1", clawbacks)
+	}
+}
+
 // TestLiveDB_DisputeTipClawbackDeferredToNextSettlement: when the rider has already
 // withdrawn the tip, the clawback cannot settle at resolution. It must be queued — never
 // overdrawing the rider, never charged to the platform — and then recovered off their

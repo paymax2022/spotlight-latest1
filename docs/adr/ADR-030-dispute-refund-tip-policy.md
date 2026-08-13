@@ -124,13 +124,21 @@ now derive from `platformRefundableKobo`. This is locked by
 `TestFoodRefundPartialInheritsTipCap` (pure) and
 `TestLiveDB_DisputePartialRefundInheritsTipCap` (live).
 
-**`ErrDuplicate` from `ledger.Debit` is not proof that money moved.** `Debit` takes the Redis
-idempotency lock *before* its balance check, so an attempt that fails on insufficient funds
-leaves that lock held for its 10s TTL; a retry inside that window reports duplicate having
-posted nothing. Since the recovery path deliberately reuses one idempotency key per dispute
-(so a debt can produce at most one ledger pair however often it is re-driven), it resolves
-`ErrDuplicate` against `ledger.Posted`, which reads the credit side from the ledger of record
-and is Redis-independent. Only a durable entry discharges a debt.
+**Neither error `ledger.Debit` returns is proof about whether the pair exists**, so the
+recovery path asks the ledger of record (`ledger.Posted`) *first*, before attempting
+anything. `ErrDuplicate` is not proof it did post: `Debit` takes the Redis idempotency lock
+before its balance check, so an attempt that failed on insufficient funds holds that lock for
+its 10s TTL and a retry inside the window reports duplicate having posted nothing. Symmetrically,
+`ErrInsufficientFunds` is not proof it did *not* post: `DebitWithBalanceCheck` runs the
+sufficiency check **before** its `ON CONFLICT DO NOTHING` insert, so replaying an
+already-posted clawback after the rider's balance has fallen below the tip returns
+insufficient funds — and treating that as "not recovered" would strand the debt as pending
+forever against a rider who had already paid, and re-notify the customer when a later sweep
+finally cleared the check. `Posted` reads the credit side from the DB and is Redis-independent,
+so it settles the question outright. This matters because the recovery path deliberately reuses
+one idempotency key per dispute, so a debt produces at most one ledger pair however often it is
+re-driven. (Both hazards generalise: **any** caller that retries a failed `ledger.Debit` under
+the same key has them.)
 
 **Write ordering is inverted relative to the refund path.** The refund path posts money first
 and records second, so a record can never claim a refund that did not move. The clawback
@@ -153,6 +161,28 @@ with the ₦500 tip recovered from the rider rather than absorbed. The platform'
 exposure — the 90% of the order it pays back but never kept — is the pre-existing,
 deliberately accepted "platform-funded, no provider clawback" rule, which this ADR does not
 revisit.
+
+**The clawback fires only on a tip the rider demonstrably RECEIVED.** `orders.tip_kobo`
+records what the customer was *charged*, which is not the same as what the rider was *paid*,
+and the two come apart in two reachable states. (i) When the escrow and the order total
+diverge, `settleOrder` drops the tip leg and releases the tip through the percentages —
+90/10 to restaurant/platform — while zeroing only its local variable, leaving
+`orders.tip_kobo` nonzero. (ii) `transitionInternal` commits `status='delivered'` and only
+then calls `settleOrder`, outside any transaction, so a settle failure leaves a delivered
+order whose escrow is still held (the window the crash-recovery reconciler exists to close);
+a dispute can be raised and resolved inside it. In both, debiting the rider would be an
+uncompensated loss to a third party. `riderWasPaidTip` therefore gates the clawback on the
+settlement being `settled` with `settlements.total_kobo = orders.total_kobo` — the same
+predicate `settleOrder` uses to decide whether to pay the tip leg at all. Where the gate
+fails, the outcome degrades to option (a): platform refunds the basis, no clawback.
+
+**Uniqueness is per ORDER, not per dispute.** The shared `disputes` table blocks only a
+concurrently *active* ticket on an order, and `orders.disputed_at` is a marker rather than a
+gate — so once a dispute resolves, a second one is raisable on the same delivered order.
+Keyed by dispute id alone, that second ticket would mint a fresh idempotency key and debit
+the rider the same tip twice while crediting the customer twice. A unique index on
+`order_id` is the hard guarantee; `recordTipClawback` inserts with an untargeted
+`ON CONFLICT DO NOTHING` and reads back whether this dispute owns the clawback.
 
 **Ops visibility.** `restaurant_dispute_tip_clawbacks` is the queue of outstanding rider debt.
 A row `pending` for a long time means a rider who took a tip on a repudiated delivery and has
@@ -177,4 +207,32 @@ gated on `TEST_DATABASE_URL`) — all three fail on the pre-change code and pass
   sweep discharges the debt, credits the disputing customer the tip, and posts exactly one
   balanced pair `DR rider wallet / CR customer wallet` with no standing account in it.
 
+- `TestLiveDB_DisputeNoClawbackWhenRiderNeverPaidTip` — diverges the escrow so `settleOrder`
+  drops the tip leg, then resolves `refund_full` and asserts the rider's wallet does not move
+  and no clawback is queued.
+- `TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder` — resolves a full refund, then raises and
+  resolves a SECOND dispute on the same delivered order, asserting the rider is not debited
+  twice, the customer is not credited the tip twice, and the order has exactly one clawback row.
+
 Pure: `TestPlatformRefundableKobo`, `TestFoodRefundPartialInheritsTipCap`.
+
+Each guard was confirmed to fail against the defect it covers: reverting the basis cap fails the
+first three; dropping the `order_id` unique index fails the double-clawback test (rider debited
+50,000 twice); bypassing `riderWasPaidTip` fails the never-paid test. Full
+`internal/restaurant` + `internal/finance` + `backend/tests` suites green against a live DB.
+
+## Known gaps (out of scope, deliberately)
+
+- **The dispute resolve path is not one transaction.** `foodDisputeResolvable` and the closing
+  `UPDATE` are separate statements, so two admins can pass the gate concurrently with different
+  resolutions, and a failure after the money moves leaves the ticket open with the refund
+  already posted. This predates ADR-030 and affects the platform-funded leg identically; the
+  per-order clawback uniqueness bounds the new third-party exposure, but the underlying TOCTOU
+  is a separate fix (claim the ticket with a guarded `UPDATE`, read the resolution back on
+  conflict).
+- **A long-`pending` clawback is a collections question, not a ledger one** — a rider who took a
+  tip on a repudiated delivery and has not delivered since. No eligibility or dunning policy is
+  defined here.
+- **`recoverRiderTipDebts` has no `LIMIT`** and runs synchronously inside the delivery status
+  flip, one ledger transaction per debt. Fine at realistic debt counts (0 or 1); would want
+  bounding if a rider ever accumulated many.

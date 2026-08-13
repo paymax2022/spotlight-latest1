@@ -37,18 +37,63 @@ import (
 // path is re-driven.
 func tipClawbackKey(disputeID string) string { return "dispute-tip-clawback:" + disputeID }
 
-// recordTipClawback durably records the obligation to return `tipKobo` to the customer
-// out of the rider's earnings, keyed by dispute id. Idempotent — a re-resolve of the same
-// dispute does not queue a second debt.
-func (s *Service) recordTipClawback(ctx context.Context, disputeID, orderID, riderID, customerID string, tipKobo int64) error {
-	_, err := s.db.Exec(ctx,
-		`INSERT INTO restaurant_dispute_tip_clawbacks (dispute_id, order_id, rider_id, customer_id, tip_kobo, status)
-		 VALUES ($1,$2,$3,$4,$5,'pending') ON CONFLICT (dispute_id) DO NOTHING`,
-		disputeID, orderID, riderID, customerID, tipKobo)
-	if err != nil {
-		return fmt.Errorf("restaurant: record tip clawback: %w", err)
+// riderWasPaidTip reports whether the rider on this order actually RECEIVED the tip at
+// settlement. The clawback must never fire on a belief — orders.tip_kobo records what the
+// customer was charged, not what the rider was paid, and the two come apart:
+//
+//   - ESCROW DIVERGENCE. settleOrder drops the tip leg when the escrow does not cover the
+//     order (settlements.total_kobo != orders.total_kobo), releasing the tip through the
+//     percentages instead — 90/10 to restaurant/platform. It zeroes only its LOCAL tip
+//     variable; orders.tip_kobo stays nonzero. Clawing that back would debit the rider a
+//     tip they never got, with no compensating credit anywhere.
+//   - DELIVERED BUT NOT YET SETTLED. transitionInternal commits status='delivered' and
+//     only then calls settleOrder, outside any transaction; a settle failure leaves a
+//     delivered order whose escrow is still held (this window is exactly why the
+//     crash-recovery reconciler exists). A dispute can be raised AND resolved inside it,
+//     and the tip is still sitting in escrow, not in the rider's wallet.
+//
+// The predicate below mirrors settleOrder's own decision to pay the tip leg: the
+// settlement must be SETTLED and its escrowed total must equal the order total. If
+// settleOrder would have dropped the tip, we do not claw it.
+func (s *Service) riderWasPaidTip(ctx context.Context, settlementID string, orderTotalKobo int64) (bool, error) {
+	if settlementID == "" {
+		return false, nil
 	}
-	return nil
+	var status string
+	var escrowedKobo int64
+	if err := s.db.QueryRow(ctx,
+		`SELECT status, total_kobo FROM settlements WHERE id=$1`, settlementID).Scan(&status, &escrowedKobo); err != nil {
+		return false, fmt.Errorf("restaurant: load settlement for tip clawback: %w", err)
+	}
+	return status == "settled" && escrowedKobo == orderTotalKobo, nil
+}
+
+// recordTipClawback durably records the obligation to return `tipKobo` to the customer out
+// of the rider's earnings. Reports whether THIS dispute owns the order's clawback.
+//
+// Uniqueness is per ORDER, not per dispute. The disputes table only blocks a second
+// CONCURRENTLY ACTIVE ticket on an order (status in open/investigating), and disputed_at
+// is a marker rather than a gate — so once a dispute resolves, a second one is raisable on
+// the same delivered order and would otherwise mint a fresh clawback key, debiting the
+// rider the same tip twice and crediting the customer twice. A tip can be clawed back at
+// most once per order, ever; the DB unique index on order_id is the hard guarantee and
+// this read-back is how the caller learns it lost the race.
+func (s *Service) recordTipClawback(ctx context.Context, disputeID, orderID, riderID, customerID string, tipKobo int64) (owns bool, err error) {
+	// Untargeted ON CONFLICT so BOTH the dispute_id primary key and the order_id unique
+	// index are absorbed as no-ops rather than erroring.
+	if _, err := s.db.Exec(ctx,
+		`INSERT INTO restaurant_dispute_tip_clawbacks (dispute_id, order_id, rider_id, customer_id, tip_kobo, status)
+		 VALUES ($1,$2,$3,$4,$5,'pending') ON CONFLICT DO NOTHING`,
+		disputeID, orderID, riderID, customerID, tipKobo); err != nil {
+		return false, fmt.Errorf("restaurant: record tip clawback: %w", err)
+	}
+	var exists bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM restaurant_dispute_tip_clawbacks WHERE dispute_id=$1)`,
+		disputeID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("restaurant: read back tip clawback: %w", err)
+	}
+	return exists, nil
 }
 
 // settleTipClawback attempts the actual money move for one recorded clawback: a single
@@ -59,11 +104,36 @@ func (s *Service) recordTipClawback(ctx context.Context, disputeID, orderID, rid
 // the expected steady state for a rider who has already withdrawn, and it leaves the row
 // pending for the next settlement sweep.
 func (s *Service) settleTipClawback(ctx context.Context, disputeID, riderID, customerID string, tipKobo int64) (bool, error) {
+	key := tipClawbackKey(disputeID)
+
+	// Ask the LEDGER OF RECORD first, before attempting anything. Neither error Debit can
+	// return is proof about whether the pair exists:
+	//
+	//   - ErrDuplicate is not proof it DID post. Debit takes the Redis idempotency lock
+	//     before its balance check, so an attempt that failed on insufficient funds holds
+	//     that lock for its 10s TTL and a retry inside the window reports duplicate having
+	//     posted nothing.
+	//   - ErrInsufficientFunds is not proof it did NOT post. DebitWithBalanceCheck runs
+	//     the sufficiency check BEFORE its ON CONFLICT DO NOTHING insert (ledger/
+	//     repository.go), so replaying an ALREADY-POSTED clawback after the rider's
+	//     balance has fallen below the tip returns insufficient funds — and treating that
+	//     as "not recovered" would strand the debt as pending forever against a rider who
+	//     has already paid, and re-notify the customer when a later sweep finally cleared.
+	//
+	// Posted reads the credit side of the pair from the DB and is Redis-independent, so it
+	// settles the question outright. One cheap indexed read per attempt.
+	posted, perr := s.ledger.Posted(ctx, key)
+	if perr != nil {
+		return false, fmt.Errorf("restaurant: confirm tip clawback posting: %w", perr)
+	}
+	if posted {
+		return true, nil
+	}
+
 	custAcc, err := s.ledger.GetOrCreateUserWallet(ctx, customerID)
 	if err != nil {
 		return false, err
 	}
-	key := tipClawbackKey(disputeID)
 
 	// DR rider wallet → CR customer wallet as ONE balanced pair. Debit does the balance
 	// check and the insert inside a single transaction under the rider's advisory lock,
@@ -74,16 +144,13 @@ func (s *Service) settleTipClawback(ctx context.Context, disputeID, riderID, cus
 		return true, nil
 
 	case errors.Is(err, ledger.ErrInsufficientFunds):
-		// Expected: the rider has already withdrawn the tip. Stay pending.
+		// Expected: the rider has already withdrawn the tip. Stay pending. (Not an
+		// already-posted pair — the Posted check above ruled that out.)
 		return false, nil
 
 	case errors.Is(err, ledger.ErrDuplicate):
-		// ErrDuplicate is NOT proof the money moved. Debit takes the Redis idempotency
-		// lock BEFORE its balance check, so an attempt that failed on insufficient funds
-		// leaves that lock held for its 10s TTL — and a retry inside that window reports
-		// duplicate having posted nothing. Ask the ledger of record instead (Posted reads
-		// the credit side of the pair from the DB, Redis-independent). Only a durable
-		// entry discharges the debt; otherwise stay pending and try again later.
+		// A concurrent sweep posted it between our Posted check and here. Re-read the
+		// ledger of record rather than assuming either way.
 		posted, perr := s.ledger.Posted(ctx, key)
 		if perr != nil {
 			return false, fmt.Errorf("restaurant: confirm tip clawback posting: %w", perr)
@@ -95,17 +162,22 @@ func (s *Service) settleTipClawback(ctx context.Context, disputeID, riderID, cus
 	}
 }
 
-// markTipClawbackRecovered flips a settled debt to 'recovered'. Guarded on the pending
-// status so a concurrent sweep cannot double-stamp it, and paired with the table's
-// status/recovered_at CHECK.
-func (s *Service) markTipClawbackRecovered(ctx context.Context, disputeID string) error {
-	if _, err := s.db.Exec(ctx,
+// markTipClawbackRecovered flips a settled debt to 'recovered' and reports whether THIS
+// call performed the flip. Guarded on the pending status so a concurrent sweep cannot
+// double-stamp it, and paired with the table's status/recovered_at CHECK.
+//
+// The bool matters: the loser of a race between two settlements for one rider (or a sweep
+// racing a resolution) also reaches this point with recovered==true, and without the
+// row-count guard both would notify the customer for a single credit.
+func (s *Service) markTipClawbackRecovered(ctx context.Context, disputeID string) (bool, error) {
+	tag, err := s.db.Exec(ctx,
 		`UPDATE restaurant_dispute_tip_clawbacks
 		    SET status='recovered', recovered_at=NOW()
-		  WHERE dispute_id=$1 AND status='pending'`, disputeID); err != nil {
-		return fmt.Errorf("restaurant: mark tip clawback recovered: %w", err)
+		  WHERE dispute_id=$1 AND status='pending'`, disputeID)
+	if err != nil {
+		return false, fmt.Errorf("restaurant: mark tip clawback recovered: %w", err)
 	}
-	return nil
+	return tag.RowsAffected() > 0, nil
 }
 
 // clawBackDisputedTip records the obligation and immediately tries to discharge it.
@@ -120,15 +192,23 @@ func (s *Service) markTipClawbackRecovered(ctx context.Context, disputeID string
 //
 // Reports whether the customer has been credited the tip already.
 func (s *Service) clawBackDisputedTip(ctx context.Context, disputeID, orderID, riderID, customerID string, tipKobo int64) (bool, error) {
-	if err := s.recordTipClawback(ctx, disputeID, orderID, riderID, customerID, tipKobo); err != nil {
+	owns, err := s.recordTipClawback(ctx, disputeID, orderID, riderID, customerID, tipKobo)
+	if err != nil {
 		return false, err
+	}
+	if !owns {
+		// An earlier dispute on this SAME order already claimed the tip. It is one tip and
+		// it comes back once; a second ticket must not debit the rider again.
+		log.Printf("[restaurant] dispute %s: order %s already has a tip clawback from an earlier dispute — not clawing the %d kobo tip twice",
+			disputeID, orderID, tipKobo)
+		return false, nil
 	}
 	recovered, err := s.settleTipClawback(ctx, disputeID, riderID, customerID, tipKobo)
 	if err != nil {
 		return false, err
 	}
 	if recovered {
-		if err := s.markTipClawbackRecovered(ctx, disputeID); err != nil {
+		if _, err := s.markTipClawbackRecovered(ctx, disputeID); err != nil {
 			return false, err
 		}
 	} else {
@@ -199,10 +279,16 @@ func (s *Service) recoverRiderTipDebts(ctx context.Context, riderID string) {
 			// down the queue may well be coverable.
 			continue
 		}
-		if err := s.markTipClawbackRecovered(ctx, d.disputeID); err != nil {
+		stamped, err := s.markTipClawbackRecovered(ctx, d.disputeID)
+		if err != nil {
 			// The money HAS moved; only the projection is stale. The next sweep re-reads
 			// this row, finds the pair already posted via Posted, and stamps it then.
 			log.Printf("[restaurant] dispute %s: tip clawback recovered but not stamped: %v", d.disputeID, err)
+			continue
+		}
+		if !stamped {
+			// Another sweep stamped it first — it also notified. Don't double-notify for
+			// what is a single credit.
 			continue
 		}
 		s.notify(ctx, Notification{UserID: d.customerID, Event: EventOrderCancelled,

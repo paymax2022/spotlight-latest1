@@ -71,6 +71,12 @@ func foodRefundKobo(res FoodDisputeResolution, requestedKobo, refundableKobo int
 	case FoodRefundFull:
 		return refundableKobo, nil
 	case FoodRefundPartial:
+		if refundableKobo <= 1 {
+			// No band to sit in: the platform holds nothing refundable on this order
+			// (an all-tip order, or diverged tip/total data). Say so plainly rather than
+			// rendering "between 1 and -1 kobo".
+			return 0, fmt.Errorf("%w: this order has no platform-refundable amount (order total is %d kobo net of the tip)", ErrDisputeInvalid, refundableKobo)
+		}
 		if requestedKobo <= 0 || requestedKobo >= refundableKobo {
 			return 0, fmt.Errorf("%w: partial refund must be between 1 and %d kobo", ErrDisputeInvalid, refundableKobo-1)
 		}

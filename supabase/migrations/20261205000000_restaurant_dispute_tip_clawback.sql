@@ -37,6 +37,16 @@ CREATE TABLE IF NOT EXISTS restaurant_dispute_tip_clawbacks (
         CHECK ((status = 'recovered') = (recovered_at IS NOT NULL))
 );
 
+-- ONE clawback per ORDER, ever — the hard guarantee against double-debiting a rider.
+-- The dispute_id primary key alone is not enough: the shared `disputes` table only blocks
+-- a second CONCURRENTLY ACTIVE ticket on an order (status in open/investigating), and
+-- orders.disputed_at is a marker rather than a gate, so once a dispute resolves a second
+-- one is raisable on the same delivered order. Keyed only by dispute id, that second
+-- ticket would mint a fresh idempotency key and debit the rider the same tip a second
+-- time while crediting the customer twice. The tip comes back at most once.
+CREATE UNIQUE INDEX IF NOT EXISTS restaurant_dispute_tip_clawbacks_order_uniq
+    ON restaurant_dispute_tip_clawbacks (order_id);
+
 -- The recovery sweep runs per rider at settlement and only ever looks at open debts.
 CREATE INDEX IF NOT EXISTS restaurant_dispute_tip_clawbacks_pending_idx
     ON restaurant_dispute_tip_clawbacks (rider_id, created_at)
