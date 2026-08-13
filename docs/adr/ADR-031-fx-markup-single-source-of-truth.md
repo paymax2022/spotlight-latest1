@@ -34,11 +34,23 @@ both surfaces.** Orchestration reads the same rows the legacy service does.
 Orchestration prices per customer tier and the legacy service does not, so the
 table gained a `tier` column (`''` = any tier) and the unique index widened to
 `(corridor, tier)`. `min_bps`/`max_bps` were added to preserve `SpreadRule`'s
-per-corridor guard band. This was folded into the **unmerged**
-`20261204000000_fx_markup_rates.sql` rather than shipped as a follow-up ALTER —
-the migration had not left this PR branch, so amending it avoids introducing a
-schema and immediately altering it (and avoids dropping a unique index, which the
-additive-only rule forbids).
+per-corridor guard band.
+
+This ships as its **own** migration, `20261205000000_fx_markup_rates_tier.sql`.
+ADR-030's `20261204000000_fx_markup_rates.sql` is left frozen exactly as
+reviewed. An earlier draft folded the change into that file on the grounds that
+it had not yet left the branch; keeping it frozen is the better call — a
+reviewed migration should stay byte-stable, and any database that already applied
+it (including a developer's local one) records that version as done and would
+never pick up an amendment.
+
+The widening needs the old `UNIQUE (corridor)` index gone, or a corridor's second
+row is rejected. That is a `DROP INDEX IF EXISTS` — explicitly allowed by
+`.github/workflows/_reusable-migration-guard.yml` as an idempotent re-create
+pattern, and a *relaxation* of a constraint rather than a loss of data. Both
+migration files were checked against the guard's own regex, and the pair was
+applied to a clean database in sequence to confirm the end state matches what a
+single combined migration produced.
 
 ### Resolution is identical on both sides
 
