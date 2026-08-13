@@ -582,3 +582,88 @@ export async function approveMerchantCampaign(merchantId: string, campaignId: st
   if (USE_MOCK) { await delay(); return { ok: true }; }
   return sendJson<{ ok: true }>('POST', `/merchants/${merchantId}/campaigns/${campaignId}/approve`, { note }, true);
 }
+
+
+// ── Ambassador approval queue (live) ─────────────────────────────────────────
+// These hit the endpoints the Go backend actually exposes:
+//   GET  /api/referral/admin/network/ambassadors?status=<status>   referral.amb.view
+//   POST /api/referral/admin/network/ambassadors/:id/status        referral.amb.manage
+//
+// The older listAmbassadors/listApplications/decideApplication above target
+// paths (/ambassadors/applications/:id/decide) that no backend route serves.
+// They are left untouched for the existing directory page rather than
+// repointed, since that page's row shape differs from this one.
+
+/** Backend lifecycle for referral_ambassadors.status. */
+export type AmbassadorQueueStatus = 'applied' | 'approved' | 'suspended' | 'rejected';
+
+/** A decision an admin can take. 'applied' is the inbox, not a decision. */
+export type AmbassadorDecision = 'approved' | 'suspended' | 'rejected';
+
+export interface AmbassadorQueueRow {
+  id: string;
+  userId: string;
+  tier: string;
+  status: AmbassadorQueueStatus;
+  /** The disclosure the applicant accepted, stored verbatim. */
+  disclosureText: string;
+  disclosureAcceptedAt: string | null;
+  appliedAt: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+}
+
+interface BackendAmbassadorRow {
+  id: string;
+  user_id: string;
+  tier: string;
+  status: string;
+  disclosure_text?: string;
+  disclosure_accepted_at?: string | null;
+  applied_at: string;
+  approved_by?: string | null;
+  approved_at?: string | null;
+}
+
+function mapAmbassadorRow(a: BackendAmbassadorRow): AmbassadorQueueRow {
+  return {
+    id: a.id,
+    userId: a.user_id,
+    tier: a.tier,
+    status: (a.status as AmbassadorQueueStatus) ?? 'applied',
+    disclosureText: a.disclosure_text ?? '',
+    disclosureAcceptedAt: a.disclosure_accepted_at ?? null,
+    appliedAt: a.applied_at,
+    approvedBy: a.approved_by ?? null,
+    approvedAt: a.approved_at ?? null,
+  };
+}
+
+/** Surfaces the backend's own message — "missing permission: ..." beats "(403)". */
+async function readAmbErr(res: Response): Promise<string> {
+  try {
+    const b = await res.json();
+    if (typeof b?.error === 'string' && b.error.trim()) return b.error;
+  } catch { /* non-JSON body */ }
+  if (res.status === 401) return 'Your admin session has expired. Sign in again.';
+  if (res.status === 403) return 'You do not have permission to do that.';
+  return `Request failed (${res.status})`;
+}
+
+export async function listAmbassadorQueue(status?: string): Promise<AmbassadorQueueRow[]> {
+  const qs = status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : '';
+  const res = await fetch(`${adminBase()}/network/ambassadors${qs}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await readAmbErr(res));
+  const body = await res.json();
+  const rows = (body?.ambassadors ?? body?.data?.ambassadors ?? []) as BackendAmbassadorRow[];
+  return rows.map(mapAmbassadorRow);
+}
+
+export async function setAmbassadorStatus(id: string, status: AmbassadorDecision): Promise<void> {
+  const res = await fetch(`${adminBase()}/network/ambassadors/${id}/status`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) throw new Error(await readAmbErr(res));
+}

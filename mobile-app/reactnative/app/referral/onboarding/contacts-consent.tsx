@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Users, BellRing } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
+import { showToast } from '@/store/toastStore';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
@@ -16,6 +17,22 @@ import { useConsent, useRecordConsent } from '@/features/referral/foundation/hoo
 export default function ContactsConsent() {
   const { data, isLoading, isError, refetch } = useConsent();
   const record = useRecordConsent();
+
+  // A silent failure here leaves the switch on while nothing was recorded — the
+  // user believes they granted (or withdrew) a permission that never persisted.
+  const saveConsent = (kind: 'contacts' | 'nudges', granted: boolean) => {
+    record.mutate(
+      { kind, granted },
+      {
+        onError: () =>
+          showToast({
+            variant: 'error',
+            title: 'Could not save that choice',
+            message: 'Please try again.',
+          }),
+      },
+    );
+  };
 
   const contactsOn = !!data?.contactsConsentAt;
   const nudgesOn = !!data?.nudgesConsentAt;
@@ -44,7 +61,7 @@ export default function ContactsConsent() {
               body="Let us suggest people to invite from your phone. We never message anyone without you choosing them."
               value={contactsOn}
               busy={record.isPending}
-              onChange={(v) => record.mutate({ kind: 'contacts', granted: v })}
+              onChange={(v) => saveConsent('contacts', v)}
             />
             <Row
               icon={<BellRing size={20} color={Colors.primary} strokeWidth={2} />}
@@ -52,7 +69,7 @@ export default function ContactsConsent() {
               body="Get notified about signups, activations, vesting unlocks and payouts."
               value={nudgesOn}
               busy={record.isPending}
-              onChange={(v) => record.mutate({ kind: 'nudges', granted: v })}
+              onChange={(v) => saveConsent('nudges', v)}
             />
           </ScrollView>
           <View style={styles.footer}>
