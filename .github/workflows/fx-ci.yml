@@ -55,16 +55,3 @@ jobs:
       - run: npm ci
       - name: Typecheck FX module
         run: npx tsc --noEmit -p tsconfig.fxcheck.json
-
-  admin-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Typecheck
-        run: npx tsc --noEmit

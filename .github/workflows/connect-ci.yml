@@ -36,19 +36,6 @@ jobs:
       - name: Test (all — regression)
         run: go test ./... -count=1
 
-  admin-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Typecheck admin (tsc --noEmit)
-        run: npm run type-check
-
   mobile-typecheck:
     runs-on: ubuntu-latest
     defaults:

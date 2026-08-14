@@ -75,21 +75,6 @@ jobs:
         run: supabase stop || true
 
   # ── 3. Web typecheck (MapView / AddressEntry / LiveTrackingMap + client) ─────
-  web-typecheck:
-    name: Web tsc --noEmit
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Typecheck web (whole app)
-        run: npx tsc --noEmit
-
-  # ── 4. Mobile typecheck (scoped to the maps/mobility slice) ──────────────────
   mobile-typecheck:
     name: Mobile tsc (scoped)
     runs-on: ubuntu-latest

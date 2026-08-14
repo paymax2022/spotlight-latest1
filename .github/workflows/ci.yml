@@ -64,6 +64,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The three whole-app gates below run ONCE, here, unconditionally. Module lanes
+  # must not repeat them: a whole-app check cannot say anything module-specific,
+  # so N copies just report the same failure N times (eight lanes once died on
+  # the same two lines of one telemedicine screen). Lanes keep only work that is
+  # actually theirs — scoped tsconfigs, module Go tests, module migration guards.
   frontend-web:
     name: frontend-web (regression + money + contract + tsc + lint)
     uses: ./.github/workflows/_reusable-frontend-web.yml

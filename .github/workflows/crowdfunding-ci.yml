@@ -52,20 +52,6 @@ jobs:
       - name: Typecheck crowdfunding screens + feature
         run: npx tsc -p tsconfig.crowdfunding.json
 
-  admin-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: npm ci || npm install
-      - name: Typecheck admin
-        run: npx tsc --noEmit
-
   migration-guard:
     runs-on: ubuntu-latest
     steps:
