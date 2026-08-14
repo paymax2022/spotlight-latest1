@@ -72,11 +72,10 @@ jobs:
   # Two cheap repo-wide grep gates share one runner: both are sub-second, and a
   # second job would cost a full runner start for no benefit (see the
   # paths-ignore note above on conserving private-repo Actions minutes).
-  # NOTE: job name deliberately left as-is — it may be wired as a required status
-  # check, which matches on the name. Rename to "hygiene (client secrets +
-  # live-DB test gate)" once branch protection is confirmed.
+  # The job id stays `secret-hygiene` — it is internal, and the deploy jobs below
+  # reference it in `needs:`.
   secret-hygiene:
-    name: secrets (no client-exposed secrets)
+    name: hygiene (client secrets + live-DB test gate)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
