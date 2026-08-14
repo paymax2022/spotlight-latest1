@@ -67,11 +67,19 @@ export async function initiateFunding(payload: {
    */
   amountKobo: number;
   callbackUrl?: string;
+  /**
+   * 'checkout' when this top-up funds a purchase the user is completing right now
+   * (the card rail, ADR-041). It carries a different KYC gate server-side — an
+   * unverified account may be allowed a capped checkout top-up while standalone
+   * funding still requires Tier 1 (ADR-042). Defaults to standalone funding.
+   */
+  purpose?: 'wallet' | 'checkout';
 }): Promise<{ authorizationUrl: string; reference: string }> {
   const res  = await api.post('/api/v1/wallet/topup',
     {
       amount_kobo: payload.amountKobo,
       callback_url: payload.callbackUrl,
+      purpose: payload.purpose ?? 'wallet',
     },
     { headers: { 'Idempotency-Key': generateIdempotencyKey() } },
   );

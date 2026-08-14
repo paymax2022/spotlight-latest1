@@ -25,7 +25,9 @@ export type { TopupStatus };
  * second defect: a ₦333.33 purchase could only ever top up ₦333.
  */
 export async function startCardTopup(amountKobo: number): Promise<{ authorizationUrl: string; reference: string }> {
-  return initiateFunding({ amountKobo });
+  // purpose: 'checkout' — this funds the purchase in flight, not the wallet as an
+  // end in itself, and the server gates the two differently (ADR-042).
+  return initiateFunding({ amountKobo, purpose: 'checkout' });
 }
 
 /** Poll a top-up intent's status until the webhook credits the wallet. */
