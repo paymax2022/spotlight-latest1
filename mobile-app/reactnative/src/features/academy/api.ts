@@ -763,7 +763,11 @@ export async function submitPlacement(
       .sort((a, b) => a.code.localeCompare(b.code));
     const totC = subjects.reduce((n, x) => n + x.correct, 0);
     const totT = subjects.reduce((n, x) => n + x.total, 0);
-    track('placement_completed', { class: classCode, score: totT ? totC / totT : 0 });
+    // The placement quiz IS the curriculum-grounded diagnostic (see the type
+    // header and this section's comment), so it emits the taxonomy's existing
+    // Activation event rather than a second name for the same transition — a
+    // 'placement_completed' alongside it would split the activation funnel in two.
+    track('diagnostic_completed', { class: classCode, score: totT ? totC / totT : 0 });
     return { classCode, overallPct: totT ? totC / totT : 0, subjects };
   }
   const { data } = await api.post(`${B}/placement/submit`, {
