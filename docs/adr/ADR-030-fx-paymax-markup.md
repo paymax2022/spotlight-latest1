@@ -59,7 +59,7 @@ Changing the rate no longer needs a deploy — it is an admin action, audited.
 
 ### Resolved: the orchestration path now shares this table
 
-At the time this ADR was written the orchestration module (`/api/v1/fx/*`) still priced from its own in-code `SpreadEngine`, so two live FX surfaces could charge different markups and only one was admin-tunable. **[ADR-031](ADR-031-fx-markup-single-source-of-truth.md) closed that**: orchestration now reads `fx_markup_rates` too, the key widened to `(corridor, tier)`, and one admin write moves both surfaces. The existing orchestration rates were seeded verbatim so nothing repriced, apart from the default fallback converging 105 bps → 100 bps on the 1% decided here.
+At the time this ADR was written the orchestration module (`/api/v1/fx/*`) still priced from its own in-code `SpreadEngine`, so two live FX surfaces could charge different markups and only one was admin-tunable. **[ADR-032](ADR-032-fx-markup-single-source-of-truth.md) closed that**: orchestration now reads `fx_markup_rates` too, the key widened to `(corridor, tier)`, and one admin write moves both surfaces. The existing orchestration rates were seeded verbatim so nothing repriced, apart from the default fallback converging 105 bps → 100 bps on the 1% decided here.
 
 ## Alternatives rejected
 

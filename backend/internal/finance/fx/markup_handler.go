@@ -27,7 +27,7 @@ func NewMarkupHandler(store *MarkupStore) *MarkupHandler { return &MarkupHandler
 // the common case ("set the platform rate to 1%") is a one-field body.
 //
 // Tier only affects the orchestration surface, which prices per customer tier;
-// the legacy wallet FX service always resolves the tier-agnostic rows (ADR-031).
+// the legacy wallet FX service always resolves the tier-agnostic rows (ADR-032).
 type SetMarkupRequest struct {
 	Corridor    string      `json:"corridor"`
 	Tier        string      `json:"tier"`
