@@ -130,11 +130,10 @@ jobs:
       - name: Install Railway CLI
         run: npm install --global @railway/cli@5.40.1
       - name: Deploy ${{ matrix.service }}
-        working-directory: ${{ matrix.path }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
         run: |
-          railway up . --path-as-root \
+          railway up ${{ matrix.path }} --path-as-root \
             --service ${{ matrix.service }} \
             --environment development \
             --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
@@ -180,11 +179,10 @@ jobs:
       - name: Install Railway CLI
         run: npm install --global @railway/cli@5.40.1
       - name: Deploy ${{ matrix.service }}
-        working-directory: ${{ matrix.path }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
         run: |
-          railway up . --path-as-root \
+          railway up ${{ matrix.path }} --path-as-root \
             --service ${{ matrix.service }} \
             --environment staging \
             --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
@@ -230,11 +228,10 @@ jobs:
       - name: Install Railway CLI
         run: npm install --global @railway/cli@5.40.1
       - name: Deploy ${{ matrix.service }}
-        working-directory: ${{ matrix.path }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
         run: |
-          railway up . --path-as-root \
+          railway up ${{ matrix.path }} --path-as-root \
             --service ${{ matrix.service }} \
             --environment production \
             --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \

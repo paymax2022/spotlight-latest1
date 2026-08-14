@@ -3,6 +3,9 @@ import { imageHosts } from './image-hosts.config.mjs';
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Produce a traced production server so the deployment image contains only
+  // the runtime files Next needs, rather than the complete build toolchain.
+  output: 'standalone',
   // Browser source maps roughly double build memory. They only pay for
   // themselves when Sentry can actually upload and symbolicate them, which the
   // wrapper below gates on SENTRY_AUTH_TOKEN — so generate them under the same
