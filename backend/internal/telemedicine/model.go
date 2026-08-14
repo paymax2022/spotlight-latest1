@@ -32,6 +32,11 @@ type Doctor struct {
 	Bio             string          `json:"bio,omitempty"`
 	About           string          `json:"about,omitempty"`
 	ConsultFeeKobo  int64           `json:"consult_fee_kobo"`
+	// Booking is the server-computed price breakdown for consulting this doctor
+	// (consultation fee + platform booking fee). It is derived from
+	// ConsultFeeKobo, never stored, and is what the app renders on the confirm
+	// screen — the app holds no fee rate of its own. See ADR-040.
+	Booking         *BookingQuote   `json:"booking,omitempty"`
 	AvatarURL       *string         `json:"avatar_url,omitempty"`
 	IsAvailable     bool            `json:"is_available"`
 	IsOnline        bool            `json:"is_online"`
@@ -87,8 +92,18 @@ type Appointment struct {
 	StartsAt         *time.Time        `json:"starts_at,omitempty"`
 	Status           AppointmentStatus `json:"status"`
 	Notes            string            `json:"notes,omitempty"`
-	FeeKobo          int64             `json:"fee_kobo"`
-	IdempotencyKey   string            `json:"idempotency_key"`
+	// FeeKobo is the doctor's CONSULTATION fee alone. Doctor earnings are 85% of
+	// it (see the SUM(fee_kobo * 0.85) queries below), so it must never be widened
+	// to mean "what the patient paid" — that figure is TotalKobo.
+	FeeKobo int64 `json:"fee_kobo"`
+	// PlatformFeeKobo is the platform booking fee charged on top of the
+	// consultation fee. Settled as a 100%-platform leg, so it does not dilute the
+	// doctor's 85%. Zero for appointments booked before ADR-040.
+	PlatformFeeKobo int64 `json:"platform_fee_kobo"`
+	// TotalKobo is what was actually escrowed and what the patient paid
+	// (FeeKobo + PlatformFeeKobo). A cancellation refunds this in full.
+	TotalKobo      int64  `json:"total_kobo"`
+	IdempotencyKey string `json:"idempotency_key"`
 	SettlementID     string            `json:"settlement_id"`
 	CreatedAt        time.Time         `json:"created_at"`
 }
@@ -199,6 +214,13 @@ type BookAppointmentRequest struct {
 	ConsultationType string    `json:"consultation_type"`
 	Notes            string    `json:"notes"`
 	IdempotencyKey   string    `json:"idempotency_key" binding:"required"`
+	// ExpectedTotalKobo is the total the client quoted the patient, taken from the
+	// doctor's `booking` quote. The card rail charges that amount at the PSP before
+	// this server escrows anything, so a stale quote would put the charged and
+	// escrowed amounts out of step — when this disagrees with the server's own
+	// computation the booking is rejected before any money moves. Zero means the
+	// client did not quote a total and skips the check (ADR-040).
+	ExpectedTotalKobo int64 `json:"expected_total_kobo"`
 }
 
 // IssuePrescriptionRequest is the body for POST /telemedicine/appointments/:id/prescription.

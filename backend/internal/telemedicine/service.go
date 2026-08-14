@@ -16,10 +16,37 @@ import (
 type Service struct {
 	db         *pgxpool.Pool
 	settlement *settlement.Service
+	// platformFeeBp is the booking fee rate in basis points, resolved from
+	// FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED at wiring time. Zero (the default)
+	// means the flag is off and consultations price exactly as they did before
+	// ADR-040 — the patient pays the consultation fee alone.
+	platformFeeBp int
 }
 
+// NewService builds the service with the platform booking fee OFF. The fee is a
+// patient-visible price increase, so it is opt-in: it charges only once
+// WithPlatformFeeBp has been wired from the feature flag. An unwired service
+// under-charges rather than over-charges, which is the safe direction to fail.
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
 	return &Service{db: db, settlement: settlement}
+}
+
+// WithPlatformFeeBp enables the platform booking fee at the given rate in basis
+// points (telemedicine.PlatformFeeBp = 500 = 5%). Pass 0 to disable — that is the
+// rollback path, and it needs no redeploy of the app: the client renders whatever
+// quote the server returns, so the fee row drops to ₦0 and the escrow drops to the
+// consultation fee on the next request. See ADR-040.
+func (s *Service) WithPlatformFeeBp(bp int) *Service {
+	if bp < 0 {
+		bp = 0
+	}
+	s.platformFeeBp = bp
+	return s
+}
+
+// quote prices a consultation at this service's configured rate.
+func (s *Service) quote(consultFeeKobo int64) BookingQuote {
+	return QuoteAt(consultFeeKobo, s.platformFeeBp)
 }
 
 // ─── Specialties ─────────────────────────────────────────────────────────────
@@ -63,6 +90,8 @@ func (s *Service) RegisterDoctor(ctx context.Context, userID string, req Registe
 		Education:      []Education{},
 		CreatedAt:      time.Now(),
 	}
+	quote := s.quote(d.ConsultFeeKobo)
+	d.Booking = &quote
 	const q = `INSERT INTO doctors (id, user_id, name, specialty, bio, consult_fee_kobo, avatar_url, is_available, education)
 	            VALUES ($1,$2,$3,$4,$5,$6,$7,true,'[]'::jsonb)`
 	_, err := s.db.Exec(ctx, q, d.ID, d.UserID, d.Name, string(d.Specialty), d.Bio, d.ConsultFeeKobo, d.AvatarURL)
@@ -142,7 +171,7 @@ func (s *Service) ListDoctors(ctx context.Context, q ListDoctorsQuery) ([]Doctor
 		return nil, err
 	}
 	defer rows.Close()
-	return scanDoctors(rows)
+	return scanDoctors(rows, s.platformFeeBp)
 }
 
 // GetDoctor returns a single doctor profile by ID.
@@ -158,7 +187,7 @@ func (s *Service) GetDoctor(ctx context.Context, id string) (*Doctor, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	doctors, err := scanDoctors(rows)
+	doctors, err := scanDoctors(rows, s.platformFeeBp)
 	if err != nil {
 		return nil, err
 	}
@@ -361,11 +390,42 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 		return nil, err
 	}
 
+	// Price the booking SERVER-SIDE from the doctor's own consultation fee. The
+	// client sends no amount it can be charged on: the platform fee is derived here
+	// from PlatformFeeBp, so the figure displayed to the patient, the figure charged
+	// and the figure escrowed are all the same number by construction (ADR-040).
+	quote := s.quote(doctor.ConsultFeeKobo)
+	if !quote.Priceable() {
+		// Fail closed. A doctor whose stored fee is non-positive or absurd cannot be
+		// booked — escrowing the zero total would give away a consultation free.
+		return nil, fmt.Errorf("telemedicine: doctor's consultation fee is not bookable")
+	}
+	// Bound the card rail: it charges the client-quoted amount at the PSP before we
+	// escrow, so a stale quote is caught here, before any money moves.
+	if err := validateExpectedTotal(req.ExpectedTotalKobo, quote.TotalKobo); err != nil {
+		return nil, err
+	}
+
 	apptID := uuid.New().String()
 	ref := "appointment:" + apptID
-	sett, err := s.settlement.Escrow(ctx, patientID, ref, req.IdempotencyKey, "telemedicine", doctor.ConsultFeeKobo)
+	// Escrow the FULL total (consultation + platform fee). The platform fee is
+	// released to platform revenue at settlement as its own 100%-platform leg, so
+	// every kobo the patient pays has a ledger entry behind it.
+	sett, err := s.settlement.Escrow(ctx, patientID, ref, req.IdempotencyKey, "telemedicine", quote.TotalKobo)
 	if err != nil {
 		return nil, fmt.Errorf("telemedicine: escrow fee: %w", err)
+	}
+	// Escrow is idempotent: a replay of this Idempotency-Key returns the settlement
+	// that ALREADY exists, escrowed for whatever the price was on the first attempt.
+	// We recompute the quote from the doctor's live consult_fee_kobo on every
+	// attempt, so if the doctor edited their fee in between, the two disagree — and
+	// writing the appointment from the fresh quote would record a price that was
+	// never charged: the patient's receipt, the platform's fee and the doctor's
+	// earnings figure would all describe money that does not exist in escrow.
+	//
+	// Fail closed against the escrow, which is the money that actually moved.
+	if err := assertEscrowMatchesQuote(sett.TotalKobo, quote.TotalKobo); err != nil {
+		return nil, err
 	}
 
 	ct := req.ConsultationType
@@ -383,20 +443,26 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 		ScheduledAt:      req.ScheduledAt,
 		Status:           ApptBooked,
 		Notes:            req.Notes,
-		FeeKobo:          doctor.ConsultFeeKobo,
-		IdempotencyKey:   req.IdempotencyKey,
-		SettlementID:     sett.ID,
-		CreatedAt:        time.Now(),
+		// fee_kobo stays the CONSULTATION fee — the doctor-earnings queries compute
+		// 85% of it. The platform fee and the escrowed total are their own columns.
+		FeeKobo:         quote.ConsultFeeKobo,
+		PlatformFeeKobo: quote.PlatformFeeKobo,
+		TotalKobo:       quote.TotalKobo,
+		IdempotencyKey:  req.IdempotencyKey,
+		SettlementID:    sett.ID,
+		CreatedAt:       time.Now(),
 	}
 	const q = `
 		INSERT INTO appointments
 		    (id, patient_id, doctor_id, doctor_name, doctor_specialty, consultation_type,
-		     scheduled_at, status, notes, fee_kobo, idempotency_key, settlement_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,'booked',$8,$9,$10,$11)`
+		     scheduled_at, status, notes, fee_kobo, platform_fee_kobo, total_kobo,
+		     idempotency_key, settlement_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,'booked',$8,$9,$10,$11,$12,$13)`
 	if _, err := s.db.Exec(ctx, q,
 		appt.ID, appt.PatientID, appt.DoctorID, appt.DoctorName, appt.DoctorSpecialty,
 		appt.ConsultationType, appt.ScheduledAt, appt.Notes,
-		appt.FeeKobo, appt.IdempotencyKey, appt.SettlementID,
+		appt.FeeKobo, appt.PlatformFeeKobo, appt.TotalKobo,
+		appt.IdempotencyKey, appt.SettlementID,
 	); err != nil {
 		return nil, fmt.Errorf("telemedicine: insert appointment: %w", err)
 	}
@@ -417,7 +483,8 @@ func (s *Service) ListMyAppointments(ctx context.Context, patientID, filter stri
 		       COALESCE(a.doctor_name,''), COALESCE(a.doctor_specialty,''),
 		       COALESCE(a.consultation_type,'video'),
 		       a.scheduled_at, a.status, COALESCE(a.notes,''),
-		       a.fee_kobo, a.idempotency_key, COALESCE(a.settlement_id::text,''), a.created_at
+		       a.fee_kobo, COALESCE(a.platform_fee_kobo,0), COALESCE(NULLIF(a.total_kobo, 0), a.fee_kobo),
+		       a.idempotency_key, COALESCE(a.settlement_id::text,''), a.created_at
 		FROM appointments a
 		WHERE a.patient_id = $1 %s
 		ORDER BY a.scheduled_at DESC LIMIT 50`, where)
@@ -436,7 +503,8 @@ func (s *Service) GetAppointment(ctx context.Context, id, userID string) (*Appoi
 		       COALESCE(a.doctor_name,''), COALESCE(a.doctor_specialty,''),
 		       COALESCE(a.consultation_type,'video'),
 		       a.scheduled_at, a.status, COALESCE(a.notes,''),
-		       a.fee_kobo, a.idempotency_key, COALESCE(a.settlement_id::text,''), a.created_at
+		       a.fee_kobo, COALESCE(a.platform_fee_kobo,0), COALESCE(NULLIF(a.total_kobo, 0), a.fee_kobo),
+		       a.idempotency_key, COALESCE(a.settlement_id::text,''), a.created_at
 		FROM appointments a
 		WHERE a.id = $1
 		  AND (a.patient_id = $2 OR EXISTS (
@@ -460,9 +528,10 @@ func (s *Service) GetAppointment(ctx context.Context, id, userID string) (*Appoi
 // CompleteAppointment marks an appointment as completed and settles the fee (85/15).
 func (s *Service) CompleteAppointment(ctx context.Context, appointmentID, doctorUserID string) error {
 	var appt Appointment
-	const q = `SELECT id, doctor_id, status, settlement_id FROM appointments WHERE id=$1`
+	const q = `SELECT id, doctor_id, status, settlement_id, COALESCE(platform_fee_kobo,0)
+	            FROM appointments WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, appointmentID).
-		Scan(&appt.ID, &appt.DoctorID, &appt.Status, &appt.SettlementID); err != nil {
+		Scan(&appt.ID, &appt.DoctorID, &appt.Status, &appt.SettlementID, &appt.PlatformFeeKobo); err != nil {
 		return fmt.Errorf("telemedicine: appointment not found")
 	}
 	if appt.Status != ApptBooked && appt.Status != ApptConfirmed {
@@ -476,7 +545,22 @@ func (s *Service) CompleteAppointment(ctx context.Context, appointmentID, doctor
 	if dbDoctorUserID != doctorUserID {
 		return fmt.Errorf("telemedicine: only the assigned doctor can complete this appointment")
 	}
-	split := settlement.Split{ProviderID: doctorUserID, ProviderPct: 0.85, PlatformPct: 0.15}
+	// The platform booking fee rides on TOP of the 85/15 split as a 100%-platform
+	// leg (ServiceFeeKobo — the mirror of a rider tip), so it does not dilute the
+	// doctor. Working Settle's algebra through with total = consult + fee:
+	//
+	//	base     = total − tip − serviceFee = consult
+	//	platform = base×0.15 + serviceFee   = 0.15·consult + fee
+	//	provider = total − platform         = 0.85·consult   ← unchanged
+	//
+	// Appointments escrowed before ADR-040 carry platform_fee_kobo = 0, which
+	// reproduces the old pure 85/15 split exactly — they settle unchanged.
+	split := settlement.Split{
+		ProviderID:     doctorUserID,
+		ProviderPct:    0.85,
+		PlatformPct:    0.15,
+		ServiceFeeKobo: appt.PlatformFeeKobo,
+	}
 	if err := s.settlement.Settle(ctx, appt.SettlementID, split); err != nil {
 		return fmt.Errorf("telemedicine: settle fee: %w", err)
 	}
@@ -643,7 +727,7 @@ type pgRows interface {
 	Err() error
 }
 
-func scanDoctors(rows pgRows) ([]Doctor, error) {
+func scanDoctors(rows pgRows, platformFeeBp int) ([]Doctor, error) {
 	var out []Doctor
 	for rows.Next() {
 		var d Doctor
@@ -666,6 +750,10 @@ func scanDoctors(rows pgRows) ([]Doctor, error) {
 		if d.Education == nil {
 			d.Education = []Education{}
 		}
+		// Attach the server-computed booking breakdown so the app renders our
+		// numbers instead of applying a fee rate of its own (ADR-040).
+		q := QuoteAt(d.ConsultFeeKobo, platformFeeBp)
+		d.Booking = &q
 		out = append(out, d)
 	}
 	return out, rows.Err()
@@ -679,7 +767,8 @@ func scanAppointments(rows pgRows) ([]Appointment, error) {
 			&a.ID, &a.PatientID, &a.DoctorID,
 			&a.DoctorName, &a.DoctorSpecialty, &a.ConsultationType,
 			&a.ScheduledAt, &a.Status, &a.Notes,
-			&a.FeeKobo, &a.IdempotencyKey, &a.SettlementID, &a.CreatedAt,
+			&a.FeeKobo, &a.PlatformFeeKobo, &a.TotalKobo,
+			&a.IdempotencyKey, &a.SettlementID, &a.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

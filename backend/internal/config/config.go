@@ -238,6 +238,13 @@ type Config struct {
 	// (internal/crypto): mock-first price feed, reuses the finance ledger.
 	FeatureCryptoEnabled bool
 
+	// FeatureTelemedicinePlatformFeeEnabled turns on the platform booking fee
+	// charged on top of a doctor's consultation fee (ADR-040). Default OFF: it is a
+	// patient-visible price increase, so it is opt-in, and switching it off is the
+	// rollback — the app renders whatever quote the server returns, so no client
+	// release is needed either way.
+	FeatureTelemedicinePlatformFeeEnabled bool
+
 	// ── Business Registry (CAC business-name verification + registration) ─────
 	// Gates the member /api/finance/business/* + admin /api/business/admin/*
 	// surface (internal/business). The CAC registration fee is a real idempotent
@@ -639,6 +646,7 @@ func Load() Config {
 		FeaturePropertySuiteEnabled:           getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
 		FeatureFractionalREEnabled:            getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
 		FeatureCryptoEnabled:                  getEnvBool("FEATURE_CRYPTO_ENABLED", false),
+		FeatureTelemedicinePlatformFeeEnabled: getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
 		FeatureBusinessRegistryEnabled:        getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
 		CACVASBaseURL:                         getEnv("CAC_VAS_BASE_URL", ""),
 		CACVASApiKey:                          getEnv("CAC_VAS_API_KEY", ""),
