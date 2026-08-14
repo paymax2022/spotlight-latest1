@@ -36,16 +36,16 @@ func (r *Repository) Get(ctx context.Context, userID string) (rec Record, exists
 // expected version for an existing row) and appends an immutable audit event, in a
 // single transaction. A version mismatch returns ErrVersionConflict.
 type Apply struct {
-	To              Status
-	ExpectVersion   int // the version the caller read; ignored when the row is new
-	RowExists       bool
-	EventType       string
-	ActorID         *string
-	Reason          *string
-	SetSubmittedNow bool
-	SetReviewedNow  bool
-	BypassExpiresAt *time.Time // set on bypass; cleared (nil) otherwise for non-bypass
-	ExposureCap     *int64
+	To               Status
+	ExpectVersion    int // the version the caller read; ignored when the row is new
+	RowExists        bool
+	EventType        string
+	ActorID          *string
+	Reason           *string
+	SetSubmittedNow  bool
+	SetReviewedNow   bool
+	BypassExpiresAt  *time.Time // set on bypass; cleared (nil) otherwise for non-bypass
+	ExposureCap      *int64
 	KeepBypassFields bool // true only for the BYPASS transition (persist expiry/cap)
 }
 
@@ -151,10 +151,15 @@ func (r *Repository) DueBypasses(ctx context.Context, now time.Time, limit int) 
 }
 
 // Event is one audit row (admin case timeline).
+// Event is serialised to the admin case view — json tags required so clients
+// receive snake_case rather than Go field names.
 type Event struct {
-	EventType, NewStatus string
-	OldStatus, ActorID, Reason *string
-	CreatedAt time.Time
+	EventType string    `json:"event_type"`
+	NewStatus string    `json:"new_status"`
+	OldStatus *string   `json:"old_status"`
+	ActorID   *string   `json:"actor_id"`
+	Reason    *string   `json:"reason"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ListEvents returns a user's audit trail, newest first.
