@@ -14,9 +14,8 @@ name: CI — CLAUDE.md gates
 #   - OpenAPI: YAML validity for every contract in contracts/
 #   - migrations: additive-only guard (no DROP / RENAME / type-narrowing)
 #
-# This workflow only verifies. It never deploys, never runs `supabase db push`,
-# never touches live secrets. Deploy lives in deploy-cpanel.yml and is gated
-# separately (push to main only, after this is green).
+# Pushes run CI checks only. Railway deployment is an explicit manual release
+# action, and is locked to the matching promotion branch/environment pair.
 
 on:
   # CI runs only on the deployable promotion branches. Railway performs native
@@ -37,6 +36,19 @@ on:
       - '**.md'
       - 'docs/**'
   workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: 'Railway environment to deploy'
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      confirm_deploy:
+        description: 'Type DEPLOY to confirm the selected release'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -69,24 +81,59 @@ jobs:
     name: migrations (additive-only guard)
     uses: ./.github/workflows/_reusable-migration-guard.yml
 
+  # Two cheap repo-wide grep gates share one runner: both are sub-second, and a
+  # second job would cost a full runner start for no benefit (see the
+  # paths-ignore note above on conserving private-repo Actions minutes).
+  # The job id stays `secret-hygiene` — it is internal, and the deploy jobs below
+  # reference it in `needs:`.
   secret-hygiene:
-    name: secrets (no client-exposed secrets)
+    name: hygiene (client secrets + live-DB test gate)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Check for secrets in client bundles
         run: bash scripts/check-client-secrets.sh
+      # No Go test may read DATABASE_URL — it is the production pooler, and the
+      # live-DB suites insert fixtures and move money.
+      - name: Check live-DB tests gate on TEST_DATABASE_URL only
+        run: bash scripts/ci/check-live-db-gate.sh
 
-  # Railway deployment is deliberately opt-in. Set the repository variable
-  # RAILWAY_DEPLOY_ENABLED=true only after the corresponding Railway service
-  # variables have been configured and reviewed.
+  # Catches workflow-level startup failures — a run that dies before any job
+  # exists, so it reports no annotation and no check-run and looks like an
+  # unexplained red X. deploy-web.yml failed this way 198 times in 11 days
+  # (invalid `matrix` context in a workflow-level `concurrency.group`) before
+  # anyone traced it. actionlint validates context availability statically.
+  workflow-lint:
+    name: workflows (actionlint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      # Pinned version, built from source — no curl|bash installer.
+      - name: Install actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      # shellcheck/pyflakes integration is off: this gate is scoped to workflow
+      # validity (context availability, expression syntax, action versions),
+      # which is the class that produces a jobless red run. Linting the `run:`
+      # shell of all 27 workflows is a separate, larger cleanup — enable by
+      # dropping the two empty flags once that backlog is clear.
+      - name: Lint workflows
+        run: actionlint -no-color -oneline -shellcheck= -pyflakes=
+
+  # Railway deployment is deliberately manual. The repository variable remains
+  # an emergency kill switch, while the inputs and branch tests prevent an
+  # environment from being deployed from the wrong promotion branch.
   deploy-development:
     name: deploy Development (${{ matrix.service }})
     if: >-
-      github.event_name == 'push' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy_environment == 'development' &&
+      inputs.confirm_deploy == 'DEPLOY' &&
       github.ref == 'refs/heads/develop' &&
       vars.RAILWAY_DEPLOY_ENABLED == 'true'
-    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene]
+    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene, workflow-lint]
     runs-on: ubuntu-latest
     environment: development
     strategy:
@@ -107,11 +154,10 @@ jobs:
       - name: Install Railway CLI
         run: npm install --global @railway/cli@5.40.1
       - name: Deploy ${{ matrix.service }}
-        working-directory: ${{ matrix.path }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
         run: |
-          railway up . --path-as-root \
+          railway up ${{ matrix.path }} --path-as-root --no-gitignore \
             --service ${{ matrix.service }} \
             --environment development \
             --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
@@ -131,10 +177,12 @@ jobs:
   deploy-staging:
     name: deploy Staging (${{ matrix.service }})
     if: >-
-      github.event_name == 'push' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy_environment == 'staging' &&
+      inputs.confirm_deploy == 'DEPLOY' &&
       github.ref == 'refs/heads/staging' &&
       vars.RAILWAY_DEPLOY_ENABLED == 'true'
-    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene]
+    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene, workflow-lint]
     runs-on: ubuntu-latest
     environment: staging
     strategy:
@@ -155,11 +203,10 @@ jobs:
       - name: Install Railway CLI
         run: npm install --global @railway/cli@5.40.1
       - name: Deploy ${{ matrix.service }}
-        working-directory: ${{ matrix.path }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
         run: |
-          railway up . --path-as-root \
+          railway up ${{ matrix.path }} --path-as-root --no-gitignore \
             --service ${{ matrix.service }} \
             --environment staging \
             --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
@@ -179,10 +226,12 @@ jobs:
   deploy-production:
     name: deploy Production (${{ matrix.service }})
     if: >-
-      github.event_name == 'push' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy_environment == 'production' &&
+      inputs.confirm_deploy == 'DEPLOY' &&
       github.ref == 'refs/heads/prod' &&
       vars.RAILWAY_DEPLOY_ENABLED == 'true'
-    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene]
+    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene, workflow-lint]
     runs-on: ubuntu-latest
     environment: production
     strategy:
@@ -203,11 +252,10 @@ jobs:
       - name: Install Railway CLI
         run: npm install --global @railway/cli@5.40.1
       - name: Deploy ${{ matrix.service }}
-        working-directory: ${{ matrix.path }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
         run: |
-          railway up . --path-as-root \
+          railway up ${{ matrix.path }} --path-as-root --no-gitignore \
             --service ${{ matrix.service }} \
             --environment production \
             --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \

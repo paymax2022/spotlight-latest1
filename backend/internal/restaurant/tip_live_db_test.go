@@ -10,7 +10,7 @@ package restaurant
 // the escrowed total, never set on the Order, never in the INSERT column list), so
 // a tip was neither charged to the customer nor paid to the rider.
 //
-// Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
+// Skipped unless TEST_DATABASE_URL is set.
 // ---------------------------------------------------------------------------
 
 import (
@@ -25,16 +25,14 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/finance/tiers"
 )
 
 func tipPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB tip test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB tip test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -64,7 +62,7 @@ func TestLiveDB_OrderTipEscrowAndRiderPayout(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
-	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led)
+	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
 
 	owner := uuid.New().String()
 	customer := uuid.New().String()
@@ -74,6 +72,9 @@ func TestLiveDB_OrderTipEscrowAndRiderPayout(t *testing.T) {
 			t.Fatalf("seed user: %v", err)
 		}
 	}
+	// PlaceOrder's escrow is tier-gated (fail-closed), so the paying customer needs a
+	// KYC tier. Tier 3 is unlimited — this test is about the tip, not the cap.
+	seedKYCTier(t, ctx, pool, customer, 3)
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Tip Kitchen','1 St',TRUE)`, restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
@@ -230,7 +231,7 @@ func TestLiveDB_OrderTipRefundedOnCancel(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
-	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led)
+	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
 
 	owner := uuid.New().String()
 	customer := uuid.New().String()
@@ -239,6 +240,7 @@ func TestLiveDB_OrderTipRefundedOnCancel(t *testing.T) {
 			t.Fatalf("seed user: %v", err)
 		}
 	}
+	seedKYCTier(t, ctx, pool, customer, 3) // unlimited — the escrow is tier-gated
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Tip Refund Kitchen','1 St',TRUE)`, restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
@@ -297,7 +299,7 @@ func TestLiveDB_OrderTipDroppedWhenEscrowDiverges(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
-	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led)
+	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
 
 	owner := uuid.New().String()
 	customer := uuid.New().String()
@@ -307,6 +309,7 @@ func TestLiveDB_OrderTipDroppedWhenEscrowDiverges(t *testing.T) {
 			t.Fatalf("seed user: %v", err)
 		}
 	}
+	seedKYCTier(t, ctx, pool, customer, 3) // unlimited — the escrow is tier-gated
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Tip Divergence Kitchen','1 St',TRUE)`, restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)

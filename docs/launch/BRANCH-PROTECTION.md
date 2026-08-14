@@ -61,7 +61,7 @@ gh api -X PUT "repos/$OWNER/$REPO/branches/main/protection" \
 
 ## GitHub Environments (for deploy)
 
-Create two environments used by `deploy.yml` / `deploy-web.yml`:
+Create two environments used by `deploy.yml` and the Railway deploy jobs in `ci.yml`:
 
 - **staging** — no gate; holds staging secrets (`RAILS_MODE=sandbox`, sandbox provider keys, staging DB URL, GCP WIF vars).
 - **production** — **required reviewers** (human gate); holds live secrets. Restrict to the `main` branch.
@@ -76,8 +76,24 @@ Deploy workflows **skip** (grey, not red) until you opt in with a repository/Env
 | Workflow | Activate with variable | Plus secrets |
 |---|---|---|
 | `deploy.yml` (Cloud Run) | `GCP_PROJECT_ID` (+ `GCP_REGION`, `GCP_ARTIFACT_REGISTRY`) | `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT` |
-| `deploy-web.yml` (Vercel) | `VERCEL_DEPLOY_ENABLED=true` | `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID_WEB`, `VERCEL_PROJECT_ID_ADMIN` |
+| `ci.yml` (Railway, per environment) | `RAILWAY_DEPLOY_ENABLED=true` — plus a manual `workflow_dispatch` naming the environment and typing `DEPLOY` to confirm, from the matching promotion branch | `RAILWAY_TOKEN_DEVELOPMENT`, `RAILWAY_TOKEN_STAGING`, `RAILWAY_TOKEN_PRODUCTION` |
+| `deploy-cpanel.yml` (Namecheap cPanel) | `CPANEL_DEPLOY_ENABLED=true` | see the workflow header |
 | `mobile-eas.yml` (EAS) | `EAS_ENABLED=true` | `EXPO_TOKEN` |
+
+> **Retired 2026-08-13:** `deploy-web.yml` (Vercel) was deleted — see
+> [ADR-027](../adr/ADR-027-deploy-target-cloud-run.md). It had never produced a successful run:
+> a `matrix` expression in its workflow-level `concurrency.group` is not a valid context there,
+> so every push created a jobless startup-failure run (198 of them) regardless of its
+> `workflow_dispatch`-only trigger. The `VERCEL_*` secrets and `VERCEL_DEPLOY_ENABLED` are no
+> longer read by any workflow. Recoverable from git history if Vercel is ever revived.
 
 `security.yml` scans run **advisory** (report, don't block) during launch — flip the
 `continue-on-error` flags to blocking once the dependency/secret backlog is clean.
+
+## Keeping workflows startup-clean
+
+`ci.yml` runs an **actionlint** job (`workflows (actionlint)`) over `.github/workflows/**`.
+It exists because a workflow-level validation error — an invalid context in `concurrency`,
+`permissions`, or `on` — produces a run with **zero jobs**, **no check-run and no annotation**.
+Nothing in the PR UI explains the red X, so the failure can persist unnoticed. Statically
+linting the files is the only pre-merge signal for that class.

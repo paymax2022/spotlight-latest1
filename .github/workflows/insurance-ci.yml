@@ -10,12 +10,17 @@ name: Insurance CI
 on:
   push:
     paths:
+      # NOTE: backend/internal/app/finance_routes.go is deliberately NOT listed.
+      # It is the shared finance router that EVERY module registers into, so any
+      # module's change touches it and used to wake all nine module CIs at once.
+      # Compile/vet/full `go test ./...` coverage for such a change still runs via
+      # fx-ci (paths: backend/**) and connect-ci (bare pull_request), and ci.yml
+      # builds+vets on every PR — so nothing here is the only thing catching it.
       - 'backend/internal/insurance/**'
       - 'backend/internal/provider/mycover/**'
       - 'backend/internal/provider/octamile/**'
       - 'backend/internal/app/insurance_routes.go'
       - 'backend/internal/app/insurance_claims_routes.go'
-      - 'backend/internal/app/finance_routes.go'
       - 'backend/internal/config/config.go'
       - 'supabase/migrations/*insurance*.sql'
       - 'frontend-admin/app/admin/insurance/**'
@@ -29,6 +34,27 @@ on:
       - 'mobile-app/reactnative/src/constants/modules.ts'
       - '.github/workflows/insurance-ci.yml'
   pull_request:
+    # Mirrors the push filter: this module's CI no longer runs on PRs that
+    # do not touch it. Repo-wide coverage still runs on every PR (ci.yml,
+    # connect-ci full go test ./..., integration-verify, security).
+    paths:
+      - 'backend/internal/insurance/**'
+      - 'backend/internal/provider/mycover/**'
+      - 'backend/internal/provider/octamile/**'
+      - 'backend/internal/app/insurance_routes.go'
+      - 'backend/internal/app/insurance_claims_routes.go'
+      - 'backend/internal/config/config.go'
+      - 'supabase/migrations/*insurance*.sql'
+      - 'frontend-admin/app/admin/insurance/**'
+      - 'frontend-admin/src/services/insuranceAdminService.ts'
+      - 'frontend-admin/src/types/insuranceAdmin.ts'
+      - 'frontend-admin/src/components/layouts/AdminSidebar.tsx'
+      - 'frontend-web/app/api/v1/insurance/**'
+      - 'frontend-web/src/lib/feature-flags.ts'
+      - 'mobile-app/reactnative/app/insurance/**'
+      - 'mobile-app/reactnative/src/features/insurance/**'
+      - 'mobile-app/reactnative/src/constants/modules.ts'
+      - '.github/workflows/insurance-ci.yml'
   workflow_dispatch:
 
 jobs:

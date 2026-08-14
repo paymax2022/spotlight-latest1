@@ -58,16 +58,16 @@ test.describe('Auth E2E - Login flow', () => {
     await expect(page.getByText('Explore Services')).toBeVisible({ timeout: 15_000 });
   });
 
-  test('401 on /auth/me clears session and redirects to login', async ({ page }) => {
+  test('a 401 from the API clears the session and redirects to login', async ({ page }) => {
     await mockWallet(page);
     await mockBillsCatalog(page);
     await loginAs(page);
 
-    // Now re-route /auth/me to fail (simulates session expiry)
-    await page.route('**/auth/me', async (route) => {
-      await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ code: 'UNAUTHORIZED' }) });
-    });
-    await page.route('**/dashboard', async (route) => {
+    // Simulate session expiry on a call the protected screen actually makes
+    // through the intercepted axios client (getWallet → /api/v1/wallet/balance).
+    // The old test 401'd /auth/me and /dashboard, which the app no longer calls
+    // at all, so nothing ever triggered the interceptor.
+    await page.route('**/api/v1/wallet/balance', async (route) => {
       await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ code: 'UNAUTHORIZED' }) });
     });
 

@@ -1,7 +1,7 @@
 package compliance_test
 
 // LIVE-DB tests for the append-only referral consent record (migration
-// 20260813010000). Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
+// 20260813010000). Skipped unless TEST_DATABASE_URL is set.
 //
 // These exist because the write path had NO test, and that gap let a
 // schema/code mismatch reach the cloud database: the migration dropped the
@@ -36,10 +36,7 @@ func liveConsentPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping referral consent live-DB test")
+		t.Skip("no TEST_DATABASE_URL set — skipping referral consent live-DB test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

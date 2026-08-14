@@ -42,7 +42,12 @@ API source of truth: `contracts/openapi.yaml`.
   then implement until green.
 - Before marking any money-path task complete, request review from the `ledger-auditor`
   subagent. Before any PR touching auth/PII, request `security-reviewer`.
-- Every non-obvious design choice gets a 1-page ADR in `docs/adr/` (use `/adr`).
+- Every non-obvious design choice gets a 1-page ADR in `docs/adr/`.
+  **Never pick the ADR number yourself.** Name the file `ADR-PR<pr-number>-<slug>.md`
+  and cite `ADR-PR<pr-number>` in every reference (prose, Go comments, SQL headers);
+  the real number is assigned on merge by `.github/workflows/adr-assign.yml`.
+  Hand-picking a number is how the repo collected six duplicate ADRs and three
+  renumbering PRs in one day — `adr-guard.yml` now fails the PR if you do.
 - Feature-flag every new module. No flag, no merge.
 - Conventional Commits. PRs < 400 lines where possible.
 

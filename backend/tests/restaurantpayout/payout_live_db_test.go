@@ -8,7 +8,7 @@ package restaurantpayout_test
 // talks to a concrete *pgxpool.Pool for the payout-run aggregation and to the
 // real ledger.Service for the ONE balanced disbursement transfer (DR settlement
 // standing account, CR provider wallet). None of this can run without a migrated
-// Postgres, so this file is SKIPPED whenever TEST_DATABASE_URL/DATABASE_URL is
+// Postgres, so this file is SKIPPED whenever TEST_DATABASE_URL is
 // unset — the SAME env-var gate as backend/tests/crypto/live_db_integration_test.go
 // and backend/tests/association/live_db_integration_test.go. The skip is NOT a
 // stub; every step drives the real Service against real tables.
@@ -20,12 +20,12 @@ package restaurantpayout_test
 //       supabase/migrations/20260613030000_ledger_entries.sql (ledger)
 //       supabase/migrations/20260919000400_restaurant_payouts.sql (payout runs/lines)
 //     Confirm the core tables landed:
-//       psql "$DATABASE_URL" -c "\d restaurant_payout_runs"
-//       psql "$DATABASE_URL" -c "\d restaurant_payout_lines"
-//  2. Set DATABASE_URL (or TEST_DATABASE_URL) to a disposable/test database —
+//       psql "$TEST_DATABASE_URL" -c "\d restaurant_payout_runs"
+//       psql "$TEST_DATABASE_URL" -c "\d restaurant_payout_lines"
+//  2. Set TEST_DATABASE_URL to a disposable/test database —
 //     never point this at production. `supabase db reset` (local, port 54322)
 //     is the safest target:
-//       export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  3. Run:
 //       cd backend && go test ./tests/restaurantpayout/... -run LiveDB -v
 //
@@ -47,15 +47,12 @@ import (
 	"spotlight/backend/internal/restaurant"
 )
 
-// liveDBPool connects using TEST_DATABASE_URL/DATABASE_URL, or skips.
+// liveDBPool connects using TEST_DATABASE_URL, or skips.
 func liveDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB restaurant payout integration test; see bring-up note in payout_live_db_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB restaurant payout integration test; see bring-up note in payout_live_db_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

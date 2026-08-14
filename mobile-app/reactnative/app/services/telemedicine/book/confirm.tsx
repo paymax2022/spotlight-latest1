@@ -20,7 +20,21 @@ import { submitApptIntake } from '@/features/health/api';
 import { CONSENT_VERSION } from '@/features/health/api/preconsult.mock';
 import { getIntakeDraft, clearIntakeDraft } from '@/features/health/intakeDraftStore';
 
-const SERVICE_FEE_KOBO = 0; // platform booking fee (demo: free)
+// Platform booking fee, charged on top of the doctor's consultation fee and
+// expressed in basis points of it (500 bps = 5%), matching how the rest of the
+// app carries fee rates (see fractionalre's platformFeeBps).
+const SERVICE_FEE_BPS = 500;
+const SERVICE_FEE_LABEL = `Platform fee (${SERVICE_FEE_BPS / 100}%)`;
+
+/**
+ * Platform fee in kobo. Integer math only — money is never a float (CLAUDE.md),
+ * so the rate is applied in basis points and rounded to whole kobo, exactly as
+ * the fractional-real-estate yield math does.
+ */
+function serviceFeeKoboFor(consultationFeeKobo: number): number {
+  if (!Number.isFinite(consultationFeeKobo) || consultationFeeKobo <= 0) return 0;
+  return Math.round((consultationFeeKobo * SERVICE_FEE_BPS) / 10_000);
+}
 
 const TYPE_META: Record<ConsultType, { label: string; Icon: typeof Video }> = {
   video: { label: 'Video consultation', Icon: Video },
@@ -48,7 +62,8 @@ export default function ConfirmBookingScreen() {
   const { data: wallet } = useQuery({ queryKey: ['wallet'], queryFn: getWallet });
 
   const feeKobo = doctor?.feeKobo ?? 0;
-  const totalKobo = feeKobo + SERVICE_FEE_KOBO;
+  const serviceFeeKobo = serviceFeeKoboFor(feeKobo);
+  const totalKobo = feeKobo + serviceFeeKobo;
   const balanceKobo = Math.round((wallet?.balance ?? 0) * 100);
   const insufficient = balanceKobo < totalKobo;
 
@@ -132,7 +147,7 @@ export default function ConfirmBookingScreen() {
           <Text style={styles.cardTitle}>Payment</Text>
           <View style={styles.divider} />
           <Row label="Consultation fee" value={formatKobo(feeKobo)} />
-          <Row label="Service fee" value={formatKobo(SERVICE_FEE_KOBO)} />
+          <Row label={SERVICE_FEE_LABEL} value={formatKobo(serviceFeeKobo)} />
           <View style={styles.divider} />
           <Row label="Total" value={formatKobo(totalKobo)} highlight />
 

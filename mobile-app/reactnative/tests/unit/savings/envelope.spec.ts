@@ -16,6 +16,7 @@ import {
   vaultDetail,
   circleDetail,
   targetDetail,
+  vaultStatus,
 } from '@/features/savings/envelope';
 
 /** Wrap a payload the way axios hands it to the callers. */
@@ -100,6 +101,30 @@ describe('savings response envelope', () => {
 
     it('falls through to the body when the key is absent', () => {
       assert.deepEqual(entity(res({ id: 'v1' }), 'vault'), { id: 'v1' });
+    });
+  });
+
+  describe('vaultStatus() — state vs kind', () => {
+    it('reports a LOCK vault as LOCKED (the bug: state was compared to a KIND value)', () => {
+      // Go sends state=OPEN, kind=LOCK. The old code tested state === 'LOCK',
+      // which is never true, so no vault was ever locked and the early-break
+      // penalty always took the unlocked path — charging nothing.
+      assert.equal(vaultStatus('OPEN', 'LOCK'), 'LOCKED');
+    });
+
+    it('reports a FLEX vault as OPEN, not LOCKED', () => {
+      assert.equal(vaultStatus('OPEN', 'FLEX'), 'OPEN');
+    });
+
+    it('lets lifecycle win once the vault is past OPEN', () => {
+      assert.equal(vaultStatus('MATURED', 'LOCK'), 'MATURED');
+      assert.equal(vaultStatus('CLOSED', 'LOCK'), 'CLOSED');
+    });
+
+    it('is case-insensitive and tolerates missing fields', () => {
+      assert.equal(vaultStatus('open', 'lock'), 'LOCKED');
+      assert.equal(vaultStatus(undefined, undefined), 'OPEN');
+      assert.equal(vaultStatus('OPEN', undefined), 'OPEN');
     });
   });
 

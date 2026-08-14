@@ -8,9 +8,14 @@ name: Health CI
 on:
   push:
     paths:
+      # NOTE: backend/internal/app/finance_routes.go is deliberately NOT listed.
+      # It is the shared finance router that EVERY module registers into, so any
+      # module's change touches it and used to wake all nine module CIs at once.
+      # Compile/vet/full `go test ./...` coverage for such a change still runs via
+      # fx-ci (paths: backend/**) and connect-ci (bare pull_request), and ci.yml
+      # builds+vets on every PR — so nothing here is the only thing catching it.
       - 'backend/internal/health/**'
       - 'backend/internal/app/health_*.go'
-      - 'backend/internal/app/finance_routes.go'
       - 'backend/internal/config/config.go'
       - 'supabase/migrations/*health_*.sql'
       - 'frontend-admin/app/admin/health/**'
@@ -24,6 +29,24 @@ on:
       - 'mobile-app/reactnative/src/constants/modules.ts'
       - '.github/workflows/health-ci.yml'
   pull_request:
+    # Mirrors the push filter: this module's CI no longer runs on PRs that
+    # do not touch it. Repo-wide coverage still runs on every PR (ci.yml,
+    # connect-ci full go test ./..., integration-verify, security).
+    paths:
+      - 'backend/internal/health/**'
+      - 'backend/internal/app/health_*.go'
+      - 'backend/internal/config/config.go'
+      - 'supabase/migrations/*health_*.sql'
+      - 'frontend-admin/app/admin/health/**'
+      - 'frontend-admin/src/services/health*AdminService.ts'
+      - 'frontend-admin/src/types/health*Admin.ts'
+      - 'frontend-admin/src/components/layouts/AdminSidebar.tsx'
+      - 'frontend-web/app/api/v1/health/**'
+      - 'frontend-web/src/lib/feature-flags.ts'
+      - 'mobile-app/reactnative/app/health/**'
+      - 'mobile-app/reactnative/src/features/health/**'
+      - 'mobile-app/reactnative/src/constants/modules.ts'
+      - '.github/workflows/health-ci.yml'
   workflow_dispatch:
 
 jobs:

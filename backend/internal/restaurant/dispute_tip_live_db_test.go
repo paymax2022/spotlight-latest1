@@ -22,7 +22,7 @@ package restaurant
 // settlement.Refund and returns the true escrowed total (tips included) — covered
 // by TestLiveDB_OrderTipRefundedOnCancel.
 //
-// Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
+// Skipped unless TEST_DATABASE_URL is set.
 // ---------------------------------------------------------------------------
 
 import (
@@ -38,6 +38,7 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/finance/tiers"
 )
 
 // disputeTipFixture is a tipped order that has been DELIVERED (and therefore settled,
@@ -75,7 +76,7 @@ func platformRevenueBalance(t *testing.T, ctx context.Context, led *ledger.Servi
 // rider the tip in full), and opens a dispute on it.
 func newDisputeTipFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, led *ledger.Service, kitchen string, tip int64) *disputeTipFixture {
 	t.Helper()
-	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led)
+	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
 
 	owner := uuid.New().String()
 	customer := uuid.New().String()
@@ -85,6 +86,9 @@ func newDisputeTipFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 			t.Fatalf("seed user: %v", err)
 		}
 	}
+	// PlaceOrder's escrow is tier-gated fail-closed (ADR-033), so the paying customer
+	// needs a KYC tier. Tier 3 is unlimited — these tests are about the dispute, not the cap.
+	seedKYCTier(t, ctx, pool, customer, 3)
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,$3,'1 St',TRUE)`, restID, owner, kitchen); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
@@ -324,7 +328,7 @@ func TestLiveDB_DisputeNoClawbackWhenRiderNeverPaidTip(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
-	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led)
+	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
 
 	owner := uuid.New().String()
 	customer := uuid.New().String()
@@ -334,6 +338,9 @@ func TestLiveDB_DisputeNoClawbackWhenRiderNeverPaidTip(t *testing.T) {
 			t.Fatalf("seed user: %v", err)
 		}
 	}
+	// PlaceOrder's escrow is tier-gated fail-closed (ADR-033), so the paying customer
+	// needs a KYC tier. Tier 3 is unlimited — these tests are about the dispute, not the cap.
+	seedKYCTier(t, ctx, pool, customer, 3)
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Unpaid Tip Kitchen','1 St',TRUE)`, restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
@@ -765,6 +772,7 @@ func TestLiveDB_DisputeTipClawbackDeferredToNextSettlement(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, nextCustomer, nextCustomer+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	seedKYCTier(t, ctx, pool, nextCustomer, 3) // tier-gated escrow (ADR-033)
 	if err := led.Credit(ctx, nextCustomer, "seed-fund", "nextfund-"+nextCustomer, revAcc.ID, 5_000_000); err != nil {
 		t.Fatalf("fund next customer: %v", err)
 	}

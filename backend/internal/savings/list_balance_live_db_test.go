@@ -10,9 +10,9 @@ package savings
 // the projection lives in SQL.
 //
 // ⚠️ GATED ON TEST_DATABASE_URL, DELIBERATELY WITH NO FALLBACK TO DATABASE_URL.
-// Other suites in this repo fall back to DATABASE_URL, but the root .env points
-// DATABASE_URL at the PRODUCTION Supabase pooler — a fallback here would create
-// vaults and ledger rows in production. Run it against a local database only:
+// The root .env points DATABASE_URL at the PRODUCTION Supabase pooler, so a
+// fallback would create vaults and ledger rows in production. Run it against a
+// local database only:
 //
 //	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
 //	  go test ./internal/savings/ -run TestLiveDB_ListVaults -v

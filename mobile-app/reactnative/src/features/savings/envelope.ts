@@ -71,6 +71,23 @@ export function vaultDetail(res: Res): any {
 }
 
 /**
+ * Display status for a vault, from Go's TWO separate fields:
+ *   state = OPEN | MATURED | CLOSED   (lifecycle)
+ *   kind  = FLEX | LOCK               (product)
+ *
+ * These are easy to conflate: the client previously tested `state === 'LOCK'`,
+ * which can never be true, so a LOCK vault never reported as locked and every
+ * lock-dependent branch took the unlocked path.
+ *
+ * Lifecycle wins when the vault has moved past OPEN; otherwise the kind decides.
+ */
+export function vaultStatus(state?: string, kind?: string): string {
+  const s = (state ?? '').toUpperCase();
+  if (s === 'MATURED' || s === 'CLOSED') return s;
+  return (kind ?? '').toUpperCase() === 'LOCK' ? 'LOCKED' : s || 'OPEN';
+}
+
+/**
  * `GET /summary` → `{ success, summary: { vault_count, vault_balance_kobo,
  * circle_count, target_count, target_balance_kobo, total_saved_kobo } }`,
  * mapped to the camelCase `SavingsSummary`.

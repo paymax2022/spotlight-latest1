@@ -1,9 +1,9 @@
 package fx_test
 
 // ---------------------------------------------------------------------------
-// LIVE-DB proof that the two FX surfaces price from ONE table (ADR-031).
+// LIVE-DB proof that the two FX surfaces price from ONE table (ADR-032).
 //
-// Before ADR-031 the legacy wallet FX service read its markup from
+// Before ADR-032 the legacy wallet FX service read its markup from
 // public.fx_markup_rates while the orchestration module priced from a hardcoded
 // SpreadEngine rule table in finance_routes.go. The same corridor could be
 // charged two different markups, and only one of them was operator-changeable.
@@ -20,10 +20,10 @@ package fx_test
 //     move into SQL — that ordering is what keeps business customers on their
 //     own rate.
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset (reuses liveDBPool
+// SKIPPED whenever TEST_DATABASE_URL is unset (reuses liveDBPool
 // from convert_live_db_test.go), so `go test ./...` without a DB stays green.
 //
-//   export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run SpreadUnification -v
 // ---------------------------------------------------------------------------
 
@@ -38,7 +38,7 @@ import (
 	"spotlight/backend/internal/orchestration"
 )
 
-// legacyInCodeEngine is the EXACT rule table orchestration used before ADR-031,
+// legacyInCodeEngine is the EXACT rule table orchestration used before ADR-032,
 // lifted from finance_routes.go. It is the baseline the seeded table must
 // reproduce; if these ever diverge, the seed repriced something.
 func legacyInCodeEngine() *orchestration.SpreadEngine {
@@ -91,7 +91,7 @@ func TestSpreadUnification_SeedReproducesLegacyPricing(t *testing.T) {
 	// The ONE deliberate change: the fallback for un-carded corridors converges on
 	// the product-set 1%. Asserted so it can never happen silently again.
 	if got, was := live.EffectiveBPS("GBP-KES", "retail"), legacy.EffectiveBPS("GBP-KES", "retail"); was != 105 || got != 100 {
-		t.Errorf("default fallback = %d bps (was %d); ADR-031 expects exactly 105 -> 100", got, was)
+		t.Errorf("default fallback = %d bps (was %d); ADR-032 expects exactly 105 -> 100", got, was)
 	}
 }
 

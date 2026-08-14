@@ -1,5 +1,6 @@
 import { api } from '@/api/client';
 import * as envelope from './envelope';
+import { vaultStatus } from './envelope';
 import { USE_MOCK, API_BASE } from './constants/savings.constants';
 import type {
   Vault,
@@ -37,7 +38,12 @@ function vaultFromBackend(raw: any): Vault {
     id: raw.id,
     name: raw.name,
     emoji: raw.emoji,
-    status: raw.state?.toUpperCase() === 'LOCK' ? 'LOCKED' : raw.state || 'OPEN',
+    // Go has TWO distinct fields: state (OPEN|MATURED|CLOSED) and kind
+    // (FLEX|LOCK). This used to test `state === 'LOCK'` — comparing a state
+    // against a KIND value — so no vault was ever 'LOCKED' and every
+    // lock-dependent branch (notably the early-break penalty) silently took the
+    // unlocked path.
+    status: vaultStatus(raw.state, raw.kind),
     balanceKobo: raw.balance_kobo ?? 0,
     targetKobo: raw.target_kobo ?? null,
     maturesAtISO: raw.matures_at ?? null,
@@ -227,11 +233,9 @@ export async function getVault(id: string): Promise<Vault> {
   return vaultFromBackend(envelope.vaultDetail(await api.get(`${API_BASE}/vaults/${id}`)));
 }
 
-// NOTE: POST /vaults/:id/early-withdraw DOES exist (handler.go:432) and returns
-// { success, balance_kobo, penalty_kobo}. What is missing is a QUOTE route
-// (GET /vaults/:id/early-withdraw/quote), so the penalty shown before
-// confirming is a client-side estimate and may differ from what the server
-// actually charges.
+// Both routes exist: POST /vaults/:id/early-withdraw performs the break, and
+// GET /vaults/:id/early-withdraw/quote prices it first. The quote runs the same
+// server function as the charge, so what is displayed is what is debited.
 export async function getEarlyWithdrawQuote(id: string): Promise<EarlyWithdrawQuote> {
   if (USE_MOCK) {
     await delay();
@@ -241,10 +245,20 @@ export async function getEarlyWithdrawQuote(id: string): Promise<EarlyWithdrawQu
     const penaltyKobo = locked ? Math.round(balanceKobo * 0.05) : 0;
     return { vaultId: id, balanceKobo, penaltyKobo, netKobo: balanceKobo - penaltyKobo, allowed: true };
   }
+  // Ask the SERVER. The rate is server policy now, so any client-side estimate
+  // could differ from what is actually debited; this endpoint runs the very same
+  // function the charge uses, so quote and charge cannot disagree.
   const v = await getVault(id);
-  const locked = v.status === 'LOCKED';
-  const penaltyKobo = locked ? Math.round(v.balanceKobo * 0.05) : 0;
-  return { vaultId: id, balanceKobo: v.balanceKobo, penaltyKobo, netKobo: v.balanceKobo - penaltyKobo, allowed: true };
+  const q = envelope.body(
+    await api.get(`${API_BASE}/vaults/${id}/early-withdraw/quote`, { params: { amount_kobo: v.balanceKobo } }),
+  );
+  return {
+    vaultId: id,
+    balanceKobo: q?.balance_kobo ?? v.balanceKobo,
+    penaltyKobo: q?.penalty_kobo ?? 0,
+    netKobo: q?.net_kobo ?? v.balanceKobo,
+    allowed: true,
+  };
 }
 
 export async function listCircles(): Promise<AjoCircle[]> {

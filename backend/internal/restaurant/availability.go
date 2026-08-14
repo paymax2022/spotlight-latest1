@@ -118,12 +118,20 @@ func (s *Service) DeleteHoliday(ctx context.Context, restaurantID, userID, date 
 // participate; an order still 'pending' past the SLA is cancelled through the single
 // guarded cancelAndRefund path (so the escrow is returned, not stranded). Returns the
 // number of orders swept. Intended to be run periodically by an ops job.
+//
+// SCHEDULED orders are excluded. They sit 'pending' by design from placement until
+// their slot — up to 7 days (scheduledHorizon) — so any sane accept_sla_minutes would
+// cancel and refund every one of them within minutes of being booked, silently deleting
+// the feature. The restaurant's clock to accept a scheduled order starts when
+// ActivateScheduledOrders releases it and clears scheduled_for, which is exactly when
+// this predicate starts matching it.
 func (s *Service) SweepUnacceptedOrders(ctx context.Context, now time.Time) (int, error) {
 	const q = `
 		SELECT o.id
 		FROM orders o
 		JOIN restaurants r ON r.id = o.restaurant_id
 		WHERE o.status = 'pending'
+		  AND o.scheduled_for IS NULL
 		  AND r.accept_sla_minutes > 0
 		  AND o.created_at < ($1::timestamptz - make_interval(mins => r.accept_sla_minutes))`
 	rows, err := s.db.Query(ctx, q, now)

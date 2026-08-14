@@ -7,7 +7,8 @@
 // (edit-after-approve re-moderation, M1) so a seller can't bait-and-switch an
 // approved ad; a price-only edit stays live. The screen surfaces that up front.
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, TextInput, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, TextInput } from 'react-native';
+import { alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, ShieldAlert, Info } from 'lucide-react-native';
@@ -84,15 +85,16 @@ export default function EditListingScreen() {
         id,
         input: { title: title.trim(), description: description.trim(), priceKobo, attrs },
       });
-      Alert.alert(
-        'Changes saved',
-        willReReview
+      await alertAsync({
+        title: 'Changes saved',
+        message: willReReview
           ? 'Your listing is back under review because you changed its content. It will go live again once approved.'
           : 'Your listing has been updated.',
-        [{ text: 'Done', onPress: () => router.replace('/marketplace/sell' as never) }],
-      );
+        buttonLabel: 'Done',
+      });
+      router.replace('/marketplace/sell' as never);
     } catch (e) {
-      Alert.alert('Could not save', e instanceof Error ? e.message : 'Please try again.');
+      await alertAsync({ title: 'Could not save', message: e instanceof Error ? e.message : 'Please try again.' });
     }
   }
 

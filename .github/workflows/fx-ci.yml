@@ -14,6 +14,16 @@ on:
       - 'contracts/openapi.yaml'
       - '.github/workflows/fx-ci.yml'
   pull_request:
+    # Mirrors the push filter: this module's CI no longer runs on PRs that
+    # do not touch it. Repo-wide coverage still runs on every PR (ci.yml,
+    # connect-ci full go test ./..., integration-verify, security).
+    paths:
+      - 'backend/**'
+      - 'mobile-app/reactnative/src/features/fx/**'
+      - 'mobile-app/reactnative/app/fx/**'
+      - 'frontend-admin/app/admin/fx/**'
+      - 'contracts/openapi.yaml'
+      - '.github/workflows/fx-ci.yml'
   workflow_dispatch:
 
 jobs:

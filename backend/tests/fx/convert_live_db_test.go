@@ -20,7 +20,7 @@ package fx_test
 // legs) — directly regression-guarding the P0 idempotency fix
 // (20260920000300_fx_convert_idempotency.sql + service.go ON CONFLICT DO NOTHING).
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset (same env-gate +
+// SKIPPED whenever TEST_DATABASE_URL is unset (same env-gate +
 // seedUser pattern as backend/tests/crypto + backend/tests/association), so
 // `go test ./...` without a DB stays green.
 //
@@ -32,7 +32,7 @@ package fx_test
 //   20260920000300_fx_convert_idempotency.sql   (idempotency safety net)
 //   + finance/ledger migrations (ledger_accounts / ledger_entries).
 // Then:
-//   export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run LiveDB -v
 // The fx_spread_income + settlement standing accounts are auto-created on first
 // GetOrCreateStandingAccount — no seed rows needed.
@@ -55,15 +55,12 @@ import (
 	"spotlight/backend/internal/provider/maplerad"
 )
 
-// liveDBPool connects using TEST_DATABASE_URL/DATABASE_URL, or skips.
+// liveDBPool connects using TEST_DATABASE_URL, or skips.
 func liveDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB FX convert integration test; see bring-up note in convert_live_db_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB FX convert integration test; see bring-up note in convert_live_db_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

@@ -3,7 +3,9 @@ package trading
 // Integration test for the module wiring: the Module-KYC service is the wallet's
 // REAL access gate. A user with no verification is refused a deposit; once KYC is
 // APPROVED the same deposit succeeds. This is what replaces the wallet's deny-all
-// default. Skipped unless DATABASE_URL is set.
+// default. Skipped unless TEST_DATABASE_URL is set —
+// deliberately with NO fallback to DATABASE_URL, which the root .env points
+// at the PRODUCTION Supabase pooler.
 
 import (
 	"context"
@@ -22,9 +24,9 @@ import (
 )
 
 func TestLiveDB_KycGatesWallet(t *testing.T) {
-	dsn := os.Getenv("DATABASE_URL")
+	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("no DATABASE_URL — skipping trading gate wiring test")
+		t.Skip("no TEST_DATABASE_URL — skipping trading gate wiring test")
 	}
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dsn)

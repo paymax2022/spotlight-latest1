@@ -1,5 +1,6 @@
 import React from 'react';
-import { ScrollView, View, Text, StyleSheet, Pressable, Alert } from 'react-native';
+import { ScrollView, View, Text, StyleSheet, Pressable } from 'react-native';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Crown, Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -32,17 +33,26 @@ export default function Premium() {
     title: plan.name,
     domain: 'connect_premium',
     charge: () => subscribe.mutateAsync(plan.id),
-    onPaid: () => Alert.alert('You’re on Connect Plus', 'Your premium perks are now active. Enjoy!'),
+    onPaid: () => { void alertAsync({ title: 'You’re on Connect Plus', message: 'Your premium perks are now active. Enjoy!' }); },
   });
 
-  const manage = () => Alert.alert('Manage subscription', 'Your Connect Plus subscription is active.', [
-    { text: 'Keep subscription', style: 'cancel' },
-    { text: 'Cancel subscription', style: 'destructive', onPress: () => cancel.mutate() },
-  ]);
+  const manage = async () => {
+    const ok = await confirmAsync({
+      title: 'Manage subscription',
+      message: 'Your Connect Plus subscription is active.',
+      confirmLabel: 'Cancel subscription',
+      cancelLabel: 'Keep subscription',
+      destructive: true,
+    });
+    if (ok) cancel.mutate();
+  };
 
-  const restore = () => refetchStatus().then((r) => {
-    Alert.alert(r.data?.active ? 'Subscription restored' : 'Nothing to restore', r.data?.active ? 'Your Connect Plus subscription is active.' : 'We could not find an active subscription for this account.');
-  });
+  const restore = () => refetchStatus().then((r) => alertAsync({
+    title: r.data?.active ? 'Subscription restored' : 'Nothing to restore',
+    message: r.data?.active
+      ? 'Your Connect Plus subscription is active.'
+      : 'We could not find an active subscription for this account.',
+  }));
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

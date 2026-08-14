@@ -608,7 +608,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		}
 		// Spread rule card comes from public.fx_markup_rates — the SAME table the
 		// legacy wallet FX service prices from — so one admin change at
-		// PUT /api/finance/admin/fx/markup moves BOTH FX surfaces (ADR-031).
+		// PUT /api/finance/admin/fx/markup moves BOTH FX surfaces (ADR-032).
 		// Reloaded once per quote, so a change is live with no restart.
 		//
 		// The in-code rules below are only the bootstrap value used before the first
@@ -1309,7 +1309,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Restaurant & Delivery routes ---
 	if cfg.FeatureRestaurantEnabled {
 		settlementSvcR := settlement.NewService(pool, ledgerSvc)
-		restaurantSvc := restaurant.NewService(pool, settlementSvcR).WithLedger(ledgerSvc)
+		// WithTiers is NOT optional here: both restaurant money paths (the customer
+		// order escrow in PlaceOrder and the merchant withdrawal reserve) refuse with
+		// ErrTierGateUnwired when no gate is attached, so an unwired deployment serves
+		// 503 on every order rather than escrowing past the KYC daily cap (ADR-033).
+		restaurantSvc := restaurant.NewService(pool, settlementSvcR).
+			WithLedger(ledgerSvc).
+			WithTiers(tiersSvc)
 
 		// ── Central Commission & Profit recording (§ profit registry) ──
 		// When the commission feature is on, inject a nil-safe recorder so realized
@@ -1495,6 +1501,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			ctx, restaurantSvc,
 			time.Duration(envInt("FOOD_RECONCILE_INTERVAL_MINUTES", 5))*time.Minute,
 			time.Duration(envInt("FOOD_SETTLE_GRACE_MINUTES", 10))*time.Minute,
+		)
+
+		// Scheduled-order activation. A scheduled order is escrowed at placement and
+		// then waits `pending` with scheduled_for set — nothing in the live flow touches
+		// it, so this sweep is the ONLY thing that can release it into the kitchen queue
+		// at its slot or cancel-and-refund it when the restaurant is closed. Without it
+		// a scheduled order's escrow has no automated path out. Idempotent +
+		// multi-instance safe (guarded UPDATE; the refund is guarded on the settlement
+		// status). Cadence 1m by default so a slot is never released long after its time.
+		restaurant.StartScheduledOrderSweeper(
+			ctx, restaurantSvc,
+			time.Duration(envInt("FOOD_SCHEDULED_SWEEP_INTERVAL_MINUTES", 1))*time.Minute,
 		)
 	}
 

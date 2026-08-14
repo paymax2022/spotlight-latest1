@@ -8,11 +8,11 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Durable spread rule card, shared with the legacy wallet FX service (ADR-031).
+// Durable spread rule card, shared with the legacy wallet FX service (ADR-032).
 //
 // public.fx_markup_rates is the SINGLE source of truth for Paymax FX markup
 // across both FX surfaces: the legacy /api/finance/fx service and this
-// orchestration module. Before ADR-031 the two priced independently — this
+// orchestration module. Before ADR-032 the two priced independently — this
 // module from an in-code rule table in finance_routes.go, the legacy service
 // from the DB — so the same corridor could be charged two different markups and
 // only one of them was operator-changeable.

@@ -3,7 +3,7 @@ package restaurant
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for dispatch reassignment (Phase 15): rider decline →
 // re-dispatch (DP-002), ops reassign + offline-assigned sweep (DP-005). Skipped unless
-// TEST_DATABASE_URL/DATABASE_URL is set.
+// TEST_DATABASE_URL is set.
 // ---------------------------------------------------------------------------
 
 import (
@@ -19,10 +19,7 @@ func reassignPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB reassign test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB reassign test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

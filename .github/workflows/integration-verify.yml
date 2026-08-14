@@ -48,6 +48,16 @@ jobs:
           --health-timeout 5s --health-retries 5
     env:
       DATABASE_URL: postgres://paymax:paymax@localhost:5432/paymax?sslmode=disable
+      # Every live-DB test suite gates on TEST_DATABASE_URL and NONE fall back to
+      # DATABASE_URL — they INSERT fixtures and move money, and on a developer
+      # machine DATABASE_URL is the PRODUCTION Supabase pooler. Enforced by
+      # scripts/ci/check-live-db-gate.sh (runs on every PR via ci.yml).
+      #
+      # This line is what makes that safe: without it those suites skip silently
+      # and gate nothing, which is exactly how internal/savings (9 tests) and
+      # internal/handlers (24) sat dead in CI for months. Both names point at the
+      # same ephemeral service container.
+      TEST_DATABASE_URL: postgres://paymax:paymax@localhost:5432/paymax?sslmode=disable
       RAILS_MODE: fake # FAKEs only — no external provider secrets in CI
     steps:
       - uses: actions/checkout@v4
@@ -87,8 +97,35 @@ jobs:
       - name: go build ./...
         run: make build
 
-      - name: go test ./... -race (Postgres + fakes)
+      # Now covers every TEST_DATABASE_URL-gated live-DB suite (see the job env
+      # above), so savings no longer needs a package-scoped step of its own.
+      - name: go test ./... -race (Postgres + fakes, incl. live-DB suites)
         run: make test
+
+      # A package whose live-DB tests all SKIP still reports "ok", so a green
+      # `make test` does NOT prove the gate above is wired. Re-run one canary per
+      # critical live-DB area with -v and assert it actually executed. Without
+      # this, a future env change silently returns them to skipping and the lane
+      # stays green with zero real coverage — exactly how savings (9 tests) and
+      # the admin console (24) sat dead here for months.
+      #
+      # Generalised from the savings-only assertion that shipped with the
+      # (now removed) package-scoped savings step.
+      - name: Prove the live-DB suites actually ran (anti-skip canary)
+        run: |
+          cd backend
+          set -o pipefail
+          go test ./internal/savings/... ./internal/handlers/... ./internal/trading/wallet/... \
+            -race -v -run 'TestLiveDB_|TestAdminConsole_' 2>&1 | tee /tmp/livedb-test.log
+          for t in TestLiveDB_BalanceForOwner_RejectsNonOwner \
+                   TestLiveDB_TargetBalanceForMember_RejectsNonMember \
+                   TestLiveDB_PenaltyRate_IsServerSideNotCallerSupplied \
+                   TestLiveDB_TradingWallet_MoneyPath \
+                   TestAdminConsole_Dashboard \
+                   TestAdminConsole_GetOrders; do
+            grep -q -- "--- PASS: $t" /tmp/livedb-test.log \
+              || { echo "::error::$t did not run (skipped?) — live-DB coverage is not gating"; exit 1; }
+          done
 
       - name: Full tsc --noEmit (both frontends)
         run: make tsc
