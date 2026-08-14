@@ -48,9 +48,21 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: backend/go.sum
+      # PINNED ON PURPOSE — do not "modernise" this back to `latest`.
+      # `supabase start` below replays the ENTIRE migration chain, so this job is
+      # the repo's fresh-replay gate. On `latest` that gate silently re-baselines
+      # itself against whatever Supabase shipped that morning: a red run could mean
+      # our migrations broke, or merely that the CLI changed, and the two are
+      # indistinguishable from the log (setup-cli does not print the version it
+      # installed). That ambiguity is not hypothetical — it cost an hour of
+      # misdiagnosis on 2026-08-14, when a genuine duplicate migration version was
+      # first blamed on an unpinned CLI bump that had not actually happened.
+      # A pinned CLI makes this job answer exactly one question: did OUR chain break?
+      # Keep in step with the pin in db-migrate.yml, which applies to production.
+      # Bump deliberately: raise the version, confirm this job stays green, merge.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.114.0
       - name: Start Supabase (applies all migrations incl. 20260626* maps)
         run: supabase start
       - name: Run maps integration tests against PostGIS
