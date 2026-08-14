@@ -267,13 +267,44 @@ jobs:
   # environment from being deployed from the wrong promotion branch.
   deploy-development:
     name: deploy Development (${{ matrix.service }})
+    # The module lanes are CONDITIONAL (`if: needs.changes.outputs.X == 'true'`),
+    # and GitHub skips a job whose dependency was skipped — so a plain `needs:`
+    # on them would skip every deploy, since most lanes sit out any given change.
+    # `!cancelled()` opts out of that implicit gating; the two `contains` tests
+    # then re-impose the part we actually want — no dependency may be red.
+    # Without them, `!cancelled()` would deploy straight through a failed gate.
     if: >-
+      !cancelled() &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled') &&
       github.event_name == 'workflow_dispatch' &&
       inputs.deploy_environment == 'development' &&
       inputs.confirm_deploy == 'DEPLOY' &&
       github.ref == 'refs/heads/develop' &&
       vars.RAILWAY_DEPLOY_ENABLED == 'true'
-    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene, workflow-lint]
+    needs:
+      - frontend-web
+      - frontend-admin
+      - backend
+      - openapi
+      - migration-guard
+      - secret-hygiene
+      - workflow-lint
+      - changes
+      - association
+      - connect
+      - crowdfunding
+      - crypto-backend
+      - doctor
+      - fx
+      - health
+      - insurance
+      - maps
+      - realtor
+      - referral
+      - stays
+      - top5
+      - visitor-election
     runs-on: ubuntu-latest
     environment: development
     strategy:
@@ -316,13 +347,39 @@ jobs:
 
   deploy-staging:
     name: deploy Staging (${{ matrix.service }})
+    # See deploy-development for why `!cancelled()` + the `contains` tests.
     if: >-
+      !cancelled() &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled') &&
       github.event_name == 'workflow_dispatch' &&
       inputs.deploy_environment == 'staging' &&
       inputs.confirm_deploy == 'DEPLOY' &&
       github.ref == 'refs/heads/staging' &&
       vars.RAILWAY_DEPLOY_ENABLED == 'true'
-    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene, workflow-lint]
+    needs:
+      - frontend-web
+      - frontend-admin
+      - backend
+      - openapi
+      - migration-guard
+      - secret-hygiene
+      - workflow-lint
+      - changes
+      - association
+      - connect
+      - crowdfunding
+      - crypto-backend
+      - doctor
+      - fx
+      - health
+      - insurance
+      - maps
+      - realtor
+      - referral
+      - stays
+      - top5
+      - visitor-election
     runs-on: ubuntu-latest
     environment: staging
     strategy:
@@ -365,13 +422,39 @@ jobs:
 
   deploy-production:
     name: deploy Production (${{ matrix.service }})
+    # See deploy-development for why `!cancelled()` + the `contains` tests.
     if: >-
+      !cancelled() &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled') &&
       github.event_name == 'workflow_dispatch' &&
       inputs.deploy_environment == 'production' &&
       inputs.confirm_deploy == 'DEPLOY' &&
       github.ref == 'refs/heads/prod' &&
       vars.RAILWAY_DEPLOY_ENABLED == 'true'
-    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene, workflow-lint]
+    needs:
+      - frontend-web
+      - frontend-admin
+      - backend
+      - openapi
+      - migration-guard
+      - secret-hygiene
+      - workflow-lint
+      - changes
+      - association
+      - connect
+      - crowdfunding
+      - crypto-backend
+      - doctor
+      - fx
+      - health
+      - insurance
+      - maps
+      - realtor
+      - referral
+      - stays
+      - top5
+      - visitor-election
     runs-on: ubuntu-latest
     environment: production
     strategy:
