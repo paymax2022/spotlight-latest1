@@ -33,6 +33,13 @@ API source of truth: `contracts/openapi.yaml`.
   enforced by a PreToolUse hook — if blocked, you are touching the wrong file.
 - All DB migrations are **additive-only**: no DROP, no column renames, no type narrowing.
   Load the `db-migrations` skill before writing any migration.
+- **Never reuse a migration version.** `schema_migrations` is keyed on the leading
+  timestamp alone, so two files sharing one aborts `supabase start`/`db reset` partway
+  through the chain. Re-check for collisions **immediately before merging**, not only when
+  authoring — a version free at write time can be claimed by another PR while yours is in
+  review, and the break only surfaces on the base branch after your merge. When it happens,
+  the migration that reached the base branch **last** renumbers. Enforced by
+  `scripts/ci/check-migration-versions.sh` in the `hygiene` CI lane.
 - The regression suite (`npm run test:regression`) must be green before and after every change.
 
 ### Workflow
