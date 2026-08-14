@@ -14,9 +14,8 @@ name: CI — CLAUDE.md gates
 #   - OpenAPI: YAML validity for every contract in contracts/
 #   - migrations: additive-only guard (no DROP / RENAME / type-narrowing)
 #
-# This workflow only verifies. It never deploys, never runs `supabase db push`,
-# never touches live secrets. Deploy lives in deploy-cpanel.yml and is gated
-# separately (push to main only, after this is green).
+# Pushes run CI checks only. Railway deployment is an explicit manual release
+# action, and is locked to the matching promotion branch/environment pair.
 
 on:
   # CI runs only on the deployable promotion branches. Railway performs native
@@ -37,6 +36,19 @@ on:
       - '**.md'
       - 'docs/**'
   workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: 'Railway environment to deploy'
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      confirm_deploy:
+        description: 'Type DEPLOY to confirm the selected release'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -86,13 +98,15 @@ jobs:
       - name: Check live-DB tests gate on TEST_DATABASE_URL only
         run: bash scripts/ci/check-live-db-gate.sh
 
-  # Railway deployment is deliberately opt-in. Set the repository variable
-  # RAILWAY_DEPLOY_ENABLED=true only after the corresponding Railway service
-  # variables have been configured and reviewed.
+  # Railway deployment is deliberately manual. The repository variable remains
+  # an emergency kill switch, while the inputs and branch tests prevent an
+  # environment from being deployed from the wrong promotion branch.
   deploy-development:
     name: deploy Development (${{ matrix.service }})
     if: >-
-      github.event_name == 'push' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy_environment == 'development' &&
+      inputs.confirm_deploy == 'DEPLOY' &&
       github.ref == 'refs/heads/develop' &&
       vars.RAILWAY_DEPLOY_ENABLED == 'true'
     needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene]
@@ -140,7 +154,9 @@ jobs:
   deploy-staging:
     name: deploy Staging (${{ matrix.service }})
     if: >-
-      github.event_name == 'push' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy_environment == 'staging' &&
+      inputs.confirm_deploy == 'DEPLOY' &&
       github.ref == 'refs/heads/staging' &&
       vars.RAILWAY_DEPLOY_ENABLED == 'true'
     needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene]
@@ -188,7 +204,9 @@ jobs:
   deploy-production:
     name: deploy Production (${{ matrix.service }})
     if: >-
-      github.event_name == 'push' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy_environment == 'production' &&
+      inputs.confirm_deploy == 'DEPLOY' &&
       github.ref == 'refs/heads/prod' &&
       vars.RAILWAY_DEPLOY_ENABLED == 'true'
     needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene]
