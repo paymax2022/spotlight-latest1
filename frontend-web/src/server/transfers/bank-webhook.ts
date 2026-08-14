@@ -8,7 +8,8 @@
  *   - No ledger action needed — funds were already debited at reservation
  *
  * transfer.failed / transfer.reversed:
- *   - Insert REVERSAL_DEBIT ledger entry to restore sender's balance
+ *   - Post a balanced REVERSAL_DEBIT / REVERSAL_CREDIT pair (ADR-PR98) to restore
+ *     the sender's balance and drain the provider_clearing pot
  *   - Mark bank_transfer as 'failed' / 'reversed'
  *
  * Idempotency: status check on bank_transfers prevents double-processing.
@@ -17,6 +18,7 @@
 
 import crypto from 'node:crypto';
 import { createAdminClient } from '@/lib/supabase/server';
+import { buildJournalLegs, getOrCreateStandingAccount } from '@/src/server/wallet/journal';
 
 interface BankWebhookResult {
   processed: boolean;
@@ -134,26 +136,40 @@ export async function handleBankTransferWebhook(
   let reversalEntryId: string | null = null;
 
   if (accountRow) {
-    const { data: entryRow, error: entryError } = await supabase
-      .from('ledger_entries')
-      .insert({
-        account_id:      (accountRow as { id: string }).id,
-        type:            'REVERSAL_DEBIT',
-        amount_kobo:     refundKobo,
-        reference:       refundRef,
-        idempotency_key: refundKey,
-        description:     `Refund for failed bank transfer ${transfer.id}`,
-        metadata: {
-          bank_transfer_id: transfer.id,
-          original_entry_id: transfer.sender_entry_id,
-          reason: event.data.reason ?? 'Transfer failed',
-        },
-      })
-      .select('id')
-      .maybeSingle();
+    // ADR-PR98: the refund is a BALANCED correction, not a lone credit —
+    // REVERSAL_DEBIT restores the sender's wallet while REVERSAL_CREDIT drains
+    // the same `provider_clearing` pot that reserve_for_bank_transfer filled
+    // (the money never actually reached the provider). Both legs go in one
+    // insert, so a unique violation rolls back the pair rather than leaving a
+    // half-posted correction.
+    const counterAccountId = await getOrCreateStandingAccount('provider_clearing');
+    const metadata = {
+      bank_transfer_id: transfer.id,
+      original_entry_id: transfer.sender_entry_id,
+      reason: event.data.reason ?? 'Transfer failed',
+    };
 
-    if (!entryError && entryRow) {
-      reversalEntryId = (entryRow as { id: string }).id;
+    const legs = buildJournalLegs({
+      primaryAccountId: (accountRow as { id: string }).id,
+      counterAccountId,
+      primarySide: 'REVERSAL_DEBIT',
+      amountKobo: refundKobo,
+      reference: refundRef,
+      idempotencyKey: refundKey,
+      description: `Refund for failed bank transfer ${transfer.id}`,
+      metadata,
+    });
+
+    const { data: entryRows, error: entryError } = await supabase
+      .from('ledger_entries')
+      .insert(legs)
+      .select('id, idempotency_key');
+
+    if (!entryError && entryRows) {
+      // The wallet leg is the one carrying the un-suffixed key.
+      const walletRow = (entryRows as { id: string; idempotency_key: string }[])
+        .find((r) => r.idempotency_key === refundKey);
+      reversalEntryId = walletRow?.id ?? null;
     }
   }
 
