@@ -98,36 +98,33 @@ jobs:
   npm-audit:
     name: npm audit (${{ matrix.dir }})
     runs-on: ubuntu-latest
-    continue-on-error: true  # advisory during launch — flip to blocking once the backlog is clean
+    # Now BLOCKING. It was advisory ("flip once the backlog is clean") because it
+    # could never pass: every residual advisory needs a framework major. It is now
+    # a DIFFERENTIAL gate against an explicit baseline, so it passes today and
+    # fails the moment a NEW advisory appears — which is the signal that was
+    # missing while it sat permanently red.
     strategy:
       fail-fast: false
       matrix:
-        dir: [frontend-web, frontend-admin, mobile-app/reactnative]
+        include:
+          - dir: frontend-web
+            baseline: frontend-web
+          - dir: frontend-admin
+            baseline: frontend-admin
+          - dir: mobile-app/reactnative
+            baseline: mobile-app-reactnative
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      # Scoped to PRODUCTION dependencies (--omit=dev): the gate should reflect
-      # what actually ships to users, not the build/test toolchain. Dev-only
-      # advisories are still worth fixing (a compromised build tool is a
-      # supply-chain risk) but they are covered by trivy + dependabot and should
-      # not be the thing a product PR trips over.
-      #
-      # HONEST CAVEAT: this narrows the gate but does NOT currently make it
-      # green. In these frameworks the build tooling IS a production dependency —
-      # metro/postcss/image-size arrive via `expo` and `react-native`, and
-      # postcss/sharp via `next`, all of which live in "dependencies". As of
-      # 2026-08-13 the residual high advisories are:
-      #
-      #   mobile-app/reactnative  11  -> need expo@57 + react-native@0.72 (majors)
-      #   frontend-web             3  -> need next@16 + sharp@0.35        (majors)
-      #   frontend-admin           3  -> need next@16                     (major)
-      #
-      # Every advisory fixable WITHOUT a framework major is already fixed. What
-      # remains needs either those upgrades or an explicit baseline of the known
-      # set (fail only on NEW advisories). The job stays continue-on-error until
-      # one of those lands.
-      - name: Audit production dependencies (fail on high/critical)
+      - name: Install (production dependencies only)
         working-directory: ${{ matrix.dir }}
-        run: npm audit --omit=dev --audit-level=high || (echo "::warning::npm audit found high/critical vulns in production dependencies of ${{ matrix.dir }}" && exit 1)
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+      # Scoped to PRODUCTION dependencies: the gate reflects what ships, not the
+      # build/test toolchain. Known-and-accepted advisories live in
+      # .github/npm-audit-baseline/, each with a reason; the gate fails on anything
+      # not listed, and ALSO on a baselined entry that has disappeared, so the
+      # baseline cannot rot into a list of things that stopped being true.
+      - name: Audit production dependencies against the baseline
+        run: node .github/scripts/npm-audit-gate.mjs "${{ matrix.dir }}" ".github/npm-audit-baseline/${{ matrix.baseline }}.json"

@@ -1,4 +1,4 @@
-# ADR-020 — Atomic free-vote claim (resolves ADR-004's deferred TOCTOU)
+# ADR-035 — Atomic free-vote claim (resolves ADR-004's deferred TOCTOU)
 
 **Status:** Accepted
 **Date:** 2026-07-30

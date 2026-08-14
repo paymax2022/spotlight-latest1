@@ -1,4 +1,4 @@
-# ADR-022: Voting Contest Eviction Mechanics
+# ADR-036: Voting Contest Eviction Mechanics
 
 **Date**: 2026-08-07  
 **Status**: ACCEPTED  

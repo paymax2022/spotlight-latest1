@@ -1,4 +1,4 @@
-# ADR-002: Vote Engine Deprecation & Production Status
+# ADR-038: Vote Engine Deprecation & Production Status
 
 **Date**: 2026-08-11  
 **Status**: ACCEPTED  
@@ -136,7 +136,7 @@ If universal engine has bugs:
 
 ## Related ADRs
 
-- [[ADR-001-vote-bridge-idempotency]] — How bridge prevents TOCTOU races
+- [[ADR-037-vote-bridge-idempotency]] — How bridge prevents TOCTOU races
 - [[ADR-003-vote-leaderboard-unification]] (future) — How to merge leaderboard data from both engines
 
 ## Timeline
