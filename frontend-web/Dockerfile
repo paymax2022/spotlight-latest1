@@ -20,6 +20,9 @@ FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+# Keep V8 below the 1 GB service allocation while allowing more than its
+# conservative default heap, which caused the Next server to restart.
+ENV NODE_OPTIONS=--max-old-space-size=768
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 COPY --from=builder /app/public ./public
