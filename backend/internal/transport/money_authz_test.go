@@ -76,13 +76,26 @@ type fakeTierLimiter struct {
 	err       error  // returned verbatim (nil = allow)
 	gotUserID string // last user id seen
 	gotAmount int64  // last amount seen
-	calls     int    // number of invocations
+	calls     int    // number of invocations (either gate)
+	// gotMethod records WHICH gate ran. A rider fare is a consumer purchase and
+	// must use the checkout gate (ADR-043); recording the method is what stops a
+	// future edit silently moving a money path onto the wrong one.
+	gotMethod string
 }
 
 func (f *fakeTierLimiter) EnforceWalletDebitLimit(_ context.Context, userID string, amountKobo int64) error {
 	f.calls++
 	f.gotUserID = userID
 	f.gotAmount = amountKobo
+	f.gotMethod = "wallet"
+	return f.err
+}
+
+func (f *fakeTierLimiter) EnforceCheckoutDebitLimit(_ context.Context, userID string, amountKobo int64) error {
+	f.calls++
+	f.gotUserID = userID
+	f.gotAmount = amountKobo
+	f.gotMethod = "checkout"
 	return f.err
 }
 

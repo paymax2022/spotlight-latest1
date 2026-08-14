@@ -245,6 +245,13 @@ type Config struct {
 	// release is needed either way.
 	FeatureTelemedicinePlatformFeeEnabled bool
 
+	// FeatureCheckoutTopupTier0 lets an UNVERIFIED (Tier 0) account pay for a
+	// purchase under a capped allowance (ADR-042 funds it, ADR-043 lets it be
+	// spent). This MUST be the same value as frontend-web's
+	// FEATURE_CHECKOUT_TOPUP_TIER0: enabling only the funding half charges a
+	// customer for a purchase that is then refused at escrow. Default OFF.
+	FeatureCheckoutTopupTier0 bool
+
 	// ── Business Registry (CAC business-name verification + registration) ─────
 	// Gates the member /api/finance/business/* + admin /api/business/admin/*
 	// surface (internal/business). The CAC registration fee is a real idempotent
@@ -647,6 +654,7 @@ func Load() Config {
 		FeatureFractionalREEnabled:            getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
 		FeatureCryptoEnabled:                  getEnvBool("FEATURE_CRYPTO_ENABLED", false),
 		FeatureTelemedicinePlatformFeeEnabled: getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
+		FeatureCheckoutTopupTier0:             getEnvBool("FEATURE_CHECKOUT_TOPUP_TIER0", false),
 		FeatureBusinessRegistryEnabled:        getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
 		CACVASBaseURL:                         getEnv("CAC_VAS_BASE_URL", ""),
 		CACVASApiKey:                          getEnv("CAC_VAS_API_KEY", ""),

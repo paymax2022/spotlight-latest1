@@ -247,7 +247,7 @@ func (s *Service) RequestPayout(ctx context.Context, userID, idemKey string, req
 	}
 
 	// (2) Tier-limit check — fail-closed: any error or denial rejects the payout.
-	if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, req.AmountKobo); err != nil {
+	if err := s.tiers.EnforceCheckoutDebitLimit(ctx, userID, req.AmountKobo); err != nil {
 		return nil, fmt.Errorf("doctor: payout tier check (fail closed): %w", err)
 	}
 

@@ -177,7 +177,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// guarded (fail-closed when the token is unset). Additive — reuses ledgerSvc only.
 	RegisterInternalLedgerAPI(r, cfg, ledgerSvc)
 
-	tiersSvc := tiers.NewService(pool)
+	// The Tier-0 checkout allowance (ADR-043) rides on this shared service, so the
+	// consumer-purchase gate in restaurant / estate / doctor is enabled by the SAME
+	// flag as the top-up that funds it. Enabling one half alone would charge a
+	// customer for a purchase that is then refused at escrow.
+	// It changes only EnforceCheckoutDebitLimit — withdrawals and transfers keep
+	// EnforceWalletDebitLimit and are never relaxed.
+	tiersSvc := tiers.NewService(pool).WithCheckoutAllowance(cfg.FeatureCheckoutTopupTier0)
+	log.Printf("[tiers] Tier-0 checkout allowance: %t (FEATURE_CHECKOUT_TOPUP_TIER0)", cfg.FeatureCheckoutTopupTier0)
 	walletSvc := wallet.NewService(ledgerSvc, tiersSvc)
 	kycSvc := kyc.NewService(pool)
 	referralSvc := referrals.NewService(pool, ledgerSvc)
@@ -1658,7 +1665,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				"Production boot is blocked by the IsProd() guard above.", cfg.AppEnv)
 		}
 		settlementSvcTr := settlement.NewService(pool, ledgerSvc)
-		transportSvc := transport.NewService(pool, settlementSvcTr)
+		// Share the flag-configured tier gate so a rider fare — a consumer purchase —
+		// honours the Tier-0 checkout allowance instead of the strict gate transport
+		// would otherwise build for itself (ADR-043).
+		transportSvc := transport.NewService(pool, settlementSvcTr).WithTiers(tiersSvc)
 		// Bridge transport dispatch/estimation onto the provider-agnostic
 		// MapService (OpenStack/OSRM by default) instead of the ad-hoc maps stub.
 		if mapSvc != nil {

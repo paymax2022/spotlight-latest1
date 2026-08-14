@@ -62,6 +62,12 @@ type RouteDistancer interface {
 // code depends on the behaviour, not on finance/tiers.
 type TierLimiter interface {
 	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+	// EnforceCheckoutDebitLimit is the customer-purchase gate. It is identical to
+	// the above for Tier 1+, and only for Tier 0 admits a capped allowance so a
+	// customer funded by the card rail is not blocked at escrow (ADR-043).
+	// Merchant withdrawals deliberately keep EnforceWalletDebitLimit — cash out is
+	// never relaxed.
+	EnforceCheckoutDebitLimit(ctx context.Context, userID string, amountKobo int64) error
 }
 
 // ErrTierGateUnwired is returned by every restaurant money path when the Service was
@@ -583,7 +589,7 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		return nil, err
 	}
 	if !escrowed {
-		if err := s.tiers.EnforceWalletDebitLimit(ctx, customerID, total); err != nil {
+		if err := s.tiers.EnforceCheckoutDebitLimit(ctx, customerID, total); err != nil {
 			// Wrapped, not replaced: handlers match tiers.ErrWalletDisabled /
 			// tiers.ErrDailyLimitExceeded with errors.Is to pick the HTTP status.
 			return nil, fmt.Errorf("restaurant: order escrow tier gate: %w", err)

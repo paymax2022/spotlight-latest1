@@ -11,6 +11,10 @@ import (
 // Service enforces per-tier wallet limits.
 type Service struct {
 	db *pgxpool.Pool
+	// checkoutAllowance enables the Tier-0 checkout spend allowance (ADR-043).
+	// Off by default — see WithCheckoutAllowance in checkout.go. It affects ONLY
+	// EnforceCheckoutDebitLimit; EnforceWalletDebitLimit is never relaxed.
+	checkoutAllowance bool
 }
 
 func NewService(db *pgxpool.Pool) *Service {

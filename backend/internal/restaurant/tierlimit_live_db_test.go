@@ -384,11 +384,25 @@ func TestLiveDB_OrderEscrowTierGate_UnwiredGateRefuses(t *testing.T) {
 // and always allows. It exists to pin WHAT is gated, independently of any real limit:
 // the arithmetic in the cap tests would pass just as happily if the gate priced only the
 // food subtotal, because every order there is far under or far over the cap.
-type recordingLimiter struct{ gotKobo, calls int64 }
+type recordingLimiter struct {
+	gotKobo, calls int64
+	// gotMethod records WHICH gate ran. A customer order must use the checkout
+	// gate and a merchant withdrawal must NOT (cash out is never relaxed —
+	// ADR-043), so the method name is part of what these tests protect.
+	gotMethod string
+}
 
 func (r *recordingLimiter) EnforceWalletDebitLimit(_ context.Context, _ string, amountKobo int64) error {
 	r.gotKobo = amountKobo
 	r.calls++
+	r.gotMethod = "wallet"
+	return nil
+}
+
+func (r *recordingLimiter) EnforceCheckoutDebitLimit(_ context.Context, _ string, amountKobo int64) error {
+	r.gotKobo = amountKobo
+	r.calls++
+	r.gotMethod = "checkout"
 	return nil
 }
 
