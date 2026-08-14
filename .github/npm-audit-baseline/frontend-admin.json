@@ -1,37 +1,6 @@
 {
   "workspace": "frontend-admin",
   "reviewed": "2026-08-14",
-  "why": "Every entry here is only fixable by a framework major upgrade — expo@57 + react-native@0.72, or next@16 + sharp@0.35 — which is a migration, not a patch. They are all BUILD-TIME tooling reached through metro/expo/next (postcss sourceMappingURL file read, image-size parser DoS), not runtime paths an external caller reaches. Tracked for the framework-upgrade work; the gate fails on anything NOT listed here.",
-  "accepted": [
-    {
-      "package": "postcss",
-      "ghsa": "GHSA-6g55-p6wh-862q",
-      "severity": "high",
-      "title": "PostCSS: Arbitrary file read and information disclosure via attacker-controlled sourceMappingURL in CSS comments"
-    },
-    {
-      "package": "postcss",
-      "ghsa": "GHSA-fxqj-rqcc-2cmp",
-      "severity": "moderate",
-      "title": "PostCSS: incomplete fix of GHSA-6g55-p6wh-862q — attacker-controlled sourceMappingURL reads arbitrary .map files when `f"
-    },
-    {
-      "package": "postcss",
-      "ghsa": "GHSA-qx2v-qp2m-jg93",
-      "severity": "moderate",
-      "title": "PostCSS has XSS via Unescaped </style> in its CSS Stringify Output"
-    },
-    {
-      "package": "postcss",
-      "ghsa": "GHSA-r28c-9q8g-f849",
-      "severity": "high",
-      "title": "PostCSS: Path Traversal in Previous Source Map Auto-Loading (sourceMappingURL) leads to Arbitrary .map File Disclosure"
-    },
-    {
-      "package": "sharp",
-      "ghsa": "GHSA-f88m-g3jw-g9cj",
-      "severity": "high",
-      "title": "sharp inherited vulnerabilities in libvips: CVE-2026-33327, CVE-2026-33328, CVE-2026-35590, CVE-2026-35591"
-    }
-  ]
+  "why": "EMPTY. next@16 cleared every high/critical advisory in this workspace (the postcss sourceMappingURL set and sharp/libvips all arrived through next@15). Nothing is accepted here — the gate fails on ANY high/critical advisory in production dependencies.",
+  "accepted": []
 }
