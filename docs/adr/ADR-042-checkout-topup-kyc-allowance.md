@@ -106,13 +106,13 @@ by someone who owns the compliance decision.
   allowance, but it is no longer tied to the purchase that justified it. Closing
   this properly means refund-to-source for checkout-funded purchases — a larger
   change, not attempted here.
-- **⚠️ The tier-gated Go modules still refuse Tier-0 spends.** `restaurant`,
-  `doctor`, `fractionalre` and `placement` wire a `TierLimiter`. Enabling this flag
-  before those are aligned lets a Tier-0 user fund a wallet for a purchase that is
-  then refused at escrow — money credited, purchase blocked, and no way to withdraw
-  it. **This is the blocker on turning the flag on**, and it is why the flag ships
-  off. Most modules (telemedicine, mobility, savings, social, stays…) have no tier
-  gate and would work.
+- ~~**⚠️ The tier-gated Go modules still refuse Tier-0 spends.**~~ **Closed by
+  [ADR-043](ADR-043-checkout-spend-allowance-alignment.md).** `restaurant`,
+  `transport`, `estate` and `doctor` now gate consumer purchases with
+  `EnforceCheckoutDebitLimit`, which honours this same allowance under this same
+  flag. `fractionalre` was deliberately excluded (investment purchases keep Tier 1+)
+  and `placement` turned out never to call the gate at all. Every cash-out path
+  keeps the strict gate, which is what preserves the argument above.
 - The Tier-0 caps are guesses until someone with the compliance mandate signs off.
 - `wallet_topup_intents.purpose` is now load-bearing for a limit. A future writer
   that forgets to set it silently grants a fresh allowance; the default of
@@ -121,6 +121,5 @@ by someone who owns the compliance decision.
 **Not addressed here**
 
 - Refund-to-source for checkout-funded purchases.
-- Aligning the four tier-gated Go modules with the checkout allowance.
 - `/wallet/balance` and `/wallet/transactions` still require Tier 1, so a Tier-0
   user who ends up holding balance cannot see it.
