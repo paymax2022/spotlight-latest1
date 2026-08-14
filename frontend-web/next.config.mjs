@@ -15,7 +15,6 @@ const nextConfig = {
 
   // Required on Next 14 for the Sentry instrumentation.ts hook (stable in Next 15).
   experimental: {
-    instrumentationHook: true,
     // Next forks one static-generation worker per CPU, each with its own V8
     // heap. This build peaks at 2.63 GiB unconstrained, which overruns the
     // 2 GB Render instance. Serialize the pool so peak memory is one heap.
