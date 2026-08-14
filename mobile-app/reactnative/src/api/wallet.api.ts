@@ -60,12 +60,17 @@ export { getTransactions as getWalletTransactions } from '@/api/transactions.api
 // ─── Wallet funding (server-side Paystack operations) ─────────────────────────
 
 export async function initiateFunding(payload: {
-  amount: number;
+  /**
+   * Amount in KOBO (integer minor units) — it is sent straight through as
+   * `amount_kobo`. Named explicitly because the previous name (`amount`) read as
+   * naira and had already produced a 100x under-top-up in features/payments/api.ts.
+   */
+  amountKobo: number;
   callbackUrl?: string;
 }): Promise<{ authorizationUrl: string; reference: string }> {
   const res  = await api.post('/api/v1/wallet/topup',
     {
-      amount_kobo: payload.amount,
+      amount_kobo: payload.amountKobo,
       callback_url: payload.callbackUrl,
     },
     { headers: { 'Idempotency-Key': generateIdempotencyKey() } },
