@@ -60,10 +60,12 @@ for (const [pkg, v] of Object.entries(vulns)) {
 }
 
 const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'));
-const accepted = new Set((baseline.accepted ?? []).map(a => `${a.package}|${a.ghsa}`));
+// Keep the baseline ENTRIES, not just their keys, so reporting reads fields
+// directly instead of taking a composite key apart again.
+const accepted = new Map((baseline.accepted ?? []).map(a => [`${a.package}|${a.ghsa}`, a]));
 
 const unexpected = [...found.entries()].filter(([k]) => !accepted.has(k)).map(([, v]) => v);
-const stale = [...accepted].filter(k => !found.has(k));
+const stale = [...accepted.entries()].filter(([k]) => !found.has(k)).map(([, a]) => a);
 
 let bad = false;
 
@@ -79,7 +81,7 @@ if (unexpected.length) {
 if (stale.length) {
   bad = true;
   console.error(`::error::${stale.length} baselined advisory(ies) in ${baselinePath} no longer appear — remove them so the baseline stays honest:`);
-  for (const k of stale) console.error(`  ${k.replace('|', ' — ')}`);
+  for (const a of stale) console.error(`  ${a.package} — ${a.ghsa}`);
 }
 
 if (!bad) {
