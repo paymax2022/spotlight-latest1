@@ -381,3 +381,50 @@ func nullable(s string) any {
 	}
 	return s
 }
+
+// NetworkSummary is a network with its member count, for the admin directory.
+// The count comes from the same members table the override base draws on, so
+// what an admin sees matches what actually accrues.
+type NetworkSummary struct {
+	Network
+	MemberCount int `json:"member_count"`
+	// HouseAttributedCount members are excluded from override chains (§7A.2);
+	// surfacing it lets an admin see how much of a network cannot pay overrides.
+	HouseAttributedCount int `json:"house_attributed_count"`
+}
+
+// ListNetworks returns every agent network with member counts, newest first.
+// status is optional ("" = all).
+func (r *Repository) ListNetworks(ctx context.Context, status string) ([]NetworkSummary, error) {
+	const q = `
+		SELECT n.id, n.lead_user_id, n.name, n.network_type, n.status, n.created_at,
+		       COALESCE(m.total, 0)  AS member_count,
+		       COALESCE(m.house, 0)  AS house_count
+		FROM referral_agent_networks n
+		LEFT JOIN (
+			SELECT network_id,
+			       COUNT(*)                                      AS total,
+			       COUNT(*) FILTER (WHERE is_house_attributed)    AS house
+			FROM referral_network_members
+			GROUP BY network_id
+		) m ON m.network_id = n.id
+		WHERE ($1 = '' OR n.status = $1)
+		ORDER BY n.created_at DESC`
+
+	rows, err := r.db.Query(ctx, q, status)
+	if err != nil {
+		return nil, fmt.Errorf("network: list networks: %w", err)
+	}
+	defer rows.Close()
+
+	out := []NetworkSummary{}
+	for rows.Next() {
+		var n NetworkSummary
+		if err := rows.Scan(&n.ID, &n.LeadUserID, &n.Name, &n.NetworkType, &n.Status,
+			&n.CreatedAt, &n.MemberCount, &n.HouseAttributedCount); err != nil {
+			return nil, fmt.Errorf("network: scan network summary: %w", err)
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}

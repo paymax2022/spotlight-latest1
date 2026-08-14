@@ -2,6 +2,16 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# Railway injects service variables into Docker builds only when declared as
+# build arguments. These are needed while Next evaluates server route modules
+# during `next build`; Railway still injects the runtime values separately.
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG SUPABASE_SERVICE_ROLE_KEY
+ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+ENV SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+
 # Install dependencies from the lockfile first so this layer caches across
 # source-only changes.
 COPY package*.json ./

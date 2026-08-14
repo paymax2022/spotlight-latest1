@@ -144,7 +144,8 @@ func scanConsent(row pgx.Row) (*Consent, error) {
 	return &c, nil
 }
 
-// RecordConsent upserts a consent decision (idempotent on user+type+version).
+// RecordConsent appends a consent decision. Each grant or withdrawal is its own
+// row; current state is the most recent row per (user, consent type).
 func (r *Repository) RecordConsent(ctx context.Context, userID string, in ConsentInput) (*Consent, error) {
 	granted := true
 	if in.Granted != nil {

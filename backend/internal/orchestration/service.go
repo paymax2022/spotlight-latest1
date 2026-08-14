@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"log"
 	"strings"
 	"time"
 
@@ -119,6 +120,16 @@ func (s *Service) CreateQuote(ctx context.Context, customerID, tier string, req 
 	rail := req.DestinationRail
 	if rail == "" {
 		rail = defaultRail(req.Intent)
+	}
+
+	// Pull the current spread rule card once per quote (ADR-031): the markup lives
+	// in fx_markup_rates, shared with the legacy FX service, so an admin change is
+	// live on the very next quote. One query per quote, not one per candidate.
+	//
+	// Fail closed. Pricing from a rule card we could not confirm would charge a
+	// spread nobody configured.
+	if err := s.spread.Refresh(ctx); err != nil {
+		return nil, NewError(ErrInternal, "spread_unavailable", "Pricing is temporarily unavailable. Please try again.")
 	}
 	corridor := Corridor(source, dest)
 
@@ -504,6 +515,13 @@ type IndicativeRate struct {
 
 // Rates returns indicative mid + Paymax sell rates for the common pairs.
 func (s *Service) Rates(ctx context.Context, tier string) []IndicativeRate {
+	// Best-effort refresh: this board is explicitly INDICATIVE and charges nothing,
+	// so a transient config-read failure degrades to the last-known rule card
+	// rather than blanking every pair. CreateQuote — which prices a real charge —
+	// fails closed instead.
+	if err := s.spread.Refresh(ctx); err != nil {
+		log.Printf("[orchestration] spread refresh failed, serving indicative rates from the last-known card: %v", err)
+	}
 	pairs := [][2]string{{"USD", "NGN"}, {"EUR", "NGN"}, {"GBP", "NGN"}, {"USD", "GHS"}, {"USD", "KES"}, {"USD", "XAF"}}
 	now := time.Now().UTC().Format(time.RFC3339)
 	out := make([]IndicativeRate, 0, len(pairs))

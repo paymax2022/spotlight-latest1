@@ -264,8 +264,16 @@ func (s *VaultService) TransitionState(ctx context.Context, ownerID, vaultID str
 
 // ListVaults returns the owner's vaults (object-level: owner only).
 func (s *VaultService) ListVaults(ctx context.Context, ownerID string) ([]Vault, error) {
-	const q = `SELECT id, owner_user_id, name, kind, state, target_kobo, config_version, matures_at, autosave_job_id, created_at, updated_at
-	           FROM savings_vaults WHERE owner_user_id=$1 ORDER BY created_at DESC`
+	// The balance is projected from the append-only ledger in the same pass
+	// (NL-8: never a stored column). Without it every vault in a list read
+	// carried 0, so funded vaults rendered as ₦0 on the list screens. Same
+	// expression as BuildSummary's per-vault subquery, kept in one round trip
+	// rather than N+1 Balance() calls.
+	const q = `SELECT v.id, v.owner_user_id, v.name, v.kind, v.state, v.target_kobo, v.config_version,
+	                  v.matures_at, v.autosave_job_id, v.created_at, v.updated_at,
+	                  COALESCE((SELECT SUM(CASE WHEN l.direction='CREDIT' THEN l.amount_kobo ELSE -l.amount_kobo END)
+	                            FROM savings_vault_ledger l WHERE l.vault_id=v.id),0) AS balance_kobo
+	           FROM savings_vaults v WHERE v.owner_user_id=$1 ORDER BY v.created_at DESC`
 	rows, err := s.db.Query(ctx, q, ownerID)
 	if err != nil {
 		return nil, err
@@ -276,7 +284,8 @@ func (s *VaultService) ListVaults(ctx context.Context, ownerID string) ([]Vault,
 		var v Vault
 		var kind, state string
 		if err := rows.Scan(&v.ID, &v.OwnerUserID, &v.Name, &kind, &state, &v.TargetKobo,
-			&v.ConfigVersion, &v.MaturesAt, &v.AutoSaveJobID, &v.CreatedAt, &v.UpdatedAt); err != nil {
+			&v.ConfigVersion, &v.MaturesAt, &v.AutoSaveJobID, &v.CreatedAt, &v.UpdatedAt,
+			&v.BalanceKobo); err != nil {
 			return nil, err
 		}
 		v.Kind = VaultKind(kind)

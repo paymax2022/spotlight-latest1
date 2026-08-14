@@ -23,6 +23,19 @@ import type {
 } from './types';
 
 // ── Backend (bare gin.H) shapes ──────────────────────────────────────────────
+/**
+ * GET /gamification/missions returns { missions: [{ mission, progress, status }] }
+ * — the mission fields are NESTED, and each row already carries this user's
+ * progress and status. Reading the row as if it were the mission itself leaves
+ * every field undefined (React warned about the missing key, which is how this
+ * surfaced) and navigation to mission-detail passes id=undefined.
+ */
+interface BackendMissionRow {
+  mission: BackendMission;
+  progress?: number;
+  status?: string;
+}
+
 interface BackendMission {
   id: string;
   slug: string;
@@ -96,7 +109,12 @@ interface BackendContest {
 }
 
 // Map backend mission (+ optional progress) → frontend MissionSummary.
-function mapMissionSummary(m: BackendMission, prog?: BackendMissionProgress): MissionSummary {
+function mapMissionSummary(
+  m: BackendMission,
+  // Only progress+status are read; the row form carries no id/user_id and we
+  // should not invent them.
+  prog?: Pick<BackendMissionProgress, 'progress' | 'status'>,
+): MissionSummary {
   const stepsTotal = m.target_count > 0 ? m.target_count : 1;
   const stepsDone = prog ? Math.min(Math.max(prog.progress, 0), stepsTotal) : 0;
   const progress = stepsTotal > 0 ? stepsDone / stepsTotal : 0;
@@ -355,12 +373,24 @@ export async function getMissions(): Promise<MissionSummary[]> {
     api.get(`${REFERRAL_API_BASE}/gamification/missions`),
     api.get(`${REFERRAL_API_BASE}/gamification/missions/progress`).catch(() => null),
   ]);
-  const missions = unwrap<{ missions?: BackendMission[] }>(missionsRes).missions ?? [];
+  const rows = unwrap<{ missions?: BackendMissionRow[] }>(missionsRes).missions ?? [];
   const progressList = progressRes
     ? unwrap<{ progress?: BackendMissionProgress[] }>(progressRes).progress ?? []
     : [];
   const progByMission = new Map(progressList.map((p) => [p.mission_id, p]));
-  return missions.map((m) => mapMissionSummary(m, progByMission.get(m.id)));
+  return rows
+    .filter((r) => r?.mission?.id)
+    .map((r) =>
+      mapMissionSummary(
+        r.mission,
+        // The row's own progress/status is authoritative — it is computed for
+        // this caller. The separate progress endpoint is only a fallback.
+        progByMission.get(r.mission.id) ??
+          (r.progress != null || r.status
+            ? { progress: r.progress ?? 0, status: r.status ?? '' }
+            : undefined),
+      ),
+    );
 }
 
 export async function getMissionDetail(id: string): Promise<MissionDetail> {
