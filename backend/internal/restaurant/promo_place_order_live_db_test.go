@@ -93,7 +93,7 @@ func newPromoOrderFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	}
 	f.itemID = item.ID
 
-	// PlaceOrder's escrow is tier-gated fail-closed (ADR-030), so the paying customer
+	// PlaceOrder's escrow is tier-gated fail-closed (ADR-033), so the paying customer
 	// needs a KYC tier. Tier 3 is unlimited — these tests are about the promo, not the cap.
 	seedKYCTier(t, ctx, pool, f.customer, 3)
 

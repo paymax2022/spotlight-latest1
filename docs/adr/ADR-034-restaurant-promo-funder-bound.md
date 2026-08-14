@@ -1,9 +1,9 @@
-# ADR-032: A promo discount is bounded by its funder's settlement leg, at placement
+# ADR-034: A promo discount is bounded by its funder's settlement leg, at placement
 
 - **Status:** Accepted
 - **Date:** 2026-08-13
 - **Module:** `backend/internal/restaurant` (food delivery money path)
-- **Related:** ADR-030 (escrow tier gate — its gate runs immediately before this reservation); `backend/internal/finance/settlement`
+- **Related:** ADR-033 (escrow tier gate — its gate runs immediately before this reservation); `backend/internal/finance/settlement`
   (`Split.DiscountKobo` / `DiscountFundedByPlatform`), migration
   `20261014000000_restaurant_promos.sql`
 
@@ -103,7 +103,7 @@ Three sequencing rules fall out of the above and are load-bearing:
    once concurrency reached half the pool every connection was held by an order transaction
    waiting for one that could never come free. `PlaceOrder` therefore runs as phases that
    each hold at most one connection: tier gate (reads only) → reserve → escrow → order tx.
-4. **The tier gate runs before the reservation** (ADR-030). It reads only, so it can sit
+4. **The tier gate runs before the reservation** (ADR-033). It reads only, so it can sit
    ahead without weakening its own "nothing to reverse" property, and gating after the
    reservation would let a tier-blocked order burn a slot off a single-use campaign.
 

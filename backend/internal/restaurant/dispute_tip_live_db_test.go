@@ -86,7 +86,7 @@ func newDisputeTipFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 			t.Fatalf("seed user: %v", err)
 		}
 	}
-	// PlaceOrder's escrow is tier-gated fail-closed (ADR-030), so the paying customer
+	// PlaceOrder's escrow is tier-gated fail-closed (ADR-033), so the paying customer
 	// needs a KYC tier. Tier 3 is unlimited — these tests are about the dispute, not the cap.
 	seedKYCTier(t, ctx, pool, customer, 3)
 	restID := uuid.New().String()
@@ -338,7 +338,7 @@ func TestLiveDB_DisputeNoClawbackWhenRiderNeverPaidTip(t *testing.T) {
 			t.Fatalf("seed user: %v", err)
 		}
 	}
-	// PlaceOrder's escrow is tier-gated fail-closed (ADR-030), so the paying customer
+	// PlaceOrder's escrow is tier-gated fail-closed (ADR-033), so the paying customer
 	// needs a KYC tier. Tier 3 is unlimited — these tests are about the dispute, not the cap.
 	seedKYCTier(t, ctx, pool, customer, 3)
 	restID := uuid.New().String()
@@ -772,7 +772,7 @@ func TestLiveDB_DisputeTipClawbackDeferredToNextSettlement(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, nextCustomer, nextCustomer+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
-	seedKYCTier(t, ctx, pool, nextCustomer, 3) // tier-gated escrow (ADR-030)
+	seedKYCTier(t, ctx, pool, nextCustomer, 3) // tier-gated escrow (ADR-033)
 	if err := led.Credit(ctx, nextCustomer, "seed-fund", "nextfund-"+nextCustomer, revAcc.ID, 5_000_000); err != nil {
 		t.Fatalf("fund next customer: %v", err)
 	}

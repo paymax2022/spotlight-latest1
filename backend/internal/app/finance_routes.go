@@ -1312,7 +1312,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// WithTiers is NOT optional here: both restaurant money paths (the customer
 		// order escrow in PlaceOrder and the merchant withdrawal reserve) refuse with
 		// ErrTierGateUnwired when no gate is attached, so an unwired deployment serves
-		// 503 on every order rather than escrowing past the KYC daily cap (ADR-030).
+		// 503 on every order rather than escrowing past the KYC daily cap (ADR-033).
 		restaurantSvc := restaurant.NewService(pool, settlementSvcR).
 			WithLedger(ledgerSvc).
 			WithTiers(tiersSvc)

@@ -356,7 +356,7 @@ func TestLiveDB_OrderEscrowTierGate_NoProfileFailsClosed(t *testing.T) {
 
 // TestLiveDB_OrderEscrowTierGate_UnwiredGateRefuses: a Service built WITHOUT WithTiers
 // refuses to escrow at all. A nil gate is a misconfigured deployment, not a dev-mode
-// bypass — see ADR-030. This is the test that would fail if someone "fixed" a wiring
+// bypass — see ADR-033. This is the test that would fail if someone "fixed" a wiring
 // problem by making the nil case permissive again.
 func TestLiveDB_OrderEscrowTierGate_UnwiredGateRefuses(t *testing.T) {
 	pool := tierPool(t)

@@ -68,7 +68,7 @@ type TierLimiter interface {
 // built WITHOUT a TierLimiter. A nil gate is a deployment misconfiguration, not a
 // dev-mode bypass: CLAUDE.md's iron rule requires every money mutation to pass a
 // fail-closed tier check, so "no gate wired" must mean "no money moves" rather than
-// "all limits are unlimited". See docs/adr/ADR-030-restaurant-escrow-tier-gate.md.
+// "all limits are unlimited". See docs/adr/ADR-033-restaurant-escrow-tier-gate.md.
 var ErrTierGateUnwired = errors.New("restaurant: money path requires a tier gate (WithTiers not wired)")
 
 // ErrOrderMissingIdem is returned when PlaceOrder is called without an Idempotency-Key.

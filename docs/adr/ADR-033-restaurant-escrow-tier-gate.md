@@ -1,4 +1,4 @@
-# ADR-030: The food-order escrow is tier-gated, and an unwired gate refuses
+# ADR-033: The food-order escrow is tier-gated, and an unwired gate refuses
 
 - **Status:** Accepted
 - **Date:** 2026-08-13
