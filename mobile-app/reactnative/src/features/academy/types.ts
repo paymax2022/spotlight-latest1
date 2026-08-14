@@ -139,6 +139,40 @@ export interface PracticeResult {
   pointsEarned: number;
 }
 
+// ── Onboarding placement quiz (curriculum-grounded diagnostic) ────────────────
+export interface PlacementQuestion {
+  id: string;
+  type: QuestionType;
+  stem: string;
+  options: { id: string; text: string }[];
+  subjectCode: string;
+  subjectName: string;
+}
+
+export interface PlacementQuiz {
+  classCode: string;
+  questions: PlacementQuestion[];
+}
+
+export type PlacementLevel = 'below_track' | 'on_track' | 'above_track';
+
+export interface PlacementSubjectScore {
+  code: string;
+  name: string;
+  correct: number;
+  total: number;
+  /** Fraction correct, 0..1 (matches the backend). */
+  scorePct: number;
+  level: PlacementLevel;
+}
+
+export interface PlacementResult {
+  classCode: string;
+  /** Fraction correct across all subjects, 0..1. */
+  overallPct: number;
+  subjects: PlacementSubjectScore[];
+}
+
 export interface MasterySnapshot {
   objectiveId: string;
   topicId: string;
