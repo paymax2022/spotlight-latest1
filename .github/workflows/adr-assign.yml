@@ -1,0 +1,139 @@
+name: adr assign number
+
+# Assigns ADR numbers AT MERGE TIME, not at write time.
+#
+# WHY
+# ADR numbers used to be chosen by the author, from whatever the highest number
+# was on their branch. Two PRs opened the same day both picked the same "next"
+# number and both merged, so the repo accumulated collisions:
+#
+#   ADR-001, ADR-002, ADR-020, ADR-021, ADR-022, ADR-025   (historic)
+#   ADR-031 x2                                             (2026-08-13, PR #82 + #103)
+#   ADR-033/034                                            (2026-08-13, same day again)
+#
+# Three renumbering PRs in one day is the symptom of allocating a shared resource
+# from a stale local view. The fix is to allocate it in the one place that IS
+# serialized: the merge into develop.
+#
+# HOW
+# Authors never pick a number. They name the file after their PR:
+#
+#   docs/adr/ADR-PR<pr-number>-<slug>.md
+#
+# and cite `ADR-PR<pr-number>` everywhere they reference it (prose, Go comments,
+# SQL headers). PR numbers are unique and already allocated by GitHub, so two
+# ADRs in flight can never clash no matter how many are open at once.
+#
+# On merge to develop this workflow allocates the real number (max + 1), renames
+# the file, and rewrites every `ADR-PR<n>` reference in the repo to the assigned
+# `ADR-0NN`. The concurrency group serialises runs, so two merges landing close
+# together are numbered one after the other rather than racing.
+#
+# The rewrite is safe to do mechanically because `ADR-PR<n>` is a unique token
+# that appears nowhere else — unlike renumbering a concrete `ADR-031`, which
+# cannot be done automatically because the same string legitimately refers to a
+# different ADR elsewhere in the tree.
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'docs/adr/ADR-PR*'
+
+# Serialise: number allocation is a read-modify-write on a shared counter.
+concurrency:
+  group: adr-assign
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  assign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: develop
+
+      - name: Assign numbers and rewrite references
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          files=(docs/adr/ADR-PR*-*.md)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No ADR-PR* placeholders left to assign — nothing to do."
+            exit 0
+          fi
+
+          # Oldest PR first, so numbering follows the order work was opened.
+          IFS=$'\n' sorted=($(printf '%s\n' "${files[@]}" | sort -t- -k2 -V)); unset IFS
+
+          changed=0
+          for f in "${sorted[@]}"; do
+            base=$(basename "$f")
+            placeholder=$(printf '%s' "$base" | grep -oE '^ADR-PR[0-9]+')
+            slug=${base#${placeholder}-}
+
+            # Next free number = highest currently in use + 1. Deliberately NOT
+            # "first gap": gaps can be deliberate (a withdrawn ADR keeps its slot
+            # so old references do not silently retarget).
+            highest=$(ls docs/adr/ | grep -oE '^ADR-[0-9]{3}' | sed 's/ADR-//' | sort -n | tail -1)
+            next=$(printf '%03d' "$((10#$highest + 1))")
+
+            echo "::notice::${placeholder} -> ADR-${next} (${slug})"
+            git mv "$f" "docs/adr/ADR-${next}-${slug}"
+
+            # Rewrite every reference. The token is unique, so this cannot touch
+            # an unrelated ADR. Skip .git and node_modules; -I skips binaries.
+            #
+            # perl rather than sed -i: sed's in-place flag differs between GNU and
+            # BSD, and perl behaves identically on both, so this script can be run
+            # and tested locally as well as on the runner. \Q..\E quotes the token
+            # and \b stops ADR-PR99 matching inside ADR-PR999.
+            refs=$(grep -rlI --exclude-dir=.git --exclude-dir=node_modules -e "$placeholder" . || true)
+            if [ -n "$refs" ]; then
+              printf '%s\n' "$refs" | while IFS= read -r file; do
+                perl -pi -e "s/\\Q${placeholder}\\E\\b/ADR-${next}/g" "$file"
+                echo "  rewrote $file"
+              done
+            fi
+            changed=1
+          done
+
+          [ "$changed" -eq 1 ] || exit 0
+
+          # Fail loudly if a placeholder survived the rewrite. ADR-000-template.md
+          # is excluded because it documents the convention with a worked example
+          # (ADR-PR142) that is illustrative, not a real pending ADR.
+          SANITY=(--exclude-dir=.git --exclude-dir=node_modules
+                  --exclude=adr-assign.yml --exclude=ADR-000-template.md)
+          if grep -rqI "${SANITY[@]}" -e 'ADR-PR[0-9]' .; then
+            echo "::error::ADR-PR placeholders remain after assignment:"
+            grep -rnI "${SANITY[@]}" -e 'ADR-PR[0-9]' . || true
+            exit 1
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore(adr): assign ADR numbers on merge
+
+          Numbers are allocated here rather than by the author, so two ADRs in
+          flight cannot claim the same slot. See .github/workflows/adr-assign.yml."
+
+          # Another merge may have landed while we were working; rebase onto it
+          # and retry once rather than clobbering.
+          for attempt in 1 2 3; do
+            if git push origin HEAD:develop; then
+              echo "pushed on attempt $attempt"
+              exit 0
+            fi
+            echo "push rejected, rebasing and retrying ($attempt)"
+            git fetch origin develop
+            git rebase origin/develop
+          done
+          echo "::error::Could not push the ADR renumber after 3 attempts."
+          exit 1
