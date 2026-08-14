@@ -1,12 +1,9 @@
 {
   "association": [
     "backend/internal/association/**",
-    "backend/internal/app/router.go",
-    "backend/internal/config/config.go",
     "contracts/associations.openapi.yaml",
     "supabase/migrations/*assoc*.sql",
     "frontend-web/src/app/api/associations/**",
-    "frontend-web/src/lib/feature-flags.ts",
     "mobile-app/reactnative/src/features/association/**",
     "mobile-app/reactnative/tsconfig.associationcheck.json"
   ],
@@ -42,7 +39,6 @@
   ],
   "doctor": [
     "backend/internal/doctor/**",
-    "backend/internal/config/config.go",
     "contracts/doctor.openapi.yaml",
     "supabase/migrations/*doctor*.sql",
     "mobile-app/reactnative/src/features/doctor/**",
@@ -55,23 +51,18 @@
     "backend/**",
     "mobile-app/reactnative/src/features/fx/**",
     "mobile-app/reactnative/app/fx/**",
-    "frontend-admin/app/admin/fx/**",
-    "contracts/openapi.yaml"
+    "frontend-admin/app/admin/fx/**"
   ],
   "health": [
     "backend/internal/health/**",
     "backend/internal/app/health_*.go",
-    "backend/internal/config/config.go",
     "supabase/migrations/*health_*.sql",
     "frontend-admin/app/admin/health/**",
     "frontend-admin/src/services/health*AdminService.ts",
     "frontend-admin/src/types/health*Admin.ts",
-    "frontend-admin/src/components/layouts/AdminSidebar.tsx",
     "frontend-web/app/api/v1/health/**",
-    "frontend-web/src/lib/feature-flags.ts",
     "mobile-app/reactnative/app/health/**",
-    "mobile-app/reactnative/src/features/health/**",
-    "mobile-app/reactnative/src/constants/modules.ts"
+    "mobile-app/reactnative/src/features/health/**"
   ],
   "insurance": [
     "backend/internal/insurance/**",
@@ -79,17 +70,13 @@
     "backend/internal/provider/octamile/**",
     "backend/internal/app/insurance_routes.go",
     "backend/internal/app/insurance_claims_routes.go",
-    "backend/internal/config/config.go",
     "supabase/migrations/*insurance*.sql",
     "frontend-admin/app/admin/insurance/**",
     "frontend-admin/src/services/insuranceAdminService.ts",
     "frontend-admin/src/types/insuranceAdmin.ts",
-    "frontend-admin/src/components/layouts/AdminSidebar.tsx",
     "frontend-web/app/api/v1/insurance/**",
-    "frontend-web/src/lib/feature-flags.ts",
     "mobile-app/reactnative/app/insurance/**",
-    "mobile-app/reactnative/src/features/insurance/**",
-    "mobile-app/reactnative/src/constants/modules.ts"
+    "mobile-app/reactnative/src/features/insurance/**"
   ],
   "maps": [
     "backend/internal/maps/**",
@@ -98,12 +85,9 @@
     "backend/internal/transport/handler.go",
     "backend/internal/restaurant/service.go",
     "backend/internal/estate/service.go",
-    "backend/internal/app/router.go",
-    "backend/internal/config/config.go",
     "supabase/migrations/2026062600*.sql",
     "supabase/migrations/*maps*.sql",
     "supabase/migrations/*merchant_locations*.sql",
-    "contracts/openapi.yaml",
     "frontend-web/src/components/map/**",
     "frontend-web/src/services/mapsClient.ts",
     "mobile-app/reactnative/src/features/mobility/**",
@@ -125,25 +109,21 @@
     "backend/internal/app/referral_routes.go",
     "backend/internal/app/referral_econ_routes.go",
     "backend/internal/app/referral_trust_routes.go",
-    "backend/internal/config/config.go",
     "supabase/migrations/*referral*.sql",
     "frontend-admin/app/admin/referral/**",
     "frontend-admin/src/services/referralAdminService.ts",
     "frontend-admin/src/services/referralAdminOpsService.ts",
     "frontend-admin/src/types/referralAdmin*.ts",
-    "frontend-admin/src/components/layouts/AdminSidebar.tsx",
     "frontend-web/app/api/v1/referral/**",
     "frontend-web/app/api/auth/register/route.ts",
     "frontend-web/src/server/referrals/**",
     "mobile-app/reactnative/app/referral/**",
-    "mobile-app/reactnative/src/features/referral/**",
-    "mobile-app/reactnative/src/constants/modules.ts"
+    "mobile-app/reactnative/src/features/referral/**"
   ],
   "stays": [
     "backend/internal/stays/**",
     "backend/internal/app/stays_routes.go",
     "backend/internal/app/stays_extranet_routes.go",
-    "backend/internal/config/config.go",
     "supabase/migrations/*stays*.sql",
     "frontend-admin/app/admin/stays/**",
     "frontend-admin/app/extranet/**",
@@ -151,12 +131,9 @@
     "frontend-admin/src/services/staysExtranetService.ts",
     "frontend-admin/src/types/staysAdmin.ts",
     "frontend-admin/src/types/staysExtranet.ts",
-    "frontend-admin/src/components/layouts/AdminSidebar.tsx",
     "frontend-web/app/api/v1/stays/**",
-    "frontend-web/src/lib/feature-flags.ts",
     "mobile-app/reactnative/app/stays/**",
-    "mobile-app/reactnative/src/features/stays/**",
-    "mobile-app/reactnative/src/constants/modules.ts"
+    "mobile-app/reactnative/src/features/stays/**"
   ],
   "top5": [
     "backend/internal/scheduler/**",
@@ -172,7 +149,6 @@
     "backend/internal/p2pmarket/**",
     "backend/internal/spray/**",
     "backend/internal/app/top5_*.go",
-    "backend/internal/config/config.go",
     "supabase/migrations/*top5*.sql",
     "supabase/migrations/*_savings.sql",
     "supabase/migrations/*_social.sql",
@@ -192,7 +168,6 @@
     "frontend-admin/src/services/creatorsAdminService.ts",
     "frontend-admin/src/services/escrowAdminService.ts",
     "frontend-admin/src/services/blackAdminService.ts",
-    "frontend-admin/src/components/layouts/AdminSidebar.tsx",
     "frontend-web/app/api/v1/savings/**",
     "frontend-web/app/api/v1/social/**",
     "frontend-web/app/api/v1/events/**",
@@ -200,7 +175,6 @@
     "frontend-web/app/api/v1/creators/**",
     "frontend-web/app/api/v1/p2p/**",
     "frontend-web/app/api/v1/spray/**",
-    "frontend-web/src/lib/feature-flags.ts",
     "mobile-app/reactnative/app/savings/**",
     "mobile-app/reactnative/app/social/**",
     "mobile-app/reactnative/app/events/**",
@@ -210,8 +184,7 @@
     "mobile-app/reactnative/src/features/social/**",
     "mobile-app/reactnative/src/features/events/**",
     "mobile-app/reactnative/src/features/loyalty/**",
-    "mobile-app/reactnative/src/features/creators/**",
-    "mobile-app/reactnative/src/constants/modules.ts"
+    "mobile-app/reactnative/src/features/creators/**"
   ],
   "visitor-election": [
     "mobile-app/reactnative/src/features/visitor/**",

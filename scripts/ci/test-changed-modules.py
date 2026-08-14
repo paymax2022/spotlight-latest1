@@ -6,6 +6,7 @@ that are easy to break silently: correct glob semantics, fail-open on an unknown
 diff, and rejection of brace patterns.
 """
 
+import collections
 import importlib.util
 import json
 import pathlib
@@ -77,6 +78,23 @@ any_docs = {
     for mod, pats in filters.items()
 }
 check("docs-only selects no module", any(any_docs.values()), False)
+
+# --- no concrete file may wake more than one lane ----------------------------
+# A single shared file listed by many lanes cannot distinguish which module
+# changed — as a filter it only ever means "something shared moved", so it wakes
+# all of them. `config.go` alone used to wake 9 of 14. Either an unconditional
+# ci.yml job already covers the file (then no lane needs it), or exactly one lane
+# owns it. 55a98125 applied this to finance_routes.go; it holds generally.
+concrete = collections.Counter(
+    p for pats in filters.values() for p in pats if not any(c in p for c in "*?[")
+)
+for path, n in concrete.items():
+    if n > 1:
+        owners = sorted(m for m, pats in filters.items() if path in pats)
+        failures.append(
+            f"{path} is listed by {n} lanes ({', '.join(owners)}); "
+            "give it one owner or cover it with an unconditional ci.yml job"
+        )
 
 # --- every module in the filter file is actually wired into ci.yml -----------
 # A filter set with no caller job is dead config: the lane would never run and
