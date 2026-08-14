@@ -9,7 +9,7 @@
     "build": "next build",
     "type-check": "tsc --noEmit",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint app components lib src --ext .js,.jsx,.ts,.tsx",
     "test": "vitest run",
     "test:money": "vitest run tests/unit/estate tests/unit/wallet tests/unit/tiers",
     "test:estate": "vitest run tests/unit/estate",
