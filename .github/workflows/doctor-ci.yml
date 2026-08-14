@@ -56,8 +56,6 @@ jobs:
       - run: npm ci
       - name: Typecheck doctor module (scoped)
         run: npx tsc --noEmit -p tsconfig.doctorcheck.json
-      - name: Typecheck whole app (belt-and-braces)
-        run: npx tsc --noEmit -p tsconfig.json
 
   migration-guard:
     runs-on: ubuntu-latest

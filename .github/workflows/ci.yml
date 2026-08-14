@@ -75,6 +75,20 @@ jobs:
       working-directory: frontend-admin
       typecheck-command: npm run type-check
 
+  # The mobile app's whole-app tsc, ONCE. Ten module lanes each ran this same
+  # `tsc --noEmit -p tsconfig.json` over the entire RN app, so a single broken
+  # file failed all ten identically — two missing style keys in one telemedicine
+  # screen turned into eight red lanes on 415c0710, saying nothing extra after
+  # the first. The lanes keep their SCOPED tsconfigs, which do say something
+  # per-module. Unconditional, like the frontend-web and frontend-admin gates
+  # above: a change anywhere in the app can break a whole-app typecheck.
+  mobile-typecheck:
+    name: mobile (whole-app tsc)
+    uses: ./.github/workflows/_reusable-node-typecheck.yml
+    with:
+      working-directory: mobile-app/reactnative
+      typecheck-command: npx tsc --noEmit -p tsconfig.json
+
   backend:
     name: backend (go build + vet)
     uses: ./.github/workflows/_reusable-go-verify.yml

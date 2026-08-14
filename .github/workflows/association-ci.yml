@@ -87,8 +87,6 @@ jobs:
       - run: npm ci
       - name: Typecheck association feature (scoped)
         run: npx tsc --noEmit -p tsconfig.associationcheck.json
-      - name: Typecheck whole app (belt-and-braces)
-        run: npx tsc --noEmit -p tsconfig.json
 
   # ── 5. Migration guard: additive-only DDL ────────────────────────────────────
   migration-guard:
