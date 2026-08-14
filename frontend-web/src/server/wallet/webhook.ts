@@ -72,6 +72,22 @@ export async function handleWalletTopupWebhook(
     return { processed: false, duplicate: true };
   }
 
+  // Credit what Paystack actually collected, not what the intent hoped for.
+  // The handler used to read `amount` off the event and never compare it, so any
+  // divergence between the initialized amount and the settled one would be
+  // credited at the intent's figure. Every module checkout now funds itself
+  // through this path, so a mismatch here would mint wallet balance.
+  const paidKobo = Number(event.data?.amount ?? 0);
+  const intentKobo = Number(intent.amount_kobo ?? 0);
+  if (!Number.isInteger(paidKobo) || paidKobo !== intentKobo) {
+    const message = `Amount mismatch for ${reference}: charged ${paidKobo} kobo, intent expects ${intentKobo} kobo`;
+    await supabase
+      .from('wallet_topup_intents')
+      .update({ status: 'failed', error_message: message, updated_at: new Date().toISOString() })
+      .eq('id', intent.id);
+    return { processed: false, duplicate: false, error: message };
+  }
+
   try {
     const idempotencyKey = buildIdempotencyKey('topup', intent.id as string, 'CREDIT');
 
