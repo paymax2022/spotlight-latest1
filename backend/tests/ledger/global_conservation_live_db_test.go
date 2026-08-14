@@ -1,13 +1,13 @@
 package ledger_test
 
 // ---------------------------------------------------------------------------
-// ADR-PR98 — GLOBAL CONSERVATION over the shared public.ledger_entries table.
+// ADR-040 — GLOBAL CONSERVATION over the shared public.ledger_entries table.
 //
 // public.ledger_entries has two independent writers:
 //   • the Go finance ledger (backend/internal/finance/ledger) — always posts a
 //     balanced DR/CR pair;
 //   • the Next.js wallet plane (frontend-web/src/server/wallet) — which, before
-//     ADR-PR98, posted ONE leg per money event.
+//     ADR-040, posted ONE leg per money event.
 //
 // Because both write to the same table, a single-sided writer in EITHER plane
 // destroys the only invariant that can catch a whole class of money bugs:
@@ -91,7 +91,7 @@ func globalResidual(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (int6
 	return residual, count
 }
 
-// TestLiveDB_LedgerGlobalConservation is the ADR-PR98 invariant: whatever history
+// TestLiveDB_LedgerGlobalConservation is the ADR-040 invariant: whatever history
 // the database carries, and whichever plane wrote it, the shared ledger conserves
 // value. A non-zero residual means some writer posted a single-sided entry.
 func TestLiveDB_LedgerGlobalConservation(t *testing.T) {
@@ -105,7 +105,7 @@ func TestLiveDB_LedgerGlobalConservation(t *testing.T) {
 			"Some writer posted an unbalanced (probably single-sided) entry. Find it with:\n"+
 			"  SELECT reference, SUM(CASE WHEN type IN ('CREDIT','REVERSAL_DEBIT') THEN amount_kobo ELSE -amount_kobo END) AS residual\n"+
 			"    FROM ledger_entries GROUP BY reference HAVING SUM(CASE WHEN type IN ('CREDIT','REVERSAL_DEBIT') THEN amount_kobo ELSE -amount_kobo END) <> 0;\n"+
-			"See docs/adr/ADR-PR98-wallet-plane-double-entry.md.", residual, count)
+			"See docs/adr/ADR-040-wallet-plane-double-entry.md.", residual, count)
 	}
 	t.Logf("ledger conserves: residual 0 kobo over %d entries", count)
 }

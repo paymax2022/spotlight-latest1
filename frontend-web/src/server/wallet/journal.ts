@@ -1,7 +1,7 @@
 /**
  * Balanced double-entry journal primitive for the Next.js wallet plane.
  *
- * WHY THIS EXISTS (see docs/adr/ADR-PR98-wallet-plane-double-entry.md)
+ * WHY THIS EXISTS (see docs/adr/ADR-040-wallet-plane-double-entry.md)
  * -------------------------------------------------------------------
  * `public.ledger_entries` is SHARED: the Go finance module
  * (backend/internal/finance/ledger) posts balanced DR/CR pairs into it, while
@@ -11,7 +11,7 @@
  * over the whole table — permanently unassertable, and it violates the CLAUDE.md
  * iron rule that every money mutation posts balanced double-entry.
  *
- * ADR-PR98 decision (option a): give every wallet-plane movement a counter-leg on
+ * ADR-040 decision (option a): give every wallet-plane movement a counter-leg on
  * the SAME chart of accounts the Go ledger uses (`provider_clearing`,
  * `settlement`, `paymax_revenue`, …), so the shared table balances globally and
  * the two planes stay reconcilable.
@@ -20,7 +20,7 @@
  * --------------------------------------------
  * The PRIMARY (wallet-side) leg keeps the caller's idempotency key VERBATIM.
  * Only the counter-leg gets the `:counter` suffix. This is deliberate: entries
- * written before ADR-PR98 carry the un-suffixed key, and `checkIdempotencyKey`
+ * written before ADR-040 carry the un-suffixed key, and `checkIdempotencyKey`
  * looks up that exact string. Had we moved the wallet leg to a `:debit`/`:credit`
  * suffix (the Go convention), a replayed webhook for a pre-ADR event would miss
  * the dedup check and DOUBLE-CREDIT the user. Never change this.
@@ -208,7 +208,7 @@ export interface PostJournalResult {
  *
  * Refuses to write an unbalanced set — the guard is fail-closed and deliberate:
  * an imbalance here is a programming error, and letting it through is exactly
- * the regression ADR-PR98 exists to prevent.
+ * the regression ADR-040 exists to prevent.
  */
 export async function postJournal(
   legs: LedgerLegInsert[],

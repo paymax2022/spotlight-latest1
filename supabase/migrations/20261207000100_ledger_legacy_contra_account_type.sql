@@ -1,5 +1,5 @@
 -- Migration: admit the `legacy_wallet_contra` standing-account type.
--- ADR-PR98 (docs/adr/ADR-PR98-wallet-plane-double-entry.md).
+-- ADR-040 (docs/adr/ADR-040-wallet-plane-double-entry.md).
 --
 -- Split out from the backfill (20261207000200) ON PURPOSE. `ALTER TABLE … ADD
 -- CONSTRAINT` takes an ACCESS EXCLUSIVE lock on ledger_accounts and holds it to

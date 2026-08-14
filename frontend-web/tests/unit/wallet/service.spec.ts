@@ -39,7 +39,7 @@ function existingAccount() {
   return { id: ACCOUNT_ID };
 }
 
-/** The standing (counter) account ADR-PR98 posts the balancing leg to. */
+/** The standing (counter) account ADR-040 posts the balancing leg to. */
 function standingAccount() {
   return { id: COUNTER_ACCOUNT_ID };
 }
@@ -159,7 +159,7 @@ describe('creditWallet', () => {
     expect(result.alreadyProcessed).toBe(false);
     expect(result.amountKobo).toBe(100_000);
 
-    // ADR-PR98: ONE insert carrying BOTH legs — atomic, no half-journal.
+    // ADR-040: ONE insert carrying BOTH legs — atomic, no half-journal.
     expect(insertFn).toHaveBeenCalledOnce();
     const legs = insertFn.mock.calls[0][0] as LedgerLegInsert[];
     expect(legs).toHaveLength(2);
@@ -280,7 +280,7 @@ describe('debitWallet', () => {
     expect(insertFn).not.toHaveBeenCalled();
   });
 
-  // ADR-PR98: debit_wallet_atomic resolves its own counter-account ('settlement').
+  // ADR-040: debit_wallet_atomic resolves its own counter-account ('settlement').
   // A caller-supplied override would type-check, read correctly, and post
   // somewhere else entirely — so it must be refused, not ignored.
   it('refuses a counterAccount the RPC cannot honour', async () => {

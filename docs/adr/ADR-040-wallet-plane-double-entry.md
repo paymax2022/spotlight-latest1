@@ -1,4 +1,4 @@
-# ADR-PR98 — The Next.js wallet plane posts balanced double-entry into the shared ledger
+# ADR-040 — The Next.js wallet plane posts balanced double-entry into the shared ledger
 
 - **Status:** Accepted
 - **Date:** 2026-08-13

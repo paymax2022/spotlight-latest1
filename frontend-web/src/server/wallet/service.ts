@@ -77,7 +77,7 @@ async function migrateLegacyMobileBalanceIfNeeded(userId: string, accountId: str
 
   const amountKobo = Math.round(legacyBalance * 100);
 
-  // ADR-PR98: an opening balance carried over from the legacy mobile system is
+  // ADR-040: an opening balance carried over from the legacy mobile system is
   // still a money movement — DR settlement (the platform owed those funds all
   // along) / CR the user's wallet.
   const counterAccountId = await getOrCreateStandingAccount('settlement');
@@ -175,7 +175,7 @@ export interface WalletMutationInput {
   description?: string;
   metadata?: Record<string, unknown>;
   /**
-   * Standing account carrying the counter-leg (ADR-PR98). Defaults to
+   * Standing account carrying the counter-leg (ADR-040). Defaults to
    * `provider_clearing` for credits and `settlement` for debits/reversals.
    * Pass an explicit one where the counterparty is known — e.g. a referral
    * bonus is funded by `referral_reward_expense`, not by a payment provider.
@@ -203,7 +203,7 @@ export async function creditWallet(
 
   const accountId = await getOrCreateAccount(userId);
 
-  // ADR-PR98: money entering a wallet has a source. Post the balanced pair —
+  // ADR-040: money entering a wallet has a source. Post the balanced pair —
   // DR the counter account / CR the wallet — in one atomic insert. A UNIQUE
   // violation on either leg rolls back both, so `alreadyProcessed` still means
   // "this exact event was already posted", never "half of it was".
@@ -233,7 +233,7 @@ export async function debitWallet(
 ): Promise<WalletMutationResult> {
   validateAmountKobo(input.amountKobo);
 
-  // ADR-PR98: this path posts its counter-leg INSIDE debit_wallet_atomic, which
+  // ADR-040: this path posts its counter-leg INSIDE debit_wallet_atomic, which
   // hardcodes `settlement` — the RPC's argument list is deliberately unchanged.
   // Accepting a different counterAccount here would silently post to the wrong
   // account (it type-checks, reads correctly, and lands somewhere else), so
@@ -242,7 +242,7 @@ export async function debitWallet(
   if (input.counterAccount && input.counterAccount !== DEFAULT_DEBIT_COUNTER) {
     throw new ApiError(
       `debitWallet cannot post to counter account '${input.counterAccount}': ` +
-      `debit_wallet_atomic always posts to '${DEFAULT_DEBIT_COUNTER}' (ADR-PR98).`,
+      `debit_wallet_atomic always posts to '${DEFAULT_DEBIT_COUNTER}' (ADR-040).`,
       500,
     );
   }
@@ -308,7 +308,7 @@ export async function reverseWalletDebit(
 
   const accountId = await getOrCreateAccount(userId);
 
-  // ADR-PR98: the correction is a balanced pair too — REVERSAL_DEBIT restores the
+  // ADR-040: the correction is a balanced pair too — REVERSAL_DEBIT restores the
   // wallet, REVERSAL_CREDIT drains the account the original debit credited.
   // Default `settlement` mirrors debit_wallet_atomic's counter-leg, so a refund
   // of a debit posted through that RPC returns the funds to the same pot.

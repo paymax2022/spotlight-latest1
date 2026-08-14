@@ -157,7 +157,7 @@ export async function processReferralReward(
     reference:     `REF_${input.shareCode}_${input.referredUserId.slice(0, 8).toUpperCase()}`,
     idempotencyKey,
     description:   `Referral reward for inviting user ${input.referredUserId.slice(0, 8)}`,
-    // ADR-PR98: a referral bonus is platform-funded, not provider money — the
+    // ADR-040: a referral bonus is platform-funded, not provider money — the
     // counter-leg is an expense, matching the Go referral ledger
     // (DR referral_reward_expense / CR wallet).
     counterAccount: 'referral_reward_expense',

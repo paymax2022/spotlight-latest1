@@ -1,5 +1,5 @@
 -- Migration: make the Next.js wallet-plane RPCs post BALANCED double-entry.
--- ADR-PR98 (docs/adr/ADR-PR98-wallet-plane-double-entry.md).
+-- ADR-040 (docs/adr/ADR-040-wallet-plane-double-entry.md).
 --
 -- WHY
 -- ---
@@ -10,7 +10,7 @@
 -- Because the table is shared, the single-sided writers made global conservation
 -- (SUM(signed amount) = 0 over the whole table) permanently unassertable, and
 -- they violate the CLAUDE.md iron rule that every money mutation posts balanced
--- double-entry. ADR-PR98 chose option (a): give the wallet plane counter-legs on
+-- double-entry. ADR-040 chose option (a): give the wallet plane counter-legs on
 -- the SAME chart of accounts the Go ledger uses, so the table balances globally.
 --
 -- This migration fixes the three SQL writers that could not conserve value:
@@ -33,7 +33,7 @@
 --  • Every pre-existing check, lock, day-boundary and RAISE message is preserved
 --    verbatim; the only behavioural delta is the added balancing leg.
 --  • The wallet leg keeps its existing idempotency_key EXACTLY; only the
---    counter-leg is suffixed. Entries written before ADR-PR98 carry the
+--    counter-leg is suffixed. Entries written before ADR-040 carry the
 --    un-suffixed key and the app's dedup check looks up that exact string, so a
 --    replayed webhook for a pre-ADR event still de-duplicates. Changing the
 --    wallet leg's key would double-spend on replay. Do not.
@@ -91,7 +91,7 @@ $$;
 COMMENT ON FUNCTION public.ledger_standing_account IS
   'Resolves (creating on first use) the singleton standing ledger account for a type '
   '(user_id IS NULL AND group_id IS NULL). Counter-leg destination for the wallet-plane '
-  'RPCs — see ADR-PR98.';
+  'RPCs — see ADR-040.';
 
 REVOKE EXECUTE ON FUNCTION public.ledger_standing_account FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.ledger_standing_account TO service_role;
@@ -159,7 +159,7 @@ BEGIN
   END IF;
 
   -- 4. Post the BALANCED pair atomically (still under the account lock).
-  --    ADR-PR98: the wallet leg keeps p_idempotency_key verbatim; the counter-leg
+  --    ADR-040: the wallet leg keeps p_idempotency_key verbatim; the counter-leg
   --    is suffixed ':counter'. The daily-total query above deliberately filters
   --    on the wallet account only, so the new CREDIT leg cannot inflate it.
   v_counter_id := public.ledger_standing_account('settlement');
@@ -176,7 +176,7 @@ $$;
 
 COMMENT ON FUNCTION public.debit_wallet_atomic IS
   'Atomically checks available balance and optional daily tier limit, then posts a BALANCED '
-  'DR wallet / CR settlement pair — all under a row-level lock on ledger_accounts (ADR-PR98). '
+  'DR wallet / CR settlement pair — all under a row-level lock on ledger_accounts (ADR-040). '
   'Raises INSUFFICIENT_BALANCE or TIER_LIMIT_EXCEEDED on failure; '
   'caller must catch SQLSTATE P0001 and map to HTTP 402/403 respectively.';
 
@@ -257,7 +257,7 @@ BEGIN
     END IF;
   END IF;
 
-  -- Reserve funds as a BALANCED pair (ADR-PR98): DEBIT reduces the sender's
+  -- Reserve funds as a BALANCED pair (ADR-040): DEBIT reduces the sender's
   -- available balance immediately; the CREDIT records the funds as in flight to
   -- the payment provider. The sender leg keeps its existing ':bank-reserve' key —
   -- bank_transfers.sender_entry_id points at it, so that must not change.
@@ -308,7 +308,7 @@ GRANT EXECUTE ON FUNCTION reserve_for_bank_transfer TO service_role;
 COMMENT ON FUNCTION reserve_for_bank_transfer IS
   'Block 11 — atomic fund reservation for outbound bank transfer. '
   'Posts a BALANCED reserve (DR sender wallet amount+fee / CR provider_clearing, '
-  'ADR-PR98) and creates a bank_transfers record atomically. '
+  'ADR-040) and creates a bank_transfers record atomically. '
   'Paystack transfer is initiated by the caller AFTER this returns successfully.';
 
 -- ---------------------------------------------------------------------------
@@ -414,7 +414,7 @@ BEGIN
     p_metadata
   );
 
-  -- ADR-PR98: recognise the fee that "stays with Paymax" as an actual leg,
+  -- ADR-040: recognise the fee that "stays with Paymax" as an actual leg,
   -- otherwise the journal is short by exactly fee_kobo.
   IF p_fee_kobo IS NOT NULL AND p_fee_kobo > 0 THEN
     v_fee_account_id := public.ledger_standing_account('paymax_revenue');
@@ -456,7 +456,7 @@ GRANT EXECUTE ON FUNCTION transfer_wallet_atomic TO service_role;
 COMMENT ON FUNCTION transfer_wallet_atomic IS
   'Block 10 — atomic Paymax wallet-to-wallet transfer. '
   'Locks sender account, checks balance + daily limit, then posts a BALANCED journal '
-  '(DR sender amount+fee / CR receiver amount / CR paymax_revenue fee, ADR-PR98) '
+  '(DR sender amount+fee / CR receiver amount / CR paymax_revenue fee, ADR-040) '
   'in a single transaction. Raises INSUFFICIENT_BALANCE or TIER_LIMIT_EXCEEDED on failure.';
 
 COMMIT;

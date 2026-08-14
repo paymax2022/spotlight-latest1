@@ -202,7 +202,7 @@ async function adjustWalletAction(formData: FormData) {
     reference,
     idempotencyKey: `admin-wallet:${reference}:${direction}`,
     description: `Admin wallet ${direction}: ${reason}`,
-    // ADR-PR98: manual admin movements settle against the platform clearing pot,
+    // ADR-040: manual admin movements settle against the platform clearing pot,
     // not against a payment provider.
     counterAccount: 'settlement' as const,
     metadata: {
@@ -242,7 +242,7 @@ const adjustWalletFormAction = adjustWalletAction as unknown as ServerFormAction
 /**
  * ledger_accounts types that hold CUSTOMER money, as opposed to the platform
  * standing accounts (settlement, provider_clearing, paymax_revenue, escrow,
- * legacy_wallet_contra, …) that ADR-PR98 posts counter-legs to. Everything not in
+ * legacy_wallet_contra, …) that ADR-040 posts counter-legs to. Everything not in
  * this list is a platform pot and is excluded from the customer-facing figures.
  */
 const CUSTOMER_ACCOUNT_TYPES = ['wallet', 'user_wallet', 'group_wallet'] as const;
@@ -258,7 +258,7 @@ async function queryRows<T>(table: string, select: string, opts: { order?: strin
 }
 
 export default async function PaymentsFinanceAdminPage() {
-  // ADR-PR98: every wallet movement now also posts a counter-leg onto a PLATFORM
+  // ADR-040: every wallet movement now also posts a counter-leg onto a PLATFORM
   // standing account (settlement / provider_clearing / paymax_revenue / …).
   // Those are not customer money — including them here would make "Wallet
   // Balance" move the WRONG WAY on a spend (the user's wallet drops, the
@@ -272,7 +272,7 @@ export default async function PaymentsFinanceAdminPage() {
   //
   // Resolved BEFORE the rest so the ledger query can exclude platform accounts
   // server-side. Trimming client-side after a fixed-size window would under-fill
-  // the table: the ADR-PR98 backfill inserts every contra-leg with the same
+  // the table: the ADR-040 backfill inserts every contra-leg with the same
   // created_at, so right after that migration the newest N rows can be entirely
   // contra-legs.
   const platformAccounts = await queryRows<{ id: string }>('ledger_accounts', 'id', {

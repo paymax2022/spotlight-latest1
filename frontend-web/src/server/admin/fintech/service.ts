@@ -80,7 +80,7 @@ async function executeAdjustment(
     reference: `ADJ_${adjustmentId.slice(0, 8).toUpperCase()}`,
     idempotencyKey: `admin-adjustment:${idempotencyKey}`,
     description: `Admin manual ${type.toLowerCase()}: ${reason}`,
-    // ADR-PR98: a manual adjustment moves value against the platform's own
+    // ADR-040: a manual adjustment moves value against the platform's own
     // clearing pot, not against a payment provider. Naming it explicitly keeps
     // provider_clearing reconcilable against actual PSP settlements.
     counterAccount: 'settlement' as const,

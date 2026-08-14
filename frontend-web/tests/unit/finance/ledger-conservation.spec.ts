@@ -1,8 +1,8 @@
 /**
- * ADR-PR98 — ledger conservation invariant (Next.js wallet plane).
+ * ADR-040 — ledger conservation invariant (Next.js wallet plane).
  *
  * The shared `public.ledger_entries` table is written by BOTH the Go finance
- * ledger and this Next.js wallet plane. Before ADR-PR98 the wallet plane posted a
+ * ledger and this Next.js wallet plane. Before ADR-040 the wallet plane posted a
  * single leg per money event, so the table could not conserve value — a top-up
  * left a `CREDIT 500000` with no offsetting `DEBIT` anywhere, and global
  * conservation was permanently unassertable.
@@ -136,7 +136,7 @@ describe('buildJournalLegs conservation', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Regression guard for the most dangerous detail in ADR-PR98. Entries written
+  // Regression guard for the most dangerous detail in ADR-040. Entries written
   // before the ADR carry the UN-suffixed key, and checkIdempotencyKey looks up
   // that exact string. Suffixing the wallet leg would make a replayed webhook
   // miss dedup and double-credit the user.
@@ -157,7 +157,7 @@ describe('buildJournalLegs conservation', () => {
 // 4. Balance detection itself.
 // ---------------------------------------------------------------------------
 describe('journalIsBalanced', () => {
-  it('rejects the pre-ADR-PR98 single-leg top-up shape', () => {
+  it('rejects the pre-ADR-040 single-leg top-up shape', () => {
     // The exact row observed on the local DB: a lone CREDIT with no counter-leg.
     const singleLeg: Pick<LedgerLegInsert, 'type' | 'amount_kobo'>[] = [
       { type: 'CREDIT', amount_kobo: 500_000 },
@@ -170,7 +170,7 @@ describe('journalIsBalanced', () => {
     expect(journalIsBalanced([])).toBe(false);
   });
 
-  it('rejects the pre-ADR-PR98 fee leak (DR amount+fee vs CR amount)', () => {
+  it('rejects the pre-ADR-040 fee leak (DR amount+fee vs CR amount)', () => {
     const amount = 100_000;
     const fee = 2_500;
     expect(journalIsBalanced([

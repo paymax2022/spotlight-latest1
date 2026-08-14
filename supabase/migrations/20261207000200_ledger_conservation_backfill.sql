@@ -1,9 +1,9 @@
 -- Migration: close the historical conservation gap in public.ledger_entries,
 -- and expose a first-class way to assert conservation from tests/ops.
--- ADR-PR98 (docs/adr/ADR-PR98-wallet-plane-double-entry.md).
+-- ADR-040 (docs/adr/ADR-040-wallet-plane-double-entry.md).
 --
 -- ⚠ DEPLOY ORDER: this migration must land WITH OR AFTER the frontend-web build
--- that contains ADR-PR98 (frontend-web/src/server/wallet/journal.ts). If the old
+-- that contains ADR-040 (frontend-web/src/server/wallet/journal.ts). If the old
 -- single-leg `creditWallet` is still serving when this runs, it keeps writing
 -- bare CREDITs and re-opens the gap this closes. Backfilling a still-single-sided
 -- writer is pointless, not dangerous — but the conservation assertion at the end
@@ -38,7 +38,7 @@
 --  • A dedicated account type (rather than reusing `settlement` or
 --    `provider_clearing`) quarantines RECONSTRUCTED legs from observed ones, so
 --    finance reporting can exclude them and their total is the exact size of the
---    pre-ADR-PR98 gap.
+--    pre-ADR-040 gap.
 --  • Idempotent: the contra-leg key carries the residual it closes, so a plain
 --    re-run finds no unbalanced groups and does nothing, while a gap that
 --    re-opens at a DIFFERENT amount still gets its own leg. A gap that re-opens
@@ -73,11 +73,11 @@ BEGIN
     ) unbalanced;
 
   IF v_groups = 0 THEN
-    RAISE NOTICE 'ADR-PR98 backfill: ledger already conserves — nothing to do.';
+    RAISE NOTICE 'ADR-040 backfill: ledger already conserves — nothing to do.';
     RETURN;
   END IF;
 
-  RAISE NOTICE 'ADR-PR98 backfill: % unbalanced reference group(s), net residual % kobo.',
+  RAISE NOTICE 'ADR-040 backfill: % unbalanced reference group(s), net residual % kobo.',
     v_groups, v_residual;
 
   v_contra_id := public.ledger_standing_account('legacy_wallet_contra');
@@ -94,9 +94,9 @@ BEGIN
     -- The residual is part of the key: re-running is a no-op, but a gap that
     -- re-opens at a different amount still gets its own reconstructed leg.
     'wallet-conservation-backfill:' || u.reference || ':' || u.signed,
-    'ADR-PR98 reconstructed contra-leg for pre-double-entry wallet history',
+    'ADR-040 reconstructed contra-leg for pre-double-entry wallet history',
     jsonb_build_object(
-      'adr', 'ADR-PR98',
+      'adr', 'ADR-040',
       'kind', 'conservation_backfill',
       'residual_kobo', u.signed
     )
@@ -135,7 +135,7 @@ SELECT
 FROM public.ledger_entries;
 
 COMMENT ON VIEW public.ledger_conservation_check IS
-  'ADR-PR98 global conservation probe over the shared ledger_entries table. '
+  'ADR-040 global conservation probe over the shared ledger_entries table. '
   'residual_kobo MUST be 0 — any other value means some writer posted a '
   'single-sided (or otherwise unbalanced) entry. Backend/service_role only.';
 
@@ -167,7 +167,7 @@ BEGIN
     FROM public.ledger_entries;
 
   IF v_residual <> 0 THEN
-    RAISE EXCEPTION 'ADR-PR98 backfill did not reach conservation: residual=% kobo. '
+    RAISE EXCEPTION 'ADR-040 backfill did not reach conservation: residual=% kobo. '
       'A single-sided writer is probably still deployed — see the DEPLOY ORDER note at the top.',
       v_residual;
   END IF;

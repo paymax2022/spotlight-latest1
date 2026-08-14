@@ -8,7 +8,7 @@
  *   - No ledger action needed — funds were already debited at reservation
  *
  * transfer.failed / transfer.reversed:
- *   - Post a balanced REVERSAL_DEBIT / REVERSAL_CREDIT pair (ADR-PR98) to restore
+ *   - Post a balanced REVERSAL_DEBIT / REVERSAL_CREDIT pair (ADR-040) to restore
  *     the sender's balance and drain the provider_clearing pot
  *   - Mark bank_transfer as 'failed' / 'reversed'
  *
@@ -136,7 +136,7 @@ export async function handleBankTransferWebhook(
   let reversalEntryId: string | null = null;
 
   if (accountRow) {
-    // ADR-PR98: the refund is a BALANCED correction, not a lone credit —
+    // ADR-040: the refund is a BALANCED correction, not a lone credit —
     // REVERSAL_DEBIT restores the sender's wallet while REVERSAL_CREDIT drains
     // the same `provider_clearing` pot that reserve_for_bank_transfer filled
     // (the money never actually reached the provider). Both legs go in one
