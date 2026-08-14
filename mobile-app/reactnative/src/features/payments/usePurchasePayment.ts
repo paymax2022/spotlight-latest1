@@ -7,14 +7,24 @@ import { generateIdempotencyKey } from '@/utils/idempotency';
 import { usePaystackGateway } from './usePaystackGateway';
 import type { PaystackGatewayController } from './paystackGateway';
 import { verifyPin } from '@/features/transfers/api';
-import { WALLET_PIN_REQUIRED, requiresPin, type PayMethod } from './paymentFlow';
+import {
+  WALLET_PIN_REQUIRED,
+  requiresPin,
+  cardTopupBlockedReason,
+  cardOutcome,
+  type PayMethod,
+} from './paymentFlow';
+import { startCardTopup, waitForTopup } from './api';
+import { extractAccessCode } from './paystackGateway';
 
 export type { PayMethod };
 export type PayPhase =
   | 'idle'
   | 'pin'             // collecting the wallet transaction PIN
+  | 'initializing'    // card: server is opening the top-up transaction
   | 'charging'        // verifying PIN / running the module's wallet charge
   | 'awaiting'        // user is on the Paystack gateway
+  | 'confirming'      // card: waiting for the webhook to credit the wallet
   | 'done'
   | 'error';
 
@@ -141,21 +151,71 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
           }
           return;
         }
-        // Hand off to the Paystack gateway SDK; fulfilment runs on its success.
+        // Card = top up the wallet for the exact amount, wait for the webhook to
+        // credit it, then run the module's ordinary wallet charge. Net wallet
+        // change is zero and the money moves on ONE ledger.
+        //
+        // Previously this opened a client-initialized charge for req.amountKobo
+        // and then ran the module's charge anyway — which debits the wallet. The
+        // customer paid twice, and if the wallet was short the debit failed after
+        // the card had been charged, destroying the PSP money outright.
+
+        // Refuse amounts the top-up rail cannot carry BEFORE opening any gateway.
+        const blocked = cardTopupBlockedReason(req.amountKobo);
+        if (blocked) { setPhase('error'); setError(blocked); return; }
+
+        setPhase('initializing');
+        let topup: { authorizationUrl: string; reference: string };
+        try {
+          topup = await startCardTopup(req.amountKobo);
+        } catch (e) {
+          setPhase('error');
+          setError(e instanceof Error ? e.message : 'Could not start the card payment.');
+          return;
+        }
+
+        // The server owns this transaction (it set the Idempotency-Key, the amount
+        // and the wallet_topup metadata the webhook matches on). We only resume it,
+        // so the client cannot alter what is charged. No access code means we
+        // cannot resume the SERVER's transaction — fail closed rather than fall
+        // back to a client-initialized charge, which is the broken path.
+        const accessCode = extractAccessCode(topup.authorizationUrl);
+        if (!accessCode) {
+          setPhase('error');
+          setError('Could not start the card payment securely. Please try your wallet.');
+          return;
+        }
+
         setPhase('awaiting');
         setVisible(false);
         gateway.open({
           email: req.email ?? user?.email ?? 'customer@paymax.app',
           amountKobo: req.amountKobo,
           domain: req.domain ?? 'checkout',
-          reference: `${req.domain ?? 'checkout'}-${generateIdempotencyKey()}`,
+          reference: topup.reference,
+          accessCode,
           onSuccess: async () => {
+            setVisible(true);
+            // A client success callback is not proof of payment. Wait for the
+            // webhook to credit the wallet; only then may the module charge run.
+            setPhase('confirming');
+            const credited = await waitForTopup(topup.reference);
+            if (cardOutcome(credited) !== 'charge') {
+              setPhase('error');
+              setError(
+                'Your payment went through but is still being confirmed. It will land in your wallet — ' +
+                'no money is lost. Please finish this purchase from your wallet in a moment.',
+              );
+              return;
+            }
             try {
               await finalize(req, 'card');
             } catch (e) {
-              setVisible(true);
               setPhase('error');
-              setError(e instanceof Error ? e.message : 'We could not complete your order after payment.');
+              setError(
+                (e instanceof Error ? e.message : 'We could not complete your order.') +
+                ' Your payment is safe in your wallet — you can retry from there.',
+              );
             }
           },
           onCancel: () => { setVisible(true); setPhase('idle'); },

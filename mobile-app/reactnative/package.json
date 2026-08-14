@@ -19,7 +19,8 @@
     "test:wallet-idempotency": "node --experimental-strip-types --test \"src/features/connect/wallet/__tests__/*.test.ts\"",
     "test:registration": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/registration/*.spec.ts\"",
     "test:savings": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/savings/*.spec.ts\"",
-    "test:telemedicine": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/telemedicine/*.spec.ts\""
+    "test:telemedicine": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/telemedicine/*.spec.ts\"",
+    "test:payments": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/payments/*.spec.ts\""
   },
   "dependencies": {
     "@expo-google-fonts/plus-jakarta-sans": "^0.4.2",

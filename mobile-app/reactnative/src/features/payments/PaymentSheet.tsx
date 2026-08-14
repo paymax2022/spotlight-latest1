@@ -21,13 +21,19 @@ export default function PaymentSheet({ controller }: { controller: PurchaseContr
 
   const amount = request.amountKobo;
   const walletCovers = walletKobo >= amount;
-  const busy = phase === 'awaiting' || phase === 'charging';
+  // 'confirming' waits on the top-up webhook and 'initializing' opens the
+  // server-side transaction — both must block dismissal, or the sheet can close
+  // mid-flight and strand a paid-for purchase the user thinks failed.
+  const busy = phase === 'awaiting' || phase === 'charging'
+    || phase === 'initializing' || phase === 'confirming';
   // When the caller preselected a method, this screen already chose how to pay —
   // don't show the in-sheet chooser; just surface progress (and retry on error).
   const preselected = !!request.method;
 
   const phaseLabel: Record<string, string> = {
+    initializing: 'Preparing secure payment…',
     awaiting: 'Opening secure payment…',
+    confirming: 'Confirming your payment…',
     charging: 'Finalising your order…',
   };
 
