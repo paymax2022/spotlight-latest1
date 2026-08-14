@@ -18,6 +18,27 @@ on:
   workflow_dispatch:
 
 jobs:
+  backend:
+    name: Go build / vet / test (estate)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+      - name: Build (whole backend — catches wiring/import breaks)
+        run: go build ./...
+      - name: Vet (estate)
+        run: go vet ./internal/estate/...
+      # 15 test files, none gated on TEST_DATABASE_URL, so no Postgres service
+      # is needed here — they run in seconds.
+      - name: Test (estate — dues/levies money invariants, allocation, guards)
+        run: go test ./internal/estate/... -count=1
+
   mobile-typecheck:
     runs-on: ubuntu-latest
     defaults:

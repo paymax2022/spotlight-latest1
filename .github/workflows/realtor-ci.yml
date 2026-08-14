@@ -17,6 +17,25 @@ on:
   workflow_dispatch:
 
 jobs:
+  backend:
+    name: Go build / vet (realtor)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+      - name: Build (whole backend — catches wiring/import breaks)
+        run: go build ./...
+      - name: Vet (realtor)
+        run: go vet ./internal/realtor/...
+      # backend/internal/realtor has no _test.go files yet. When it gains tests,
+      # add: go test ./internal/realtor/... -count=1
+
   mobile-typecheck:
     runs-on: ubuntu-latest
     defaults:

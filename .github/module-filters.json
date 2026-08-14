@@ -116,7 +116,8 @@
     "frontend-web/app/api/v1/realtor/**",
     "frontend-admin/app/admin/realtor/**",
     "frontend-admin/src/services/realtorAdminService.ts",
-    "supabase/migrations/*realtor*.sql"
+    "supabase/migrations/*realtor*.sql",
+    "backend/internal/realtor/**"
   ],
   "referral": [
     "backend/internal/referral/**",
@@ -271,6 +272,8 @@
     "frontend-web/src/server/estate/**",
     "frontend-web/app/api/v1/estate/**",
     "frontend-web/src/server/meetings/**",
-    "frontend-web/src/server/estate/**"
+    "frontend-web/src/server/estate/**",
+    "backend/internal/estate/**",
+    "backend/internal/app/estate_admin_routes.go"
   ]
 }
