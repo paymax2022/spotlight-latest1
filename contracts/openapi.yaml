@@ -1801,6 +1801,8 @@ components:
                  mental_health, womens_health, neurology, eye_care, nutrition, dentistry,
                  oncology, orthopedic]
         consult_fee_kobo: { type: integer, format: int64 }
+        booking:
+          $ref: '#/components/schemas/BookingQuote'
         is_available: { type: boolean }
         is_online: { type: boolean }
         is_hmo_verified: { type: boolean }
@@ -2293,8 +2295,47 @@ components:
         starts_at: { type: string, format: date-time, nullable: true }
         status: { type: string, enum: [booked, confirmed, completed, cancelled] }
         notes: { type: string }
-        fee_kobo: { type: integer, format: int64 }
+        fee_kobo:
+          type: integer
+          format: int64
+          description: >-
+            The doctor's CONSULTATION fee only, excluding the platform booking
+            fee. Doctor earnings are 85% of this. Not a patient-facing total —
+            use total_kobo for what the patient paid (ADR-040).
+        platform_fee_kobo:
+          type: integer
+          format: int64
+          description: >-
+            Platform booking fee charged on top of the consultation fee, computed
+            server-side. 0 for appointments booked before ADR-040.
+        total_kobo:
+          type: integer
+          format: int64
+          description: >-
+            What was escrowed and what the patient paid = fee_kobo +
+            platform_fee_kobo. Also the amount refunded on cancellation.
         created_at: { type: string, format: date-time }
+
+    BookingQuote:
+      type: object
+      description: >-
+        Server-computed price breakdown for booking a consultation with this
+        doctor. The client renders these values and must never compute the rate
+        itself — see ADR-040.
+      properties:
+        consult_fee_kobo: { type: integer, format: int64 }
+        platform_fee_bp:
+          type: integer
+          description: Platform booking fee rate in basis points (500 = 5%).
+        platform_fee_kobo:
+          type: integer
+          format: int64
+          description: >-
+            consult_fee_kobo x platform_fee_bp / 10000, floored to whole kobo.
+        total_kobo:
+          type: integer
+          format: int64
+          description: consult_fee_kobo + platform_fee_kobo.
 
     Slot:
       type: object
@@ -7805,12 +7846,30 @@ paths:
                 scheduled_at: { type: string, format: date-time }
                 notes: { type: string }
                 idempotency_key: { type: string }
+                expected_total_kobo:
+                  type: integer
+                  format: int64
+                  description: >-
+                    The total the client quoted the patient (from the doctor's
+                    `booking` quote). When non-zero and it disagrees with the
+                    server's own computation, the booking is rejected before any
+                    money moves — this bounds the card rail, which charges the
+                    client-side amount at the PSP before the server escrows.
+                    Omit or send 0 to skip the check (ADR-040).
       responses:
         '201':
           description: Appointment booked
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Appointment' }
+        '409':
+          description: >-
+            Stale quote — either expected_total_kobo disagrees with the
+            server-computed total, or this Idempotency-Key was already escrowed at
+            a different price. No appointment was created and nothing was escrowed
+            on this call; re-read the doctor's booking quote and start a new
+            booking. NOTE: on the client-side card rail the PSP charge has already
+            completed by this point (see ADR-040, "Not addressed here").
 
   /telemedicine/appointments/{id}/complete:
     post:
