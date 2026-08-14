@@ -6457,6 +6457,58 @@ paths:
                   verified_at: { type: string, format: date-time, nullable: true }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /me/tier:
+    get:
+      operationId: getMyTierAllowance
+      summary: Get the caller's KYC tier and today's remaining wallet-debit allowance
+      description: >-
+        Reports the caller's tier alongside TODAY's wallet-debit allowance, read from
+        the same finance/tiers usage the fail-closed debit gate is derived from — so a
+        client pre-check agrees with what the server will actually enforce.
+
+
+        Clients use this to decline a spend BEFORE taking payment: the mobile checkout
+        will not open the card gateway for an amount the server is going to refuse,
+        which would otherwise charge the customer for an order they cannot receive.
+
+
+        The allowance fields (dailyLimitKobo, dailyUsedKobo, remainingKobo,
+        walletDisabled) are OMITTED together when the server cannot compute usage. A
+        client MUST treat their absence as "unknown" and defer to the server, never as
+        "no allowance".
+      tags: [KYC]
+      responses:
+        '200':
+          description: Tier status and today's allowance
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [tier]
+                    properties:
+                      tier: { $ref: '#/components/schemas/KycTier' }
+                      label: { type: string }
+                      status: { $ref: '#/components/schemas/KycStatus' }
+                      dailyLimitKobo:
+                        type: integer
+                        format: int64
+                        description: Daily wallet-debit cap in kobo. 0 means unlimited (Tier 3) OR disabled (Tier 0) — read walletDisabled to disambiguate.
+                      dailyUsedKobo:
+                        type: integer
+                        format: int64
+                        description: Wallet debits already posted today, in kobo.
+                      remainingKobo:
+                        type: integer
+                        format: int64
+                        description: Allowance left today, in kobo. -1 means unlimited.
+                      walletDisabled:
+                        type: boolean
+                        description: True for Tier 0 — the wallet cannot be debited at all until KYC completes.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /kyc/initiate:
     post:
       operationId: initiateKyc

@@ -1,22 +1,36 @@
 import { useCallback, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { getWallet } from '@/api/wallet.api';
+import { getSpendLimit } from '@/api/tiers.api';
 import { useAuthStore } from '@/store/authStore';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { usePaystackGateway } from './usePaystackGateway';
 import type { PaystackGatewayController } from './paystackGateway';
 import { verifyPin } from '@/features/transfers/api';
-import { WALLET_PIN_REQUIRED, requiresPin, type PayMethod } from './paymentFlow';
+import {
+  WALLET_PIN_REQUIRED,
+  requiresPin,
+  evaluateSpendLimit,
+  type PayMethod,
+  type SpendDecision,
+} from './paymentFlow';
 
 export type { PayMethod };
 export type PayPhase =
   | 'idle'
+  | 'checking'        // resolving the caller's KYC spend allowance
+  | 'blocked'         // the KYC tier will not permit this spend — no rail can succeed
   | 'pin'             // collecting the wallet transaction PIN
   | 'charging'        // verifying PIN / running the module's wallet charge
   | 'awaiting'        // user is on the Paystack gateway
   | 'done'
   | 'error';
+
+// How long a fetched spend allowance stays fresh. Short, because the number moves
+// with every wallet debit the customer makes elsewhere in the app.
+const SPEND_LIMIT_STALE_MS = 15_000;
+const SPEND_LIMIT_KEY = ['tiers', 'spend-limit'] as const;
 
 export interface PurchaseRequest<T = unknown> {
   amountKobo: number;
@@ -56,6 +70,13 @@ export interface PurchaseController<T = unknown> {
   request: PurchaseRequest<T> | null;
   walletKobo: number;
   walletLoading: boolean;
+  /**
+   * Set when the caller's KYC tier will not permit this spend on ANY rail (Tier 0
+   * wallet, or today's daily limit). The sheet renders the reason instead of the
+   * payment options — nothing here can succeed, so offering a card charge would
+   * only take the customer's money before the server refuses the order.
+   */
+  spendBlock: Extract<SpendDecision, { allowed: false }> | null;
   /** Open the payment sheet for a purchase. */
   start: (req: PurchaseRequest<T>) => void;
   /** Run a chosen method. */
@@ -77,9 +98,11 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
   const [phase, setPhase] = useState<PayPhase>('idle');
   const [error, setError] = useState<string | null>(null);
   const [request, setRequest] = useState<PurchaseRequest<T> | null>(null);
+  const [spendBlock, setSpendBlock] = useState<Extract<SpendDecision, { allowed: false }> | null>(null);
 
   const gateway = usePaystackGateway();
   const user = useAuthStore((s) => s.user);
+  const queryClient = useQueryClient();
 
   const walletQ = useQuery({
     queryKey: ['wallet', 'balance'],
@@ -90,11 +113,22 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
   // Wallet.balance is in naira (major units) in the app model — normalise to kobo.
   const walletKobo = Math.round((walletQ.data?.balance ?? 0) * 100);
 
+  // Warm the spend allowance as soon as the sheet opens, so the common case costs
+  // no extra wait when the user taps a rail. runPay re-reads it through the same
+  // cache key, so this is a prefetch — never the authority on its own.
+  useQuery({
+    queryKey: SPEND_LIMIT_KEY,
+    queryFn: getSpendLimit,
+    enabled: visible,
+    staleTime: SPEND_LIMIT_STALE_MS,
+  });
+
   const close = useCallback(() => {
     setVisible(false);
     setPhase('idle');
     setError(null);
     setRequest(null);
+    setSpendBlock(null);
   }, []);
 
   const finalize = useCallback(async (req: PurchaseRequest<T>, method: PayMethod, pin?: string) => {
@@ -119,12 +153,52 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
     [finalize],
   );
 
-  // Runs a chosen method against an explicit request, so it can be triggered
-  // both from the in-sheet chooser (`pay`) and auto-run from `start` when a
-  // method is preselected — without depending on the async `request` state.
+  // Resolves the caller's KYC spend allowance and decides whether this purchase can
+  // proceed. Reads through the same query cache the sheet warms on open, so the
+  // common path is a cache hit; a cold or stale cache fetches once.
+  //
+  // An allowance that cannot be read is treated as "unknown" and ALLOWED — the
+  // server gate still refuses the debit, so failing closed here would block checkout
+  // on a network hiccup while protecting nothing.
+  const checkSpendAllowed = useCallback(
+    async (amountKobo: number): Promise<SpendDecision> => {
+      try {
+        const limit = await queryClient.fetchQuery({
+          queryKey: SPEND_LIMIT_KEY,
+          queryFn: getSpendLimit,
+          staleTime: SPEND_LIMIT_STALE_MS,
+        });
+        return evaluateSpendLimit(limit, amountKobo);
+      } catch {
+        return { allowed: true };
+      }
+    },
+    [queryClient],
+  );
+
+  // Runs a chosen method against an explicit request, so it can be triggered both
+  // from the in-sheet chooser (`pay`) and auto-run from `start` when a method is
+  // preselected — without depending on the async `request` state.
   const runPay = useCallback(
     async (req: PurchaseRequest<T>, method: PayMethod) => {
       setError(null);
+      setSpendBlock(null);
+
+      // ── KYC spend pre-check — MUST stay ahead of both rails ──────────────────
+      // The card rail charges Paystack BEFORE the module's fulfilment runs, so a
+      // spend the server will refuse must be stopped here or the customer pays for
+      // an order they cannot get. The wallet rail is checked too: there is no point
+      // collecting a PIN for a debit that cannot land.
+      setPhase('checking');
+      const decision = await checkSpendAllowed(req.amountKobo);
+      if (!decision.allowed) {
+        setSpendBlock(decision);
+        setError(decision.message);
+        setPhase('blocked');
+        setVisible(true);
+        return;
+      }
+      setPhase('idle');
 
       if (method === 'card') {
         // Module-specific card flow (e.g. a server-initiated Paystack redirect)
@@ -173,7 +247,7 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
       }
       await walletCharge(req);
     },
-    [gateway, user, finalize, walletCharge],
+    [gateway, user, finalize, walletCharge, checkSpendAllowed],
   );
 
   // Verify the entered PIN centrally (POST /transfers/pin/verify), then charge.
@@ -199,6 +273,7 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
   const start = useCallback((req: PurchaseRequest<T>) => {
     setRequest(req);
     setError(null);
+    setSpendBlock(null);
     setPhase('idle');
     setVisible(true);
     if (req.method) void runPay(req, req.method);
@@ -216,6 +291,7 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
     request,
     walletKobo,
     walletLoading: walletQ.isLoading,
+    spendBlock,
     start,
     pay,
     submitPin,

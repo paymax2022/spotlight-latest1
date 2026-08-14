@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Wallet, CreditCard, X, ShieldCheck } from 'lucide-react-native';
+import { Wallet, CreditCard, X, ShieldCheck, ShieldAlert } from 'lucide-react-native';
+import { router } from 'expo-router';
 
 import { Colors } from '@/constants/colors';
 import type { PurchaseController } from './usePurchasePayment';
@@ -13,7 +14,7 @@ function naira(kobo: number): string {
 // OR directly via card (Paystack). Drop it once near a module's pay button and
 // drive it with usePurchasePayment().
 export default function PaymentSheet({ controller }: { controller: PurchaseController<any> }) {
-  const { visible, phase, error, request, walletKobo, walletLoading, pay, submitPin, close, GatewaySheet } = controller;
+  const { visible, phase, error, request, walletKobo, walletLoading, spendBlock, pay, submitPin, close, GatewaySheet } = controller;
   // Local PIN entry state, cleared whenever we leave the PIN step.
   const [pin, setPin] = React.useState('');
   React.useEffect(() => { if (phase !== 'pin') setPin(''); }, [phase]);
@@ -21,12 +22,13 @@ export default function PaymentSheet({ controller }: { controller: PurchaseContr
 
   const amount = request.amountKobo;
   const walletCovers = walletKobo >= amount;
-  const busy = phase === 'awaiting' || phase === 'charging';
+  const busy = phase === 'awaiting' || phase === 'charging' || phase === 'checking';
   // When the caller preselected a method, this screen already chose how to pay —
   // don't show the in-sheet chooser; just surface progress (and retry on error).
   const preselected = !!request.method;
 
   const phaseLabel: Record<string, string> = {
+    checking: 'Checking your limits…',
     awaiting: 'Opening secure payment…',
     charging: 'Finalising your order…',
   };
@@ -47,7 +49,34 @@ export default function PaymentSheet({ controller }: { controller: PurchaseContr
 
           <Text style={styles.amount}>{naira(amount)}</Text>
 
-          {phase === 'pin' ? (
+          {phase === 'blocked' && spendBlock ? (
+            /* The caller's KYC tier will not permit this spend on ANY rail, so the
+               payment options are replaced rather than dimmed — offering a card
+               charge here would take the customer's money for an order the server
+               is going to refuse. */
+            <View style={styles.blockWrap}>
+              <View style={styles.blockIcon}>
+                <ShieldAlert size={26} color={Colors.error} strokeWidth={2} />
+              </View>
+              <Text style={styles.blockTitle}>
+                {spendBlock.reason === 'wallet_disabled' ? 'Verification needed' : "Daily limit reached"}
+              </Text>
+              <Text style={styles.blockBody}>{spendBlock.message}</Text>
+              <View style={styles.actionRow}>
+                <Pressable
+                  style={[styles.actionBtn, styles.retryBtn]}
+                  onPress={() => { close(); router.push('/kyc'); }}
+                >
+                  <Text style={styles.retryText}>
+                    {spendBlock.reason === 'wallet_disabled' ? 'Verify my account' : 'Raise my limit'}
+                  </Text>
+                </Pressable>
+                <Pressable style={[styles.actionBtn, styles.cancelBtn]} onPress={close}>
+                  <Text style={styles.cancelText}>Not now</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : phase === 'pin' ? (
             <View style={styles.pinWrap}>
               <View style={styles.pinHeadRow}>
                 <ShieldCheck size={16} color={Colors.primary} strokeWidth={2.2} />
@@ -174,6 +203,13 @@ const styles = StyleSheet.create({
   hint: { fontSize: 13, color: Colors.onSurfaceVariant, textAlign: 'center', paddingHorizontal: 12 },
   error: { color: Colors.error, fontSize: 13, marginTop: 4 },
   secure: { fontSize: 12, color: Colors.onSurfaceVariant, textAlign: 'center', marginTop: 4 },
+  blockWrap: { alignItems: 'center', gap: 10, paddingVertical: 16 },
+  blockIcon: {
+    width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.surfaceContainerHigh,
+  },
+  blockTitle: { fontSize: 16, fontWeight: '700', color: Colors.onSurface },
+  blockBody: { fontSize: 14, color: Colors.onSurfaceVariant, textAlign: 'center', paddingHorizontal: 8, lineHeight: 20 },
   pinWrap: { gap: 12, paddingTop: 4 },
   pinHeadRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   pinLabel: { fontSize: 14, fontWeight: '600', color: Colors.onSurface },
