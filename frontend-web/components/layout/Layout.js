@@ -33,11 +33,19 @@ export default function Layout({
     const handleSearch = () => setSearch(!isSearch)
 
     useEffect(() => {
-        const WOW = require('wowjs')
-        window.wow = new WOW.WOW({
-            live: false
-        })
-        window.wow.init()
+        // wowjs is a legacy UMD library whose export shape breaks under Next's
+        // bundler ("WOW.WOW is not a constructor"). Load it defensively across the
+        // possible interop shapes and no-op if it can't be constructed — the
+        // scroll-reveal animation is purely cosmetic and must never crash the page.
+        import('wowjs')
+            .then((mod) => {
+                const WOW = mod?.WOW || mod?.default?.WOW || mod?.default
+                if (typeof WOW === 'function') {
+                    window.wow = new WOW({ live: false })
+                    window.wow.init()
+                }
+            })
+            .catch(() => { /* animation is non-critical */ })
 
         document.addEventListener("scroll", () => {
             const scrollCheck = window.scrollY > 100

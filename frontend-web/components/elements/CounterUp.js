@@ -1,19 +1,16 @@
 'use client'
-import { useState } from 'react';
 import CountUp from "react-countup";
-import ScrollTrigger from 'react-scroll-trigger';
 
+// Counts up when scrolled into view. Uses react-countup's built-in scroll spy
+// (enableScrollSpy + scrollSpyOnce) instead of the unmaintained
+// `react-scroll-trigger`, which relied on ReactDOM.findDOMNode — removed in
+// modern React / broken under Next 15's bundling ("findDOMNode is not a function").
 export default function CounterUp({ count, time }) {
-    const [counterOn, setCounterOn] = useState(false);
     return (
-        <>
-            <ScrollTrigger onEnter={() => setCounterOn(true)} onExit={() => setCounterOn(false)}  component="span">
-                <CountUp end={count} duration={time} redraw={true}>
-                    {({ countUpRef }) => (
-                        <span ref={countUpRef} className='count'></span>
-                    )}
-                </CountUp>
-            </ScrollTrigger>
-        </>
+        <CountUp end={count} duration={time} enableScrollSpy scrollSpyOnce>
+            {({ countUpRef }) => (
+                <span ref={countUpRef} className='count'></span>
+            )}
+        </CountUp>
     );
 }
