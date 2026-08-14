@@ -237,6 +237,14 @@ const styles = StyleSheet.create({
   topBar:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md },
   liveTag:    { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, height: 28, borderRadius: Radius.full, backgroundColor: 'rgba(255,255,255,0.15)' },
   liveDot:    { width: 7, height: 7, borderRadius: 4, backgroundColor: '#FF5A5A' },
+  // Applied ON TOP of liveTag/liveDot when the session has ended, so they only
+  // override what changes: the badge dims and the recording-red dot goes neutral,
+  // matching the LIVE -> ENDED label beside them. Both reuse white-overlay alphas
+  // already used in this screen's chrome (0.12 = connBadge, 0.25 = selfPreview
+  // border) rather than introducing new values — constants/colors.ts has no solid
+  // muted token, only gradientMuted, which is a gradient for disabled surfaces.
+  endedTag:   { backgroundColor: 'rgba(255,255,255,0.12)' },
+  endedDot:   { backgroundColor: 'rgba(255,255,255,0.25)' },
   liveText:   { ...Typography.labelSm, color: Colors.white, fontWeight: '700' },
   timer:      { ...Typography.labelLg, color: Colors.white },
   stage:      { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
