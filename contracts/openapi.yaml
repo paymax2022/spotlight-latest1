@@ -6609,6 +6609,18 @@ paths:
                   format: int64
                   minimum: 10000
                   description: Amount to top up in kobo (min ₦100)
+                purpose:
+                  type: string
+                  enum: [wallet, checkout]
+                  default: wallet
+                  description: >-
+                    What this top-up is for, which selects the KYC gate (ADR-042).
+                    `wallet` — standalone funding; requires KYC Tier 1.
+                    `checkout` — funds a purchase being completed right now via the
+                    card rail (ADR-041); may be permitted below Tier 1 under a
+                    capped rolling allowance when FEATURE_CHECKOUT_TOPUP_TIER0 is
+                    on. Any unrecognised value is treated as `wallet`, so the
+                    weaker gate can only be reached by asking for it explicitly.
       responses:
         '200':
           description: Paystack payment initialized
