@@ -569,12 +569,27 @@ func (s *Service) CompleteAppointment(ctx context.Context, appointmentID, doctor
 }
 
 // CancelAppointment refunds the patient if the appointment has not been completed.
+// Only the patient who booked it or the assigned doctor may cancel.
 func (s *Service) CancelAppointment(ctx context.Context, appointmentID, actorID string) error {
-	var patientID, status, settlementID string
+	var patientID, status, settlementID, doctorID string
 	if err := s.db.QueryRow(ctx,
-		`SELECT patient_id, status, settlement_id FROM appointments WHERE id=$1`,
-		appointmentID).Scan(&patientID, &status, &settlementID); err != nil {
+		`SELECT patient_id, doctor_id, status, settlement_id FROM appointments WHERE id=$1`,
+		appointmentID).Scan(&patientID, &doctorID, &status, &settlementID); err != nil {
 		return fmt.Errorf("telemedicine: appointment not found")
+	}
+	// Object-level authZ. `actorID` was previously accepted and never compared, so
+	// any authenticated user could cancel any appointment by id — forcing a full
+	// refund of a stranger's booking and denying the doctor their fee. Fail closed:
+	// an unresolvable doctor record denies rather than falls through.
+	if actorID != patientID {
+		var doctorUserID string
+		if err := s.db.QueryRow(ctx, `SELECT user_id FROM doctors WHERE id=$1`, doctorID).
+			Scan(&doctorUserID); err != nil {
+			return fmt.Errorf("telemedicine: not permitted to cancel this appointment")
+		}
+		if actorID != doctorUserID {
+			return fmt.Errorf("telemedicine: not permitted to cancel this appointment")
+		}
 	}
 	if status == string(ApptCompleted) {
 		return fmt.Errorf("telemedicine: cannot cancel a completed appointment")
