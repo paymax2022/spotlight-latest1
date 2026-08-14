@@ -5,7 +5,8 @@ package placement_test
 // bank, and Score marks answers into a per-subject placement. Verifies the
 // engine end-to-end against the seeded NERDC-2025 entry-class questions.
 //
-// Skips unless TEST_DATABASE_URL/DATABASE_URL is set. Requires the placement
+// Skips unless TEST_DATABASE_URL is set — never DATABASE_URL, which is the
+// production pooler, and this test inserts. Requires the placement
 // question seed (20261102000000_academy_placement_questions.sql).
 
 import (
@@ -22,10 +23,7 @@ func liveDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping placement live-DB test")
+		t.Skip("no TEST_DATABASE_URL set — skipping placement live-DB test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
