@@ -11,7 +11,7 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 # The build is intentionally serialized in next.config.mjs; this is a build
 # limit only and is not inherited by the small runtime container.
-ENV NODE_OPTIONS=--max-old-space-size=1536
+ENV NODE_OPTIONS=--max-old-space-size=2048
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
