@@ -27,11 +27,12 @@ package fx_test
 // `backend/internal/orchestration` are the only packages that touch orch_*
 // tables, so no other parallel package can race it either.
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset (reuses
-// liveDBPool from convert_live_db_test.go).
+// SKIPPED whenever TEST_DATABASE_URL is unset (reuses liveDBPool from
+// convert_live_db_test.go). It does NOT fall back to DATABASE_URL — that is the
+// PRODUCTION Supabase pooler and this suite posts ledger entries.
 //
 // Bring-up:
-//   export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run OrchGlobal -v
 // ---------------------------------------------------------------------------
 

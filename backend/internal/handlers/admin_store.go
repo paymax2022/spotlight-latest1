@@ -41,19 +41,33 @@ type AdminStore struct {
 // amount: invest_orders carries both a requested notional (amount_kobo) and a
 // settled total (total_amount_kobo, 0 until fill), so report the total once it
 // exists and fall back to the request before then.
+//
+// side is lower-cased to match the console's OrderSide ('buy' | 'sell'). Both
+// tables already store lower-case, but invest_orders has no CHECK constraint on
+// the column, and OrderRow renders anything that is not exactly 'buy' as "Sell"
+// — so a stray 'Buy' would silently mislabel the trade direction.
+//
+// symbol comes from a LEFT JOIN for crypto (crypto_orders keys an asset_id, not
+// a symbol) and straight off the column for stocks. LEFT, not INNER: an order
+// whose asset row was removed must still appear in an admin list rather than
+// vanish from oversight.
 const tradingOrdersSQL = `
-	SELECT id::text      AS id,
-	       user_id::text AS user_id,
-	       'crypto'      AS kind,
-	       cash_kobo     AS amount_kobo,
-	       CASE lower(status)
+	SELECT o.id::text      AS id,
+	       o.user_id::text AS user_id,
+	       'crypto'        AS kind,
+	       o.cash_kobo     AS amount_kobo,
+	       CASE lower(o.status)
 	         WHEN 'pending' THEN 'Pending'
 	         WHEN 'filled'  THEN 'Filled'
 	         WHEN 'failed'  THEN 'Failed'
 	         ELSE 'Processing'
-	       END           AS status,
-	       created_at
-	  FROM crypto_orders
+	       END             AS status,
+	       lower(o.side)             AS side,
+	       COALESCE(a.symbol, '')    AS symbol,
+	       COALESCE(o.reference, '') AS provider_ref,
+	       o.created_at
+	  FROM crypto_orders o
+	  LEFT JOIN crypto_assets a ON a.id = o.asset_id
 	UNION ALL
 	SELECT id::text                                           AS id,
 	       user_id                                            AS user_id,
@@ -82,6 +96,9 @@ const tradingOrdersSQL = `
 	         WHEN 'ComplianceHold'  THEN 'ComplianceHold'
 	         ELSE 'Processing'
 	       END                                                AS status,
+	       lower(side)                        AS side,
+	       symbol                             AS symbol,
+	       COALESCE(provider_reference, '')   AS provider_ref,
 	       created_at
 	  FROM invest_orders`
 
@@ -257,13 +274,16 @@ func (s *AdminStore) GetKYCQueue(ctx context.Context) ([]KYCEntry, error) {
 
 // Order represents an order/asset for admin view.
 type Order struct {
-	ID        string `json:"id"`
-	UserID    string `json:"userId"`
-	Email     string `json:"email"`
-	Type      string `json:"type"`
-	Amount    int64  `json:"amount"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"createdAt"`
+	ID          string `json:"id"`
+	UserID      string `json:"userId"`
+	Email       string `json:"email"`
+	Type        string `json:"type"`
+	Amount      int64  `json:"amount"`
+	Status      string `json:"status"`
+	Side        string `json:"side"`
+	Symbol      string `json:"symbol"`
+	ProviderRef string `json:"providerRef"`
+	CreatedAt   string `json:"createdAt"`
 }
 
 // ListOrders retrieves orders/assets.
@@ -279,6 +299,9 @@ func (s *AdminStore) ListOrders(ctx context.Context) ([]Order, error) {
 			o.kind,
 			o.amount_kobo,
 			o.status,
+			o.side,
+			o.symbol,
+			o.provider_ref,
 			o.created_at::text
 		FROM (`+tradingOrdersSQL+`) o
 		WHERE o.created_at > NOW() - INTERVAL '30 days'
@@ -294,7 +317,7 @@ func (s *AdminStore) ListOrders(ctx context.Context) ([]Order, error) {
 	for rows.Next() {
 		var o Order
 		if err := rows.Scan(&o.ID, &o.UserID, &o.Email, &o.Type, &o.Amount,
-			&o.Status, &o.CreatedAt); err != nil {
+			&o.Status, &o.Side, &o.Symbol, &o.ProviderRef, &o.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan order: %w", err)
 		}
 		orders = append(orders, o)

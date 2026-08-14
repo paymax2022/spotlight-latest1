@@ -307,12 +307,12 @@ func (h *AdminConsoleHandler) GetOrders(c *gin.Context) {
 			"ref": o.ID,
 			"user": o.Email,
 			"kind": o.Type,
-			"side": "buy",
-			"symbol": "", // Phase 2: extract from order details
+			"side": o.Side,
+			"symbol": o.Symbol,
 			"status": o.Status,
 			"amount": gin.H{"amount": o.Amount, "currency": "NGN"},
 			"createdAt": o.CreatedAt,
-			"providerRef": "", // Phase 2: from provider_reference column
+			"providerRef": o.ProviderRef,
 		})
 	}
 

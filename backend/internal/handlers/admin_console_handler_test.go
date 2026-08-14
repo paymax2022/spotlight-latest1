@@ -173,28 +173,31 @@ func seedAuditLog(t *testing.T, pool *pgxpool.Pool, action string) string {
 }
 
 // seedCryptoOrder inserts one crypto order (the 'crypto' leg of the admin order
-// union) with the given status, and returns its id.
-func seedCryptoOrder(t *testing.T, pool *pgxpool.Pool, userID, status string, cashKobo int64) string {
+// union) and returns its id, the catalogue symbol, and the provider reference —
+// the caller asserts the endpoint surfaces all three rather than hardcoding them.
+func seedCryptoOrder(t *testing.T, pool *pgxpool.Pool, userID, status, side string, cashKobo int64) (id, symbol, providerRef string) {
 	t.Helper()
 	ctx := context.Background()
 	assetID := uuid.NewString()
 	// crypto_assets.symbol is UNIQUE, so the fixture asset needs a unique symbol.
 	// is_active defaults to TRUE and packages run concurrently against one
 	// database — an active fixture asset would show up in another suite's
-	// catalogue listing, so it is created inactive. ListOrders does not join
-	// crypto_assets, so this costs nothing here.
+	// catalogue listing, so it is created inactive. The order union LEFT JOINs
+	// this row for its symbol, and a LEFT JOIN ignores is_active.
+	symbol = "ADMTEST" + assetID[:8]
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO crypto_assets (id, symbol, name, is_active)
 		VALUES ($1, $2, 'Admin Console Fixture', false)`,
-		assetID, "ADMTEST"+assetID[:8]); err != nil {
+		assetID, symbol); err != nil {
 		t.Fatalf("seed crypto_assets: %v", err)
 	}
-	id := uuid.NewString()
+	id = uuid.NewString()
+	providerRef = "prov-cr-" + id
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO crypto_orders (id, user_id, asset_id, side, status, cash_kobo,
-		                           units, price_kobo, idempotency_key)
-		VALUES ($1, $2, $3, 'buy', $4, $5, 1000, 500, $6)`,
-		id, userID, assetID, status, cashKobo, "adm-test-"+id); err != nil {
+		                           units, price_kobo, idempotency_key, reference)
+		VALUES ($1, $2, $3, $4, $5, $6, 1000, 500, $7, $8)`,
+		id, userID, assetID, side, status, cashKobo, "adm-test-"+id, providerRef); err != nil {
 		t.Fatalf("seed crypto_orders: %v", err)
 	}
 	t.Cleanup(func() {
@@ -206,16 +209,17 @@ func seedCryptoOrder(t *testing.T, pool *pgxpool.Pool, userID, status string, ca
 			t.Logf("cleanup crypto_assets %s: %v", assetID, err)
 		}
 	})
-	return id
+	return id, symbol, providerRef
 }
 
 // seedInvestOrder inserts one stock order (the 'stock' leg of the admin order
-// union) and returns its id. invest_orders.user_id is text, not a uuid FK.
-func seedInvestOrder(t *testing.T, pool *pgxpool.Pool, userID, status string, totalKobo int64) string {
+// union) and returns its id, symbol and provider reference.
+// invest_orders.user_id is text, not a uuid FK.
+func seedInvestOrder(t *testing.T, pool *pgxpool.Pool, userID, status, side string, totalKobo int64) (id, symbol, providerRef string) {
 	t.Helper()
 	ctx := context.Background()
 	assetID := uuid.NewString()
-	symbol := "ADMT" + assetID[:6]
+	symbol = "ADMT" + assetID[:6]
 	// status defaults to 'active'; created inactive for the same reason the crypto
 	// fixture asset is (see seedCryptoOrder). buy_enabled/sell_enabled already
 	// default to false.
@@ -225,12 +229,15 @@ func seedInvestOrder(t *testing.T, pool *pgxpool.Pool, userID, status string, to
 		assetID, symbol); err != nil {
 		t.Fatalf("seed invest_stock_assets: %v", err)
 	}
-	id := uuid.NewString()
+	id = uuid.NewString()
+	providerRef = "prov-st-" + id
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO invest_orders (id, user_id, stock_asset_id, symbol, side, status,
-		                           amount_kobo, total_amount_kobo, idempotency_key)
-		VALUES ($1, $2, $3, $4, 'buy', $5, $6, $6, $7)`,
-		id, userID, assetID, symbol, status, totalKobo, "adm-test-"+id); err != nil {
+		                           amount_kobo, total_amount_kobo, idempotency_key,
+		                           provider_reference)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9)`,
+		id, userID, assetID, symbol, side, status, totalKobo, "adm-test-"+id,
+		providerRef); err != nil {
 		t.Fatalf("seed invest_orders: %v", err)
 	}
 	t.Cleanup(func() {
@@ -242,7 +249,7 @@ func seedInvestOrder(t *testing.T, pool *pgxpool.Pool, userID, status string, to
 			t.Logf("cleanup invest_stock_assets %s: %v", assetID, err)
 		}
 	})
-	return id
+	return id, symbol, providerRef
 }
 
 // adminGet issues an authenticated admin GET and returns the recorder.
@@ -323,7 +330,7 @@ func TestAdminConsole_Dashboard(t *testing.T) {
 	// activeOrders counts the trading union's non-terminal states. Seeded so a
 	// regression to a lower-case 'pending' comparison — which the status
 	// normalisation in tradingOrdersSQL made dead — shows up as a zero here.
-	seedCryptoOrder(t, pool, userID, "pending", 75_000)
+	seedCryptoOrder(t, pool, userID, "pending", "buy", 75_000)
 
 	w := adminGet(t, r, "/api/v1/admin/dashboard", "SuperAdmin")
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
@@ -546,20 +553,23 @@ func TestAdminConsole_GetOrders(t *testing.T) {
 	r := setupAdminConsoleRouterWithPool(t, pool)
 
 	userID, email := seedAdminUser(t, pool, "orders")
-	failedCrypto := seedCryptoOrder(t, pool, userID, "failed", 250_000)
-	pendingCrypto := seedCryptoOrder(t, pool, userID, "pending", 125_000)
-	filledStock := seedInvestOrder(t, pool, userID, "Filled", 900_000)
+	failedCrypto, cryptoSymbol, cryptoProviderRef := seedCryptoOrder(t, pool, userID, "failed", "sell", 250_000)
+	pendingCrypto, _, _ := seedCryptoOrder(t, pool, userID, "pending", "buy", 125_000)
+	filledStock, stockSymbol, stockProviderRef := seedInvestOrder(t, pool, userID, "Filled", "buy", 900_000)
 	// 'Submitted' is a real invest.OrderStatus but is NOT in the console's
 	// AdminOrderStatus union, so it must be folded onto 'Processing' — a raw
 	// leak here would render an unstyled status pill in the app.
-	submittedStock := seedInvestOrder(t, pool, userID, "Submitted", 400_000)
+	submittedStock, _, _ := seedInvestOrder(t, pool, userID, "Submitted", "sell", 400_000)
 
 	type order struct {
-		Ref    string `json:"ref"`
-		User   string `json:"user"`
-		Kind   string `json:"kind"`
-		Status string `json:"status"`
-		Amount struct {
+		Ref         string `json:"ref"`
+		User        string `json:"user"`
+		Kind        string `json:"kind"`
+		Status      string `json:"status"`
+		Side        string `json:"side"`
+		Symbol      string `json:"symbol"`
+		ProviderRef string `json:"providerRef"`
+		Amount      struct {
 			Amount   int64  `json:"amount"`
 			Currency string `json:"currency"`
 		} `json:"amount"`
@@ -590,6 +600,26 @@ func TestAdminConsole_GetOrders(t *testing.T) {
 	assert.Equal(t, int64(900_000), all[filledStock].Amount.Amount)
 	assert.Equal(t, email, all[filledStock].User,
 		"invest_orders.user_id is text, so the email join must compare auth.users.id as text")
+
+	// side / symbol / providerRef were hardcoded to "buy" / "" / "" behind
+	// Phase-2 TODOs. The console renders side as the trade direction, prints
+	// providerRef on every row, and its search box filters on symbol and
+	// providerRef — so hardcoded values made search dead and mislabelled sells.
+	// Distinct fixture values per leg prove each field is really projected.
+	assert.Equal(t, "sell", all[failedCrypto].Side, "crypto side must come from the row, not a hardcoded 'buy'")
+	assert.Equal(t, "buy", all[pendingCrypto].Side)
+	assert.Equal(t, "buy", all[filledStock].Side)
+	assert.Equal(t, "sell", all[submittedStock].Side)
+
+	assert.Equal(t, cryptoSymbol, all[failedCrypto].Symbol,
+		"crypto symbol must come from the crypto_assets LEFT JOIN")
+	assert.Equal(t, stockSymbol, all[filledStock].Symbol,
+		"stock symbol must come from invest_orders.symbol")
+
+	assert.Equal(t, cryptoProviderRef, all[failedCrypto].ProviderRef,
+		"crypto providerRef must come from crypto_orders.reference")
+	assert.Equal(t, stockProviderRef, all[filledStock].ProviderRef,
+		"stock providerRef must come from invest_orders.provider_reference")
 
 	// Status must land on the console's AdminOrderStatus union. The client keys
 	// ORDER_STATUS_STYLE off these exact strings, so casing is a contract, not a
