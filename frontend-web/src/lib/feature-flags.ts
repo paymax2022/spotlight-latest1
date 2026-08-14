@@ -63,6 +63,18 @@ export const featureFlags = {
   /** Block 7 — Per-tier daily wallet and vote limits (fail-closed enforcement) */
   tierLimits: () => envFlag('FEATURE_TIER_LIMITS_ENABLED'),
 
+  /**
+   * ADR-042 — let an UNVERIFIED (Tier 0) account pay by card at checkout, under a
+   * capped rolling allowance, instead of being refused outright.
+   *
+   * This relaxes a KYC gate, so it defaults off like every other flag and should
+   * only be turned on deliberately. Note the tier-gated Go modules (restaurant,
+   * doctor, fractionalre, placement) still refuse Tier-0 spends — enabling this
+   * before those are aligned lets a Tier-0 user fund a wallet for a purchase that
+   * is then refused. See the ADR.
+   */
+  checkoutTopupTier0: () => envFlag('FEATURE_CHECKOUT_TOPUP_TIER0'),
+
   /** Utility bills engine — provider routing, wallet debit, receipts */
   utilityPayments: () => envFlag('FEATURE_UTILITY_PAYMENTS_ENABLED'),
 

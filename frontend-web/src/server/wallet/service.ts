@@ -366,6 +366,13 @@ export interface TopupInput {
   amountKobo: number;
   idempotencyKey: string;
   callbackUrl?: string;
+  /**
+   * 'checkout' marks a top-up raised by a module checkout's card rail. It is
+   * persisted because the Tier-0 checkout allowance is summed over checkout
+   * intents only (ADR-042) — an unrecorded purpose would let each top-up see a
+   * fresh allowance. Defaults to 'wallet' (standalone funding).
+   */
+  purpose?: 'wallet' | 'checkout';
 }
 
 export interface TopupIntentResult {
@@ -407,6 +414,7 @@ export async function createTopupIntent(
     amount_kobo: input.amountKobo,
     payment_reference: paymentReference,
     idempotency_key: input.idempotencyKey,
+    purpose: input.purpose ?? 'wallet',
     status: 'pending',
   });
 
