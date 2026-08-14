@@ -51,11 +51,22 @@ func (s *Service) getDailyDebited(ctx context.Context, userID string) (int64, er
 
 // Usage summarises a user's tier and how much of today's debit allowance is left.
 type Usage struct {
-	Tier            Tier
-	DailyLimitKobo  int64 // 0 = unlimited (Tier3) or disabled (Tier0); check Tier to disambiguate
-	DailyUsedKobo   int64
-	RemainingKobo   int64 // -1 when unlimited
-	WalletDisabled  bool
+	Tier           Tier
+	DailyLimitKobo int64 // 0 = unlimited (Tier3) or disabled (Tier0); check Tier to disambiguate
+	DailyUsedKobo  int64
+	RemainingKobo  int64 // -1 when unlimited
+	WalletDisabled bool
+
+	// ── Checkout allowance (ADR-043) ─────────────────────────────────────────
+	// A Tier-0 account whose wallet is otherwise disabled may still spend a capped
+	// amount ON PURCHASES. These are reported SEPARATELY rather than folded into
+	// the fields above, because the two are not interchangeable: this allowance
+	// buys goods and services, and buys nothing else — transfers and withdrawals
+	// still see WalletDisabled and refuse. Collapsing them into one number would
+	// tell a customer they have money to send that they cannot send.
+	CheckoutEnabled       bool  // the allowance applies to this caller
+	CheckoutAllowanceKobo int64 // rolling-window cap
+	CheckoutRemainingKobo int64 // cap − spend in the window, floored at 0
 }
 
 // GetUsage returns the user's tier alongside today's debit usage. Read-only —
@@ -88,6 +99,23 @@ func (s *Service) GetUsage(ctx context.Context, userID string) (Usage, error) {
 		u.RemainingKobo = cfg.DailyDebitLimitKobo - used
 		if u.RemainingKobo < 0 {
 			u.RemainingKobo = 0
+		}
+	}
+
+	// A Tier-0 caller with the allowance on can still buy things. Reported so a
+	// client pre-check agrees with EnforceCheckoutDebitLimit — without it the
+	// checkout sheet reads WalletDisabled and refuses to open a rail the server
+	// would have accepted, which is the funded-but-blocked trap in mirror image.
+	if u.WalletDisabled && s.checkoutAllowance {
+		spent, err := s.debitedSince(ctx, userID, time.Now().UTC().Add(-checkoutWindow))
+		if err != nil {
+			return Usage{}, fmt.Errorf("tiers: get checkout window spend: %w", err)
+		}
+		u.CheckoutEnabled = true
+		u.CheckoutAllowanceKobo = CheckoutAllowanceKobo
+		u.CheckoutRemainingKobo = CheckoutAllowanceKobo - spent
+		if u.CheckoutRemainingKobo < 0 {
+			u.CheckoutRemainingKobo = 0
 		}
 	}
 	return u, nil

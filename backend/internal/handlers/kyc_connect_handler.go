@@ -283,6 +283,13 @@ func (h *KYCConnectHandler) GetTierStatus(c *gin.Context) {
 		payload["remainingKobo"] = usage.RemainingKobo   // -1 = unlimited
 		payload["dailyUsedKobo"] = usage.DailyUsedKobo
 		payload["walletDisabled"] = usage.WalletDisabled
+		// Purchases may still be permitted while the wallet is otherwise disabled
+		// (ADR-043). Sent alongside walletDisabled, never instead of it: a client
+		// deciding about a PURCHASE consults these, one deciding about a transfer
+		// must keep reading walletDisabled.
+		payload["checkoutEnabled"] = usage.CheckoutEnabled
+		payload["checkoutAllowanceKobo"] = usage.CheckoutAllowanceKobo
+		payload["checkoutRemainingKobo"] = usage.CheckoutRemainingKobo
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": payload})

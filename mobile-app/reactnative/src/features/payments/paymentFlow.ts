@@ -144,6 +144,16 @@ export interface SpendLimit {
   /** Remaining allowance today; -1 means unlimited. */
   remainingKobo: number;
   walletDisabled: boolean;
+  /**
+   * A Tier-0 account whose wallet is otherwise disabled may still be permitted a
+   * capped spend ON PURCHASES (ADR-043). Reported separately from the fields
+   * above because it is not interchangeable with them: it buys goods and
+   * services and nothing else — transfers and withdrawals still see
+   * walletDisabled and refuse.
+   */
+  checkoutEnabled?: boolean;
+  checkoutAllowanceKobo?: number;
+  checkoutRemainingKobo?: number;
 }
 
 export type SpendDeclineReason = 'wallet_disabled' | 'daily_limit';
@@ -180,6 +190,20 @@ export function evaluateSpendLimit(
   if (!limit) return ALLOWED; // unknown — let the server decide
 
   if (limit.walletDisabled) {
+    // A disabled wallet may still carry a capped purchase allowance. Refusing
+    // here regardless would veto exactly the checkouts the server now accepts —
+    // the funded-but-blocked trap in mirror image.
+    if (limit.checkoutEnabled) {
+      const remaining = limit.checkoutRemainingKobo ?? 0;
+      if (amountKobo <= remaining) return ALLOWED;
+      return {
+        allowed: false,
+        reason: 'daily_limit',
+        message:
+          `Unverified accounts can spend up to ${naira(limit.checkoutAllowanceKobo ?? 0)} a day — ` +
+          `${naira(remaining)} left. Complete KYC verification to raise it.`,
+      };
+    }
     return {
       allowed: false,
       reason: 'wallet_disabled',

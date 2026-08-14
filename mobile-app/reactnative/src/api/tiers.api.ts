@@ -29,6 +29,12 @@ export async function getSpendLimit(): Promise<SpendLimit | null> {
       dailyUsedKobo: Number(data.dailyUsedKobo ?? 0),
       remainingKobo: Number(data.remainingKobo),
       walletDisabled: Boolean(data.walletDisabled ?? Number(data.tier ?? 0) === 0),
+      // Purchase allowance for an otherwise-disabled wallet (ADR-043). Absent on
+      // an older server, which reads as "no allowance" — the strict refusal, i.e.
+      // the behaviour before the allowance existed.
+      checkoutEnabled: Boolean(data.checkoutEnabled ?? false),
+      checkoutAllowanceKobo: Number(data.checkoutAllowanceKobo ?? 0),
+      checkoutRemainingKobo: Number(data.checkoutRemainingKobo ?? 0),
     };
   } catch {
     return null;
