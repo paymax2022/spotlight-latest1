@@ -297,6 +297,12 @@ type Config struct {
 	FeatureSocialPayEnabled  bool // Social Payments & P2P Escrow
 	FeatureP2PMarketEnabled  bool // P2P Marketplace
 	FeatureSavingsEnabled    bool // Group & Goal Savings (Ajo/Esusu)
+
+	// SavingsEarlyBreakPenaltyBps is the fee for breaking a LOCK vault before
+	// maturity, in basis points (1000 = 10%). MUST stay server-side: it used to
+	// be read from the request body, so a member could break a lock for free by
+	// sending 0.
+	SavingsEarlyBreakPenaltyBps int
 	FeatureCreatorsEnabled   bool // Creator & Talent Monetisation
 	FeatureLoyaltyEnabled    bool // Unified Loyalty & Paymax Black
 	FeatureCommissionEnabled bool // Central Commission & Profit management
@@ -636,6 +642,7 @@ func Load() Config {
 		FeatureSocialPayEnabled:               getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
 		FeatureP2PMarketEnabled:               getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
 		FeatureSavingsEnabled:                 getEnvBool("FEATURE_SAVINGS_ENABLED", false),
+		SavingsEarlyBreakPenaltyBps:           getEnvInt("SAVINGS_EARLY_BREAK_PENALTY_BPS", 1000),
 		FeatureCreatorsEnabled:                getEnvBool("FEATURE_CREATORS_ENABLED", false),
 		FeatureLoyaltyEnabled:                 getEnvBool("FEATURE_LOYALTY_ENABLED", false),
 		FeatureCommissionEnabled:              getEnvBool("FEATURE_COMMISSION_ENABLED", false),

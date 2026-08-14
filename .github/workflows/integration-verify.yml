@@ -90,6 +90,34 @@ jobs:
       - name: go test ./... -race (Postgres + fakes)
         run: make test
 
+      # The savings money-path suites gate on TEST_DATABASE_URL and deliberately
+      # do NOT fall back to DATABASE_URL: they move money, and on a developer
+      # machine DATABASE_URL is the PRODUCTION pooler. `make test` above therefore
+      # SKIPS them. Run them here with the variable pointed at this job's ephemeral
+      # service container so they actually gate CI.
+      #
+      # Scoped to this package on purpose: setting TEST_DATABASE_URL job-wide also
+      # wakes other long-dormant TEST_DATABASE_URL-gated suites (e.g.
+      # internal/handlers admin-console), which expect pre-seeded fixtures a fresh
+      # CI database does not have and fail. Widening this is its own task.
+      - name: Live-DB money-path suites (savings)
+        env:
+          TEST_DATABASE_URL: postgres://paymax:paymax@localhost:5432/paymax?sslmode=disable
+        run: |
+          cd backend
+          set -o pipefail
+          go test ./internal/savings/... -race -v 2>&1 | tee /tmp/savings-test.log
+          # A package whose live-DB tests all SKIP still reports "ok", so assert
+          # the authorization and penalty cases actually executed. Without this a
+          # future env change could silently return them to skipping and the lane
+          # would stay green with zero real coverage.
+          for t in TestLiveDB_BalanceForOwner_RejectsNonOwner \
+                   TestLiveDB_TargetBalanceForMember_RejectsNonMember \
+                   TestLiveDB_PenaltyRate_IsServerSideNotCallerSupplied; do
+            grep -q "^--- PASS: $t" /tmp/savings-test.log \
+              || { echo "::error::$t did not run (skipped?) — savings money-path coverage is not gating"; exit 1; }
+          done
+
       - name: Full tsc --noEmit (both frontends)
         run: make tsc
 
