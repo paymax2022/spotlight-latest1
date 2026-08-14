@@ -46,7 +46,7 @@ COPY --from=builder /app/package*.json ./
 # falls back to Next defaults.
 COPY --from=builder /app/next.config.mjs ./
 
-EXPOSE 3001
+EXPOSE 8080
 
 # Bind whatever port Railway assigns. The package.json `start` script hardcodes
 # `-p 3001`, which would ignore $PORT and leave the service unreachable.
