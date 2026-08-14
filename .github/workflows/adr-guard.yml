@@ -37,6 +37,11 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # Passed via env, never interpolated into the script body: a ${{ }}
+          # expression inside `run:` is substituted before the shell sees it, so a
+          # branch name containing quotes or backticks would be script injection.
+          # It also keeps this script runnable (and testable) outside Actions.
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
 
@@ -68,7 +73,7 @@ jobs:
             if printf '%s' "$base" | grep -qE '^ADR-[0-9]{3}-'; then
               n=$(printf '%s' "$base" | grep -oE '^ADR-[0-9]{3}' | sed 's/ADR-//')
               if printf '%s\n' "$taken" | grep -qx "$n"; then
-                echo "::error file=$f::ADR-$n already exists on ${{ github.event.pull_request.base.ref }}. Do NOT hand-pick numbers — rename to ADR-PR${PR_NUMBER}-<slug>.md, cite ADR-PR${PR_NUMBER} in its references, and the number is assigned on merge (.github/workflows/adr-assign.yml)."
+                echo "::error file=$f::ADR-$n already exists on $BASE_REF. Do NOT hand-pick numbers — rename to ADR-PR${PR_NUMBER}-<slug>.md, cite ADR-PR${PR_NUMBER} in its references, and the number is assigned on merge (.github/workflows/adr-assign.yml)."
                 fail=1
               else
                 echo "OK  $base (concrete number $n is free on base)"
