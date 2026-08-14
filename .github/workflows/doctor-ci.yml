@@ -8,8 +8,13 @@ name: Doctor CI
 on:
   push:
     paths:
+      # NOTE: backend/internal/app/finance_routes.go is deliberately NOT listed.
+      # It is the shared finance router that EVERY module registers into, so any
+      # module's change touches it and used to wake all nine module CIs at once.
+      # Compile/vet/full `go test ./...` coverage for such a change still runs via
+      # fx-ci (paths: backend/**) and connect-ci (bare pull_request), and ci.yml
+      # builds+vets on every PR — so nothing here is the only thing catching it.
       - 'backend/internal/doctor/**'
-      - 'backend/internal/app/finance_routes.go'
       - 'backend/internal/config/config.go'
       - 'contracts/doctor.openapi.yaml'
       - 'supabase/migrations/*doctor*.sql'
@@ -20,6 +25,20 @@ on:
       - 'mobile-app/reactnative/tsconfig.doctorcheck.json'
       - '.github/workflows/doctor-ci.yml'
   pull_request:
+    # Mirrors the push filter: this module's CI no longer runs on PRs that
+    # do not touch it. Repo-wide coverage still runs on every PR (ci.yml,
+    # connect-ci full go test ./..., integration-verify, security).
+    paths:
+      - 'backend/internal/doctor/**'
+      - 'backend/internal/config/config.go'
+      - 'contracts/doctor.openapi.yaml'
+      - 'supabase/migrations/*doctor*.sql'
+      - 'mobile-app/reactnative/src/features/doctor/**'
+      - 'mobile-app/reactnative/app/(doctor)/**'
+      - 'mobile-app/reactnative/src/api/doctor*.ts'
+      - 'mobile-app/reactnative/src/types/doctor*.ts'
+      - 'mobile-app/reactnative/tsconfig.doctorcheck.json'
+      - '.github/workflows/doctor-ci.yml'
   workflow_dispatch:
 
 jobs:

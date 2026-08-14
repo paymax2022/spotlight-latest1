@@ -17,6 +17,17 @@ on:
       - 'supabase/migrations/*realtor*.sql'
       - '.github/workflows/realtor-ci.yml'
   pull_request:
+    # Mirrors the push filter: this module's CI no longer runs on PRs that
+    # do not touch it. Repo-wide coverage still runs on every PR (ci.yml,
+    # connect-ci full go test ./..., integration-verify, security).
+    paths:
+      - 'mobile-app/reactnative/src/features/realtor/**'
+      - 'mobile-app/reactnative/app/realtor/**'
+      - 'frontend-web/app/api/v1/realtor/**'
+      - 'frontend-admin/app/admin/realtor/**'
+      - 'frontend-admin/src/services/realtorAdminService.ts'
+      - 'supabase/migrations/*realtor*.sql'
+      - '.github/workflows/realtor-ci.yml'
   workflow_dispatch:
 
 jobs:

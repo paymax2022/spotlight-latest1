@@ -9,9 +9,14 @@ name: Top5 CI
 on:
   push:
     paths:
+      # NOTE: backend/internal/app/finance_routes.go is deliberately NOT listed.
+      # It is the shared finance router that EVERY module registers into, so any
+      # module's change touches it and used to wake all nine module CIs at once.
+      # Compile/vet/full `go test ./...` coverage for such a change still runs via
+      # fx-ci (paths: backend/**) and connect-ci (bare pull_request), and ci.yml
+      # builds+vets on every PR — so nothing here is the only thing catching it.
       - 'backend/internal/{scheduler,escrow,cashtag,savings,social,credential,points,top5events,loyalty,creators,p2pmarket,spray}/**'
       - 'backend/internal/app/top5_*.go'
-      - 'backend/internal/app/finance_routes.go'
       - 'backend/internal/config/config.go'
       - 'supabase/migrations/*top5*.sql'
       - 'supabase/migrations/*_savings.sql'
@@ -28,6 +33,27 @@ on:
       - 'mobile-app/reactnative/src/constants/modules.ts'
       - '.github/workflows/top5-ci.yml'
   pull_request:
+    # Mirrors the push filter: this module's CI no longer runs on PRs that
+    # do not touch it. Repo-wide coverage still runs on every PR (ci.yml,
+    # connect-ci full go test ./..., integration-verify, security).
+    paths:
+      - 'backend/internal/{scheduler,escrow,cashtag,savings,social,credential,points,top5events,loyalty,creators,p2pmarket,spray}/**'
+      - 'backend/internal/app/top5_*.go'
+      - 'backend/internal/config/config.go'
+      - 'supabase/migrations/*top5*.sql'
+      - 'supabase/migrations/*_savings.sql'
+      - 'supabase/migrations/*_social.sql'
+      - 'supabase/migrations/*_creators.sql'
+      - 'supabase/migrations/*loyalty*.sql'
+      - 'frontend-admin/app/admin/{savings,social,events,loyalty,creators,social-escrow,loyalty-black}/**'
+      - 'frontend-admin/src/services/{savings,social,events,loyalty,creators,escrow,black}AdminService.ts'
+      - 'frontend-admin/src/components/layouts/AdminSidebar.tsx'
+      - 'frontend-web/app/api/v1/{savings,social,events,loyalty,creators,p2p,spray}/**'
+      - 'frontend-web/src/lib/feature-flags.ts'
+      - 'mobile-app/reactnative/app/{savings,social,events,loyalty,creators}/**'
+      - 'mobile-app/reactnative/src/features/{savings,social,events,loyalty,creators}/**'
+      - 'mobile-app/reactnative/src/constants/modules.ts'
+      - '.github/workflows/top5-ci.yml'
   workflow_dispatch:
 
 jobs:
