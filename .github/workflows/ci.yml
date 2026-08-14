@@ -101,13 +101,13 @@ jobs:
     name: migrations (additive-only guard)
     uses: ./.github/workflows/_reusable-migration-guard.yml
 
-  # Two cheap repo-wide grep gates share one runner: both are sub-second, and a
-  # second job would cost a full runner start for no benefit (see the
+  # Cheap repo-wide gates share one runner: each is sub-second, and a separate
+  # job per gate would cost a full runner start for no benefit (see the
   # paths-ignore note above on conserving private-repo Actions minutes).
   # The job id stays `secret-hygiene` — it is internal, and the deploy jobs below
   # reference it in `needs:`.
   secret-hygiene:
-    name: hygiene (client secrets + live-DB test gate)
+    name: hygiene (client secrets + live-DB test gate + migration versions)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -117,6 +117,12 @@ jobs:
       # live-DB suites insert fixtures and move money.
       - name: Check live-DB tests gate on TEST_DATABASE_URL only
         run: bash scripts/ci/check-live-db-gate.sh
+      # schema_migrations is keyed on the version alone, so two migrations
+      # sharing a timestamp abort `supabase start` / `db reset` partway through
+      # the chain. The collision is invisible to the author — it appears on the
+      # base branch only AFTER the merge — so it must be caught at PR time.
+      - name: Check migration versions are unique
+        run: bash scripts/ci/check-migration-versions.sh
       # Pins the module router's glob semantics, its fail-open behaviour, and its
       # rejection of brace patterns. Sub-second, so it shares this runner.
       - name: Test the module router
