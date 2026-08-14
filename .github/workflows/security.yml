@@ -108,6 +108,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Audit (fail on high/critical)
+      # Scoped to PRODUCTION dependencies (--omit=dev): the gate should reflect
+      # what actually ships to users, not the build/test toolchain. Dev-only
+      # advisories are still worth fixing (a compromised build tool is a
+      # supply-chain risk) but they are covered by trivy + dependabot and should
+      # not be the thing a product PR trips over.
+      #
+      # HONEST CAVEAT: this narrows the gate but does NOT currently make it
+      # green. In these frameworks the build tooling IS a production dependency —
+      # metro/postcss/image-size arrive via `expo` and `react-native`, and
+      # postcss/sharp via `next`, all of which live in "dependencies". As of
+      # 2026-08-13 the residual high advisories are:
+      #
+      #   mobile-app/reactnative  11  -> need expo@57 + react-native@0.72 (majors)
+      #   frontend-web             3  -> need next@16 + sharp@0.35        (majors)
+      #   frontend-admin           3  -> need next@16                     (major)
+      #
+      # Every advisory fixable WITHOUT a framework major is already fixed. What
+      # remains needs either those upgrades or an explicit baseline of the known
+      # set (fail only on NEW advisories). The job stays continue-on-error until
+      # one of those lands.
+      - name: Audit production dependencies (fail on high/critical)
         working-directory: ${{ matrix.dir }}
-        run: npm audit --audit-level=high || (echo "::warning::npm audit found high/critical vulns in ${{ matrix.dir }}" && exit 1)
+        run: npm audit --omit=dev --audit-level=high || (echo "::warning::npm audit found high/critical vulns in production dependencies of ${{ matrix.dir }}" && exit 1)
