@@ -1,9 +1,9 @@
-# ADR-021 — Vote engine: universal is canonical; legacy deprecated; v2 cut-over
+# ADR-039 — Vote engine: universal is canonical; legacy deprecated; v2 cut-over
 
 **Status:** Accepted
 **Date:** 2026-07-30
 **Deciders:** QA + Product Engineering
-**Relates to:** ADR-004, ADR-020 (vote bridge)
+**Relates to:** ADR-004, ADR-035 (vote bridge)
 
 ---
 
@@ -19,7 +19,7 @@ Two vote engines exist in the database (documented in the `vote-bridge` skill,
   `voter_daily_limits`, `voter_contestant_daily_limits`; TypeScript services in
   `frontend-web/src/server/voting/`.
 
-The universal engine is what the web app reads and writes. With ADR-020 the web
+The universal engine is what the web app reads and writes. With ADR-035 the web
 free-vote path now routes through the atomic bridge (`claim_free_vote`). We need a
 recorded decision on which engine is authoritative and how the cut-over ships
 without breaking production.
@@ -57,7 +57,7 @@ zero-write check below is the authoritative gate.
 ## Consequences
 
 ### Positive
-- Single source of truth for tallies; the atomic path (ADR-020) becomes the live
+- Single source of truth for tallies; the atomic path (ADR-035) becomes the live
   web behavior once the flag is on.
 - Legacy data preserved; no destructive migration.
 
@@ -81,5 +81,5 @@ zero-write check below is the authoritative gate.
 |---|---|
 | Big-bang cutover (delete legacy, force v2) | High risk on a live, money-adjacent path; no rollback. |
 | Dual-write both engines | Doubles the surface for the exact concurrency bugs we're fixing. |
-| Keep everything on v1, edit the protected service | Forbidden by the brownfield hook; loses the ADR-020 atomicity. |
+| Keep everything on v1, edit the protected service | Forbidden by the brownfield hook; loses the ADR-035 atomicity. |
 | Leave the flag off, ship code only | Doesn't deliver the fix to production — the whole point of the cut-over. |

@@ -1,4 +1,4 @@
-# ADR-001: Vote Bridge Idempotency & TOCTOU Mitigation
+# ADR-037: Vote Bridge Idempotency & TOCTOU Mitigation
 
 **Date**: 2026-08-11  
 **Status**: ACCEPTED  
@@ -188,7 +188,7 @@ If bridge causes outage:
 
 ## Related ADRs
 
-- [[ADR-002-vote-engine-deprecation]] — Which vote engine is live in production; plan to stop legacy writes
+- [[ADR-038-vote-engine-deprecation]] — Which vote engine is live in production; plan to stop legacy writes
 
 ## Decision
 

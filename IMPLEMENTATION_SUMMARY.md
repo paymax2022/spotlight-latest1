@@ -83,7 +83,7 @@
 
 ### 5. Architecture Documentation
 **Files**:
-- `docs/adr/ADR-022-voting-contest-eviction.md` - Design decisions & rationale
+- `docs/adr/ADR-036-voting-contest-eviction.md` - Design decisions & rationale
 - `docs/features/VOTING_CONTEST_EVICTION.md` - Complete feature specification
 - `VOTING_CONTEST_EVICTION_IMPLEMENTATION.md` - Phase breakdown and checklist
 
@@ -317,7 +317,7 @@ Before going to production:
 ## Support & Maintenance
 
 **Documentation**:
-- ADR-022 explains design decisions
+- ADR-036 explains design decisions
 - Feature spec has complete implementation guide
 - Implementation status has phase breakdown
 

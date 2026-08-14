@@ -302,7 +302,7 @@ POST /api/v1/connect/contests/{contestId}/admin-vote
 
 ## Related ADRs
 
-- [ADR-022: Voting Contest Eviction Mechanics](../adr/ADR-022-voting-contest-eviction.md)
+- [ADR-036: Voting Contest Eviction Mechanics](../adr/ADR-036-voting-contest-eviction.md)
 
 ## Monitoring & Alerts
 
