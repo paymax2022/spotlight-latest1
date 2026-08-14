@@ -15,17 +15,17 @@ type submitRequest struct {
 	Answers   []Answer `json:"answers"`
 }
 
-// RegisterAcademyPlacement mounts the placement quiz routes under the member
-// academy group (same base as assessment: /api/finance/academy):
+// RegisterAcademyPlacement mounts the placement quiz routes on the member academy
+// group (which is already /api/finance/academy), so the full paths are:
 //
-//	GET  /academy/placement?class=P4&per=2   → the diagnostic (no answer key)
-//	POST /academy/placement/submit           → per-subject placement result
+//	GET  /api/finance/academy/placement?class=P4&per=2   → the diagnostic (no answer key)
+//	POST /api/finance/academy/placement/submit           → per-subject placement result
 func RegisterAcademyPlacement(member *gin.RouterGroup, pool *pgxpool.Pool) {
 	if pool == nil {
 		return
 	}
 	h := &Handler{svc: NewService(pool)}
-	g := member.Group("/academy/placement")
+	g := member.Group("/placement")
 	g.GET("", h.GetQuiz)
 	g.POST("/submit", h.Submit)
 }
