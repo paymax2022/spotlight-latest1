@@ -27,10 +27,7 @@ func schedPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB scheduled/group test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB scheduled/group test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

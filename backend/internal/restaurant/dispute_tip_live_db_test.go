@@ -22,7 +22,7 @@ package restaurant
 // settlement.Refund and returns the true escrowed total (tips included) — covered
 // by TestLiveDB_OrderTipRefundedOnCancel.
 //
-// Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
+// Skipped unless TEST_DATABASE_URL is set.
 // ---------------------------------------------------------------------------
 
 import (

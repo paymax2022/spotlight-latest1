@@ -8,7 +8,7 @@ package association_test
 // REAL Service against a live Postgres and assert fail-closed denials across
 // organisation boundaries.
 //
-// Gated on TEST_DATABASE_URL/DATABASE_URL exactly like live_db_integration_test.go
+// Gated on TEST_DATABASE_URL exactly like live_db_integration_test.go
 // (shared liveDBPool + seed helpers). Run:
 //   export TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:54322/postgres"
 //   go test ./tests/association/ -run IDOR -v

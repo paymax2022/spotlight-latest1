@@ -10,7 +10,7 @@ package restaurant
 // the escrowed total, never set on the Order, never in the INSERT column list), so
 // a tip was neither charged to the customer nor paid to the rider.
 //
-// Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
+// Skipped unless TEST_DATABASE_URL is set.
 // ---------------------------------------------------------------------------
 
 import (
@@ -32,10 +32,7 @@ func tipPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB tip test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB tip test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

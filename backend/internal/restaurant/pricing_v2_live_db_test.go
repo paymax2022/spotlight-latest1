@@ -3,7 +3,7 @@ package restaurant
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for pricing v2 (Phase 10): the free-delivery promo
 // (discount == the delivery fee) and the platform pricing-config setter
-// (service_fee_bp / surge_bp). Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
+// (service_fee_bp / surge_bp). Skipped unless TEST_DATABASE_URL is set.
 // The settlement money legs (service fee → platform, surge in gross) are proven by
 // the settlement package's pure conservation tests.
 // ---------------------------------------------------------------------------
@@ -22,10 +22,7 @@ func pricingV2LivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB pricing v2 test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB pricing v2 test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

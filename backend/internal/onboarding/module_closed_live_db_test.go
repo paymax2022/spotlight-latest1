@@ -4,7 +4,7 @@ package onboarding_test
 // Regression for the gap where an OPEN merchant type under a CLOSED module was
 // still applyable (create checked the type status only, not the module status).
 //
-// Skips unless TEST_DATABASE_URL/DATABASE_URL is set. onb_application.user_id has
+// Skips unless TEST_DATABASE_URL is set. onb_application.user_id has
 // no hard FK, so a random uuid works as the caller.
 
 import (
@@ -23,10 +23,7 @@ func liveOnbPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping onboarding module-closed live-DB test")
+		t.Skip("no TEST_DATABASE_URL set — skipping onboarding module-closed live-DB test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

@@ -3,7 +3,7 @@ package restaurant
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for the expanded order lifecycle (Phase 14): restaurant
 // reject→refund, dispatch-failed→refund, delivery-failed marker (no refund), and the
-// authz on each. Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
+// authz on each. Skipped unless TEST_DATABASE_URL is set.
 // ---------------------------------------------------------------------------
 
 import (
@@ -26,10 +26,7 @@ func fsmPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB FSM test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB FSM test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

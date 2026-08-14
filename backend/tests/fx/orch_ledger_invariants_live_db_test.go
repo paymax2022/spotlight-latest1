@@ -21,11 +21,11 @@ package fx_test
 // Currency must be part of the GROUP BY. TestOrchLedger_LegacyShapeIsRejected
 // pins that distinction so the invariant cannot be weakened back.
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset (reuses liveDBPool
+// SKIPPED whenever TEST_DATABASE_URL is unset (reuses liveDBPool
 // from convert_live_db_test.go), so `go test ./...` without a DB stays green.
 //
 // Bring-up: apply migrations incl. 20260621000000_fx_orchestration.sql, then:
-//   export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run OrchLedger -v
 // ---------------------------------------------------------------------------
 

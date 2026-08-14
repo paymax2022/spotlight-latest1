@@ -3,7 +3,7 @@ package restaurant
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for promo codes (Phase 4): owner CRUD, code resolution
 // (window / min-subtotal / usage limits), and the funder snapshot — driven against
-// real rows. Skipped unless TEST_DATABASE_URL/DATABASE_URL is set. Requires the
+// real rows. Skipped unless TEST_DATABASE_URL is set. Requires the
 // restaurant + restaurant_promos migrations. Escrow/settlement not exercised here;
 // the settlement funder math is proven by the settlement package's pure invariants.
 // ---------------------------------------------------------------------------
@@ -23,10 +23,7 @@ func promoLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB promo test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB promo test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

@@ -10,7 +10,7 @@ package app
 //   (3) A balanceChecked overdraw is rejected 409 insufficient_funds (fail-closed).
 //   (4) The service-token guard rejects a missing / wrong Bearer token.
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset — the SAME gate the
+// SKIPPED whenever TEST_DATABASE_URL is unset — the SAME gate the
 // other finance/ledger live-DB tests use (see
 // backend/internal/referral/ledger/withdraw_integration_test.go). Point it at a
 // disposable, migrated Postgres — NEVER production. Every row is keyed by a fresh
@@ -43,10 +43,7 @@ func internalLedgerPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping internal ledger API live-DB test")
+		t.Skip("no TEST_DATABASE_URL set — skipping internal ledger API live-DB test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

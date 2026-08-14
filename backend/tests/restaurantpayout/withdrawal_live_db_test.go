@@ -22,13 +22,13 @@ package restaurantpayout_test
 //   - owner-scoping: a merchant cannot withdraw to another owner's bank account;
 //   - tier limits are enforced fail-closed (Tier 0 wallet disabled → blocked).
 //
-// SKIPPED whenever TEST_DATABASE_URL/DATABASE_URL is unset (same gate + helpers
+// SKIPPED whenever TEST_DATABASE_URL is unset (same gate + helpers
 // as payout_live_db_test.go, whose liveDBPool/seedUser/seedRestaurant/balanceOf/
 // newIdemKey/ledgerEntryCount/newLiveLedgerService this file reuses).
 //
 // Bring-up: apply migrations incl. 20261101000100_restaurant_bank_accounts.sql
 // and 20261101000200_restaurant_withdrawals.sql, then:
-//   cd backend && DATABASE_URL=postgres://postgres:postgres@localhost:54322/postgres?sslmode=disable \
+//   cd backend && TEST_DATABASE_URL=postgres://postgres:postgres@localhost:54322/postgres?sslmode=disable \
 //     go test ./tests/restaurantpayout/... -run LiveDB_Withdrawal -v
 // ---------------------------------------------------------------------------
 

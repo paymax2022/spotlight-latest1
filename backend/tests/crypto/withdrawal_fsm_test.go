@@ -18,7 +18,7 @@ package crypto_test
 // Live-DB tests that drive crypto.Service.Withdraw/ConfirmWithdrawal end-to-end
 // (proving units-parked-on-create and units-returned-on-failed against a real
 // Postgres) live in live_db_integration_test.go (skip-gated on
-// DATABASE_URL/TEST_DATABASE_URL).
+// TEST_DATABASE_URL).
 // ---------------------------------------------------------------------------
 
 import (

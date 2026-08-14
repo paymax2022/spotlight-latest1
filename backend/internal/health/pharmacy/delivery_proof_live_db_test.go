@@ -12,7 +12,7 @@ import (
 
 // DP-006 live-DB integration test for proof-of-delivery.
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset (gated same as rx/lab tests).
+// SKIPPED whenever TEST_DATABASE_URL is unset (gated same as rx/lab tests).
 // Bring-up:
 //
 //	supabase start   # or any Postgres with migrations including 20260902000000
@@ -29,10 +29,7 @@ func deliveryProofLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB pharmacy delivery proof test; see bring-up note in delivery_proof_live_db_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB pharmacy delivery proof test; see bring-up note in delivery_proof_live_db_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

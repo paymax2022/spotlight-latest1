@@ -69,6 +69,12 @@ jobs:
     name: migrations (additive-only guard)
     uses: ./.github/workflows/_reusable-migration-guard.yml
 
+  # Two cheap repo-wide grep gates share one runner: both are sub-second, and a
+  # second job would cost a full runner start for no benefit (see the
+  # paths-ignore note above on conserving private-repo Actions minutes).
+  # NOTE: job name deliberately left as-is — it may be wired as a required status
+  # check, which matches on the name. Rename to "hygiene (client secrets +
+  # live-DB test gate)" once branch protection is confirmed.
   secret-hygiene:
     name: secrets (no client-exposed secrets)
     runs-on: ubuntu-latest
@@ -76,6 +82,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check for secrets in client bundles
         run: bash scripts/check-client-secrets.sh
+      # No Go test may read DATABASE_URL — it is the production pooler, and the
+      # live-DB suites insert fixtures and move money.
+      - name: Check live-DB tests gate on TEST_DATABASE_URL only
+        run: bash scripts/ci/check-live-db-gate.sh
 
   # Railway deployment is deliberately opt-in. Set the repository variable
   # RAILWAY_DEPLOY_ENABLED=true only after the corresponding Railway service

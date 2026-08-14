@@ -8,8 +8,7 @@ package businessregistry_test
 // Asserts the money invariant: the fee is debited EXACTLY once (idempotent
 // replay posts no second debit), and — when the sandbox provider registers —
 // the profile reaches a verified/registered state that satisfies the
-// merchant-upgrade gate (HasVerifiedBusiness). Skips unless TEST_DATABASE_URL/
-// DATABASE_URL is set.
+// merchant-upgrade gate (HasVerifiedBusiness). Skips unless TEST_DATABASE_URL is set.
 // ---------------------------------------------------------------------------
 
 import (
@@ -32,10 +31,7 @@ func liveDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping CAC fee-debit live-DB test")
+		t.Skip("no TEST_DATABASE_URL set — skipping CAC fee-debit live-DB test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

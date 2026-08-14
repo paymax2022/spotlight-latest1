@@ -9,7 +9,7 @@ package association_test
 // PublishOrganisation, SetAiNoteStatus via ApproveAiNote/PublishAiNote) and to
 // the real ledger.Service for double-entry posting. None of this can run
 // without a migrated Postgres. This file is SKIPPED whenever
-// DATABASE_URL/TEST_DATABASE_URL is unset (same pattern as
+// TEST_DATABASE_URL is unset (same pattern as
 // backend/internal/top5events/service_integration_test.go and
 // backend/tests/transport_scheduled/live_db_integration_test.go), but is fully
 // written end-to-end so it can be un-skipped the moment infra is available —
@@ -22,8 +22,8 @@ package association_test
 //       supabase/migrations/20260629000000_assoc_committee_members.sql
 //       supabase/migrations/20260629000100_association_settings.sql
 //     Confirm the core tables landed:
-//       psql "$DATABASE_URL" -c "\d assoc_dues_invoices"
-//       psql "$DATABASE_URL" -c "\d assoc_payments"
+//       psql "$TEST_DATABASE_URL" -c "\d assoc_dues_invoices"
+//       psql "$TEST_DATABASE_URL" -c "\d assoc_payments"
 //  2. These tests do NOT depend on Supabase auth.users rows except where noted
 //     (GetApprovalQueue LEFT JOINs auth.users but tolerates no match). Money
 //     tests need a wallet with a positive balance for the paying member (dues
@@ -31,10 +31,10 @@ package association_test
 //     the synthetic test user id before running PayInvoice tests. Each test
 //     SKIPS with a clear message rather than reporting a false negative if the
 //     wallet balance is insufficient.
-//  3. Set DATABASE_URL (or TEST_DATABASE_URL) to a disposable/test database —
+//  3. Set TEST_DATABASE_URL to a disposable/test database —
 //     never point this at production. `supabase db reset` (local, port 54322)
 //     is the safest target:
-//       export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  4. Run:
 //       cd backend && go test ./tests/association/... -run LiveDB -v
 //
@@ -57,15 +57,12 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 )
 
-// liveDBPool connects using DATABASE_URL/TEST_DATABASE_URL, or skips.
+// liveDBPool connects using TEST_DATABASE_URL, or skips.
 func liveDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB association integration test; see bring-up note in live_db_integration_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB association integration test; see bring-up note in live_db_integration_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

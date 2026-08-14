@@ -30,7 +30,7 @@ func seedPendingOrder(t *testing.T, ctx context.Context, pool *pgxpool.Pool, res
 // TestLiveDB_OrderStatusAuthz is the regression for the Phase-0 S1 fix: the order
 // status + cancel endpoints must enforce object-level authorization, and `delivered`
 // must never be reachable via the generic status endpoint (POD bypass closed).
-// Skips unless TEST_DATABASE_URL/DATABASE_URL is set.
+// Skips unless TEST_DATABASE_URL is set.
 func TestLiveDB_OrderStatusAuthz(t *testing.T) {
 	pool := liveDBPool(t)
 	defer pool.Close()

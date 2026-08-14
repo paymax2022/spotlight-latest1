@@ -12,7 +12,7 @@ import (
 
 // DP-004 live-DB integration test for prescription refills.
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset (same env-gate as the
+// SKIPPED whenever TEST_DATABASE_URL is unset (same env-gate as the
 // FX / lab-amendment live-DB suites). Bring-up:
 //
 //	supabase start   # or any Postgres with the migrations applied
@@ -27,10 +27,7 @@ func refillLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB rx refills test; see bring-up note in refill_live_db_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB rx refills test; see bring-up note in refill_live_db_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

@@ -13,11 +13,11 @@ package fx_test
 //   - EVERY change writes an immutable before/after audit row naming the actor;
 //   - the fat-finger ceiling is enforced by the store AND by the table CHECK.
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset (reuses liveDBPool
+// SKIPPED whenever TEST_DATABASE_URL is unset (reuses liveDBPool
 // from convert_live_db_test.go), so `go test ./...` without a DB stays green.
 //
 // Bring-up: apply migrations incl. 20261204000000_fx_markup_rates.sql, then:
-//   export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run MarkupStore -v
 // ---------------------------------------------------------------------------
 

@@ -20,10 +20,10 @@ package fx_test
 //     move into SQL — that ordering is what keeps business customers on their
 //     own rate.
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset (reuses liveDBPool
+// SKIPPED whenever TEST_DATABASE_URL is unset (reuses liveDBPool
 // from convert_live_db_test.go), so `go test ./...` without a DB stays green.
 //
-//   export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run SpreadUnification -v
 // ---------------------------------------------------------------------------
 

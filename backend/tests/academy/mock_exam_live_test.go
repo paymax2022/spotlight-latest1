@@ -9,7 +9,7 @@ package academy_test
 // service, and analytics queries against a migrated Postgres so the Go code
 // can never silently drift from supabase/migrations again.
 //
-// SKIPPED when TEST_DATABASE_URL (or DATABASE_URL) is unset. Target the local
+// SKIPPED when TEST_DATABASE_URL is unset. Target the local
 // Supabase instance after a fresh replay:
 //
 //	export TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
@@ -39,10 +39,7 @@ func liveDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL/DATABASE_URL not set — skipping live-DB mock-exam test")
+		t.Skip("TEST_DATABASE_URL not set — skipping live-DB mock-exam test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

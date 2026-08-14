@@ -18,12 +18,12 @@ package edtechfees_test
 // feesVaultInvoice over the real *ledger.Service). The only enrichment: the
 // invoice adapter ALSO records a real academy_invoice_payments row (via the real
 // feesinvoice.Service) so this test can assert the invoice-side record, exactly
-// as the SF-2 discipline requires. This file skips on TEST_DATABASE_URL /
-// DATABASE_URL unset (shared gate in invoice_live_db_test.go).
+// as the SF-2 discipline requires. This file skips on TEST_DATABASE_URL unset
+// (shared gate in invoice_live_db_test.go).
 //
 // ── Bring-up note ──────────────────────────────────────────────────────────
 // Apply the fees + edupay + ledger migrations (supabase db reset), then:
-//   export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/edtechfees/... -run LiveDB_Vault -v
 // The AccountEdtechFeesVault standing account is auto-created on first
 // GetOrCreateStandingAccount — no seed row needed (finance/ledger/model.go).

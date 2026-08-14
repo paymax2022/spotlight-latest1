@@ -16,7 +16,7 @@ package edtechfees_test
 //
 // The ledger + invoice ports are the SAME thin adapters production wires
 // (backend/internal/app/academy_routes.go: feesScholarshipLedger /
-// feesScholarshipInvoice). Skips on TEST_DATABASE_URL / DATABASE_URL unset
+// feesScholarshipInvoice). Skips on TEST_DATABASE_URL unset
 // (shared gate in invoice_live_db_test.go).
 //
 // ── KNOWN SCHEMA-INTEGRATION GAP (documented, not a test bug) ───────────────
