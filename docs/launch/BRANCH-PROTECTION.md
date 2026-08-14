@@ -1,10 +1,49 @@
-# Branch protection & repo hardening for `main`
+# Branch protection & repo hardening
 
-Apply this once per repo. Requires repo admin. Branch protection cannot be set from
-a normal Actions run — an admin runs the `gh` script below (or configures it in
-**Settings → Branches / Rules**).
+Requires repo admin. Branch protection cannot be set from a normal Actions run.
 
-## Required settings for `main`
+## `develop` — LIVE as of 2026-08-14
+
+`develop` is protected, and this is the only protection currently configured on the
+repo (`main` remains unprotected — the section below is still a proposal).
+
+Apply or change it with:
+
+```bash
+GITHUB_TOKEN=<admin token> scripts/ci/apply-branch-protection.sh develop
+```
+
+The required checks live in **`.github/required-checks.txt`** — one home, read by
+that script. They are the nine unconditional jobs of `ci.yml`, which is now the
+single pipeline. Module lanes are deliberately *not* required: they are gated on
+the router and report `skipped` when their module did not change, so requiring
+them would couple branch protection to routing for no gain.
+
+| Setting | Value | Why |
+|---|---|---|
+| `enforce_admins` | **false** | Required checks block **direct pushes**, and the checks only run *after* a push lands. With admins enforced, the standing "rebase, one fast-forward `git push origin HEAD:develop`" workflow becomes impossible and every change would need a PR. Admins keep the bypass; the gate still applies to PRs and to everyone else. |
+| `strict` | **false** | "Require branches to be up to date before merging" forces a rebase every time the base moves. `develop` moves several times an hour, so strict would mean a PR is rarely mergeable without a race. |
+| `required_pull_request_reviews` | **none** | Not a status gate. Adding it would block the owner's own workflow — do it deliberately, not as a side effect. |
+| force pushes / deletions | blocked | — |
+
+### Two ways this configuration bites, both silent
+
+- **`ci.yml`'s `pull_request` trigger must never regain `paths-ignore`.** GitHub
+  reports a path-*skipped* required check as perpetually *"Expected — waiting for
+  status"*, not as passed, so a docs-only PR would never start the workflow and
+  could never merge. This is why the `paths-ignore` was removed from
+  `pull_request` (it is still on `push`, where docs-only changes cost nothing).
+- **Renaming a required job blocks every PR.** Protection matches the check-run
+  name exactly; the old context simply never reports again. `scripts/ci/test-changed-modules.py`
+  asserts every name in `required-checks.txt` still exists as a job in `ci.yml`,
+  so a rename fails CI loudly instead of hanging merges silently. After any
+  rename: update `required-checks.txt`, then re-run the apply script.
+
+> Check-run names are `"<caller job name> / <job id inside the reusable>"` for
+> reusable-workflow calls, and just the job's `name:` for inline jobs. You cannot
+> require a *workflow* — only its checks.
+
+## Proposed settings for `main` (not yet applied)
 
 - Require a pull request before merging; **≥ 1 approval**.
 - **Require review from Code Owners** (activates `.github/CODEOWNERS`).
