@@ -20,6 +20,7 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/finance/tiers"
 )
 
 func schedPool(t *testing.T) *pgxpool.Pool {
@@ -46,7 +47,7 @@ func TestLiveDB_ScheduledAndGroup(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
-	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led)
+	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
 
 	owner := uuid.New().String()
 	host := uuid.New().String()
@@ -54,6 +55,9 @@ func TestLiveDB_ScheduledAndGroup(t *testing.T) {
 	for _, u := range []string{owner, host, friend} {
 		_, _ = pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test")
 	}
+	// The host pays for the finalized group order, and that escrow is tier-gated
+	// (fail-closed). Tier 3 is unlimited — this test is about the group flow, not caps.
+	seedKYCTier(t, ctx, pool, host, 3)
 	// Open restaurant (no weekly hours → governed by is_open) with a menu item.
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Group Kitchen','1 St',TRUE)`, restID, owner); err != nil {

@@ -396,7 +396,21 @@ paths:
     post:
       tags: [customer]
       summary: Place an order (escrows total) — money mutation
-      description: Money mutation — escrows the order total and posts balanced ledger entries. Requires an Idempotency-Key.
+      description: >-
+        Money mutation — escrows the order total and posts balanced ledger entries.
+        Requires an Idempotency-Key. The escrow debits the customer's wallet, so it is
+        gated fail-closed on the caller's KYC tier: a Tier 0 customer (wallet disabled)
+        and an order that would take the caller past their daily wallet debit cap are
+        both refused with 403 BEFORE any money moves. The gate prices the FULL escrowed
+        total (subtotal + delivery + tip), and a refused order creates no ledger entry,
+        no settlement and no order row.
+
+
+        Idempotency: a repeat of an Idempotency-Key this caller already used returns that
+        original order and moves no money — the request body is NOT re-read, so replaying
+        a key with a different body returns the original order rather than placing the new
+        one. Keys are scoped per caller: replaying another customer's key does not resolve
+        to their order.
       parameters:
         - { $ref: '#/components/parameters/IdParam' }
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -427,10 +441,12 @@ paths:
                     0; a tip greater than the order's own value (subtotal + delivery) is
                     rejected.
       responses:
-        '200': { description: Order placed, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '201': { description: Order placed (also returned for an idempotent replay of the same Idempotency-Key), content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
         '401': { description: Not authenticated }
         '402': { description: Insufficient wallet balance }
+        '403': { description: KYC tier forbids this debit — wallet disabled (Tier 0) or daily debit limit exceeded }
         '422': { description: Item unavailable (86'd) / validation error }
+        '503': { description: Tier gate not wired on this deployment — ordering is disabled fail-closed }
   /orders/{orderId}:
     get:
       tags: [customer, restaurant, rider]

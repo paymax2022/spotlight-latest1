@@ -3,12 +3,14 @@ package restaurant
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
@@ -41,11 +43,23 @@ type RouteDistancer interface {
 }
 
 // TierLimiter is the fail-closed KYC-tier / daily-spend gate on restaurant money moves
-// (order escrow + merchant withdrawals). Modeled as a local interface so restaurant
-// never imports finance/tiers at compile time.
+// (order escrow + merchant withdrawals). Modeled as a local interface so the money-path
+// code depends on the behaviour, not on finance/tiers.
 type TierLimiter interface {
 	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
 }
+
+// ErrTierGateUnwired is returned by every restaurant money path when the Service was
+// built WITHOUT a TierLimiter. A nil gate is a deployment misconfiguration, not a
+// dev-mode bypass: CLAUDE.md's iron rule requires every money mutation to pass a
+// fail-closed tier check, so "no gate wired" must mean "no money moves" rather than
+// "all limits are unlimited". See docs/adr/ADR-030-restaurant-escrow-tier-gate.md.
+var ErrTierGateUnwired = errors.New("restaurant: money path requires a tier gate (WithTiers not wired)")
+
+// ErrOrderMissingIdem is returned when PlaceOrder is called without an Idempotency-Key.
+// The HTTP handlers reject an empty key before reaching the service; this is the
+// service-layer backstop for direct callers. Mirrors ErrWithdrawMissingIdem.
+var ErrOrderMissingIdem = errors.New("restaurant: Idempotency-Key required to place an order")
 
 // Service manages restaurants, menus, and orders.
 type Service struct {
@@ -58,7 +72,7 @@ type Service struct {
 	notifier    Notifier            // nil-safe via s.notify; defaults to LogNotifier
 	rt          *Realtime           // optional; nil → no WS fan-out
 	commission  CommissionRecorder  // optional; nil ⇒ realized-profit recording is a no-op
-	tiers       TierLimiter         // optional; fail-closed gate on order escrow + withdrawal debit
+	tiers       TierLimiter         // REQUIRED; fail-closed gate on order escrow + withdrawal debit
 	withdrawalsOn bool              // FEATURE_RESTAURANT_WITHDRAWALS_ENABLED
 	disburser   WithdrawalDisburser // optional; nil ⇒ NoopDisburser (default sandbox)
 }
@@ -96,8 +110,9 @@ func (s *Service) WithDistancer(d RouteDistancer) *Service {
 	return s
 }
 
-// WithTiers attaches the fail-closed KYC-tier gate used for wallet debits
-// (order escrow + merchant withdrawals). Required for money-path operations.
+// WithTiers attaches the fail-closed KYC-tier gate used for wallet debits (order
+// escrow + merchant withdrawals). REQUIRED for every money path in this module:
+// without it PlaceOrder and RequestWithdrawal both refuse with ErrTierGateUnwired.
 func (s *Service) WithTiers(t TierLimiter) *Service {
 	s.tiers = t
 	return s
@@ -209,6 +224,36 @@ func (s *Service) SetDeliveryConfig(ctx context.Context, restaurantID *string, c
 // Supports multi-restaurant orders when items include restaurant_id; falls back to
 // single-restaurant mode when all items use the route's restaurantID.
 func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID string, req PlaceOrderRequest) (*Order, error) {
+	// ── Fast idempotent-replay path ───────────────────────────────────────────
+	// A retry of an order this customer already placed under the same
+	// Idempotency-Key returns the canonical order and moves no money.
+	//
+	// This MUST run before the tier gate below. The gate measures today's spend by
+	// summing the customer's wallet DEBIT entries, which on a replay already include
+	// THIS order's own escrow debit — so re-gating a replay counts the request
+	// against itself and refuses it with "daily limit exceeded" even though the
+	// money already moved and the order exists. The caller would see a hard
+	// rejection for an order that succeeded, and might re-order under a fresh key
+	// and pay twice. Same ordering as RequestWithdrawal, which resolves its
+	// idempotency key before calling EnforceWalletDebitLimit.
+	//
+	// The post-INSERT ON CONFLICT branch below stays as the concurrent-race
+	// backstop for two requests that pass this check simultaneously.
+	if req.IdempotencyKey == "" {
+		// Defence in depth: both HTTP handlers already reject an empty key. Without
+		// this, a direct service caller would hit the lookup below with '' — a legal,
+		// globally UNIQUE value in orders.idempotency_key — and silently receive their
+		// previous ''-keyed order instead of placing a new one.
+		return nil, ErrOrderMissingIdem
+	}
+	existing, err := s.findOrderByIdempotencyKey(ctx, req.IdempotencyKey, customerID)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		return existing, nil
+	}
+
 	// Collect unique restaurants from items (or use the route's restaurantID as fallback).
 	// This enables multi-restaurant orders while maintaining backward compatibility.
 	restaurantMap := make(map[string]bool)
@@ -331,6 +376,57 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	orderID := uuid.New().String()
 	ref := "order:" + orderID
 
+	// ── Fail-closed tier / daily-limit gate on the escrow debit ────────────────
+	// The Escrow below DEBITS the customer's wallet, so placing an order is a wallet
+	// debit like any other and owes CLAUDE.md's iron rule #4 a fail-closed tier check:
+	// a Tier 0 customer has no wallet at all, and every capped tier has a daily debit
+	// ceiling that this order must fit under. The check and the debit read the same
+	// rows — tiers sums today's user_wallet DEBIT entries, which is exactly what the
+	// escrow posts — so the cap prices food orders alongside transfers and withdrawals
+	// instead of leaving food as an uncapped side door out of the wallet.
+	//
+	// Enforced on `total` — subtotal + delivery + tip — because that is the whole
+	// amount leaving the customer's wallet. Gating only the food subtotal would let
+	// the delivery fee and tip escape the cap.
+	//
+	// Placement is deliberate:
+	//   - AFTER the free validations (closed restaurant, unknown/unavailable item,
+	//     min-order, tip bound) so each keeps returning its own specific error, and
+	//     so a cart that would be refused anyway never costs a tier lookup;
+	//   - IMMEDIATELY BEFORE settlement.Escrow, with nothing between them, so a
+	//     rejected order leaves behind no ledger entry, no settlement row, and no
+	//     order row. Nothing to reverse, because nothing was written.
+	//
+	// A nil gate is refused rather than treated as "unlimited" — see ErrTierGateUnwired.
+	// This stays unconditional: a deployment with no gate must not place orders at all.
+	if s.tiers == nil {
+		return nil, ErrTierGateUnwired
+	}
+
+	// The limit itself is skipped when this key's escrow ALREADY committed. That
+	// happens when a prior attempt posted the escrow and then died before the order
+	// row landed — an item deleted mid-flight, a commit timeout, a pod restart. The
+	// fast path at the top of this function cannot see that case (there is no order
+	// row), but the wallet debit is already posted, so re-authorising it here would
+	// count it against the customer a second time and refuse the very retry that
+	// heals the stranded escrow. settlement.Escrow is idempotent on this key and will
+	// post no second debit, so there is nothing left for the gate to authorise.
+	//
+	// Without this, gating the escrow would have broken settlement.Escrow's documented
+	// crash-recovery property: the money would sit in escrow with no order attached,
+	// invisible to the reconciler (which joins orders) and with no path to a refund.
+	escrowed, err := s.escrowCommittedFor(ctx, req.IdempotencyKey, customerID)
+	if err != nil {
+		return nil, err
+	}
+	if !escrowed {
+		if err := s.tiers.EnforceWalletDebitLimit(ctx, customerID, total); err != nil {
+			// Wrapped, not replaced: handlers match tiers.ErrWalletDisabled /
+			// tiers.ErrDailyLimitExceeded with errors.Is to pick the HTTP status.
+			return nil, fmt.Errorf("restaurant: order escrow tier gate: %w", err)
+		}
+	}
+
 	// Escrow full amount: 80% restaurant, 10% rider, 10% platform (the tip rides on
 	// top of that split — the percentages price total − tip).
 	sett, err := s.settlement.Escrow(ctx, customerID, ref, req.IdempotencyKey, "food_delivery", total)
@@ -385,11 +481,13 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		return nil, fmt.Errorf("restaurant: insert order: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		// Idempotent replay: an order with this Idempotency-Key already exists (the
-		// escrow debit was already deduped on the same key). Return the canonical
-		// existing order instead of failing on the UNIQUE constraint with a 500.
+		// Idempotent replay that raced the fast path at the top of this function: an
+		// order with this Idempotency-Key was committed by a concurrent request while
+		// we were mid-flight (the escrow debit was deduped on the same key, so no
+		// second debit was posted). Return the canonical existing order instead of
+		// failing on the UNIQUE constraint with a 500.
 		_ = tx.Rollback(ctx)
-		return s.getOrderByIdempotencyKey(ctx, order.IdempotencyKey)
+		return s.getOrderByIdempotencyKey(ctx, order.IdempotencyKey, customerID)
 	}
 
 	// Insert order items and their restaurant mappings (multi-restaurant support).
@@ -435,17 +533,57 @@ func (s *Service) OrderParties(ctx context.Context, orderID string) (customer, o
 
 // orderParties returns the three participant user-ids for an order: the
 // customer, the restaurant owner, and the assigned rider (rider may be empty).
-// getOrderByIdempotencyKey resolves and returns the order previously created with the
-// given Idempotency-Key — the canonical result for an idempotent PlaceOrder replay
-// (returned instead of a UNIQUE-violation 500). Scoped to the order's own customer.
-func (s *Service) getOrderByIdempotencyKey(ctx context.Context, idemKey string) (*Order, error) {
-	var id, customerID string
-	if err := s.db.QueryRow(ctx,
-		`SELECT id, customer_id FROM orders WHERE idempotency_key=$1`, idemKey).
-		Scan(&id, &customerID); err != nil {
-		return nil, fmt.Errorf("restaurant: order not found for idempotency key")
+// findOrderByIdempotencyKey resolves the order this customer previously created under
+// the given Idempotency-Key. It returns (nil, nil) when there is no such order, and a
+// real error ONLY when the lookup itself failed — a transient pool error must not be
+// mistaken for a miss, or the caller would fall through and re-gate an order that
+// already exists.
+//
+// Scoped to the CALLING customer, not to the stored row's customer: Idempotency-Keys
+// are client-chosen, so resolving one to whichever order happens to hold it would let
+// any caller read a stranger's order by replaying their key. A key that exists but
+// belongs to someone else is a miss here.
+func (s *Service) findOrderByIdempotencyKey(ctx context.Context, idemKey, customerID string) (*Order, error) {
+	var id string
+	err := s.db.QueryRow(ctx,
+		`SELECT id FROM orders WHERE idempotency_key=$1 AND customer_id=$2`, idemKey, customerID).
+		Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("restaurant: resolve order for idempotency key: %w", err)
 	}
 	return s.GetOrder(ctx, id, customerID)
+}
+
+// escrowCommittedFor reports whether this customer already has a committed escrow for
+// the given Idempotency-Key. Used to tell "a fresh order" apart from "a retry whose
+// wallet debit already posted", which must not be charged against the tier limit twice.
+func (s *Service) escrowCommittedFor(ctx context.Context, idemKey, customerID string) (bool, error) {
+	var exists bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM settlements WHERE idempotency_key=$1 AND payer_id=$2)`,
+		idemKey, customerID).Scan(&exists); err != nil {
+		// Fail closed: if we cannot tell whether the escrow already posted, do not
+		// guess. Refusing here leaves a retryable error and moves no money.
+		return false, fmt.Errorf("restaurant: resolve existing escrow: %w", err)
+	}
+	return exists, nil
+}
+
+// getOrderByIdempotencyKey is findOrderByIdempotencyKey for the post-INSERT conflict
+// branch, where a miss genuinely IS an error (the UNIQUE violation told us a row exists,
+// so failing to resolve it means the row belongs to another customer).
+func (s *Service) getOrderByIdempotencyKey(ctx context.Context, idemKey, customerID string) (*Order, error) {
+	o, err := s.findOrderByIdempotencyKey(ctx, idemKey, customerID)
+	if err != nil {
+		return nil, err
+	}
+	if o == nil {
+		return nil, fmt.Errorf("restaurant: order not found for idempotency key")
+	}
+	return o, nil
 }
 
 func (s *Service) orderParties(ctx context.Context, orderID string) (customer, owner, rider string, err error) {
