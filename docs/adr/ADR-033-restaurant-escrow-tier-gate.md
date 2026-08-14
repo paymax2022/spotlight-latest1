@@ -180,14 +180,45 @@ Every escrow path in the module now runs through the one gated `PlaceOrder`:
   customer (`seedKYCTier` in `tierlimit_live_db_test.go`). Seeding a customer means
   seeding a tier.
 
-### Rollout risk — this is the part to read before merging
+### Rollout: shipped as-is, KYC completion is the unblocker
 
-**Tier 0 customers cannot order at all until KYC completes.** That is the intended
-behaviour of a disabled wallet, but it is a behaviour change for *every* food order, and
-the tier distribution makes it a large one: roughly 94% of profiles on the local database
-are Tier 0. That local figure is polluted by test seeding and is only a hint — **the
-production split must be measured before this ships**, and a backfill of
-legitimately-verified users is likely needed first.
+**Tier 0 customers cannot order until KYC completes.** That is the intended behaviour of
+a disabled wallet, and it is a behaviour change for *every* food order.
+
+An earlier draft of this ADR called for a backfill of "legitimately-verified users stuck
+at Tier 0" before shipping, and cited ~94% of profiles being Tier 0. **Both were wrong,
+and the correction matters:**
+
+- The 94% figure came from the local database, where 877 of 1,008 profiles are
+  `@seed.test` rows created by the test suites themselves. It measured test pollution,
+  not users.
+- More importantly, **the backfill population is empty.** Of the Tier 0 rows, *zero* have
+  any evidence of verification — no `kyc_status='verified'`, no `kyc_verified_at`, no
+  `bvn_hash`, no `nin_hash`, no `phone_verified`, no `kyc_submitted_at`, and no
+  `kyc_events` audit rows. Their tier is not a stale column that a backfill would
+  correct; it is accurate. They have genuinely never submitted identity documents.
+
+A "backfill" here would therefore mean writing verified-KYC state for people who never
+verified, in order to grant them wallet spend rights — which is precisely what this gate
+exists to prevent, and a KYC-tier compliance problem rather than a data fix. It is not
+on the table.
+
+So the gate ships as-is and **KYC completion is the unblocker**. What makes that
+acceptable rather than merely strict is the client pre-check below: an affected customer
+gets a "Verify my account" prompt with a route into KYC *before* any money moves, instead
+of a failed charge.
+
+Two things remain true and should be checked against production rather than assumed:
+
+- the production tier split is still unmeasured (local is not evidence) —
+  `SELECT kyc_tier, kyc_status, count(*) FROM user_profiles GROUP BY 1,2;`
+- if production *does* hold verified-but-Tier-0 rows, that is a genuine backfill, and it
+  must be scoped strictly to rows carrying verification evidence and audited into
+  `kyc_events`.
+
+If the business instead wants Tier 0 to transact at all, the lever is the tier policy in
+`finance/tiers` — a uniform, reviewable, reversible limit change — never per-user tier
+data.
 
 **The card rail charged before it learned the order would be refused — now fixed.** In
 the mobile checkout (`mobile-app/reactnative/src/features/payments/usePurchasePayment.ts`),

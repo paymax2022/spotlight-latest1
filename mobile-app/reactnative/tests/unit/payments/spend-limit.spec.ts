@@ -1,12 +1,12 @@
 // Pure-logic tests for the KYC spend pre-check that runs before either payment rail.
-//   node --experimental-strip-types --test src/features/payments/__tests__/spendLimit.test.ts
+//   npm run test:payments
 //
 // This decision is what stops the card rail from charging Paystack for a spend the
 // server's fail-closed tier gate will refuse — so the cases below mirror
 // backend/internal/finance/tiers EnforceWalletDebitLimit exactly.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateSpendLimit, type SpendLimit } from '../paymentFlow.ts';
+import { evaluateSpendLimit, type SpendLimit } from '@/features/payments/paymentFlow';
 
 // Tier 1: ₦50,000/day (5,000,000 kobo), ₦20,000 already spent → ₦30,000 left.
 const tier1: SpendLimit = {

@@ -74,7 +74,7 @@ export default function PaymentSheet({ controller }: { controller: PurchaseContr
                   style={[styles.actionBtn, styles.retryBtn]}
                   onPress={() => { close(); router.push('/kyc'); }}
                 >
-                  <Text style={styles.retryText}>
+                  <Text style={styles.retryText} numberOfLines={1}>
                     {spendBlock.reason === 'wallet_disabled' ? 'Verify my account' : 'Raise my limit'}
                   </Text>
                 </Pressable>
@@ -201,7 +201,10 @@ const styles = StyleSheet.create({
   optSub: { fontSize: 13, color: Colors.onSurfaceVariant, marginTop: 2 },
   busy: { alignItems: 'center', gap: 10, paddingVertical: 28 },
   busyText: { fontSize: 15, fontWeight: '600', color: Colors.onSurface },
-  actionRow: { flexDirection: 'row', gap: 12, marginTop: 8 },
+  // alignSelf stretch: both parents (busy / blockWrap) centre their children, which
+  // otherwise shrinks this row to its intrinsic width and leaves the two flex:1
+  // buttons too narrow for their labels.
+  actionRow: { flexDirection: 'row', gap: 12, marginTop: 8, alignSelf: 'stretch' },
   actionBtn: { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
   retryBtn: { backgroundColor: Colors.primary },
   retryText: { fontSize: 15, fontWeight: '700', color: Colors.surfaceContainerLowest },
