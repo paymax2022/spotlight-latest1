@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: Connect CI
 
 # Formal verification gate for the Paymax Connect (dating/networking) module.
@@ -6,24 +12,7 @@ name: Connect CI
 # Blocks merges on red. See docs/prd/dating/PHASE-0-PLAN.md §P0-G.
 
 on:
-  push:
-    paths:
-      - 'backend/internal/connect/**'
-      - 'backend/internal/app/connect_routes.go'
-      - 'backend/internal/app/connect_money_routes.go'
-      - 'backend/internal/app/connect_live_routes.go'
-      - 'backend/internal/app/router.go'
-      - 'backend/internal/config/config.go'
-      - 'supabase/migrations/*connect*.sql'
-      - 'frontend-admin/app/admin/connect/**'
-      - 'frontend-admin/src/services/connectAdminService.ts'
-      - 'frontend-admin/src/services/connectAdminOpsService.ts'
-      - 'frontend-admin/src/types/connectAdmin.ts'
-      - 'mobile-app/reactnative/src/features/connect/**'
-      - 'mobile-app/reactnative/app/connect/**'
-      - 'mobile-app/reactnative/tsconfig.connectcheck.json'
-      - '.github/workflows/connect-ci.yml'
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 jobs:

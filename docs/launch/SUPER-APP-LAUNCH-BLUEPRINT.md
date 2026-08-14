@@ -124,7 +124,7 @@ install → lint → typecheck → unit tests (regression + money invariants)
 - **`ci.yml`** stays the always-on PR gate. **Add a security lane** (`security.yml`): CodeQL (Go + JS/TS), `govulncheck`, `gitleaks`, Trivy (image + filesystem), `npm audit`/`osv-scanner`. Block merge on high/critical.
 - **Build once**: `deploy.yml` builds the backend image, tags it `:{sha}`, pushes to Artifact Registry, and the **same digest** is deployed to staging then prod.
 - **Web**: the Railway jobs in `ci.yml` deploy both Next apps per environment (`develop` → Development, `staging` → Staging, `prod` → Production), gated on `RAILWAY_DEPLOY_ENABLED`. *(The original Vercel path, `deploy-web.yml`, was deleted 2026-08-13 — see the amendment in ADR-027.)*
-- Keep pipelines fast: dependency caching, path filters (per-module lanes already do this), parallel jobs, `concurrency` cancellation (already set).
+- Keep pipelines fast: dependency caching, parallel jobs, `concurrency` cancellation (already set), and **one pipeline per push** — `ci.yml` calls the 14 module lanes as reusable workflows, gated on which modules changed (`.github/module-filters.json` → `scripts/ci/changed-modules.py`), instead of each lane carrying its own trigger and starting a rival run.
 
 ### Rollback (must exist before first deploy)
 

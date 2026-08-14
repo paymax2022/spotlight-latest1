@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: Top5 CI
 
 # Verification gate for the Top-5 expansion (Savings, Social/Escrow, Events/
@@ -7,135 +13,7 @@ name: Top5 CI
 # vet/test, mobile + admin + web typecheck, additive-only migration guard.
 
 on:
-  push:
-    paths:
-      # NOTE: backend/internal/app/finance_routes.go is deliberately NOT listed.
-      # It is the shared finance router that EVERY module registers into, so any
-      # module's change touches it and used to wake all nine module CIs at once.
-      # Compile/vet/full `go test ./...` coverage for such a change still runs via
-      # fx-ci (paths: backend/**) and connect-ci (bare pull_request), and ci.yml
-      # builds+vets on every PR — so nothing here is the only thing catching it.
-      # NOTE: no brace expansion. GitHub path filters support * ** ? + ! and
-      # character ranges only — '{a,b}/**' matches NOTHING. Proven by 7c0c7886,
-      # which touched only backend/internal/savings/** and did not start this
-      # workflow on push. List every directory explicitly.
-      - 'backend/internal/scheduler/**'
-      - 'backend/internal/escrow/**'
-      - 'backend/internal/cashtag/**'
-      - 'backend/internal/savings/**'
-      - 'backend/internal/social/**'
-      - 'backend/internal/credential/**'
-      - 'backend/internal/points/**'
-      - 'backend/internal/top5events/**'
-      - 'backend/internal/loyalty/**'
-      - 'backend/internal/creators/**'
-      - 'backend/internal/p2pmarket/**'
-      - 'backend/internal/spray/**'
-      - 'backend/internal/app/top5_*.go'
-      - 'backend/internal/config/config.go'
-      - 'supabase/migrations/*top5*.sql'
-      - 'supabase/migrations/*_savings.sql'
-      - 'supabase/migrations/*_social.sql'
-      - 'supabase/migrations/*_creators.sql'
-      - 'supabase/migrations/*loyalty*.sql'
-      - 'frontend-admin/app/admin/savings/**'
-      - 'frontend-admin/app/admin/social/**'
-      - 'frontend-admin/app/admin/events/**'
-      - 'frontend-admin/app/admin/loyalty/**'
-      - 'frontend-admin/app/admin/creators/**'
-      - 'frontend-admin/app/admin/social-escrow/**'
-      - 'frontend-admin/app/admin/loyalty-black/**'
-      - 'frontend-admin/src/services/savingsAdminService.ts'
-      - 'frontend-admin/src/services/socialAdminService.ts'
-      - 'frontend-admin/src/services/eventsAdminService.ts'
-      - 'frontend-admin/src/services/loyaltyAdminService.ts'
-      - 'frontend-admin/src/services/creatorsAdminService.ts'
-      - 'frontend-admin/src/services/escrowAdminService.ts'
-      - 'frontend-admin/src/services/blackAdminService.ts'
-      - 'frontend-admin/src/components/layouts/AdminSidebar.tsx'
-      - 'frontend-web/app/api/v1/savings/**'
-      - 'frontend-web/app/api/v1/social/**'
-      - 'frontend-web/app/api/v1/events/**'
-      - 'frontend-web/app/api/v1/loyalty/**'
-      - 'frontend-web/app/api/v1/creators/**'
-      - 'frontend-web/app/api/v1/p2p/**'
-      - 'frontend-web/app/api/v1/spray/**'
-      - 'frontend-web/src/lib/feature-flags.ts'
-      - 'mobile-app/reactnative/app/savings/**'
-      - 'mobile-app/reactnative/app/social/**'
-      - 'mobile-app/reactnative/app/events/**'
-      - 'mobile-app/reactnative/app/loyalty/**'
-      - 'mobile-app/reactnative/app/creators/**'
-      - 'mobile-app/reactnative/src/features/savings/**'
-      - 'mobile-app/reactnative/src/features/social/**'
-      - 'mobile-app/reactnative/src/features/events/**'
-      - 'mobile-app/reactnative/src/features/loyalty/**'
-      - 'mobile-app/reactnative/src/features/creators/**'
-      - 'mobile-app/reactnative/src/constants/modules.ts'
-      - '.github/workflows/top5-ci.yml'
-  pull_request:
-    # Mirrors the push filter: this module's CI no longer runs on PRs that
-    # do not touch it. Repo-wide coverage still runs on every PR (ci.yml,
-    # connect-ci full go test ./..., integration-verify, security).
-    paths:
-      # NOTE: no brace expansion. GitHub path filters support * ** ? + ! and
-      # character ranges only — '{a,b}/**' matches NOTHING. Proven by 7c0c7886,
-      # which touched only backend/internal/savings/** and did not start this
-      # workflow on push. List every directory explicitly.
-      - 'backend/internal/scheduler/**'
-      - 'backend/internal/escrow/**'
-      - 'backend/internal/cashtag/**'
-      - 'backend/internal/savings/**'
-      - 'backend/internal/social/**'
-      - 'backend/internal/credential/**'
-      - 'backend/internal/points/**'
-      - 'backend/internal/top5events/**'
-      - 'backend/internal/loyalty/**'
-      - 'backend/internal/creators/**'
-      - 'backend/internal/p2pmarket/**'
-      - 'backend/internal/spray/**'
-      - 'backend/internal/app/top5_*.go'
-      - 'backend/internal/config/config.go'
-      - 'supabase/migrations/*top5*.sql'
-      - 'supabase/migrations/*_savings.sql'
-      - 'supabase/migrations/*_social.sql'
-      - 'supabase/migrations/*_creators.sql'
-      - 'supabase/migrations/*loyalty*.sql'
-      - 'frontend-admin/app/admin/savings/**'
-      - 'frontend-admin/app/admin/social/**'
-      - 'frontend-admin/app/admin/events/**'
-      - 'frontend-admin/app/admin/loyalty/**'
-      - 'frontend-admin/app/admin/creators/**'
-      - 'frontend-admin/app/admin/social-escrow/**'
-      - 'frontend-admin/app/admin/loyalty-black/**'
-      - 'frontend-admin/src/services/savingsAdminService.ts'
-      - 'frontend-admin/src/services/socialAdminService.ts'
-      - 'frontend-admin/src/services/eventsAdminService.ts'
-      - 'frontend-admin/src/services/loyaltyAdminService.ts'
-      - 'frontend-admin/src/services/creatorsAdminService.ts'
-      - 'frontend-admin/src/services/escrowAdminService.ts'
-      - 'frontend-admin/src/services/blackAdminService.ts'
-      - 'frontend-admin/src/components/layouts/AdminSidebar.tsx'
-      - 'frontend-web/app/api/v1/savings/**'
-      - 'frontend-web/app/api/v1/social/**'
-      - 'frontend-web/app/api/v1/events/**'
-      - 'frontend-web/app/api/v1/loyalty/**'
-      - 'frontend-web/app/api/v1/creators/**'
-      - 'frontend-web/app/api/v1/p2p/**'
-      - 'frontend-web/app/api/v1/spray/**'
-      - 'frontend-web/src/lib/feature-flags.ts'
-      - 'mobile-app/reactnative/app/savings/**'
-      - 'mobile-app/reactnative/app/social/**'
-      - 'mobile-app/reactnative/app/events/**'
-      - 'mobile-app/reactnative/app/loyalty/**'
-      - 'mobile-app/reactnative/app/creators/**'
-      - 'mobile-app/reactnative/src/features/savings/**'
-      - 'mobile-app/reactnative/src/features/social/**'
-      - 'mobile-app/reactnative/src/features/events/**'
-      - 'mobile-app/reactnative/src/features/loyalty/**'
-      - 'mobile-app/reactnative/src/features/creators/**'
-      - 'mobile-app/reactnative/src/constants/modules.ts'
-      - '.github/workflows/top5-ci.yml'
+  workflow_call:
   workflow_dispatch:
 
 jobs:

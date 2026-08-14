@@ -79,3 +79,7 @@ launch/master.env
 # Previously committed (54MB + 17MB) and a major cause of repo bloat.
 /backend/server
 /backend/marketplace-cron
+
+# Python bytecode (scripts/ci/*.py are run directly by CI)
+__pycache__/
+*.pyc

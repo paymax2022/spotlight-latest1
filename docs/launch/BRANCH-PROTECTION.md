@@ -90,6 +90,36 @@ Deploy workflows **skip** (grey, not red) until you opt in with a repository/Env
 `security.yml` scans run **advisory** (report, don't block) during launch — flip the
 `continue-on-error` flags to blocking once the dependency/secret backlog is clean.
 
+## One pipeline per push
+
+`ci.yml` is the only workflow a push or PR starts. The 14 per-module lanes
+(`doctor-ci.yml`, `top5-ci.yml`, …) have no `push:`/`pull_request:` trigger of their
+own — they are `workflow_call` reusables, invoked by `ci.yml` only when the change
+touches them, so their jobs report inside that single run.
+
+Routing lives in **one** place: `.github/module-filters.json`, read by
+`scripts/ci/changed-modules.py`. Previously each lane repeated its path list under
+both triggers — two hand-synced copies per lane, with nothing detecting drift.
+
+Two properties worth keeping when editing this:
+
+- **Fail-open.** If the changed-file set cannot be established (shallow clone,
+  force-push, new branch, `workflow_dispatch`), *every* lane is selected. A gate
+  that silently skips itself is worse than one that runs too much.
+- **Fail-closed on bad config.** A malformed filter file aborts the run rather than
+  routing to nothing. Brace patterns are rejected outright — GitHub does not expand
+  them, so `{a,b}/**` silently matches nothing (see PR #115).
+
+`scripts/ci/test-changed-modules.py` runs in the hygiene job and pins the glob
+semantics, the fail-open path, that every filter set has a caller job, and that
+`ci.yml` stays within GitHub's limit of **20 unique reusable workflows per caller**
+(it currently uses 19 — one slot left, so a 15th lane needs a rethink, not a
+one-line addition).
+
+> Adding a module lane means: add its paths to `module-filters.json`, add a
+> `changes` output, and add a gated `uses:` job in `ci.yml`. The test fails if you
+> do only some of those.
+
 ## Keeping workflows startup-clean
 
 `ci.yml` runs an **actionlint** job (`workflows (actionlint)`) over `.github/workflows/**`.

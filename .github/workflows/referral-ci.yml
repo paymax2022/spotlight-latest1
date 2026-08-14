@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: Referral CI
 
 # Formal verification gate for the Paymax/Spotlight Referral Earning System
@@ -8,57 +14,7 @@ name: Referral CI
 # additive-only migration guard. Blocks merges on red.
 
 on:
-  push:
-    paths:
-      # NOTE: backend/internal/app/finance_routes.go is deliberately NOT listed.
-      # It is the shared finance router that EVERY module registers into, so any
-      # module's change touches it and used to wake all nine module CIs at once.
-      # Compile/vet/full `go test ./...` coverage for such a change still runs via
-      # fx-ci (paths: backend/**) and connect-ci (bare pull_request), and ci.yml
-      # builds+vets on every PR — so nothing here is the only thing catching it.
-      - 'backend/internal/referral/**'
-      - 'backend/internal/finance/referrals/**'
-      - 'backend/internal/app/referral_routes.go'
-      - 'backend/internal/app/referral_econ_routes.go'
-      - 'backend/internal/app/referral_trust_routes.go'
-      - 'backend/internal/config/config.go'
-      - 'supabase/migrations/*referral*.sql'
-      - 'frontend-admin/app/admin/referral/**'
-      - 'frontend-admin/src/services/referralAdminService.ts'
-      - 'frontend-admin/src/services/referralAdminOpsService.ts'
-      - 'frontend-admin/src/types/referralAdmin*.ts'
-      - 'frontend-admin/src/components/layouts/AdminSidebar.tsx'
-      - 'frontend-web/app/api/v1/referral/**'
-      - 'frontend-web/app/api/auth/register/route.ts'
-      - 'frontend-web/src/server/referrals/**'
-      - 'mobile-app/reactnative/app/referral/**'
-      - 'mobile-app/reactnative/src/features/referral/**'
-      - 'mobile-app/reactnative/src/constants/modules.ts'
-      - '.github/workflows/referral-ci.yml'
-  pull_request:
-    # Mirrors the push filter: this module's CI no longer runs on PRs that
-    # do not touch it. Repo-wide coverage still runs on every PR (ci.yml,
-    # connect-ci full go test ./..., integration-verify, security).
-    paths:
-      - 'backend/internal/referral/**'
-      - 'backend/internal/finance/referrals/**'
-      - 'backend/internal/app/referral_routes.go'
-      - 'backend/internal/app/referral_econ_routes.go'
-      - 'backend/internal/app/referral_trust_routes.go'
-      - 'backend/internal/config/config.go'
-      - 'supabase/migrations/*referral*.sql'
-      - 'frontend-admin/app/admin/referral/**'
-      - 'frontend-admin/src/services/referralAdminService.ts'
-      - 'frontend-admin/src/services/referralAdminOpsService.ts'
-      - 'frontend-admin/src/types/referralAdmin*.ts'
-      - 'frontend-admin/src/components/layouts/AdminSidebar.tsx'
-      - 'frontend-web/app/api/v1/referral/**'
-      - 'frontend-web/app/api/auth/register/route.ts'
-      - 'frontend-web/src/server/referrals/**'
-      - 'mobile-app/reactnative/app/referral/**'
-      - 'mobile-app/reactnative/src/features/referral/**'
-      - 'mobile-app/reactnative/src/constants/modules.ts'
-      - '.github/workflows/referral-ci.yml'
+  workflow_call:
   workflow_dispatch:
 
 jobs:

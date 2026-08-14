@@ -1,10 +1,16 @@
 name: CI — CLAUDE.md gates
 # Deployment-trigger commit: this workflow change intentionally starts a fresh Development CI run.
 
-# Single PR gate that runs every quality gate required by CLAUDE.md.
-# Per-module workflows (doctor-ci.yml, connect-ci.yml, …) remain as scoped,
-# path-filtered fast lanes; this workflow is the repo-wide always-on gate that
-# blocks merges to any branch.
+# The single pipeline. One push or PR starts THIS workflow and nothing else:
+# the per-module lanes (doctor-ci.yml, connect-ci.yml, …) no longer carry their
+# own push/pull_request triggers. They are reusable workflows called from the
+# jobs below, gated on which modules the change actually touched, so their jobs
+# report inside this one run instead of queueing fifteen rival pipelines.
+#
+# Module paths live in ONE place — .github/module-filters.json — read by
+# scripts/ci/changed-modules.py. Before, each lane repeated its path list under
+# both `push:` and `pull_request:`, two hand-synced copies per lane with nothing
+# checking them for drift.
 #
 # Gates enforced (see CLAUDE.md "Commands you should know"):
 #   - frontend-web: golden-path regression (test:regression), money invariants
@@ -97,6 +103,140 @@ jobs:
       # live-DB suites insert fixtures and move money.
       - name: Check live-DB tests gate on TEST_DATABASE_URL only
         run: bash scripts/ci/check-live-db-gate.sh
+      # Pins the module router's glob semantics, its fail-open behaviour, and its
+      # rejection of brace patterns. Sub-second, so it shares this runner.
+      - name: Test the module router
+        run: python3 scripts/ci/test-changed-modules.py
+
+  # Which module lanes does this change need? One shared filter file
+  # (.github/module-filters.json) drives the gating below, so a module's paths
+  # are written once instead of once per trigger per workflow.
+  # Fail-open: if the diff cannot be established, every lane is selected.
+  changes:
+    name: which modules changed
+    runs-on: ubuntu-latest
+    outputs:
+      association: ${{ steps.route.outputs.association }}
+      connect: ${{ steps.route.outputs.connect }}
+      crowdfunding: ${{ steps.route.outputs.crowdfunding }}
+      crypto_backend: ${{ steps.route.outputs.crypto_backend }}
+      doctor: ${{ steps.route.outputs.doctor }}
+      fx: ${{ steps.route.outputs.fx }}
+      health: ${{ steps.route.outputs.health }}
+      insurance: ${{ steps.route.outputs.insurance }}
+      maps: ${{ steps.route.outputs.maps }}
+      realtor: ${{ steps.route.outputs.realtor }}
+      referral: ${{ steps.route.outputs.referral }}
+      stays: ${{ steps.route.outputs.stays }}
+      top5: ${{ steps.route.outputs.top5 }}
+      visitor_election: ${{ steps.route.outputs.visitor_election }}
+    steps:
+      # Full history: the PR diff is taken against the merge base, and a push
+      # diff needs the previous tip, which a shallow clone would not contain.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Route
+        id: route
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          python3 scripts/ci/changed-modules.py \
+            --event "$EVENT" \
+            --before "$BEFORE" \
+            --sha "$GITHUB_SHA" \
+            --base "$BASE"
+
+  # The module lanes, called as reusable workflows so their jobs report inside
+  # THIS run. One push = one pipeline, instead of fourteen queued in parallel.
+  # NOTE: GitHub allows at most 20 unique reusable workflows per caller. This
+  # file uses 19 (5 shared + 14 module) — ONE slot left. The router test asserts
+  # the count so a 21st addition fails loudly here instead of breaking the run.
+  association:
+    name: Association CI
+    needs: changes
+    if: needs.changes.outputs.association == 'true'
+    uses: ./.github/workflows/association-ci.yml
+
+  connect:
+    name: Connect CI
+    needs: changes
+    if: needs.changes.outputs.connect == 'true'
+    uses: ./.github/workflows/connect-ci.yml
+
+  crowdfunding:
+    name: Crowdfunding CI
+    needs: changes
+    if: needs.changes.outputs.crowdfunding == 'true'
+    uses: ./.github/workflows/crowdfunding-ci.yml
+
+  crypto-backend:
+    name: Crypto Backend CI
+    needs: changes
+    if: needs.changes.outputs.crypto_backend == 'true'
+    uses: ./.github/workflows/crypto-backend-ci.yml
+
+  doctor:
+    name: Doctor CI
+    needs: changes
+    if: needs.changes.outputs.doctor == 'true'
+    uses: ./.github/workflows/doctor-ci.yml
+
+  fx:
+    name: FX CI
+    needs: changes
+    if: needs.changes.outputs.fx == 'true'
+    uses: ./.github/workflows/fx-ci.yml
+
+  health:
+    name: Health CI
+    needs: changes
+    if: needs.changes.outputs.health == 'true'
+    uses: ./.github/workflows/health-ci.yml
+
+  insurance:
+    name: Insurance CI
+    needs: changes
+    if: needs.changes.outputs.insurance == 'true'
+    uses: ./.github/workflows/insurance-ci.yml
+
+  maps:
+    name: Maps CI
+    needs: changes
+    if: needs.changes.outputs.maps == 'true'
+    uses: ./.github/workflows/maps-ci.yml
+
+  realtor:
+    name: Realtor CI
+    needs: changes
+    if: needs.changes.outputs.realtor == 'true'
+    uses: ./.github/workflows/realtor-ci.yml
+
+  referral:
+    name: Referral CI
+    needs: changes
+    if: needs.changes.outputs.referral == 'true'
+    uses: ./.github/workflows/referral-ci.yml
+
+  stays:
+    name: Stays CI
+    needs: changes
+    if: needs.changes.outputs.stays == 'true'
+    uses: ./.github/workflows/stays-ci.yml
+
+  top5:
+    name: Top5 CI
+    needs: changes
+    if: needs.changes.outputs.top5 == 'true'
+    uses: ./.github/workflows/top5-ci.yml
+
+  visitor-election:
+    name: Visitor & Election CI
+    needs: changes
+    if: needs.changes.outputs.visitor_election == 'true'
+    uses: ./.github/workflows/visitor-election-ci.yml
 
   # Catches workflow-level startup failures — a run that dies before any job
   # exists, so it reports no annotation and no check-run and looks like an

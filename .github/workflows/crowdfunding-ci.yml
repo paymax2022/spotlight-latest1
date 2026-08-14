@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: Crowdfunding CI
 
 # Runs the environment-blocked verification for the crowdfunding module on a
@@ -8,39 +14,7 @@ name: Crowdfunding CI
 # typecheck, and an additive-only migration guard.
 
 on:
-  push:
-    paths:
-      # NOTE: backend/internal/app/finance_routes.go is deliberately NOT listed.
-      # It is the shared finance router that EVERY module registers into, so any
-      # module's change touches it and used to wake all nine module CIs at once.
-      # Compile/vet/full `go test ./...` coverage for such a change still runs via
-      # fx-ci (paths: backend/**) and connect-ci (bare pull_request), and ci.yml
-      # builds+vets on every PR — so nothing here is the only thing catching it.
-      - 'backend/internal/crowdfunding/**'
-      - 'supabase/migrations/*crowdfunding*.sql'
-      - 'frontend-web/app/api/v1/crowdfunding/**'
-      - 'mobile-app/reactnative/src/features/crowdfunding/**'
-      - 'mobile-app/reactnative/app/crowdfunding/**'
-      - 'mobile-app/reactnative/tsconfig.crowdfunding.json'
-      - 'frontend-admin/src/services/crowdfundingAdminService.ts'
-      - 'frontend-admin/src/types/crowdfunding.ts'
-      - 'frontend-admin/app/admin/crowdfunding/**'
-      - '.github/workflows/crowdfunding-ci.yml'
-  pull_request:
-    # Mirrors the push filter: this module's CI no longer runs on PRs that
-    # do not touch it. Repo-wide coverage still runs on every PR (ci.yml,
-    # connect-ci full go test ./..., integration-verify, security).
-    paths:
-      - 'backend/internal/crowdfunding/**'
-      - 'supabase/migrations/*crowdfunding*.sql'
-      - 'frontend-web/app/api/v1/crowdfunding/**'
-      - 'mobile-app/reactnative/src/features/crowdfunding/**'
-      - 'mobile-app/reactnative/app/crowdfunding/**'
-      - 'mobile-app/reactnative/tsconfig.crowdfunding.json'
-      - 'frontend-admin/src/services/crowdfundingAdminService.ts'
-      - 'frontend-admin/src/types/crowdfunding.ts'
-      - 'frontend-admin/app/admin/crowdfunding/**'
-      - '.github/workflows/crowdfunding-ci.yml'
+  workflow_call:
   workflow_dispatch:
 
 jobs:
