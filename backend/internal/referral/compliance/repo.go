@@ -98,7 +98,7 @@ func (r *Repository) ListDisclosures(ctx context.Context, slug string) ([]Disclo
 		return nil, fmt.Errorf("compliance: list disclosures: %w", err)
 	}
 	defer rows.Close()
-	var out []Disclosure
+	out := []Disclosure{}
 	for rows.Next() {
 		d, err := scanDisclosure(rows)
 		if err != nil {
@@ -178,7 +178,7 @@ func (r *Repository) ConsentsByUser(ctx context.Context, userID string) ([]Conse
 		return nil, fmt.Errorf("compliance: consents by user: %w", err)
 	}
 	defer rows.Close()
-	var out []Consent
+	out := []Consent{}
 	for rows.Next() {
 		c, err := scanConsent(rows)
 		if err != nil {
@@ -234,7 +234,7 @@ func (r *Repository) ListAML(ctx context.Context, status string) ([]AMLFlag, err
 		return nil, fmt.Errorf("compliance: list aml: %w", err)
 	}
 	defer rows.Close()
-	var out []AMLFlag
+	out := []AMLFlag{}
 	for rows.Next() {
 		f, err := scanAML(rows)
 		if err != nil {
@@ -338,7 +338,7 @@ func (r *Repository) ClaimReview(ctx context.Context, status string) ([]ClaimRev
 		return nil, fmt.Errorf("compliance: claim review: %w", err)
 	}
 	defer rows.Close()
-	var out []ClaimReviewItem
+	out := []ClaimReviewItem{}
 	for rows.Next() {
 		var (
 			it           ClaimReviewItem
@@ -369,7 +369,7 @@ func (r *Repository) RegulatoryExport(ctx context.Context, since, until string) 
 		return nil, fmt.Errorf("compliance: regulatory export: %w", err)
 	}
 	defer rows.Close()
-	var out []RegulatoryExportRow
+	out := []RegulatoryExportRow{}
 	for rows.Next() {
 		var (
 			row        RegulatoryExportRow

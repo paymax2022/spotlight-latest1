@@ -54,7 +54,7 @@ func (r *Repository) ListRules(ctx context.Context) ([]Rule, error) {
 		return nil, fmt.Errorf("risk: list rules: %w", err)
 	}
 	defer rows.Close()
-	var out []Rule
+	out := []Rule{}
 	for rows.Next() {
 		rule, err := scanRule(rows)
 		if err != nil {
@@ -72,7 +72,7 @@ func (r *Repository) EnabledRules(ctx context.Context) ([]Rule, error) {
 		return nil, fmt.Errorf("risk: enabled rules: %w", err)
 	}
 	defer rows.Close()
-	var out []Rule
+	out := []Rule{}
 	for rows.Next() {
 		rule, err := scanRule(rows)
 		if err != nil {
@@ -197,7 +197,7 @@ func (r *Repository) ListAlerts(ctx context.Context, status string, limit int) (
 		return nil, fmt.Errorf("risk: list alerts: %w", err)
 	}
 	defer rows.Close()
-	var out []Alert
+	out := []Alert{}
 	for rows.Next() {
 		a, err := scanAlert(rows)
 		if err != nil {
@@ -216,7 +216,7 @@ func (r *Repository) AlertsBySubject(ctx context.Context, subjectID string) ([]A
 		return nil, fmt.Errorf("risk: alerts by subject: %w", err)
 	}
 	defer rows.Close()
-	var out []Alert
+	out := []Alert{}
 	for rows.Next() {
 		a, err := scanAlert(rows)
 		if err != nil {
@@ -292,7 +292,7 @@ func (r *Repository) ListCases(ctx context.Context, status string, limit int) ([
 		return nil, fmt.Errorf("risk: list cases: %w", err)
 	}
 	defer rows.Close()
-	var out []Case
+	out := []Case{}
 	for rows.Next() {
 		c, err := scanCase(rows)
 		if err != nil {
@@ -344,7 +344,7 @@ func (r *Repository) CaseAlerts(ctx context.Context, caseID string) ([]Alert, er
 		return nil, fmt.Errorf("risk: case alerts: %w", err)
 	}
 	defer rows.Close()
-	var out []Alert
+	out := []Alert{}
 	for rows.Next() {
 		a, err := scanAlert(rows)
 		if err != nil {
@@ -415,7 +415,7 @@ func (r *Repository) ListBlocklist(ctx context.Context, listType string) ([]Bloc
 		return nil, fmt.Errorf("risk: list blocklist: %w", err)
 	}
 	defer rows.Close()
-	var out []BlocklistEntry
+	out := []BlocklistEntry{}
 	for rows.Next() {
 		b, err := scanBlocklist(rows)
 		if err != nil {
@@ -484,7 +484,7 @@ func (r *Repository) ListReviewQueue(ctx context.Context, status string) ([]Revi
 		return nil, fmt.Errorf("risk: list review queue: %w", err)
 	}
 	defer rows.Close()
-	var out []ReviewItem
+	out := []ReviewItem{}
 	for rows.Next() {
 		it, err := scanReview(rows)
 		if err != nil {

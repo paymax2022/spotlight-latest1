@@ -103,7 +103,7 @@ func (r *Repository) ListAmbassadors(ctx context.Context, status string) ([]Amba
 		return nil, fmt.Errorf("network: list ambassadors: %w", err)
 	}
 	defer rows.Close()
-	var out []Ambassador
+	out := []Ambassador{}
 	for rows.Next() {
 		a, err := scanAmbassador(rows)
 		if err != nil {
@@ -124,7 +124,7 @@ func (r *Repository) NetworksByLead(ctx context.Context, leadUserID string) ([]N
 		return nil, fmt.Errorf("network: networks by lead: %w", err)
 	}
 	defer rows.Close()
-	var out []Network
+	out := []Network{}
 	for rows.Next() {
 		var n Network
 		if err := rows.Scan(&n.ID, &n.LeadUserID, &n.Name, &n.NetworkType, &n.Status, &n.CreatedAt); err != nil {
@@ -158,7 +158,7 @@ func (r *Repository) ListMembers(ctx context.Context, networkID string) ([]Membe
 		return nil, fmt.Errorf("network: list members: %w", err)
 	}
 	defer rows.Close()
-	var out []Member
+	out := []Member{}
 	for rows.Next() {
 		var m Member
 		if err := rows.Scan(&m.ID, &m.NetworkID, &m.MemberUserID, &m.IsHouseAttributed, &m.Status, &m.JoinedAt); err != nil {
@@ -291,7 +291,7 @@ func (r *Repository) OverridesByBeneficiary(ctx context.Context, beneficiaryID s
 		return nil, fmt.Errorf("network: overrides by beneficiary: %w", err)
 	}
 	defer rows.Close()
-	var out []Override
+	out := []Override{}
 	for rows.Next() {
 		var (
 			o              Override
@@ -344,7 +344,7 @@ func (r *Repository) ListPolicies(ctx context.Context) ([]OverridePolicy, error)
 		return nil, fmt.Errorf("network: list policies: %w", err)
 	}
 	defer rows.Close()
-	var out []OverridePolicy
+	out := []OverridePolicy{}
 	for rows.Next() {
 		var p OverridePolicy
 		if err := rows.Scan(&p.ID, &p.Tier, &p.OverrideBps, &p.PerMemberCapKobo, &p.MonthlyCapKobo, &p.IsActive); err != nil {
