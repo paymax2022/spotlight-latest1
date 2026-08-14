@@ -1502,6 +1502,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			time.Duration(envInt("FOOD_RECONCILE_INTERVAL_MINUTES", 5))*time.Minute,
 			time.Duration(envInt("FOOD_SETTLE_GRACE_MINUTES", 10))*time.Minute,
 		)
+
+		// Scheduled-order activation. A scheduled order is escrowed at placement and
+		// then waits `pending` with scheduled_for set — nothing in the live flow touches
+		// it, so this sweep is the ONLY thing that can release it into the kitchen queue
+		// at its slot or cancel-and-refund it when the restaurant is closed. Without it
+		// a scheduled order's escrow has no automated path out. Idempotent +
+		// multi-instance safe (guarded UPDATE; the refund is guarded on the settlement
+		// status). Cadence 1m by default so a slot is never released long after its time.
+		restaurant.StartScheduledOrderSweeper(
+			ctx, restaurantSvc,
+			time.Duration(envInt("FOOD_SCHEDULED_SWEEP_INTERVAL_MINUTES", 1))*time.Minute,
+		)
 	}
 
 	// --- Nutrition Resolution Engine (NRE) routes ---

@@ -142,6 +142,23 @@ components:
         unit_price_kobo: { $ref: '#/components/schemas/Money' }
         quantity: { type: integer }
         notes: { type: string }
+        modifiers_kobo:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          description: >-
+            Per-unit surcharge from the chosen modifiers. The line's subtotal is
+            (unit_price_kobo + modifiers_kobo) × quantity.
+        modifiers:
+          type: array
+          description: >-
+            Immutable snapshot of the options chosen on this line, with the name and
+            price delta as they were at order time — a later menu edit never rewrites
+            what the customer was charged.
+          items:
+            type: object
+            properties:
+              modifier_id: { type: string }
+              name: { type: string }
+              price_delta_kobo: { $ref: '#/components/schemas/Money' }
     Order:
       type: object
       properties:
@@ -156,13 +173,59 @@ components:
           items: { $ref: '#/components/schemas/OrderItem' }
         subtotal_kobo: { $ref: '#/components/schemas/Money' }
         delivery_fee_kobo: { $ref: '#/components/schemas/Money' }
-        service_fee_kobo: { $ref: '#/components/schemas/Money' }
+        surge_kobo:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          description: >-
+            Peak dynamic pricing added to the item subtotal from the restaurant's
+            surge_bp at order time. It sits INSIDE the settlement gross, so it splits
+            80/10/10 like any other food revenue.
+        service_fee_kobo:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          description: >-
+            Platform service fee from the restaurant's service_fee_bp at order time,
+            charged on the surged item subtotal. Escrowed on top of the gross and paid
+            100% to the platform at settlement (the mirror of a rider tip), so neither
+            the restaurant nor the rider takes a cut of it. Both knobs are snapshotted
+            at placement — a later config change never reprices an existing order.
         tip_kobo:
           allOf: [{ $ref: '#/components/schemas/Money' }]
           description: >-
             Rider tip, escrowed with the order total and paid 100% to the rider at
             settlement (the 80/10/10 percentages price total − tip).
+        discount_kobo:
+          allOf: [{ $ref: '#/components/schemas/Money' }]
+          description: >-
+            Promo discount applied at placement and already deducted from total_kobo.
+            At settlement the pre-discount gross is reconstructed and the discount is
+            charged wholly to promo_funder; the other parties settle on the full gross.
+        promo_id:
+          type: string
+          nullable: true
+          description: The promo that was applied, or null when no code was used.
+        promo_funder:
+          type: string
+          nullable: true
+          enum: [platform, restaurant]
+          description: >-
+            Snapshot of who bore the discount, taken at placement. Later edits to the
+            promo never move who paid for an order that has already settled its terms.
         total_kobo: { $ref: '#/components/schemas/Money' }
+        special_instructions:
+          type: string
+          nullable: true
+          description: >-
+            Customer's free-text order note, sanitized server-side (control characters
+            stripped, whitespace collapsed, capped at 500 characters). Null when none
+            was given.
+        scheduled_for:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            The future slot this order was booked for, or null for an immediate order.
+            While set the order waits in `pending`; at the slot the sweeper either
+            clears this field (releasing it into the live queue) or cancels and refunds
+            it if the restaurant is closed.
         delivery_address: { type: string }
         delivery_lat: { type: number }
         delivery_lng: { type: number }
@@ -428,6 +491,16 @@ paths:
                       item_id: { type: string }
                       quantity: { type: integer }
                       notes: { type: string }
+                      modifier_ids:
+                        type: array
+                        items: { type: string }
+                        description: >-
+                          Chosen menu_modifiers for this line. Validated fail-closed
+                          against the item's own modifier groups — an unknown or
+                          unavailable option, a duplicate, or a group whose
+                          required/min_select/max_select rule is broken rejects the
+                          whole order with 400, before anything is escrowed. Each
+                          chosen option adds its price_delta_kobo per unit.
                 delivery_address: { type: string }
                 delivery_lat: { type: number }
                 delivery_lng: { type: number }
@@ -440,12 +513,50 @@ paths:
                     paid 100% to the rider at settlement. A negative value is clamped to
                     0; a tip greater than the order's own value (subtotal + delivery) is
                     rejected.
+                promo_code:
+                  type: string
+                  description: >-
+                    Optional discount code, matched case-insensitively against this
+                    restaurant's promos and platform-wide ones. The discount is deducted
+                    from the escrowed total, snapshotted onto the order
+                    (discount_kobo / promo_id / promo_funder) and a redemption is
+                    recorded so usage_limit / per_user_limit are enforced.
+
+
+                    A code that cannot be applied FAILS the order with 422 — it is never
+                    silently ignored, which would charge the customer full price. Reasons:
+                    unknown code, inactive or outside its window, order below the promo's
+                    minimum, usage limit reached, the discount rounds to zero, or the
+                    discount exceeds what the declared funder's settlement share can bear.
+                special_instructions:
+                  type: string
+                  maxLength: 500
+                  description: >-
+                    Free-text note for the kitchen and the rider. Sanitized server-side
+                    rather than rejected: control characters are stripped, whitespace runs
+                    collapsed, and the result is trimmed to 500 characters.
+                scheduled_for:
+                  type: string
+                  format: date-time
+                  description: >-
+                    Book the order for a future slot. The slot must be at least 15 minutes
+                    ahead, at most 7 days out, and — when the restaurant has weekly hours
+                    configured — fall inside an opening window; otherwise the order is
+                    rejected before anything is escrowed.
+
+
+                    Scheduling defers the kitchen, not the money: the total is escrowed at
+                    placement. A scheduled order MAY be placed while the restaurant is
+                    currently closed (the slot, not the switch, is what is checked). If the
+                    restaurant is still closed when the slot arrives, the order is
+                    automatically cancelled and refunded in full.
       responses:
         '201': { description: Order placed (also returned for an idempotent replay of the same Idempotency-Key), content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '400': { description: "Malformed cart — missing item_id/quantity, or an invalid modifier selection" }
         '401': { description: Not authenticated }
         '402': { description: Insufficient wallet balance }
         '403': { description: KYC tier forbids this debit — wallet disabled (Tier 0) or daily debit limit exceeded }
-        '422': { description: Item unavailable (86'd) / validation error }
+        '422': { description: Item unavailable (86'd) / promo code cannot be applied / validation error }
         '503': { description: Tier gate not wired on this deployment — ordering is disabled fail-closed }
   /orders/{orderId}:
     get:
