@@ -320,6 +320,10 @@ func TestAdminConsole_Dashboard(t *testing.T) {
 
 	userID, _ := seedAdminUser(t, pool, "dash")
 	seedPendingKyc(t, pool, userID, 2)
+	// activeOrders counts the trading union's non-terminal states. Seeded so a
+	// regression to a lower-case 'pending' comparison — which the status
+	// normalisation in tradingOrdersSQL made dead — shows up as a zero here.
+	seedCryptoOrder(t, pool, userID, "pending", 75_000)
 
 	w := adminGet(t, r, "/api/v1/admin/dashboard", "SuperAdmin")
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
@@ -338,11 +342,20 @@ func TestAdminConsole_Dashboard(t *testing.T) {
 	require.True(t, ok, "openKyc must be numeric, got %#v", data["openKyc"])
 	assert.GreaterOrEqual(t, openKyc, float64(1), "the seeded pending-KYC profile must be counted")
 
-	// activeOrders and tradingVolume come from the trading-order union and the
-	// ledger. Only their presence and type are asserted — both move underneath
-	// this test as other suites run.
+	// tradingVolume comes from the ledger and moves underneath this test as other
+	// suites run, so only presence and type are asserted.
 	assert.IsType(t, float64(0), data["failedOrders"])
 	assert.Contains(t, data, "tradingVolume")
+
+	// ActiveOrders is computed but not exposed in the dashboard JSON, so assert it
+	// on the store directly — otherwise the trading-union half of the aggregate
+	// query has no coverage at all.
+	stats, err := NewAdminStore(pool).GetDashboardStats(context.Background())
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, stats.ActiveOrders, int64(1),
+		"the seeded pending crypto order must count as active — a lower-case 'pending' comparison would make this 0")
+	assert.GreaterOrEqual(t, stats.TotalUsers, int64(1))
+	assert.GreaterOrEqual(t, stats.KYCPending, int64(1))
 }
 
 // GetUsers returns a PAGE ENVELOPE ({users,total,limit,offset}), not a bare
@@ -536,6 +549,10 @@ func TestAdminConsole_GetOrders(t *testing.T) {
 	failedCrypto := seedCryptoOrder(t, pool, userID, "failed", 250_000)
 	pendingCrypto := seedCryptoOrder(t, pool, userID, "pending", 125_000)
 	filledStock := seedInvestOrder(t, pool, userID, "Filled", 900_000)
+	// 'Submitted' is a real invest.OrderStatus but is NOT in the console's
+	// AdminOrderStatus union, so it must be folded onto 'Processing' — a raw
+	// leak here would render an unstyled status pill in the app.
+	submittedStock := seedInvestOrder(t, pool, userID, "Submitted", 400_000)
 
 	type order struct {
 		Ref    string `json:"ref"`
@@ -571,21 +588,32 @@ func TestAdminConsole_GetOrders(t *testing.T) {
 
 	assert.Equal(t, "stock", all[filledStock].Kind)
 	assert.Equal(t, int64(900_000), all[filledStock].Amount.Amount)
-	// invest_orders stores capitalised states; the store lower-cases them so the
-	// handler's ?filter= comparisons match.
-	assert.Equal(t, "filled", all[filledStock].Status)
 	assert.Equal(t, email, all[filledStock].User,
 		"invest_orders.user_id is text, so the email join must compare auth.users.id as text")
 
+	// Status must land on the console's AdminOrderStatus union. The client keys
+	// ORDER_STATUS_STYLE off these exact strings, so casing is a contract, not a
+	// cosmetic detail: crypto's lower-case states are mapped UP, and invest
+	// states outside the union are folded onto the nearest member.
+	assert.Equal(t, "Failed", all[failedCrypto].Status, "crypto 'failed' must map to 'Failed'")
+	assert.Equal(t, "Pending", all[pendingCrypto].Status, "crypto 'pending' must map to 'Pending'")
+	assert.Equal(t, "Filled", all[filledStock].Status)
+	assert.Equal(t, "Processing", all[submittedStock].Status,
+		"invest 'Submitted' is outside AdminOrderStatus and must fold onto 'Processing'")
+
+	// The failed/pending filters mirror the console's KPI tiles: failed counts
+	// Failed+Reversed, pending counts Pending+Processing.
 	failed := get("?filter=failed")
 	assert.Contains(t, failed, failedCrypto)
 	assert.NotContains(t, failed, pendingCrypto, "?filter=failed must exclude pending orders")
 	assert.NotContains(t, failed, filledStock, "?filter=failed must exclude filled orders")
-	assert.Equal(t, "failed", failed[failedCrypto].Status)
+	assert.Equal(t, "Failed", failed[failedCrypto].Status)
 
 	pending := get("?filter=pending")
 	assert.Contains(t, pending, pendingCrypto)
+	assert.Contains(t, pending, submittedStock, "?filter=pending must include Processing orders")
 	assert.NotContains(t, pending, failedCrypto)
+	assert.NotContains(t, pending, filledStock)
 
 	stock := get("?filter=stock")
 	assert.Contains(t, stock, filledStock)

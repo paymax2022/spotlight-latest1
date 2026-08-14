@@ -23,19 +23,35 @@ type AdminStore struct {
 // failed with `column "amount_kobo" does not exist` and the endpoint returned
 // 500 unconditionally.
 //
-// status is lower-cased here because invest_orders stores capitalised states
-// ('Draft', 'Filled') while crypto_orders stores lower-case ones, and the
-// handler's ?filter= comparisons are lower-case.
+// status is normalised onto the admin console's AdminOrderStatus union —
+// Filled | PartiallyFilled | Processing | Pending | Failed | Reversed |
+// ComplianceHold (mobile-app/reactnative/src/features/admin/types/admin.types.ts).
+// That contract is NOT cosmetic: the client keys ORDER_STATUS_STYLE off these
+// exact strings, so an unmapped value renders a blank status pill, and its
+// failed/pending KPI tiles compare against 'Failed'/'Reversed' and
+// 'Pending'/'Processing' literally.
+//
+// The two sources disagree: crypto_orders stores lower-case (pending/filled/
+// failed) while invest_orders stores the 18-state invest.OrderStatus machine in
+// CamelCase. invest is the wider vocabulary and the client union is modelled on
+// it, so crypto is mapped UP and invest's extra in-flight and terminal states
+// are folded onto the nearest union member. Anything unrecognised falls back to
+// 'Processing' rather than leaking a raw value the client cannot style.
 //
 // amount: invest_orders carries both a requested notional (amount_kobo) and a
 // settled total (total_amount_kobo, 0 until fill), so report the total once it
 // exists and fall back to the request before then.
 const tradingOrdersSQL = `
-	SELECT id::text            AS id,
-	       user_id::text       AS user_id,
-	       'crypto'            AS kind,
-	       cash_kobo           AS amount_kobo,
-	       lower(status)       AS status,
+	SELECT id::text      AS id,
+	       user_id::text AS user_id,
+	       'crypto'      AS kind,
+	       cash_kobo     AS amount_kobo,
+	       CASE lower(status)
+	         WHEN 'pending' THEN 'Pending'
+	         WHEN 'filled'  THEN 'Filled'
+	         WHEN 'failed'  THEN 'Failed'
+	         ELSE 'Processing'
+	       END           AS status,
 	       created_at
 	  FROM crypto_orders
 	UNION ALL
@@ -43,7 +59,29 @@ const tradingOrdersSQL = `
 	       user_id                                            AS user_id,
 	       'stock'                                            AS kind,
 	       COALESCE(NULLIF(total_amount_kobo, 0), amount_kobo) AS amount_kobo,
-	       lower(status)                                      AS status,
+	       CASE status
+	         -- not yet at the venue
+	         WHEN 'Draft'                THEN 'Pending'
+	         WHEN 'PendingReview'        THEN 'Pending'
+	         WHEN 'AwaitingConfirmation' THEN 'Pending'
+	         WHEN 'CashLocked'           THEN 'Pending'
+	         -- in flight
+	         WHEN 'Submitted'         THEN 'Processing'
+	         WHEN 'Accepted'          THEN 'Processing'
+	         WHEN 'PendingSettlement' THEN 'Processing'
+	         WHEN 'CancelRequested'   THEN 'Processing'
+	         WHEN 'ReversalPending'   THEN 'Processing'
+	         -- terminal
+	         WHEN 'PartiallyFilled' THEN 'PartiallyFilled'
+	         WHEN 'Filled'          THEN 'Filled'
+	         WHEN 'Settled'         THEN 'Filled'
+	         WHEN 'Cancelled'       THEN 'Failed'
+	         WHEN 'Rejected'        THEN 'Failed'
+	         WHEN 'Failed'          THEN 'Failed'
+	         WHEN 'Reversed'        THEN 'Reversed'
+	         WHEN 'ComplianceHold'  THEN 'ComplianceHold'
+	         ELSE 'Processing'
+	       END                                                AS status,
 	       created_at
 	  FROM invest_orders`
 
@@ -72,7 +110,7 @@ func (s *AdminStore) GetDashboardStats(ctx context.Context) (*DashboardStats, er
 			(SELECT COUNT(*) FROM user_profiles
 			 WHERE kyc_status IN ('submitted', 'pending')) as kyc_pending,
 			(SELECT COUNT(*) FROM (`+tradingOrdersSQL+`) o
-			 WHERE o.status = 'pending') as active_orders,
+			 WHERE o.status IN ('Pending', 'Processing')) as active_orders,
 			(SELECT COALESCE(SUM(amount_kobo), 0) FROM ledger_entries
 			 WHERE type = 'DEBIT' AND created_at > NOW() - INTERVAL '24 hours') as total_volume,
 			(SELECT COALESCE(AVG(o.amount_kobo), 0)::bigint FROM (`+tradingOrdersSQL+`) o

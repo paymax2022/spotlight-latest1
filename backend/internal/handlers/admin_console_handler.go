@@ -287,10 +287,16 @@ func (h *AdminConsoleHandler) GetOrders(c *gin.Context) {
 
 	result := []gin.H{}
 	for _, o := range orders {
-		// Apply filter
+		// Apply filter.
+		//
+		// Compared against the AdminOrderStatus values the store normalises to
+		// (see tradingOrdersSQL), NOT lower-case. The failed/pending groupings
+		// mirror the console's own KPI tiles exactly — failed counts
+		// Failed+Reversed, pending counts Pending+Processing — so the server-side
+		// filter and the client-side count can never disagree.
 		if filter != "all" {
-			if (filter == "failed" && o.Status != "failed") ||
-				(filter == "pending" && (o.Status != "pending" && o.Status != "processing")) ||
+			if (filter == "failed" && o.Status != "Failed" && o.Status != "Reversed") ||
+				(filter == "pending" && o.Status != "Pending" && o.Status != "Processing") ||
 				(filter == "crypto" && o.Type != "crypto") ||
 				(filter == "stock" && o.Type != "stock") {
 				continue
