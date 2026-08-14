@@ -106,6 +106,26 @@ for module in filters:
     if f"outputs.{module.replace('-', '_')}" not in ci:
         failures.append(f"{module}: ci.yml has no `changes` output gating it")
 
+# --- every required status check still exists as a job in ci.yml -------------
+# Branch protection matches the check-run name EXACTLY. Rename a job and the old
+# context never reports again: PRs hang on "Expected — waiting for status" with
+# nothing in the UI explaining it, and merges stop. Fail here instead.
+req = ROOT / ".github/required-checks.txt"
+if req.exists():
+    ci_names = set(re.findall(r"^\s*name:\s*(.+?)\s*$", ci, re.M))
+    for line in req.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # "<caller job name> / <job id inside the reusable>" -> the caller's name:
+        caller = line.split(" / ", 1)[0]
+        if caller not in ci_names:
+            failures.append(
+                f"required check {line!r} has no job named {caller!r} in ci.yml — "
+                "renaming a required job blocks every PR; update "
+                ".github/required-checks.txt and re-apply branch protection"
+            )
+
 # --- GitHub allows at most 20 unique reusable workflows per caller ------------
 # Hitting it breaks the whole pipeline at startup, so fail here instead.
 reusables = set(re.findall(r"uses:\s*(\./\.github/workflows/[\w.-]+)", ci))

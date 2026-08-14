@@ -27,10 +27,14 @@ on:
   # CI runs only on the deployable promotion branches. Railway performs native
   # GitHub deployments from these branches after its per-environment branch mapping
   # is configured: develop -> Development, staging -> Staging, prod -> Production.
-  # Docs-only changes are skipped to conserve private-repository Actions minutes.
-  # NOTE: if ci.yml is ever made a REQUIRED status check, drop the pull_request
-  # paths-ignore — GitHub reports a path-skipped required check as perpetually
-  # pending, which would block docs-only PRs from merging.
+  # Docs-only PUSHES are skipped to conserve private-repository Actions minutes.
+  #
+  # `pull_request` deliberately has NO paths-ignore. This workflow's jobs are
+  # required status checks on develop (.github/required-checks.txt), and GitHub
+  # reports a path-SKIPPED required check as perpetually "Expected — waiting for
+  # status", not as passed. With a paths-ignore here, a docs-only PR would never
+  # start this workflow and could never merge. Docs-only PRs are cheap now: the
+  # router skips every module lane, leaving only the core gates.
   push:
     branches: [develop, staging, prod]
     paths-ignore:
@@ -38,9 +42,6 @@ on:
       - 'docs/**'
   pull_request:
     branches: [develop, staging, prod]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
   workflow_dispatch:
     inputs:
       deploy_environment:
