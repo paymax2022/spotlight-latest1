@@ -5,7 +5,7 @@
 **Deciders:** FX/Orchestration
 **Scope:** `backend/internal/orchestration/repository.go` (`sqlStore.ApplyConversion`,
 `sqlStore.ApplyTransfer`), two live-DB invariant suites, and one INSERT-only backfill migration
-for historical rows (`20261205000000`, see "Historical backfill" below). **No API contract change,
+for historical rows (`20261206000100`, see "Historical backfill" below). **No API contract change,
 no balance/projection change, no DDL on any existing table.** Does not touch the main finance
 ledger (`backend/internal/finance/ledger`) — that plane's own single-sided-writer problem is
 ADR-030.
@@ -160,7 +160,7 @@ the table at all — which is why every assertion in
 `orch_ledger_invariants_live_db_test.go` is scoped to a synthetic customer the test created. A
 per-writer test cannot catch a writer nobody thought to test, a hand-run repair, or history.
 
-`supabase/migrations/20261205000000_orch_ledger_conservation_backfill.sql` closes that:
+`supabase/migrations/20261206000100_orch_ledger_conservation_backfill.sql` closes that:
 
 - For every `(customer_id, reference, currency)` group that does not net to zero, it posts ONE
   reconstructed leg on `provider_clearing` for the residual. This is not an arbitrary plug — it is
