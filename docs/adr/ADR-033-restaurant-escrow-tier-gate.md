@@ -189,21 +189,47 @@ are Tier 0. That local figure is polluted by test seeding and is only a hint —
 production split must be measured before this ships**, and a backfill of
 legitimately-verified users is likely needed first.
 
-Two related issues that this ADR does **not** fix, and that should be settled as part of
-the rollout rather than discovered in production:
+**The card rail charged before it learned the order would be refused — now fixed.** In
+the mobile checkout (`mobile-app/reactnative/src/features/payments/usePurchasePayment.ts`),
+`runPay` opened the Paystack gateway and only called `placeOrder` in `onSuccess`. A Tier 0
+customer therefore completed a card charge and *then* received 403 `tiers: wallet disabled`
+— money credited to a wallet they are not allowed to spend, and no order. The
+insufficient-funds case always had this shape; Tier 0 would have turned it from an edge
+case into the default path.
 
-1. **The card rail charges before it learns the order will be refused.** In the mobile
-   checkout (`mobile-app/reactnative/src/features/payments/usePurchasePayment.ts`),
-   `runPay` opens the Paystack gateway and only calls `placeOrder` in `onSuccess`. A
-   Tier 0 customer therefore completes a card charge and *then* receives 403
-   `tiers: wallet disabled` — money credited to a wallet they are not allowed to spend,
-   and no order. The insufficient-funds case always had this shape; Tier 0 turns it from
-   an edge case into the default path. The fix is a client-side `tiers.GetUsage` check
-   before `pay.start()`, in the mobile module.
-2. **No feature flag.** `FeatureRestaurantEnabled` gates the whole module, not this gate.
-   A staged rollout would need a separate flag — deliberately not added here, because a
-   bypass switch on a fail-closed money gate is the thing the iron rule exists to
-   prevent. If a staged rollout is wanted, stage the *backfill*, not the gate.
+`runPay` now runs a KYC spend pre-check ahead of **both** rails (§ "Client pre-check").
+
+**Still no feature flag.** `FeatureRestaurantEnabled` gates the whole module, not this
+gate. A staged rollout would need a separate flag — deliberately not added, because a
+bypass switch on a fail-closed money gate is the thing the iron rule exists to prevent.
+If a staged rollout is wanted, stage the *backfill*, not the gate.
+
+### Client pre-check (mobile)
+
+The pre-check exists to stop the card rail from taking money for a spend the server will
+refuse. It is **advisory and one-directional**: it can only decline early, never
+authorise. The server gate remains the sole authority.
+
+- `GET /api/v1/me/tier` (Go `KYCConnectHandler.GetTierStatus`, proxied by
+  `frontend-web/app/api/v1/me/tier/route.ts`) now reports `dailyUsedKobo` and
+  `walletDisabled` alongside the existing `dailyLimitKobo` / `remainingKobo`. All four
+  come from the same `tiers.GetUsage` the debit gate is derived from — the client never
+  re-implements the limit table or the "what counts as today's spend" rule.
+- `walletDisabled` is reported explicitly rather than left to be inferred from the
+  `(0, -1)` vs `(0, 0)` encoding of unlimited-vs-disabled. Making a client decode that is
+  how a money rule quietly drifts.
+- When the server cannot compute usage it **omits** the four fields rather than zeroing
+  them, and `evaluateSpendLimit` treats a missing allowance as *unknown → allowed*.
+  Failing closed on the client would block checkout on a network hiccup while protecting
+  nothing, since the escrow still refuses the debit.
+- The decision (`evaluateSpendLimit`, `paymentFlow.ts`) is pure and unit-tested against
+  the server's rule, including the boundary: an amount exactly equal to the remainder is
+  allowed by both, because the server rejects on `used + amount > cap`.
+- The read is marked `skipAuthRedirect` so a 401 on this advisory call can never sign a
+  customer out mid-checkout.
+
+Blocked checkouts replace the payment options entirely rather than dimming them, with a
+route into KYC — offering a card button that cannot succeed is what caused the problem.
 
 ### Known limits of the gate (accepted, not fixed here)
 
@@ -277,3 +303,13 @@ comparing it to `order.TotalKobo` is what actually pins §1.
 Unit tests (no DB): `handler_escrow_status_test.go` pins the HTTP mapping *through the
 error wrapping*, so swapping a `%w` for a `%v` in the service can no longer silently turn
 a 403 into a 500 with the live-DB suite still green.
+
+Client pre-check:
+
+| Test | Asserts |
+|---|---|
+| `mobile-app/reactnative/src/features/payments/__tests__/spendLimit.test.ts` | The decision matches the server rule — including the exact boundary (amount == remainder is allowed), Tier 0 declining regardless of amount, unlimited tiers, and unknown ⇒ allowed |
+| `backend/internal/handlers/tier_status_allowance_live_db_test.go` | `/api/v1/me/tier` emits `walletDisabled` / `dailyUsedKobo`, reports the enforced limit, and shrinks the remaining allowance by a real wallet debit |
+
+Not verified in a running app: the blocked-state rendering in `PaymentSheet` was
+typechecked but not exercised end-to-end against a live Expo build.
