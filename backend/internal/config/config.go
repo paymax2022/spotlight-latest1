@@ -182,6 +182,21 @@ type Config struct {
 	FeaturePharmacySymptomSearchEnabled bool
 	FeatureOnboardingEnabled            bool
 	FeatureInvestEnabled                bool // stock-trading (Paymax Invest) module
+
+	// AI-trading fund (backend/internal/trading). Two gates, matching the
+	// module's own contract:
+	//   FeatureTradingEnabled   – mounts Module-KYC + fund wallet (subscribe/redeem).
+	//   FeatureAITradingEnabled – ALSO exposes the decision pipeline (/evaluate)
+	//                             and the promotion-ladder admin routes.
+	// Neither executes a real venue order in this build; cash moves only through
+	// the finance ledger.
+	FeatureTradingEnabled   bool
+	FeatureAITradingEnabled bool
+
+	// Performance-fee terms for the fund, in basis points. TradingFeeBps must be
+	// in (0,10000] or PerformanceFee fails closed and charges nothing.
+	TradingFeeBps    int // e.g. 2000 = 20% performance fee
+	TradingHurdleBps int // 0 = pure high-water-mark, no hurdle
 	FeatureInvestPINDevBypass           bool // dev only: accept any well-formed PIN
 	// Invest provider adapters — when a base URL is set the real HTTP adapter is
 	// used; otherwise the deterministic mock is used (mock-first, real last).
@@ -642,6 +657,10 @@ func Load() Config {
 		FeatureSocialPayEnabled:               getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
 		FeatureP2PMarketEnabled:               getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
 		FeatureSavingsEnabled:                 getEnvBool("FEATURE_SAVINGS_ENABLED", false),
+		FeatureTradingEnabled:                 getEnvBool("FEATURE_TRADING_ENABLED", false),
+		FeatureAITradingEnabled:               getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
+		TradingFeeBps:                         getEnvInt("TRADING_FEE_BPS", 2000),
+		TradingHurdleBps:                      getEnvInt("TRADING_HURDLE_BPS", 0),
 		SavingsEarlyBreakPenaltyBps:           getEnvInt("SAVINGS_EARLY_BREAK_PENALTY_BPS", 1000),
 		FeatureCreatorsEnabled:                getEnvBool("FEATURE_CREATORS_ENABLED", false),
 		FeatureLoyaltyEnabled:                 getEnvBool("FEATURE_LOYALTY_ENABLED", false),

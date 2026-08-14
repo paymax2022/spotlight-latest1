@@ -9,7 +9,13 @@ import type {
 // two-person maker≠checker). Fixture-backed until the routes are live (USE_FIXTURES),
 // mirroring the marketplace admin service.
 export function tradingAdminBase(): string {
-  return `${env.apiBaseUrl.replace(/\/api\/v1\/?$/, '')}/v1/trading/admin`;
+  // The Go module mounts admin routes at /api/v1/admin/trading/* (see
+  // backend/internal/trading/routes.go). This previously stripped `/api/v1` off
+  // apiBaseUrl and re-appended `/v1/trading/admin`, dropping `/api` entirely and
+  // inverting admin/trading — so every admin call 404'd once the routes went
+  // live. Normalise to the host, then use the documented path.
+  const host = env.apiBaseUrl.replace(/\/api\/v1\/?$/, '').replace(/\/api\/?$/, '').replace(/\/$/, '');
+  return `${host}/api/v1/admin/trading`;
 }
 
 function authHeaders(): Record<string, string> {

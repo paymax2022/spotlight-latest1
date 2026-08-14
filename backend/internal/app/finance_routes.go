@@ -69,6 +69,7 @@ import (
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/restaurant"
 	"spotlight/backend/internal/services"
+	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/telemedicine"
 	"spotlight/backend/internal/transport"
 	"spotlight/backend/internal/votebridge"
@@ -444,6 +445,27 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// /api/finance/savings/savings/*. NOTE: RegisterSocialPay below has the same
 		// latent double-mount and should get the same fix when social goes live.
 		RegisterSavings(finance, adminGroupTop5(r, "/api/savings/admin"), cfg, pool, rbac)
+	}
+	// AI-trading fund (Module-KYC + fund wallet). Mounted at the paths the module
+	// documents and the clients call:
+	//   member /api/v1/trading/*        — mobile src/features/aitrading/api.ts
+	//   admin  /api/v1/admin/trading/*  — frontend-admin tradingAdminService.ts
+	// Both groups need RequireAuthContext BEFORE requireUserID: the former mirrors
+	// user_id into the gin context, and without it requireUserID 401s every call
+	// even with a valid token (the same trap the base finance group documents).
+	// cfg.FeatureAITradingEnabled is the stricter SECOND gate, passed through to
+	// expose /evaluate + the promotion-ladder admin routes.
+	if cfg.FeatureTradingEnabled && pool != nil {
+		tMember := r.Group("/api/v1/trading")
+		tMember.Use(mapsAuth())
+		tMember.Use(requireUserID())
+		tAdmin := r.Group("/api/v1/admin/trading")
+		tAdmin.Use(mapsAuth())
+		tAdmin.Use(requireUserID())
+		trading.Register(tMember, tAdmin, pool, rbac, ledgerSvc,
+			int64(cfg.TradingFeeBps), int64(cfg.TradingHurdleBps), cfg.FeatureAITradingEnabled)
+		log.Printf("[trading] mounted /api/v1/trading + /api/v1/admin/trading (fee %dbps, hurdle %dbps, ai=%v)",
+			cfg.TradingFeeBps, cfg.TradingHurdleBps, cfg.FeatureAITradingEnabled)
 	}
 	if cfg.FeatureSocialPayEnabled && pool != nil {
 		RegisterSocialPay(finance.Group("/social"), adminGroupTop5(r, "/api/social/admin"), pool, rbac)
