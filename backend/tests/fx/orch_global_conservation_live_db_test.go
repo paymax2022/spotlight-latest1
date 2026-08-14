@@ -6,7 +6,7 @@ package fx_test
 // orch_ledger_invariants_live_db_test.go proves that each WRITER posts balanced
 // legs, but every assertion there is scoped to a synthetic customer the test
 // created. That scoping was not a stylistic choice — before the backfill in
-// migration 20261205000000, the table itself carried four legacy conversions
+// migration 20261206000100, the table itself carried four legacy conversions
 // whose legs were single-sided per currency (NGN residual -106669225, USD
 // residual +67668 on the QA database), so a whole-table assertion could not
 // pass and the property could not be guarded at all.
@@ -129,7 +129,7 @@ func TestOrchGlobalConservation_CheckViewAgrees(t *testing.T) {
 
 	rows, err := pool.Query(ctx, `SELECT currency, residual_minor FROM public.orch_ledger_conservation_check`)
 	if err != nil {
-		t.Fatalf("read orch_ledger_conservation_check (is migration 20261205000000 applied?): %v", err)
+		t.Fatalf("read orch_ledger_conservation_check (is migration 20261206000100 applied?): %v", err)
 	}
 	defer rows.Close()
 
