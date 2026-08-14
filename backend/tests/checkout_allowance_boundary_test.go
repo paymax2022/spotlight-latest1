@@ -27,6 +27,11 @@ var cashOutPaths = map[string]string{
 	"internal/finance/transfers/service.go":      "wallet-to-wallet and bank transfers — money leaves the wallet",
 	"internal/fractionalre/service_subscribe.go": "investment purchase — warrants stricter KYC, not looser",
 	"internal/fractionalre/service_secondary.go": "investment purchase — warrants stricter KYC, not looser",
+	// RequestPayout withdraws a doctor's wallet balance to a bank account. ADR-043
+	// originally listed this file as "consultation payment" and moved it onto the
+	// relaxed gate; internal/doctor has no consultation money path at all. A
+	// ledger-auditor review caught it. Listed here so the mistake cannot recur.
+	"internal/doctor/service.go": "doctor payout to a bank account — money leaves the platform",
 }
 
 // Consumer-purchase paths that SHOULD use it, so a Tier-0 customer funded by the
@@ -35,7 +40,6 @@ var checkoutPaths = map[string]string{
 	"internal/restaurant/service.go":  "customer order escrow",
 	"internal/transport/service.go":   "rider fare escrow",
 	"internal/estate/service_dues.go": "resident dues payment",
-	"internal/doctor/service.go":      "consultation payment",
 }
 
 func readSource(t *testing.T, rel string) string {
@@ -48,8 +52,14 @@ func readSource(t *testing.T, rel string) string {
 }
 
 // callRe matches a real call, not the interface declaration or a comment.
+//
+// It must cover every way a call can be written, not just the shape that happened
+// to be in the tree: `if err := x.M(`, `err := x.M(`, `return x.M(`, `_ = x.M(`
+// and a bare `x.M(`. The earlier pattern only matched the `if err :=` form, so a
+// cash-out path could have adopted the relaxed gate in any other style and stayed
+// invisible to these tests.
 func callRe(method string) *regexp.Regexp {
-	return regexp.MustCompile(`(?m)^\s*(?:if err :?= )?[\w.]*\.` + method + `\(`)
+	return regexp.MustCompile(`(?m)^\s*(?:(?:if\s+)?[\w, ]*:?=\s*|return\s+)?[\w.]*\.` + method + `\(`)
 }
 
 func TestCashOutPathsNeverUseTheCheckoutAllowance(t *testing.T) {

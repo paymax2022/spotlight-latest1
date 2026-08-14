@@ -46,7 +46,7 @@ a verified account's limits cannot drift from the strict gate. Only Tier 0 diffe
 | `restaurant` order escrow | checkout | consumer purchase |
 | `transport` rider fare | checkout | consumer purchase |
 | `estate` dues | checkout | resident paying for a service |
-| `doctor` consultation payment | checkout | consumer service |
+| `doctor` payout | **strict** | cash OUT — see correction below |
 | `restaurant` merchant withdrawal | **strict** | cash OUT |
 | `transfers` wallet-to-wallet and bank | **strict** | cash OUT |
 | `fractionalre` subscribe / secondary | **strict** | investment purchase |
@@ -62,6 +62,21 @@ funded, extractable wallet — a KYC bypass.
 
 `internal/placement` holds a `*tiers.Service` but never calls the gate, so despite
 appearing in the original list it is not a tier-gated money path and needed nothing.
+
+> **Correction (post-review).** This ADR originally listed `doctor` as a
+> "consultation payment" and moved it onto the checkout gate. That was wrong and
+> was the most serious defect a ledger-auditor review found: the call site is
+> `RequestPayout`, which debits the caller's wallet to the settlement clearing
+> account and queues a `doctor_payouts` row against a bank account. It is a cash
+> OUT. `internal/doctor` has no consultation money path at all — the only ledger
+> movement in the package is that payout. It is reverted to the strict gate and is
+> now listed among the paths that must never use the allowance.
+>
+> The boundary test did not merely miss this: because it asserts per FILE, it
+> *required* the relaxed call to be present in `internal/doctor/service.go`. The
+> assertions now list that file as cash-out, and the call-site regex was widened —
+> it previously matched only the `if err := …` form, so the same defect written as
+> `err := …` or `return …` would have passed.
 
 ### 3. One flag for both halves
 

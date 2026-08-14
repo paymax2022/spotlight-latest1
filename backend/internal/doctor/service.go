@@ -247,7 +247,11 @@ func (s *Service) RequestPayout(ctx context.Context, userID, idemKey string, req
 	}
 
 	// (2) Tier-limit check — fail-closed: any error or denial rejects the payout.
-	if err := s.tiers.EnforceCheckoutDebitLimit(ctx, userID, req.AmountKobo); err != nil {
+	//     STRICT gate, deliberately: this is a payout to a bank account, not a
+	//     purchase. The Tier-0 checkout allowance (ADR-043) must never reach it —
+	//     ADR-042 permits an unverified account to move money only because it
+	//     cannot get value out, and this is exactly the way out.
+	if err := s.tiers.EnforceWalletDebitLimit(ctx, userID, req.AmountKobo); err != nil {
 		return nil, fmt.Errorf("doctor: payout tier check (fail closed): %w", err)
 	}
 
