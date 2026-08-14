@@ -1,0 +1,87 @@
+name: adr guard
+
+# PR-time companion to adr-assign.yml.
+#
+# adr-assign allocates ADR numbers on merge, but only for files that use the
+# `ADR-PR<pr-number>` placeholder. This guard makes sure a PR cannot bypass that
+# and hand-pick a number that is already taken — which is exactly how the repo
+# ended up with six duplicate ADR numbers and three renumbering PRs in one day.
+#
+# Rules:
+#   1. A new ADR SHOULD be named docs/adr/ADR-PR<n>-<slug>.md, where <n> is this
+#      PR's number. Merge-time assignment then gives it a real number.
+#   2. If it is, <n> must match this PR — otherwise the placeholder belongs to a
+#      different PR and the rewrite would mislabel it.
+#   3. A new ADR MAY carry a concrete number, but only one that is still free on
+#      the base branch. (Escape hatch for backfills and deliberate slots.)
+#
+# Only ADDED files are checked, so historic duplicates do not fail every PR.
+
+on:
+  pull_request:
+    paths:
+      - 'docs/adr/**'
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check ADR numbering
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+
+          added=$(git diff --name-only --diff-filter=A "$BASE_SHA" HEAD -- 'docs/adr/*.md' || true)
+          if [ -z "$added" ]; then
+            echo "No new ADR files. Guard passes."
+            exit 0
+          fi
+
+          # Numbers already used on the base branch.
+          taken=$(git ls-tree --name-only "$BASE_SHA" docs/adr/ \
+                  | grep -oE 'ADR-[0-9]{3}' | sed 's/ADR-//' | sort -u)
+
+          fail=0
+          for f in $added; do
+            base=$(basename "$f")
+
+            if printf '%s' "$base" | grep -qE '^ADR-PR[0-9]+-'; then
+              n=$(printf '%s' "$base" | grep -oE '^ADR-PR[0-9]+' | sed 's/ADR-PR//')
+              if [ "$n" != "$PR_NUMBER" ]; then
+                echo "::error file=$f::Placeholder says PR #$n but this is PR #$PR_NUMBER. Rename to ADR-PR${PR_NUMBER}-<slug>.md and update its references, or the merge-time rewrite will mislabel it."
+                fail=1
+              else
+                echo "OK  $base (number assigned on merge)"
+              fi
+              continue
+            fi
+
+            if printf '%s' "$base" | grep -qE '^ADR-[0-9]{3}-'; then
+              n=$(printf '%s' "$base" | grep -oE '^ADR-[0-9]{3}' | sed 's/ADR-//')
+              if printf '%s\n' "$taken" | grep -qx "$n"; then
+                echo "::error file=$f::ADR-$n already exists on ${{ github.event.pull_request.base.ref }}. Do NOT hand-pick numbers — rename to ADR-PR${PR_NUMBER}-<slug>.md, cite ADR-PR${PR_NUMBER} in its references, and the number is assigned on merge (.github/workflows/adr-assign.yml)."
+                fail=1
+              else
+                echo "OK  $base (concrete number $n is free on base)"
+              fi
+              continue
+            fi
+
+            echo "::error file=$f::Unrecognised ADR filename. Use ADR-PR${PR_NUMBER}-<slug>.md so the number is assigned at merge time."
+            fail=1
+          done
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::ADR numbering guard FAILED — see annotations above."
+            exit 1
+          fi
+          echo "ADR numbering guard passed."
