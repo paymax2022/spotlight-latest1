@@ -1,4 +1,12 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { fetchModuleVisibility, MODULE_VISIBILITY_KEY } from '@/features/modules/visibility';
+import { visibilityFor } from '@/features/modules/rules';
+import {
+  moduleKeyForSegments,
+  guardAppliesTo,
+  MODULE_UNAVAILABLE_ROUTE,
+  MODULE_LABELS,
+} from '@/features/modules/routeModuleKeys';
 import { Stack, useRouter, useSegments, usePathname, useGlobalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
@@ -42,6 +50,13 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const segments = useSegments();
   const router   = useRouter();
   const pathname = usePathname();
+  // Module publication for this environment. Read once here and shared by the
+  // deep-link guard below; the render gates use the same cached query.
+  const { data: moduleVisibility, isLoading: moduleVisibilityLoading } = useQuery({
+    queryKey: MODULE_VISIBILITY_KEY,
+    queryFn: fetchModuleVisibility,
+    staleTime: 60_000,
+  });
   // useGlobalSearchParams() returns a NEW object every render; keeping it in the
   // gate effect's deps made the effect re-run on every render and storm router.replace
   // during redirects ("Maximum update depth exceeded"). It's only needed to snapshot
@@ -122,6 +137,30 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     // globalParams intentionally omitted (read via ref) — see note above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialized, user, segments, router, pinMissing, pathname]);
+
+  // ── Module guard (deep links) ──────────────────────────────────────────────
+  // Gating the module lists stops a module being DISCOVERED; this stops it being
+  // REACHED by a saved link, a push notification or a typed URL. One guard here
+  // covers every route via the segment map, rather than 36 per-screen checks.
+  //
+  // Runs AFTER the auth guard above and skips the auth stack, so the two never
+  // fight over navigation. Fails OPEN: while the registry is loading, or if it
+  // could not be read, nothing is redirected — the same reasoning as the render
+  // gates. Blocking a working screen is worse than leaving one reachable.
+  useEffect(() => {
+    if (!initialized || !user) return;
+    if (moduleVisibilityLoading || !moduleVisibility) return;
+    if (!guardAppliesTo(segments)) return;
+
+    const key = moduleKeyForSegments(segments);
+    if (!key) return;
+    if (visibilityFor(moduleVisibility, key)) return;
+
+    router.replace({
+      pathname: MODULE_UNAVAILABLE_ROUTE,
+      params: { module: MODULE_LABELS[key] ?? 'This service' },
+    } as never);
+  }, [initialized, user, segments, router, moduleVisibility, moduleVisibilityLoading]);
 
   if (!initialized) {
     return (

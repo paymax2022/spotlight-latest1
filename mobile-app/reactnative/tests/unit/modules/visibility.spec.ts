@@ -20,6 +20,11 @@ import {
   featuredRegistryKeyFor,
 } from '@/features/modules/serviceModuleKeys';
 import {
+  moduleKeyForSegments,
+  guardAppliesTo,
+  MODULE_LABELS,
+} from '@/features/modules/routeModuleKeys';
+import {
   SERVICE_MODULES,
   PROPERTY_SUBMODULES,
   QUICK_ACTIONS,
@@ -256,5 +261,86 @@ describe('home tab gates', () => {
     assert.ok(!gated.some((g) => g.label === 'Financial'), 'empty Financial group must be dropped');
     // Learn is 'academy', which has no registry mapping, so it survives.
     assert.ok(gated.some((g) => g.label === 'Learn'), 'ungated group must survive');
+  });
+});
+
+// ── Deep links: route → module ───────────────────────────────────────────────
+
+describe('route guard', () => {
+  test('a nested route beats its parent', () => {
+    // The whole reason for longest-first matching. If ['health'] won, publishing
+    // the health umbrella would silently publish pharmacy, lab and vet too.
+    assert.equal(moduleKeyForSegments(['health', 'lab']), 'healthLab');
+    assert.equal(moduleKeyForSegments(['health', 'pharmacy']), 'healthPharmacy');
+    assert.equal(moduleKeyForSegments(['health', 'vet']), 'healthVet');
+  });
+
+  test('every screen beneath a mapped route inherits the gate', () => {
+    // Prefix matching is what keeps this to one map instead of 36 entries.
+    assert.equal(
+      moduleKeyForSegments(['services', 'telemedicine', 'book', 'confirm']),
+      'telemedicine',
+    );
+    assert.equal(moduleKeyForSegments(['health', 'lab', 'checkout']), 'healthLab');
+    assert.equal(moduleKeyForSegments(['wallet', 'send', 'review']), 'wallet');
+  });
+
+  test('hubs and navigation are never gated', () => {
+    // '/services' is the tab hub; gating it would lock the user out of the very
+    // screen that lists what IS available.
+    assert.equal(moduleKeyForSegments(['services']), null);
+    assert.equal(moduleKeyForSegments(['(tabs)', 'home']), null);
+    assert.equal(moduleKeyForSegments(['profile']), null);
+  });
+
+  test('ambiguous and unregistered routes are left ungated', () => {
+    // Conservative on purpose: gating a route wrongly locks users out of a
+    // working screen, which is worse than leaving one merely undiscoverable.
+    for (const seg of [['voting'], ['arena'], ['academy'], ['crypto'], ['dues'], ['properties']]) {
+      assert.equal(moduleKeyForSegments(seg), null, `${seg[0]} should not be gated`);
+    }
+  });
+
+  test('every route mapping targets a registered module', () => {
+    for (const seg of [
+      ['health', 'lab'], ['health', 'pharmacy'], ['health', 'vet'],
+      ['services', 'telemedicine'], ['services', 'bills'], ['services', 'cards'],
+      ['wallet'], ['savings'], ['stays'], ['mobility'], ['food'], ['realtor'],
+      ['association'], ['events'], ['fractionalre'], ['referral'], ['social'],
+    ]) {
+      const key = moduleKeyForSegments(seg);
+      assert.ok(key && REGISTRY_KEYS.has(key), `/${seg.join('/')} -> '${key}' is not a registered module`);
+    }
+  });
+
+  test('the guard never runs on itself, or on the auth stack', () => {
+    // Redirecting the unavailable screen to itself is an infinite loop; fighting
+    // the auth guard over navigation is the other way to trap a user.
+    assert.equal(guardAppliesTo(['module-unavailable']), false);
+    assert.equal(guardAppliesTo(['(auth)', 'login']), false);
+    assert.equal(guardAppliesTo(['onboarding']), false);
+    assert.equal(guardAppliesTo([]), false);
+    // …but it does run on real module routes.
+    assert.equal(guardAppliesTo(['services', 'telemedicine']), true);
+  });
+
+  test('a hidden module blocks its deep link, a published one does not', () => {
+    const blocked = (segs: string[], published: ModuleVisibility | null) => {
+      if (!guardAppliesTo(segs)) return false;
+      const key = moduleKeyForSegments(segs);
+      if (!key) return false;
+      return !visibilityFor(published, key);
+    };
+    const deep = ['services', 'telemedicine', 'book', 'confirm'];
+    assert.equal(blocked(deep, list('wallet')), true, 'unpublished module must block');
+    assert.equal(blocked(deep, list('telemedicine')), false, 'published module must pass');
+    // Fail open while the registry is unknown.
+    assert.equal(blocked(deep, null), false, 'unknown registry must not block');
+  });
+
+  test('every label maps to a registered module', () => {
+    for (const key of Object.keys(MODULE_LABELS)) {
+      assert.ok(REGISTRY_KEYS.has(key), `label for '${key}' is not a registered module`);
+    }
   });
 });
