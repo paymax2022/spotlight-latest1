@@ -11,11 +11,10 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api/client';
+import { visibilityFor, type ModuleVisibility } from './rules';
 
-export interface ModuleVisibility {
-  environment: string;
-  modules: string[];
-}
+export { visibilityFor };
+export type { ModuleVisibility };
 
 /** Cache lifetime. Publication changes are rare; a stale minute is acceptable. */
 const STALE_MS = 60_000;
@@ -34,21 +33,6 @@ export async function fetchModuleVisibility(): Promise<ModuleVisibility | null> 
     // Unreachable registry ⇒ "unknown", never "nothing". See visibilityFor.
     return null;
   }
-}
-
-/**
- * Resolve one module's visibility from a fetched list.
- *
- * `null` (registry unreachable / not yet loaded) resolves to VISIBLE, deliberately.
- * This is the one place the fail-closed instinct is wrong: the registry decides
- * what to *render*, not what to authorise. Failing closed here would blank the
- * whole app on a flaky network, while failing open shows a screen whose actions
- * the server still refuses if they are genuinely gated. Authorisation lives in the
- * API; this is presentation.
- */
-export function visibilityFor(list: ModuleVisibility | null | undefined, key: string): boolean {
-  if (!list) return true;
-  return list.modules.includes(key);
 }
 
 export function useModuleVisibility() {

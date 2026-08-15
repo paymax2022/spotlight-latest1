@@ -10,6 +10,8 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { SERVICE_MODULES } from '@/constants/modules';
+import { useModuleVisibility } from '@/features/modules/visibility';
+import { registryKeyFor } from '@/features/modules/serviceModuleKeys';
 
 const CATEGORIES = [
   { key: 'all',        label: 'All' },
@@ -48,17 +50,30 @@ export default function ServicesScreen() {
 
   const isSearch = search.trim().length > 0;
 
+  // Registry gate. One filter here covers every band, chip and search result, so
+  // an unpublished module cannot leak through a path someone forgot to update.
+  // Tiles with no registry mapping are always shown (see serviceModuleKeys), and
+  // an unreachable registry shows everything rather than emptying the tab.
+  const { isVisible } = useModuleVisibility();
+  const visibleModules = React.useMemo(
+    () => SERVICE_MODULES.filter((m) => {
+      const key = registryKeyFor(m.id);
+      return key === null || isVisible(key);
+    }),
+    [isVisible],
+  );
+
   const searchResults = isSearch
-    ? SERVICE_MODULES.filter((m) => m.label.toLowerCase().includes(search.toLowerCase()))
+    ? visibleModules.filter((m) => m.label.toLowerCase().includes(search.toLowerCase()))
     : [];
 
   const bandsWithModules = BANDS.map((b) => ({
     ...b,
-    modules: SERVICE_MODULES.filter((m) => m.category === b.key),
+    modules: visibleModules.filter((m) => m.category === b.key),
   })).filter((b) => b.modules.length > 0);
 
   const singleCatModules = activeCat !== 'all'
-    ? SERVICE_MODULES.filter((m) => m.category === activeCat)
+    ? visibleModules.filter((m) => m.category === activeCat)
     : [];
 
   const activeBandLabel = BANDS.find((b) => b.key === activeCat)?.label;
