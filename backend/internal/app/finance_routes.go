@@ -47,6 +47,7 @@ import (
 	"spotlight/backend/internal/invest"
 	"spotlight/backend/internal/maps"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/modules"
 	"spotlight/backend/internal/notifications"
 	"spotlight/backend/internal/onboarding"
 	"spotlight/backend/internal/orchestration"
@@ -69,8 +70,8 @@ import (
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/restaurant"
 	"spotlight/backend/internal/services"
-	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/telemedicine"
+	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
 	"spotlight/backend/internal/votebridge"
 	"spotlight/backend/internal/webhooks"
@@ -2715,6 +2716,25 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	} else {
 		log.Println("[crypto] FEATURE_CRYPTO_ENABLED is false — skipping routes")
 	}
+
+	// --- Platform module registry (ADR: admin-controlled module publication) ---
+	// Deliberately NOT behind a feature flag: this is the surface that gates every
+	// other module, so a flag misconfiguration must never make it unreachable —
+	// that would strand every module at whatever state it was last left in.
+	//
+	// The flag lookup is the ops kill switch axis. A module whose FEATURE_* var is
+	// unset reads as OFF here, which is fail-closed; the console reports
+	// env_flag_enabled so an operator sees WHY a published module is still hidden
+	// instead of concluding the toggle is broken.
+	modulesBase := r.Group("/api/v1")
+	modulesMember := modulesBase.Group("")
+	modulesMember.Use(mapsAuth())
+	modulesAdmin := modulesBase.Group("/admin")
+	modulesAdmin.Use(mapsAuth())
+	modules.Register(modulesMember, modulesAdmin, pool, rbac,
+		modules.Environment(cfg.AppEnv),
+		func(flag string) bool { return os.Getenv(flag) == "true" })
+	log.Printf("[modules] registry mounted; environment=%s", cfg.AppEnv)
 
 	// --- Realtor admin control plane (moderation, verification, payments, escrow) ---
 	realtor.Register(r, realtor.Deps{
