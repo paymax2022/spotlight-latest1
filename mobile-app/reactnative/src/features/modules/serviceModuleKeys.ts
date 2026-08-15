@@ -80,3 +80,32 @@ export const PROPERTY_SUBMODULE_REGISTRY_KEY: Record<string, string> = {
 export function propertyRegistryKeyFor(subModuleId: string): string | null {
   return PROPERTY_SUBMODULE_REGISTRY_KEY[subModuleId] ?? null;
 }
+
+// ── Home tab: quick actions ──────────────────────────────────────────────────
+// A third id-space. These are wallet SUB-ACTIONS ('add', 'send', 'withdraw',
+// 'exchange'), not modules, so they carry their own short ids that mean nothing
+// in the other tables — 'withdraw' and 'exchange' are not SERVICE_MODULES tiles,
+// which is why the first batch had to drop them.
+export const QUICK_ACTION_REGISTRY_KEY: Record<string, string> = {
+  add: 'wallet',
+  send: 'walletTransfers',
+  withdraw: 'walletBankTransfers',
+  exchange: 'fx',
+};
+
+export function quickActionRegistryKeyFor(actionId: string): string | null {
+  return QUICK_ACTION_REGISTRY_KEY[actionId] ?? null;
+}
+
+// ── Home tab: featured service cards ─────────────────────────────────────────
+// A fourth id-space. 'food-ride' is a featured card only (it has no tile in
+// SERVICE_MODULES); 'naija-driver' and 'invest' have no registry module, so they
+// are ungated and always render.
+export const FEATURED_REGISTRY_KEY: Record<string, string> = {
+  bills: 'utilityPayments',
+  'food-ride': 'restaurant',
+};
+
+export function featuredRegistryKeyFor(featuredId: string): string | null {
+  return FEATURED_REGISTRY_KEY[featuredId] ?? null;
+}

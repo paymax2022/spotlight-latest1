@@ -14,8 +14,17 @@ import {
   registryKeyFor,
   PROPERTY_SUBMODULE_REGISTRY_KEY,
   propertyRegistryKeyFor,
+  QUICK_ACTION_REGISTRY_KEY,
+  quickActionRegistryKeyFor,
+  FEATURED_REGISTRY_KEY,
+  featuredRegistryKeyFor,
 } from '@/features/modules/serviceModuleKeys';
-import { SERVICE_MODULES, PROPERTY_SUBMODULES } from '@/constants/modules';
+import {
+  SERVICE_MODULES,
+  PROPERTY_SUBMODULES,
+  QUICK_ACTIONS,
+  FEATURED_SERVICES,
+} from '@/constants/modules';
 
 const list = (...modules: string[]): ModuleVisibility => ({ environment: 'production', modules });
 
@@ -51,7 +60,7 @@ describe('service-grid mapping', () => {
   test('every mapped id is a real tile in the grid', () => {
     // A mapping whose id no longer exists is dead weight that hides nothing and
     // misleads the next reader.
-    const ids = new Set(SERVICE_MODULES.map((m) => m.id));
+    const ids = new Set<string>(SERVICE_MODULES.map((m) => m.id));
     for (const id of Object.keys(SERVICE_MODULE_REGISTRY_KEY)) {
       assert.ok(ids.has(id), `mapped id '${id}' is not in SERVICE_MODULES`);
     }
@@ -117,7 +126,7 @@ describe('property hub gate', () => {
     });
 
   test('every mapped pillar id is a real pillar', () => {
-    const ids = new Set(PROPERTY_SUBMODULES.map((p) => p.id));
+    const ids = new Set<string>(PROPERTY_SUBMODULES.map((p) => p.id));
     for (const id of Object.keys(PROPERTY_SUBMODULE_REGISTRY_KEY)) {
       assert.ok(ids.has(id), `mapped pillar '${id}' is not in PROPERTY_SUBMODULES`);
     }
@@ -178,5 +187,74 @@ describe('mapped values are real registry modules', () => {
     for (const [id, key] of Object.entries(PROPERTY_SUBMODULE_REGISTRY_KEY)) {
       assert.ok(REGISTRY_KEYS.has(key), `'${id}' maps to '${key}', which is not a registered module`);
     }
+  });
+});
+
+// ── Home tab: quick actions, featured cards, category groups ─────────────────
+
+describe('home tab gates', () => {
+  test('every mapped quick-action and featured id is real', () => {
+    const qaIds = new Set<string>(QUICK_ACTIONS.map((q) => q.id));
+    for (const id of Object.keys(QUICK_ACTION_REGISTRY_KEY)) {
+      assert.ok(qaIds.has(id), `quick action '${id}' does not exist`);
+    }
+    const fIds = new Set<string>(FEATURED_SERVICES.map((f) => f.id));
+    for (const id of Object.keys(FEATURED_REGISTRY_KEY)) {
+      assert.ok(fIds.has(id), `featured card '${id}' does not exist`);
+    }
+  });
+
+  test('quick-action and featured mappings target registered modules', () => {
+    for (const [id, key] of Object.entries(QUICK_ACTION_REGISTRY_KEY)) {
+      assert.ok(REGISTRY_KEYS.has(key), `quick action '${id}' -> unknown module '${key}'`);
+    }
+    for (const [id, key] of Object.entries(FEATURED_REGISTRY_KEY)) {
+      assert.ok(REGISTRY_KEYS.has(key), `featured '${id}' -> unknown module '${key}'`);
+    }
+  });
+
+  test('ids that are NOT service tiles resolve only in their own space', () => {
+    // 'withdraw' and 'exchange' were dropped from the services map because no such
+    // tile exists; they are quick actions. 'food-ride' is a featured card only.
+    // Each must resolve in exactly one table.
+    assert.equal(registryKeyFor('withdraw'), null);
+    assert.equal(quickActionRegistryKeyFor('withdraw'), 'walletBankTransfers');
+    assert.equal(registryKeyFor('exchange'), null);
+    assert.equal(quickActionRegistryKeyFor('exchange'), 'fx');
+    assert.equal(registryKeyFor('food-ride'), null);
+    assert.equal(featuredRegistryKeyFor('food-ride'), 'restaurant');
+  });
+
+  test('unpublishing a wallet sub-module removes only its quick action', () => {
+    const gateQA = (published: ModuleVisibility | null) =>
+      QUICK_ACTIONS.filter((q) => {
+        const k = quickActionRegistryKeyFor(q.id);
+        return k === null || visibilityFor(published, k);
+      }).map((q) => q.id);
+
+    // Everything except walletTransfers: 'send' goes, the rest stay.
+    const left = gateQA(list('wallet', 'walletBankTransfers', 'fx'));
+    assert.ok(!left.includes('send'), 'send must follow walletTransfers');
+    assert.deepEqual(left.sort(), ['add', 'exchange', 'withdraw']);
+  });
+
+  test('a category group that gates to empty is dropped entirely', () => {
+    // The Explore card renders a label + grid per group. A group filtered to zero
+    // must disappear, not render a label above an empty grid.
+    const groups = [
+      { label: 'Financial', modules: SERVICE_MODULES.filter((m) => m.category === 'financial') },
+      { label: 'Learn', modules: SERVICE_MODULES.filter((m) => m.id === 'academy') },
+    ];
+    const gated = groups
+      .map((g) => ({ ...g, modules: g.modules.filter((m) => {
+        const k = registryKeyFor(m.id);
+        return k === null || visibilityFor(list(), k);
+      }) }))
+      .filter((g) => g.modules.length > 0);
+
+    // Financial is entirely registry-mapped, so an empty published list clears it.
+    assert.ok(!gated.some((g) => g.label === 'Financial'), 'empty Financial group must be dropped');
+    // Learn is 'academy', which has no registry mapping, so it survives.
+    assert.ok(gated.some((g) => g.label === 'Learn'), 'ungated group must survive');
   });
 });

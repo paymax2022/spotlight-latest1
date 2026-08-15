@@ -18,6 +18,12 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { Typography } from '@/constants/typography';
 import { SERVICE_MODULES, FEATURED_SERVICES, QUICK_ACTIONS } from '@/constants/modules';
+import { useModuleVisibility } from '@/features/modules/visibility';
+import {
+  registryKeyFor,
+  quickActionRegistryKeyFor,
+  featuredRegistryKeyFor,
+} from '@/features/modules/serviceModuleKeys';
 import { shadow1 } from '@/constants/shadows';
 import { getDashboard } from '@/api/dashboard.api';
 import { Transaction } from '@/types/transaction';
@@ -60,11 +66,15 @@ function txToActivity(tx: Transaction): Activity {
   };
 }
 
-const FINANCIAL = SERVICE_MODULES.filter((m) => m.category === 'financial');
-const UTILITY   = SERVICE_MODULES.filter((m) => m.category === 'utility');
-const LIFESTYLE = SERVICE_MODULES.filter((m) => m.category === 'lifestyle');
-// StudyHub — the EdTech learning module (distinct from the Education utility bill).
-const LEARN     = SERVICE_MODULES.filter((m) => m.id === 'academy');
+// Category groupings for the Explore card. Gating is applied per render (below),
+// not here, because visibility comes from a hook.
+const SERVICE_GROUPS: { label: string; modules: typeof SERVICE_MODULES }[] = [
+  { label: 'Financial', modules: SERVICE_MODULES.filter((m) => m.category === 'financial') },
+  { label: 'Utility',   modules: SERVICE_MODULES.filter((m) => m.category === 'utility') },
+  { label: 'Lifestyle', modules: SERVICE_MODULES.filter((m) => m.category === 'lifestyle') },
+  // StudyHub — the EdTech learning module (distinct from the Education utility bill).
+  { label: 'Learn',     modules: SERVICE_MODULES.filter((m) => m.id === 'academy') },
+];
 
 function SubCategoryLabel({ label }: { label: string }) {
   return (
@@ -77,6 +87,32 @@ function SubCategoryLabel({ label }: { label: string }) {
 
 export default function HomeScreen() {
   const [search, setSearch] = React.useState('');
+
+  // Registry gate for all three home surfaces. Each has its OWN id-space, so each
+  // resolves through its own map — 'withdraw'/'exchange' are quick-action ids that
+  // do not exist as service tiles, and 'food-ride' is a featured card only.
+  const { isVisible } = useModuleVisibility();
+  const gate = React.useCallback(
+    (key: string | null) => key === null || isVisible(key),
+    [isVisible],
+  );
+
+  const quickActions = React.useMemo(
+    () => QUICK_ACTIONS.filter((qa) => gate(quickActionRegistryKeyFor(qa.id))),
+    [gate],
+  );
+  const featured = React.useMemo(
+    () => FEATURED_SERVICES.filter((s) => gate(featuredRegistryKeyFor(s.id))),
+    [gate],
+  );
+  // Drop groups that gate to empty, so the Explore card never shows a category
+  // label above an empty grid.
+  const serviceGroups = React.useMemo(
+    () =>
+      SERVICE_GROUPS.map((g) => ({ ...g, modules: g.modules.filter((m) => gate(registryKeyFor(m.id))) }))
+        .filter((g) => g.modules.length > 0),
+    [gate],
+  );
 
   const runSearch = (text: string) => {
     const q = text.trim();
@@ -129,7 +165,7 @@ export default function HomeScreen() {
         <BalanceCard
           balance={balance}
           currency="NGN"
-          quickActions={QUICK_ACTIONS.map((qa) => ({
+          quickActions={quickActions.map((qa) => ({
             id:      qa.id,
             label:   qa.label,
             icon:    QUICK_ACTION_ICONS[qa.id],
@@ -137,24 +173,28 @@ export default function HomeScreen() {
           }))}
         />
 
-        <SectionHeader title="Explore Services" actionLabel="View All" onAction={() => router.push('/(tabs)/services')} />
+        {serviceGroups.length > 0 ? (
+          <>
+            <SectionHeader title="Explore Services" actionLabel="View All" onAction={() => router.push('/(tabs)/services')} />
 
-        <View style={[styles.servicesCard, shadow1]}>
-          <SubCategoryLabel label="Financial" />
-          <ModuleGrid modules={FINANCIAL} />
-          <View style={styles.divider} />
-          <SubCategoryLabel label="Utility" />
-          <ModuleGrid modules={UTILITY} />
-          <View style={styles.divider} />
-          <SubCategoryLabel label="Lifestyle" />
-          <ModuleGrid modules={LIFESTYLE} />
-          <View style={styles.divider} />
-          <SubCategoryLabel label="Learn" />
-          <ModuleGrid modules={LEARN} />
-        </View>
+            <View style={[styles.servicesCard, shadow1]}>
+              {serviceGroups.map((g, i) => (
+                <React.Fragment key={g.label}>
+                  {/* Divider BETWEEN groups, never after the last — a trailing rule
+                      under an empty space is what a naive filter leaves behind. */}
+                  {i > 0 ? <View style={styles.divider} /> : null}
+                  <SubCategoryLabel label={g.label} />
+                  <ModuleGrid modules={g.modules} />
+                </React.Fragment>
+              ))}
+            </View>
+          </>
+        ) : null}
 
-        <SectionHeader title="Featured Services" style={{ marginTop: Spacing.lg }} />
-        {FEATURED_SERVICES.map((s) => (
+        {featured.length > 0 ? (
+          <SectionHeader title="Featured Services" style={{ marginTop: Spacing.lg }} />
+        ) : null}
+        {featured.map((s) => (
           <FeaturedServiceCard
             key={s.id}
             title={s.title}
