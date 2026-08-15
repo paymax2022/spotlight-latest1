@@ -12,6 +12,7 @@ import {
   type StandingAccountType,
 } from './journal';
 import { enforceWalletLimit } from '@/src/server/tiers/service';
+import { WALLET_ACCOUNT_TYPE, SPENDABLE_WALLET_TYPES } from './account-type';
 
 const MIN_TOPUP_KOBO = 10_000; // ₦100 minimum
 
@@ -22,6 +23,11 @@ const MIN_TOPUP_KOBO = 10_000; // ₦100 minimum
 /**
  * Find or create the wallet ledger_account for a user.
  * Handles the concurrent-insert race via a re-fetch on UNIQUE conflict.
+ *
+ * Resolves WALLET_ACCOUNT_TYPE ('user_wallet') — the SAME row the Go finance
+ * ledger creates via GetOrCreateUserWallet, keyed by the shared
+ * ledger_accounts_user_type_key. Both processes now mutate one pot, so money
+ * credited here is spendable by a Go module escrow and vice versa (ADR-045).
  */
 export async function getOrCreateAccount(userId: string): Promise<string> {
   const supabase = createAdminClient();
@@ -30,7 +36,7 @@ export async function getOrCreateAccount(userId: string): Promise<string> {
     .from('ledger_accounts')
     .select('id')
     .eq('user_id', userId)
-    .eq('type', 'wallet')
+    .eq('type', WALLET_ACCOUNT_TYPE)
     .eq('currency', 'NGN')
     .maybeSingle();
 
@@ -39,7 +45,7 @@ export async function getOrCreateAccount(userId: string): Promise<string> {
   const newId = crypto.randomUUID();
   const { error } = await supabase
     .from('ledger_accounts')
-    .insert({ id: newId, user_id: userId, type: 'wallet', currency: 'NGN' });
+    .insert({ id: newId, user_id: userId, type: WALLET_ACCOUNT_TYPE, currency: 'NGN' });
 
   if (error) {
     // Race: another concurrent request inserted first — re-fetch
@@ -47,7 +53,7 @@ export async function getOrCreateAccount(userId: string): Promise<string> {
       .from('ledger_accounts')
       .select('id')
       .eq('user_id', userId)
-      .eq('type', 'wallet')
+      .eq('type', WALLET_ACCOUNT_TYPE)
       .eq('currency', 'NGN')
       .maybeSingle();
     if (raced) return raced.id as string;
@@ -111,17 +117,16 @@ export async function getBalance(userId: string): Promise<WalletBalance> {
   await migrateLegacyMobileBalanceIfNeeded(userId, accountId);
   const supabase = createAdminClient();
 
-  // The user's spendable funds live across TWO ledger account types: 'wallet'
-  // (this Next.js wallet) and 'user_wallet' (the Go finance ledger — the
-  // money-path authority that transport/gifting/payouts debit). Read-only sum
-  // of both so the displayed balance reflects real spendable money; mutations
-  // still go through each system's own ledger.
+  // Mutations are unified on WALLET_ACCOUNT_TYPE (ADR-045). This read still sums
+  // the legacy plane too, so any residue the sweep migration has not yet moved —
+  // or anything credited in the deploy window — stays VISIBLE rather than
+  // appearing to vanish. Once the legacy plane is empty this is a no-op.
   const { data: walletAccounts } = await supabase
     .from('ledger_accounts')
     .select('id')
     .eq('user_id', userId)
     .eq('currency', 'NGN')
-    .in('type', ['wallet', 'user_wallet']);
+    .in('type', SPENDABLE_WALLET_TYPES as unknown as string[]);
   const accountIds = (walletAccounts ?? []).map((a) => a.id as string);
   if (!accountIds.includes(accountId)) accountIds.push(accountId);
 

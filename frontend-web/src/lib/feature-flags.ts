@@ -72,8 +72,8 @@ export const featureFlags = {
    *
    * ⚠️ DO NOT ENABLE YET. A ledger-auditor review found blockers that make the
    * relaxation unsafe and non-functional as it stands:
-   *   - the card rail credits ledger type 'wallet' while the Go modules debit
-   *     'user_wallet', so a card-funded checkout cannot be spent at all;
+   *   - [FIXED, ADR-045] the card rail credited ledger type 'wallet' while the Go
+   *     modules debit 'user_wallet'. One plane now: both mutate 'user_wallet';
    *   - the Tier-0 cash-out ban this relaxation depends on lives behind
    *     FEATURE_TIER_LIMITS_ENABLED, which ships false in .env.example;
    *   - the funding cap is a read-then-insert with no lock, so concurrent

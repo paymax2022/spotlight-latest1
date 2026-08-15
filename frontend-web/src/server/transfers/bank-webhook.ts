@@ -19,6 +19,7 @@
 import crypto from 'node:crypto';
 import { createAdminClient } from '@/lib/supabase/server';
 import { buildJournalLegs, getOrCreateStandingAccount } from '@/src/server/wallet/journal';
+import { WALLET_ACCOUNT_TYPE } from '@/src/server/wallet/account-type';
 
 interface BankWebhookResult {
   processed: boolean;
@@ -130,7 +131,7 @@ export async function handleBankTransferWebhook(
     .from('ledger_accounts')
     .select('id')
     .eq('user_id', transfer.user_id)
-    .eq('type', 'wallet')
+    .eq('type', WALLET_ACCOUNT_TYPE)
     .maybeSingle();
 
   let reversalEntryId: string | null = null;
