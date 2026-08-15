@@ -16,7 +16,8 @@ import {
   useMyStores, useStoreDetail, useCreateStore, useUpdateStore, useSetAvailability,
   useCreateCategory, useDeleteCategory, useCreateItem, useDeleteItem,
 } from '@/features/restaurantmerchant/hooks';
-import type { MerchantMenuCategory } from '@/features/restaurantmerchant/types';
+import type { MerchantMenuCategory, MerchantStore } from '@/features/restaurantmerchant/types';
+import { parsePackagingPrice, packagingPriceInput } from '@/features/restaurantmerchant/packagingPrice';
 
 const naira = (kobo: number) => `₦${(kobo / 100).toLocaleString('en-NG')}`;
 
@@ -153,11 +154,95 @@ function ManageStore({ storeId }: { storeId: string }) {
             loading={update.isPending} disabled={!dirty || !nameVal.trim()} />
         </Card>
 
+        {/* Packaging */}
+        <Text style={styles.section}>Takeaway packaging</Text>
+        <PackagingPrice storeId={storeId} store={server} />
+
         {/* Menu */}
         <Text style={styles.section}>Menu</Text>
         <MenuBuilder storeId={storeId} categories={detail.data?.categories ?? []} />
       </ScrollView>
     </Shell>
+  );
+}
+
+// ── Takeaway packaging price ──────────────────────────────────────────────────
+//
+// The customer pays this ONCE PER PACK, so the owner is setting a price every
+// future order carries — worth its own card rather than a fourth input buried in
+// the profile form. The copy says where the money goes, because the honest answer
+// is unusually good for the merchant: all of it, with no platform or rider cut.
+function PackagingPrice({ storeId, store }: { storeId: string; store: MerchantStore }) {
+  const update = useUpdateStore(storeId);
+  const serverKobo = store.packagingFeeKobo;
+
+  // null while untouched, so the field tracks the server value until the owner
+  // actually edits it — the same pattern the profile form above uses.
+  const [draft, setDraft] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // `?? undefined` deliberately: an older payload that omits the field is UNKNOWN,
+  // and seeding the box with "0" would invite the owner to save a price of free
+  // that they never chose.
+  const serverInput = serverKobo === undefined ? '' : packagingPriceInput(serverKobo);
+  const value = draft ?? serverInput;
+
+  const parsed = parsePackagingPrice(value);
+  const dirty = value !== serverInput;
+  const canSave = dirty && parsed.ok && !update.isPending;
+
+  const save = () => {
+    const result = parsePackagingPrice(value);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setError(null);
+    update.mutate(
+      { packagingFeeKobo: result.kobo },
+      {
+        // Drop back to tracking the server, so what is displayed is what was
+        // actually saved rather than what was typed.
+        onSuccess: () => setDraft(null),
+        onError: () => setError('Couldn’t save that price. Check your connection and try again.'),
+      },
+    );
+  };
+
+  const perPack = parsed.ok ? parsed.kobo : null;
+
+  return (
+    <Card>
+      <Text style={styles.muted}>
+        Charged once for every takeaway pack in an order. You keep all of it — Paymax and the
+        rider take no cut.
+      </Text>
+
+      <Field
+        label="Price per pack (₦)"
+        value={value}
+        onChangeText={(t) => { setDraft(t); if (error) setError(null); }}
+        placeholder="200"
+        keyboardType="decimal-pad"
+      />
+
+      {error ? (
+        <Text style={styles.errorText}>{error}</Text>
+      ) : perPack !== null ? (
+        <Text style={styles.muted}>
+          {perPack === 0
+            ? 'Customers won’t be charged for packaging.'
+            : `A 3-pack order adds ${naira(perPack * 3)} for the customer.`}
+        </Text>
+      ) : null}
+
+      <PrimaryButton
+        label="Save packaging price"
+        onPress={save}
+        loading={update.isPending}
+        disabled={!canSave}
+      />
+    </Card>
   );
 }
 
@@ -263,16 +348,17 @@ function Card({ children }: { children: React.ReactNode }) {
 }
 
 function Field({
-  label, value, onChangeText, placeholder, multiline,
+  label, value, onChangeText, placeholder, multiline, keyboardType,
 }: {
   label: string; value: string; onChangeText: (t: string) => void; placeholder?: string; multiline?: boolean;
+  keyboardType?: 'default' | 'decimal-pad';
 }) {
   return (
     <View style={{ gap: 6 }}>
       <Text style={styles.label}>{label}</Text>
       <TextInput
         value={value} onChangeText={onChangeText} placeholder={placeholder}
-        placeholderTextColor={Colors.outline} multiline={multiline}
+        placeholderTextColor={Colors.outline} multiline={multiline} keyboardType={keyboardType}
         style={[styles.input, multiline && { height: 76, textAlignVertical: 'top' }]}
       />
     </View>
@@ -290,6 +376,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: { color: Colors.onSurface, fontSize: 16, fontWeight: '700' },
   muted: { color: Colors.onSurfaceVariant, fontSize: 13 },
+  errorText: { color: Colors.error, fontSize: 13 },
   label: { color: Colors.onSurfaceVariant, fontSize: 13, fontWeight: '600' },
   input: {
     borderWidth: 1, borderColor: Colors.outlineVariant, borderRadius: Radius.md,

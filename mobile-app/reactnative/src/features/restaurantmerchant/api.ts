@@ -16,6 +16,7 @@
 //   DELETE /restaurant/:id/menu/items/:itemId
 
 import { api } from '@/api/client';
+import { buildUpdateStoreBody } from './packagingPrice';
 import type {
   MerchantStore,
   MerchantStoreDetail,
@@ -43,6 +44,9 @@ function mapStore(r: any): MerchantStore {
     logoUrl: r.logo_url ?? null,
     isOpen: !!r.is_open,
     createdAt: r.created_at,
+    // Left undefined when the server omits it, so the UI can tell "not loaded"
+    // from a genuine ₦0 and never shows a price the owner did not set.
+    packagingFeeKobo: typeof r.packaging_fee_kobo === 'number' ? r.packaging_fee_kobo : undefined,
   };
 }
 function mapItem(i: any): MerchantMenuItem {
@@ -64,6 +68,7 @@ function mapCategory(c: any): MerchantMenuCategory {
 // ── Offline stub (only when USE_MOCK) ─────────────────────────────────────────
 let mockStore: MerchantStore = {
   id: 'r-demo', name: 'My Kitchen', description: '', address: '1 Demo Street, Lagos', isOpen: false,
+  packagingFeeKobo: 20000, // the platform default, ₦200
 };
 let mockCats: MerchantMenuCategory[] = [];
 let seq = 0;
@@ -101,14 +106,11 @@ export async function updateStore(id: string, patch: UpdateStoreInput): Promise<
       description: patch.description ?? mockStore.description,
       address: patch.address ?? mockStore.address,
       logoUrl: patch.logoUrl ?? mockStore.logoUrl,
+      packagingFeeKobo: patch.packagingFeeKobo ?? mockStore.packagingFeeKobo,
     };
     return mockStore;
   }
-  const body: Record<string, unknown> = {};
-  if (patch.name !== undefined) body.name = patch.name;
-  if (patch.description !== undefined) body.description = patch.description;
-  if (patch.address !== undefined) body.address = patch.address;
-  if (patch.logoUrl !== undefined) body.logo_url = patch.logoUrl;
+  const body = buildUpdateStoreBody(patch);
   return mapStore(unwrap<any>(await api.patch(`${BASE}/${enc(id)}`, body)));
 }
 

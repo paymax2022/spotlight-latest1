@@ -15,6 +15,12 @@ export interface MerchantStore {
   logoUrl?: string | null;
   isOpen: boolean;
   createdAt?: string;
+  /**
+   * Price of ONE takeaway pack, integer kobo. The platform seeds ₦200; the owner
+   * sets their own, and 0 is a legitimate choice meaning "I don't charge for
+   * packaging". Absent from an older payload reads as unknown, not as free.
+   */
+  packagingFeeKobo?: Kobo;
 }
 
 export interface MerchantMenuItem {
@@ -52,6 +58,9 @@ export interface UpdateStoreInput {
   description?: string;
   address?: string;
   logoUrl?: string;
+  /** Integer kobo per takeaway pack. 0 is a real value, so this is only omitted
+   *  when the owner is not changing the price. */
+  packagingFeeKobo?: Kobo;
 }
 
 export interface EarningsRun {
