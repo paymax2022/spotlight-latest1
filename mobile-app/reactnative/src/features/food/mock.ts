@@ -362,7 +362,10 @@ export function makeOrder(
   const id = partial.id ?? `o${orderSeq++}-${Date.now().toString(36)}`;
   const items = partial.items ?? [];
   const subtotal = items.reduce((sum, it) => sum + it.priceKobo * it.qty, 0);
-  const delivery = r.deliveryFeeKobo;
+  // Every MOCK_RESTAURANTS entry defines a flat fee, but the field is optional on
+  // Restaurant because the live DTO has no such column — so narrow it here. An
+  // Order always carries a concrete delivery fee.
+  const delivery = r.deliveryFeeKobo ?? 0;
   const service = Math.round(subtotal * 0.05);
   // Mandatory take-away packaging: one pack fee PER takeaway package (the
   // container). Falls back to one pack per portion only if no package count was
