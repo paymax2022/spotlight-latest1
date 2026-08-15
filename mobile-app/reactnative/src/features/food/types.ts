@@ -79,6 +79,18 @@ export interface CartLine {
   isProtein?: boolean;
   /** Restaurant ID for this item (enables multi-restaurant orders). */
   restaurantId?: string;
+  /**
+   * Restaurant name, captured when the item was added.
+   *
+   * The cart already groups by `restaurantId`, but the store keeps only ONE
+   * `restaurantName` — the first restaurant added — so checkout could name a
+   * single section and fell back to "Restaurant 2/3/4" for the rest. The name
+   * is available at add time, so recording it per line removes the guess.
+   *
+   * Optional because carts hydrated from storage or the server predate this
+   * field; checkout resolves those from the discovery list instead.
+   */
+  restaurantName?: string;
 }
 
 /**

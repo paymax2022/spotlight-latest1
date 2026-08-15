@@ -18,8 +18,9 @@ import {
   useCartStore, cartSubtotalKobo, cartItemCount, cartPackageCount, cartPackagingKobo,
   aggregateCartLines, cartPackagesPayload, MAX_SAME_FOOD_PER_PACKAGE,
 } from '@/features/food/cartStore';
+import { resolveRestaurantName } from '@/features/food/restaurantName';
 import { formatNaira } from '@/features/food/utils';
-import { useRestaurant } from '@/features/food/hooks';
+import { useRestaurant, useRestaurants } from '@/features/food/hooks';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { CartNutritionSummary } from '@/features/nutrition';
 
@@ -44,6 +45,20 @@ function SubLine({ label, value, strong }: { label: string; value: string; stron
 export default function CheckoutScreen() {
   const { packages, restaurantId, restaurantName, clear, addItem, decrementItem, addPackage, removePackage } = useCartStore();
   const { data: restaurant } = useRestaurant(restaurantId ?? undefined);
+
+  // Names for the OTHER restaurants in a multi-restaurant cart. Lines added in
+  // this session carry their own name; this covers carts hydrated from storage
+  // or the server, whose lines predate that field. Already cached by the food
+  // screens (staleTime 30s), so it costs no extra round-trip in practice.
+  const { data: allRestaurants } = useRestaurants();
+  const restaurantNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of allRestaurants ?? []) if (r.id && r.name) m.set(r.id, r.name);
+    // The cart's primary restaurant is known to the store even when discovery
+    // does not list it (e.g. it has since closed).
+    if (restaurantId && restaurantName && !m.has(restaurantId)) m.set(restaurantId, restaurantName);
+    return m;
+  }, [allRestaurants, restaurantId, restaurantName]);
   const placeOrder = usePlaceOrder();
   // Two-option checkout modal: Pay with Wallet, or Pay with Card/Transfer (Paystack gateway).
   const pay = usePurchasePayment<Awaited<ReturnType<typeof placeOrder.mutateAsync>>>();
@@ -203,7 +218,12 @@ export default function CheckoutScreen() {
                   {/* Restaurant name header */}
                   <View style={s.restaurantSection}>
                     <Text style={s.restaurantSectionTitle}>
-                      {restaurantName && rid === restaurantId ? restaurantName : `Restaurant ${restIndex + 1}`}
+                      {resolveRestaurantName(
+                        rPackages.flatMap((p) => p.lines),
+                        rid,
+                        restIndex,
+                        (id) => restaurantNameById.get(id),
+                      )}
                     </Text>
                   </View>
 
