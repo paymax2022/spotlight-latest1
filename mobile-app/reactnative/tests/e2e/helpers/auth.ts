@@ -21,6 +21,39 @@ function supabaseAuthUser(user: AnyTestUser) {
   };
 }
 
+// ── Transaction-PIN gate ─────────────────────────────────────────────────────
+// AuthGate in app/_layout.tsx parks EVERY signed-in user on /security/set-pin
+// until getPinStatus() reports a PIN. Two paths have to be satisfied because
+// transfers defaults to mock mode (EXPO_PUBLIC_TRANSFERS_USE_MOCK unset/'true'):
+//   • mock  — getPinStatus() reads MOCK_PIN, seeded from localStorage at module
+//     load (src/features/transfers/mock.ts). No network call happens, so seeding
+//     the key via addInitScript is what actually clears the gate.
+//   • live  — GET /api/v1/transfers/pin/status, covered by the route mock.
+// Seeding both keeps the helper correct whichever way the flag is set.
+const MOCK_TXN_PIN_KEY = 'paymax_mock_txn_pin';
+
+/** The 4-digit PIN seeded for signed-in test users. */
+export const TEST_TXN_PIN = '1234';
+
+/**
+ * Control whether the signed-in user already has a transaction PIN.
+ * `hasPin: false` deliberately leaves the gate closed so a test can exercise
+ * the set-PIN flow itself.
+ */
+export async function mockPinStatus(page: Page, hasPin: boolean) {
+  await page.route('**/api/v1/transfers/pin/status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ hasPin }),
+    });
+  });
+  await page.addInitScript(({ key, pin }) => {
+    if (pin === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, pin);
+  }, { key: MOCK_TXN_PIN_KEY, pin: hasPin ? TEST_TXN_PIN : null });
+}
+
 export async function mockAuth(page: Page, user: AnyTestUser = users.funded) {
   const authUser = supabaseAuthUser(user);
 
@@ -62,8 +95,13 @@ export async function mockAuth(page: Page, user: AnyTestUser = users.funded) {
   });
 }
 
-export async function loginAs(page: Page, user: AnyTestUser = users.funded) {
-  await mockAuth(page, user);
+/**
+ * Pre-seed a live Supabase session into the app's storage so the next
+ * navigation starts signed in. The key is the secure-storage adapter's prefix
+ * plus Supabase's default key for the 127.0.0.1 host — seeding anything else
+ * leaves the app signed out.
+ */
+export async function seedSession(page: Page, user: AnyTestUser = users.funded) {
   await page.addInitScript(({ seededUser }) => {
     const authUser = {
       id: seededUser.id,
@@ -89,6 +127,20 @@ export async function loginAs(page: Page, user: AnyTestUser = users.funded) {
     };
     window.localStorage.setItem('paymax_secure_sb-127-auth-token', JSON.stringify(session));
   }, { seededUser: user });
+}
+
+export async function loginAs(
+  page: Page,
+  user: AnyTestUser = users.funded,
+  opts: { withPin?: boolean } = {},
+) {
+  // Default to a user who already has a PIN — the gate is not what these tests
+  // are about. Pass withPin:false to land on the set-PIN screen instead.
+  const withPin = opts.withPin ?? true;
+  await mockAuth(page, user);
+  await mockPinStatus(page, withPin);
+  await seedSession(page, user);
   await page.goto('/home', { waitUntil: 'domcontentloaded' });
-  await expect(page.getByText('Explore Services')).toBeVisible();
+  // Without a PIN the gate redirects to /security/set-pin, so home never renders.
+  if (withPin) await expect(page.getByText('Explore Services')).toBeVisible();
 }

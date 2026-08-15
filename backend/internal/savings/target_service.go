@@ -88,6 +88,22 @@ func (s *TargetService) Join(ctx context.Context, targetID, userID string) error
 }
 
 // Balance returns the derived pot balance in kobo (NL-8).
+// BalanceForMember is the ONLY pot-balance read that may be reached from a
+// request handler. Balance() below takes no caller identity and so cannot be
+// authorized; exposing it directly let any authenticated user read any pot's
+// balance by id. RLS does not cover this — the backend connects as table owner.
+func (s *TargetService) BalanceForMember(ctx context.Context, userID, targetID string) (int64, error) {
+	ok, err := s.isMember(ctx, targetID, userID)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, ErrForbidden
+	}
+	return s.Balance(ctx, targetID)
+}
+
+// Balance is UNAUTHORIZED by construction — see BalanceForMember.
 func (s *TargetService) Balance(ctx context.Context, targetID string) (int64, error) {
 	const q = `SELECT COALESCE(SUM(CASE WHEN direction='CREDIT' THEN amount_kobo ELSE -amount_kobo END),0)
 	           FROM group_target_ledger WHERE target_id=$1`

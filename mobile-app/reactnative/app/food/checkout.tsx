@@ -7,7 +7,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import AddressAutocompleteInput, { type SelectedAddress } from '@/components/AddressAutocompleteInput';
 import { withPlusCode } from '@/lib/addressLookup';
-import type { LatLng } from '@/features/food/types';
+import type { CartPackage, LatLng } from '@/features/food/types';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
@@ -109,8 +109,12 @@ export default function CheckoutScreen() {
       domain: 'food_order',
       charge: () =>
         placeOrder.mutateAsync({
-          restaurantId,
-          items: aggregated.map((l) => ({ itemId: l.itemId, qty: l.qty })),
+          restaurantId: restaurantId || '', // primary restaurant (from route)
+          items: aggregated.map((l) => ({
+            itemId: l.itemId,
+            qty: l.qty,
+            restaurantId: l.restaurantId, // multi-restaurant: include per-item restaurant
+          })),
           packageCount: packCount,
           packages: cartPackagesPayload(packages),
           deliveryAddress: withPlusCode(address.trim(), addressPlusCode),
@@ -179,56 +183,88 @@ export default function CheckoutScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
-        {restaurantName ? <Text style={s.restName}>{restaurantName}</Text> : null}
+        {/* Group items by restaurant and display */}
+        {(() => {
+          // Create a map of restaurant -> packages
+          const byRestaurant = new Map<string, CartPackage[]>();
+          for (const pkg of packages) {
+            if (pkg.lines.length === 0) continue;
+            // Get the restaurant ID from the first item in the package
+            const rid = pkg.lines[0]?.restaurantId || restaurantId || 'unknown';
+            if (!byRestaurant.has(rid)) byRestaurant.set(rid, []);
+            byRestaurant.get(rid)!.push(pkg);
+          }
 
-        {/* Takeaway packs — each package is a container with its own food.
-            Max 2 of the same item per pack; add more packs as needed. */}
-        {packages.filter((p) => p.lines.length > 0).map((pkg, i) => (
-          <View key={pkg.id} style={[s.card, shadow1, i > 0 && { marginTop: Spacing.sm }]}>
-            <View style={s.packHeader}>
-              <View style={s.packHeaderLeft}>
-                <Icons.ShoppingBag size={16} color={Colors.primary} strokeWidth={2.2} />
-                <Text style={s.packTitle}>Takeaway pack {i + 1}</Text>
-              </View>
-              <Pressable onPress={() => removePackage(pkg.id)} hitSlop={8} accessibilityLabel={`Remove pack ${i + 1}`}>
-                <Icons.Trash2 size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />
-              </Pressable>
-            </View>
-            <View style={s.divider} />
-            {pkg.lines.map((l) => {
-              const atMax = !l.isProtein && l.qty >= MAX_SAME_FOOD_PER_PACKAGE;
-              return (
-                <View key={l.itemId} style={s.itemRow}>
-                  <View style={s.itemNameWrap}>
-                    <Text style={s.itemName} numberOfLines={1}>{l.name}</Text>
-                    {l.isProtein ? <View style={s.proteinTag}><Text style={s.proteinTagText}>protein</Text></View> : null}
+          const restaurants = Array.from(byRestaurant.entries());
+          return restaurants.length === 0 ? null : (
+            <View>
+              {restaurants.map(([rid, rPackages], restIndex) => (
+                <View key={rid} style={restIndex > 0 && { marginTop: Spacing.lg }}>
+                  {/* Restaurant name header */}
+                  <View style={s.restaurantSection}>
+                    <Text style={s.restaurantSectionTitle}>
+                      {restaurantName && rid === restaurantId ? restaurantName : `Restaurant ${restIndex + 1}`}
+                    </Text>
                   </View>
-                  <View style={s.stepper}>
-                    <Pressable onPress={() => decrementItem(pkg.id, l.itemId)} style={s.stepBtn} accessibilityLabel="Remove one">
-                      <Icons.Minus size={14} color={Colors.primary} strokeWidth={2.4} />
-                    </Pressable>
-                    <Text style={s.qty}>{l.qty}</Text>
-                    <Pressable
-                      onPress={() => onIncrement(pkg.id, l)}
-                      style={[s.stepBtn, atMax && s.stepBtnDisabled]}
-                      disabled={atMax}
-                      accessibilityLabel="Add one"
-                    >
-                      <Icons.Plus size={14} color={atMax ? Colors.outline : Colors.primary} strokeWidth={2.4} />
-                    </Pressable>
-                  </View>
-                  <Text style={s.itemPrice}>{formatNaira(l.priceKobo * l.qty)}</Text>
+
+                  {/* Takeaway packs for this restaurant */}
+                  {rPackages.map((pkg, pkgIndex) => (
+                    <View key={pkg.id} style={[s.card, shadow1, pkgIndex > 0 && { marginTop: Spacing.sm }]}>
+                      <View style={s.packHeader}>
+                        <View style={s.packHeaderLeft}>
+                          <Icons.ShoppingBag size={16} color={Colors.primary} strokeWidth={2.2} />
+                          <Text style={s.packTitle}>Takeaway pack {pkgIndex + 1}</Text>
+                        </View>
+                        <Pressable onPress={() => removePackage(pkg.id)} hitSlop={8} accessibilityLabel={`Remove pack ${pkgIndex + 1}`}>
+                          <Icons.Trash2 size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />
+                        </Pressable>
+                      </View>
+                      <View style={s.divider} />
+                      {pkg.lines.map((l) => {
+                        const atMax = !l.isProtein && l.qty >= MAX_SAME_FOOD_PER_PACKAGE;
+                        return (
+                          <View key={l.itemId} style={s.itemRow}>
+                            <View style={s.itemNameWrap}>
+                              <Text style={s.itemName} numberOfLines={1}>{l.name}</Text>
+                              {l.isProtein ? <View style={s.proteinTag}><Text style={s.proteinTagText}>protein</Text></View> : null}
+                            </View>
+                            <View style={s.stepper}>
+                              <Pressable onPress={() => decrementItem(pkg.id, l.itemId)} style={s.stepBtn} accessibilityLabel="Remove one">
+                                <Icons.Minus size={14} color={Colors.primary} strokeWidth={2.4} />
+                              </Pressable>
+                              <Text style={s.qty}>{l.qty}</Text>
+                              <Pressable
+                                onPress={() => onIncrement(pkg.id, l)}
+                                style={[s.stepBtn, atMax && s.stepBtnDisabled]}
+                                disabled={atMax}
+                                accessibilityLabel="Add one"
+                              >
+                                <Icons.Plus size={14} color={atMax ? Colors.outline : Colors.primary} strokeWidth={2.4} />
+                              </Pressable>
+                            </View>
+                            <Text style={s.itemPrice}>{formatNaira(l.priceKobo * l.qty)}</Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ))}
                 </View>
-              );
-            })}
-          </View>
-        ))}
+              ))}
+            </View>
+          );
+        })()}
 
-        <Pressable style={s.addPackRow} onPress={() => addPackage()} accessibilityRole="button">
-          <Icons.Plus size={16} color={Colors.primary} strokeWidth={2.6} />
-          <Text style={s.addPackRowText}>Add another takeaway pack</Text>
-        </Pressable>
-        <Text style={s.packNote}>One main dish per pack (up to {MAX_SAME_FOOD_PER_PACKAGE} portions); proteins like meat & fish can be added on top. Add food from the restaurant menu.</Text>
+        <View style={s.packActionsRow}>
+          <Pressable style={[s.actionButton, s.actionButtonAdd]} onPress={() => addPackage()} accessibilityRole="button">
+            <Icons.Plus size={16} color={Colors.primary} strokeWidth={2.6} />
+            <Text style={s.actionButtonText}>Add another pack</Text>
+          </Pressable>
+          <Pressable style={[s.actionButton, s.actionButtonShop]} onPress={() => router.push('/food')} accessibilityRole="button">
+            <Icons.Plus size={16} color={Colors.white} strokeWidth={2.6} />
+            <Text style={[s.actionButtonText, s.actionButtonTextShop]}>Add more food</Text>
+          </Pressable>
+        </View>
+        <Text style={s.packNote}>One main dish per pack (up to {MAX_SAME_FOOD_PER_PACKAGE} portions); proteins like meat & fish can be added on top.</Text>
 
         {/* Delivery address — proxy (Google) lookup with offline fallback, returning
             a map-ready coordinate + Plus Code, with confirm-on-map + GPS. */}
@@ -354,13 +390,23 @@ const s = StyleSheet.create({
   iconButton: { width: 40, height: 40, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
   topTitle: { ...Typography.titleLg, color: Colors.primary },
   content: { padding: Spacing.containerMargin, paddingBottom: Spacing.xxl },
-  restName: { ...Typography.titleMd, color: Colors.onSurface, marginBottom: Spacing.md },
+  restHeader: { marginBottom: Spacing.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  restName: { ...Typography.titleMd, color: Colors.onSurface },
+  restMeta: { ...Typography.labelMd, color: Colors.secondary },
+  restaurantSection: { marginBottom: Spacing.md, paddingBottom: Spacing.sm, borderBottomWidth: 2, borderBottomColor: Colors.primary },
+  restaurantSectionTitle: { ...Typography.titleMd, color: Colors.primary, fontWeight: '600' as const },
   card: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, padding: Spacing.md },
   packHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   packHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   packTitle: { ...Typography.labelLg, color: Colors.onSurface },
   addPackRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, marginTop: Spacing.sm, paddingVertical: Spacing.md, borderRadius: Radius.lg, borderWidth: 1.5, borderStyle: 'dashed', borderColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLowest },
   addPackRowText: { ...Typography.labelMd, color: Colors.primary },
+  packActionsRow: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.sm },
+  actionButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, paddingVertical: Spacing.md, borderRadius: Radius.lg, borderWidth: 1.5 },
+  actionButtonAdd: { borderStyle: 'dashed' as const, borderColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLowest },
+  actionButtonShop: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  actionButtonText: { ...Typography.labelMd, color: Colors.primary },
+  actionButtonTextShop: { color: Colors.white },
   packNote: { ...Typography.caption, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
   itemRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.xs },
   itemNameWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },

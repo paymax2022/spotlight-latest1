@@ -12,7 +12,7 @@ import (
 // TM-006 live-DB integration test: a consult's clinical notes are readable only by
 // the participants (patient / provider owner) or an admin; anyone else is forbidden.
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset. Bring-up:
+// SKIPPED whenever TEST_DATABASE_URL is unset. Bring-up:
 //
 //	supabase start
 //	export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
@@ -22,10 +22,7 @@ func noteReadLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB consult note-read test; see bring-up note in noteaccess_live_db_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB consult note-read test; see bring-up note in noteaccess_live_db_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

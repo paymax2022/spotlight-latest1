@@ -270,6 +270,46 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 	if !exists {
 		return fmt.Errorf("restaurant: application not found")
 	}
+	var target KYBStatus
+	switch decision {
+	case "approve":
+		target = KYBApproved
+	case "reject":
+		target = KYBRejected
+	case "needs_info":
+		target = KYBNeedsInfo
+	default:
+		return fmt.Errorf("restaurant: invalid decision %q (want approve|reject|needs_info)", decision)
+	}
+	if decision != "approve" && note == "" {
+		return fmt.Errorf("restaurant: a reviewer note is required to %s", decision)
+	}
+
+	// When a KYB record exists, the decision must be a legal KYB transition and is
+	// recorded on it (plus the restaurants.kyb_status snapshot payout gating reads).
+	k, hasKYB, err := s.loadKYB(ctx, restaurantID)
+	if err != nil {
+		return err
+	}
+	if hasKYB {
+		if !kybCanTransition(k.Status, target) {
+			return fmt.Errorf("restaurant: cannot move KYB from %s to %s", k.Status, target)
+		}
+		if _, err := s.db.Exec(ctx,
+			`UPDATE restaurant_kyb SET status=$2, decision_reason=NULLIF($3,''), reviewed_by=$4,
+			        decided_at=now(), updated_at=now() WHERE restaurant_id=$1`,
+			restaurantID, string(target), note, adminID); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(ctx,
+			`UPDATE restaurants SET kyb_status=$2, updated_at=now() WHERE id=$1`,
+			restaurantID, string(target)); err != nil {
+			return err
+		}
+	} else if decision == "needs_info" {
+		return fmt.Errorf("restaurant: no KYB submission to request more info on")
+	}
+
 	switch decision {
 	case "approve":
 		if _, err := s.db.Exec(ctx,
@@ -277,15 +317,10 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 			return err
 		}
 	case "reject":
-		if note == "" {
-			return fmt.Errorf("restaurant: a reviewer note is required to reject")
-		}
 		if _, err := s.db.Exec(ctx,
 			`UPDATE restaurants SET is_open=false, updated_at=now() WHERE id=$1`, restaurantID); err != nil {
 			return err
 		}
-	default:
-		return fmt.Errorf("restaurant: invalid decision %q (want approve|reject)", decision)
 	}
 	// Best-effort audit via the shared notifier (owner is informed of the decision).
 	var owner string
@@ -293,8 +328,12 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 	if owner != "" {
 		title := "Restaurant approved"
 		body := "Your restaurant has been approved and is now live."
-		if decision == "reject" {
+		switch decision {
+		case "reject":
 			title = "Restaurant application rejected"
+			body = note
+		case "needs_info":
+			title = "More information needed"
 			body = note
 		}
 		s.notify(ctx, Notification{UserID: owner, Event: EventOnboardingDecision, Title: title, Body: body,

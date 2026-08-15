@@ -1,5 +1,5 @@
 import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/responses';
-import { listRegistrationApplications, startRegistrationDraft } from '@/src/server/registration/store';
+import { listRegistrationApplications, startRegistrationDraft } from '@/src/server/registration/supabase-store';
 import type { RegistrationListFilter } from '@/src/features/registration/types';
 import { requireUser } from '@/src/lib/auth/server';
 
@@ -18,7 +18,7 @@ export async function GET(request: Request) {
     if (searchParams.get('minAge')) filter.minAge = Number(searchParams.get('minAge'));
     if (searchParams.get('maxAge')) filter.maxAge = Number(searchParams.get('maxAge'));
 
-    const applications = listRegistrationApplications(filter).filter((draft) => draft.userId === user.id);
+    const applications = (await listRegistrationApplications(filter)).filter((draft) => draft.userId === user.id);
     return successResponse({ success: true, applications });
   } catch (error) {
     return handleApiError(error, 'Failed to list registration applications');
@@ -39,10 +39,14 @@ export async function POST(request: Request) {
       return errorResponse('contestSlug is required', 400);
     }
 
-    const draft = startRegistrationDraft({
+    // registrations.role is DB-constrained to public_user|invited_applicant|staff
+    // (see 20260811232202 CHECK) — fold the app's wider role set onto it.
+    const storeRole =
+      body.role === 'admin' || body.role === 'super_admin' ? 'staff' : 'public_user';
+    const draft = await startRegistrationDraft({
       contestSlug: body.contestSlug,
       userId: user.id,
-      role: body.role,
+      role: storeRole,
       accountData: body.accountData,
     });
 

@@ -71,11 +71,19 @@ func (s *Service) Escrow(ctx context.Context, payerID, reference, idempotencyKey
 	if _, err = s.db.Exec(ctx, insert, sett.ID, sett.Reference, sett.ModuleType, sett.PayerID, sett.TotalKobo, sett.EscrowedAt, sett.IdempotencyKey); err != nil {
 		return nil, fmt.Errorf("settlement: insert escrow row: %w", err)
 	}
-	// Resolve the authoritative id/status (handles the retry case where the row was
-	// inserted by a prior attempt).
+	// Resolve the authoritative id/status/total (handles the retry case where the
+	// row was inserted by a prior attempt).
+	//
+	// total_kobo is re-read, NOT echoed from the argument: on a replay the existing
+	// row wins, and it may have been escrowed for a DIFFERENT amount than this
+	// attempt computed (e.g. a marketplace price changed between attempts). Callers
+	// persist their own copy of the amount, so handing them the argument they passed
+	// would let their record diverge from the money actually held in escrow. Compare
+	// the returned TotalKobo against what you intended to charge and fail closed on a
+	// mismatch.
 	if err = s.db.QueryRow(ctx,
-		`SELECT id, status FROM settlements WHERE idempotency_key=$1`, idempotencyKey,
-	).Scan(&sett.ID, &sett.Status); err != nil {
+		`SELECT id, status, total_kobo FROM settlements WHERE idempotency_key=$1`, idempotencyKey,
+	).Scan(&sett.ID, &sett.Status, &sett.TotalKobo); err != nil {
 		return nil, fmt.Errorf("settlement: resolve escrow row: %w", err)
 	}
 	return sett, nil

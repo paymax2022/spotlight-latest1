@@ -8,6 +8,17 @@ import { getDevUrl } from '@/lib/devUrl';
 // All read-only catalog and wallet data comes directly from Supabase (see each api/*.ts).
 const baseURL = getDevUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:3000');
 
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /**
+     * Suppress the global 401 → sign-out + redirect for this request. Set it on
+     * advisory/background reads only; every user-initiated request should keep the
+     * default so an expired session is surfaced immediately.
+     */
+    skipAuthRedirect?: boolean;
+  }
+}
+
 export const api = axios.create({
   baseURL,
   timeout: 30_000,
@@ -28,7 +39,12 @@ api.interceptors.request.use(async (config) => {
 api.interceptors.response.use(
   (r) => r,
   async (error) => {
-    if (error?.response?.status === 401) {
+    // A 401 normally means the session is gone, so sign out and bounce to login.
+    // ADVISORY reads opt out with `skipAuthRedirect: true`: a background check that
+    // merely informs the UI (e.g. the checkout's KYC spend pre-check) must never be
+    // able to log someone out on its own — if the session really is dead, the user's
+    // next real request will 401 and take this path anyway.
+    if (error?.response?.status === 401 && !error?.config?.skipAuthRedirect) {
       try { await createSupabaseClient().auth.signOut(); } catch { /* ignore */ }
       router.replace('/(auth)/login');
     }

@@ -3,8 +3,8 @@
  *   POST /api/registration/applications         — create draft
  *   POST /api/registration/applications/[id]/submit — submit draft
  *
- * The registration store is in-memory (globalThis Map) — no database.
- * Store functions are mocked so tests stay isolated and fast.
+ * The routes read the Supabase-backed registration store (supabase-store);
+ * its functions are mocked so tests stay isolated and fast — no database.
  * Auth (requireUser) is mocked to control auth outcomes.
  *
  * Protected sources:
@@ -31,7 +31,7 @@ vi.mock('@/src/lib/auth/server', () => ({
   requireUser: vi.fn(),
 }));
 
-vi.mock('@/src/server/registration/store', () => ({
+vi.mock('@/src/server/registration/supabase-store', () => ({
   listRegistrationApplications: vi.fn().mockReturnValue([]),
   startRegistrationDraft: vi.fn(),
   getRegistrationDraft: vi.fn(),
@@ -48,7 +48,7 @@ import {
   getRegistrationDraft,
   submitRegistrationApplication,
   listRegistrationApplications,
-} from '@/src/server/registration/store';
+} from '@/src/server/registration/supabase-store';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -107,7 +107,9 @@ describe('POST /api/registration/applications', () => {
     expect(vi.mocked(startRegistrationDraft)).toHaveBeenCalledWith({
       contestSlug: 'reality-tv-show',
       userId: TEST_USER.id,
-      role: undefined,
+      // The route folds the app role set onto the DB-constrained store set
+      // (registrations.role CHECK) — unset roles become 'public_user'.
+      role: 'public_user',
       accountData: undefined,
     });
   });
@@ -192,7 +194,7 @@ describe('POST /api/registration/applications/[id]/submit', () => {
   });
 
   it('should return 404 when the draft does not exist', async () => {
-    vi.mocked(getRegistrationDraft).mockReturnValue(null);
+    vi.mocked(getRegistrationDraft).mockResolvedValue(null);
 
     const res = await submitPost(
       makeRequest('/api/registration/applications/unknown-id/submit', {}),

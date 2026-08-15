@@ -177,6 +177,126 @@ const MENU_BY_RESTAURANT: Record<string, MenuCategory[]> = {
       ],
     },
   ],
+  r2: [
+    {
+      id: 'c1',
+      name: 'Chicken Combos',
+      items: [
+        { id: 'i1', name: 'Spicy Chicken Bucket (8pc)', description: 'Crispy spiced chicken pieces', priceKobo: 420000, icon: 'Drumstick', available: true },
+        { id: 'i2', name: 'Mild Chicken Bucket (8pc)', description: 'Tender mild chicken pieces', priceKobo: 400000, icon: 'Drumstick', available: true },
+        { id: 'i3', name: 'Chicken & Chips Combo', description: 'Golden fried chicken with fries', priceKobo: 280000, icon: 'Drumstick', available: true },
+      ],
+    },
+    {
+      id: 'c2',
+      name: 'Sides',
+      items: [
+        { id: 'i4', name: 'French Fries (Large)', description: 'Crispy golden fries', priceKobo: 120000, icon: 'CookingPot', available: true },
+        { id: 'i5', name: 'Coleslaw', description: 'Fresh crispy coleslaw', priceKobo: 80000, icon: 'CookingPot', available: true },
+        { id: 'i6', name: 'Corn on the Cob', description: 'Grilled with butter', priceKobo: 100000, icon: 'CookingPot', available: true },
+      ],
+    },
+    {
+      id: 'c3',
+      name: 'Drinks',
+      items: [
+        { id: 'i7', name: 'Fanta (500ml)', description: 'Various flavors available', priceKobo: 60000, icon: 'CupSoda', available: true },
+        { id: 'i8', name: 'Bottled Water (500ml)', priceKobo: 30000, icon: 'CupSoda', available: true },
+      ],
+    },
+  ],
+  r3: [
+    {
+      id: 'c1',
+      name: 'Main Dishes',
+      items: [
+        { id: 'i1', name: 'Fried Rice + Shrimp', description: 'Egg fried rice with shrimp', priceKobo: 350000, icon: 'UtensilsCrossed', available: true },
+        { id: 'i2', name: 'Chow Mein + Beef', description: 'Stir-fried noodles with beef', priceKobo: 320000, icon: 'UtensilsCrossed', available: true },
+        { id: 'i3', name: 'Sweet & Sour Pork', description: 'With vegetables', priceKobo: 380000, icon: 'UtensilsCrossed', available: true },
+      ],
+    },
+    {
+      id: 'cP',
+      name: 'Proteins (add to any pack)',
+      items: [
+        { id: 'p1', name: 'Extra Shrimp', description: 'Per piece', priceKobo: 150000, icon: 'Fish', available: true, foodType: 'protein' },
+        { id: 'p2', name: 'Beef Strips', description: 'Per piece', priceKobo: 100000, icon: 'Beef', available: true, foodType: 'protein' },
+      ],
+    },
+    {
+      id: 'c2',
+      name: 'Drinks',
+      items: [
+        { id: 'i4', name: 'Green Tea', description: 'Hot or cold', priceKobo: 50000, icon: 'CupSoda', available: true },
+        { id: 'i5', name: 'Mango Juice (500ml)', priceKobo: 80000, icon: 'CupSoda', available: true },
+      ],
+    },
+  ],
+  r4: [
+    {
+      id: 'c1',
+      name: 'Grilled Meats',
+      items: [
+        { id: 'i1', name: 'Grilled Steak (250g)', description: 'Prime beef steak', priceKobo: 480000, icon: 'Beef', available: true },
+        { id: 'i2', name: 'BBQ Ribs (Full Rack)', description: 'Smoked with special sauce', priceKobo: 450000, icon: 'Beef', available: true },
+        { id: 'i3', name: 'Grilled Chicken Thigh', description: 'Per piece', priceKobo: 180000, icon: 'Drumstick', available: true },
+      ],
+    },
+    {
+      id: 'c2',
+      name: 'Sides & Sauces',
+      items: [
+        { id: 'i4', name: 'Grilled Vegetables', description: 'Seasonal vegetables', priceKobo: 100000, icon: 'CookingPot', available: true },
+        { id: 'i5', name: 'Mashed Potatoes', description: 'Creamy and smooth', priceKobo: 90000, icon: 'CookingPot', available: true },
+      ],
+    },
+  ],
+  r5: [
+    {
+      id: 'c1',
+      name: 'Salad Bowls',
+      items: [
+        { id: 'i1', name: 'Caesar Salad', description: 'Crispy romaine with parmesan', priceKobo: 220000, icon: 'Salad', available: true },
+        { id: 'i2', name: 'Green Garden Salad', description: 'Mixed organic greens', priceKobo: 200000, icon: 'Salad', available: true },
+        { id: 'i3', name: 'Protein Bowl (Grilled Chicken)', description: 'With quinoa and greens', priceKobo: 280000, icon: 'UtensilsCrossed', available: true },
+      ],
+    },
+    {
+      id: 'c2',
+      name: 'Healthy Wraps',
+      items: [
+        { id: 'i4', name: 'Veggie Wrap', description: 'Whole wheat with greens', priceKobo: 180000, icon: 'UtensilsCrossed', available: true },
+        { id: 'i5', name: 'Grilled Chicken Wrap', description: 'With fresh vegetables', priceKobo: 220000, icon: 'UtensilsCrossed', available: true },
+      ],
+    },
+    {
+      id: 'c3',
+      name: 'Smoothies & Juices',
+      items: [
+        { id: 'i6', name: 'Detox Smoothie', description: 'Spinach, apple, ginger', priceKobo: 120000, icon: 'CupSoda', available: true },
+        { id: 'i7', name: 'Fresh Orange Juice', priceKobo: 100000, icon: 'CupSoda', available: true },
+      ],
+    },
+  ],
+  r6: [
+    {
+      id: 'c1',
+      name: 'Pepper Soup',
+      items: [
+        { id: 'i1', name: 'Pepper Soup (Goat Meat)', description: 'Hot & spicy', priceKobo: 280000, icon: 'Soup', available: true },
+        { id: 'i2', name: 'Pepper Soup (Fish)', description: 'Seasoned with local spices', priceKobo: 300000, icon: 'Soup', available: true },
+        { id: 'i3', name: 'Chicken Pepper Soup', description: 'Light and flavorful', priceKobo: 260000, icon: 'Soup', available: true },
+      ],
+    },
+    {
+      id: 'c2',
+      name: 'Sides',
+      items: [
+        { id: 'i4', name: 'Pounded Yam', description: 'Fresh and smooth', priceKobo: 150000, icon: 'CookingPot', available: true },
+        { id: 'i5', name: 'Fufu (Cassava & Plantain)', description: 'Traditional blend', priceKobo: 140000, icon: 'CookingPot', available: true },
+      ],
+    },
+  ],
 };
 
 function defaultMenu(): MenuCategory[] {

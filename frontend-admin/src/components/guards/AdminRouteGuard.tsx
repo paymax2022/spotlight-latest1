@@ -8,10 +8,18 @@ import { isRouteAllowed } from '@/features/auth/routeGuard';
 // Public admin routes render WITHOUT a session. They live under app/admin/ so
 // they inherit this guard; without this exemption the guard swallows the login
 // form (returns null when no token) and no one can ever sign in.
-const PUBLIC_ADMIN_ROUTES = ['/admin/login', '/admin/unauthorized'];
+const PUBLIC_ADMIN_ROUTES: (string | RegExp)[] = [
+  '/admin/login',
+  '/admin/unauthorized',
+  '/admin/competitions/participants',
+  /^\/admin\/voting\/contestant\//,
+];
 
 function isPublicAdminRoute(pathname: string): boolean {
-  return PUBLIC_ADMIN_ROUTES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  return PUBLIC_ADMIN_ROUTES.some((p) => {
+    if (p instanceof RegExp) return p.test(pathname);
+    return pathname === p || pathname.startsWith(`${p}/`);
+  });
 }
 
 export function AdminRouteGuard({ children }: { children: React.ReactNode }) {

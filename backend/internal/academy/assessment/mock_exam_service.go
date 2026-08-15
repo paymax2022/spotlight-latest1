@@ -160,9 +160,10 @@ func (s *MockExamService) SubmitExam(ctx context.Context, attemptID string, answ
 	// Grade the exam
 	result := s.gradeExam(ctx, instance, answers)
 
-	// Save performance
+	// Save final answers + performance
 	perfJSON, _ := json.Marshal(result.Performance)
-	if err := s.repo.SubmitAttempt(ctx, attemptID, perfJSON); err != nil {
+	answersJSON, _ := json.Marshal(answers)
+	if err := s.repo.SubmitAttempt(ctx, attemptID, answersJSON, perfJSON); err != nil {
 		return nil, fmt.Errorf("failed to submit exam: %w", err)
 	}
 
@@ -185,39 +186,59 @@ func (s *MockExamService) gradeExam(ctx context.Context, instance *MockExamInsta
 	var markingScheme map[string]interface{}
 	json.Unmarshal(instance.MarkingScheme, &markingScheme)
 
-	totalMarks := 100 // Default; would come from marking_scheme["total_marks"]
-	scoredMarks := 0
+	totalMarks := 100.0
+	if v, ok := markingScheme["total_marks"].(float64); ok && v > 0 {
+		totalMarks = v
+	}
 	correctAnswers := 0
 	totalAnswered := len(answers)
+	totalQuestions := 0
 
 	// Simple grading: compare against answer_keys
 	if answerKeys, ok := markingScheme["answer_keys"].(map[string]interface{}); ok {
+		totalQuestions = len(answerKeys)
 		for qID, answered := range answers {
 			if correct, exists := answerKeys[qID]; exists {
 				// Simple string comparison for now
 				if fmt.Sprintf("%v", answered) == fmt.Sprintf("%v", correct) {
 					correctAnswers++
-					scoredMarks += (totalMarks / len(answerKeys)) // distribute marks evenly
 				}
 			}
 		}
 	}
 
+	// Marks are the fraction of the key answered correctly, in float math —
+	// per-question integer division (totalMarks / n) floors to 0-1 marks and
+	// caps a perfect 60-question exam at 60%.
 	scorePercent := 0.0
-	if len(answers) > 0 {
-		scorePercent = (float64(scoredMarks) / float64(totalMarks)) * 100
+	if totalQuestions > 0 {
+		scorePercent = float64(correctAnswers) / float64(totalQuestions) * 100
 	}
+	scoredMarks := scorePercent / 100 * totalMarks
 
 	grade := s.calculateGrade(scorePercent)
 
+	bySection := make(map[string]interface{}) // would be populated in full implementation
+
+	// Persisted shape of academy_mock_attempt_metadata.performance; score_pct
+	// feeds v_mock_attempt_scores.score_percent, the rest feeds analytics.
+	performance := map[string]interface{}{
+		"score_raw":       scoredMarks,
+		"score_pct":       scorePercent,
+		"grade":           grade,
+		"correct_answers": correctAnswers,
+		"total_answered":  totalAnswered,
+		"by_section":      bySection,
+	}
+
 	return &ExamGradingResult{
-		Score:           float64(scoredMarks),
-		ScorePercent:    scorePercent,
-		Grade:           grade,
-		CorrectAnswers:  correctAnswers,
-		TotalAnswered:   totalAnswered,
-		BySection:       make(map[string]interface{}), // would be populated in full implementation
-		Performance:     make(map[string]interface{}),
+		Score:          scoredMarks,
+		ScorePercent:   scorePercent,
+		Grade:          grade,
+		CorrectAnswers: correctAnswers,
+		TotalAnswered:  totalAnswered,
+		BySection:      bySection,
+		Performance:    performance,
 	}
 }
 

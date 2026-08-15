@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: Insurance CI
 
 # Formal verification gate for the Paymax Micro-Insurance / Protection module
@@ -8,27 +14,7 @@ name: Insurance CI
 # additive-only migration guard. Blocks merges on red.
 
 on:
-  push:
-    paths:
-      - 'backend/internal/insurance/**'
-      - 'backend/internal/provider/mycover/**'
-      - 'backend/internal/provider/octamile/**'
-      - 'backend/internal/app/insurance_routes.go'
-      - 'backend/internal/app/insurance_claims_routes.go'
-      - 'backend/internal/app/finance_routes.go'
-      - 'backend/internal/config/config.go'
-      - 'supabase/migrations/*insurance*.sql'
-      - 'frontend-admin/app/admin/insurance/**'
-      - 'frontend-admin/src/services/insuranceAdminService.ts'
-      - 'frontend-admin/src/types/insuranceAdmin.ts'
-      - 'frontend-admin/src/components/layouts/AdminSidebar.tsx'
-      - 'frontend-web/app/api/v1/insurance/**'
-      - 'frontend-web/src/lib/feature-flags.ts'
-      - 'mobile-app/reactnative/app/insurance/**'
-      - 'mobile-app/reactnative/src/features/insurance/**'
-      - 'mobile-app/reactnative/src/constants/modules.ts'
-      - '.github/workflows/insurance-ci.yml'
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -51,45 +37,6 @@ jobs:
         run: go test ./internal/insurance/... -count=1 -v
       - name: Test (all — regression)
         run: go test ./... -count=1
-
-  admin-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Typecheck admin (tsc --noEmit)
-        run: npm run type-check
-
-  web-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Typecheck web (insurance proxy + feature flag)
-        run: npx tsc --noEmit
-
-  mobile-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mobile-app/reactnative
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Typecheck whole app (insurance Protection surface + module registry)
-        run: npx tsc --noEmit -p tsconfig.json
 
   migration-guard:
     runs-on: ubuntu-latest

@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: Health CI
 
 # Verification gate for the Health verticals (shared platform + Pharmacy, Lab,
@@ -6,24 +12,7 @@ name: Health CI
 # web typecheck, additive-only migration guard. Blocks merges on red.
 
 on:
-  push:
-    paths:
-      - 'backend/internal/health/**'
-      - 'backend/internal/app/health_*.go'
-      - 'backend/internal/app/finance_routes.go'
-      - 'backend/internal/config/config.go'
-      - 'supabase/migrations/*health_*.sql'
-      - 'frontend-admin/app/admin/health/**'
-      - 'frontend-admin/src/services/health*AdminService.ts'
-      - 'frontend-admin/src/types/health*Admin.ts'
-      - 'frontend-admin/src/components/layouts/AdminSidebar.tsx'
-      - 'frontend-web/app/api/v1/health/**'
-      - 'frontend-web/src/lib/feature-flags.ts'
-      - 'mobile-app/reactnative/app/health/**'
-      - 'mobile-app/reactnative/src/features/health/**'
-      - 'mobile-app/reactnative/src/constants/modules.ts'
-      - '.github/workflows/health-ci.yml'
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -46,42 +35,6 @@ jobs:
         run: go test ./internal/health/... -count=1 -v
       - name: Test (all — regression)
         run: go test ./... -count=1
-
-  admin-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - run: npm run type-check
-
-  web-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - run: npx tsc --noEmit
-
-  mobile-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mobile-app/reactnative
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - run: npx tsc --noEmit -p tsconfig.json
 
   migration-guard:
     runs-on: ubuntu-latest

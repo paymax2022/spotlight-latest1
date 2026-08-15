@@ -168,7 +168,7 @@ const SELLER_SCHEMA_V1: FormSchema = {
   ],
 };
 
-// Mirrors supabase/migrations/20261101000000_open_food_merchant_onboarding.sql.
+// Mirrors supabase/migrations/20261101000001_open_food_merchant_onboarding.sql.
 const RESTAURANT_SCHEMA_V1: FormSchema = {
   id: 'fs-restaurant-v1', merchantTypeId: 'mt-restaurant', version: 1, status: 'published',
   steps: [

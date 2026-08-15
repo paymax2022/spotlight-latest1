@@ -14,6 +14,13 @@ import type {
   LeaderboardState,
 } from '../types/voting.types';
 import {
+  mapContest,
+  mapContestant,
+  mapLeaderboardEntry,
+  type BackendContest,
+  type BackendRosterEntry,
+} from './connectVoting.mapper';
+import {
   MOCK_CONTESTS,
   MOCK_CONTESTANTS,
   MOCK_VOTE_PACKAGES,
@@ -25,6 +32,12 @@ import {
 // ─── Feature flag: flip to false once real endpoints are ready ─────────────────
 // Mock by default; set EXPO_PUBLIC_VOTING_USE_MOCK=false to hit the live backend.
 const USE_MOCK = (process.env.EXPO_PUBLIC_VOTING_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+
+// Live voting is served by the Go backend's Connect module. Contests,
+// contestants and free votes all come from here; the roster is the same ranked
+// list the admin console publishes to, so approving an entry there makes it
+// votable here.
+const CONNECT_VOTING_BASE = '/api/v1/connect';
 
 // ─── Contests ─────────────────────────────────────────────────────────────────
 
@@ -64,9 +77,9 @@ export async function getContests(params?: {
     if (params?.status)   list = list.filter((c) => c.status === params.status);
     return list;
   }
-  const res = await api.get('/voting/contests', { params });
-  const list = (res.data?.data ?? res.data ?? []) as Array<Record<string, unknown>>;
-  return list.map(normalizeContest);
+  const res = await api.get(`${CONNECT_VOTING_BASE}/contests`, { params });
+  const list = (res.data?.data ?? res.data ?? []) as BackendContest[];
+  return list.map((c) => normalizeContest(mapContest(c) as unknown as Record<string, unknown>));
 }
 
 export async function getContest(contestId: string): Promise<Contest> {
@@ -75,8 +88,21 @@ export async function getContest(contestId: string): Promise<Contest> {
     if (!found) throw new Error('Contest not found');
     return found;
   }
-  const res = await api.get(`/voting/contests/${contestId}`);
-  return normalizeContest((res.data?.data ?? res.data ?? {}) as Record<string, unknown>);
+  const res = await api.get(`${CONNECT_VOTING_BASE}/contests/${contestId}`);
+  const raw = (res.data?.data ?? res.data ?? {}) as BackendContest;
+  // The detail endpoint returns no summary columns, so derive the count from
+  // the roster — the authoritative list of who is actually votable.
+  let count = raw.contestant_count ?? 0;
+  let votes: number | null = raw.total_votes ?? null;
+  try {
+    const roster = await api.get(`${CONNECT_VOTING_BASE}/contests/${contestId}/contestants`);
+    const rows = (roster.data?.data ?? []) as BackendRosterEntry[];
+    count = rows.length;
+    votes = rows.reduce((sum, r) => sum + (r.total_votes ?? 0), 0);
+  } catch {
+    /* roster unavailable — show the contest without a count rather than failing */
+  }
+  return normalizeContest(mapContest(raw, count, votes) as unknown as Record<string, unknown>);
 }
 
 // ─── Contestants ──────────────────────────────────────────────────────────────
@@ -97,9 +123,11 @@ export async function getContestants(
     if (params?.state)    list = list.filter((c) => c.state === params.state);
     return list;
   }
-  const res = await api.get(`/voting/contests/${contestId}/contestants`, { params });
-  const list = (res.data?.data ?? res.data ?? []) as Array<Record<string, unknown>>;
-  return list.map(normalizeContestantTrend);
+  const res = await api.get(`${CONNECT_VOTING_BASE}/contests/${contestId}/contestants`, { params });
+  const list = (res.data?.data ?? res.data ?? []) as BackendRosterEntry[];
+  return list.map((r) =>
+    normalizeContestantTrend(mapContestant(r, contestId) as unknown as Record<string, unknown>),
+  );
 }
 
 /**
@@ -119,8 +147,11 @@ export async function getContestant(contestantId: string): Promise<Contestant> {
     if (!found) throw new Error('Contestant not found');
     return found;
   }
-  const res = await api.get(`/voting/contestants/${contestantId}`);
-  return normalizeContestantTrend((res.data?.data ?? res.data ?? {}) as Record<string, unknown>);
+  const res = await api.get(`${CONNECT_VOTING_BASE}/contestants/${contestantId}`);
+  const raw = (res.data?.data ?? res.data ?? {}) as BackendRosterEntry & { contest_id?: string };
+  return normalizeContestantTrend(
+    mapContestant(raw, raw.contest_id ?? '') as unknown as Record<string, unknown>,
+  );
 }
 
 // ─── Leaderboard ──────────────────────────────────────────────────────────────
@@ -170,8 +201,12 @@ export async function getLeaderboardState(contestId: string): Promise<Leaderboar
       entries: MOCK_LEADERBOARD.filter((e) => e.contestant.contestId === contestId),
     };
   }
-  const res = await api.get(`/voting/contests/${contestId}/leaderboard`);
-  const body = (res.data?.data ?? res.data ?? []) as
+  // The leaderboard IS the ranked roster — same endpoint, same ordering — so a
+  // vote moves the contestant list and the leaderboard consistently instead of
+  // letting two separately-tallied views disagree.
+  const res = await api.get(`${CONNECT_VOTING_BASE}/contests/${contestId}/contestants`);
+  const rows = (res.data?.data ?? res.data ?? []) as BackendRosterEntry[];
+  const body = rows.map((r) => mapLeaderboardEntry(r, contestId) as unknown as Record<string, unknown>) as
     | Array<Record<string, unknown>>
     | { hidden?: boolean; reason?: string | null; entries?: Array<Record<string, unknown>> };
 
@@ -262,14 +297,15 @@ export async function getFreeVoteAllocation(
       resetsAt: nextLocalMidnightISO(),
     };
   }
-  // Live: the universal voting engine returns the per-contestant remaining +
-  // reset timestamp when contestantId is supplied.
-  const res = await api.get('/api/votes/remaining', { params: { contestId, contestantId } });
+  // Live: the Connect backend computes the allowance from the contest's
+  // per-user cap and the votes actually recorded, so this cannot disagree with
+  // what the vote endpoint enforces.
+  const res = await api.get(`${CONNECT_VOTING_BASE}/contests/${contestId}/free-vote-allowance`);
   const d = (res.data?.data ?? res.data) as Record<string, unknown>;
   return {
-    total: Number(d.freeVotesPerDay ?? d.free_votes_per_day ?? FREE_VOTE_CAP),
-    used: Number(d.freeVotesUsed ?? d.free_votes_used ?? 0),
-    remaining: Number(d.freeVotesRemaining ?? d.free_votes_remaining ?? 0),
+    total: Number(d.total ?? d.freeVotesPerDay ?? d.free_votes_per_day ?? FREE_VOTE_CAP),
+    used: Number(d.used ?? d.freeVotesUsed ?? d.free_votes_used ?? 0),
+    remaining: Number(d.remaining ?? d.freeVotesRemaining ?? d.free_votes_remaining ?? 0),
     resetsAt: String(d.resetAt ?? d.reset_at ?? nextLocalMidnightISO()),
   };
 }
@@ -296,12 +332,21 @@ export async function castFreeVotes(
     mockFreeUsed[key] = used + add;
     return { success: true, remainingFreeVotes: Math.max(0, cap - used - add), resetsAt: nextLocalMidnightISO() };
   }
+  // The Connect free-vote endpoint takes the contestant id as optionRef and
+  // enforces the per-contest allowance, the velocity guard and roster
+  // membership server-side; the client cannot override any of them.
   const res = await api.post(
-    '/voting/vote/free',
-    payload,
+    `${CONNECT_VOTING_BASE}/contests/${payload.contestId}/vote`,
+    { optionRef: payload.contestantId },
     { headers: { 'Idempotency-Key': payload.idempotencyKey } },
   );
-  return res.data?.data ?? res.data;
+  // The server returns the post-vote allowance; trust it over any local count.
+  const allowance = (res.data?.allowance ?? {}) as { remaining?: number };
+  return {
+    success: true,
+    remainingFreeVotes: Number(allowance.remaining ?? 0),
+    resetsAt: nextLocalMidnightISO(),
+  };
 }
 
 // ─── Paid Vote Initiate ────────────────────────────────────────────────────────

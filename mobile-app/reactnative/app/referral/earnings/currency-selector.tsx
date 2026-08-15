@@ -9,6 +9,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
+import { showToast } from '@/store/toastStore';
 import { DisclosureCard } from '@/features/referral/components';
 import { useCurrencyOptions, useSetRewardCurrency } from '@/features/referral/earnings/hooks';
 import type { RewardCurrency } from '@/features/referral/earnings/types';
@@ -34,7 +35,16 @@ export default function CurrencySelectorScreen() {
               <Pressable
                 key={c.key}
                 style={[styles.option, c.active && styles.optionActive]}
-                onPress={() => setCurrency.mutate(c.key as RewardCurrency)}
+                onPress={() =>
+                  setCurrency.mutate(c.key as RewardCurrency, {
+                    onError: () =>
+                      showToast({
+                        variant: 'error',
+                        title: 'Could not change your reward currency',
+                        message: 'Please try again.',
+                      }),
+                  })
+                }
                 disabled={setCurrency.isPending}
                 accessibilityRole="radio"
                 accessibilityState={{ selected: c.active }}

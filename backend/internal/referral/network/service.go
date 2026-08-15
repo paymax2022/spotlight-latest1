@@ -260,3 +260,8 @@ func (s *Service) recordExcluded(ctx context.Context, leadID, sourceUserID, reas
 		IdempotencyKey: "override_excluded:" + leadID + ":" + sourceUserID + ":" + reason,
 	})
 }
+
+// ListNetworks returns all agent networks with member counts (admin directory).
+func (s *Service) ListNetworks(ctx context.Context, status string) ([]NetworkSummary, error) {
+	return s.repo.ListNetworks(ctx, status)
+}

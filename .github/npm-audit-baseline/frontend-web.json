@@ -1,0 +1,6 @@
+{
+  "workspace": "frontend-web",
+  "reviewed": "2026-08-14",
+  "why": "EMPTY. next@16 + sharp@0.35 cleared every high/critical advisory here (the postcss sourceMappingURL set arrived through next@15; sharp/libvips through sharp@0.34). Nothing is accepted — the gate fails on ANY high/critical advisory in production dependencies.",
+  "accepted": []
+}

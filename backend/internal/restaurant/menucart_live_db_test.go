@@ -3,7 +3,7 @@ package restaurant
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for menu/cart completeness (Phase 12): dietary tags on
 // items, the min-order gate, item price bounds, and special-instructions handling.
-// Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
+// Skipped unless TEST_DATABASE_URL is set.
 // ---------------------------------------------------------------------------
 
 import (
@@ -19,10 +19,7 @@ func menuCartPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB menu/cart test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB menu/cart test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

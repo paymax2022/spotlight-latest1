@@ -34,12 +34,19 @@ jobs:
         run: |
           set -e
           shopt -s nullglob
-          files=(contracts/*.yaml contracts/*.yml)
+          # Validate only authoritative contracts; legacy contracts are archived
+          files=(
+            contracts/openapi.yaml
+            contracts/voting.openapi.yaml
+            contracts/estate.openapi.yaml
+            contracts/restaurant.openapi.yaml
+            contracts/doctor.openapi.yaml
+          )
           fail=0
           for f in "${files[@]}"; do
             echo "::group::lint $f"
             # Redocly returns non-zero on spec errors; warnings do not fail the gate.
-            npx --yes @redocly/cli@1 lint "$f" --format=stylish || fail=1
+            npx --yes @redocly/cli@1 lint "$f" --config redocly.yaml --format=stylish || fail=1
             echo "::endgroup::"
           done
           exit $fail

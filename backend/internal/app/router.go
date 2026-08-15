@@ -88,6 +88,8 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		users := v1.Group("/users")
 		users.GET("/health", health.GenericHealth)
 
+		// Registration endpoints will be registered after pool is created (see below)
+
 		schools := v1.Group("/schools")
 		schools.Use(middleware.StemRateLimit(25, time.Minute))
 		schools.GET("", stem.Schools)
@@ -309,6 +311,8 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		rbacAdmin.POST("/users/:id/force-logout", middleware.RequirePermission(rbacService, "users.suspend"), sessionHandler.AdminForceLogout)
 		rbacAdmin.POST("/users/:id/force-password-reset", middleware.RequirePermission(rbacService, "users.suspend"), sessionHandler.AdminForcePasswordReset)
 
+		// Admin console routes will be registered after pool is created (see below)
+
 		mobile := v1.Group("/mobile")
 		mobile.GET("/health", health.GenericHealth)
 
@@ -348,6 +352,81 @@ func NewRouter(cfg config.Config) *gin.Engine {
 
 	// Paymax Connect module — wired only when FEATURE_CONNECT_ENABLED + shared pool.
 	registerConnectRoutes(r, cfg, supabase, rbacService, sharedPool)
+
+	// Paymax Connect wallet endpoints (/api/v1/wallet/*, /api/v1/kyc/*, etc.)
+	// — member-facing wallet balance, gifting, tier progression, and payouts.
+	// All endpoints require authentication (Bearer token). Requires shared pool.
+	if sharedPool != nil {
+		authMiddleware := middleware.RequireAuthContext(supabase, rbacService)
+		registerConnectWalletRoutes(r, supabase, rbacService, authMiddleware, sharedPool, auditService)
+	}
+
+	// Admin console — unified /api/v1/admin/* endpoints for mobile admin UI
+	// Gated by RBAC middleware (X-Admin-Role header). All endpoints are read-only
+	// for Phase 1, wired to Supabase queries via AdminStore. Requires shared pool.
+	if sharedPool != nil {
+		v1 := r.Group("/api/v1")
+		adminStore := handlers.NewAdminStore(sharedPool)
+		adminConsoleHandler := handlers.NewAdminConsoleHandler(adminStore)
+		adminConsole := v1.Group("/admin")
+		adminConsole.Use(middleware.RequireAdminConsoleRole())
+		adminConsole.GET("/dashboard", adminConsoleHandler.Dashboard)
+		adminConsole.GET("/users", adminConsoleHandler.GetUsers)
+		adminConsole.GET("/users/:id", adminConsoleHandler.GetUser)
+		adminConsole.GET("/kyc", adminConsoleHandler.GetKycQueue)
+		adminConsole.POST("/kyc/:id/review", adminConsoleHandler.ReviewKyc)
+		adminConsole.GET("/assets", adminConsoleHandler.GetAssetControls)
+		adminConsole.PATCH("/assets/:id", adminConsoleHandler.UpdateAssetControl)
+		adminConsole.GET("/orders", adminConsoleHandler.GetOrders)
+		adminConsole.GET("/withdrawals", adminConsoleHandler.GetWithdrawalQueue)
+		adminConsole.POST("/withdrawals/:ref/review", adminConsoleHandler.ReviewWithdrawal)
+		adminConsole.GET("/reconciliation", adminConsoleHandler.GetReconciliation)
+		adminConsole.GET("/providers", adminConsoleHandler.GetProviders)
+		adminConsole.GET("/risk-limits", adminConsoleHandler.GetRiskLimits)
+		adminConsole.PATCH("/risk-limits/:id", adminConsoleHandler.UpdateRiskLimit)
+		adminConsole.GET("/fees", adminConsoleHandler.GetFees)
+		adminConsole.PATCH("/fees/:id", adminConsoleHandler.UpdateFee)
+		adminConsole.GET("/feature-flags", adminConsoleHandler.GetFeatureFlags)
+		adminConsole.PATCH("/feature-flags/:key", adminConsoleHandler.SetFeatureFlag)
+		adminConsole.GET("/approvals", adminConsoleHandler.GetApprovals)
+		adminConsole.POST("/approvals/:id/approve", adminConsoleHandler.Approve)
+		adminConsole.POST("/approvals/:id/reject", adminConsoleHandler.RejectApproval)
+		adminConsole.GET("/audit", adminConsoleHandler.GetAudit)
+		adminConsole.GET("/admins", adminConsoleHandler.GetAdmins)
+
+		// Registration endpoints — contest applications with Supabase persistence
+		// All endpoints require bearer token auth. Wired to RegistrationStore.
+		registrationStore := handlers.NewRegistrationStore(sharedPool)
+		registrationHandler := handlers.NewRegistrationHandler(registrationStore, auditService)
+		registrationAuth := v1.Group("/registration")
+		registrationAuth.Use(middleware.RequireAuthContext(supabase, rbacService))
+		registrationAuth.GET("/contests", registrationHandler.ListContests)
+		registrationAuth.GET("/applications", registrationHandler.ListApplications)
+		registrationAuth.POST("/applications", registrationHandler.CreateApplication)
+		registrationAuth.GET("/applications/:id", registrationHandler.GetApplication)
+		registrationAuth.PATCH("/applications/:id", registrationHandler.SaveStep)
+		registrationAuth.POST("/applications/:id/submit", registrationHandler.SubmitApplication)
+		registrationAuth.GET("/applications/:id/status", registrationHandler.GetStatus)
+		registrationAuth.POST("/applications/:id/withdraw", registrationHandler.WithdrawApplication)
+		registrationAuth.POST("/applications/:id/payment/initiate", registrationHandler.InitiatePayment)
+		registrationAuth.POST("/applications/:id/payment/verify", registrationHandler.VerifyPayment)
+
+		// Admin review queue for the registration funnel. Approving here promotes
+		// the entry onto the voting roster in one transaction (see
+		// promote_registration_to_contestant), which is the seam that connects the
+		// mobile entry flow to what voters actually see.
+		//
+		// contestant.view gates the whole group; UpdateStatus additionally checks
+		// contestant.approve or contestant.reject per target status.
+		registrationAdminStore := handlers.NewRegistrationAdminStore(sharedPool)
+		registrationAdminHandler := handlers.NewRegistrationAdminHandler(registrationAdminStore, rbacService, auditService)
+		registrationAdmin := v1.Group("/admin/registrations")
+		registrationAdmin.Use(middleware.RequireAuthContext(supabase, rbacService))
+		registrationAdmin.Use(middleware.RequirePermission(rbacService, "contestant.view"))
+		registrationAdmin.GET("", registrationAdminHandler.List)
+		registrationAdmin.GET("/:id", registrationAdminHandler.Get)
+		registrationAdmin.PATCH("/:id/status", registrationAdminHandler.UpdateStatus)
+	}
 
 	// Arena competition engine (ADR-014) — feature-flagged, default off. The merit
 	// firewall lives inside: only the ScoringGateway holds signers. The shared Redis

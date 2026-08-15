@@ -182,6 +182,21 @@ type Config struct {
 	FeaturePharmacySymptomSearchEnabled bool
 	FeatureOnboardingEnabled            bool
 	FeatureInvestEnabled                bool // stock-trading (Paymax Invest) module
+
+	// AI-trading fund (backend/internal/trading). Two gates, matching the
+	// module's own contract:
+	//   FeatureTradingEnabled   – mounts Module-KYC + fund wallet (subscribe/redeem).
+	//   FeatureAITradingEnabled – ALSO exposes the decision pipeline (/evaluate)
+	//                             and the promotion-ladder admin routes.
+	// Neither executes a real venue order in this build; cash moves only through
+	// the finance ledger.
+	FeatureTradingEnabled   bool
+	FeatureAITradingEnabled bool
+
+	// Performance-fee terms for the fund, in basis points. TradingFeeBps must be
+	// in (0,10000] or PerformanceFee fails closed and charges nothing.
+	TradingFeeBps    int // e.g. 2000 = 20% performance fee
+	TradingHurdleBps int // 0 = pure high-water-mark, no hurdle
 	FeatureInvestPINDevBypass           bool // dev only: accept any well-formed PIN
 	// Invest provider adapters — when a base URL is set the real HTTP adapter is
 	// used; otherwise the deterministic mock is used (mock-first, real last).
@@ -208,6 +223,7 @@ type Config struct {
 	FeatureAcademyTutorEnabled            bool // Academy Phase 4: tutor marketplace + payouts
 	FeatureAcademyFeesEnabled             bool // Academy EdTech Fees: invoices, vault, promotion, competition, scholarship, trust-score, compliance export
 	FeatureConnectEnabled                 bool // Paymax Connect (dating/networking) module
+	FeatureContestStageEvictionEnabled    bool // Voting contest stage eviction system (multi-stage, grace period, judge save)
 	// Property Management suite (unification umbrella over estate + realtor):
 	// role context, rent passport, stay→gate-pass bridge. DEFAULT OFF. The estate
 	// and realtor modules keep their own flags; this gates only the /property/*
@@ -221,6 +237,20 @@ type Config struct {
 	// Crypto buy/sell module. DEFAULT OFF. Gates the /api/v1/crypto[/admin] surface
 	// (internal/crypto): mock-first price feed, reuses the finance ledger.
 	FeatureCryptoEnabled bool
+
+	// FeatureTelemedicinePlatformFeeEnabled turns on the platform booking fee
+	// charged on top of a doctor's consultation fee (ADR-040). Default OFF: it is a
+	// patient-visible price increase, so it is opt-in, and switching it off is the
+	// rollback — the app renders whatever quote the server returns, so no client
+	// release is needed either way.
+	FeatureTelemedicinePlatformFeeEnabled bool
+
+	// FeatureCheckoutTopupTier0 lets an UNVERIFIED (Tier 0) account pay for a
+	// purchase under a capped allowance (ADR-042 funds it, ADR-043 lets it be
+	// spent). This MUST be the same value as frontend-web's
+	// FEATURE_CHECKOUT_TOPUP_TIER0: enabling only the funding half charges a
+	// customer for a purchase that is then refused at escrow. Default OFF.
+	FeatureCheckoutTopupTier0 bool
 
 	// ── Business Registry (CAC business-name verification + registration) ─────
 	// Gates the member /api/finance/business/* + admin /api/business/admin/*
@@ -296,6 +326,12 @@ type Config struct {
 	FeatureSocialPayEnabled  bool // Social Payments & P2P Escrow
 	FeatureP2PMarketEnabled  bool // P2P Marketplace
 	FeatureSavingsEnabled    bool // Group & Goal Savings (Ajo/Esusu)
+
+	// SavingsEarlyBreakPenaltyBps is the fee for breaking a LOCK vault before
+	// maturity, in basis points (1000 = 10%). MUST stay server-side: it used to
+	// be read from the request body, so a member could break a lock for free by
+	// sending 0.
+	SavingsEarlyBreakPenaltyBps int
 	FeatureCreatorsEnabled   bool // Creator & Talent Monetisation
 	FeatureLoyaltyEnabled    bool // Unified Loyalty & Paymax Black
 	FeatureCommissionEnabled bool // Central Commission & Profit management
@@ -613,9 +649,12 @@ func Load() Config {
 		FeatureAcademyTutorEnabled:            getEnvBool("FEATURE_ACADEMY_TUTOR_ENABLED", false),
 		FeatureAcademyFeesEnabled:             getEnvBool("FEATURE_ACADEMY_FEES_ENABLED", false),
 		FeatureConnectEnabled:                 getEnvBool("FEATURE_CONNECT_ENABLED", false),
+		FeatureContestStageEvictionEnabled:    getEnvBool("FEATURE_CONTEST_STAGE_EVICTION_ENABLED", false),
 		FeaturePropertySuiteEnabled:           getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
 		FeatureFractionalREEnabled:            getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
 		FeatureCryptoEnabled:                  getEnvBool("FEATURE_CRYPTO_ENABLED", false),
+		FeatureTelemedicinePlatformFeeEnabled: getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
+		FeatureCheckoutTopupTier0:             getEnvBool("FEATURE_CHECKOUT_TOPUP_TIER0", false),
 		FeatureBusinessRegistryEnabled:        getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
 		CACVASBaseURL:                         getEnv("CAC_VAS_BASE_URL", ""),
 		CACVASApiKey:                          getEnv("CAC_VAS_API_KEY", ""),
@@ -634,6 +673,11 @@ func Load() Config {
 		FeatureSocialPayEnabled:               getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
 		FeatureP2PMarketEnabled:               getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
 		FeatureSavingsEnabled:                 getEnvBool("FEATURE_SAVINGS_ENABLED", false),
+		FeatureTradingEnabled:                 getEnvBool("FEATURE_TRADING_ENABLED", false),
+		FeatureAITradingEnabled:               getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
+		TradingFeeBps:                         getEnvInt("TRADING_FEE_BPS", 2000),
+		TradingHurdleBps:                      getEnvInt("TRADING_HURDLE_BPS", 0),
+		SavingsEarlyBreakPenaltyBps:           getEnvInt("SAVINGS_EARLY_BREAK_PENALTY_BPS", 1000),
 		FeatureCreatorsEnabled:                getEnvBool("FEATURE_CREATORS_ENABLED", false),
 		FeatureLoyaltyEnabled:                 getEnvBool("FEATURE_LOYALTY_ENABLED", false),
 		FeatureCommissionEnabled:              getEnvBool("FEATURE_COMMISSION_ENABLED", false),

@@ -25,10 +25,13 @@ export default function ActiveTripCard({ trip, onPress }: Props) {
       </View>
       <View style={styles.body}>
         <View style={styles.topRow}>
-          <Text style={styles.title}>{SERVICE_TYPE_LABEL[trip.serviceType]} trip</Text>
+          <Text style={styles.title}>{SERVICE_TYPE_LABEL[trip.serviceType] ?? 'Ride'} trip</Text>
           <StatusBadge phase={trip.phase} />
         </View>
-        <Text style={styles.dest} numberOfLines={1}>To {trip.dest.label ?? trip.dest.address}</Text>
+        {/* Live backend trips carry flat destAddress (may be empty); mock trips carry a dest Place. */}
+        <Text style={styles.dest} numberOfLines={1}>
+          To {trip.dest?.label ?? trip.dest?.address ?? trip.destAddress ?? 'destination'}
+        </Text>
         <Text style={styles.meta}>
           {formatNairaWhole(trip.fareKobo)}
           {trip.driverEtaS != null ? ` · driver ${formatEta(trip.driverEtaS)}` : ''}

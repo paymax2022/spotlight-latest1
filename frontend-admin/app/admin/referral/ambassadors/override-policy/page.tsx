@@ -2,20 +2,27 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { getOverridePolicy, formatNaira } from '@/services/referralAdminOpsService';
-import type { OverridePolicy } from '@/types/referralAdminOps';
-import { Kpi, timeAgo } from '../../_ui';
+import { listOverridePolicies, formatNaira, type OverridePolicyRow } from '@/services/referralAdminOpsService';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
+// A-AMB-04 — Override policy config.
+//
+// Reads GET /api/referral/admin/network/override-policies. The page previously
+// also showed four policy-level tiles (activity-based only, max depth,
+// recruitment earnings blocked, house excluded) sourced from mock data — no
+// endpoint returns them, and an unsourced "Recruitment earnings: Blocked" tile
+// asserts a compliance property the system never reported. They are gone rather
+// than faked; the programme rules stay described in the subtitle as prose.
+
 export default function OverridePolicyPage() {
-  const [data, setData] = useState<OverridePolicy | null>(null);
+  const [rows, setRows] = useState<OverridePolicyRow[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true); setError(null);
-    try { setData(await getOverridePolicy()); }
-    catch (e) { setError(String(e)); }
+    try { setRows(await listOverridePolicies()); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
@@ -24,45 +31,67 @@ export default function OverridePolicyPage() {
     <Page>
       <PageHeader
         title="Ambassadors — Override policy config"
-        subtitle="Enforce activity-based overrides with caps (A-AMB-04). No earning on recruitment alone; house accruals are excluded from override chains (§7A.2)."
-        actions={<Link href="/admin/referral/ambassadors"><Button variant="outline">← Directory</Button></Link>}
+        subtitle="Per-tier override rates and caps (A-AMB-04). Programme rule: overrides accrue on a member's verified activity, never on recruitment alone, and house-attributed members are excluded from override chains (§7A.2)."
+        actions={
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button variant="outline" onClick={load}>Refresh</Button>
+            <Link href="/admin/referral/ambassadors"><Button variant="outline">← Directory</Button></Link>
+          </div>
+        }
       />
 
-      {loading ? (
-        <p style={{ color: colors.muted, fontSize: 13 }}>Loading…</p>
-      ) : error ? (
-        <p style={{ color: colors.danger, fontSize: 13 }}>{error}</p>
-      ) : !data ? (
-        <p style={{ color: colors.muted, fontSize: 13 }}>No records found.</p>
-      ) : (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px,1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <Kpi label="Activity-based only" value={data.activity_based_only ? 'Yes' : 'No'} accent={data.activity_based_only ? colors.success : colors.danger} />
-            <Kpi label="Max depth" value={String(data.max_depth)} />
-            <Kpi label="Recruitment earnings" value={data.recruitment_earnings_blocked ? 'Blocked' : 'Allowed'} accent={data.recruitment_earnings_blocked ? colors.success : colors.danger} />
-            <Kpi label="House excluded from overrides" value={data.house_excluded_from_overrides ? 'Yes' : 'No'} accent={data.house_excluded_from_overrides ? colors.success : colors.danger} sub="§7A.2 pyramid-line guard" />
+      {error && (
+        <Card style={{ marginBottom: 16, borderLeft: `3px solid ${colors.danger}` }}>
+          <strong style={{ color: colors.danger }}>Could not load override policies:</strong>
+          <div style={{ fontSize: '0.85rem', color: colors.muted, marginTop: 6 }}>{error}</div>
+          <div style={{ fontSize: '0.8rem', color: colors.muted, marginTop: 10 }}>
+            Viewing needs the <code>referral.network.view</code> permission.
           </div>
+        </Card>
+      )}
 
-          <Card style={{ padding: 0, overflow: 'hidden' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '14px 14px 0' }}>
-              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Override % by tier (with monthly caps)</h2>
-              <span style={{ fontSize: '0.72rem', color: colors.muted }}>Updated {timeAgo(data.updated_at)}</span>
-            </div>
+      <Card style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '14px 14px 0' }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Override rate by tier</h2>
+          <span style={{ fontSize: '0.72rem', color: colors.muted }}>
+            {rows ? `${rows.length} tier${rows.length === 1 ? '' : 's'}` : ''}
+          </span>
+        </div>
+
+        {loading ? (
+          <p style={{ color: colors.muted, fontSize: 13, padding: 14 }}>Loading…</p>
+        ) : !rows || rows.length === 0 ? (
+          <p style={{ color: colors.muted, fontSize: 13, padding: 14 }}>No override policies configured.</p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 14 }}>
-              <thead><tr><th style={thCell}>Tier</th><th style={thCell}>Override %</th><th style={thCell}>Monthly cap</th></tr></thead>
+              <thead>
+                <tr>
+                  <th style={thCell}>Tier</th>
+                  <th style={thCell}>Override rate</th>
+                  <th style={thCell}>Per-member cap</th>
+                  <th style={thCell}>Monthly cap</th>
+                  <th style={thCell}>Active</th>
+                </tr>
+              </thead>
               <tbody>
-                {data.override_pct_by_tier.map((t) => (
-                  <tr key={t.tier}>
-                    <td style={tdCell}>{t.tier}</td>
-                    <td style={tdCell}>{t.pct}%</td>
-                    <td style={tdCell}>{t.monthly_cap_kobo === 0 ? <Badge text="no override" color={colors.secondary} /> : formatNaira(t.monthly_cap_kobo)}</td>
+                {rows.map((p) => (
+                  <tr key={p.id}>
+                    <td style={{ ...tdCell, textTransform: 'capitalize', fontWeight: 600 }}>{p.tier}</td>
+                    {/* bps -> %: 200 bps = 2.00%. Kept exact rather than rounded to a whole number. */}
+                    <td style={tdCell}>{(p.overrideBps / 100).toFixed(2)}%</td>
+                    <td style={tdCell}>{formatNaira(p.perMemberCapKobo)}</td>
+                    <td style={tdCell}>{formatNaira(p.monthlyCapKobo)}</td>
+                    <td style={tdCell}>
+                      <Badge text={p.isActive ? 'active' : 'inactive'} color={p.isActive ? colors.success : colors.muted} />
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </Card>
-        </>
-      )}
+          </div>
+        )}
+      </Card>
     </Page>
   );
 }

@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import {
-  ScrollView, View, Text, StyleSheet, Pressable, ActivityIndicator, Image, Platform, Alert,
+  ScrollView, View, Text, StyleSheet, Pressable, ActivityIndicator, Image, Platform, Alert, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Share2, Heart, BadgeCheck, MapPin, Music } from 'lucide-react-native';
+import { ArrowLeft, Share2, Heart, BadgeCheck, MapPin, Music, PlayCircle, ExternalLink } from 'lucide-react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -27,6 +27,31 @@ import { formatVoteCount } from '@/features/voting/utils/voteFormatters';
 import type { VotePackage } from '@/features/voting/types/voting.types';
 import { MOCK_FREE_VOTE_ALLOCATION, MOCK_VOTE_PACKAGES } from '@/features/voting/api/voting.mock';
 
+/**
+ * The sample link is contestant-submitted registration data, so it is untrusted
+ * input: only http(s) is allowed through. Without this check a crafted entry
+ * could put a `javascript:` or `file:` URL in front of every voter who opens
+ * the profile.
+ */
+function safeMediaUrl(raw?: string): string | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw.trim());
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.toString() : null;
+  } catch {
+    return null; // not a parseable absolute URL
+  }
+}
+
+/** "youtube.com" from a full URL — enough for the voter to see where it goes. */
+function linkHost(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return 'external link';
+  }
+}
+
 export default function ContestantProfileScreen() {
   const { contestantId, contestId } = useLocalSearchParams<{ contestantId: string; contestId: string }>();
   const [voteOpen, setVoteOpen]   = useState(false);
@@ -42,6 +67,19 @@ export default function ContestantProfileScreen() {
   const showRank      = parentContest?.showRank !== false;
   const castFree = useCastFreeVotes();
   const qc = useQueryClient();
+
+  const sampleUrl = safeMediaUrl(contestant?.mediaUrl);
+  const openSample = async () => {
+    if (!sampleUrl) return;
+    const ok = await Linking.canOpenURL(sampleUrl).catch(() => false);
+    if (!ok) {
+      Alert.alert('Cannot open link', 'No app on this device can open that link.');
+      return;
+    }
+    Linking.openURL(sampleUrl).catch(() =>
+      Alert.alert('Cannot open link', 'Something went wrong opening the performance sample.'),
+    );
+  };
 
   const handleFreeVote = async (votes: number) => {
     if (!contestant) return;
@@ -164,6 +202,24 @@ export default function ContestantProfileScreen() {
             </View>
           )}
 
+          {/* Performance sample — the link submitted with the entry. */}
+          {sampleUrl && (
+            <Pressable
+              onPress={openSample}
+              accessibilityRole="link"
+              accessibilityLabel={`Watch performance sample on ${linkHost(sampleUrl)}`}
+              style={({ pressed }) => [styles.section, shadow1, pressed && styles.samplePressed]}
+            >
+              <Text style={styles.sectionTitle}>Performance sample</Text>
+              <View style={styles.sampleRow}>
+                <PlayCircle size={20} color={Colors.primary} strokeWidth={2} />
+                <Text style={styles.sampleHost} numberOfLines={1}>{linkHost(sampleUrl)}</Text>
+                <ExternalLink size={14} color={Colors.onSurfaceVariant} strokeWidth={2} />
+              </View>
+              <Text style={styles.sampleHint}>Opens outside the app</Text>
+            </Pressable>
+          )}
+
           {/* Stats */}
           <ContestantStatsCard contestant={contestant} />
 
@@ -232,6 +288,10 @@ const styles = StyleSheet.create({
   section:     { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.lg, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, gap: Spacing.sm },
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface },
   bio:         { ...Typography.bodyMd, color: Colors.onSurfaceVariant, lineHeight: 26 },
+  samplePressed: { opacity: 0.7 },
+  sampleRow:   { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  sampleHost:  { ...Typography.bodyMd, color: Colors.primary, flex: 1 },
+  sampleHint:  { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   ctaBlock:    { gap: Spacing.sm },
   voteBtn:     {},
 });

@@ -7,11 +7,10 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { useBeneficiaries, useExecuteTransfer } from '@/features/fx/hooks/useFx';
-import { buildQuote } from '@/features/fx/utils/fxFormatters';
-import type { CurrencyCode } from '@/features/fx/types/fx.types';
+import type { CurrencyCode, Quote } from '@/features/fx/types/fx.types';
 
 export default function SendProcessingScreen() {
-  const p = useLocalSearchParams<{ beneficiaryId: string; source: string; amount: string; narration: string; expiresAt: string }>();
+  const p = useLocalSearchParams<{ beneficiaryId: string; source: string; amount: string; narration: string; quote: string }>();
   const { data: beneficiaries } = useBeneficiaries();
   const transfer = useExecuteTransfer();
   const fired = useRef(false);
@@ -25,11 +24,20 @@ export default function SendProcessingScreen() {
     if (!beneficiary) return;            // wait for beneficiary list to resolve
     fired.current = true;
 
-    const quote = buildQuote({
-      source, destination: beneficiary.currency, amount, amountType: 'source',
-      intent: 'transfer', destinationRail: beneficiary.rail, lock: true,
-    });
-    if (p.expiresAt) quote.expiresAt = String(p.expiresAt);
+    // The SERVER quote priced+locked on the review screen; the backend executes
+    // against its id — no client-side quote math on this path.
+    let quote: Quote | null = null;
+    try { quote = p.quote ? (JSON.parse(String(p.quote)) as Quote) : null; } catch { quote = null; }
+    if (!quote) {
+      router.replace({
+        pathname: '/fx/send/failed',
+        params: {
+          beneficiaryId: beneficiary.id, source, amount: String(amount), narration: p.narration ?? '',
+          reason: 'The quote was lost in transit. Please request a fresh quote.', kind: 'rate_expired',
+        },
+      });
+      return;
+    }
 
     transfer.mutate(
       { draft: { beneficiaryId: beneficiary.id, beneficiary: null, source, amount, narration: p.narration || null, reference: null }, quote, beneficiary },

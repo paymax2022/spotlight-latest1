@@ -33,18 +33,82 @@ var foodDisputeTypes = map[string]bool{
 	"other":        true,
 }
 
-// foodRefundKobo computes the refund a resolution owes the customer, PURELY. full →
-// the order total; partial → the requested amount, which must be strictly between 0 and
-// the total (a full-value "partial" must use refund_full; 0 must use dismissed);
-// replacement/dismissed → 0. Fails closed on an unknown resolution or an out-of-range
-// partial so a dispute can never refund more than the order was worth.
-func foodRefundKobo(res FoodDisputeResolution, requestedKobo, orderTotalKobo int64) (int64, error) {
+// platformRefundableKobo is the basis a PLATFORM-FUNDED dispute refund is computed on:
+// the order total LESS the customer tip. See ADR-031.
+//
+// A dispute resolves only on a DELIVERED order, i.e. after settlement has already paid
+// the rider 100% of the tip (settlement.Split.TipKobo) and there is no provider clawback
+// on this path. Refunding the tip-inclusive total would therefore have the platform hand
+// the customer money it never held — its own revenue covering the rider's tip. The
+// platform refunds only what it actually took in on the order; the tip is refunded
+// separately and funded by the RIDER (see tip_clawback.go).
+//
+// Fails closed: a total that does not cover its own tip (only reachable if orders.tip_kobo
+// and orders.total_kobo have diverged) yields no refundable basis at all rather than a
+// negative one.
+func platformRefundableKobo(orderTotalKobo, tipKobo int64) int64 {
+	if tipKobo <= 0 {
+		return orderTotalKobo
+	}
+	if tipKobo >= orderTotalKobo {
+		return 0
+	}
+	return orderTotalKobo - tipKobo
+}
+
+// remainingRefundableKobo is what is left of an order's platform-funded refund budget
+// after everything already refunded on it. See ADR-031.
+//
+// The budget is per ORDER, not per dispute. The shared `disputes` table blocks only a
+// concurrently ACTIVE ticket on an order, and orders.disputed_at is a marker rather than a
+// gate, so once a dispute resolves a second one is raisable on the same delivered order.
+// Keyed per dispute, each upheld refund_full would credit the customer the whole basis
+// AGAIN out of platform revenue — N times for N disputes.
+//
+// A CUMULATIVE cap rather than a one-refund-per-order rule: a customer who is refunded
+// ₦500 for a missing item and later establishes the whole order was wrong should still be
+// able to be made whole. What must never happen is the total across all of an order's
+// disputes exceeding what the platform actually took in.
+//
+// Floors at 0: an order already refunded to (or past) its cap has no budget left, never a
+// negative one.
+func remainingRefundableKobo(orderCapKobo, alreadyRefundedKobo int64) int64 {
+	if alreadyRefundedKobo >= orderCapKobo {
+		return 0
+	}
+	return orderCapKobo - alreadyRefundedKobo
+}
+
+// foodRefundKobo computes the platform-funded refund a resolution owes the customer,
+// PURELY. full → the whole remaining budget; partial → the requested amount, which must
+// be strictly between 0 and that budget (a full-value "partial" must use refund_full; 0
+// must use dismissed); replacement/dismissed → 0. Fails closed on an unknown resolution
+// or an out-of-range partial so a dispute can never refund more than the platform held.
+//
+// refundableKobo is the REMAINING budget — remainingRefundableKobo over
+// platformRefundableKobo(total, tip) — not the raw order total and not the order's full
+// basis. Both branches are bounded by the same figure on purpose: the partial branch's
+// ceiling is derived from it, so a looser basis here would let `refund_partial` walk past
+// the cap in slices and reopen the exact exposure refund_full is capped to close.
+func foodRefundKobo(res FoodDisputeResolution, requestedKobo, refundableKobo int64) (int64, error) {
 	switch res {
 	case FoodRefundFull:
-		return orderTotalKobo, nil
+		// A zero budget yields a zero refund, NOT an error. "Nothing left to refund" and
+		// "this order never had a platform-refundable basis" are different situations and
+		// only the caller can tell them apart (it knows what has already been drawn) — see
+		// the exhausted-budget rejection in AdminResolveFoodDispute. Erroring here would
+		// abort the resolve on an all-tip order that has never been refunded at all, and
+		// with it the rider tip clawback, leaving the customer with nothing.
+		return refundableKobo, nil
 	case FoodRefundPartial:
-		if requestedKobo <= 0 || requestedKobo >= orderTotalKobo {
-			return 0, fmt.Errorf("%w: partial refund must be between 1 and %d kobo", ErrDisputeInvalid, orderTotalKobo-1)
+		if refundableKobo <= 1 {
+			// No band to sit in: nothing (or one indivisible kobo) is left of this order's
+			// platform-funded budget. Say so plainly rather than rendering "between 1 and
+			// -1 kobo".
+			return 0, fmt.Errorf("%w: this order has no platform-refundable amount left (%d kobo remaining of its non-tip total)", ErrDisputeInvalid, refundableKobo)
+		}
+		if requestedKobo <= 0 || requestedKobo >= refundableKobo {
+			return 0, fmt.Errorf("%w: partial refund must be between 1 and %d kobo", ErrDisputeInvalid, refundableKobo-1)
 		}
 		return requestedKobo, nil
 	case FoodReplacement, FoodDismissed:

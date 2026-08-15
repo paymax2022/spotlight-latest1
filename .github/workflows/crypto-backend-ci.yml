@@ -1,3 +1,6 @@
+# Called by ci.yml, the single pipeline for a push or PR — see the note in the
+# other *-ci.yml lanes. This is a SEPARATE Go module (paymax/crypto-backend, its
+# own Postgres), but it is routed the same way so one push stays one pipeline.
 name: Crypto Backend CI
 
 # CI for the standalone `paymax/crypto-backend` Go module
@@ -7,14 +10,7 @@ name: Crypto Backend CI
 # change, giving the green baseline the trading-module work depends on.
 
 on:
-  push:
-    paths:
-      - 'mobile-app/reactnative/backend/**'
-      - '.github/workflows/crypto-backend-ci.yml'
-  pull_request:
-    paths:
-      - 'mobile-app/reactnative/backend/**'
-      - '.github/workflows/crypto-backend-ci.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:

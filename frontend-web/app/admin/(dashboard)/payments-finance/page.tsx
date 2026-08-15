@@ -202,6 +202,9 @@ async function adjustWalletAction(formData: FormData) {
     reference,
     idempotencyKey: `admin-wallet:${reference}:${direction}`,
     description: `Admin wallet ${direction}: ${reason}`,
+    // ADR-040: manual admin movements settle against the platform clearing pot,
+    // not against a payment provider.
+    counterAccount: 'settlement' as const,
     metadata: {
       actor_id: actorId,
       reason,
@@ -236,6 +239,14 @@ const suspendKycFormAction = suspendKycAction as unknown as ServerFormAction;
 const backfillWalletsFormAction = backfillWalletsAction as unknown as ServerFormAction;
 const adjustWalletFormAction = adjustWalletAction as unknown as ServerFormAction;
 
+/**
+ * ledger_accounts types that hold CUSTOMER money, as opposed to the platform
+ * standing accounts (settlement, provider_clearing, paymax_revenue, escrow,
+ * legacy_wallet_contra, …) that ADR-040 posts counter-legs to. Everything not in
+ * this list is a platform pot and is excluded from the customer-facing figures.
+ */
+const CUSTOMER_ACCOUNT_TYPES = ['wallet', 'user_wallet', 'group_wallet'] as const;
+
 async function queryRows<T>(table: string, select: string, opts: { order?: string; ascending?: boolean; limit?: number; filter?: (query: any) => any } = {}) {
   const supabase = createAdminClient();
   let query = supabase.from(table).select(select);
@@ -247,9 +258,37 @@ async function queryRows<T>(table: string, select: string, opts: { order?: strin
 }
 
 export default async function PaymentsFinanceAdminPage() {
-  const [wallets, ledgerEntries, kycProfiles, userProfiles, virtualAccounts, auditEvents] = await Promise.all([
-    queryRows<WalletBalanceRow>('wallet_balance', 'account_id,user_id,account_type,currency,available_kobo,last_transaction_at', { order: 'last_transaction_at', limit: 50 }),
-    queryRows<LedgerEntryRow>('ledger_entries', 'id,account_id,type,amount_kobo,reference,description,created_at', { order: 'created_at', limit: 50 }),
+  // ADR-040: every wallet movement now also posts a counter-leg onto a PLATFORM
+  // standing account (settlement / provider_clearing / paymax_revenue / …).
+  // Those are not customer money — including them here would make "Wallet
+  // Balance" move the WRONG WAY on a spend (the user's wallet drops, the
+  // settlement pot rises by the same amount) and would let them monopolise the
+  // 50-row windows below.
+  //
+  // Discriminated by ACCOUNT TYPE rather than `user_id IS NULL`: group wallets
+  // are customer money but also carry a NULL user_id
+  // (backend/internal/groups/service.go), so a user_id test would wrongly drop
+  // them from these figures.
+  //
+  // Resolved BEFORE the rest so the ledger query can exclude platform accounts
+  // server-side. Trimming client-side after a fixed-size window would under-fill
+  // the table: the ADR-040 backfill inserts every contra-leg with the same
+  // created_at, so right after that migration the newest N rows can be entirely
+  // contra-legs.
+  const platformAccounts = await queryRows<{ id: string }>('ledger_accounts', 'id', {
+    filter: (q) => q.not('type', 'in', `(${CUSTOMER_ACCOUNT_TYPES.join(',')})`),
+  });
+  const platformAccountIds = platformAccounts.rows.map((row) => row.id);
+
+  const [wallets, ledgerEntriesRaw, kycProfiles, userProfiles, virtualAccounts, auditEvents] = await Promise.all([
+    queryRows<WalletBalanceRow>('wallet_balance', 'account_id,user_id,account_type,currency,available_kobo,last_transaction_at', { order: 'last_transaction_at', limit: 50, filter: (q) => q.in('account_type', CUSTOMER_ACCOUNT_TYPES) }),
+    queryRows<LedgerEntryRow>('ledger_entries', 'id,account_id,type,amount_kobo,reference,description,created_at', {
+      order: 'created_at',
+      limit: 50,
+      filter: (q) => (platformAccountIds.length
+        ? q.not('account_id', 'in', `(${platformAccountIds.join(',')})`)
+        : q),
+    }),
     queryRows<KycProfileRow>(
       'user_profiles',
       'id,email,full_name,phone,kyc_tier,kyc_status,phone_verified,kyc_submitted_at,kyc_verified_at,document_type',
@@ -259,6 +298,14 @@ export default async function PaymentsFinanceAdminPage() {
     queryRows<VirtualAccountRow>('virtual_accounts', 'id,user_id,provider,account_number,account_name,bank_name,currency,provisioned_at', { order: 'provisioned_at', limit: 50 }),
     queryRows<DbRow>('kyc_events', 'id,user_id,old_status,new_status,old_tier,new_tier,note,created_at', { order: 'created_at', limit: 50 }),
   ]);
+
+  // Fail LOUD, not open: if the platform-account lookup errored we could not
+  // build the exclusion, so the entry stream may contain counter-legs and the
+  // volume tiles would silently revert to double-counting. Surface it.
+  const ledgerEntries = {
+    error: ledgerEntriesRaw.error ?? platformAccounts.error,
+    rows: ledgerEntriesRaw.rows,
+  };
 
   const totalBalance = wallets.rows.reduce((sum, row) => sum + Number(row.available_kobo || 0), 0);
   const pendingKyc = kycProfiles.rows.filter((row) => row.kyc_status === 'pending');

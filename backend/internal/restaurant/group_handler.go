@@ -69,6 +69,12 @@ func (h *Handler) FinalizeGroupOrder(c *gin.Context) {
 	}
 	order, err := h.svc.FinalizeGroupOrder(c.Request.Context(), c.Param("groupId"), host, req)
 	if err != nil {
+		// Finalize escrows through PlaceOrder, so it inherits that path's money-side
+		// refusals (tier gate, insufficient funds) — map them the same way here.
+		if code, ok := escrowErrStatus(err); ok {
+			c.JSON(code, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(statusCodeFor(err), gin.H{"error": err.Error()})
 		return
 	}

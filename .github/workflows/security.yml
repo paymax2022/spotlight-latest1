@@ -98,16 +98,33 @@ jobs:
   npm-audit:
     name: npm audit (${{ matrix.dir }})
     runs-on: ubuntu-latest
-    continue-on-error: true  # advisory during launch — flip to blocking once the backlog is clean
+    # Now BLOCKING. It was advisory ("flip once the backlog is clean") because it
+    # could never pass: every residual advisory needs a framework major. It is now
+    # a DIFFERENTIAL gate against an explicit baseline, so it passes today and
+    # fails the moment a NEW advisory appears — which is the signal that was
+    # missing while it sat permanently red.
     strategy:
       fail-fast: false
       matrix:
-        dir: [frontend-web, frontend-admin, mobile-app/reactnative]
+        include:
+          - dir: frontend-web
+            baseline: frontend-web
+          - dir: frontend-admin
+            baseline: frontend-admin
+          - dir: mobile-app/reactnative
+            baseline: mobile-app-reactnative
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Audit (fail on high/critical)
+      - name: Install (production dependencies only)
         working-directory: ${{ matrix.dir }}
-        run: npm audit --audit-level=high || (echo "::warning::npm audit found high/critical vulns in ${{ matrix.dir }}" && exit 1)
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+      # Scoped to PRODUCTION dependencies: the gate reflects what ships, not the
+      # build/test toolchain. Known-and-accepted advisories live in
+      # .github/npm-audit-baseline/, each with a reason; the gate fails on anything
+      # not listed, and ALSO on a baselined entry that has disappeared, so the
+      # baseline cannot rot into a list of things that stopped being true.
+      - name: Audit production dependencies against the baseline
+        run: node .github/scripts/npm-audit-gate.mjs "${{ matrix.dir }}" ".github/npm-audit-baseline/${{ matrix.baseline }}.json"

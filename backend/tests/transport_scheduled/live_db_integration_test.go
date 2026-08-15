@@ -8,7 +8,7 @@ package transport_scheduled_test
 // GetScheduled, CancelScheduled, DispatchScheduled, DueForDispatch,
 // ExpireStale, SendDueReminders) and to the real settlement.Service for
 // escrow/refund. None of this can run without a migrated Postgres. This file
-// is SKIPPED whenever DATABASE_URL/TEST_DATABASE_URL is unset (the pattern
+// is SKIPPED whenever TEST_DATABASE_URL is unset (the pattern
 // used by backend/internal/top5events/service_integration_test.go), but is
 // fully written end-to-end so it can be un-skipped the moment infra is
 // available — do not treat the skip as "this is a stub"; every step below
@@ -19,7 +19,7 @@ package transport_scheduled_test
 //       supabase/migrations/2026090600000X_transport_scheduled_bookings.sql
 //     (table transport_scheduled_bookings + scheduled_booking_status enum +
 //     the transport.admin.scheduled.* RBAC perms). Confirm it landed:
-//       psql "$DATABASE_URL" -c "\d transport_scheduled_bookings"
+//       psql "$TEST_DATABASE_URL" -c "\d transport_scheduled_bookings"
 //  2. This test needs a wallet with a positive balance for the test rider
 //     (escrow debits fail closed otherwise) — seed one via the existing
 //     wallet top-up path or a direct ledger credit to a synthetic test user
@@ -27,10 +27,10 @@ package transport_scheduled_test
 //     boundary; if the environment has no seeded balance the dispatch step
 //     will fail at the tier/escrow gate and this test SKIPS with a clear
 //     message rather than reporting a false negative on the scheduling logic.
-//  3. Set DATABASE_URL (or TEST_DATABASE_URL) to a disposable/test database —
+//  3. Set TEST_DATABASE_URL to a disposable/test database —
 //     never point this at production. `supabase db reset` (local, port 54322)
 //     is the safest target:
-//       export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  4. Run:
 //       cd backend && go test ./tests/transport_scheduled/... -run LiveDB -v
 //
@@ -55,15 +55,12 @@ import (
 	"spotlight/backend/internal/transport"
 )
 
-// liveDBPool connects using DATABASE_URL/TEST_DATABASE_URL, or skips.
+// liveDBPool connects using TEST_DATABASE_URL, or skips.
 func liveDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB transport-scheduling integration test; see bring-up note in live_db_integration_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB transport-scheduling integration test; see bring-up note in live_db_integration_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

@@ -86,7 +86,24 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   { prefix: '/admin/featured-placement', permissions: ['placement.admin.review'] },
   { prefix: '/admin/nutrition', permissions: ['nutrition.admin.manage'] },
   { prefix: '/admin/restaurant/delivery-fee', permissions: ['restaurant.admin.pricing'] },
-  { prefix: '/admin/restaurant', permissions: ['restaurant.admin.view'] },
+  // `restaurant.admin.view` was never seeded — it appears in neither
+  // 20260919000200_restaurant_admin_rbac.sql nor 20260920000100_rbac_seed_gaps.sql,
+  // so this prefix used to admit only wildcard super-admins and locked every
+  // real restaurant operator out of the console. The seeded slugs are
+  // restaurant.manage plus restaurant.admin.{pricing,dispatch,onboarding,payouts,disputes};
+  // hasAnyPermission is an OR, so holding any one of them opens the section and
+  // each sub-page still gates its own actions via RESTAURANT_PERMS in _ui.tsx.
+  {
+    prefix: '/admin/restaurant',
+    permissions: [
+      'restaurant.manage',
+      'restaurant.admin.dispatch',
+      'restaurant.admin.onboarding',
+      'restaurant.admin.payouts',
+      'restaurant.admin.disputes',
+      'restaurant.admin.pricing',
+    ],
+  },
   { prefix: '/admin/marketplace', permissions: ['marketplace.admin.view'] },
   { prefix: '/admin/vendors', permissions: ['marketplace.admin.view'] },
   { prefix: '/admin/insurance', permissions: ['insurance.admin.view'] },

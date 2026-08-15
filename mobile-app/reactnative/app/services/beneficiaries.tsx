@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Alert, KeyboardAvoidingView } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Icons from 'lucide-react-native';
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react-native';
+import { confirmAsync } from '@/lib/confirm';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
@@ -48,11 +49,15 @@ export default function BeneficiariesScreen() {
     setAdding(false);
   };
 
-  const confirmDelete = (biller: SavedBiller) =>
-    Alert.alert('Remove beneficiary', `Remove "${biller.title}" from your saved billers?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove', style: 'destructive', onPress: () => remove(biller.id) },
-    ]);
+  const confirmDelete = async (biller: SavedBiller) => {
+    const ok = await confirmAsync({
+      title: 'Remove beneficiary',
+      message: `Remove "${biller.title}" from your saved billers?`,
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (ok) remove(biller.id);
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

@@ -117,13 +117,15 @@ export default function RestaurantDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: restaurant, isLoading, isError, refetch } = useRestaurant(id);
   const { packages, restaurantId, activePackageId, addPackage, removePackage, setActivePackage, addItem, decrementItem, removeItem } = useCartStore();
-  // The cart is single-restaurant; only show packs that belong to THIS restaurant.
+  // Multi-restaurant: show THIS restaurant's packs. Cart may have items from other restaurants too.
   const mine = restaurantId === id;
   const myPackages = mine ? packages : [];
   const activeId = mine ? activePackageId : null;
-  const cartCount = cartItemCount(myPackages);
-  const subtotal = cartSubtotalKobo(myPackages);
   const activePkg = myPackages.find((p) => p.id === activeId) ?? null;
+
+  // Cart totals across ALL restaurants (for display at bottom)
+  const totalCartCount = cartItemCount(packages);
+  const totalCartSubtotal = cartSubtotalKobo(packages);
 
   // Transient, non-blocking note shown when a regular item overflows into a new pack.
   const [overflowNote, setOverflowNote] = React.useState<string | null>(null);
@@ -153,7 +155,7 @@ export default function RestaurantDetailScreen() {
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.topBar}>
-        <Pressable onPress={() => router.back()} style={s.iconButton} accessibilityLabel="Go back">
+        <Pressable onPress={() => router.navigate('/food')} style={s.iconButton} accessibilityLabel="Go back">
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle} numberOfLines={1}>
@@ -194,6 +196,12 @@ export default function RestaurantDetailScreen() {
             {/* Takeaway packs — the "mother" container. Add a pack, then add food
                 into the ACTIVE pack (max 2 of the same item per pack). Each pack
                 lists its food; tap × to remove a food from that pack. */}
+            {!mine && totalCartCount > 0 ? (
+              <View style={[s.cartFromOtherNote, shadow1]}>
+                <Icons.ShoppingCart size={14} color={Colors.primary} strokeWidth={2} />
+                <Text style={s.cartFromOtherText}>You have {totalCartCount} items from other restaurants. Add from here or proceed to checkout.</Text>
+              </View>
+            ) : null}
             <View style={s.packsHead}>
               <Text style={s.packBarTitle}>Takeaway packs{myPackages.length > 0 ? ` (${myPackages.length})` : ''}</Text>
               <Pressable onPress={() => addPackage()} style={s.addPackBtn} accessibilityRole="button" accessibilityLabel="Add takeaway pack">
@@ -273,13 +281,13 @@ export default function RestaurantDetailScreen() {
             ))}
           </ScrollView>
 
-          {cartCount > 0 ? (
+          {totalCartCount > 0 ? (
             <Pressable style={[s.cartBar, shadow2]} onPress={() => router.push('/food/checkout')} accessibilityRole="button">
               <View style={s.cartBadge}>
-                <Text style={s.cartBadgeText}>{cartCount}</Text>
+                <Text style={s.cartBadgeText}>{totalCartCount}</Text>
               </View>
               <Text style={s.cartText}>View cart</Text>
-              <Text style={s.cartCta}>{formatNaira(subtotal)}</Text>
+              <Text style={s.cartCta}>{formatNaira(totalCartSubtotal)}</Text>
             </Pressable>
           ) : null}
         </>
@@ -335,6 +343,8 @@ const s = StyleSheet.create({
   packLineName: { ...Typography.bodyMd, color: Colors.onSurface, flex: 1 },
   packLineQty: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   packLineRemove: { width: 28, height: 28, borderRadius: Radius.full, backgroundColor: Colors.errorContainer, alignItems: 'center', justifyContent: 'center' },
+  cartFromOtherNote: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.primaryContainer, borderRadius: Radius.md, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, marginBottom: Spacing.md },
+  cartFromOtherText: { ...Typography.bodySm, color: Colors.onPrimaryContainer, flex: 1 },
   cartBar: {
     position: 'absolute',
     left: Spacing.containerMargin,

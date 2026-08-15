@@ -377,11 +377,13 @@ func RegisterMarketplace(
 	a.GET("/flags", guard("marketplace.admin.flags.action"), h.AdminFlags)
 	a.POST("/flags/:id/action", guard("marketplace.admin.flags.action"), h.AdminActionFlag)
 	a.GET("/audit-log", guard("marketplace.admin.audit.read"), h.AdminAuditLog)
+
+
 	// Boost moderation — the SOLE live marketplace money path (§2.4). GET lists boosts
 	// platform-wide (read-scoped marketplace.admin.moderation); POST rejects+auto-refunds.
 	a.GET("/boosts", guard("marketplace.admin.moderation"), h.AdminListBoosts)
 	a.POST("/boosts/:id/reject", guard("marketplace.admin.reject"), h.AdminRejectBoost)
 
-	log.Println("[marketplace] routes registered — listings/offers/boosts + trust/account + admin moderation (listings-and-connect; no escrow)")
+	log.Println("[marketplace] routes registered — listings/offers/boosts + trust/account + admin moderation + real-time audit (listings-and-connect; no escrow)")
 	return svc
 }

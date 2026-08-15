@@ -25,17 +25,22 @@ import ContestHero from '@/features/voting/components/ContestHero';
 import CountdownTimer from '@/features/voting/components/CountdownTimer';
 import { formatVoteCount } from '@/features/voting/utils/voteFormatters';
 
-const FEATURED_CONTEST_ID = 'c1';
+
 
 export default function VotingHomeScreen() {
   const { user } = useAuthStore();
   const firstName = user?.fullName?.split(' ')[0] ?? 'there';
 
   const { data: contests, isLoading: loadingContests, refetch, isRefetching } = useContests({ status: 'LIVE' });
-  const { data: leaderboard } = useLeaderboard(FEATURED_CONTEST_ID);
-  const { data: freeVotes } = useFreeVoteAllocation(FEATURED_CONTEST_ID);
 
+  // The featured contest is whichever live contest comes first — NOT a
+  // hardcoded id. Pointing these at a fixed mock id ('c1') meant the leaderboard
+  // and free-vote lookups 404'd against real data.
   const featuredContest = contests?.[0];
+  const featuredContestId = featuredContest?.id;
+
+  const { data: leaderboard } = useLeaderboard(featuredContestId ?? '');
+  const { data: freeVotes } = useFreeVoteAllocation(featuredContestId ?? '');
   const liveContests    = contests ?? [];
   const topEntries      = (leaderboard ?? []).slice(0, 3);
 
@@ -78,7 +83,7 @@ export default function VotingHomeScreen() {
         {/* Free votes strip */}
         {freeVotes && (
           <Pressable
-            onPress={() => router.push(`/voting/contestant-profile?contestantId=ct1&contestId=${FEATURED_CONTEST_ID}`)}
+            onPress={() => featuredContestId && router.push(`/voting/contestants?contestId=${featuredContestId}`)}
             style={[styles.freeVoteCard, shadow1]}
           >
             <FreeVoteBadge remaining={freeVotes.remaining} total={freeVotes.total} />
@@ -138,7 +143,7 @@ export default function VotingHomeScreen() {
             <SectionHeader
               title="Leaderboard Preview"
               actionLabel="Full Board"
-              onAction={() => router.push(`/voting/leaderboard?contestId=${FEATURED_CONTEST_ID}`)}
+              onAction={() => featuredContestId && router.push(`/voting/leaderboard?contestId=${featuredContestId}`)}
             />
             <View style={[styles.leaderCard, shadow1]}>
               <View style={styles.leaderHeader}>
@@ -150,14 +155,14 @@ export default function VotingHomeScreen() {
                 <View key={entry.contestant.id}>
                   <LeaderboardRow
                     entry={entry}
-                    onPress={() => router.push(`/voting/contestant-profile?contestantId=${entry.contestant.id}&contestId=${FEATURED_CONTEST_ID}`)}
-                    onVote={() => router.push(`/voting/contestant-profile?contestantId=${entry.contestant.id}&contestId=${FEATURED_CONTEST_ID}`)}
+                    onPress={() => router.push(`/voting/contestant-profile?contestantId=${entry.contestant.id}&contestId=${featuredContestId}`)}
+                    onVote={() => router.push(`/voting/contestant-profile?contestantId=${entry.contestant.id}&contestId=${featuredContestId}`)}
                   />
                   {i < topEntries.length - 1 && <View style={styles.divider} />}
                 </View>
               ))}
               <Pressable
-                onPress={() => router.push(`/voting/leaderboard?contestId=${FEATURED_CONTEST_ID}`)}
+                onPress={() => router.push(`/voting/leaderboard?contestId=${featuredContestId}`)}
                 style={styles.seeAllBtn}
               >
                 <Text style={styles.seeAllText}>See full leaderboard</Text>

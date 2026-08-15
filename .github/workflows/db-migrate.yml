@@ -64,9 +64,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # PINNED ON PURPOSE — do not "modernise" this back to `latest`.
+      # The step below runs `supabase db push --linked` against PRODUCTION. With
+      # `latest` the CLI that touches the production database is whatever Supabase
+      # shipped that morning, so an unreviewed upstream release could change apply
+      # semantics on a run nobody chose to take. Pinning makes the production
+      # migration path reproducible and puts CLI upgrades behind a reviewed commit.
+      # Keep this in step with the pin in maps-ci.yml so local replays and the
+      # production push cannot disagree about how a migration applies.
+      # Bump deliberately: raise the version, let maps-ci's PostGIS job replay the
+      # whole chain green, then merge.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.114.0
 
       - name: Check required secrets are present
         run: |

@@ -582,3 +582,189 @@ export async function approveMerchantCampaign(merchantId: string, campaignId: st
   if (USE_MOCK) { await delay(); return { ok: true }; }
   return sendJson<{ ok: true }>('POST', `/merchants/${merchantId}/campaigns/${campaignId}/approve`, { note }, true);
 }
+
+
+// ── Ambassador approval queue (live) ─────────────────────────────────────────
+// These hit the endpoints the Go backend actually exposes:
+//   GET  /api/referral/admin/network/ambassadors?status=<status>   referral.amb.view
+//   POST /api/referral/admin/network/ambassadors/:id/status        referral.amb.manage
+//
+// The older listAmbassadors/listApplications/decideApplication above target
+// paths (/ambassadors/applications/:id/decide) that no backend route serves.
+// They are left untouched for the existing directory page rather than
+// repointed, since that page's row shape differs from this one.
+
+/** Backend lifecycle for referral_ambassadors.status. */
+export type AmbassadorQueueStatus = 'applied' | 'approved' | 'suspended' | 'rejected';
+
+/** A decision an admin can take. 'applied' is the inbox, not a decision. */
+export type AmbassadorDecision = 'approved' | 'suspended' | 'rejected';
+
+export interface AmbassadorQueueRow {
+  id: string;
+  userId: string;
+  tier: string;
+  status: AmbassadorQueueStatus;
+  /** The disclosure the applicant accepted, stored verbatim. */
+  disclosureText: string;
+  disclosureAcceptedAt: string | null;
+  appliedAt: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+}
+
+interface BackendAmbassadorRow {
+  id: string;
+  user_id: string;
+  tier: string;
+  status: string;
+  disclosure_text?: string;
+  disclosure_accepted_at?: string | null;
+  applied_at: string;
+  approved_by?: string | null;
+  approved_at?: string | null;
+}
+
+function mapAmbassadorRow(a: BackendAmbassadorRow): AmbassadorQueueRow {
+  return {
+    id: a.id,
+    userId: a.user_id,
+    tier: a.tier,
+    status: (a.status as AmbassadorQueueStatus) ?? 'applied',
+    disclosureText: a.disclosure_text ?? '',
+    disclosureAcceptedAt: a.disclosure_accepted_at ?? null,
+    appliedAt: a.applied_at,
+    approvedBy: a.approved_by ?? null,
+    approvedAt: a.approved_at ?? null,
+  };
+}
+
+/** Surfaces the backend's own message — "missing permission: ..." beats "(403)". */
+async function readAmbErr(res: Response): Promise<string> {
+  try {
+    const b = await res.json();
+    if (typeof b?.error === 'string' && b.error.trim()) return b.error;
+  } catch { /* non-JSON body */ }
+  if (res.status === 401) return 'Your admin session has expired. Sign in again.';
+  if (res.status === 403) return 'You do not have permission to do that.';
+  return `Request failed (${res.status})`;
+}
+
+export async function listAmbassadorQueue(status?: string): Promise<AmbassadorQueueRow[]> {
+  const qs = status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : '';
+  const res = await fetch(`${adminBase()}/network/ambassadors${qs}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await readAmbErr(res));
+  const body = await res.json();
+  const rows = (body?.ambassadors ?? body?.data?.ambassadors ?? []) as BackendAmbassadorRow[];
+  return rows.map(mapAmbassadorRow);
+}
+
+export async function setAmbassadorStatus(id: string, status: AmbassadorDecision): Promise<void> {
+  const res = await fetch(`${adminBase()}/network/ambassadors/${id}/status`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) throw new Error(await readAmbErr(res));
+}
+
+
+// ── Override policies (live) ─────────────────────────────────────────────────
+// GET /api/referral/admin/network/override-policies  (referral.network.view)
+//
+// The older getOverridePolicy() above targets /ambassadors/override-policy,
+// which no backend route serves, and its shape carries policy-level flags
+// (activity_based_only, max_depth, recruitment_earnings_blocked,
+// house_excluded_from_overrides) that no endpoint returns — they were mock
+// inventions. They are NOT reproduced here: rendering an unsourced
+// "Recruitment earnings: Blocked" tile asserts a compliance property the
+// system never actually reported.
+
+export interface OverridePolicyRow {
+  id: string;
+  tier: string;
+  /** Override rate in basis points; 200 bps = 2%. */
+  overrideBps: number;
+  perMemberCapKobo: number;
+  monthlyCapKobo: number;
+  isActive: boolean;
+}
+
+interface BackendOverridePolicy {
+  id: string;
+  tier: string;
+  override_bps: number;
+  per_member_cap_kobo: number;
+  monthly_cap_kobo: number;
+  is_active: boolean;
+}
+
+export async function listOverridePolicies(): Promise<OverridePolicyRow[]> {
+  const res = await fetch(`${adminBase()}/network/override-policies`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await readAmbErr(res));
+  const body = await res.json();
+  const rows = (body?.policies ?? body?.data?.policies ?? []) as BackendOverridePolicy[];
+  return rows
+    .map((p) => ({
+      id: p.id,
+      tier: p.tier,
+      overrideBps: p.override_bps ?? 0,
+      perMemberCapKobo: p.per_member_cap_kobo ?? 0,
+      monthlyCapKobo: p.monthly_cap_kobo ?? 0,
+      isActive: !!p.is_active,
+    }))
+    // The API returns tiers alphabetically (bronze, gold, platinum, silver),
+    // which reads as arbitrary in a ladder. Order by rate so the table climbs
+    // in tier order without hardcoding tier names the backend may add to.
+    .sort((a, b) => a.overrideBps - b.overrideBps);
+}
+
+
+// ── Agent networks (live) ────────────────────────────────────────────────────
+// GET /api/referral/admin/network/networks  (referral.amb.view)
+//
+// The older listNetworks() above targets /ambassadors/networks, which no
+// backend route served — the admin endpoint did not exist until it was added
+// alongside this. Its shape also carried depth / max_depth_cap /
+// verified_activity_kobo / override_paid_kobo, none of which the API returns.
+
+export interface AgentNetworkRow {
+  id: string;
+  leadUserId: string;
+  name: string;
+  networkType: string;
+  status: string;
+  memberCount: number;
+  /** Members excluded from override chains (house-attributed, §7A.2). */
+  houseAttributedCount: number;
+  createdAt: string;
+}
+
+interface BackendNetworkSummary {
+  id: string;
+  lead_user_id: string;
+  name: string;
+  network_type: string;
+  status: string;
+  created_at: string;
+  member_count: number;
+  house_attributed_count: number;
+}
+
+export async function listAgentNetworks(status?: string): Promise<AgentNetworkRow[]> {
+  const qs = status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : '';
+  const res = await fetch(`${adminBase()}/network/networks${qs}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await readAmbErr(res));
+  const body = await res.json();
+  const rows = (body?.networks ?? body?.data?.networks ?? []) as BackendNetworkSummary[];
+  return rows.map((n) => ({
+    id: n.id,
+    leadUserId: n.lead_user_id,
+    name: n.name,
+    networkType: n.network_type,
+    status: n.status,
+    memberCount: n.member_count ?? 0,
+    houseAttributedCount: n.house_attributed_count ?? 0,
+    createdAt: n.created_at,
+  }));
+}

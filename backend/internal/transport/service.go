@@ -23,6 +23,9 @@ import (
 // this small means the wiring in NewService is unchanged and idiomatic.
 type tierLimiter interface {
 	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+	// Rider fares are consumer purchases, so they use the checkout gate: identical
+	// for Tier 1+, capped-but-permitted for Tier 0 (ADR-043).
+	EnforceCheckoutDebitLimit(ctx context.Context, userID string, amountKobo int64) error
 }
 
 // Service manages driver registration, trip lifecycle, fare negotiation, and settlement.
@@ -44,6 +47,20 @@ func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
 	return &Service{db: db, settlement: settlement, tiers: tiers.NewService(db), maps: NewMockMaps()}
 }
 
+// WithTiers injects a pre-configured tier gate, taking the refactor the comment
+// above invited. Routes pass the shared, flag-configured service so a rider fare
+// honours the Tier-0 checkout allowance (ADR-043) rather than the strict default
+// this service builds for itself.
+//
+// Optional and fail-safe: without it the self-built gate applies, which refuses
+// Tier 0 exactly as before. An unwired call site is stricter, never looser.
+func (s *Service) WithTiers(t tierLimiter) *Service {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
+}
+
 // enforceTierLimit is a fail-closed guard applied before any rider-funded wallet
 // escrow. It delegates to the shared tiers service (KYC tier + daily debit limit)
 // so a Tier0/over-limit rider cannot move money. Any error (including DB errors)
@@ -56,7 +73,7 @@ func (s *Service) enforceTierLimit(ctx context.Context, riderID string, amountKo
 	if amountKobo <= 0 {
 		return nil
 	}
-	if err := s.tiers.EnforceWalletDebitLimit(ctx, riderID, amountKobo); err != nil {
+	if err := s.tiers.EnforceCheckoutDebitLimit(ctx, riderID, amountKobo); err != nil {
 		// Surface as a client-visible forbidden — the rider must complete KYC or is
 		// over their daily limit. Do NOT let money move.
 		return codedErr(http.StatusForbidden, CodeForbidden, err.Error())

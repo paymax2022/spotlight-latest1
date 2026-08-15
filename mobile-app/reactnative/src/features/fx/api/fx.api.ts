@@ -62,6 +62,25 @@ const unwrap = <T>(res: { data: unknown }): T => {
 // Coerce a list payload to an array — a backend empty result may arrive as null.
 const arr = <T>(v: T[] | null | undefined): T[] => (Array.isArray(v) ? v : []);
 
+// The Go backend rejects with {"error": {type, code, message, ...}} (FxError).
+// Axios only surfaces its own generic message, so the screens' `err.fxType`
+// branches (e.g. the rate_expired → re-quote UX) never fired on live. Re-throw
+// with fxType/message lifted from the envelope so mock and live behave alike.
+const withFxError = async <T>(call: Promise<T>): Promise<T> => {
+  try {
+    return await call;
+  } catch (err) {
+    const body = (err as { response?: { data?: { error?: { type?: string; message?: string } } } })?.response?.data;
+    const fxErr = body?.error;
+    if (fxErr && typeof fxErr === 'object') {
+      const e = new Error(fxErr.message || 'The request could not be completed.') as Error & { fxType?: string };
+      e.fxType = fxErr.type;
+      throw e;
+    }
+    throw err;
+  }
+};
+
 // ─── Balances (GET /v1/balances) ──────────────────────────────────────────────
 
 export async function getBalances(): Promise<WalletBalance[]> {
@@ -158,7 +177,7 @@ export async function executeConversion(
     };
   }
   return unwrap<Conversion>(
-    await api.post('/api/v1/fx/conversions', { quote_id: quote.id }, { headers: { 'Idempotency-Key': idempotencyKey } }),
+    await withFxError(api.post('/api/v1/fx/conversions', { quote_id: quote.id }, { headers: { 'Idempotency-Key': idempotencyKey } })),
   );
 }
 
@@ -201,11 +220,11 @@ export async function executeTransfer(
     };
   }
   return unwrap<Transfer>(
-    await api.post(
+    await withFxError(api.post(
       '/api/v1/fx/transfers',
       { quote_id: quote.id, beneficiary_id: beneficiary.id, narration: draft.narration, reference: draft.reference },
       { headers: { 'Idempotency-Key': idempotencyKey } },
-    ),
+    )),
   );
 }
 
@@ -348,22 +367,31 @@ export async function getCollections(): Promise<CollectionEvent[]> {
 
 // ─── Transactions (GET /v1/transactions[/{id}]) ───────────────────────────────
 
+// Shared filter used by BOTH branches: the Go handler ignores query params
+// today, so without this the filter chips silently do nothing on live data.
+const applyTxFilter = <T extends TransactionSummary>(list: T[], filter?: TransactionFilter): T[] => {
+  let out = list;
+  if (filter?.type) out = out.filter((t) => t.type === filter.type);
+  if (filter?.status) out = out.filter((t) => t.status === filter.status);
+  if (filter?.currency) out = out.filter((t) => t.source.currency === filter.currency || t.destination.currency === filter.currency);
+  if (filter?.search) {
+    const q = filter.search.toLowerCase().trim();
+    out = out.filter((t) =>
+      (t.title ?? '').toLowerCase().includes(q) ||
+      (t.reference ?? '').toLowerCase().includes(q) ||
+      ((t as { counterparty?: string }).counterparty ?? '').toLowerCase().includes(q));
+  }
+  return [...out].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+};
+
 export async function getTransactions(filter?: TransactionFilter): Promise<TransactionSummary[]> {
   if (USE_MOCK) {
     await delay();
-    let list = [...MOCK_TRANSACTIONS];
-    if (filter?.type) list = list.filter((t) => t.type === filter.type);
-    if (filter?.status) list = list.filter((t) => t.status === filter.status);
-    if (filter?.currency) list = list.filter((t) => t.source.currency === filter.currency || t.destination.currency === filter.currency);
-    if (filter?.search) {
-      const q = filter.search.toLowerCase().trim();
-      list = list.filter((t) => t.title.toLowerCase().includes(q) || t.reference.toLowerCase().includes(q) || (t.counterparty ?? '').toLowerCase().includes(q));
-    }
-    return list
-      .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+    return applyTxFilter(MOCK_TRANSACTIONS, filter)
       .map(({ route, quotedRate, executedRate, fees, providerRef, counterparty, narration, statusHistory, ...summary }) => summary);
   }
-  return arr(unwrap<TransactionSummary[]>(await api.get('/api/v1/fx/transactions', { params: filter })));
+  const list = arr(unwrap<TransactionSummary[]>(await api.get('/api/v1/fx/transactions', { params: filter })));
+  return applyTxFilter(list, filter);
 }
 
 export async function disputeTransaction(draft: import('../types/fx.types').DisputeDraft): Promise<import('../types/fx.types').Dispute> {

@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -131,14 +132,23 @@ func TestJWKSVerify_TamperedSignature(t *testing.T) {
 	v := NewJWKSVerifier(f.srv.URL)
 
 	tok := f.signRS256(t, "RS256", f.kid, validClaims())
-	// Flip the final character of the signature segment.
-	bad := tok[:len(tok)-1]
-	if tok[len(tok)-1] == 'A' {
-		bad += "B"
-	} else {
-		bad += "A"
+
+	// Tamper with the signature BYTES, not its spelling. Flipping the final
+	// base64 character is not enough: a 256-byte RS256 signature encodes to a
+	// trailing group of 2 chars whose last char carries only 2 significant bits
+	// (the low 4 are padding), and RawURLEncoding is not Strict, so 'A'->'B'
+	// decodes to the identical signature and verification correctly succeeds.
+	// That made this test fail ~25% of runs — whenever the signature's last byte
+	// happened to land on a 'A'-encoding boundary.
+	parts := strings.Split(tok, ".")
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatalf("decode signature: %v", err)
 	}
-	_, err := v.Verify(bad)
+	sig[0] ^= 0x01
+	bad := parts[0] + "." + parts[1] + "." + base64.RawURLEncoding.EncodeToString(sig)
+
+	_, err = v.Verify(bad)
 	if !errors.Is(err, ErrSignature) {
 		t.Fatalf("err = %v, want ErrSignature", err)
 	}
