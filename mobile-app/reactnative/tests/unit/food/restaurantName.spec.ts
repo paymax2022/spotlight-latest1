@@ -8,8 +8,12 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveRestaurantName } from '@/features/food/restaurantName';
-import type { CartLine } from '@/features/food/types';
+import {
+  resolveRestaurantName,
+  groupPackagesByRestaurant,
+  UNKNOWN_RESTAURANT_ID,
+} from '@/features/food/restaurantName';
+import type { CartLine, CartPackage } from '@/features/food/types';
 
 const line = (over: Partial<CartLine> = {}): CartLine => ({
   itemId: 'i1',
@@ -89,5 +93,59 @@ describe('resolveRestaurantName', () => {
     assert.equal(resolveRestaurantName([line()], 'r4', 1), 'Restaurant 2');
     assert.equal(resolveRestaurantName([], 'r4', 0), 'Restaurant 1');
     assert.equal(resolveRestaurantName([line()], 'r4', 2, () => undefined), 'Restaurant 3');
+  });
+});
+
+describe('groupPackagesByRestaurant', () => {
+  const pkg = (id: string, lines: CartLine[]): CartPackage => ({ id, lines });
+
+  it('groups packages by restaurant, preserving cart order', () => {
+    const groups = groupPackagesByRestaurant([
+      pkg('p1', [line({ restaurantId: 'r1' })]),
+      pkg('p2', [line({ restaurantId: 'r2' })]),
+      pkg('p3', [line({ restaurantId: 'r1' })]),
+    ]);
+    assert.deepEqual(groups.map((g) => g.rid), ['r1', 'r2']);
+    assert.equal(groups[0].packages.length, 2, 'both r1 packs land in one group');
+  });
+
+  it('skips empty packages so they open no section', () => {
+    // The cart lets you add a pack before filling it; an empty one must not
+    // render a restaurant heading of its own.
+    const groups = groupPackagesByRestaurant([
+      pkg('empty', []),
+      pkg('p1', [line({ restaurantId: 'r1' })]),
+    ]);
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0].rid, 'r1');
+  });
+
+  it('falls back to the cart restaurant, then to the unknown marker', () => {
+    // Legacy lines carry no restaurantId at all.
+    assert.equal(groupPackagesByRestaurant([pkg('p', [line()])], 'r9')[0].rid, 'r9');
+    assert.equal(groupPackagesByRestaurant([pkg('p', [line()])])[0].rid, UNKNOWN_RESTAURANT_ID);
+  });
+
+  it('returns nothing for an empty cart', () => {
+    assert.deepEqual(groupPackagesByRestaurant([]), []);
+    assert.deepEqual(groupPackagesByRestaurant([pkg('e', [])]), []);
+  });
+});
+
+describe('the closed-restaurant case that survived the first fix', () => {
+  it('names a group once a by-id fetch supplies what discovery could not', () => {
+    // Discovery is `WHERE is_open = TRUE`, so a closed restaurant is absent
+    // from it (31 of 697 in the dev DB). A hydrated cart line carries no name
+    // either, so both earlier sources fail and only the by-id fetch can name it.
+    const lines = [line({ restaurantId: 'rClosed' })];
+    const discoveryOnly = (id: string) => ({ rOpen: 'Mama Cass' })[id];
+    assert.equal(
+      resolveRestaurantName(lines, 'rClosed', 1, discoveryOnly),
+      'Restaurant 2',
+      'reproduces the placeholder that was still showing',
+    );
+
+    const withFetched = (id: string) => ({ rOpen: 'Mama Cass', rClosed: 'Closed Kitchen' })[id];
+    assert.equal(resolveRestaurantName(lines, 'rClosed', 1, withFetched), 'Closed Kitchen');
   });
 });

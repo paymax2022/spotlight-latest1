@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -7,7 +7,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import AddressAutocompleteInput, { type SelectedAddress } from '@/components/AddressAutocompleteInput';
 import { withPlusCode } from '@/lib/addressLookup';
-import type { CartPackage, LatLng } from '@/features/food/types';
+import type { LatLng } from '@/features/food/types';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
@@ -18,9 +18,9 @@ import {
   useCartStore, cartSubtotalKobo, cartItemCount, cartPackageCount, cartPackagingKobo,
   aggregateCartLines, cartPackagesPayload, MAX_SAME_FOOD_PER_PACKAGE,
 } from '@/features/food/cartStore';
-import { resolveRestaurantName } from '@/features/food/restaurantName';
+import { resolveRestaurantName, groupPackagesByRestaurant, UNKNOWN_RESTAURANT_ID } from '@/features/food/restaurantName';
 import { formatNaira } from '@/features/food/utils';
-import { useRestaurant, useRestaurants } from '@/features/food/hooks';
+import { useRestaurant, useRestaurants, useRestaurantNames } from '@/features/food/hooks';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { CartNutritionSummary } from '@/features/nutrition';
 
@@ -59,6 +59,32 @@ export default function CheckoutScreen() {
     if (restaurantId && restaurantName && !m.has(restaurantId)) m.set(restaurantId, restaurantName);
     return m;
   }, [allRestaurants, restaurantId, restaurantName]);
+
+  // The cart's restaurant groups, in render order. Lifted out of the JSX so the
+  // unresolved ids below can be computed before rendering.
+  const restaurantGroups = useMemo(() => groupPackagesByRestaurant(packages, restaurantId), [packages, restaurantId]);
+
+  // Ids that NEITHER a captured line name NOR discovery can name. Discovery is
+  // `WHERE is_open = TRUE`, so a closed restaurant is missing from it entirely —
+  // and a cart outlives opening hours. These are fetched by id, which has no
+  // such filter. Usually empty, in which case no request is made.
+  const unresolvedRestaurantIds = useMemo(
+    () =>
+      restaurantGroups
+        .filter(({ rid, packages: ps }) => {
+          if (!rid || rid === UNKNOWN_RESTAURANT_ID) return false; // nothing to fetch
+          if (restaurantNameById.has(rid)) return false;
+          return !ps.some((p) => p.lines.some((l) => l.restaurantName?.trim()));
+        })
+        .map(({ rid }) => rid),
+    [restaurantGroups, restaurantNameById],
+  );
+  const fetchedNames = useRestaurantNames(unresolvedRestaurantIds);
+
+  const lookupRestaurantName = useCallback(
+    (id: string) => restaurantNameById.get(id) ?? fetchedNames.get(id),
+    [restaurantNameById, fetchedNames],
+  );
   const placeOrder = usePlaceOrder();
   // Two-option checkout modal: Pay with Wallet, or Pay with Card/Transfer (Paystack gateway).
   const pay = usePurchasePayment<Awaited<ReturnType<typeof placeOrder.mutateAsync>>>();
@@ -200,20 +226,11 @@ export default function CheckoutScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
         {/* Group items by restaurant and display */}
         {(() => {
-          // Create a map of restaurant -> packages
-          const byRestaurant = new Map<string, CartPackage[]>();
-          for (const pkg of packages) {
-            if (pkg.lines.length === 0) continue;
-            // Get the restaurant ID from the first item in the package
-            const rid = pkg.lines[0]?.restaurantId || restaurantId || 'unknown';
-            if (!byRestaurant.has(rid)) byRestaurant.set(rid, []);
-            byRestaurant.get(rid)!.push(pkg);
-          }
-
-          const restaurants = Array.from(byRestaurant.entries());
-          return restaurants.length === 0 ? null : (
+          // Grouping is memoized above (restaurantGroups) so the screen can
+          // resolve names for closed/unlisted restaurants before rendering.
+          return restaurantGroups.length === 0 ? null : (
             <View>
-              {restaurants.map(([rid, rPackages], restIndex) => (
+              {restaurantGroups.map(({ rid, packages: rPackages }, restIndex) => (
                 <View key={rid} style={restIndex > 0 && { marginTop: Spacing.lg }}>
                   {/* Restaurant name header */}
                   <View style={s.restaurantSection}>
@@ -222,7 +239,7 @@ export default function CheckoutScreen() {
                         rPackages.flatMap((p) => p.lines),
                         rid,
                         restIndex,
-                        (id) => restaurantNameById.get(id),
+                        lookupRestaurantName,
                       )}
                     </Text>
                   </View>

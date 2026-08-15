@@ -9,7 +9,33 @@
 // and AsyncStorage, none of which resolve under `node --test`. Types-only here,
 // same reasoning as normalize.ts.
 
-import type { CartLine } from './types';
+import type { CartLine, CartPackage } from './types';
+
+/** Group id used when a package's lines carry no restaurant at all. */
+export const UNKNOWN_RESTAURANT_ID = 'unknown';
+
+/**
+ * The cart's packages grouped by restaurant, in insertion order.
+ *
+ * Lifted out of checkout's JSX so the screen can work out which ids still need
+ * a name lookup BEFORE rendering. Empty packages are skipped: they are a
+ * user-visible container the cart lets you create ahead of filling it, and an
+ * empty one must not open a restaurant section of its own.
+ */
+export function groupPackagesByRestaurant(
+  packages: readonly CartPackage[],
+  fallbackRestaurantId?: string | null,
+): { rid: string; packages: CartPackage[] }[] {
+  const byRestaurant = new Map<string, CartPackage[]>();
+  for (const pkg of packages) {
+    if (pkg.lines.length === 0) continue;
+    const rid = pkg.lines[0]?.restaurantId || fallbackRestaurantId || UNKNOWN_RESTAURANT_ID;
+    const group = byRestaurant.get(rid);
+    if (group) group.push(pkg);
+    else byRestaurant.set(rid, [pkg]);
+  }
+  return Array.from(byRestaurant.entries()).map(([rid, ps]) => ({ rid, packages: ps }));
+}
 
 /**
  * Name for one restaurant section of the cart.
