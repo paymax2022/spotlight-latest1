@@ -58,3 +58,25 @@ export const SERVICE_MODULE_REGISTRY_KEY: Record<string, string> = {
 export function registryKeyFor(serviceId: string): string | null {
   return SERVICE_MODULE_REGISTRY_KEY[serviceId] ?? null;
 }
+
+// ── Property hub ─────────────────────────────────────────────────────────────
+// A SEPARATE map, not an extension of the one above. The two id-spaces collide:
+// 'marketplace' is a lifestyle shopping tile in SERVICE_MODULES and the property
+// buy/rent marketplace in PROPERTY_SUBMODULES. Sharing one table would gate the
+// shopping tile on the realtor module.
+//
+// 'marketplace' and 'rent' both map to `realtor` on purpose — listings and leases
+// are the same registry module (see FEATURE_REALTOR_ENABLED: "property graph,
+// listings, inspections, leases, shortlet"). Unpublishing realtor therefore hides
+// both pillars, which is the intended behaviour.
+export const PROPERTY_SUBMODULE_REGISTRY_KEY: Record<string, string> = {
+  marketplace: 'realtor',
+  rent: 'realtor',
+  stays: 'stays',
+  estate: 'estate',
+};
+
+/** Registry key for a property pillar id, or null when it is not registry-gated. */
+export function propertyRegistryKeyFor(subModuleId: string): string | null {
+  return PROPERTY_SUBMODULE_REGISTRY_KEY[subModuleId] ?? null;
+}

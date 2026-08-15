@@ -9,8 +9,13 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { visibilityFor, type ModuleVisibility } from '@/features/modules/rules';
-import { SERVICE_MODULE_REGISTRY_KEY, registryKeyFor } from '@/features/modules/serviceModuleKeys';
-import { SERVICE_MODULES } from '@/constants/modules';
+import {
+  SERVICE_MODULE_REGISTRY_KEY,
+  registryKeyFor,
+  PROPERTY_SUBMODULE_REGISTRY_KEY,
+  propertyRegistryKeyFor,
+} from '@/features/modules/serviceModuleKeys';
+import { SERVICE_MODULES, PROPERTY_SUBMODULES } from '@/constants/modules';
 
 const list = (...modules: string[]): ModuleVisibility => ({ environment: 'production', modules });
 
@@ -99,5 +104,79 @@ describe('the gate applied to the grid', () => {
     const survivors = gate(list()).map((m) => m.id);
     assert.ok(survivors.includes('academy'), 'an unmapped tile must not be hidden by the registry');
     assert.ok(!survivors.includes('telemedicine'), 'a mapped tile must be hidden when unpublished');
+  });
+});
+
+// ── Property hub ─────────────────────────────────────────────────────────────
+
+describe('property hub gate', () => {
+  const gate = (published: ModuleVisibility | null) =>
+    PROPERTY_SUBMODULES.filter((p) => {
+      const key = propertyRegistryKeyFor(p.id);
+      return key === null || visibilityFor(published, key);
+    });
+
+  test('every mapped pillar id is a real pillar', () => {
+    const ids = new Set(PROPERTY_SUBMODULES.map((p) => p.id));
+    for (const id of Object.keys(PROPERTY_SUBMODULE_REGISTRY_KEY)) {
+      assert.ok(ids.has(id), `mapped pillar '${id}' is not in PROPERTY_SUBMODULES`);
+    }
+  });
+
+  test("the two id-spaces do not share a table", () => {
+    // 'marketplace' means the lifestyle shopping tile in one space and the
+    // property buy/rent marketplace in the other. One shared table would gate the
+    // shopping tile on the realtor module — the reason these maps are separate.
+    assert.equal(registryKeyFor('marketplace'), null);
+    assert.equal(propertyRegistryKeyFor('marketplace'), 'realtor');
+  });
+
+  test('unpublishing realtor hides both listings and leases', () => {
+    // Deliberate: FEATURE_REALTOR_ENABLED covers listings AND leases, so both
+    // pillars follow it.
+    const left = gate(list('stays', 'estate')).map((p) => p.id);
+    assert.deepEqual(left.sort(), ['estate', 'stays']);
+  });
+
+  test('publishing only stays leaves exactly one pillar', () => {
+    assert.deepEqual(gate(list('stays')).map((p) => p.id), ['stays']);
+  });
+
+  test('all pillars unpublished yields an empty hub, not a partial one', () => {
+    // The screen renders a real empty state for this; the gate must actually
+    // produce zero rather than silently falling back to "show everything".
+    assert.equal(gate(list()).length, 0);
+  });
+
+  test('an unreachable registry shows every pillar', () => {
+    assert.equal(gate(null).length, PROPERTY_SUBMODULES.length);
+  });
+});
+
+// ── The mapped VALUES must be real registry keys ─────────────────────────────
+// Mirrors the keys seeded into platform_modules (supabase migration
+// 20261210000000, generated from frontend-web/src/lib/feature-flags.ts). Keep in
+// step: a mapping pointing at a key the registry does not have gates the tile on
+// a module that can never be published, hiding it forever with no error anywhere.
+const REGISTRY_KEYS = new Set([
+  'aiCare', 'association', 'beneficiaries', 'checkoutTopupTier0', 'creators', 'crowdfunding',
+  'disputes', 'estate', 'events', 'fintechAdmin', 'fx', 'groups', 'health', 'healthLab',
+  'healthPharmacy', 'healthVet', 'insurance', 'kyc', 'loyalty', 'ratings', 'realtor',
+  'referrals', 'restaurant', 'savings', 'socialPay', 'stays', 'telemedicine', 'tierLimits',
+  'transport', 'utilityPayments', 'virtualAccounts', 'voteBridge', 'votesBridge', 'wallet',
+  'walletBankTransfers', 'walletTransfers',
+]);
+
+describe('mapped values are real registry modules', () => {
+  test('every services-grid mapping targets a registered module', () => {
+    for (const [id, key] of Object.entries(SERVICE_MODULE_REGISTRY_KEY)) {
+      assert.ok(REGISTRY_KEYS.has(key), `'${id}' maps to '${key}', which is not a registered module`);
+    }
+  });
+
+  test('every property-hub mapping targets a registered module', () => {
+    for (const [id, key] of Object.entries(PROPERTY_SUBMODULE_REGISTRY_KEY)) {
+      assert.ok(REGISTRY_KEYS.has(key), `'${id}' maps to '${key}', which is not a registered module`);
+    }
   });
 });
