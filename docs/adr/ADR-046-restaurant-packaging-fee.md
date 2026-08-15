@@ -1,17 +1,19 @@
-# ADR-PR124 — Takeaway packaging is charged server-side and paid whole to the restaurant
+# ADR-046 — Takeaway packaging is charged server-side and paid whole to the restaurant
 
 **Status:** Accepted
 **Date:** 2026-08-15
 
-> **Number assigned on merge.** Per CLAUDE.md the filename carries the PR number
-> and `.github/workflows/adr-assign.yml` stamps the real ADR number — do not
-> hand-pick one. 124 is the next number in the repo's issue/PR sequence, used as
-> the placeholder tag because this went straight to `develop` without a PR.
+> **Number 046 was assigned by `adr-assign.yml`, not chosen here.** The job
+> resolved this file's PR placeholder to ADR-046 (highest existing 045, plus one)
+> — see the run on 040bea08 — and then could
+> not push it: its token is rejected by branch protection on `develop` — "9 of 9
+> required status checks are expected" — so the workflow computes the rename but
+> cannot land it on a direct push. The rename is applied here exactly as the job
+> decided it, which is why this file is not a hand-picked number.
 >
-> An earlier revision named this `ADR-PRTBD`, which broke that workflow: it matches
-> `^ADR-PR[0-9]+`, so a non-numeric tag parsed as an empty placeholder and the
-> assign job failed. The workflow does run on pushes to `develop`, not only on
-> pull requests.
+> Two corrections to things stated earlier in this session: `adr-assign.yml` is not
+> pull-request-only (it runs on pushes to `develop`), and a non-numeric tag like
+> `ADR-PRTBD` breaks it, because it parses the placeholder with `^ADR-PR[0-9]+`.
 
 ## Context
 
