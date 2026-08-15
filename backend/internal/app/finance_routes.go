@@ -1562,7 +1562,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Telemedicine routes ---
 	if cfg.FeatureTelemedicineEnabled {
 		settlementSvcT := settlement.NewService(pool, ledgerSvc)
-		// Platform booking fee (ADR-040), default OFF. Off resolves to a 0-bp rate,
+		// Platform booking fee (ADR-044), default OFF. Off resolves to a 0-bp rate,
 		// which prices and escrows exactly as the module did before the fee existed.
 		platformFeeBp := 0
 		if cfg.FeatureTelemedicinePlatformFeeEnabled {

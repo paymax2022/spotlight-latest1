@@ -4,7 +4,7 @@ import "testing"
 
 // The FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED gate. The flag resolves to a rate,
 // and the rate is the only thing that changes — so "off" must reproduce the
-// pre-ADR-040 world exactly: the patient pays the consultation fee, that is what
+// pre-ADR-044 world exactly: the patient pays the consultation fee, that is what
 // gets escrowed, and Settle sees ServiceFeeKobo = 0 (the pure 85/15 split).
 //
 // Money bug prevented: a flag that only hid the fee in the UI while still escrowing

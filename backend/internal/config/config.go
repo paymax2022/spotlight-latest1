@@ -239,7 +239,7 @@ type Config struct {
 	FeatureCryptoEnabled bool
 
 	// FeatureTelemedicinePlatformFeeEnabled turns on the platform booking fee
-	// charged on top of a doctor's consultation fee (ADR-040). Default OFF: it is a
+	// charged on top of a doctor's consultation fee (ADR-044). Default OFF: it is a
 	// patient-visible price increase, so it is opt-in, and switching it off is the
 	// rollback — the app renders whatever quote the server returns, so no client
 	// release is needed either way.

@@ -132,7 +132,7 @@ func (h *Handler) BookAppointment(c *gin.Context) {
 	if err != nil {
 		// A stale client quote is a conflict, not a server fault: no money moved,
 		// and the fix is to re-read the doctor's booking quote — not to retry the
-		// same amount (ADR-040).
+		// same amount (ADR-044).
 		if errors.Is(err, ErrQuoteMismatch) {
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 			return
