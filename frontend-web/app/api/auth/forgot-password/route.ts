@@ -10,7 +10,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Email is required' }, { status: 400 });
     }
 
-    const redirectTo = `${process.env.NEXT_PUBLIC_SITE_URL ?? 'https://spotlightng.com'}/auth/reset-password`;
+    const redirectTo = `${process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com'}/auth/reset-password`;
 
     const anon = createAnonClient();
     const { error } = await anon.auth.resetPasswordForEmail(email, { redirectTo });
