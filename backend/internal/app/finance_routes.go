@@ -2727,11 +2727,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// env_flag_enabled so an operator sees WHY a published module is still hidden
 	// instead of concluding the toggle is broken.
 	modulesBase := r.Group("/api/v1")
-	modulesMember := modulesBase.Group("")
-	modulesMember.Use(mapsAuth())
+	// Visibility is public (see modules.Register); only the admin surface is gated.
+	modulesPublic := modulesBase.Group("")
 	modulesAdmin := modulesBase.Group("/admin")
 	modulesAdmin.Use(mapsAuth())
-	modules.Register(modulesMember, modulesAdmin, pool, rbac,
+	modules.Register(modulesPublic, modulesAdmin, pool, rbac,
 		modules.Environment(cfg.AppEnv),
 		func(flag string) bool { return os.Getenv(flag) == "true" })
 	log.Printf("[modules] registry mounted; environment=%s", cfg.AppEnv)

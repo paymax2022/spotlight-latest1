@@ -10,17 +10,24 @@ import (
 
 // Register mounts the module registry.
 //
-//	member: GET /api/v1/modules/visibility        — authenticated, any user
+//	public: GET /api/v1/modules/visibility        — UNAUTHENTICATED
 //	admin:  GET/PATCH /api/v1/admin/modules/...   — platform.modules.{read,manage}
 //
-// `member` and `admin` are route groups the caller has already put behind
-// authentication, matching how every other module registers.
-func Register(member, admin *gin.RouterGroup, db *pgxpool.Pool, rbac services.RBACService, env Environment, flag FlagLookup) {
+// `admin` is a route group the caller has already put behind authentication.
+func Register(public, admin *gin.RouterGroup, db *pgxpool.Pool, rbac services.RBACService, env Environment, flag FlagLookup) {
 	h := NewHandler(NewService(db, env, flag))
 
-	// Any signed-in client asks what it may render. No permission required — the
-	// answer is scoped to this tier and contains nothing an operator would hide.
-	member.GET("/modules/visibility", h.Visibility)
+	// Deliberately UNAUTHENTICATED. The response is the set of modules already
+	// visible in this tier's UI — the same information anyone gets by opening the
+	// app — so it is not a disclosure. It never includes unpublished modules, and
+	// never another tier's state.
+	//
+	// Requiring auth here broke the callers rather than protecting anything: the
+	// web helper fetches server-to-server with no user token, so it always got 401,
+	// fell back to "unknown" and rendered everything; and a logged-out mobile user
+	// got the same. A gate that silently fails open for its main callers is worse
+	// than no gate, because it looks like it is working.
+	public.GET("/modules/visibility", h.Visibility)
 
 	// Reading the registry exposes unreleased work, so it is permissioned too —
 	// not just the writes.
