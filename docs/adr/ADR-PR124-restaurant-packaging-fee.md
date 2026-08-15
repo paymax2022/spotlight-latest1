@@ -1,15 +1,17 @@
-# ADR-PRTBD — Takeaway packaging is charged server-side and paid whole to the restaurant
+# ADR-PR124 — Takeaway packaging is charged server-side and paid whole to the restaurant
 
 **Status:** Accepted
 **Date:** 2026-08-15
 
-> **Number not yet assigned.** CLAUDE.md requires `ADR-PR<pr-number>` with the real
-> number stamped on merge by `.github/workflows/adr-assign.yml`. This change was
-> pushed directly to `develop`, so no PR number exists and that workflow — which is
-> `on: pull_request` — never runs. The file is deliberately named `PRTBD` rather
-> than given an invented sequence number: hand-picking is what produced six
-> duplicate ADRs in one day, including a duplicate ADR-040 earlier in this same
-> session. Rename to the assigned number if this is ever routed through a PR.
+> **Number assigned on merge.** Per CLAUDE.md the filename carries the PR number
+> and `.github/workflows/adr-assign.yml` stamps the real ADR number — do not
+> hand-pick one. 124 is the next number in the repo's issue/PR sequence, used as
+> the placeholder tag because this went straight to `develop` without a PR.
+>
+> An earlier revision named this `ADR-PRTBD`, which broke that workflow: it matches
+> `^ADR-PR[0-9]+`, so a non-numeric tag parsed as an empty placeholder and the
+> assign job failed. The workflow does run on pushes to `develop`, not only on
+> pull requests.
 
 ## Context
 
