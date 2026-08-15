@@ -8,7 +8,7 @@ package marketplace_test
 // their tests are historical stubs). Drives the real marketplace.Service against
 // a real Postgres.
 //
-// SKIPPED whenever MARKETPLACE_TEST_DATABASE_URL (or DATABASE_URL) is unset, so
+// SKIPPED whenever MARKETPLACE_TEST_DATABASE_URL / TEST_DATABASE_URL are unset, so
 // `go test ./...` without a DB stays green. Self-contained: it seeds a minimal
 // category + active listing, exercises the flow, and cleans up.
 //
@@ -37,10 +37,10 @@ func liveConnectService(t *testing.T) (*mkt.Service, *pgxpool.Pool) {
 	t.Helper()
 	dsn := os.Getenv("MARKETPLACE_TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
+		dsn = os.Getenv("TEST_DATABASE_URL")
 	}
 	if dsn == "" {
-		t.Skip("no MARKETPLACE_TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB connect-flow test")
+		t.Skip("no MARKETPLACE_TEST_DATABASE_URL/TEST_DATABASE_URL set — skipping live-DB connect-flow test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

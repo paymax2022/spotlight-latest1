@@ -17,10 +17,10 @@ func (s *Service) TriggerEvictions(ctx context.Context, contestID string, req Ev
 	// Audit log
 	if s.audit != nil {
 		s.audit.WriteAudit(ctx, "evict_contestants", actorID, "contest", contestID, map[string]any{
-			"stage_number": req.StageNumber,
+			"stage_number":        req.StageNumber,
 			"eviction_percentage": req.EvictionPercentage,
-			"grace_period_hours": req.GracePeriodHours,
-			"count": len(results),
+			"grace_period_hours":  req.GracePeriodHours,
+			"count":               len(results),
 		})
 	}
 
@@ -39,7 +39,7 @@ func (s *Service) SaveContestant(ctx context.Context, evictionID, actorID, saveT
 	if s.audit != nil {
 		s.audit.WriteAudit(ctx, "save_contestant", actorID, "eviction", evictionID, map[string]any{
 			"save_type": saveType,
-			"reason": reason,
+			"reason":    reason,
 		})
 	}
 
@@ -82,14 +82,14 @@ func (s *Service) FinalizeEvictions(ctx context.Context, contestID string, stage
 
 // GetContestantsByStage retrieves all contestants in a stage with eviction status.
 type StageContestant struct {
-	ID              string    `json:"id"`
-	Name            string    `json:"name"`
-	PhotoURL        string    `json:"photo_url"`
-	VoteCount       int       `json:"vote_count"`
-	EvictionStatus  string    `json:"eviction_status"`
-	EvictionTemplate string   `json:"eviction_template"`
-	EvictionID      *string   `json:"eviction_id,omitempty"`
-	GracePeriodEnd  *time.Time `json:"grace_period_end,omitempty"`
+	ID               string     `json:"id"`
+	Name             string     `json:"name"`
+	PhotoURL         string     `json:"photo_url"`
+	VoteCount        int        `json:"vote_count"`
+	EvictionStatus   string     `json:"eviction_status"`
+	EvictionTemplate string     `json:"eviction_template"`
+	EvictionID       *string    `json:"eviction_id,omitempty"`
+	GracePeriodEnd   *time.Time `json:"grace_period_end,omitempty"`
 }
 
 func (s *Service) GetContestantsByStage(ctx context.Context, contestID string, stageNumber int) ([]StageContestant, error) {
@@ -103,16 +103,16 @@ func (s *Service) GetContestantsByStage(ctx context.Context, contestID string, s
 
 // EvictionInfo represents a single pending eviction
 type EvictionInfo struct {
-	ID                 string     `json:"id"`
-	ContestantID       string     `json:"contestant_id"`
-	ContestantName     string     `json:"contestant_name"`
-	StageNumber        int        `json:"stage_number"`
-	VoteCount          int        `json:"vote_count"`
-	EvictionRank       int        `json:"eviction_rank"`
-	GracePeriodEndsAt  time.Time  `json:"grace_period_ends_at"`
-	Status             string     `json:"status"`
-	SaveCount          int        `json:"save_count"`
-	CanBeSaved         bool       `json:"can_be_saved"`
+	ID                string    `json:"id"`
+	ContestantID      string    `json:"contestant_id"`
+	ContestantName    string    `json:"contestant_name"`
+	StageNumber       int       `json:"stage_number"`
+	VoteCount         int       `json:"vote_count"`
+	EvictionRank      int       `json:"eviction_rank"`
+	GracePeriodEndsAt time.Time `json:"grace_period_ends_at"`
+	Status            string    `json:"status"`
+	SaveCount         int       `json:"save_count"`
+	CanBeSaved        bool      `json:"can_be_saved"`
 }
 
 // GetEvictions retrieves all pending evictions for a contest.

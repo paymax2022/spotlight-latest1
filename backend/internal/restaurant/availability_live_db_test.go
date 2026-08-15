@@ -3,7 +3,7 @@ package restaurant
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for availability (Phase 11): holiday overrides + the
 // accept-SLA sweeper (auto-cancel + refund of never-accepted orders). Skipped unless
-// TEST_DATABASE_URL/DATABASE_URL is set. Requires the availability migration.
+// TEST_DATABASE_URL is set. Requires the availability migration.
 // ---------------------------------------------------------------------------
 
 import (
@@ -25,10 +25,7 @@ func availLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB availability test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB availability test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

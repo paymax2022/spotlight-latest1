@@ -2,11 +2,13 @@ package connectvoting
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/internal/config"
 )
 
 // Handler exposes contests + free/paid voting over HTTP.
@@ -24,6 +26,9 @@ func mapError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
 	case errors.Is(err, ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "contest not found"})
+	case errors.Is(err, ErrNotOnRoster):
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error": "that contestant is not in this contest"})
 	case errors.Is(err, ErrContestClosed), errors.Is(err, ErrPaidUnavailable),
 		errors.Is(err, ErrInvalidAmount), errors.Is(err, ErrInvalidQuantity):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -87,7 +92,14 @@ func (h *Handler) FreeVote(c *gin.Context) {
 		mapError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"data": v})
+	// Return the post-vote allowance so the client shows the real remaining
+	// count instead of inferring one.
+	allowance, allowErr := h.svc.FreeVoteAllowanceFor(c.Request.Context(), c.Param("id"), uid)
+	resp := gin.H{"data": v}
+	if allowErr == nil {
+		resp["allowance"] = allowance
+	}
+	c.JSON(http.StatusCreated, resp)
 }
 
 // PaidVote — POST /api/v1/connect/contests/:id/paid-vote (member, Idempotency-Key).
@@ -120,34 +132,110 @@ func (h *Handler) Results(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
+// ListRoster — GET /api/v1/connect/contests/:id/contestants (member).
+// The contest's active contestants, ranked by total votes. This is what the
+// mobile app renders as the contestant list and the leaderboard: both views
+// are the same ranked roster, so a vote cast moves both consistently.
+func (h *Handler) ListRoster(c *gin.Context) {
+	roster, err := h.svc.ListRoster(c.Request.Context(), c.Param("id"), false)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "contest not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load contestants"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": roster})
+}
+
+// FreeVoteAllowance — GET /api/v1/connect/contests/:id/free-vote-allowance.
+// How many free votes the caller has left in this contest. Server-computed:
+// the client must not derive it, or two surfaces will disagree about how many
+// votes a user really has.
+func (h *Handler) FreeVoteAllowance(c *gin.Context) {
+	uid := userID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	a, err := h.svc.FreeVoteAllowanceFor(c.Request.Context(), c.Param("id"), uid)
+	if err != nil {
+		mapError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": a})
+}
+
+// GetContestant — GET /api/v1/connect/contestants/:id (member).
+// One contestant with its live tally and rank, keyed on the contestant id alone.
+func (h *Handler) GetContestant(c *gin.Context) {
+	e, err := h.svc.GetContestant(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "contestant not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load contestant"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": e})
+}
+
+// GetStages — GET /api/v1/connect/contests/:id/stages (member).
+func (h *Handler) GetStages(c *gin.Context) {
+	stages, err := h.svc.GetStages(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": stages})
+}
+
 // PermissionGuard mirrors middleware.RequirePermission: route file supplies
 // a factory that builds the per-permission gin.HandlerFunc.
 type PermissionGuard func(permission string) gin.HandlerFunc
 
 // Register wires the voting routes onto the auth-gated member group.
-func Register(member gin.IRouter, svc *Service) {
+func Register(member gin.IRouter, svc *Service, cfg config.Config) {
 	h := NewHandler(svc)
 	member.GET("/contests", h.ListContests)
 	member.GET("/contests/:id", h.GetContest)
 	member.POST("/contests/:id/vote", h.FreeVote)      // free
 	member.POST("/contests/:id/paid-vote", h.PaidVote) // Idempotency-Key required
 	member.GET("/contests/:id/results", h.Results)
+	member.GET("/contests/:id/contestants", h.ListRoster)
+	member.GET("/contests/:id/free-vote-allowance", h.FreeVoteAllowance)
+	member.GET("/contestants/:id", h.GetContestant)
+	member.GET("/contests/:id/stages", h.GetStages)
 
-	// Stage eviction routes (admin/judge) — wired without RBAC guards here;
-	// admin routes with guards are in RegisterAdmin.
+	// Stage eviction routes — gated behind FEATURE_CONTEST_STAGE_EVICTION_ENABLED.
+	// Admin routes with RBAC guards are in RegisterAdmin.
+	if !cfg.FeatureContestStageEvictionEnabled {
+		log.Println("[connect-voting] FEATURE_CONTEST_STAGE_EVICTION_ENABLED is off — skipping eviction routes")
+		return
+	}
+
+	// READ-ONLY for members. The eviction MUTATIONS (evict, save,
+	// extend-grace-period, finalize-evictions, admin-vote) are deliberately NOT
+	// registered here: the member group carries authentication but no RBAC, and
+	// the handlers themselves do not check permissions, so registering them on
+	// this group let any signed-in user evict contestants or cast admin votes.
+	// They live in RegisterAdmin only, each behind its connect.contests.* guard.
 	member.GET("/contests/:id/stages/:stageNum/contestants", h.GetContestantsByStage)
 	member.GET("/contests/:id/evictions", h.GetEvictions)
-	member.POST("/contests/:id/stages/:stageNum/evict", h.TriggerEvictions)
-	member.POST("/contests/:id/save", h.SaveContestant)
-	member.POST("/contests/:id/extend-grace-period", h.ExtendGracePeriod)
-	member.POST("/contests/:id/stages/:stageNum/finalize-evictions", h.FinalizeEvictions)
-	member.POST("/contests/:id/admin-vote", h.AdminVote)
 }
 
 // RegisterAdmin wires admin eviction routes with RBAC permission guards.
 // The caller passes a guard factory (built from middleware.RequirePermission + the RBAC
 // service) so each route enforces its connect.contests.* permission.
-func RegisterAdmin(admin gin.IRouter, svc *Service, guard PermissionGuard) {
+// Gated behind FEATURE_CONTEST_STAGE_EVICTION_ENABLED.
+func RegisterAdmin(admin gin.IRouter, svc *Service, guard PermissionGuard, cfg config.Config) {
+	if !cfg.FeatureContestStageEvictionEnabled {
+		log.Println("[connect-voting-admin] FEATURE_CONTEST_STAGE_EVICTION_ENABLED is off — skipping admin eviction routes")
+		return
+	}
+
 	h := NewHandler(svc)
 	g := admin.Group("/contests")
 

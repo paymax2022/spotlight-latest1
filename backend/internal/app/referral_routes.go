@@ -66,7 +66,11 @@ func RegisterReferral(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgx
 	inviteHandler := invite.NewHandler(pool)
 
 	// --- Member routes (/api/finance/referral) ---
-	mg := member.Group("/referral")
+	// `member` is ALREADY the /referral group (see finance_routes.go); grouping
+	// "/referral" again mounted these eight routes at
+	// /api/finance/referral/referral/*, which no client could reach — the sibling
+	// Register fns (Econ, Trust) correctly use `member` directly.
+	mg := member
 	mg.GET("/config", cfgHandler.Get)                      // config-read
 	mg.GET("/my-attribution", attribHandler.MyAttribution) // M-ONB-10 result
 	mg.POST("/claim-code", attribHandler.ClaimCode)        // M-INV-10 late claim

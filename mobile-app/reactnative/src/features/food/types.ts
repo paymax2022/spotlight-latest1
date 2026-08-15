@@ -77,6 +77,8 @@ export interface CartLine {
   qty: number;
   /** True for protein items (uncapped, may co-pack with the main). */
   isProtein?: boolean;
+  /** Restaurant ID for this item (enables multi-restaurant orders). */
+  restaurantId?: string;
 }
 
 /**
@@ -201,7 +203,7 @@ export interface RiderOffer {
 // ─── Requests ───────────────────────────────────────────────────────────────
 export interface PlaceOrderRequest {
   restaurantId: string;
-  items: { itemId: string; qty: number }[];   // aggregated across packages (for pricing/charge)
+  items: { itemId: string; qty: number; restaurantId?: string }[];   // aggregated across packages (for pricing/charge)
   /** Number of physical takeaway packages (drives the packaging fee). */
   packageCount?: number;
   /** Per-package breakdown so the restaurant knows how to pack the order. */

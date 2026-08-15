@@ -11,7 +11,7 @@ package restaurantpayout_test
 // both reads (mirroring delivery.go) and skips the refund when there is no
 // escrow to return.
 //
-// Skips unless TEST_DATABASE_URL/DATABASE_URL is set (same gate as the sibling
+// Skips unless TEST_DATABASE_URL is set (same gate as the sibling
 // live-DB tests). seedPendingOrder deliberately inserts NO settlement_id.
 // ---------------------------------------------------------------------------
 

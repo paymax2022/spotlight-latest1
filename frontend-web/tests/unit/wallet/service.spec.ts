@@ -25,9 +25,11 @@ import {
   createTopupIntent,
 } from '@/src/server/wallet/service';
 import { createAdminClient } from '@/lib/supabase/server';
+import { journalSignedSum, type LedgerLegInsert } from '@/src/server/wallet/journal';
 
 const USER_ID = 'user-wallet-001';
 const ACCOUNT_ID = 'account-uuid-001';
+const COUNTER_ACCOUNT_ID = 'account-standing-settlement';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -35,6 +37,11 @@ const ACCOUNT_ID = 'account-uuid-001';
 
 function existingAccount() {
   return { id: ACCOUNT_ID };
+}
+
+/** The standing (counter) account ADR-040 posts the balancing leg to. */
+function standingAccount() {
+  return { id: COUNTER_ACCOUNT_ID };
 }
 
 function balanceRow(available_kobo: number) {
@@ -58,13 +65,27 @@ function setupMock() {
 describe('getBalance', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  // getBalance reads spendable funds across BOTH wallet-type ledger accounts
+  // ('wallet' + Go money-path 'user_wallet'). Its two list queries terminate in
+  // .in(...), so tests queue promise returns on mock.in:
+  //   in#1 → ledger_accounts (account id list), in#2 → wallet_balance rows.
+  function queueListQueries(
+    mock: { in: ReturnType<typeof vi.fn> },
+    accounts: { id: string }[],
+    balances: { available_kobo: number; currency: string; account_id: string }[],
+  ) {
+    mock.in
+      .mockReturnValueOnce(Promise.resolve({ data: accounts, error: null }))
+      .mockReturnValueOnce(Promise.resolve({ data: balances, error: null }));
+  }
+
   it('returns available_kobo=0 for a new account with no entries', async () => {
-    const { maybySingle } = setupMock();
+    const { mock, maybySingle } = setupMock();
     maybySingle
       .mockResolvedValueOnce({ data: existingAccount(), error: null }) // account lookup
       .mockResolvedValueOnce({ data: null, error: null })              // mobile_fintech (migrate)
-      .mockResolvedValueOnce({ data: null, error: null })              // wallet_balance (no row)
       .mockResolvedValueOnce({ data: null, error: null });             // mobile_fintech (balance=0 path)
+    queueListQueries(mock, [existingAccount()], []);
 
     const result = await getBalance(USER_ID);
     expect(result.available_kobo).toBe(0);
@@ -72,23 +93,40 @@ describe('getBalance', () => {
   });
 
   it('returns the correct balance from the wallet_balance view', async () => {
-    const { maybySingle } = setupMock();
+    const { mock, maybySingle } = setupMock();
     maybySingle
       .mockResolvedValueOnce({ data: existingAccount(), error: null }) // account lookup
-      .mockResolvedValueOnce({ data: null, error: null })              // mobile_fintech (migrate)
-      .mockResolvedValueOnce({ data: balanceRow(250_000), error: null }); // wallet_balance
+      .mockResolvedValueOnce({ data: null, error: null });             // mobile_fintech (migrate)
+    queueListQueries(mock, [existingAccount()], [balanceRow(250_000)]);
 
     const result = await getBalance(USER_ID);
     expect(result.available_kobo).toBe(250_000);
   });
 
+  it('sums the wallet and user_wallet ledger pots into one balance', async () => {
+    const { mock, maybySingle } = setupMock();
+    const goPotId = 'account-uuid-go-pot';
+    maybySingle
+      .mockResolvedValueOnce({ data: existingAccount(), error: null }) // account lookup
+      .mockResolvedValueOnce({ data: null, error: null });             // mobile_fintech (migrate)
+    queueListQueries(
+      mock,
+      [existingAccount(), { id: goPotId }],
+      [balanceRow(150_000), { available_kobo: 100_000, currency: 'NGN', account_id: goPotId }],
+    );
+
+    const result = await getBalance(USER_ID);
+    expect(result.available_kobo).toBe(250_000); // 150k 'wallet' + 100k 'user_wallet'
+    expect(result.account_id).toBe(ACCOUNT_ID);  // primary account id unchanged
+  });
+
   it('creates a new account when one does not exist', async () => {
-    const { maybySingle, insertFn } = setupMock();
+    const { mock, maybySingle, insertFn } = setupMock();
     maybySingle
       .mockResolvedValueOnce({ data: null, error: null })             // no existing account
       .mockResolvedValueOnce({ data: null, error: null })             // mobile_fintech (migrate)
-      .mockResolvedValueOnce({ data: null, error: null })             // wallet_balance (new acct)
       .mockResolvedValueOnce({ data: null, error: null });            // mobile_fintech (balance=0)
+    queueListQueries(mock, [], []); // new account: list query misses, id backfilled locally
     insertFn.mockResolvedValueOnce({ error: null });
 
     const result = await getBalance(USER_ID);
@@ -104,11 +142,12 @@ describe('getBalance', () => {
 describe('creditWallet', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('inserts a CREDIT entry and returns alreadyProcessed=false', async () => {
+  it('posts a BALANCED CREDIT journal and returns alreadyProcessed=false', async () => {
     const { maybySingle, insertFn } = setupMock();
     maybySingle
-      .mockResolvedValueOnce({ data: null, error: null })            // idempotency check: miss
-      .mockResolvedValueOnce({ data: existingAccount(), error: null }); // account lookup
+      .mockResolvedValueOnce({ data: null, error: null })              // idempotency check: miss
+      .mockResolvedValueOnce({ data: existingAccount(), error: null }) // wallet account lookup
+      .mockResolvedValueOnce({ data: standingAccount(), error: null }); // counter account lookup
     insertFn.mockResolvedValueOnce({ error: null });
 
     const result = await creditWallet(USER_ID, {
@@ -119,7 +158,27 @@ describe('creditWallet', () => {
 
     expect(result.alreadyProcessed).toBe(false);
     expect(result.amountKobo).toBe(100_000);
+
+    // ADR-040: ONE insert carrying BOTH legs — atomic, no half-journal.
     expect(insertFn).toHaveBeenCalledOnce();
+    const legs = insertFn.mock.calls[0][0] as LedgerLegInsert[];
+    expect(legs).toHaveLength(2);
+    expect(journalSignedSum(legs)).toBe(0);
+
+    // Wallet leg keeps the caller's key VERBATIM (pre-ADR replays must still dedup).
+    expect(legs[0]).toMatchObject({
+      account_id: ACCOUNT_ID,
+      type: 'CREDIT',
+      amount_kobo: 100_000,
+      idempotency_key: 'topup:intent-001:CREDIT',
+    });
+    // Counter leg lands on the standing account, suffixed key.
+    expect(legs[1]).toMatchObject({
+      account_id: COUNTER_ACCOUNT_ID,
+      type: 'DEBIT',
+      amount_kobo: 100_000,
+      idempotency_key: 'topup:intent-001:CREDIT:counter',
+    });
   });
 
   it('returns alreadyProcessed=true when idempotency key already exists', async () => {
@@ -220,16 +279,54 @@ describe('debitWallet', () => {
     expect(result.alreadyProcessed).toBe(true);
     expect(insertFn).not.toHaveBeenCalled();
   });
+
+  // ADR-040: debit_wallet_atomic resolves its own counter-account ('settlement').
+  // A caller-supplied override would type-check, read correctly, and post
+  // somewhere else entirely — so it must be refused, not ignored.
+  it('refuses a counterAccount the RPC cannot honour', async () => {
+    const { mock } = setupMock();
+
+    await expect(
+      debitWallet(USER_ID, {
+        amountKobo: 200_000,
+        reference: 'VOTE_ref_001',
+        idempotencyKey: 'vote:ref-002:DEBIT',
+        counterAccount: 'paymax_revenue',
+      }),
+    ).rejects.toThrow(/cannot post to counter account 'paymax_revenue'/);
+
+    expect(mock.rpc).not.toHaveBeenCalled();
+  });
+
+  it('accepts an explicit counterAccount that matches what the RPC posts', async () => {
+    const { mock, maybySingle } = setupMock();
+    maybySingle
+      .mockResolvedValueOnce({ data: null, error: null })
+      .mockResolvedValueOnce({ data: existingAccount(), error: null })
+      .mockResolvedValueOnce({ data: null, error: null });
+    vi.mocked(mock.rpc).mockResolvedValueOnce({ data: null, error: null });
+
+    const result = await debitWallet(USER_ID, {
+      amountKobo: 200_000,
+      reference: 'ADJ_ref_001',
+      idempotencyKey: 'admin-adjustment:key-1',
+      counterAccount: 'settlement',
+    });
+
+    expect(result.alreadyProcessed).toBe(false);
+    expect(mock.rpc).toHaveBeenCalledOnce();
+  });
 });
 
 describe('reverseWalletDebit', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('inserts a REVERSAL_DEBIT entry for an idempotent refund', async () => {
+  it('posts a BALANCED REVERSAL pair for an idempotent refund', async () => {
     const { maybySingle, insertFn } = setupMock();
     maybySingle
-      .mockResolvedValueOnce({ data: null, error: null })
-      .mockResolvedValueOnce({ data: existingAccount(), error: null });
+      .mockResolvedValueOnce({ data: null, error: null })              // idempotency miss
+      .mockResolvedValueOnce({ data: existingAccount(), error: null }) // wallet account
+      .mockResolvedValueOnce({ data: standingAccount(), error: null }); // counter account
     insertFn.mockResolvedValueOnce({ error: null });
 
     const result = await reverseWalletDebit(USER_ID, {
@@ -239,12 +336,24 @@ describe('reverseWalletDebit', () => {
     });
 
     expect(result.alreadyProcessed).toBe(false);
-    expect(insertFn).toHaveBeenCalledWith(expect.objectContaining({
+    expect(insertFn).toHaveBeenCalledOnce();
+
+    const legs = insertFn.mock.calls[0][0] as LedgerLegInsert[];
+    expect(journalSignedSum(legs)).toBe(0);
+    expect(legs[0]).toMatchObject({
+      account_id: ACCOUNT_ID,
       type: 'REVERSAL_DEBIT',
       amount_kobo: 200_000,
       reference: 'UTL-REFUND-001',
       idempotency_key: 'utility:tx-001:REVERSAL_DEBIT',
-    }));
+    });
+    // The correction drains the pot the original debit filled.
+    expect(legs[1]).toMatchObject({
+      account_id: COUNTER_ACCOUNT_ID,
+      type: 'REVERSAL_CREDIT',
+      amount_kobo: 200_000,
+      idempotency_key: 'utility:tx-001:REVERSAL_DEBIT:counter',
+    });
   });
 });
 

@@ -2,18 +2,20 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "admin",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "cwd": "frontend-admin",
-      "port": 3001
-    },
-    {
       "name": "web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "cwd": "frontend-web",
-      "port": 3000
+      "port": 3000,
+      "description": "Main app + dashboard"
+    },
+    {
+      "name": "admin",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "frontend-admin",
+      "port": 3001,
+      "description": "Admin portal"
     },
     {
       "name": "mobile",
@@ -21,6 +23,14 @@
       "runtimeArgs": ["run", "web"],
       "cwd": "mobile-app/reactnative",
       "port": 8083
+    },
+    {
+      "name": "expo-web-fx",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["expo", "start", "--web", "--port", "8085"],
+      "cwd": "mobile-app/reactnative",
+      "port": 8085,
+      "description": "Mobile web on a side port for FX QA"
     }
   ]
 }

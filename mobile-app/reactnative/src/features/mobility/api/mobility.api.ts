@@ -72,16 +72,28 @@ type TripEnvelope = {
   vehicle?: Trip['vehicle'];
   fareOffer?: Trip['fareOffer'];
 };
+// Live trips carry flat pickupAddress/destAddress strings (no coordinates in
+// the payload); screens type against full Place objects. Synthesize a Place
+// from the flat address when the nested one is absent so Trip.pickup/dest are
+// ALWAYS present — the type stays strict and no screen needs a guard.
+function ensurePlaces(trip: Partial<Trip>): Trip {
+  return {
+    ...(trip as Trip),
+    pickup: trip.pickup ?? { lat: 0, lng: 0, address: trip.pickupAddress ?? '' },
+    dest: trip.dest ?? { lat: 0, lng: 0, address: trip.destAddress ?? '' },
+  };
+}
+
 function flattenTrip(raw: TripEnvelope | Trip | null | undefined): Trip {
   const env = (raw ?? {}) as TripEnvelope & Partial<Trip>;
   // Flat shape already: no nested `trip` key → the object *is* the trip.
-  if (!env.trip) return raw as Trip;
-  return {
+  if (!env.trip) return ensurePlaces(env as Partial<Trip>);
+  return ensurePlaces({
     ...(env.trip as Trip),
     driver: env.driver ?? env.trip.driver ?? null,
     vehicle: env.vehicle ?? env.trip.vehicle ?? null,
     fareOffer: env.fareOffer ?? env.trip.fareOffer ?? null,
-  };
+  });
 }
 
 // ─── Home ─────────────────────────────────────────────────────────────────────
@@ -95,19 +107,24 @@ export async function getHome(): Promise<MobilityHome> {
       safetyReminder: 'Always confirm the plate number and your trip PIN before getting in.',
     };
   }
-  // Backend home is { activeTrip, profile, quickTiles: string[], safetyReminder }.
-  // activeTrip is a trip envelope (or null); flatten it for the screens.
+  // Backend home is snake_case: { active_trip, profile, quick_tiles, safety_reminder }
+  // (Go gin.H keys — see backend/internal/transport/customer_handler.go:Home).
+  // active_trip is a trip envelope (or null); flatten it for the screens.
   const body = unwrap<{
+    active_trip?: TripEnvelope | null;
     activeTrip?: TripEnvelope | null;
     profile?: MobilityHome['profile'];
+    quick_tiles?: string[];
     quickTiles?: string[];
+    safety_reminder?: string;
     safetyReminder?: string;
   }>(await api.get(`${BASE}/mobility/home`));
+  const active = body?.active_trip ?? body?.activeTrip;
   return {
-    activeTrip: body?.activeTrip ? flattenTrip(body.activeTrip) : null,
+    activeTrip: active ? flattenTrip(active) : null,
     profile: body?.profile ?? null,
-    quickTiles: body?.quickTiles ?? [],
-    safetyReminder: body?.safetyReminder ?? '',
+    quickTiles: body?.quick_tiles ?? body?.quickTiles ?? [],
+    safetyReminder: body?.safety_reminder ?? body?.safetyReminder ?? '',
   };
 }
 
@@ -369,9 +386,10 @@ export async function getHistory(): Promise<Trip[]> {
     await delay();
     return [...MOCK_HISTORY].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
-  // Backend wraps the list: { trips: [...] }. History rows are flat trips.
-  const body = unwrap<{ trips?: Trip[] }>(await api.get(`${BASE}/mobility/history`));
-  return body?.trips ?? [];
+  // Backend wraps the list: { trips: [...] }. History rows are flat trips —
+  // run them through flattenTrip so pickup/dest Places are always present.
+  const body = unwrap<{ trips?: Partial<Trip>[] }>(await api.get(`${BASE}/mobility/history`));
+  return (body?.trips ?? []).map((t) => flattenTrip(t as Trip));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

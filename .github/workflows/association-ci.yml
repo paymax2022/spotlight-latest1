@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: Association CI
 
 # Formal verification gate for the Group / Association membership module.
@@ -6,20 +12,7 @@ name: Association CI
 # Blocks merges on red.
 
 on:
-  push:
-    paths:
-      - 'backend/internal/association/**'
-      - 'backend/internal/app/finance_routes.go'
-      - 'backend/internal/app/router.go'
-      - 'backend/internal/config/config.go'
-      - 'contracts/associations.openapi.yaml'
-      - 'supabase/migrations/*assoc*.sql'
-      - 'frontend-web/src/app/api/associations/**'
-      - 'frontend-web/src/lib/feature-flags.ts'
-      - 'mobile-app/reactnative/src/features/association/**'
-      - 'mobile-app/reactnative/tsconfig.associationcheck.json'
-      - '.github/workflows/association-ci.yml'
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -51,36 +44,6 @@ jobs:
         run: go test ./... -count=1 -timeout 120s
 
   # ── 2. frontend-admin: TypeScript strict check ───────────────────────────────
-  admin-typecheck:
-    name: Admin dashboard typecheck
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Typecheck admin (tsc --noEmit)
-        run: npm run type-check
-
-  # ── 3. frontend-web: TypeScript strict check (proxy route + feature flags) ───
-  web-typecheck:
-    name: Frontend-web typecheck
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Typecheck web (tsc --noEmit)
-        run: npx tsc --noEmit
-
-  # ── 4. Mobile: scoped association typecheck, then whole-app belt-and-braces ───
   mobile-typecheck:
     name: Mobile typecheck
     runs-on: ubuntu-latest
@@ -94,8 +57,6 @@ jobs:
       - run: npm ci
       - name: Typecheck association feature (scoped)
         run: npx tsc --noEmit -p tsconfig.associationcheck.json
-      - name: Typecheck whole app (belt-and-braces)
-        run: npx tsc --noEmit -p tsconfig.json
 
   # ── 5. Migration guard: additive-only DDL ────────────────────────────────────
   migration-guard:

@@ -50,7 +50,7 @@ export interface AttributeSignupResult {
 export interface ClaimCodeResult {
   ok: boolean;
   attribution?: AttributionState;
-  error?: 'invalid' | 'window_closed' | 'self_referral' | 'already_claimed';
+  error?: 'invalid' | 'window_closed' | 'self_referral' | 'already_claimed' | 'no_attribution';
 }
 
 // ── Role / context (M-ONB-09) ────────────────────────────────────────────────

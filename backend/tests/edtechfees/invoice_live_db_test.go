@@ -7,7 +7,7 @@ package edtechfees_test
 // *pgxpool.Pool for every mutation (Issue, RecordPayment) and wires the REAL
 // feeschedule.Service for the SF-1 lock on first issue. None of this can run
 // without a migrated Postgres, so every test here is SKIPPED whenever
-// TEST_DATABASE_URL / DATABASE_URL is unset (same env-gate + seedUser pattern as
+// TEST_DATABASE_URL is unset (same env-gate + seedUser pattern as
 // backend/tests/crypto/live_db_integration_test.go and
 // backend/tests/association/live_db_integration_test.go). The skip is NOT a stub:
 // every step drives the real Service against real tables and asserts DB state.
@@ -29,11 +29,11 @@ package edtechfees_test
 //       20260918000000_academy_fees_edtech.sql         (academy_students, academy_invoices,
 //                                                       academy_invoice_payments, fee-schedule lock)
 //     Confirm the core tables landed:
-//       psql "$DATABASE_URL" -c "\d academy_invoices"
-//       psql "$DATABASE_URL" -c "\d academy_invoice_payments"
-//  2. Point TEST_DATABASE_URL (or DATABASE_URL) at a DISPOSABLE test database —
+//       psql "$TEST_DATABASE_URL" -c "\d academy_invoices"
+//       psql "$TEST_DATABASE_URL" -c "\d academy_invoice_payments"
+//  2. Point TEST_DATABASE_URL at a DISPOSABLE test database —
 //     `supabase db reset` (local, port 54322) is the safest target:
-//       export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  3. Run:
 //       cd backend && go test ./tests/edtechfees/... -run LiveDB -v
 //
@@ -146,16 +146,13 @@ func TestLiveDB_Invoice_RejectsOverpayment(t *testing.T) {
 	}
 }
 
-// liveDBPool connects using TEST_DATABASE_URL/DATABASE_URL, or skips. Same gate
+// liveDBPool connects using TEST_DATABASE_URL, or skips. Same gate
 // and precedence as backend/tests/crypto + backend/tests/association.
 func liveDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB edtech-fees integration test; see bring-up note in invoice_live_db_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB edtech-fees integration test; see bring-up note in invoice_live_db_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

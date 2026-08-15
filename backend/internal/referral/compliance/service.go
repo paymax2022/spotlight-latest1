@@ -41,7 +41,8 @@ func (s *Service) RecordConsent(ctx context.Context, userID string, in ConsentIn
 		return nil, fmt.Errorf("compliance: consent_type required")
 	}
 	switch in.ConsentType {
-	case ConsentNDPCData, ConsentEarningTerms, ConsentMarketing, ConsentOverride:
+	case ConsentNDPCData, ConsentEarningTerms, ConsentMarketing, ConsentOverride,
+		ConsentContacts, ConsentNudges:
 	default:
 		return nil, fmt.Errorf("compliance: invalid consent_type %q", in.ConsentType)
 	}

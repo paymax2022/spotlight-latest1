@@ -3,6 +3,7 @@ package risk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -53,7 +54,7 @@ func (r *Repository) ListRules(ctx context.Context) ([]Rule, error) {
 		return nil, fmt.Errorf("risk: list rules: %w", err)
 	}
 	defer rows.Close()
-	var out []Rule
+	out := []Rule{}
 	for rows.Next() {
 		rule, err := scanRule(rows)
 		if err != nil {
@@ -71,7 +72,7 @@ func (r *Repository) EnabledRules(ctx context.Context) ([]Rule, error) {
 		return nil, fmt.Errorf("risk: enabled rules: %w", err)
 	}
 	defer rows.Close()
-	var out []Rule
+	out := []Rule{}
 	for rows.Next() {
 		rule, err := scanRule(rows)
 		if err != nil {
@@ -196,7 +197,7 @@ func (r *Repository) ListAlerts(ctx context.Context, status string, limit int) (
 		return nil, fmt.Errorf("risk: list alerts: %w", err)
 	}
 	defer rows.Close()
-	var out []Alert
+	out := []Alert{}
 	for rows.Next() {
 		a, err := scanAlert(rows)
 		if err != nil {
@@ -215,7 +216,7 @@ func (r *Repository) AlertsBySubject(ctx context.Context, subjectID string) ([]A
 		return nil, fmt.Errorf("risk: alerts by subject: %w", err)
 	}
 	defer rows.Close()
-	var out []Alert
+	out := []Alert{}
 	for rows.Next() {
 		a, err := scanAlert(rows)
 		if err != nil {
@@ -291,7 +292,7 @@ func (r *Repository) ListCases(ctx context.Context, status string, limit int) ([
 		return nil, fmt.Errorf("risk: list cases: %w", err)
 	}
 	defer rows.Close()
-	var out []Case
+	out := []Case{}
 	for rows.Next() {
 		c, err := scanCase(rows)
 		if err != nil {
@@ -343,7 +344,7 @@ func (r *Repository) CaseAlerts(ctx context.Context, caseID string) ([]Alert, er
 		return nil, fmt.Errorf("risk: case alerts: %w", err)
 	}
 	defer rows.Close()
-	var out []Alert
+	out := []Alert{}
 	for rows.Next() {
 		a, err := scanAlert(rows)
 		if err != nil {
@@ -414,7 +415,7 @@ func (r *Repository) ListBlocklist(ctx context.Context, listType string) ([]Bloc
 		return nil, fmt.Errorf("risk: list blocklist: %w", err)
 	}
 	defer rows.Close()
-	var out []BlocklistEntry
+	out := []BlocklistEntry{}
 	for rows.Next() {
 		b, err := scanBlocklist(rows)
 		if err != nil {
@@ -483,7 +484,7 @@ func (r *Repository) ListReviewQueue(ctx context.Context, status string) ([]Revi
 		return nil, fmt.Errorf("risk: list review queue: %w", err)
 	}
 	defer rows.Close()
-	var out []ReviewItem
+	out := []ReviewItem{}
 	for rows.Next() {
 		it, err := scanReview(rows)
 		if err != nil {
@@ -640,4 +641,31 @@ func (r *Repository) Dashboard(ctx context.Context) (*DashboardCounts, error) {
 		return nil, fmt.Errorf("risk: dashboard: %w", err)
 	}
 	return &d, nil
+}
+
+// ReferrerOf returns the user's currently attributed referrer, or "" when they
+// have no attribution or are attributed to the house.
+//
+// Used to resolve the target of a member abuse report: the report is about
+// whoever referred the reporter, and the client neither knows nor should send
+// that id — letting a client name an arbitrary target would make it trivial to
+// open fraud alerts against any account.
+func (r *Repository) ReferrerOf(ctx context.Context, userID string) (string, error) {
+	var referrer *string
+	err := r.db.QueryRow(ctx, `
+		SELECT referrer_id::text
+		FROM referral_attributions
+		WHERE referred_user_id = $1 AND COALESCE(is_house, false) = false
+		ORDER BY id DESC
+		LIMIT 1`, userID).Scan(&referrer)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("risk: resolve referrer: %w", err)
+	}
+	if referrer == nil {
+		return "", nil
+	}
+	return *referrer, nil
 }

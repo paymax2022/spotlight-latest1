@@ -2,8 +2,10 @@ package promotion
 
 // LIVE-DB test for the promotion-ladder service: registration, readiness updates,
 // the full audited climb (maker≠checker enforced, Risk+legal required for Live),
-// gate rejections persisted as no-ops, halt, and the Evaluable gate. Skipped unless
-// DATABASE_URL is set.
+// gate rejections persisted as no-ops, halt, and the Evaluable gate.
+// Skipped unless TEST_DATABASE_URL is set —
+// deliberately with NO fallback to DATABASE_URL, which the root .env points
+// at the PRODUCTION Supabase pooler.
 
 import (
 	"context"
@@ -19,9 +21,9 @@ import (
 
 func live(t *testing.T) (*Service, *pgxpool.Pool) {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
+	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("no DATABASE_URL — skipping promotion live-DB test")
+		t.Skip("no TEST_DATABASE_URL — skipping promotion live-DB test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

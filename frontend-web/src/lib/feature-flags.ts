@@ -63,6 +63,25 @@ export const featureFlags = {
   /** Block 7 — Per-tier daily wallet and vote limits (fail-closed enforcement) */
   tierLimits: () => envFlag('FEATURE_TIER_LIMITS_ENABLED'),
 
+  /**
+   * ADR-042 — let an UNVERIFIED (Tier 0) account pay by card at checkout, under a
+   * capped rolling allowance, instead of being refused outright.
+   *
+   * This relaxes a KYC gate, so it defaults off like every other flag and should
+   * only be turned on deliberately.
+   *
+   * ⚠️ DO NOT ENABLE YET. A ledger-auditor review found blockers that make the
+   * relaxation unsafe and non-functional as it stands:
+   *   - the card rail credits ledger type 'wallet' while the Go modules debit
+   *     'user_wallet', so a card-funded checkout cannot be spent at all;
+   *   - the Tier-0 cash-out ban this relaxation depends on lives behind
+   *     FEATURE_TIER_LIMITS_ENABLED, which ships false in .env.example;
+   *   - the funding cap is a read-then-insert with no lock, so concurrent
+   *     requests exceed it.
+   * See ADR-042 / ADR-043 and the review notes before flipping this.
+   */
+  checkoutTopupTier0: () => envFlag('FEATURE_CHECKOUT_TOPUP_TIER0'),
+
   /** Utility bills engine — provider routing, wallet debit, receipts */
   utilityPayments: () => envFlag('FEATURE_UTILITY_PAYMENTS_ENABLED'),
 

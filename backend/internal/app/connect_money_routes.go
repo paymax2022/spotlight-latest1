@@ -87,7 +87,7 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, cfg c
 		voteSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
 		log.Println("[connect-money] commission recording wired → Contest/Voting (earning-row only; no ledger re-post)")
 	}
-	connectvoting.Register(member, voteSvc)
+	connectvoting.Register(member, voteSvc, cfg)
 
 	// --- Payouts (creator gift-revenue payout request) ---
 	payoutSvc := connectpayouts.NewService(
@@ -101,7 +101,7 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, cfg c
 		return middleware.RequirePermission(rbac, permission)
 	}
 	// Voting admin routes (eviction management, stage progression)
-	connectvoting.RegisterAdmin(admin, voteSvc, guard)
+	connectvoting.RegisterAdmin(admin, voteSvc, guard, cfg)
 	// AML admin routes
 	connectaml.Register(admin, amlSvc, guard)
 

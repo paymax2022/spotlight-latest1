@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Alert, KeyboardAvoidingView, Linking } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Linking } from 'react-native';
+import { alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ArrowLeft, Headphones, Mail, MessageCircle, Phone, ChevronDown } from 'lucide-react-native';
@@ -42,17 +43,20 @@ export default function SupportScreen() {
     if (!ready || sending) return;
     setSending(true);
     // Fire-and-forget: a real ticket endpoint would post here. We confirm locally.
-    setTimeout(() => {
+    setTimeout(async () => {
       setSending(false);
-      Alert.alert(
-        'Message sent',
-        "Thanks — our support team will reply to your registered email, usually within a few hours.",
-        [{ text: 'Done', onPress: () => router.back() }],
-      );
+      await alertAsync({
+        title: 'Message sent',
+        message: 'Thanks — our support team will reply to your registered email, usually within a few hours.',
+        buttonLabel: 'Done',
+      });
+      router.back();
     }, 600);
   };
 
-  const openChannel = (url: string) => Linking.openURL(url).catch(() => Alert.alert('Unavailable', 'We could not open that just now. Please try another channel.'));
+  const openChannel = (url: string) =>
+    Linking.openURL(url).catch(() =>
+      alertAsync({ title: 'Unavailable', message: 'We could not open that just now. Please try another channel.' }));
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

@@ -5,7 +5,9 @@ package wallet
 // the ledger, units mint/redeem correctly, idempotent replays never double-move
 // money, a second depositor doesn't dilute the first, the performance fee leaves
 // other holders' NAV unchanged, over-redeem is blocked, deposits are access-gated,
-// and reconciliation holds throughout. Skipped unless DATABASE_URL is set.
+// and reconciliation holds throughout. Skipped unless TEST_DATABASE_URL is set —
+// deliberately with NO fallback to DATABASE_URL, which the root .env points
+// at the PRODUCTION Supabase pooler.
 
 import (
 	"context"
@@ -26,9 +28,9 @@ func (g allowGate) HasTradingAccess(context.Context, string) (bool, error) { ret
 
 func liveFund(t *testing.T, feeBps, hurdleBps int64, allow bool) (*Service, *ledger.Service, *pgxpool.Pool) {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
+	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("no DATABASE_URL — skipping trading live-DB money-path test")
+		t.Skip("no TEST_DATABASE_URL — skipping trading live-DB money-path test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

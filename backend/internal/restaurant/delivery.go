@@ -11,17 +11,21 @@ import (
 
 // ListOpenRestaurants returns the discovery list of open restaurants.
 func (s *Service) ListOpenRestaurants(ctx context.Context) ([]Restaurant, error) {
-	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at
+	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
+	                  min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng
 	           FROM restaurants WHERE is_open = TRUE ORDER BY created_at DESC`
 	rows, err := s.db.Query(ctx, q)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Restaurant
+	// Non-nil so the handler serialises `[]` rather than `null` on an empty
+	// result — a JSON null breaks array-typed clients.
+	out := []Restaurant{}
 	for rows.Next() {
 		var r Restaurant
-		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
+			&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -38,9 +42,13 @@ type RestaurantDetail struct {
 // GetRestaurantDetail returns a restaurant and its menu (categories + items).
 func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) (*RestaurantDetail, error) {
 	var r Restaurant
-	const qr = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, created_at
+	// Detail previously omitted rating and cuisine too, so a store page showed a
+	// zero rating even though the list showed the real one.
+	const qr = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
+	                   min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng
 	            FROM restaurants WHERE id=$1`
-	if err := s.db.QueryRow(ctx, qr, restaurantID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.CreatedAt); err != nil {
+	if err := s.db.QueryRow(ctx, qr, restaurantID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
+		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng); err != nil {
 		return nil, fmt.Errorf("restaurant: not found")
 	}
 
@@ -106,13 +114,15 @@ func (s *Service) GetOrder(ctx context.Context, orderID, userID string) (*Order,
 		return nil, fmt.Errorf("restaurant: not a participant of this order")
 	}
 	var o Order
-	const q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, tip_kobo, discount_kobo, total_kobo,
+	const q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, total_kobo,
 	                  status, idempotency_key, COALESCE(settlement_id::text,''), delivery_address,
-	                  COALESCE(dispatch_status,'none'), delivery_code, created_at
+	                  COALESCE(dispatch_status,'none'), delivery_code, promo_id::text, promo_funder,
+	                  COALESCE(special_instructions,''), scheduled_for, created_at
 	           FROM orders WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.CustomerID, &o.RestaurantID, &o.RiderID,
-		&o.SubtotalKobo, &o.DeliveryKobo, &o.TipKobo, &o.DiscountKobo, &o.TotalKobo, &o.Status, &o.IdempotencyKey, &o.SettlementID,
-		&o.DeliveryAddress, &o.DispatchStatus, &o.DeliveryCode, &o.CreatedAt); err != nil {
+		&o.SubtotalKobo, &o.DeliveryKobo, &o.SurgeKobo, &o.ServiceFeeKobo, &o.TipKobo, &o.DiscountKobo, &o.TotalKobo, &o.Status, &o.IdempotencyKey, &o.SettlementID,
+		&o.DeliveryAddress, &o.DispatchStatus, &o.DeliveryCode, &o.PromoID, &o.PromoFunder,
+		&o.SpecialInstructions, &o.ScheduledFor, &o.CreatedAt); err != nil {
 		return nil, fmt.Errorf("restaurant: order not found")
 	}
 	items, err := s.loadOrderItems(ctx, orderID)
@@ -188,20 +198,20 @@ func (s *Service) ListOrders(ctx context.Context, userID, role string) ([]Order,
 	var q string
 	switch role {
 	case "customer":
-		q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, tip_kobo, discount_kobo, total_kobo,
+		q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, total_kobo,
 		            status, idempotency_key, COALESCE(settlement_id::text,''), delivery_address,
-		            COALESCE(dispatch_status,'none'), delivery_code, created_at
+		            COALESCE(dispatch_status,'none'), delivery_code, promo_id::text, promo_funder, created_at
 		     FROM orders WHERE customer_id=$1 ORDER BY created_at DESC`
 	case "restaurant":
-		q = `SELECT o.id, o.customer_id, o.restaurant_id, o.rider_id, o.subtotal_kobo, o.delivery_kobo, o.tip_kobo, o.discount_kobo, o.total_kobo,
+		q = `SELECT o.id, o.customer_id, o.restaurant_id, o.rider_id, o.subtotal_kobo, o.delivery_kobo, o.surge_kobo, o.service_fee_kobo, o.tip_kobo, o.discount_kobo, o.total_kobo,
 		            o.status, o.idempotency_key, COALESCE(o.settlement_id::text,''), o.delivery_address,
-		            COALESCE(o.dispatch_status,'none'), o.delivery_code, o.created_at
+		            COALESCE(o.dispatch_status,'none'), o.delivery_code, o.promo_id::text, o.promo_funder, o.created_at
 		     FROM orders o JOIN restaurants r ON r.id = o.restaurant_id
 		     WHERE r.owner_id=$1 ORDER BY o.created_at DESC`
 	case "rider":
-		q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, tip_kobo, discount_kobo, total_kobo,
+		q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, total_kobo,
 		            status, idempotency_key, COALESCE(settlement_id::text,''), delivery_address,
-		            COALESCE(dispatch_status,'none'), delivery_code, created_at
+		            COALESCE(dispatch_status,'none'), delivery_code, promo_id::text, promo_funder, created_at
 		     FROM orders WHERE rider_id=$1 ORDER BY created_at DESC`
 	default:
 		return nil, fmt.Errorf("restaurant: invalid role %q (want customer|restaurant|rider)", role)
@@ -215,8 +225,8 @@ func (s *Service) ListOrders(ctx context.Context, userID, role string) ([]Order,
 	for rows.Next() {
 		var o Order
 		if err := rows.Scan(&o.ID, &o.CustomerID, &o.RestaurantID, &o.RiderID, &o.SubtotalKobo,
-			&o.DeliveryKobo, &o.TipKobo, &o.DiscountKobo, &o.TotalKobo, &o.Status, &o.IdempotencyKey, &o.SettlementID,
-			&o.DeliveryAddress, &o.DispatchStatus, &o.DeliveryCode, &o.CreatedAt); err != nil {
+			&o.DeliveryKobo, &o.SurgeKobo, &o.ServiceFeeKobo, &o.TipKobo, &o.DiscountKobo, &o.TotalKobo, &o.Status, &o.IdempotencyKey, &o.SettlementID,
+			&o.DeliveryAddress, &o.DispatchStatus, &o.DeliveryCode, &o.PromoID, &o.PromoFunder, &o.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, o)
@@ -226,10 +236,37 @@ func (s *Service) ListOrders(ctx context.Context, userID, role string) ([]Order,
 
 // ── Menu management (owner only) ──────────────────────────────────────────────
 
+// ctxKeyAdminOverride marks a call as made by a PLATFORM OPERATOR rather than the
+// store owner. It is the single, greppable bypass of the ownership check below.
+type ctxKeyAdminOverride struct{}
+
+// WithAdminOverride marks ctx as an admin-authenticated call, allowing the store
+// mutations below to run for an operator who does not own the store.
+//
+// SECURITY: only ever call this from a route already fail-closed behind
+// middleware.RequirePermission(rbac, "restaurant.manage") — the RBAC check IS the
+// security boundary for those routes, and ownership is deliberately not a second
+// gate there (an operator is meant to be able to fix any merchant's store). It is
+// set in exactly one place: the /api/restaurant/admin/restaurants/* group in
+// internal/app/finance_routes.go. Never set it on a member route.
+func WithAdminOverride(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ctxKeyAdminOverride{}, true)
+}
+
+func isAdminOverride(ctx context.Context) bool {
+	v, _ := ctx.Value(ctxKeyAdminOverride{}).(bool)
+	return v
+}
+
 func (s *Service) assertOwner(ctx context.Context, restaurantID, userID string) error {
 	var ownerID string
 	if err := s.db.QueryRow(ctx, `SELECT owner_id FROM restaurants WHERE id=$1`, restaurantID).Scan(&ownerID); err != nil {
 		return fmt.Errorf("restaurant: not found")
+	}
+	// The existence check above still runs for admins, so a bad id is a 404 for
+	// operators too rather than a silent success.
+	if isAdminOverride(ctx) {
+		return nil
 	}
 	if ownerID != userID {
 		return fmt.Errorf("restaurant: only the owner may manage the menu")
@@ -340,7 +377,8 @@ func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID s
 // ListMyRestaurants returns every store owned by the caller (the merchant's own
 // stores), newest first. Used by the merchant app to load the store to manage.
 func (s *Service) ListMyRestaurants(ctx context.Context, ownerID string) ([]Restaurant, error) {
-	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, created_at
+	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
+	                  min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng
 	           FROM restaurants WHERE owner_id=$1 ORDER BY created_at DESC`
 	rows, err := s.db.Query(ctx, q, ownerID)
 	if err != nil {
@@ -350,7 +388,8 @@ func (s *Service) ListMyRestaurants(ctx context.Context, ownerID string) ([]Rest
 	out := []Restaurant{}
 	for rows.Next() {
 		var r Restaurant
-		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
+			&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -362,10 +401,12 @@ func (s *Service) ListMyRestaurants(ctx context.Context, ownerID string) ([]Rest
 // store-management mutations to echo the updated store back to the merchant.
 func (s *Service) getRestaurantCore(ctx context.Context, restaurantID string) (*Restaurant, error) {
 	var r Restaurant
-	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, created_at
+	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
+	                  min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng
 	           FROM restaurants WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, restaurantID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description,
-		&r.Address, &r.LogoURL, &r.IsOpen, &r.CreatedAt); err != nil {
+		&r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
+		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng); err != nil {
 		return nil, fmt.Errorf("restaurant: not found")
 	}
 	return &r, nil
@@ -579,9 +620,9 @@ func (s *Service) PostLocation(ctx context.Context, orderID, riderID string, lat
 // one of several riders an order was offered to; the first to accept wins.
 // Falls back to the legacy single rider_candidate_id for backward compatibility.
 func (s *Service) RiderOffers(ctx context.Context, riderID string) ([]Order, error) {
-	const q = `SELECT o.id, o.customer_id, o.restaurant_id, o.rider_id, o.subtotal_kobo, o.delivery_kobo, o.tip_kobo, o.discount_kobo, o.total_kobo,
+	const q = `SELECT o.id, o.customer_id, o.restaurant_id, o.rider_id, o.subtotal_kobo, o.delivery_kobo, o.surge_kobo, o.service_fee_kobo, o.tip_kobo, o.discount_kobo, o.total_kobo,
 	                  o.status, o.idempotency_key, COALESCE(o.settlement_id::text,''), o.delivery_address,
-	                  COALESCE(o.dispatch_status,'none'), o.delivery_code, o.created_at
+	                  COALESCE(o.dispatch_status,'none'), o.delivery_code, o.promo_id::text, o.promo_funder, o.created_at
 	           FROM orders o
 	           WHERE o.rider_id IS NULL
 	             AND o.status NOT IN ('delivered','cancelled')
@@ -606,9 +647,9 @@ func (s *Service) RiderOffers(ctx context.Context, riderID string) ([]Order, err
 
 // RiderActive lists the rider's in-progress deliveries (accepted, not terminal).
 func (s *Service) RiderActive(ctx context.Context, riderID string) ([]Order, error) {
-	const q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, tip_kobo, discount_kobo, total_kobo,
+	const q = `SELECT id, customer_id, restaurant_id, rider_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, total_kobo,
 	                  status, idempotency_key, COALESCE(settlement_id::text,''), delivery_address,
-	                  COALESCE(dispatch_status,'none'), delivery_code, created_at
+	                  COALESCE(dispatch_status,'none'), delivery_code, promo_id::text, promo_funder, created_at
 	           FROM orders WHERE rider_id=$1 AND status NOT IN ('delivered','cancelled')
 	           ORDER BY created_at DESC`
 	return s.queryOrders(ctx, q, riderID)
@@ -624,8 +665,8 @@ func (s *Service) queryOrders(ctx context.Context, q string, arg string) ([]Orde
 	for rows.Next() {
 		var o Order
 		if err := rows.Scan(&o.ID, &o.CustomerID, &o.RestaurantID, &o.RiderID, &o.SubtotalKobo,
-			&o.DeliveryKobo, &o.TipKobo, &o.DiscountKobo, &o.TotalKobo, &o.Status, &o.IdempotencyKey, &o.SettlementID,
-			&o.DeliveryAddress, &o.DispatchStatus, &o.DeliveryCode, &o.CreatedAt); err != nil {
+			&o.DeliveryKobo, &o.SurgeKobo, &o.ServiceFeeKobo, &o.TipKobo, &o.DiscountKobo, &o.TotalKobo, &o.Status, &o.IdempotencyKey, &o.SettlementID,
+			&o.DeliveryAddress, &o.DispatchStatus, &o.DeliveryCode, &o.PromoID, &o.PromoFunder, &o.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, o)

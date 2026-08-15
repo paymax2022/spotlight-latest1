@@ -11,18 +11,23 @@
 import { api } from '@/api/client';
 import { initiateFunding } from '@/api/wallet.api';
 
-export interface TopupStatus {
-  reference: string;
-  status: string;
-  completed: boolean;
-  amountKobo: number;
-}
+import { pollUntilCredited, type TopupStatus } from './paymentFlow';
 
-/** Start a Paystack top-up for an exact purchase amount (kobo). */
+export type { TopupStatus };
+
+/**
+ * Start a Paystack top-up for an EXACT purchase amount, in kobo.
+ *
+ * The amount is passed through untouched. It previously converted kobo to naira
+ * before calling initiateFunding — whose `amount` was already kobo — so it topped
+ * up 1/100th of the purchase and every card checkout would have failed the
+ * following wallet debit on insufficient funds. Rounding to whole naira was a
+ * second defect: a ₦333.33 purchase could only ever top up ₦333.
+ */
 export async function startCardTopup(amountKobo: number): Promise<{ authorizationUrl: string; reference: string }> {
-  // initiateFunding takes naira; convert from kobo and round to whole naira.
-  const amountNaira = Math.max(1, Math.round(amountKobo / 100));
-  return initiateFunding({ amount: amountNaira });
+  // purpose: 'checkout' — this funds the purchase in flight, not the wallet as an
+  // end in itself, and the server gates the two differently (ADR-042).
+  return initiateFunding({ amountKobo, purpose: 'checkout' });
 }
 
 /** Poll a top-up intent's status until the webhook credits the wallet. */
@@ -45,19 +50,5 @@ export async function waitForTopup(
   reference: string,
   opts: { intervalMs?: number; timeoutMs?: number; signal?: () => boolean } = {},
 ): Promise<boolean> {
-  const intervalMs = opts.intervalMs ?? 3000;
-  const timeoutMs = opts.timeoutMs ?? 150000; // ~2.5 min
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (opts.signal?.()) return false;
-    try {
-      const s = await getTopupStatus(reference);
-      if (s.completed) return true;
-      if (s.status === 'failed') return false;
-    } catch {
-      // transient — keep polling
-    }
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
-  return false;
+  return pollUntilCredited(reference, getTopupStatus, opts);
 }

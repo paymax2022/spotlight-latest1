@@ -81,8 +81,16 @@ export default function AuthorizeScreen() {
       </View>
 
       <SafeAreaView edges={['bottom']} style={styles.footer}>
-        <PrimaryButton label="Authorize investment" onPress={onAuthorize} disabled={!valid} />
+        <PrimaryButton
+          label="Authorize investment"
+          onPress={onAuthorize}
+          disabled={!valid || subscribe.isPending}
+          loading={subscribe.isPending}
+        />
       </SafeAreaView>
+      {/* checkout.start() only flips this sheet's state — without it mounted the
+          button appears to do nothing at all. */}
+      <PaymentSheet controller={checkout} />
     </SafeAreaView>
   );
 }

@@ -3,6 +3,7 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Share } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Link2, Copy, Check, TrendingUp } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
+import { showToast } from '@/store/toastStore';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
@@ -40,7 +41,17 @@ export default function VanityLinkScreen() {
     if (!alias || aliasError) return;
     create.mutate(
       { alias, source: source || undefined, campaign: campaign || undefined },
-      { onSuccess: () => { setAlias(''); setSource(''); setCampaign(''); } },
+      {
+        onSuccess: () => { setAlias(''); setSource(''); setCampaign(''); },
+        // Without this a failed create just left the form untouched, which reads
+        // as "nothing happened" rather than "that didn't save".
+        onError: () =>
+          showToast({
+            variant: 'error',
+            title: 'Could not create that link',
+            message: 'Check the alias and try again.',
+          }),
+      },
     );
   };
 

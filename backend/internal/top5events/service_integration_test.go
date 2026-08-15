@@ -8,14 +8,14 @@
 //	go test -tags=integration ./internal/top5events/...
 //
 // against a migrated Postgres with these applied in order (per schema-drift note in
-// supabase/migrations/20260902000000_events_schema_drift_fix.sql):
+// supabase/migrations/20260902000001_events_schema_drift_fix.sql):
 //  1. 20260616240000_events.sql            (legacy events/event_tickets shape)
 //  2. 20260726000200_events.sql            (top5events full schema: tiers, promos,
 //     orders, wallets, wallet ledger, vendors, vendor float/charges, settlements)
-//  3. 20260902000000_events_schema_drift_fix.sql (adds organiser_id/venue/state/
+//  3. 20260902000001_events_schema_drift_fix.sql (adds organiser_id/venue/state/
 //     fee_bps to events; tier_id/order_id/state/credential_id to event_tickets)
 //
-// Set TEST_DATABASE_URL (or DATABASE_URL). NOTE: GetOrCreateStandingAccount posts
+// Set TEST_DATABASE_URL. NOTE: GetOrCreateStandingAccount posts
 // against public.ledger_accounts, whose CHECK constraint (from
 // 20260613020000_ledger_accounts.sql) only allows type='wallet' and requires a
 // non-null user_id — standing accounts (escrow, paymax_revenue) will violate that
@@ -47,10 +47,7 @@ func itestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL — skipping top5events integration test")
+		t.Skip("no TEST_DATABASE_URL — skipping top5events integration test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

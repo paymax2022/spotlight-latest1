@@ -118,7 +118,7 @@ func (r *Repository) Cohorts(ctx context.Context) ([]CohortRow, error) {
 		return nil, fmt.Errorf("analytics: cohorts: %w", err)
 	}
 	defer rows.Close()
-	var out []CohortRow
+	out := []CohortRow{}
 	for rows.Next() {
 		var c CohortRow
 		if err := rows.Scan(&c.CohortMonth, &c.Signups, &c.ActiveUsers, &c.LTVKobo); err != nil {
@@ -146,7 +146,7 @@ func (r *Repository) Channels(ctx context.Context) ([]ChannelRow, error) {
 		return nil, fmt.Errorf("analytics: channels: %w", err)
 	}
 	defer rows.Close()
-	var out []ChannelRow
+	out := []ChannelRow{}
 	for rows.Next() {
 		var c ChannelRow
 		if err := rows.Scan(&c.Channel, &c.Signups, &c.IsHouse); err != nil {

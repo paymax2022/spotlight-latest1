@@ -3,9 +3,8 @@ package restaurant
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for restaurant discovery search (Phase 6): text,
 // cuisine, min-rating, near-me (via the merchant_locations geo sync), and open_now
-// (via business hours) against real rows. Skipped unless TEST_DATABASE_URL/
-// DATABASE_URL is set. Requires the restaurant, maps_core, business-hours, and
-// search migrations.
+// (via business hours) against real rows. Skipped unless TEST_DATABASE_URL is
+// set. Requires the restaurant, maps_core, business-hours, and search migrations.
 // ---------------------------------------------------------------------------
 
 import (
@@ -22,10 +21,7 @@ func searchLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB search test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB search test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

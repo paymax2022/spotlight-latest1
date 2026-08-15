@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/internal/config"
 )
 
 // TestEvictionHandlersParameterBinding verifies request parameter binding
@@ -68,7 +69,7 @@ func TestEvictionHandlersParameterBinding(t *testing.T) {
 				EvictionID:      "test-uuid",
 				AdditionalHours: 0,
 			},
-			expectError: false,  // Struct binding is valid; handler validates semantics
+			expectError: false, // Struct binding is valid; handler validates semantics
 			errorField:  "",
 		},
 	}
@@ -121,10 +122,10 @@ func TestEvictionResponseTypes(t *testing.T) {
 		{
 			name: "eviction response",
 			response: EvictionResponse{
-				ContestantID:   "contestant-1",
-				VoteCount:      100,
-				EvictionRank:   50,
-				EvictionID:     "eviction-1",
+				ContestantID: "contestant-1",
+				VoteCount:    100,
+				EvictionRank: 50,
+				EvictionID:   "eviction-1",
 			},
 			validate: func(r interface{}) bool {
 				er, ok := r.(EvictionResponse)
@@ -134,8 +135,8 @@ func TestEvictionResponseTypes(t *testing.T) {
 		{
 			name: "save response",
 			response: SaveResponse{
-				Success:     true,
-				Message:     "Contestant saved",
+				Success:      true,
+				Message:      "Contestant saved",
 				SaveRecordID: "save-1",
 			},
 			validate: func(r interface{}) bool {
@@ -218,7 +219,8 @@ func TestRouteRegistration(t *testing.T) {
 				t.Errorf("Register panicked: %v", r)
 			}
 		}()
-		Register(router, mockSvc)
+		cfg := config.Config{FeatureContestStageEvictionEnabled: true}
+		Register(router, mockSvc, cfg)
 		t.Log("✓ Register() executed without panic")
 	})
 
@@ -236,7 +238,8 @@ func TestRouteRegistration(t *testing.T) {
 		guard := func(permission string) gin.HandlerFunc {
 			return func(c *gin.Context) { c.Next() }
 		}
-		RegisterAdmin(adminGroup, mockSvc, guard)
+		cfg := config.Config{FeatureContestStageEvictionEnabled: true}
+		RegisterAdmin(adminGroup, mockSvc, guard, cfg)
 		t.Log("✓ RegisterAdmin() executed without panic")
 	})
 }
@@ -244,10 +247,10 @@ func TestRouteRegistration(t *testing.T) {
 // TestErrorResponse verifies error responses are well-formed
 func TestErrorResponse(t *testing.T) {
 	tests := []struct {
-		name           string
-		statusCode     int
-		errorMessage   string
-		expectInJSON   bool
+		name         string
+		statusCode   int
+		errorMessage string
+		expectInJSON bool
 	}{
 		{
 			name:         "400 bad request",
@@ -291,5 +294,49 @@ func TestErrorResponse(t *testing.T) {
 				t.Errorf("expected error message %q, got %q", tt.errorMessage, response["error"])
 			}
 		})
+	}
+}
+
+// TestEvictionMutationsAreNotOnMemberRouter guards a privilege escalation: the
+// member group authenticates but carries no RBAC, and these handlers do not
+// check permissions themselves. Registering any eviction MUTATION there lets any
+// signed-in user evict contestants, save them, or cast admin votes. Read-only
+// stage/eviction lookups are fine.
+func TestEvictionMutationsAreNotOnMemberRouter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	member := r.Group("")
+
+	Register(member, &Service{}, config.Config{FeatureContestStageEvictionEnabled: true})
+
+	forbidden := []struct{ method, path string }{
+		{"POST", "/contests/:id/stages/:stageNum/evict"},
+		{"POST", "/contests/:id/save"},
+		{"POST", "/contests/:id/extend-grace-period"},
+		{"POST", "/contests/:id/stages/:stageNum/finalize-evictions"},
+		{"POST", "/contests/:id/admin-vote"},
+	}
+
+	registered := map[string]bool{}
+	for _, ri := range r.Routes() {
+		registered[ri.Method+" "+ri.Path] = true
+	}
+
+	for _, f := range forbidden {
+		if registered[f.method+" "+f.path] {
+			t.Errorf("%s %s is registered on the member router without an RBAC guard — "+
+				"any authenticated user could call it; it belongs in RegisterAdmin only",
+				f.method, f.path)
+		}
+	}
+
+	// The read-only routes SHOULD still be there for members.
+	for _, want := range []string{
+		"GET /contests/:id/stages/:stageNum/contestants",
+		"GET /contests/:id/evictions",
+	} {
+		if !registered[want] {
+			t.Errorf("expected member read route %q to stay registered", want)
+		}
 	}
 }

@@ -4,7 +4,7 @@ package restaurant
 // LIVE-DB integration test for grouped menu-item modifiers (Phase 3): the owner
 // CRUD (CreateModifierGroup / AddModifier), the loader (loadItemModifierGroups),
 // and the pure resolver driven off DB-loaded groups. Skipped unless
-// TEST_DATABASE_URL/DATABASE_URL is set. Requires the restaurant + menu_modifiers
+// TEST_DATABASE_URL is set. Requires the restaurant + menu_modifiers
 // migrations. No escrow/wallet is exercised — this covers the catalog + pricing
 // resolution, not the money move.
 // ---------------------------------------------------------------------------
@@ -23,10 +23,7 @@ func modifiersLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB modifier test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB modifier test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

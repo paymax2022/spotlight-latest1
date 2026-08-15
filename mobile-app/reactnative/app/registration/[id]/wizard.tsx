@@ -16,6 +16,7 @@ import WizardProgress from '@/features/registration/components/WizardProgress';
 import { useDraft, useSaveStep, useUploadFile } from '@/features/registration/hooks/useRegistration';
 import { isLockedForEditing } from '@/features/registration/utils/status';
 import { withCityOptions, dependentCityKey } from '@/features/registration/utils/cityOptions';
+import { validateRequiredFields } from '@/features/registration/lib/validation';
 import type { RegistrationStep } from '@/features/registration/types/registration.types';
 
 export default function RegistrationWizardScreen() {
@@ -103,6 +104,14 @@ export default function RegistrationWizardScreen() {
   const isLastStep = stepIndex === steps.length - 1;
 
   const handleNext = () => {
+    // Client-side validation: check required fields are filled
+    const validationErrors = validateRequiredFields(step, draft?.formData ?? {}, edits);
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
+      return;
+    }
+
+    // All required fields are filled, send to backend
     saveStep.mutate(
       { stepKey: step.key, values: edits },
       {
@@ -148,16 +157,29 @@ export default function RegistrationWizardScreen() {
             </View>
           )}
 
-          {step.fields.map((field) => (
-            <FieldRenderer
-              key={field.key}
-              field={withCityOptions(field, valueFor)}
-              value={valueFor(field.key)}
-              error={errors[field.key]}
-              onChange={onChange}
-              onUpload={runUpload}
-            />
-          ))}
+          {step.fields
+            .filter((field) => {
+              // Exclude payment and ID fields
+              const excludedFields = [
+                'payment.method',
+                'payment.transactionReference',
+                'id.cardType',
+                'id.number',
+                'personal.idCardType',
+                'personal.idNumber',
+              ];
+              return !excludedFields.includes(field.key);
+            })
+            .map((field) => (
+              <FieldRenderer
+                key={field.key}
+                field={withCityOptions(field, valueFor)}
+                value={valueFor(field.key)}
+                error={errors[field.key]}
+                onChange={onChange}
+                onUpload={runUpload}
+              />
+            ))}
         </ScrollView>
 
         <View style={styles.footer}>

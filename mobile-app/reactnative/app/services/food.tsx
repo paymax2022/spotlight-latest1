@@ -17,8 +17,19 @@ import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1, shadow2 } from '@/constants/shadows';
+import { useRestaurants } from '@/features/food/hooks';
+import { useCartStore, cartItemCount } from '@/features/food/cartStore';
+import { formatNairaWhole } from '@/features/food/utils';
+import type { Restaurant } from '@/features/food/types';
 
-// ── Static mock data ────────────────────────────────────────────────────────
+// ── Landing-screen config ───────────────────────────────────────────────────
+//
+// This screen is the module's only nav entry (src/constants/modules.ts). It used
+// to render a hard-coded RESTAURANTS array whose ids ('1','2',…) matched nothing
+// real, and every card pushed a bare '/food' — so the tapped restaurant was
+// silently discarded and you always landed on the generic list. It now reads the
+// same live `useRestaurants()` query the /food discovery screen uses, so the
+// cards are real and deep-link to the right store.
 
 const CUISINE_FILTERS = [
   { key: 'all',     label: 'All' },
@@ -42,94 +53,8 @@ const CATEGORIES = [
   { id: 'orders',    label: 'My Orders',  icon: 'ReceiptText', accent: Colors.primary,    bg: Colors.iconBgPurple,        href: '/food/orders' },
 ] as const;
 
-const RESTAURANTS = [
-  {
-    id: '1',
-    name: 'Mama Cass',
-    cuisine: 'local',
-    tags: ['Local', 'Soups'],
-    // Real dish names from this restaurant's menu (src/features/food/mock.ts,
-    // MENU_BY_RESTAURANT.r1) so dish search here matches what's actually orderable.
-    menuItems: ['Egusi Soup', 'Afang Soup', 'Ogbono Soup', 'Jollof Rice', 'Fried Rice', 'Pounded Yam'],
-    rating: 4.8,
-    time: '20–30 min',
-    minOrder: '₦2,500',
-    promo: '10% off',
-    icon: 'UtensilsCrossed',
-    iconColor: '#EF4444',
-    bg: 'rgba(239,68,68,0.08)',
-  },
-  {
-    id: '2',
-    name: 'Chicken Republic',
-    cuisine: 'fast',
-    tags: ['Fast Food', 'Chicken'],
-    menuItems: ['Fried Chicken', 'Chicken Burger', 'Chicken Wrap', 'Chips', 'Meat Pie'],
-    rating: 4.5,
-    time: '15–25 min',
-    minOrder: '₦1,500',
-    promo: null,
-    icon: 'Drumstick',
-    iconColor: '#F97316',
-    bg: 'rgba(249,115,22,0.08)',
-  },
-  {
-    id: '3',
-    name: 'Dragon Palace',
-    cuisine: 'chinese',
-    tags: ['Chinese', 'Rice'],
-    menuItems: ['Fried Rice', 'Sweet & Sour Chicken', 'Spring Rolls', 'Beef Noodles', 'Chow Mein'],
-    rating: 4.6,
-    time: '25–40 min',
-    minOrder: '₦3,000',
-    promo: 'Free delivery',
-    icon: 'Soup',
-    iconColor: Colors.teal,
-    bg: Colors.iconBgTeal,
-  },
-  {
-    id: '4',
-    name: 'The Grill House',
-    cuisine: 'grills',
-    tags: ['Grills', 'BBQ'],
-    menuItems: ['Suya', 'Grilled Chicken', 'BBQ Ribs', 'Grilled Fish', 'Peppered Steak'],
-    rating: 4.7,
-    time: '30–45 min',
-    minOrder: '₦4,000',
-    promo: null,
-    icon: 'Flame',
-    iconColor: '#EAB308',
-    bg: 'rgba(234,179,8,0.10)',
-  },
-  {
-    id: '5',
-    name: 'Green Bowl',
-    cuisine: 'healthy',
-    tags: ['Healthy', 'Salads'],
-    menuItems: ['Caesar Salad', 'Grilled Chicken Salad', 'Smoothie Bowl', 'Quinoa Bowl', 'Avocado Toast'],
-    rating: 4.9,
-    time: '20–30 min',
-    minOrder: '₦2,000',
-    promo: '15% off',
-    icon: 'Salad',
-    iconColor: '#16A34A',
-    bg: Colors.iconBgGreen,
-  },
-  {
-    id: '6',
-    name: 'Street Buka',
-    cuisine: 'local',
-    tags: ['Local', 'Pepper Soup'],
-    menuItems: ['Pepper Soup', 'Amala', 'Ewedu', 'Gbegiri', 'Moin Moin'],
-    rating: 4.4,
-    time: '15–25 min',
-    minOrder: '₦1,000',
-    promo: null,
-    icon: 'Bowl',
-    iconColor: Colors.primary,
-    bg: Colors.iconBgPurple,
-  },
-];
+// The restaurant list is now fetched live via useRestaurants() in the component
+// below. The former hard-coded RESTAURANTS array lived here.
 
 // ── Sub-components ──────────────────────────────────────────────────────────
 
@@ -157,7 +82,7 @@ function RestaurantCard({
   onPress,
   matchedDish,
 }: {
-  item: typeof RESTAURANTS[0];
+  item: Restaurant;
   onPress: () => void;
   /** Set when this card only matched the search via a menu item, not the
    *  restaurant's name/tags — shown so it's clear why the result appeared. */
@@ -169,7 +94,7 @@ function RestaurantCard({
       style={({ pressed }) => [rc.card, shadow1, pressed && { opacity: 0.88 }]}
       accessibilityRole="button"
     >
-      <View style={[rc.iconBox, { backgroundColor: item.bg }]}>
+      <View style={[rc.iconBox, { backgroundColor: item.iconBg }]}>
         <DynamicIcon name={item.icon} color={item.iconColor} size={26} />
       </View>
 
@@ -200,9 +125,15 @@ function RestaurantCard({
           <StarRow rating={item.rating} />
           <Text style={rc.dot}>·</Text>
           <Icons.Clock size={11} color={Colors.onSurfaceVariant} strokeWidth={2} />
-          <Text style={rc.meta}>{item.time}</Text>
+          <Text style={rc.meta}>{item.etaLabel}</Text>
           <Text style={rc.dot}>·</Text>
-          <Text style={rc.meta}>Min {item.minOrder}</Text>
+          <Text style={rc.meta}>Min {formatNairaWhole(item.minOrderKobo)}</Text>
+          {!item.isOpen && (
+            <>
+              <Text style={rc.dot}>·</Text>
+              <Text style={rc.closed}>Closed</Text>
+            </>
+          )}
         </View>
       </View>
 
@@ -248,6 +179,7 @@ const rc = StyleSheet.create({
   bottomRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
   dot:      { ...Typography.labelSm, color: Colors.outline },
   meta:     { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  closed:   { ...Typography.labelSm, color: Colors.error },
 });
 
 // ── Main screen ─────────────────────────────────────────────────────────────
@@ -256,24 +188,27 @@ export default function FoodScreen() {
   const [cuisine, setCuisine] = useState<Cuisine>('all');
   const [search, setSearch]   = useState('');
 
+  const { data: restaurants, isLoading, isError, refetch } = useRestaurants();
+  const packages = useCartStore((st) => st.packages);
+  const cartCount = cartItemCount(packages);
+
   const query = search.trim().toLowerCase();
 
-  // A restaurant matches if the query hits its name/tags OR any dish on its
-  // menu — the search bar previously only checked name+tags, so searching
-  // e.g. "jollof" or "suya" found nothing even though those dishes exist.
-  // matchedDish (when the hit came from the menu, not the name/tags) is
-  // surfaced on the card so it's clear *why* a result showed up.
-  const filtered = RESTAURANTS.map((r) => {
+  // Name/tag search only. Dish-level search is deliberately NOT done here: the
+  // list endpoint returns no menu, so matching dishes would need one detail
+  // fetch per restaurant. The previous hard-coded `menuItems` arrays made it
+  // look like dish search worked when it was only ever matching a copy of the
+  // mock menu. Dish search belongs on the server (backend/internal/restaurant/
+  // search.go exists for exactly this) — see the note in the module summary.
+  const filtered = (restaurants ?? []).filter((r) => {
     const matchesCuisine = cuisine === 'all' || r.cuisine === cuisine;
-    if (!query) return matchesCuisine ? { ...r, matchedDish: null } : null;
-
-    const matchesName = r.name.toLowerCase().includes(query);
-    const matchesTag  = r.tags.some((t) => t.toLowerCase().includes(query));
-    const matchedDish = r.menuItems.find((item) => item.toLowerCase().includes(query)) ?? null;
-
-    if (!matchesCuisine || !(matchesName || matchesTag || matchedDish)) return null;
-    return { ...r, matchedDish: matchesName || matchesTag ? null : matchedDish };
-  }).filter((r): r is (typeof RESTAURANTS)[number] & { matchedDish: string | null } => r !== null);
+    if (!matchesCuisine) return false;
+    if (!query) return true;
+    return (
+      r.name.toLowerCase().includes(query) ||
+      r.tags.some((t) => t.toLowerCase().includes(query))
+    );
+  });
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
@@ -283,8 +218,19 @@ export default function FoodScreen() {
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Food & Delivery</Text>
-        <Pressable style={s.iconButton} onPress={() => router.push('/food')} accessibilityRole="button" accessibilityLabel="View cart">
+        {/* Was pushing '/food' (the discovery list), not the cart. */}
+        <Pressable
+          style={s.iconButton}
+          onPress={() => router.push('/food/checkout')}
+          accessibilityRole="button"
+          accessibilityLabel={cartCount ? `View cart, ${cartCount} items` : 'View cart'}
+        >
           <Icons.ShoppingCart size={21} color={Colors.primary} strokeWidth={2} />
+          {cartCount > 0 && (
+            <View style={s.cartBadge}>
+              <Text style={s.cartBadgeText}>{cartCount > 9 ? '9+' : cartCount}</Text>
+            </View>
+          )}
         </Pressable>
       </View>
 
@@ -364,19 +310,33 @@ export default function FoodScreen() {
           <Text style={s.sectionTitle}>
             {cuisine === 'all' ? 'All Restaurants' : CUISINE_FILTERS.find((f) => f.key === cuisine)?.label}
           </Text>
-          <Text style={s.sectionMeta}>{filtered.length} open</Text>
+          <Text style={s.sectionMeta}>
+            {isLoading ? '…' : `${filtered.filter((r) => r.isOpen).length} open`}
+          </Text>
         </View>
 
         <View style={s.list}>
-          {filtered.length === 0 ? (
-            <Text style={s.empty}>No restaurants match "{search}"</Text>
+          {isLoading ? (
+            <Text style={s.empty}>Loading restaurants…</Text>
+          ) : isError ? (
+            <View style={s.errorBox}>
+              <Text style={s.empty}>Couldn't load restaurants.</Text>
+              <Pressable onPress={() => void refetch()} accessibilityRole="button">
+                <Text style={s.retry}>Tap to retry</Text>
+              </Pressable>
+            </View>
+          ) : filtered.length === 0 ? (
+            <Text style={s.empty}>
+              {query ? `No restaurants match "${search}"` : 'No restaurants available yet.'}
+            </Text>
           ) : (
             filtered.map((item) => (
               <RestaurantCard
                 key={item.id}
                 item={item}
-                matchedDish={item.matchedDish}
-                onPress={() => router.push('/food')}
+                // Deep-link to the tapped store. The old handler pushed a bare
+                // '/food', throwing the id away.
+                onPress={() => router.push(`/food/restaurant/${item.id}`)}
               />
             ))
           )}
@@ -406,6 +366,19 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: Colors.surfaceContainerLow,
   },
+  cartBadge: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cartBadgeText: { ...Typography.labelSm, color: Colors.white },
   topTitle: { ...Typography.titleLg, color: Colors.primary },
   content: {
     paddingTop: Spacing.lg,
@@ -472,4 +445,6 @@ const s = StyleSheet.create({
   chipLabelActive: { color: Colors.white },
   list:  { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm },
   empty: { ...Typography.bodyMd, color: Colors.outline, textAlign: 'center', marginTop: Spacing.xxl },
+  errorBox: { alignItems: 'center', gap: Spacing.sm },
+  retry: { ...Typography.labelLg, color: Colors.primary },
 });

@@ -136,8 +136,13 @@ export interface Trip {
   status: TripStatus;
   serviceType: ServiceType;
   pricingMode: PricingMode;
+  // Always present: live backend trips return flat pickupAddress/destAddress
+  // strings, and flattenTrip (mobility.api.ts) synthesizes Place objects from
+  // them so screens can rely on pickup/dest unconditionally.
   pickup: Place;
   dest: Place;
+  pickupAddress?: string;
+  destAddress?: string;
   distanceM: number;
   durationS: number;
   fareKobo: Kobo;                 // current agreed/escrowed fare

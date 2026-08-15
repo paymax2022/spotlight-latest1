@@ -9,6 +9,11 @@
 import { Colors } from '@/constants/colors';
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
+import {
+  mapAppointmentMoney,
+  mapDoctorMoney,
+  withDemoQuote,
+} from '@/features/telemedicine/pricing';
 import type {
   Specialty,
   Doctor,
@@ -41,6 +46,9 @@ function unwrap<T>(res: { data?: unknown }): T {
   return ((body && typeof body === 'object' && 'data' in body ? body.data : body) ?? body) as T;
 }
 
+// Money fields are mapped in @/features/telemedicine/pricing — kept out of this
+// file so the mapping is unit-testable without pulling in the axios client.
+
 // ─── Demo data ───────────────────────────────────────────────────────────────
 
 export const DEMO_SPECIALTIES: Specialty[] = [
@@ -54,7 +62,7 @@ export const DEMO_SPECIALTIES: Specialty[] = [
   { id: 'nutrition', name: 'Nutrition',     icon: 'Apple',       accent: '#16A34A',        bg: 'rgba(22,163,74,0.08)', doctorCount: 5 },
 ];
 
-export const DEMO_DOCTORS: Doctor[] = [
+const DEMO_DOCTORS_RAW: Doctor[] = [
   {
     id: 'doc-1', name: 'Dr. Amaka Obi', title: 'MBBS, FWACP', specialtyId: 'gp',
     specialties: ['General Practice', 'Family Medicine'],
@@ -98,6 +106,12 @@ export const DEMO_DOCTORS: Doctor[] = [
     yearsExperience: 8, languages: ['English', 'Yoruba'], isOnline: false, nextAvailable: 'Tomorrow, 2:00 PM',
   },
 ];
+
+// Demo doctors carry a booking quote from the moment they are exported. Screens
+// use these as react-query `placeholderData`, and a placeholder with no quote
+// would make a priced checkout flash "Pricing unavailable" before the real
+// response lands.
+export const DEMO_DOCTORS: Doctor[] = DEMO_DOCTORS_RAW.map(withDemoQuote);
 
 function buildSlots(): Slot[] {
   const slots: Slot[] = [];
@@ -162,12 +176,16 @@ export async function getDoctors(specialtyId?: string): Promise<Doctor[]> {
     const list = specialtyId ? DEMO_DOCTORS.filter((d) => d.specialtyId === specialtyId) : DEMO_DOCTORS;
     return wait(list);
   }
-  return unwrap<Doctor[]>(await api.get(`${BASE}/doctors`, { params: specialtyId ? { specialtyId } : undefined }));
+  const raw = unwrap<unknown[]>(await api.get(`${BASE}/doctors`, { params: specialtyId ? { specialtyId } : undefined }));
+  return (raw ?? []).map(mapDoctorMoney);
 }
 
 export async function getDoctor(id: string): Promise<Doctor | undefined> {
-  if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_DOCTORS.find((d) => d.id === id)); }
-  return unwrap<Doctor | undefined>(await api.get(`${BASE}/doctors/${id}`));
+  if (TELEMEDICINE_USE_MOCK) {
+    return wait(DEMO_DOCTORS.find((d) => d.id === id));
+  }
+  const raw = unwrap<unknown>(await api.get(`${BASE}/doctors/${id}`));
+  return raw ? mapDoctorMoney(raw) : undefined;
 }
 
 export async function getDoctorAvailability(doctorId: string): Promise<Slot[]> {
@@ -183,13 +201,18 @@ export async function getDoctorReviews(doctorId: string): Promise<Review[]> {
 }
 
 export async function getAppointments(): Promise<Appointment[]> {
-  if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_APPOINTMENTS); }
-  return unwrap<Appointment[]>(await api.get(`${BASE}/appointments`));
+  if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_APPOINTMENTS.map(mapAppointmentMoney)); }
+  const raw = unwrap<unknown[]>(await api.get(`${BASE}/appointments`));
+  return (raw ?? []).map(mapAppointmentMoney);
 }
 
 export async function getAppointment(id: string): Promise<Appointment | undefined> {
-  if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_APPOINTMENTS.find((a) => a.id === id)); }
-  return unwrap<Appointment | undefined>(await api.get(`${BASE}/appointments/${id}`));
+  if (TELEMEDICINE_USE_MOCK) {
+    const found = DEMO_APPOINTMENTS.find((a) => a.id === id);
+    return wait(found ? mapAppointmentMoney(found) : undefined);
+  }
+  const raw = unwrap<unknown>(await api.get(`${BASE}/appointments/${id}`));
+  return raw ? mapAppointmentMoney(raw) : undefined;
 }
 
 export async function getPrescription(appointmentId: string): Promise<Prescription> {
@@ -216,8 +239,21 @@ export async function bookAppointment(input: BookAppointmentInput): Promise<Book
   }
   // MONEY PATH: requires Idempotency-Key.
   const idempotencyKey = input.idempotencyKey || generateIdempotencyKey();
+  // The server prices the booking itself and ignores any amount we send; the only
+  // money field here is `expected_total_kobo`, the total we quoted the patient. If
+  // it disagrees with the server's own computation the booking is rejected with a
+  // 409 before any money moves — which is what stops the card rail (already
+  // charged at the PSP) from settling against a different amount (ADR-040).
+  const body = {
+    doctor_id:           input.doctorId,
+    scheduled_at:        input.scheduledAt,
+    consultation_type:   input.consultType,
+    notes:               input.reason,
+    idempotency_key:     idempotencyKey,
+    expected_total_kobo: input.expectedTotalKobo ?? 0,
+  };
   return unwrap<BookAppointmentResult>(
-    await api.post(`${BASE}/appointments`, input, { headers: { 'Idempotency-Key': idempotencyKey } }),
+    await api.post(`${BASE}/appointments`, body, { headers: { 'Idempotency-Key': idempotencyKey } }),
   );
 }
 

@@ -98,7 +98,7 @@ func (r *Repository) ListDisclosures(ctx context.Context, slug string) ([]Disclo
 		return nil, fmt.Errorf("compliance: list disclosures: %w", err)
 	}
 	defer rows.Close()
-	var out []Disclosure
+	out := []Disclosure{}
 	for rows.Next() {
 		d, err := scanDisclosure(rows)
 		if err != nil {
@@ -144,7 +144,8 @@ func scanConsent(row pgx.Row) (*Consent, error) {
 	return &c, nil
 }
 
-// RecordConsent upserts a consent decision (idempotent on user+type+version).
+// RecordConsent appends a consent decision. Each grant or withdrawal is its own
+// row; current state is the most recent row per (user, consent type).
 func (r *Repository) RecordConsent(ctx context.Context, userID string, in ConsentInput) (*Consent, error) {
 	granted := true
 	if in.Granted != nil {
@@ -154,13 +155,14 @@ func (r *Repository) RecordConsent(ctx context.Context, userID string, in Consen
 	if in.Version > 0 {
 		version = in.Version
 	}
+	// Append-only: every grant and withdrawal is its own row. The previous
+	// upsert on (user_id, consent_type, version) overwrote the prior record, so
+	// a withdrawal erased the evidence of what had been agreed. Corrections are
+	// made by appending, the way the ledger corrects with reversing entries.
+	// The DB enforces this too — UPDATE/DELETE are blocked by trigger.
 	const q = `
 		INSERT INTO referral_consents (user_id, disclosure_id, consent_type, granted, version, source)
 		VALUES ($1,$2,$3,$4,$5,$6)
-		ON CONFLICT (user_id, consent_type, version) DO UPDATE SET
-			disclosure_id = EXCLUDED.disclosure_id,
-			granted = EXCLUDED.granted,
-			source = EXCLUDED.source
 		RETURNING ` + consentCols
 	return scanConsent(r.db.QueryRow(ctx, q,
 		userID, nullable(in.DisclosureID), in.ConsentType, granted, version, nullable(in.Source)))
@@ -169,12 +171,14 @@ func (r *Repository) RecordConsent(ctx context.Context, userID string, in Consen
 // ConsentsByUser returns a user's consents.
 func (r *Repository) ConsentsByUser(ctx context.Context, userID string) ([]Consent, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT `+consentCols+` FROM referral_consents WHERE user_id = $1 ORDER BY created_at DESC`, userID)
+		// seq, not created_at: now() is transaction-constant, so consents written
+		// together share a timestamp and created_at cannot order them.
+		`SELECT `+consentCols+` FROM referral_consents WHERE user_id = $1 ORDER BY seq DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("compliance: consents by user: %w", err)
 	}
 	defer rows.Close()
-	var out []Consent
+	out := []Consent{}
 	for rows.Next() {
 		c, err := scanConsent(rows)
 		if err != nil {
@@ -230,7 +234,7 @@ func (r *Repository) ListAML(ctx context.Context, status string) ([]AMLFlag, err
 		return nil, fmt.Errorf("compliance: list aml: %w", err)
 	}
 	defer rows.Close()
-	var out []AMLFlag
+	out := []AMLFlag{}
 	for rows.Next() {
 		f, err := scanAML(rows)
 		if err != nil {
@@ -334,7 +338,7 @@ func (r *Repository) ClaimReview(ctx context.Context, status string) ([]ClaimRev
 		return nil, fmt.Errorf("compliance: claim review: %w", err)
 	}
 	defer rows.Close()
-	var out []ClaimReviewItem
+	out := []ClaimReviewItem{}
 	for rows.Next() {
 		var (
 			it           ClaimReviewItem
@@ -365,7 +369,7 @@ func (r *Repository) RegulatoryExport(ctx context.Context, since, until string) 
 		return nil, fmt.Errorf("compliance: regulatory export: %w", err)
 	}
 	defer rows.Close()
-	var out []RegulatoryExportRow
+	out := []RegulatoryExportRow{}
 	for rows.Next() {
 		var (
 			row        RegulatoryExportRow

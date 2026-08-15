@@ -281,6 +281,21 @@ func (s *Service) GetChatThreads(ctx context.Context, userID string) ([]ChatThre
 		FROM assoc_chat_threads t
 		LEFT JOIN assoc_chat_thread_state st ON st.thread_id=t.id AND st.membership_id=$3
 		WHERE t.organisation_id=$1
+		  AND (CASE
+		        -- CM-002: hide sub-group threads the caller cannot open (parity
+		        -- with the GetChatThread / SendChatMessage scope gates).
+		        WHEN t.scope = 'EXECUTIVE' THEN EXISTS (
+		          SELECT 1 FROM assoc_member_roles ar
+		          JOIN assoc_memberships am ON am.id = ar.membership_id
+		          WHERE am.user_id = $2 AND am.organisation_id = t.organisation_id
+		            AND am.status = 'ACTIVE' AND ar.role != 'NONE')
+		        WHEN t.scope = 'COMMITTEE' AND t.committee_id IS NOT NULL THEN EXISTS (
+		          SELECT 1 FROM assoc_committee_members cm
+		          JOIN assoc_memberships am ON am.id = cm.membership_id
+		          WHERE am.user_id = $2 AND cm.committee_id = t.committee_id
+		            AND cm.status = 'ACTIVE')
+		        ELSE true
+		      END)
 		ORDER BY 6 DESC`
 	rows, err := s.db.Query(ctx, q, orgID, userID, mid)
 	if err != nil {
@@ -319,7 +334,24 @@ func (s *Service) GetChatThread(ctx context.Context, userID, threadID string) (*
 		WHERE t.id=$1
 		  AND EXISTS (SELECT 1 FROM assoc_memberships v
 		              WHERE v.user_id=$3 AND v.status='ACTIVE'
-		                AND v.organisation_id = t.organisation_id)`
+		                AND v.organisation_id = t.organisation_id)
+		  AND (CASE
+		        -- CM-002 sub-group isolation: EXECUTIVE threads are for org
+		        -- admins/execs; a COMMITTEE thread linked via committee_id is for
+		        -- that committee's ACTIVE members. Everything else (GENERAL/EVENT/
+		        -- unlinked COMMITTEE) keeps the org-scoped fallback above.
+		        WHEN t.scope = 'EXECUTIVE' THEN EXISTS (
+		          SELECT 1 FROM assoc_member_roles ar
+		          JOIN assoc_memberships am ON am.id = ar.membership_id
+		          WHERE am.user_id = $3 AND am.organisation_id = t.organisation_id
+		            AND am.status = 'ACTIVE' AND ar.role != 'NONE')
+		        WHEN t.scope = 'COMMITTEE' AND t.committee_id IS NOT NULL THEN EXISTS (
+		          SELECT 1 FROM assoc_committee_members cm
+		          JOIN assoc_memberships am ON am.id = cm.membership_id
+		          WHERE am.user_id = $3 AND cm.committee_id = t.committee_id
+		            AND cm.status = 'ACTIVE')
+		        ELSE true
+		      END)`
 	if err := s.db.QueryRow(ctx, q, threadID, mid, userID).Scan(
 		&t.ID, &t.Title, &t.Scope, &t.PostingBlock, &t.Description, &t.Muted, &t.MemberCount,
 	); err != nil {
@@ -404,7 +436,21 @@ func (s *Service) SendChatMessage(ctx context.Context, userID, threadID, body st
 		WHERE EXISTS (
 			SELECT 1 FROM assoc_chat_threads t
 			JOIN assoc_memberships v ON v.organisation_id = t.organisation_id
-			WHERE t.id = $2 AND v.user_id = $3 AND v.status = 'ACTIVE')
+			WHERE t.id = $2 AND v.user_id = $3 AND v.status = 'ACTIVE'
+			  AND (CASE
+			        -- CM-002: same scope gate as GetChatThread (read/write parity).
+			        WHEN t.scope = 'EXECUTIVE' THEN EXISTS (
+			          SELECT 1 FROM assoc_member_roles ar
+			          JOIN assoc_memberships am ON am.id = ar.membership_id
+			          WHERE am.user_id = $3 AND am.organisation_id = t.organisation_id
+			            AND am.status = 'ACTIVE' AND ar.role != 'NONE')
+			        WHEN t.scope = 'COMMITTEE' AND t.committee_id IS NOT NULL THEN EXISTS (
+			          SELECT 1 FROM assoc_committee_members cm
+			          JOIN assoc_memberships am ON am.id = cm.membership_id
+			          WHERE am.user_id = $3 AND cm.committee_id = t.committee_id
+			            AND cm.status = 'ACTIVE')
+			        ELSE true
+			      END))
 		RETURNING to_char(created_at,'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 	if err := s.db.QueryRow(ctx, q, m.ID, threadID, userID, body).Scan(&m.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

@@ -3,9 +3,9 @@ package restaurant
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for dispatch fairness + SLA (Phase 7): the candidate
 // gatherer (load + last-assigned + distance signals) and the DispatchOrder SLA
-// timeline (first_offered_at / dispatch_attempts). Skipped unless TEST_DATABASE_URL/
-// DATABASE_URL is set. Requires the restaurant, autodispatch, transport `drivers`,
-// and dispatch-SLA migrations.
+// timeline (first_offered_at / dispatch_attempts). Skipped unless TEST_DATABASE_URL
+// is set. Requires the restaurant, autodispatch, transport `drivers`, and
+// dispatch-SLA migrations.
 // ---------------------------------------------------------------------------
 
 import (
@@ -21,10 +21,7 @@ func dispatchLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB dispatch test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB dispatch test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

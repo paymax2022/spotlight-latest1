@@ -47,14 +47,22 @@ func RegisterSavings(member *gin.RouterGroup, adminGroup *gin.RouterGroup, cfg c
 
 	vaultSvc := savings.NewVaultService(pool, ledgerSvc, sched, auditor)
 
+	// Early-break penalty rate: server-side policy, never caller input. Fails
+	// closed — a bad config value is logged and the safe default is kept rather
+	// than charging a nonsense rate.
+	if err := vaultSvc.SetEarlyBreakPenaltyBps(int64(cfg.SavingsEarlyBreakPenaltyBps)); err != nil {
+		log.Printf("[savings] %v — keeping default %d bps", err, savings.DefaultEarlyBreakPenaltyBps)
+	}
+
 	// Central Commission & Profit recording (§ profit registry). Nil-safe, gated on the
 	// flag, built WITHOUT a ledger (no double-post — the early-break penalty debit
 	// already moves money into ledger.AccountPaymaxRevenue). Records under
 	// Finance/Savings ONLY on the early-withdrawal penalty (the sole Spotlight-earned
 	// fee in savings; deposits, normal withdrawals, target & Ajo flows are all fee-free
 	// — NL-2, no yield — so AjoService/TargetService need no recorder). RATE NOTE: the
-	// actual fee is the caller-supplied penalty bps of the withdrawal, so the central
-	// 10% of the withdrawal principal over/under-states unless the penalty is 10%.
+	// fee is now the SERVER's configured penalty bps (SAVINGS_EARLY_BREAK_PENALTY_BPS,
+	// default 1000 = 10%), and recordCommissionSafe records the EXACT penalty charged
+	// via RecordExact — so the registry no longer depends on the rate being 10%.
 	if cfg.FeatureCommissionEnabled {
 		vaultSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
 		log.Println("[savings] commission recording wired → Finance/Savings (early-break penalty; earning-row only; no ledger re-post)")

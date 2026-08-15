@@ -3,7 +3,6 @@ package savings
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"spotlight/backend/internal/finance/ledger"
 )
@@ -30,6 +29,10 @@ func (s *VaultService) GetVault(ctx context.Context, ownerID, vaultID string) (*
 	if err != nil {
 		return nil, 0, err
 	}
+	// Populate the projection on the vault too. The handler also returns bal
+	// beside it; if the embedded field were left at 0 the same response would
+	// carry two contradictory balances for one vault.
+	v.BalanceKobo = bal
 	return v, bal, nil
 }
 
@@ -39,12 +42,12 @@ func (s *VaultService) GetVault(ctx context.Context, ownerID, vaultID string) (*
 // their wallet; the vault ledger is debited by the full amount. FLEX vaults have
 // no penalty and this behaves like a normal withdraw. NL-1: never exceeds the
 // derived balance; the penalty never creates value, it redistributes it.
-func (s *VaultService) EarlyWithdraw(ctx context.Context, ownerID, vaultID string, amountKobo, penaltyBps int64, idemKey string) (int64, int64, error) {
+// NOTE: there is deliberately no penaltyBps parameter. The rate is service
+// policy (see VaultService.penaltyFor); it used to come from the request body,
+// which let any member break a LOCK vault penalty-free by sending 0.
+func (s *VaultService) EarlyWithdraw(ctx context.Context, ownerID, vaultID string, amountKobo int64, idemKey string) (int64, int64, error) {
 	if amountKobo <= 0 {
 		return 0, 0, fmt.Errorf("savings: withdraw must be positive")
-	}
-	if penaltyBps < 0 || penaltyBps > 10000 {
-		return 0, 0, fmt.Errorf("savings: penalty_bps out of range")
 	}
 	v, err := s.getVault(ctx, vaultID)
 	if err != nil {
@@ -54,11 +57,7 @@ func (s *VaultService) EarlyWithdraw(ctx context.Context, ownerID, vaultID strin
 		return 0, 0, ErrForbidden
 	}
 	// Penalty only applies to breaking a still-locked LOCK vault before maturity.
-	penalty := int64(0)
-	locked := v.Kind == VaultLock && v.State == VaultOpen && (v.MaturesAt == nil || time.Now().Before(*v.MaturesAt))
-	if locked {
-		penalty = amountKobo * penaltyBps / 10000
-	}
+	penalty := s.penaltyFor(v, amountKobo)
 	bal, err := s.Balance(ctx, vaultID)
 	if err != nil {
 		return 0, 0, err

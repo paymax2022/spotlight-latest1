@@ -3,6 +3,14 @@ import { ApiError } from '@/src/lib/api/responses';
 import { validateAmountKobo, buildIdempotencyKey } from './ledger';
 import type { LedgerEntryRow } from './ledger';
 import { checkIdempotencyKey, checkTopupIdempotencyKey } from './idempotency';
+import {
+  buildJournalLegs,
+  getOrCreateStandingAccount,
+  postJournal,
+  DEFAULT_CREDIT_COUNTER,
+  DEFAULT_DEBIT_COUNTER,
+  type StandingAccountType,
+} from './journal';
 import { enforceWalletLimit } from '@/src/server/tiers/service';
 
 const MIN_TOPUP_KOBO = 10_000; // ₦100 minimum
@@ -68,19 +76,24 @@ async function migrateLegacyMobileBalanceIfNeeded(userId: string, accountId: str
   if (legacyBalance <= 0) return;
 
   const amountKobo = Math.round(legacyBalance * 100);
-  const { error } = await supabase.from('ledger_entries').insert({
-    account_id: accountId,
-    type: 'CREDIT',
-    amount_kobo: amountKobo,
-    reference: `LEGACY-MOBILE-${userId}`,
-    idempotency_key: `legacy-mobile-fintech:${userId}:initial-credit`,
-    description: 'Migrated legacy mobile wallet balance',
-    metadata: { source: 'mobile_fintech_accounts', currency: legacy?.currency ?? 'NGN' },
-  });
 
-  if (error && error.code !== '23505') {
-    throw new ApiError(`Failed to migrate legacy wallet balance: ${error.message}`, 500);
-  }
+  // ADR-040: an opening balance carried over from the legacy mobile system is
+  // still a money movement — DR settlement (the platform owed those funds all
+  // along) / CR the user's wallet.
+  const counterAccountId = await getOrCreateStandingAccount('settlement');
+  await postJournal(
+    buildJournalLegs({
+      primaryAccountId: accountId,
+      counterAccountId,
+      primarySide: 'CREDIT',
+      amountKobo,
+      reference: `LEGACY-MOBILE-${userId}`,
+      idempotencyKey: `legacy-mobile-fintech:${userId}:initial-credit`,
+      description: 'Migrated legacy mobile wallet balance',
+      metadata: { source: 'mobile_fintech_accounts', currency: legacy?.currency ?? 'NGN' },
+    }),
+    'Failed to migrate legacy wallet balance',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -98,13 +111,30 @@ export async function getBalance(userId: string): Promise<WalletBalance> {
   await migrateLegacyMobileBalanceIfNeeded(userId, accountId);
   const supabase = createAdminClient();
 
-  const { data } = await supabase
+  // The user's spendable funds live across TWO ledger account types: 'wallet'
+  // (this Next.js wallet) and 'user_wallet' (the Go finance ledger — the
+  // money-path authority that transport/gifting/payouts debit). Read-only sum
+  // of both so the displayed balance reflects real spendable money; mutations
+  // still go through each system's own ledger.
+  const { data: walletAccounts } = await supabase
+    .from('ledger_accounts')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('currency', 'NGN')
+    .in('type', ['wallet', 'user_wallet']);
+  const accountIds = (walletAccounts ?? []).map((a) => a.id as string);
+  if (!accountIds.includes(accountId)) accountIds.push(accountId);
+
+  const { data: balances } = await supabase
     .from('wallet_balance')
     .select('available_kobo, currency, account_id')
-    .eq('account_id', accountId)
-    .maybeSingle();
+    .in('account_id', accountIds);
 
-  const availableKobo = (data?.available_kobo as number) ?? 0;
+  const availableKobo = (balances ?? []).reduce(
+    (sum, row) => sum + ((row.available_kobo as number) ?? 0),
+    0,
+  );
+  const data = (balances ?? []).find((row) => row.account_id === accountId) ?? null;
   const { count: ledgerEntryCount } = await supabase
     .from('ledger_entries')
     .select('id', { count: 'exact', head: true })
@@ -144,6 +174,15 @@ export interface WalletMutationInput {
   idempotencyKey: string;
   description?: string;
   metadata?: Record<string, unknown>;
+  /**
+   * Standing account carrying the counter-leg (ADR-040). Defaults to
+   * `provider_clearing` for credits and `settlement` for debits/reversals.
+   * Pass an explicit one where the counterparty is known — e.g. a referral
+   * bonus is funded by `referral_reward_expense`, not by a payment provider.
+   * A reversal MUST name the same account the original movement used, so the
+   * correction drains the pot it filled.
+   */
+  counterAccount?: StandingAccountType;
 }
 
 export interface WalletMutationResult {
@@ -163,27 +202,29 @@ export async function creditWallet(
   }
 
   const accountId = await getOrCreateAccount(userId);
-  const supabase = createAdminClient();
 
-  const { error } = await supabase.from('ledger_entries').insert({
-    account_id: accountId,
-    type: 'CREDIT',
-    amount_kobo: input.amountKobo,
-    reference: input.reference,
-    idempotency_key: input.idempotencyKey,
-    description: input.description ?? null,
-    metadata: input.metadata ?? null,
-  });
+  // ADR-040: money entering a wallet has a source. Post the balanced pair —
+  // DR the counter account / CR the wallet — in one atomic insert. A UNIQUE
+  // violation on either leg rolls back both, so `alreadyProcessed` still means
+  // "this exact event was already posted", never "half of it was".
+  const counterAccountId = await getOrCreateStandingAccount(
+    input.counterAccount ?? DEFAULT_CREDIT_COUNTER,
+  );
+  const { duplicate } = await postJournal(
+    buildJournalLegs({
+      primaryAccountId: accountId,
+      counterAccountId,
+      primarySide: 'CREDIT',
+      amountKobo: input.amountKobo,
+      reference: input.reference,
+      idempotencyKey: input.idempotencyKey,
+      description: input.description,
+      metadata: input.metadata,
+    }),
+    'Failed to credit wallet',
+  );
 
-  if (error) {
-    if (error.code === '23505') {
-      // UNIQUE violation — concurrent insert with same idempotency_key; treat as duplicate
-      return { alreadyProcessed: true, amountKobo: input.amountKobo };
-    }
-    throw new ApiError(`Failed to credit wallet: ${error.message}`, 500);
-  }
-
-  return { alreadyProcessed: false, amountKobo: input.amountKobo };
+  return { alreadyProcessed: duplicate, amountKobo: input.amountKobo };
 }
 
 export async function debitWallet(
@@ -191,6 +232,20 @@ export async function debitWallet(
   input: WalletMutationInput,
 ): Promise<WalletMutationResult> {
   validateAmountKobo(input.amountKobo);
+
+  // ADR-040: this path posts its counter-leg INSIDE debit_wallet_atomic, which
+  // hardcodes `settlement` — the RPC's argument list is deliberately unchanged.
+  // Accepting a different counterAccount here would silently post to the wrong
+  // account (it type-checks, reads correctly, and lands somewhere else), so
+  // refuse it. Callers needing another counterparty must post through the
+  // journal helper directly.
+  if (input.counterAccount && input.counterAccount !== DEFAULT_DEBIT_COUNTER) {
+    throw new ApiError(
+      `debitWallet cannot post to counter account '${input.counterAccount}': ` +
+      `debit_wallet_atomic always posts to '${DEFAULT_DEBIT_COUNTER}' (ADR-040).`,
+      500,
+    );
+  }
 
   const hit = await checkIdempotencyKey(input.idempotencyKey);
   if (hit.alreadyProcessed) {
@@ -252,26 +307,29 @@ export async function reverseWalletDebit(
   }
 
   const accountId = await getOrCreateAccount(userId);
-  const supabase = createAdminClient();
 
-  const { error } = await supabase.from('ledger_entries').insert({
-    account_id: accountId,
-    type: 'REVERSAL_DEBIT',
-    amount_kobo: input.amountKobo,
-    reference: input.reference,
-    idempotency_key: input.idempotencyKey,
-    description: input.description ?? null,
-    metadata: input.metadata ?? null,
-  });
+  // ADR-040: the correction is a balanced pair too — REVERSAL_DEBIT restores the
+  // wallet, REVERSAL_CREDIT drains the account the original debit credited.
+  // Default `settlement` mirrors debit_wallet_atomic's counter-leg, so a refund
+  // of a debit posted through that RPC returns the funds to the same pot.
+  const counterAccountId = await getOrCreateStandingAccount(
+    input.counterAccount ?? DEFAULT_DEBIT_COUNTER,
+  );
+  const { duplicate } = await postJournal(
+    buildJournalLegs({
+      primaryAccountId: accountId,
+      counterAccountId,
+      primarySide: 'REVERSAL_DEBIT',
+      amountKobo: input.amountKobo,
+      reference: input.reference,
+      idempotencyKey: input.idempotencyKey,
+      description: input.description,
+      metadata: input.metadata,
+    }),
+    'Failed to reverse wallet debit',
+  );
 
-  if (error) {
-    if (error.code === '23505') {
-      return { alreadyProcessed: true, amountKobo: input.amountKobo };
-    }
-    throw new ApiError(`Failed to reverse wallet debit: ${error.message}`, 500);
-  }
-
-  return { alreadyProcessed: false, amountKobo: input.amountKobo };
+  return { alreadyProcessed: duplicate, amountKobo: input.amountKobo };
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +366,13 @@ export interface TopupInput {
   amountKobo: number;
   idempotencyKey: string;
   callbackUrl?: string;
+  /**
+   * 'checkout' marks a top-up raised by a module checkout's card rail. It is
+   * persisted because the Tier-0 checkout allowance is summed over checkout
+   * intents only (ADR-042) — an unrecorded purpose would let each top-up see a
+   * fresh allowance. Defaults to 'wallet' (standalone funding).
+   */
+  purpose?: 'wallet' | 'checkout';
 }
 
 export interface TopupIntentResult {
@@ -349,6 +414,7 @@ export async function createTopupIntent(
     amount_kobo: input.amountKobo,
     payment_reference: paymentReference,
     idempotency_key: input.idempotencyKey,
+    purpose: input.purpose ?? 'wallet',
     status: 'pending',
   });
 

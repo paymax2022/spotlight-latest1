@@ -13,6 +13,8 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { getAppointment, DEMO_APPOINTMENTS } from '@/api/telemedicine.api';
 import { DoctorAvatar } from '@/features/telemedicine/components';
+import { useLocalMedia } from '@/features/telemedicine/useLocalMedia';
+import SelfVideo from '@/features/telemedicine/SelfVideo';
 import { useApptIntake } from '@/features/health/hooks';
 import PrimaryButton from '@/components/PrimaryButton';
 
@@ -21,6 +23,11 @@ interface ChatMessage { id: string; from: 'me' | 'doctor'; text: string; }
 const SEED_CHAT: ChatMessage[] = [
   { id: 'm1', from: 'doctor', text: "Hello! I'm here. How are you feeling today?" },
 ];
+
+// Designated consult length. The session timer counts down from this and stops
+// (and auto-ends the call) at 0. Kept here until the appointment model carries a
+// per-booking duration.
+const SESSION_SECONDS = 20 * 60;
 
 export default function ConsultRoomScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -32,6 +39,7 @@ export default function ConsultRoomScreen() {
   const [chat, setChat] = useState<ChatMessage[]>(SEED_CHAT);
   const [draft, setDraft] = useState('');
   const [seconds, setSeconds] = useState(0);
+  const [ended, setEnded] = useState(false);
 
   const { data: appt } = useQuery({
     queryKey: ['tele-appointment', id],
@@ -44,10 +52,34 @@ export default function ConsultRoomScreen() {
   const intakeQ = useApptIntake(String(id));
   const intakeReady = intakeQ.data?.intake.status === 'SUBMITTED';
 
+  // Real camera + mic (browser getUserMedia on web; no-op placeholder on native).
+  // Only requested once the patient is actually in the room.
+  const media = useLocalMedia(intakeReady && !ended);
+
+  // Session clock: tick only while live, cap at the session length, and stop.
   useEffect(() => {
-    const t = setInterval(() => setSeconds((s) => s + 1), 1000);
+    if (!intakeReady || ended) return;
+    const t = setInterval(() => setSeconds((s) => Math.min(s + 1, SESSION_SECONDS)), 1000);
     return () => clearInterval(t);
-  }, []);
+  }, [intakeReady, ended]);
+
+  // Reaching the designated end stops the clock, releases the camera/mic, and
+  // auto-ends the call after a short grace so the patient sees it ended.
+  useEffect(() => {
+    if (seconds >= SESSION_SECONDS && !ended) setEnded(true);
+  }, [seconds, ended]);
+
+  useEffect(() => {
+    if (!ended) return;
+    media.stop();
+    const t = setTimeout(() => router.replace(`/services/telemedicine/appointment/${id}/summary`), 3000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ended]);
+
+  // Mirror the mic/camera buttons onto the real media tracks.
+  useEffect(() => { media.setAudioEnabled(micOn); }, [micOn, media]);
+  useEffect(() => { media.setVideoEnabled(camOn); }, [camOn, media]);
 
   const send = () => {
     if (!draft.trim()) return;
@@ -56,11 +88,14 @@ export default function ConsultRoomScreen() {
   };
 
   const endCall = () => {
+    media.stop();
     router.replace(`/services/telemedicine/appointment/${id}/summary`);
   };
 
-  const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
-  const ss = String(seconds % 60).padStart(2, '0');
+  // Countdown to the designated session end.
+  const remaining = Math.max(0, SESSION_SECONDS - seconds);
+  const mm = String(Math.floor(remaining / 60)).padStart(2, '0');
+  const ss = String(remaining % 60).padStart(2, '0');
   const doctor = appt?.doctor;
 
   // Intake gate — block the live room until the patient has submitted intake.
@@ -104,11 +139,11 @@ export default function ConsultRoomScreen() {
 
       {/* Top status */}
       <View style={styles.topBar}>
-        <View style={styles.liveTag}>
-          <View style={styles.liveDot} />
-          <Text style={styles.liveText}>LIVE</Text>
+        <View style={[styles.liveTag, ended && styles.endedTag]}>
+          <View style={[styles.liveDot, ended && styles.endedDot]} />
+          <Text style={styles.liveText}>{ended ? 'ENDED' : 'LIVE'}</Text>
         </View>
-        <Text style={styles.timer}>{mm}:{ss}</Text>
+        <Text style={styles.timer}>{ended ? 'Session ended' : `${mm}:${ss}`}</Text>
       </View>
 
       {/* Doctor stage */}
@@ -117,12 +152,20 @@ export default function ConsultRoomScreen() {
         <Text style={styles.docName}>{doctor?.name}</Text>
         <Text style={styles.docSpec}>{doctor?.specialties.join(' • ')}</Text>
         <View style={styles.connBadge}>
-          <Text style={styles.connText}>Connected · {camOn ? 'Video on' : 'Video off'}</Text>
+          <Text style={styles.connText}>
+            {ended
+              ? 'Session ended'
+              : media.status === 'denied'
+                ? 'Camera & mic blocked — allow access'
+                : media.status === 'requesting'
+                  ? 'Starting camera…'
+                  : `Your camera ${camOn ? 'on' : 'off'} · mic ${micOn ? 'on' : 'off'}`}
+          </Text>
         </View>
 
-        {/* Self preview */}
+        {/* Self preview — real local camera on web (getUserMedia) */}
         <View style={styles.selfPreview}>
-          {camOn ? <Text style={styles.selfText}>You</Text> : <VideoOff size={20} color={Colors.white} strokeWidth={2} />}
+          <SelfVideo stream={media.stream as MediaStream | null} camOn={camOn} />
         </View>
       </View>
 
@@ -194,6 +237,14 @@ const styles = StyleSheet.create({
   topBar:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md },
   liveTag:    { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, height: 28, borderRadius: Radius.full, backgroundColor: 'rgba(255,255,255,0.15)' },
   liveDot:    { width: 7, height: 7, borderRadius: 4, backgroundColor: '#FF5A5A' },
+  // Applied ON TOP of liveTag/liveDot when the session has ended, so they only
+  // override what changes: the badge dims and the recording-red dot goes neutral,
+  // matching the LIVE -> ENDED label beside them. Both reuse white-overlay alphas
+  // already used in this screen's chrome (0.12 = connBadge, 0.25 = selfPreview
+  // border) rather than introducing new values — constants/colors.ts has no solid
+  // muted token, only gradientMuted, which is a gradient for disabled surfaces.
+  endedTag:   { backgroundColor: 'rgba(255,255,255,0.12)' },
+  endedDot:   { backgroundColor: 'rgba(255,255,255,0.25)' },
   liveText:   { ...Typography.labelSm, color: Colors.white, fontWeight: '700' },
   timer:      { ...Typography.labelLg, color: Colors.white },
   stage:      { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },

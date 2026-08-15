@@ -438,11 +438,11 @@ func (s *Service) GetDashboard(ctx context.Context, userID string) (*MemberDashb
 // GetCard builds the digital membership card for the authenticated user.
 func (s *Service) GetCard(ctx context.Context, userID string) (MembershipCard, error) {
 	const q = `
-		SELECT m.id, m.member_code, m.status, m.payment_standing, m.verified, m.valid_through,
+		SELECT m.id, m.organisation_id, m.member_code, m.status, m.payment_standing, m.verified, m.valid_through,
 		       o.name, o.acronym,
 		       COALESCE(mc.label,'Member'),
 		       ch.name,
-		       mp.full_name, mp.photo_url
+		       COALESCE(mp.full_name,''), mp.photo_url
 		FROM assoc_memberships m
 		JOIN assoc_organisations o ON o.id=m.organisation_id
 		LEFT JOIN assoc_membership_categories mc ON mc.id=m.category_id
@@ -451,9 +451,10 @@ func (s *Service) GetCard(ctx context.Context, userID string) (MembershipCard, e
 		WHERE m.user_id=$1 AND m.status='ACTIVE'
 		LIMIT 1`
 	var card MembershipCard
+	var membershipID, orgID string
 	var validThrough *string
 	if err := s.db.QueryRow(ctx, q, userID).Scan(
-		&card.MemberID, &card.MemberID, &card.Status, &card.PaymentStanding, &card.Verified, &validThrough,
+		&membershipID, &orgID, &card.MemberID, &card.Status, &card.PaymentStanding, &card.Verified, &validThrough,
 		&card.OrganisationName, &card.OrganisationAcronym,
 		&card.CategoryLabel, &card.ChapterName,
 		&card.FullName, &card.PhotoURL,
@@ -461,7 +462,9 @@ func (s *Service) GetCard(ctx context.Context, userID string) (MembershipCard, e
 		return card, fmt.Errorf("association: membership not found: %w", err)
 	}
 	card.ValidThrough = validThrough
-	card.QRPayload = "assoc:" + card.MemberID
+	// Signed QR token (AMC1.<payload>.<hmac>) — VerifyCard authenticates it and
+	// then re-checks the LIVE record (authenticity != validity).
+	card.QRPayload = s.SignCardToken(membershipID, card.MemberID, orgID)
 	return card, nil
 }
 
@@ -1070,8 +1073,12 @@ func (s *Service) GetApprovalQueue(ctx context.Context, adminID, jurisdiction st
 		LEFT JOIN assoc_membership_categories mc ON mc.id=a.category_id
 		LEFT JOIN assoc_chapters ch ON ch.id=a.chapter_id
 		LEFT JOIN auth.users u ON u.id=a.user_id
-		WHERE a.status IN ('PENDING','PENDING_CHAPTER','PENDING_NATIONAL','INFO_REQUESTED')`
-	args := []any{}
+		WHERE a.status IN ('PENDING','PENDING_CHAPTER','PENDING_NATIONAL','INFO_REQUESTED')
+		  AND a.organisation_id IN (
+			SELECT am.organisation_id FROM assoc_member_roles ar
+			JOIN assoc_memberships am ON am.id=ar.membership_id
+			WHERE am.user_id=$1 AND ar.role != 'NONE')`
+	args := []any{adminID}
 	if jurisdiction != "" && jurisdiction != "ALL" {
 		args = append(args, jurisdiction)
 		q += fmt.Sprintf(` AND a.jurisdiction=$%d`, len(args))
@@ -1166,7 +1173,11 @@ func (s *Service) GetOfflinePayments(ctx context.Context, adminID string) ([]Off
 		JOIN assoc_dues_invoices i ON i.id=p.invoice_id
 		LEFT JOIN assoc_member_profiles mp ON mp.membership_id=m.id
 		WHERE p.offline=true AND p.status='PENDING'
-		ORDER BY p.created_at DESC LIMIT 200`)
+		  AND m.organisation_id IN (
+			SELECT am.organisation_id FROM assoc_member_roles ar
+			JOIN assoc_memberships am ON am.id=ar.membership_id
+			WHERE am.user_id=$1 AND ar.role != 'NONE')
+		ORDER BY p.created_at DESC LIMIT 200`, adminID)
 	if err != nil {
 		return nil, fmt.Errorf("association: offline payments: %w", err)
 	}

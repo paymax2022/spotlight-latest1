@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/academy/assessment"
+	"spotlight/backend/internal/academy/placement"
 	"spotlight/backend/internal/academy/commerce"
 	"spotlight/backend/internal/academy/content"
 	"spotlight/backend/internal/academy/credentials"
@@ -248,6 +249,9 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 	if examEnabled {
 		assessment.RegisterAcademyAssessment(memberAcad, adminAcad, pool, rbac)
 		exam.RegisterAcademyExam(memberAcad, adminAcad, pool, rbac)
+		// Onboarding placement quiz — curriculum-grounded diagnostic that reads the
+		// assessment question bank; mounted alongside assessment so it shares its data.
+		placement.RegisterAcademyPlacement(memberAcad, pool)
 	}
 
 	// EdTech School Fees (invoices, vault, promotion, competition, scholarship,

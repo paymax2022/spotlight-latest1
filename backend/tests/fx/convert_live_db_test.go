@@ -20,7 +20,7 @@ package fx_test
 // legs) — directly regression-guarding the P0 idempotency fix
 // (20260920000300_fx_convert_idempotency.sql + service.go ON CONFLICT DO NOTHING).
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset (same env-gate +
+// SKIPPED whenever TEST_DATABASE_URL is unset (same env-gate +
 // seedUser pattern as backend/tests/crypto + backend/tests/association), so
 // `go test ./...` without a DB stays green.
 //
@@ -32,7 +32,7 @@ package fx_test
 //   20260920000300_fx_convert_idempotency.sql   (idempotency safety net)
 //   + finance/ledger migrations (ledger_accounts / ledger_entries).
 // Then:
-//   export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run LiveDB -v
 // The fx_spread_income + settlement standing accounts are auto-created on first
 // GetOrCreateStandingAccount — no seed rows needed.
@@ -43,7 +43,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -55,15 +55,12 @@ import (
 	"spotlight/backend/internal/provider/maplerad"
 )
 
-// liveDBPool connects using TEST_DATABASE_URL/DATABASE_URL, or skips.
+// liveDBPool connects using TEST_DATABASE_URL, or skips.
 func liveDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB FX convert integration test; see bring-up note in convert_live_db_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB FX convert integration test; see bring-up note in convert_live_db_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -112,23 +109,55 @@ func seedWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 	}
 }
 
-// mapleradTestServer returns an httptest server that answers the two FX endpoints
-// the fx.Service drives (GET /fx/rates for the quote, POST /fx/convert for the
-// execution) with a deterministic NGN→USD rate. AmountKobo 500,000 → 32,500
-// (¢325.00) at rate 0.00065, fee 500 kobo.
+// mapleradTestServer returns an httptest server speaking Maplerad's REAL FX
+// contract, as probed against the sandbox: the fx.Service books a firm quote with
+// POST /fx/quote and exchanges it with POST /fx. Both nest source/target objects
+// and carry NO fee, transaction id, or status field.
+//
+// Deterministic NGN→USD pricing: 500,000 kobo → 32,500 (¢325.00) at rate 0.00065.
+//
+// Two things this stub deliberately asserts by NOT handling them:
+//
+//   - GET /fx/rates — the rate board issues no quote reference, so the convert
+//     path must never price off it. A request here trips the default arm.
+//   - POST /fx/convert — does not exist in the real API (404); the old stub
+//     answered it, which is what let the pre-`d6e6942c` code look healthy.
+//
+// The quote reference is SINGLE USE, exactly as the provider treats it: a second
+// exchange of the same reference fails with "could not find quote". That makes an
+// idempotency regression fail here rather than silently double-converting.
 func mapleradTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	const quoteRef = "prov-quote-1"
+	var mu sync.Mutex
+	spent := false
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/fx/rates"):
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":true,"data":{"quote_id":"prov-quote-1","rate":0.00065,"source_amount":500000,"target_amount":32500,"fee":500,"expires_at":"2999-01-01T00:00:00Z"}}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/fx/convert":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":true,"data":{"transaction_id":"prov-txn-1","rate":0.00065,"source_amount":500000,"target_amount":32500,"fee":500,"status":"success"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/fx/quote":
+			_, _ = w.Write([]byte(`{"status":true,"data":{"reference":"` + quoteRef + `",` +
+				`"source":{"currency":"NGN","amount":500000},` +
+				`"target":{"currency":"USD","amount":32500},"rate":0.00065}}`))
+
+		case r.Method == http.MethodPost && r.URL.Path == "/fx":
+			mu.Lock()
+			alreadySpent := spent
+			spent = true
+			mu.Unlock()
+			if alreadySpent {
+				// Maplerad answers HTTP 200 with status:false for business errors.
+				_, _ = w.Write([]byte(`{"status":false,"message":"could not find quote"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":true,"data":{` +
+				`"source":{"currency":"NGN","amount":500000},` +
+				`"target":{"currency":"USD","amount":32500},"rate":0.00065,` +
+				`"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}`))
+
 		default:
 			t.Errorf("unexpected maplerad request: %s %s", r.Method, r.URL.Path)
-			http.Error(w, "unexpected", http.StatusBadRequest)
+			http.Error(w, `{"status":false,"message":"unexpected request"}`, http.StatusBadRequest)
 		}
 	}))
 	t.Cleanup(srv.Close)
@@ -161,6 +190,10 @@ func TestLiveDB_FXConvert_BothLegsPosted_MirrorCredited_ReplayNoDoubleCredit(t *
 	srv := mapleradTestServer(t)
 	provider := maplerad.New("sk_test_live", false).WithBaseURL(srv.URL)
 	svc := fx.NewService(pool, led, provider, (*goredis.Client)(nil))
+	// Pin the Paymax markup so the expected fee is exact and independent of the
+	// production rule table: 10 bps of 500,000 kobo = 500. Maplerad itself returns
+	// no fee (its margin is in the rate), so this markup IS the disclosed fee.
+	svc.SetMarkup(fx.NewMarkup(10))
 
 	userID := seedUser(t, ctx, pool)
 	// Fund the NGN wallet with ample headroom for the source+fee debit.
@@ -174,7 +207,7 @@ func TestLiveDB_FXConvert_BothLegsPosted_MirrorCredited_ReplayNoDoubleCredit(t *
 		t.Fatalf("GetQuote: %v", err)
 	}
 	const wantSource = int64(500_000)
-	const wantFee = int64(500)
+	const wantFee = int64(500) // 10 bps of wantSource — see SetMarkup above
 	const wantTarget = int64(32_500)
 	if quote.SourceAmountKobo != wantSource || quote.FeeKobo != wantFee || quote.TargetAmountMinor != wantTarget {
 		t.Fatalf("quote amounts = (src %d, fee %d, tgt %d), want (%d,%d,%d)",

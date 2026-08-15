@@ -3,7 +3,7 @@ package restaurant
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for weekly business hours (Phase 5): owner replace-all
 // SetBusinessHours, the loader, and the effective-open gate driven off real rows.
-// Skipped unless TEST_DATABASE_URL/DATABASE_URL is set. Requires the restaurant +
+// Skipped unless TEST_DATABASE_URL is set. Requires the restaurant +
 // business-hours migrations.
 // ---------------------------------------------------------------------------
 
@@ -21,10 +21,7 @@ func hoursLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB business-hours test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB business-hours test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

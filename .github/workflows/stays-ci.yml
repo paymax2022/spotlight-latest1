@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: Stays CI
 
 # Formal verification gate for the Paymax Hotel Booking / Stays module (Property
@@ -9,28 +15,7 @@ name: Stays CI
 # migration guard. Blocks merges on red.
 
 on:
-  push:
-    paths:
-      - 'backend/internal/stays/**'
-      - 'backend/internal/app/stays_routes.go'
-      - 'backend/internal/app/stays_extranet_routes.go'
-      - 'backend/internal/app/finance_routes.go'
-      - 'backend/internal/config/config.go'
-      - 'supabase/migrations/*stays*.sql'
-      - 'frontend-admin/app/admin/stays/**'
-      - 'frontend-admin/app/extranet/**'
-      - 'frontend-admin/src/services/staysAdminService.ts'
-      - 'frontend-admin/src/services/staysExtranetService.ts'
-      - 'frontend-admin/src/types/staysAdmin.ts'
-      - 'frontend-admin/src/types/staysExtranet.ts'
-      - 'frontend-admin/src/components/layouts/AdminSidebar.tsx'
-      - 'frontend-web/app/api/v1/stays/**'
-      - 'frontend-web/src/lib/feature-flags.ts'
-      - 'mobile-app/reactnative/app/stays/**'
-      - 'mobile-app/reactnative/src/features/stays/**'
-      - 'mobile-app/reactnative/src/constants/modules.ts'
-      - '.github/workflows/stays-ci.yml'
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -53,45 +38,6 @@ jobs:
         run: go test ./internal/stays/... -count=1 -v
       - name: Test (all — regression)
         run: go test ./... -count=1
-
-  admin-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Typecheck admin + extranet (tsc --noEmit)
-        run: npm run type-check
-
-  web-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Typecheck web (stays proxy + feature flag)
-        run: npx tsc --noEmit
-
-  mobile-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mobile-app/reactnative
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Typecheck whole app (stays surface + property hub)
-        run: npx tsc --noEmit -p tsconfig.json
 
   migration-guard:
     runs-on: ubuntu-latest

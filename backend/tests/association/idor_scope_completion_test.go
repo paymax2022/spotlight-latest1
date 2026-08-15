@@ -6,7 +6,7 @@ package association_test
 //   - GetApprovalQueue     (cross-org READ: every org's pending applicant PII)
 //   - GetOfflinePayments   (cross-org READ: every org's offline-payment financial PII)
 //
-// Gated on TEST_DATABASE_URL/DATABASE_URL exactly like idor_scope_test.go — reuses
+// Gated on TEST_DATABASE_URL exactly like idor_scope_test.go — reuses
 // its shared liveDBPool + seed helpers. Run:
 //   export TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:54322/postgres"
 //   go test ./tests/association/ -run IDOR -v
