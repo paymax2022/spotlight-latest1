@@ -20,6 +20,7 @@ import {
 } from '@/features/food/cartStore';
 import { resolveRestaurantName, groupPackagesByRestaurant, UNKNOWN_RESTAURANT_ID } from '@/features/food/restaurantName';
 import { formatNaira } from '@/features/food/utils';
+import { resolveDeliveryFee } from '@/features/food/deliveryFee';
 import { useRestaurant, useRestaurants, useRestaurantNames } from '@/features/food/hooks';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { CartNutritionSummary } from '@/features/nutrition';
@@ -101,12 +102,18 @@ export default function CheckoutScreen() {
   // authoritative on placeOrder — this only drives the pre-payment estimate.
   const quoteQ = useDeliveryQuote(restaurantId ?? undefined, addressLocation);
   const quote = quoteQ.data;
-  // Use the quoted fee once we have a confident (non-fallback) quote; otherwise
-  // fall back to the restaurant's flat fee and label it as an estimate.
-  const flatFee = restaurant?.deliveryFeeKobo ?? 0;
-  const haveQuote = Boolean(addressLocation) && Boolean(quote) && !quote!.flat_fallback;
-  const deliveryFee = haveQuote ? quote!.delivery_fee_kobo : flatFee;
-  const deliveryEstimated = !haveQuote;
+  // A quote is a SERVER price and is always used; flat_fallback only means it is
+  // not distance-based. The old rule discarded a flat-fallback quote in favour of
+  // restaurant.deliveryFeeKobo — a field with no column and no DTO behind it —
+  // so the fee rendered as ₦0 for every restaurant without coordinates while
+  // PlaceOrder still charged the real one.
+  const deliveryQuoteView = resolveDeliveryFee(quote);
+  const deliveryFee = deliveryQuoteView.feeKobo;
+  const deliveryKnown = deliveryQuoteView.known;
+  const deliveryEstimated = deliveryQuoteView.estimated;
+  const deliveryCalculating = Boolean(addressLocation) && quoteQ.isPending && !quote;
+  // Only a distance-based quote carries a breakdown worth showing.
+  const haveQuote = deliveryKnown && !deliveryEstimated;
   // Service fee shown as an estimate; the SERVER computes the authoritative total.
   const serviceFee = Math.round(subtotal * 0.05);
   // Mandatory take-away packaging — one pack fee PER takeaway package the customer
@@ -330,14 +337,20 @@ export default function CheckoutScreen() {
           <Line label={`Subtotal (${count} item${count > 1 ? 's' : ''})`} value={formatNaira(subtotal)} />
           <Line
             label={
-              deliveryEstimated
-                ? 'Delivery fee (estimated — add your address)'
-                : 'Delivery fee'
+              !deliveryKnown
+                ? 'Delivery fee (add your address)'
+                : deliveryEstimated
+                  ? 'Delivery fee (estimated)'
+                  : 'Delivery fee'
             }
             value={
-              addressLocation && quoteQ.isPending && !quote
+              deliveryCalculating
                 ? 'Calculating…'
-                : formatNaira(deliveryFee)
+                : // Never render ₦0 for a fee nobody has quoted: the customer
+                  // would read "free delivery" and then be charged at checkout.
+                  deliveryKnown
+                  ? formatNaira(deliveryFee)
+                  : '—'
             }
           />
           {/* Distance/time delivery breakdown — only when we have a real quote.

@@ -121,10 +121,11 @@ export function mapRestaurant(input: unknown): Restaurant {
     minOrderKobo: kobo(pick(raw, 'minOrderKobo', 'min_order_kobo')),
     packagingFeeKobo: kobo(pick(raw, 'packagingFeeKobo', 'packaging_fee_kobo')),
 
-    // NOT part of the discovery DTO. The authoritative delivery fee is
-    // distance-based and comes from the quote endpoint at checkout, so no food
-    // screen reads this field. Zero here is a placeholder, never a quoted price.
-    deliveryFeeKobo: 0,
+    // deliveryFeeKobo is deliberately NOT set. It is absent from the discovery
+    // DTO and from `restaurants` altogether; the real fee is distance-based and
+    // comes from the delivery-quote endpoint. Emitting 0 here made an unknown
+    // fee look like free delivery on both the store page and checkout — leaving
+    // it undefined forces callers to treat it as unknown.
 
     promo: null,
 
