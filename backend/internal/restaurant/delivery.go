@@ -419,6 +419,12 @@ type UpdateRestaurantRequest struct {
 	Description *string `json:"description,omitempty"`
 	Address     *string `json:"address,omitempty"`
 	LogoURL     *string `json:"logo_url,omitempty"`
+	// PackagingFeeKobo is the price of ONE takeaway pack. The platform seeds ₦200,
+	// but the price is the owner's to set — including 0, for a restaurant that does
+	// not charge for packaging. A POINTER so that 0 is a real choice and not
+	// indistinguishable from "field omitted"; COALESCE below leaves it unchanged
+	// only when nil.
+	PackagingFeeKobo *int64 `json:"packaging_fee_kobo,omitempty"`
 }
 
 // UpdateRestaurant lets the owner edit their store's name/description/address/logo.
@@ -430,14 +436,28 @@ func (s *Service) UpdateRestaurant(ctx context.Context, restaurantID, userID str
 	if req.Name != nil && *req.Name == "" {
 		return nil, fmt.Errorf("restaurant: name cannot be empty")
 	}
+	// Packaging is money the customer will be charged on every future order, so the
+	// bounds are enforced here rather than left to the DB check alone: a negative
+	// price would subtract from the escrowed total and break settlement
+	// conservation, and an absurd one is a data-entry slip (kobo/naira confusion)
+	// that would otherwise be billed to real customers before anyone noticed.
+	if req.PackagingFeeKobo != nil {
+		if *req.PackagingFeeKobo < 0 {
+			return nil, fmt.Errorf("restaurant: packaging fee cannot be negative")
+		}
+		if *req.PackagingFeeKobo > maxPackagingFeePerPackKobo {
+			return nil, fmt.Errorf("restaurant: packaging fee per pack may not exceed %d kobo", maxPackagingFeePerPackKobo)
+		}
+	}
 	const q = `UPDATE restaurants
-	              SET name        = COALESCE($2, name),
-	                  description = COALESCE($3, description),
-	                  address     = COALESCE($4, address),
-	                  logo_url    = COALESCE($5, logo_url),
-	                  updated_at  = NOW()
+	              SET name               = COALESCE($2, name),
+	                  description        = COALESCE($3, description),
+	                  address            = COALESCE($4, address),
+	                  logo_url           = COALESCE($5, logo_url),
+	                  packaging_fee_kobo = COALESCE($6, packaging_fee_kobo),
+	                  updated_at         = NOW()
 	            WHERE id = $1`
-	if _, err := s.db.Exec(ctx, q, restaurantID, req.Name, req.Description, req.Address, req.LogoURL); err != nil {
+	if _, err := s.db.Exec(ctx, q, restaurantID, req.Name, req.Description, req.Address, req.LogoURL, req.PackagingFeeKobo); err != nil {
 		return nil, err
 	}
 	// Re-geocode when the address changed so "near me" stays correct. A geocode

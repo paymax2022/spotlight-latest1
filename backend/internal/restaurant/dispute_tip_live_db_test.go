@@ -90,7 +90,7 @@ func newDisputeTipFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	// needs a KYC tier. Tier 3 is unlimited — these tests are about the dispute, not the cap.
 	seedKYCTier(t, ctx, pool, customer, 3)
 	restID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,$3,'1 St',TRUE)`, restID, owner, kitchen); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open, packaging_fee_kobo) VALUES ($1,$2,$3,'1 St',TRUE,0)`, restID, owner, kitchen); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 	cat, err := svc.CreateCategory(ctx, restID, owner, "Mains")
@@ -342,7 +342,7 @@ func TestLiveDB_DisputeNoClawbackWhenRiderNeverPaidTip(t *testing.T) {
 	// needs a KYC tier. Tier 3 is unlimited — these tests are about the dispute, not the cap.
 	seedKYCTier(t, ctx, pool, customer, 3)
 	restID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Unpaid Tip Kitchen','1 St',TRUE)`, restID, owner); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open, packaging_fee_kobo) VALUES ($1,$2,'Unpaid Tip Kitchen','1 St',TRUE,0)`, restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 	cat, err := svc.CreateCategory(ctx, restID, owner, "Mains")
@@ -757,7 +757,7 @@ func TestLiveDB_DisputeTipClawbackDeferredToNextSettlement(t *testing.T) {
 
 	// --- The rider's NEXT delivery pays them, and the sweep discharges the debt. ---
 	restID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Next Delivery Kitchen','2 St',TRUE)`, restID, f.owner); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open, packaging_fee_kobo) VALUES ($1,$2,'Next Delivery Kitchen','2 St',TRUE,0)`, restID, f.owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 	cat, err := f.svc.CreateCategory(ctx, restID, f.owner, "Mains")

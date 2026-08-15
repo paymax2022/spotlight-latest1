@@ -114,43 +114,15 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 	if sett.Status != StatusEscrowed {
 		return fmt.Errorf("settlement: cannot settle — current status is %s", sett.Status)
 	}
-	// A tip larger than what was escrowed would drive the non-tip base (and thus the
-	// provider remainder) negative. Fail closed — the tip can never exceed the total.
-	if split.TipKobo+split.ServiceFeeKobo > sett.TotalKobo {
-		return fmt.Errorf("settlement: tip %d + service fee %d exceed escrowed total %d", split.TipKobo, split.ServiceFeeKobo, sett.TotalKobo)
+	// The split arithmetic — including every fail-closed bound (fixed legs may not
+	// exceed the escrowed total; no leg may go negative) — lives in ComputeLegs, so
+	// that the tests exercise the same expression this moves money by rather than a
+	// copy of it. See settlement/model.go.
+	legs, err := ComputeLegs(sett.TotalKobo, split)
+	if err != nil {
+		return err
 	}
-
-	// Compute splits. The percentages apply to the pre-discount GROSS (the item+delivery
-	// value before any promo), NOT to the escrowed total. Two amounts already sit inside
-	// the escrowed total: a tip (a fixed rider leg on top) and a promo discount (already
-	// deducted from what the payer paid). Reconstructing the gross:
-	//
-	//	base  = total − tip            (escrow beyond the tip = gross − discount)
-	//	gross = base + discount        (pre-discount base+delivery the percentages price)
-	//
-	// The discount is borne by exactly one party: platform-funded → subtracted from the
-	// platform leg; otherwise it falls out of the provider remainder. The rider never
-	// funds it and always gets its gross share + the full tip. With tip == 0 AND
-	// discount == 0, gross == base == total and this is the pure percentage split —
-	// unchanged for every caller that sets neither.
-	base := sett.TotalKobo - split.TipKobo - split.ServiceFeeKobo
-	gross := base + split.DiscountKobo
-	platformKobo := int64(float64(gross)*split.PlatformPct) + split.ServiceFeeKobo
-	if split.DiscountFundedByPlatform {
-		platformKobo -= split.DiscountKobo
-	}
-	riderKobo := int64(0)
-	if split.RiderID != nil {
-		riderKobo = int64(float64(gross)*split.RiderPct) + split.TipKobo
-	}
-	providerKobo := sett.TotalKobo - platformKobo - riderKobo
-
-	// Fail closed if any leg would go negative — a discount larger than the funder's
-	// gross share must never silently invert a payout (platform-funded drives the
-	// platform leg negative; provider-funded drives the provider remainder negative).
-	if platformKobo < 0 || riderKobo < 0 || providerKobo < 0 {
-		return fmt.Errorf("settlement: split produced a negative leg (provider=%d platform=%d rider=%d) — discount too large for the funder", providerKobo, platformKobo, riderKobo)
-	}
+	providerKobo, platformKobo, riderKobo := legs.ProviderKobo, legs.PlatformKobo, legs.RiderKobo
 
 	// ATOMICITY FIX (money invariant): previously the provider/rider credits went
 	// through s.ledger.Credit (which posts on the ledger's OWN connection), while the
