@@ -24,7 +24,8 @@
     "test:modules": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/modules/*.spec.ts\"",
     "test:food": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/food/*.spec.ts\"",
     "test:location": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/location/*.spec.ts\"",
-    "test:merchant2": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/merchant2/*.spec.ts\""
+    "test:merchant2": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/merchant2/*.spec.ts\"",
+    "test:merchantws": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/merchantws/*.spec.ts\""
   },
   "dependencies": {
     "@expo-google-fonts/plus-jakarta-sans": "^0.4.2",

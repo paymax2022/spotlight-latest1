@@ -35,10 +35,17 @@ import type {
   SubmitApplicationInput,
 } from '@/types/merchant';
 
-// Mock by default; flip with EXPO_PUBLIC_MERCHANT_USE_MOCK=false to hit the Go
-// backend (/api/v1/onboarding/*, /api/v1/me/capabilities). Matches the house
-// convention used by fx/doctor/realtor/mobility feature APIs.
-const USE_MOCK = (process.env.EXPO_PUBLIC_MERCHANT_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+// LIVE by default, against /api/v1/onboarding/* and /api/v1/me/capabilities —
+// set EXPO_PUBLIC_MERCHANT_USE_MOCK=true for the offline demo store below.
+//
+// It used to default the other way, so the whole onboarding wizard ran on an
+// in-memory mock and never touched the Go engine, even though 10 of the 11
+// functions here already had live branches. Matches restaurantmerchant, which
+// also defaults live.
+//
+// ⚠️ The server side needs FEATURE_ONBOARDING_ENABLED=true, or the Go routes are
+// not registered at all and every call 404s.
+const USE_MOCK = (process.env.EXPO_PUBLIC_MERCHANT_USE_MOCK ?? 'false').toLowerCase() === 'true';
 
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const nowISO = () => new Date().toISOString();
@@ -52,7 +59,10 @@ const SEED_SELLER_PROFILE: MerchantProfile = {
   id: 'mp-seller-1', userId: ME_USER_ID, moduleId: 'mod-marketplace', moduleName: 'Marketplace',
   merchantTypeId: 'mt-seller', merchantTypeName: 'Marketplace Seller', icon: 'ShoppingBag',
   roleGranted: 'marketplace_seller', status: 'ACTIVE', activatedAt: new Date(Date.now() - 40 * 86400000).toISOString(),
-  workspaceRoute: '/services/marketplace',
+  // Same convention the Go service writes on approval: /merchant/<type slug>.
+  // The mock previously invented '/services/marketplace', so mock and live
+  // exercised different routes and only live could be wrong.
+  workspaceRoute: '/merchant/seller',
 };
 
 const db: {
@@ -261,7 +271,8 @@ export async function __demoApprove(applicationId: string): Promise<void> {
       id: uid('mp'), userId: ME_USER_ID, moduleId: type.moduleId, moduleName: type.moduleName,
       merchantTypeId: type.id, merchantTypeName: type.name, icon: type.icon,
       roleGranted: type.roleToGrant, status: 'ACTIVE', activatedAt: nowISO(),
-      workspaceRoute: type.id === 'mt-doctor' ? '/(doctor)/(tabs)/dashboard' : '/services/marketplace',
+      // Mirrors onboarding/service.go: fmt.Sprintf("/merchant/%s", mt.Slug).
+      workspaceRoute: `/merchant/${type.slug}`,
     });
   }
 }
