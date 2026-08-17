@@ -39,14 +39,15 @@ export interface MerchantWorkspace {
  *                            used `/(doctor)/(tabs)/dashboard`, which does not
  *                            resolve — there is no `dashboard` screen.
  *   • seller               — marketplace selling: listings, compose, edit, boost
- *   • pharmacy             — nothing yet. Everything under app/health/pharmacy is
- *                            the CUSTOMER side (cart, checkout, BNPL).
+ *   • pharmacy             — the pharmacist's order inbox. Note app/health/pharmacy
+ *                            is the CUSTOMER side (cart, checkout, BNPL); the
+ *                            merchant side is app/pharmacy.
  */
 export const MERCHANT_WORKSPACES: Record<string, MerchantWorkspace> = {
   restaurant: { label: 'Restaurant', route: '/food/restaurant/manage' },
   'medical-practitioner': { label: 'Medical practice', route: '/(doctor)/(tabs)' },
   seller: { label: 'Marketplace shop', route: '/marketplace/sell' },
-  pharmacy: { label: 'Pharmacy' },
+  pharmacy: { label: 'Pharmacy', route: '/pharmacy/orders' },
 };
 
 export type WorkspaceResolution =

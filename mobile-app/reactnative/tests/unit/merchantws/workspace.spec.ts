@@ -73,12 +73,27 @@ describe('resolveWorkspace', () => {
     }
   });
 
-  it('reports an approved type with no tooling honestly', () => {
-    // Pharmacy can be approved today, but everything under app/health/pharmacy
-    // is the customer side. Saying so beats redirecting somewhere unrelated.
+  it('sends an approved pharmacist to their order inbox', () => {
+    // Pharmacy was 'not-built' until the inbox existed. It is the merchant side
+    // (app/pharmacy); app/health/pharmacy is the CUSTOMER side.
     const r = resolveWorkspace('pharmacy', [profile({ workspaceRoute: '/merchant/pharmacy' })]);
-    assert.equal(r.kind, 'not-built');
-    if (r.kind === 'not-built') assert.equal(r.label, 'Pharmacy');
+    assert.equal(r.kind, 'workspace');
+    if (r.kind === 'workspace') assert.equal(r.route, '/pharmacy/orders');
+  });
+
+  it('still reports honestly when a type genuinely has no tooling', () => {
+    // The not-built path must keep working for the next type added to the
+    // registry before its screens exist — that is the whole point of the state.
+    const stub = { label: 'Stub trade' } as const;
+    const original = MERCHANT_WORKSPACES.__stub;
+    (MERCHANT_WORKSPACES as Record<string, typeof stub>).__stub = stub;
+    try {
+      const r = resolveWorkspace('__stub', [profile({ workspaceRoute: '/merchant/__stub' })]);
+      assert.equal(r.kind, 'not-built');
+      if (r.kind === 'not-built') assert.equal(r.label, 'Stub trade');
+    } finally {
+      if (original === undefined) delete (MERCHANT_WORKSPACES as Record<string, unknown>).__stub;
+    }
   });
 
   it('refuses a workspace the caller has not been approved for', () => {
