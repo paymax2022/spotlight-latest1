@@ -19,6 +19,15 @@ export function usePharmacyOrders(state?: string) {
   });
 }
 
+/** The owner's earnings. Same namespace, so an action refreshes it too. */
+export function usePharmacyEarnings() {
+  return useQuery({
+    queryKey: [KEY, 'earnings'],
+    queryFn: pharm.getEarnings,
+    staleTime: 15_000,
+  });
+}
+
 export function usePharmacyOrder(id?: string) {
   return useQuery({
     queryKey: [KEY, 'order', id],

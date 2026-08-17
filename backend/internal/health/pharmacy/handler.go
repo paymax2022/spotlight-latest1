@@ -262,6 +262,19 @@ func parseIntDefault(raw string, def int) int {
 	return n
 }
 
+// Earnings — GET /earnings
+//
+// What the caller's pharmacies have been paid, and what is still held for them.
+// Scoped by ownership server-side; an owner of nothing sees zeros.
+func (h *Handler) Earnings(c *gin.Context) {
+	e, err := h.svc.EarningsForOwner(c.Request.Context(), uid(c))
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "earnings": e})
+}
+
 // ─── Multi-pharmacy discovery + ratings (HL-2 gated) ─────────────────────────
 
 // DiscoverPharmacies — GET /pharmacies?lat=&lng=&radius_m=&sort=distance|rating|name&q=

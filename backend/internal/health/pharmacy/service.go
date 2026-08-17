@@ -1283,3 +1283,36 @@ func (s *Service) ListForOwner(ctx context.Context, ownerID, state string, limit
 	}
 	return out, rows.Err()
 }
+
+// EarningsForOwner totals what this owner's pharmacies have been paid and what is
+// still held for them.
+//
+// A pharmacy is paid by escrow RELEASE on completion, straight to the owner's
+// wallet — there is no payout-run batching as there is for restaurants. That made
+// the money invisible as a BUSINESS figure: the owner saw undifferentiated wallet
+// credits with no attribution to orders, and no idea how much was still held.
+//
+// Amounts come from escrow_holds rather than pharmacy_orders.total_kobo, because
+// the hold is the money record: it knows whether funds were released, refunded or
+// are still held, which the order's workflow state only implies.
+//
+// Scoped by ownership, resolved server-side. An owner with no pharmacies gets
+// zeros, not the platform's totals.
+func (s *Service) EarningsForOwner(ctx context.Context, ownerID string) (*PharmacyEarnings, error) {
+	const q = `
+		SELECT
+		  COALESCE(SUM(eh.amount_kobo) FILTER (WHERE eh.state = 'RELEASED'), 0),
+		  COALESCE(SUM(eh.amount_kobo) FILTER (WHERE eh.state = 'HELD'), 0),
+		  COUNT(*) FILTER (WHERE eh.state = 'RELEASED')
+		FROM pharmacy_orders o
+		JOIN health_providers hp ON hp.id = o.pharmacy_provider_id
+		JOIN escrow_holds     eh ON eh.id = o.escrow_id
+		WHERE hp.owner_user_id = $1`
+
+	var out PharmacyEarnings
+	if err := s.db.QueryRow(ctx, q, ownerID).
+		Scan(&out.ReleasedKobo, &out.HeldKobo, &out.OrdersPaid); err != nil {
+		return nil, fmt.Errorf("pharmacy: earnings: %w", err)
+	}
+	return &out, nil
+}

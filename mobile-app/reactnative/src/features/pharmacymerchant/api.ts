@@ -95,3 +95,30 @@ export async function completeOrder(id: string, pickupCode: string | undefined, 
     idem(key),
   );
 }
+
+/** The owner's money view: paid out, and still held in escrow. */
+export interface PharmacyEarnings {
+  released_kobo: number;
+  held_kobo: number;
+  orders_paid: number;
+}
+
+/**
+ * Earnings for the caller's pharmacies.
+ *
+ * `released_kobo` is money that has actually reached them — escrow.Release
+ * credits the full held amount, so it is exact rather than an estimate.
+ * `held_kobo` is customer money still in escrow, which completing the order
+ * releases.
+ */
+export async function getEarnings(): Promise<PharmacyEarnings> {
+  const { data } = await api.get<{ earnings?: Partial<PharmacyEarnings> }>(`${BASE}/earnings`);
+  const e = data?.earnings ?? {};
+  // Coerced defensively: these render as money, and `undefined` formatted as
+  // naira reads as NaN on a merchant's earnings screen.
+  return {
+    released_kobo: Number.isFinite(e.released_kobo) ? Number(e.released_kobo) : 0,
+    held_kobo: Number.isFinite(e.held_kobo) ? Number(e.held_kobo) : 0,
+    orders_paid: Number.isFinite(e.orders_paid) ? Number(e.orders_paid) : 0,
+  };
+}
