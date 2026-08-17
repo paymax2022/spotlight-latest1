@@ -1316,3 +1316,48 @@ func (s *Service) EarningsForOwner(ctx context.Context, ownerID string) (*Pharma
 	}
 	return &out, nil
 }
+
+// ListProductsForOwner returns every product belonging to the pharmacies this
+// user OWNS — including the ones customers cannot see.
+//
+// ListProducts is the CUSTOMER catalogue: it filters to
+// `active = true AND nafdac_status = 'REGISTERED'`, which is right for a shopper
+// and useless for a merchant. Under it an owner could write a product but never
+// read it back once it stopped being sellable: a line taken off sale vanished
+// from their own view, with no way to reprice, restock, or reactivate it, and a
+// product still awaiting NAFDAC verification was invisible to the person meant to
+// chase it.
+//
+// Managing stock means seeing all of it, so this deliberately applies NO status
+// filter. Scoped by ownership, resolved server-side — a rival's pricing and stock
+// levels are commercially sensitive, and an owner of nothing gets nothing.
+func (s *Service) ListProductsForOwner(ctx context.Context, ownerID string) ([]Product, error) {
+	const q = `
+		SELECT pr.id, pr.pharmacy_provider_id, COALESCE(hp.display_name, ''), pr.name, pr.nafdac_ref,
+		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty,
+		       pr.active, pr.created_at
+		FROM pharmacy_products pr
+		JOIN health_providers hp ON hp.id = pr.pharmacy_provider_id
+		WHERE hp.owner_user_id = $1
+		ORDER BY pr.active DESC, pr.name ASC
+		LIMIT 500`
+
+	rows, err := s.db.Query(ctx, q, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Non-nil so the handler serialises [] rather than null for an empty shelf.
+	out := []Product{}
+	for rows.Next() {
+		var p Product
+		if err := rows.Scan(&p.ID, &p.PharmacyProviderID, &p.PharmacyName, &p.Name, &p.NAFDACRef,
+			&p.NAFDACStatus, &p.RxRequired, &p.IsControlled, &p.PriceKobo, &p.StockQty,
+			&p.Active, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

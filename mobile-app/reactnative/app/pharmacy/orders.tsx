@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { ChevronRight, Pill, Wallet } from 'lucide-react-native';
+import { ChevronRight, Pill, Wallet, Package } from 'lucide-react-native';
 
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
@@ -52,16 +52,28 @@ export default function PharmacyOrdersScreen() {
 
       {/* Earnings is the other half of a merchant's day, so it lives one tap from
           the queue rather than behind a menu. */}
-      <Pressable
-        style={({ pressed }) => [s.earningsLink, pressed && { opacity: 0.9 }]}
-        onPress={() => router.push('/pharmacy/earnings' as never)}
-        accessibilityRole="button"
-        accessibilityLabel="View earnings"
-      >
-        <Wallet size={16} color={Colors.primary} strokeWidth={2} />
-        <Text style={s.earningsText}>Earnings</Text>
-        <ChevronRight size={15} color={Colors.outline} strokeWidth={2} />
-      </Pressable>
+      <View style={s.linkRow}>
+        <Pressable
+          style={({ pressed }) => [s.earningsLink, { flex: 1 }, pressed && { opacity: 0.9 }]}
+          onPress={() => router.push('/pharmacy/earnings' as never)}
+          accessibilityRole="button"
+          accessibilityLabel="View earnings"
+        >
+          <Wallet size={16} color={Colors.primary} strokeWidth={2} />
+          <Text style={s.earningsText}>Earnings</Text>
+          <ChevronRight size={15} color={Colors.outline} strokeWidth={2} />
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [s.earningsLink, { flex: 1 }, pressed && { opacity: 0.9 }]}
+          onPress={() => router.push('/pharmacy/catalogue' as never)}
+          accessibilityRole="button"
+          accessibilityLabel="Manage products"
+        >
+          <Package size={16} color={Colors.primary} strokeWidth={2} />
+          <Text style={s.earningsText}>Products</Text>
+          <ChevronRight size={15} color={Colors.outline} strokeWidth={2} />
+        </Pressable>
+      </View>
 
       <View style={s.tabs}>
         {(['todo', 'all'] as Filter[]).map((f) => (
@@ -143,9 +155,9 @@ export default function PharmacyOrdersScreen() {
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   body: { padding: Spacing.md, gap: Spacing.sm },
+  linkRow: { flexDirection: 'row', gap: Spacing.sm, marginHorizontal: Spacing.md, marginBottom: Spacing.sm },
   earningsLink: {
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.xs,
-    marginHorizontal: Spacing.md, marginBottom: Spacing.sm, padding: Spacing.md,
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, padding: Spacing.md,
     borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.surfaceContainerHigh,
     backgroundColor: Colors.surfaceContainerLowest,
   },

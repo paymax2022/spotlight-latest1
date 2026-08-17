@@ -85,6 +85,7 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	// --- Member routes (/api/finance/health/pharmacy) — HEALTH-BUILD §6 ---
 	pg := member.Group("/health/pharmacy")
 	pg.GET("/products", h.ListProducts)                         // NAFDAC-gated, Rx flag (HL-5)
+	pg.GET("/products/mine", h.MyProducts)                      // owner shelf incl. off-sale (before :id)
 	pg.GET("/products/:id", h.GetProduct)                       // single product + owning pharmacy
 	pg.POST("/products", h.UpsertProduct)                       // pharmacy owner, HL-5 write-gate
 	pg.POST("/prescriptions/:id/verify", h.VerifyPrescription)  // pharmacist, HL-3

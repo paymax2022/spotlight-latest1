@@ -95,6 +95,21 @@ func (h *Handler) UpsertProduct(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"success": true, "product": out})
 }
 
+// MyProducts — GET /products/mine
+//
+// The owner's own shelf, including lines customers cannot see (deactivated, or
+// pending NAFDAC). Scoped by ownership server-side.
+//
+// Registered BEFORE /products/:id so Gin does not read "mine" as an id.
+func (h *Handler) MyProducts(c *gin.Context) {
+	list, err := h.svc.ListProductsForOwner(c.Request.Context(), uid(c))
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "products": list})
+}
+
 // CreateOrder — POST /orders  (patient, payment HELD, HL-9)
 func (h *Handler) CreateOrder(c *gin.Context) {
 	id := uid(c)

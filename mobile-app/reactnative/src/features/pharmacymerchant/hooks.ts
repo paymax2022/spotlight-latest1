@@ -28,6 +28,24 @@ export function usePharmacyEarnings() {
   });
 }
 
+/** The owner's shelf, off-sale lines included. */
+export function usePharmacyProducts() {
+  return useQuery({
+    queryKey: [KEY, 'products'],
+    queryFn: pharm.listMyProducts,
+    staleTime: 30_000,
+  });
+}
+
+/** Create or update a product; refreshes the shelf on success. */
+export function useUpsertProduct() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: Parameters<typeof pharm.upsertProduct>[0]) => pharm.upsertProduct(p),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'products'] }),
+  });
+}
+
 export function usePharmacyOrder(id?: string) {
   return useQuery({
     queryKey: [KEY, 'order', id],

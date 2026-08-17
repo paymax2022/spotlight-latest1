@@ -122,3 +122,41 @@ export async function getEarnings(): Promise<PharmacyEarnings> {
     orders_paid: Number.isFinite(e.orders_paid) ? Number(e.orders_paid) : 0,
   };
 }
+
+// ── Catalogue ────────────────────────────────────────────────────────────────
+
+export interface PharmacyProduct {
+  id: string;
+  pharmacy_provider_id: string;
+  name: string;
+  nafdac_ref: string;
+  nafdac_status: string;
+  rx_required: boolean;
+  is_controlled: boolean;
+  price_kobo: number;
+  stock_qty: number;
+  active: boolean;
+}
+
+/**
+ * The owner's own shelf — including lines a customer cannot see (off sale, or
+ * pending NAFDAC). GET /products is the CUSTOMER catalogue and filters those
+ * out, which is right for a shopper and useless for managing stock.
+ */
+export async function listMyProducts(): Promise<PharmacyProduct[]> {
+  const { data } = await api.get<{ products?: PharmacyProduct[] }>(`${BASE}/products/mine`);
+  return Array.isArray(data?.products) ? data.products : [];
+}
+
+/**
+ * Create or update a product.
+ *
+ * The server owns the rules and re-checks them all: verified-owner (HL-2), a
+ * positive price, a NAFDAC reference (HL-5), and controlled substances refused
+ * outright (HL-4). Sending the whole product is the API's shape — it is an
+ * upsert, not a patch.
+ */
+export async function upsertProduct(p: Partial<PharmacyProduct>): Promise<PharmacyProduct> {
+  const { data } = await api.post<{ product: PharmacyProduct }>(`${BASE}/products`, p);
+  return data.product;
+}
