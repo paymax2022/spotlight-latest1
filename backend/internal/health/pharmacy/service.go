@@ -1213,3 +1213,73 @@ func generatePickupCode() string {
 	}
 	return string(b)
 }
+
+// ─── Owner order inbox ──────────────────────────────────────────────────────
+
+// maxOwnerOrderPage bounds a client-supplied page size. Without it, `limit` is a
+// lever for pulling the whole order table in one request.
+const maxOwnerOrderPage = 100
+const defaultOwnerOrderPage = 50
+
+// ListForOwner returns orders belonging to the pharmacies this user OWNS, newest
+// first, optionally narrowed to one state.
+//
+// This is the pharmacist's inbox, and until it existed a pharmacy could take
+// money (CreateOrder holds the payment) and complete a fulfilment lifecycle —
+// confirm → dispense → dispatch → complete — with no way to discover WHICH orders
+// were waiting: the only reads were GET /orders/:id, which needs an id you
+// already have, and an admin-only list.
+//
+// Scoping is by ownership, resolved server-side from health_providers; the caller
+// never names a pharmacy. An owner with no pharmacies gets an empty list, not
+// everyone's orders.
+//
+// pickup_code is deliberately NOT selected. Service.Get strips it for every
+// reader who is not the patient, because it is the credential the patient
+// presents at the counter — returning it here would hand the pharmacy the very
+// token it is meant to check against.
+func (s *Service) ListForOwner(ctx context.Context, ownerID, state string, limit, offset int) ([]Order, error) {
+	if limit <= 0 {
+		limit = defaultOwnerOrderPage
+	}
+	if limit > maxOwnerOrderPage {
+		limit = maxOwnerOrderPage
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	// State is bound as a parameter and compared only when non-empty, so an
+	// unknown value yields an empty page rather than an error or a wildcard.
+	const q = `
+		SELECT o.id, o.patient_id, o.pharmacy_provider_id, o.prescription_id, o.state,
+		       o.fulfilment_method, o.total_kobo, o.escrow_id, o.delivery_ref,
+		       o.idempotency_key, o.created_at
+		FROM pharmacy_orders o
+		JOIN health_providers hp ON hp.id = o.pharmacy_provider_id
+		WHERE hp.owner_user_id = $1
+		  AND ($2 = '' OR o.state = $2)
+		ORDER BY o.created_at DESC
+		LIMIT $3 OFFSET $4`
+
+	rows, err := s.db.Query(ctx, q, ownerID, state, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Non-nil so the handler serialises [] rather than null for an empty inbox.
+	out := []Order{}
+	for rows.Next() {
+		var o Order
+		var st, method string
+		if err := rows.Scan(&o.ID, &o.PatientID, &o.PharmacyProviderID, &o.PrescriptionID, &st,
+			&method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.IdempotencyKey, &o.CreatedAt); err != nil {
+			return nil, err
+		}
+		o.State = OrderState(st)
+		o.FulfilmentMethod = FulfilmentMethod(method)
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}

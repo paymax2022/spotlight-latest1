@@ -93,6 +93,10 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	pg.GET("/pharmacies/:id/reviews", h.ListPharmacyReviews)    // public rating feed
 	pg.POST("/pharmacies/:id/profile", h.UpsertPharmacyProfile) // verified owner storefront settings (HL-2)
 	pg.POST("/orders", h.CreateOrder)                           // patient, payment HELD (HL-9)
+	// The pharmacist's inbox — orders for the pharmacies the caller OWNS. Declared
+	// BEFORE /orders/:id so Gin routes the literal path rather than binding "orders"
+	// as an :id.
+	pg.GET("/orders", h.ListMine)                               // owner-scoped fulfilment queue
 	pg.GET("/orders/:id", h.Get)                                // object-level authZ
 	pg.POST("/orders/:id/confirm", h.Confirm)                   // HL-3 verified e-Rx gate
 	pg.POST("/orders/:id/dispense", h.Dispense)                 // pharmacist (HL-1/HL-3)

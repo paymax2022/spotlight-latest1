@@ -3,6 +3,7 @@ package healthpharmacy
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -228,6 +229,37 @@ func (h *Handler) Get(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
+}
+
+// ListMine — GET /orders?state=&limit=&offset=
+//
+// The pharmacist's inbox: orders belonging to the pharmacies the CALLER owns.
+// Scoping is derived server-side from ownership — the caller never names a
+// pharmacy — so there is no id to tamper with, and a user who owns none gets an
+// empty list.
+//
+// Registered BEFORE /orders/:id so Gin does not treat "orders" as an :id.
+func (h *Handler) ListMine(c *gin.Context) {
+	orders, err := h.svc.ListForOwner(
+		c.Request.Context(), uid(c), c.Query("state"),
+		parseIntDefault(c.Query("limit"), 0), parseIntDefault(c.Query("offset"), 0),
+	)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "orders": orders})
+}
+
+// parseIntDefault reads a non-negative integer query param, falling back to def
+// for anything absent or malformed. The service clamps the range; a bad string is
+// not worth a 400 on a list read.
+func parseIntDefault(raw string, def int) int {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n < 0 {
+		return def
+	}
+	return n
 }
 
 // ─── Multi-pharmacy discovery + ratings (HL-2 gated) ─────────────────────────
