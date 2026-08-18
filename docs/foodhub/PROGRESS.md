@@ -44,6 +44,18 @@ skipped by every payout run with nothing surfaced to owner or admin.
 how much has already settled behind the gate. Manage Store shows it as a banner,
 only when that outlet is blocked.
 
+## Staff roles (A18) — done
+
+`restaurant_staff` grants authority per (outlet, user), so a manager at Lekki has
+none at Ikeja. OWNER rows are system-managed, mirroring `restaurants.owner_id`;
+the staff API grants only MANAGER/CASHIER/KITCHEN/RIDER. 1237 owner rows
+backfilled — exactly the number of restaurants with an owner — so resolution
+returns what `assertOwner` returns and the migration alone changes no behaviour.
+
+Still to do: the invite/accept endpoints and the owner-facing Staff screen. The
+table, matrix and resolver are in; nothing calls `AssertStaffPermission` in place
+of `assertOwner` yet — that swap is deliberately a separate, reviewable step.
+
 ## Remaining Phase 1 work
 
 **A17 — two owner-application paths.** `onb_application` grants the capability; `restaurant_kyb` gates payouts. Neither triggers the other, so today a user can hold the capability without approved KYB (can trade, cannot be paid) or the reverse.
