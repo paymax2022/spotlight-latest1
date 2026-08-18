@@ -33,6 +33,11 @@ export function useCreateStore() {
   });
 }
 
+/** Per-outlet payout readiness for the signed-in owner. */
+export function usePayoutReadiness() {
+  return useQuery({ queryKey: [KEY, 'payout-readiness'], queryFn: merchant.getPayoutReadiness, staleTime: 60_000 });
+}
+
 export function useUpdateStore(id: string) {
   const qc = useQueryClient();
   return useMutation({

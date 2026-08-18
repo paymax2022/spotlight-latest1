@@ -76,3 +76,22 @@ export interface MerchantEarnings {
   pendingKobo: Kobo;
   runs: EarningsRun[];
 }
+
+/**
+ * Per-outlet payout readiness — the capability↔KYB bridge (foodhub A17).
+ *
+ * The merchant capability lets a person trade; KYB lets an OUTLET be paid
+ * (payout runs select `kyb_status = 'approved'`, PY-007). They are separate on
+ * purpose — banking is per outlet — so this reports the join.
+ */
+export interface OutletPayoutReadiness {
+  restaurantId: string;
+  name: string;
+  /** 'none' when the outlet has no KYB record at all. */
+  kybStatus: string;
+  payable: boolean;
+  /** Owner-facing, empty when payable. */
+  reason?: string;
+  /** Settled earnings already held behind the gate, integer kobo. */
+  unpaidKobo: Kobo;
+}

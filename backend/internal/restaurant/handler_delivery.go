@@ -127,6 +127,20 @@ func (h *Handler) Earnings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": e})
 }
 
+// PayoutReadiness → GET /restaurant/payout-readiness
+//
+// The capability↔KYB bridge, per outlet: can this shop be paid, why not, and how
+// much has already settled behind the gate. Scoped by ownership server-side.
+func (h *Handler) PayoutReadiness(c *gin.Context) {
+	userID := c.GetString("user_id")
+	list, err := h.svc.PayoutReadinessForOwner(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"outlets": list})
+}
+
 // MyRestaurants → GET /restaurant/mine (the caller's own stores).
 func (h *Handler) MyRestaurants(c *gin.Context) {
 	userID := c.GetString("user_id")

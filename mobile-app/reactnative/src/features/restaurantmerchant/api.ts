@@ -19,6 +19,7 @@ import { api } from '@/api/client';
 import { buildUpdateStoreBody } from './packagingPrice';
 import type {
   MerchantStore,
+  OutletPayoutReadiness,
   MerchantStoreDetail,
   MerchantMenuCategory,
   MerchantMenuItem,
@@ -112,6 +113,31 @@ export async function updateStore(id: string, patch: UpdateStoreInput): Promise<
   }
   const body = buildUpdateStoreBody(patch);
   return mapStore(unwrap<any>(await api.patch(`${BASE}/${enc(id)}`, body)));
+}
+
+/**
+ * Per-outlet payout readiness. Server-scoped by ownership — no id is sent.
+ *
+ * Mock mode reports every outlet payable: the offline demo has no KYB flow, and
+ * an unexplained "you cannot be paid" banner there would be noise, not a warning.
+ */
+export async function getPayoutReadiness(): Promise<OutletPayoutReadiness[]> {
+  if (USE_MOCK) {
+    await delay();
+    return [{ restaurantId: mockStore.id, name: mockStore.name, kybStatus: 'approved', payable: true, unpaidKobo: 0 }];
+  }
+  const raw = unwrap<any>(await api.get(`${BASE}/payout-readiness`));
+  const rows = Array.isArray(raw) ? raw : (raw?.outlets ?? []);
+  return rows.map((r: any) => ({
+    restaurantId: r.restaurant_id,
+    name: r.name,
+    kybStatus: r.kyb_status ?? 'none',
+    // `=== true`, never truthiness: an absent field must read as NOT payable, so a
+    // shape change can never silently tell an owner their money is on its way.
+    payable: r.payable === true,
+    reason: r.reason || undefined,
+    unpaidKobo: typeof r.unpaid_kobo === 'number' ? r.unpaid_kobo : 0,
+  }));
 }
 
 export async function setAvailability(id: string, isOpen: boolean): Promise<MerchantStore> {

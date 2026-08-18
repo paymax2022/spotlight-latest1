@@ -14,7 +14,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import {
   useMyStores, useStoreDetail, useCreateStore, useUpdateStore, useSetAvailability,
-  useCreateCategory, useDeleteCategory, useCreateItem, useDeleteItem,
+  useCreateCategory, useDeleteCategory, useCreateItem, useDeleteItem, usePayoutReadiness,
 } from '@/features/restaurantmerchant/hooks';
 import type { MerchantMenuCategory, MerchantStore } from '@/features/restaurantmerchant/types';
 import { parsePackagingPrice, packagingPriceInput } from '@/features/restaurantmerchant/packagingPrice';
@@ -212,6 +212,8 @@ function ManageStore({
           </Card>
         )}
 
+        <PayoutReadinessBanner storeId={storeId} />
+
         {/* Quick links to orders + earnings. */}
         <View style={styles.linkRow}>
           <Pressable onPress={() => router.push('/food/restaurant')} style={[styles.ordersLink, { flex: 1 }]}>
@@ -261,6 +263,34 @@ function ManageStore({
         <MenuBuilder storeId={storeId} categories={detail.data?.categories ?? []} />
       </ScrollView>
     </Shell>
+  );
+}
+
+// ── Payout readiness (capability ↔ KYB bridge) ───────────────────────────────
+//
+// Trading and being PAID are gated separately: the merchant capability lets a
+// person trade, while payout runs select `kyb_status = 'approved'` per outlet
+// (PY-007). Until now nothing joined them, so an outlet could take orders, settle
+// them, and be skipped by every payout run with no signal at all — 709 outlets
+// are in exactly that state.
+//
+// Shown only when this outlet is blocked. A banner that appears when everything
+// is fine is noise, and gets ignored when it matters.
+function PayoutReadinessBanner({ storeId }: { storeId: string }) {
+  const readiness = usePayoutReadiness();
+  const mine = readiness.data?.find((o) => o.restaurantId === storeId);
+  if (!mine || mine.payable) return null;
+
+  return (
+    <View style={styles.payoutWarn} accessibilityRole="alert">
+      <Text style={styles.payoutWarnTitle}>Payouts are on hold for this outlet</Text>
+      <Text style={styles.muted}>{mine.reason}</Text>
+      {mine.unpaidKobo > 0 && (
+        <Text style={styles.payoutWarnAmount}>
+          {naira(mine.unpaidKobo)} already earned is waiting to be paid out.
+        </Text>
+      )}
+    </View>
   );
 }
 
@@ -482,6 +512,12 @@ const styles = StyleSheet.create({
   },
   outletChipOn: { borderColor: Colors.primary, backgroundColor: Colors.surfaceContainerLow },
   outletChipAdd: { borderStyle: 'dashed', borderColor: Colors.primary },
+  payoutWarn: {
+    gap: 4, padding: Spacing.md, borderRadius: Radius.lg,
+    borderWidth: 1, borderColor: Colors.error, backgroundColor: Colors.surfaceContainerLowest,
+  },
+  payoutWarnTitle: { color: Colors.error, fontSize: 14, fontWeight: '700' },
+  payoutWarnAmount: { color: Colors.onSurface, fontSize: 13, fontWeight: '600' },
   outletChipText: { color: Colors.onSurfaceVariant, fontSize: 13, fontWeight: '600' },
   outletChipTextOn: { color: Colors.primary },
   outletChipClosed: { color: Colors.onSurfaceVariant, fontSize: 11 },

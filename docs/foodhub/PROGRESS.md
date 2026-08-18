@@ -3,7 +3,7 @@
 | Phase | Status | Notes |
 |---|---|---|
 | 0 Audit | **DONE** | `AUDIT.md` (A1–A27 with evidence), `GAP_PLAN.md` (status mapping, naming deviations, risks). No code written, per §2. |
-| 1 Owner capability & legacy linking | **IN PROGRESS** | Multi-outlet owner console landed. Staff roles (A18), owner_profile linkage and legacy/unclaimed queue still to do. A17 decision still open. |
+| 1 Owner capability & legacy linking | **IN PROGRESS** | Multi-outlet owner console landed. Staff roles (A18), owner_profile linkage and legacy/unclaimed queue still to do. A17 decision made: BRIDGE (see below). |
 | 2 Restaurant ops & menu | NOT STARTED | |
 | 3 Restaurant-side order flow | NOT STARTED | |
 | 4 Delivery | NOT STARTED | Smallest phase; mostly already complete. |
@@ -27,7 +27,24 @@ that survives an outlet being transferred or closed.
 Not needed after checking: an outlet label on order rows — `OrderListRow` already
 renders `order.restaurantName`.
 
-## Open decision blocking the rest of Phase 1
+## A17 — decided: bridge, not merge
+
+The two systems stay separate because they answer different questions, and
+because KYB is per OUTLET while the capability is per PERSON — an owner's second
+outlet can carry different banking, so merging would break as soon as multi-outlet
+is real (it now is).
+
+What was missing was the join, and it was costing money silently:
+**1059 of 1075 outlets have no KYB row at all, and 709 are actively trading while
+not KYB-approved.** `buildPayoutRun` selects `AND res.kyb_status = 'approved'`
+(PY-007), so those outlets take orders, settle into `provider_kobo`, and are
+skipped by every payout run with nothing surfaced to owner or admin.
+
+`GET /restaurant/payout-readiness` now reports, per outlet: payable, why not, and
+how much has already settled behind the gate. Manage Store shows it as a banner,
+only when that outlet is blocked.
+
+## Remaining Phase 1 work
 
 **A17 — two owner-application paths.** `onb_application` grants the capability; `restaurant_kyb` gates payouts. Neither triggers the other, so today a user can hold the capability without approved KYB (can trade, cannot be paid) or the reverse.
 
