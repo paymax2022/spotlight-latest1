@@ -56,9 +56,13 @@ Guard swap **done**: all 18 owner-side call sites now go through
 `AssertStaffPermission` with a per-action permission. `assertOwner` survives only
 as the parity oracle in tests.
 
-Still to do: invite/accept endpoints and the owner-facing Staff screen — until
-those land, the only grants that exist are the backfilled OWNER rows, so the swap
-changes nothing operationally while making staff possible.
+Invite/accept and the Staff screen are **done**: an owner (or a manager, for
+non-manager roles) invites by user id, hands over a one-time code, and can
+suspend, restore or remove anyone except the owner. Staff roles are now usable
+end to end.
+
+Remaining in Phase 1: `owner_profile_id` linkage and the legacy/unclaimed queue
+(§5.4).
 
 ## Remaining Phase 1 work
 

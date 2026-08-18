@@ -95,3 +95,26 @@ export interface OutletPayoutReadiness {
   /** Settled earnings already held behind the gate, integer kobo. */
   unpaidKobo: Kobo;
 }
+
+/** A member of one outlet's staff. */
+export interface StaffMember {
+  userId: string;
+  email?: string;
+  role: 'OWNER' | 'MANAGER' | 'CASHIER' | 'KITCHEN' | 'RIDER';
+  status: 'INVITED' | 'ACTIVE' | 'SUSPENDED' | 'REMOVED';
+  acceptedAt?: string | null;
+  createdAt?: string;
+}
+
+/**
+ * The one-time invite token.
+ *
+ * Only its hash is stored server-side, so this value is unrecoverable once the
+ * screen loses it. The UI must hand it over immediately rather than promise to
+ * show it again later.
+ */
+export interface StaffInvite {
+  userId: string;
+  role: StaffMember['role'];
+  token: string;
+}

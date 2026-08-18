@@ -20,6 +20,8 @@ import { buildUpdateStoreBody } from './packagingPrice';
 import type {
   MerchantStore,
   OutletPayoutReadiness,
+  StaffMember,
+  StaffInvite,
   MerchantStoreDetail,
   MerchantMenuCategory,
   MerchantMenuItem,
@@ -138,6 +140,50 @@ export async function getPayoutReadiness(): Promise<OutletPayoutReadiness[]> {
     reason: r.reason || undefined,
     unpaidKobo: typeof r.unpaid_kobo === 'number' ? r.unpaid_kobo : 0,
   }));
+}
+
+// ── Staff ────────────────────────────────────────────────────────────────────
+
+export async function listStaff(restaurantId: string): Promise<StaffMember[]> {
+  if (USE_MOCK) {
+    await delay();
+    return [{ userId: 'u-owner', email: 'owner@demo.test', role: 'OWNER', status: 'ACTIVE' }];
+  }
+  const raw = unwrap<any>(await api.get(`${BASE}/${enc(restaurantId)}/staff`));
+  const rows = Array.isArray(raw) ? raw : (raw?.staff ?? []);
+  return rows.map((r: any) => ({
+    userId: r.user_id,
+    email: r.email || undefined,
+    role: r.role,
+    status: r.status,
+    acceptedAt: r.accepted_at ?? null,
+    createdAt: r.created_at,
+  }));
+}
+
+/** Returns the one-time token; the server keeps only its hash. */
+export async function inviteStaff(
+  restaurantId: string, userId: string, role: StaffMember['role'],
+): Promise<StaffInvite> {
+  if (USE_MOCK) {
+    await delay();
+    return { userId, role, token: 'demo-token-not-real' };
+  }
+  const raw = unwrap<any>(await api.post(`${BASE}/${enc(restaurantId)}/staff`, { user_id: userId, role }));
+  const inv = raw?.invite ?? raw;
+  return { userId: inv.user_id, role: inv.role, token: inv.token };
+}
+
+export async function setStaffStatus(
+  restaurantId: string, userId: string, status: StaffMember['status'],
+): Promise<void> {
+  if (USE_MOCK) { await delay(); return; }
+  await api.patch(`${BASE}/${enc(restaurantId)}/staff/${enc(userId)}`, { status });
+}
+
+export async function acceptStaffInvite(token: string): Promise<void> {
+  if (USE_MOCK) { await delay(); return; }
+  await api.post(`${BASE}/staff/accept`, { token });
 }
 
 export async function setAvailability(id: string, isOpen: boolean): Promise<MerchantStore> {

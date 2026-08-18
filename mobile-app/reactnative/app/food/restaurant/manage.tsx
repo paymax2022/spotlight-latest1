@@ -5,7 +5,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
-import { Trash2, Plus, ClipboardList, Wallet } from 'lucide-react-native';
+import { Trash2, Plus, ClipboardList, Wallet, Users } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
@@ -223,6 +223,13 @@ function ManageStore({
           <Pressable onPress={() => router.push('/food/restaurant/earnings')} style={[styles.ordersLink, { flex: 1 }]}>
             <Wallet size={18} color={Colors.primary} />
             <Text style={styles.ordersLinkText}>Earnings</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => router.push(`/food/restaurant/staff?outlet=${storeId}`)}
+            style={[styles.ordersLink, { flex: 1 }]}
+          >
+            <Users size={18} color={Colors.primary} />
+            <Text style={styles.ordersLinkText}>Staff</Text>
           </Pressable>
         </View>
 
