@@ -61,8 +61,24 @@ non-manager roles) invites by user id, hands over a one-time code, and can
 suspend, restore or remove anyone except the owner. Staff roles are now usable
 end to end.
 
-Remaining in Phase 1: `owner_profile_id` linkage and the legacy/unclaimed queue
-(§5.4).
+## Legacy linking (§5.4) — done
+
+Every restaurant predated the onboarding engine: 1651 restaurants, 1539 owners,
+**zero** merchant profiles. Since capabilities are read from
+`onb_merchant_profile`, every one of those owners had no capability card and
+resolved to "you don't manage a restaurant yet" — while their tooling worked if
+they knew the direct URL.
+
+20261213000000 grandfathers them in: 1539 profiles (all `application_id IS NULL`,
+so grandfathered stays distinguishable from reviewed), the RBAC role, and
+`restaurants.owner_profile_id` on all 1651 shops.
+
+**§5.4 case 2 is partly unreachable here:** `restaurants.owner_id` is NOT NULL, so
+"no owner at all" cannot exist. The reachable shape is an owner without an active
+profile, which is what the unclaimed queue detects — derived, not a stored flag,
+so it cannot go stale.
+
+**Phase 1 complete.**
 
 ## Remaining Phase 1 work
 
