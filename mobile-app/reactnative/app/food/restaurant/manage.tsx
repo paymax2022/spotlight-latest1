@@ -18,12 +18,18 @@ import {
 } from '@/features/restaurantmerchant/hooks';
 import type { MerchantMenuCategory, MerchantStore } from '@/features/restaurantmerchant/types';
 import { parsePackagingPrice, packagingPriceInput } from '@/features/restaurantmerchant/packagingPrice';
+import { resolveActiveOutlet } from '@/features/restaurantmerchant/activeOutlet';
 
 const naira = (kobo: number) => `₦${(kobo / 100).toLocaleString('en-NG')}`;
 
 export default function ManageStoreScreen() {
   const stores = useMyStores();
-  const store = stores.data?.[0];
+  // Which outlet the console acts on. This used to be `stores.data?.[0]`, so an
+  // owner running several restaurants could only ever manage the first — while
+  // the order queue already spanned them all. 61 owners in the live data run
+  // 2–3 outlets.
+  const [outletId, setOutletId] = useState<string | null>(null);
+  const { active: store, multi, outlets } = resolveActiveOutlet(stores.data, outletId);
 
   if (stores.isLoading) {
     return (
@@ -41,7 +47,14 @@ export default function ManageStoreScreen() {
     );
   }
   if (!store) return <CreateStore onDone={() => stores.refetch()} />;
-  return <ManageStore storeId={store.id} />;
+  return (
+    <ManageStore
+      storeId={store.id}
+      outlets={outlets}
+      activeOutletId={store.id}
+      onSwitchOutlet={setOutletId}
+    />
+  );
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -78,9 +91,22 @@ function CreateStore({ onDone }: { onDone: () => void }) {
 }
 
 // ── Manage an existing store ──────────────────────────────────────────────────
-function ManageStore({ storeId }: { storeId: string }) {
+function ManageStore({
+  storeId, outlets, activeOutletId, onSwitchOutlet,
+}: {
+  storeId: string;
+  /** Every outlet the owner runs. Chips render only when there is more than one,
+   *  but "Add outlet" is offered either way — that is how a second one appears. */
+  outlets: MerchantStore[];
+  activeOutletId: string;
+  onSwitchOutlet: (id: string) => void;
+}) {
   const detail = useStoreDetail(storeId);
   const update = useUpdateStore(storeId);
+  const createOutlet = useCreateStore();
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newAddress, setNewAddress] = useState('');
   const availability = useSetAvailability(storeId);
 
   const server = detail.data?.store;
@@ -114,6 +140,78 @@ function ManageStore({ storeId }: { storeId: string }) {
   return (
     <Shell>
       <ScrollView contentContainerStyle={styles.body}>
+        {/* Outlet switcher — only when the owner runs more than one. Every section
+            below (profile, packaging, menu) acts on the selected outlet, so this
+            is the control that decides which shop gets edited. */}
+        {outlets.length > 0 && (
+          <View style={{ gap: 6 }}>
+            <Text style={styles.label}>{outlets.length > 1 ? 'Outlet' : 'Your outlets'}</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: Spacing.xs }}>
+              {(outlets.length > 1 ? outlets : []).map((o) => {
+                const selected = o.id === activeOutletId;
+                return (
+                  <Pressable
+                    key={o.id}
+                    onPress={() => onSwitchOutlet(o.id)}
+                    style={[styles.outletChip, selected && styles.outletChipOn]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    accessibilityLabel={`Manage ${o.name}${o.isOpen ? '' : ', closed'}`}
+                  >
+                    <Text style={[styles.outletChipText, selected && styles.outletChipTextOn]} numberOfLines={1}>
+                      {o.name}
+                    </Text>
+                    {!o.isOpen && <Text style={styles.outletChipClosed}>Closed</Text>}
+                  </Pressable>
+                );
+              })}
+              <Pressable
+                onPress={() => setAdding(true)}
+                style={[styles.outletChip, styles.outletChipAdd]}
+                accessibilityRole="button"
+                accessibilityLabel="Add another outlet"
+              >
+                <Plus size={14} color={Colors.primary} />
+                <Text style={styles.outletChipTextOn}>Add outlet</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        )}
+
+        {adding && (
+          <Card>
+            <Text style={styles.cardTitle}>New outlet</Text>
+            <Text style={styles.muted}>
+              A separate shop with its own menu, hours and packaging price. Orders for every
+              outlet arrive in the same queue.
+            </Text>
+            <Field label="Outlet name" value={newName} onChangeText={setNewName} placeholder="Blue Yam — Lekki" />
+            <Field label="Address" value={newAddress} onChangeText={setNewAddress} placeholder="12 Admiralty Way, Lekki" />
+            <PrimaryButton
+              label="Create outlet"
+              onPress={() => {
+                if (!newName.trim() || !newAddress.trim()) return;
+                createOutlet.mutate(
+                  { name: newName.trim(), address: newAddress.trim() },
+                  {
+                    onSuccess: (created) => {
+                      setAdding(false); setNewName(''); setNewAddress('');
+                      // Switch straight to the new outlet: the owner created it to
+                      // work on it, and leaving them on the old one reads as failure.
+                      if (created?.id) onSwitchOutlet(created.id);
+                    },
+                  },
+                );
+              }}
+              loading={createOutlet.isPending}
+              disabled={!newName.trim() || !newAddress.trim()}
+            />
+            <Pressable onPress={() => setAdding(false)} accessibilityRole="button">
+              <Text style={styles.muted}>Cancel</Text>
+            </Pressable>
+          </Card>
+        )}
+
         {/* Quick links to orders + earnings. */}
         <View style={styles.linkRow}>
           <Pressable onPress={() => router.push('/food/restaurant')} style={[styles.ordersLink, { flex: 1 }]}>
@@ -377,6 +475,16 @@ const styles = StyleSheet.create({
   cardTitle: { color: Colors.onSurface, fontSize: 16, fontWeight: '700' },
   muted: { color: Colors.onSurfaceVariant, fontSize: 13 },
   errorText: { color: Colors.error, fontSize: 13 },
+  outletChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: 220,
+    paddingHorizontal: Spacing.sm, paddingVertical: 8, borderRadius: Radius.full,
+    borderWidth: 1, borderColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLowest,
+  },
+  outletChipOn: { borderColor: Colors.primary, backgroundColor: Colors.surfaceContainerLow },
+  outletChipAdd: { borderStyle: 'dashed', borderColor: Colors.primary },
+  outletChipText: { color: Colors.onSurfaceVariant, fontSize: 13, fontWeight: '600' },
+  outletChipTextOn: { color: Colors.primary },
+  outletChipClosed: { color: Colors.onSurfaceVariant, fontSize: 11 },
   label: { color: Colors.onSurfaceVariant, fontSize: 13, fontWeight: '600' },
   input: {
     borderWidth: 1, borderColor: Colors.outlineVariant, borderRadius: Radius.md,

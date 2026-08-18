@@ -26,6 +26,7 @@
     "test:location": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/location/*.spec.ts\"",
     "test:merchant2": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/merchant2/*.spec.ts\"",
     "test:merchantws": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/merchantws/*.spec.ts\"",
+    "test:outlets": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/outlets/*.spec.ts\"",
     "test:pharmacymerchant": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/pharmacymerchant/*.spec.ts\""
   },
   "dependencies": {
