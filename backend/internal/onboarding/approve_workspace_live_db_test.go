@@ -66,8 +66,12 @@ func TestLiveDB_ApprovalWritesAResolvableWorkspaceRoute(t *testing.T) {
 		bg := context.Background()
 		pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE merchant_type_id=$1`, typeID)
 		pool.Exec(bg, `DELETE FROM onb_application WHERE merchant_type_id=$1`, typeID)
-		pool.Exec(bg, `DELETE FROM onb_merchant_type WHERE id=$1`, typeID)
+		// Schema BEFORE type: onb_form_schema.merchant_type_id has an FK to
+		// onb_merchant_type, so deleting the type first fails, and because these
+		// Execs ignore their error the row silently survives — as an OPEN merchant
+		// type visible to real users in the live onboarding list.
 		pool.Exec(bg, `DELETE FROM onb_form_schema WHERE merchant_type_id=$1`, typeID)
+		pool.Exec(bg, `DELETE FROM onb_merchant_type WHERE id=$1`, typeID)
 		pool.Exec(bg, `DELETE FROM onb_module WHERE id=$1`, modID)
 	})
 
@@ -165,8 +169,12 @@ func TestLiveDB_ApprovalIsIdempotent(t *testing.T) {
 		bg := context.Background()
 		pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE merchant_type_id=$1`, typeID)
 		pool.Exec(bg, `DELETE FROM onb_application WHERE merchant_type_id=$1`, typeID)
-		pool.Exec(bg, `DELETE FROM onb_merchant_type WHERE id=$1`, typeID)
+		// Schema BEFORE type: onb_form_schema.merchant_type_id has an FK to
+		// onb_merchant_type, so deleting the type first fails, and because these
+		// Execs ignore their error the row silently survives — as an OPEN merchant
+		// type visible to real users in the live onboarding list.
 		pool.Exec(bg, `DELETE FROM onb_form_schema WHERE merchant_type_id=$1`, typeID)
+		pool.Exec(bg, `DELETE FROM onb_merchant_type WHERE id=$1`, typeID)
 		pool.Exec(bg, `DELETE FROM onb_module WHERE id=$1`, modID)
 	})
 
