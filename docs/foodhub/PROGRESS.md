@@ -52,9 +52,13 @@ the staff API grants only MANAGER/CASHIER/KITCHEN/RIDER. 1237 owner rows
 backfilled — exactly the number of restaurants with an owner — so resolution
 returns what `assertOwner` returns and the migration alone changes no behaviour.
 
-Still to do: the invite/accept endpoints and the owner-facing Staff screen. The
-table, matrix and resolver are in; nothing calls `AssertStaffPermission` in place
-of `assertOwner` yet — that swap is deliberately a separate, reviewable step.
+Guard swap **done**: all 18 owner-side call sites now go through
+`AssertStaffPermission` with a per-action permission. `assertOwner` survives only
+as the parity oracle in tests.
+
+Still to do: invite/accept endpoints and the owner-facing Staff screen — until
+those land, the only grants that exist are the backfilled OWNER rows, so the swap
+changes nothing operationally while making staff possible.
 
 ## Remaining Phase 1 work
 

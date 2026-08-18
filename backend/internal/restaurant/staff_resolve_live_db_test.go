@@ -17,6 +17,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -187,3 +188,63 @@ func TestLiveDB_ResolutionAgreesWithOwnerCheck(t *testing.T) {
 		}
 	}
 }
+
+// ─── The swap itself ────────────────────────────────────────────────────────
+//
+// The tests above exercise AssertStaffPermission directly. These go through the
+// real service methods, which is the only way to prove the guard swap actually
+// took effect at the call sites: a handler still calling assertOwner would pass
+// every test above and still refuse every manager.
+
+func TestLiveDB_ManagerCanRunTheirOutletThroughTheRealMethods(t *testing.T) {
+	pool := staffPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	f := newStaffFixture(t, ctx, pool)
+
+	// Menu — the daily work of a branch manager.
+	cat, err := f.svc.CreateCategory(ctx, f.lekki, f.manager, "Manager Specials")
+	if err != nil {
+		t.Fatalf("manager could not create a category at their own outlet: %v", err)
+	}
+	if _, err := f.svc.CreateItem(ctx, f.lekki, f.manager, CreateItemRequest{
+		CategoryID: cat.ID, Name: "Jollof", PriceKobo: 250_000,
+	}); err != nil {
+		t.Errorf("manager could not add a menu item: %v", err)
+	}
+
+	// Storefront.
+	if _, err := f.svc.SetAvailability(ctx, f.lekki, f.manager, false); err != nil {
+		t.Errorf("manager could not close their own outlet: %v", err)
+	}
+	if _, err := f.svc.UpdateRestaurant(ctx, f.lekki, f.manager, UpdateRestaurantRequest{
+		PackagingFeeKobo: ptrInt64Staff(25_000),
+	}); err != nil {
+		t.Errorf("manager could not set the packaging price: %v", err)
+	}
+}
+
+func TestLiveDB_ManagerIsRefusedAtOtherOutletsAndOnBanking(t *testing.T) {
+	pool := staffPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	f := newStaffFixture(t, ctx, pool)
+
+	// A different branch of the same brand — the manager has no grant there.
+	if _, err := f.svc.CreateCategory(ctx, f.ikeja, f.manager, "Should Not Exist"); err == nil {
+		t.Error("a Lekki manager created a category at Ikeja")
+	}
+	// Banking stays with the owner even at the manager's own outlet.
+	if _, err := f.svc.SaveKYB(ctx, f.lekki, f.manager, KYB{LegalName: "Hijack Ltd"}); err == nil {
+		t.Error("a manager saved KYB — banking details are owner-only")
+	}
+	if _, _, err := f.svc.GetKYB(ctx, f.lekki, f.manager); err == nil {
+		t.Error("a manager read KYB — it carries bank account, TIN and RC numbers")
+	}
+	// Earnings are not a manager-blocked action, but a stranger must still fail.
+	if _, err := f.svc.EarningsStatement(ctx, f.lekki, f.stranger, time.Now().Add(-24*time.Hour), time.Now()); err == nil {
+		t.Error("a stranger read the earnings statement")
+	}
+}
+
+func ptrInt64Staff(v int64) *int64 { return &v }

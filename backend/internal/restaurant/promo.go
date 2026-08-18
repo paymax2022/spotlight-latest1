@@ -363,7 +363,7 @@ type CreatePromoRequest struct {
 // settlement share — a platform-funded (or platform-wide) promo would let a merchant
 // spend platform money and must be created through an admin path instead.
 func (s *Service) CreatePromo(ctx context.Context, restaurantID, userID string, req CreatePromoRequest) (*Promo, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageStore); err != nil {
 		return nil, err
 	}
 	switch req.Kind {

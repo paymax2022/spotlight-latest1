@@ -276,7 +276,7 @@ func (s *Service) assertOwner(ctx context.Context, restaurantID, userID string) 
 
 // CreateCategory adds a menu category (owner only).
 func (s *Service) CreateCategory(ctx context.Context, restaurantID, userID, name string) (*MenuCategory, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageMenu); err != nil {
 		return nil, err
 	}
 	c := &MenuCategory{ID: uuid.New().String(), RestaurantID: restaurantID, Name: name}
@@ -299,7 +299,7 @@ type CreateItemRequest struct {
 
 // CreateItem adds a menu item (owner only).
 func (s *Service) CreateItem(ctx context.Context, restaurantID, userID string, req CreateItemRequest) (*MenuItem, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageMenu); err != nil {
 		return nil, err
 	}
 	if err := validateItemPriceKobo(req.PriceKobo); err != nil {
@@ -334,7 +334,7 @@ type UpdateItemRequest struct {
 
 // UpdateItem updates an item's price/availability/dietary tags (owner only).
 func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID string, req UpdateItemRequest) (*MenuItem, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageMenu); err != nil {
 		return nil, err
 	}
 	if req.PriceKobo != nil {
@@ -430,7 +430,7 @@ type UpdateRestaurantRequest struct {
 // UpdateRestaurant lets the owner edit their store's name/description/address/logo.
 // Changing the address re-geocodes the pin (best-effort, mirrors CreateRestaurant).
 func (s *Service) UpdateRestaurant(ctx context.Context, restaurantID, userID string, req UpdateRestaurantRequest) (*Restaurant, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageStore); err != nil {
 		return nil, err
 	}
 	if req.Name != nil && *req.Name == "" {
@@ -476,7 +476,7 @@ func (s *Service) UpdateRestaurant(ctx context.Context, restaurantID, userID str
 // hours / pausing new orders). Eligibility/KYC gating is handled upstream by the
 // merchant-onboarding engine — reaching this endpoint requires owning the store.
 func (s *Service) SetAvailability(ctx context.Context, restaurantID, userID string, isOpen bool) (*Restaurant, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageStore); err != nil {
 		return nil, err
 	}
 	if _, err := s.db.Exec(ctx, `UPDATE restaurants SET is_open=$2, updated_at=NOW() WHERE id=$1`,
@@ -488,7 +488,7 @@ func (s *Service) SetAvailability(ctx context.Context, restaurantID, userID stri
 
 // DeleteItem removes a menu item (owner only).
 func (s *Service) DeleteItem(ctx context.Context, restaurantID, userID, itemID string) error {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageMenu); err != nil {
 		return err
 	}
 	ct, err := s.db.Exec(ctx, `DELETE FROM menu_items WHERE id=$1 AND restaurant_id=$2`, itemID, restaurantID)
@@ -505,7 +505,7 @@ func (s *Service) DeleteItem(ctx context.Context, restaurantID, userID, itemID s
 // still has items is blocked to avoid orphaning them — the merchant removes or
 // re-homes the items first.
 func (s *Service) DeleteCategory(ctx context.Context, restaurantID, userID, categoryID string) error {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageMenu); err != nil {
 		return err
 	}
 	var itemCount int
