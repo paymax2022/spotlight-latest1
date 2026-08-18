@@ -1406,6 +1406,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Static sibling of :id, like /mine. Owner-scoped payout readiness — the
 		// bridge between the merchant capability and per-outlet KYB (PY-007).
 		restGroup.GET("/payout-readiness", restaurantHandler.PayoutReadiness)
+		// Staff. accept is a STATIC sibling of :id and must precede it — and it is
+		// intentionally not outlet-scoped: the token names the outlet, and the
+		// invitee is not yet staff there, so no per-outlet guard could pass.
+		restGroup.POST("/staff/accept", restaurantHandler.AcceptStaffInvite)
+		restGroup.GET("/:id/staff", restaurantHandler.ListStaff)
+		restGroup.POST("/:id/staff", restaurantHandler.InviteStaff)
+		restGroup.PATCH("/:id/staff/:userId", restaurantHandler.SetStaffStatus)
 		restGroup.GET("/earnings", restaurantHandler.Earnings)  // caller's food-delivery earnings
 		restGroup.GET("/:id", restaurantHandler.GetRestaurant)
 

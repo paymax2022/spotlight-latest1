@@ -127,6 +127,75 @@ func (h *Handler) Earnings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": e})
 }
 
+// ListStaff → GET /restaurant/:id/staff
+func (h *Handler) ListStaff(c *gin.Context) {
+	list, err := h.svc.ListStaff(c.Request.Context(), c.Param("id"), c.GetString("user_id"))
+	if err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"staff": list})
+}
+
+// InviteStaff → POST /restaurant/:id/staff {user_id, role}
+//
+// The response carries the invite token ONCE. It is not recoverable afterwards —
+// only its hash is stored — so the client must hand it to the invitee there and
+// then.
+func (h *Handler) InviteStaff(c *gin.Context) {
+	var body struct {
+		UserID string `json:"user_id" binding:"required"`
+		Role   string `json:"role" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	inv, err := h.svc.InviteStaff(c.Request.Context(), c.Param("id"), c.GetString("user_id"),
+		body.UserID, StaffRole(body.Role))
+	if err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"invite": inv})
+}
+
+// SetStaffStatus → PATCH /restaurant/:id/staff/:userId {status}
+func (h *Handler) SetStaffStatus(c *gin.Context) {
+	var body struct {
+		Status string `json:"status" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.SetStaffStatus(c.Request.Context(), c.Param("id"), c.GetString("user_id"),
+		c.Param("userId"), StaffStatus(body.Status)); err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// AcceptStaffInvite → POST /restaurant/staff/accept {token}
+//
+// Not scoped to a restaurant: the token identifies the outlet, and the invitee is
+// by definition not yet staff there, so no outlet-level guard could pass.
+func (h *Handler) AcceptStaffInvite(c *gin.Context) {
+	var body struct {
+		Token string `json:"token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.AcceptStaffInvite(c.Request.Context(), body.Token, c.GetString("user_id")); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
 // PayoutReadiness → GET /restaurant/payout-readiness
 //
 // The capability↔KYB bridge, per outlet: can this shop be paid, why not, and how
