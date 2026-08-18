@@ -4,7 +4,7 @@
 |---|---|---|
 | 0 Audit | **DONE** | `AUDIT.md` (A1–A27 with evidence), `GAP_PLAN.md` (status mapping, naming deviations, risks). No code written, per §2. |
 | 1 Owner capability & legacy linking | **IN PROGRESS** | Multi-outlet owner console landed. Staff roles (A18), owner_profile linkage and legacy/unclaimed queue still to do. A17 decision made: BRIDGE (see below). |
-| 2 Restaurant ops & menu | NOT STARTED | |
+| 2 Restaurant ops & menu | **IN PROGRESS** | Listing review (A6) landed, flag-gated OFF. Remaining: lifecycle `status` enum (A3), the A1 storefront columns, CSV/86 board (A5), admin moderation screens (A20). |
 | 3 Restaurant-side order flow | NOT STARTED | |
 | 4 Delivery | NOT STARTED | Smallest phase; mostly already complete. |
 | 5 Merchant money | NOT STARTED | Escrow already live — no cut-over needed. |
@@ -79,6 +79,19 @@ profile, which is what the unclaimed queue detects — derived, not a stored fla
 so it cannot go stale.
 
 **Phase 1 complete.**
+
+## Listing review (A6) — done, shipped dark
+
+A restaurant's public face went live the instant the owner saved it — no review
+of any kind. 20261214000000 adds the state, the guarded transitions, a
+`published_snapshot` so a decision refers to reviewed text, and the discovery
+gate.
+
+Verified the estate is untouched: 1788 rows discoverable before the migration,
+1788 after, 1897 of 1897 APPROVED. The gate is additionally behind
+`FEATURE_FOODHUB_MODERATION` (default OFF) per §1.4 — with it off, discovery runs
+the identical predicate it always has. Turning it on is a deliberate act: new
+restaurants start DRAFT and must be approved before they appear.
 
 ## Remaining Phase 1 work
 

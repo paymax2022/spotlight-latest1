@@ -95,6 +95,10 @@ type Service struct {
 	commission  CommissionRecorder  // optional; nil ⇒ realized-profit recording is a no-op
 	tiers       TierLimiter         // REQUIRED; fail-closed gate on order escrow + withdrawal debit
 	withdrawalsOn bool              // FEATURE_RESTAURANT_WITHDRAWALS_ENABLED
+	// moderationOn gates the listing-review requirement in discovery
+	// (FEATURE_FOODHUB_MODERATION). OFF by default: with it off, discovery serves
+	// exactly what it served before listing review existed (PRD §1.4).
+	moderationOn bool
 	disburser   WithdrawalDisburser // optional; nil ⇒ NoopDisburser (default sandbox)
 }
 
@@ -136,6 +140,17 @@ func (s *Service) WithDistancer(d RouteDistancer) *Service {
 // without it PlaceOrder and RequestWithdrawal both refuse with ErrTierGateUnwired.
 func (s *Service) WithTiers(t TierLimiter) *Service {
 	s.tiers = t
+	return s
+}
+
+// WithModeration enables the listing-review gate in discovery.
+//
+// Off by default and deliberately so: every existing restaurant is backfilled
+// APPROVED, so turning it on changes nothing for them, but a NEW restaurant
+// starts DRAFT and stays out of discovery until a reviewer approves it. That is
+// the intended behaviour and the reason it ships dark.
+func (s *Service) WithModeration(enabled bool) *Service {
+	s.moderationOn = enabled
 	return s
 }
 

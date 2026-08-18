@@ -11,9 +11,18 @@ import (
 
 // ListOpenRestaurants returns the discovery list of open restaurants.
 func (s *Service) ListOpenRestaurants(ctx context.Context) ([]Restaurant, error) {
-	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
+	// The listing gate is applied ONLY when moderation is enabled. With it off the
+	// predicate is byte-identical to what discovery has always run, so the consumer
+	// experience is unchanged (PRD §1.4). With it on, only APPROVED listings are
+	// public — and every pre-existing restaurant was backfilled APPROVED, so the
+	// change is felt by new shops, not by the estate.
+	gate := ""
+	if s.moderationOn {
+		gate = " AND listing_review_status = 'APPROVED'"
+	}
+	q := `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
 	                  min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng
-	           FROM restaurants WHERE is_open = TRUE ORDER BY created_at DESC`
+	           FROM restaurants WHERE is_open = TRUE` + gate + ` ORDER BY created_at DESC`
 	rows, err := s.db.Query(ctx, q)
 	if err != nil {
 		return nil, err
