@@ -105,7 +105,11 @@ func newInboxFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inbo
 
 func TestLiveDB_OwnerSeesTheirPharmacysOrders(t *testing.T) {
 	pool := ownerOrdersPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER the test function returns, so a `defer pool.Close()`
+	// would shut the pool BEFORE the row cleanups fire — and since those Execs
+	// ignore their errors, the failure is silent and the fixtures survive.
+	// Registered first, so LIFO makes it run last.
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	f := newInboxFixture(t, ctx, pool)
 
@@ -126,7 +130,11 @@ func TestLiveDB_OwnerSeesTheirPharmacysOrders(t *testing.T) {
 
 func TestLiveDB_InboxNeverLeaksAnotherPharmacysOrders(t *testing.T) {
 	pool := ownerOrdersPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER the test function returns, so a `defer pool.Close()`
+	// would shut the pool BEFORE the row cleanups fire — and since those Execs
+	// ignore their errors, the failure is silent and the fixtures survive.
+	// Registered first, so LIFO makes it run last.
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	f := newInboxFixture(t, ctx, pool)
 
@@ -155,7 +163,11 @@ func TestLiveDB_InboxNeverLeaksAnotherPharmacysOrders(t *testing.T) {
 
 func TestLiveDB_InboxWithholdsThePickupCode(t *testing.T) {
 	pool := ownerOrdersPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER the test function returns, so a `defer pool.Close()`
+	// would shut the pool BEFORE the row cleanups fire — and since those Execs
+	// ignore their errors, the failure is silent and the fixtures survive.
+	// Registered first, so LIFO makes it run last.
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	f := newInboxFixture(t, ctx, pool)
 
@@ -176,7 +188,11 @@ func TestLiveDB_InboxWithholdsThePickupCode(t *testing.T) {
 
 func TestLiveDB_InboxFiltersByState(t *testing.T) {
 	pool := ownerOrdersPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER the test function returns, so a `defer pool.Close()`
+	// would shut the pool BEFORE the row cleanups fire — and since those Execs
+	// ignore their errors, the failure is silent and the fixtures survive.
+	// Registered first, so LIFO makes it run last.
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	f := newInboxFixture(t, ctx, pool)
 
@@ -200,7 +216,11 @@ func TestLiveDB_InboxFiltersByState(t *testing.T) {
 
 func TestLiveDB_InboxBoundsThePageSize(t *testing.T) {
 	pool := ownerOrdersPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER the test function returns, so a `defer pool.Close()`
+	// would shut the pool BEFORE the row cleanups fire — and since those Execs
+	// ignore their errors, the failure is silent and the fixtures survive.
+	// Registered first, so LIFO makes it run last.
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	f := newInboxFixture(t, ctx, pool)
 

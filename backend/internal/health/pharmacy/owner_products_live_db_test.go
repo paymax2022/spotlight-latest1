@@ -41,7 +41,11 @@ func seedProduct(t *testing.T, ctx context.Context, f inboxFixture, pharmacyID, 
 
 func TestLiveDB_OwnerCatalogueIncludesWhatCustomersCannotSee(t *testing.T) {
 	pool := ownerOrdersPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER the test function returns, so a `defer pool.Close()`
+	// would shut the pool BEFORE the row cleanups fire — and since those Execs
+	// ignore their errors, the failure is silent and the fixtures survive.
+	// Registered first, so LIFO makes it run last.
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	f := newInboxFixture(t, ctx, pool)
 
@@ -76,7 +80,11 @@ func TestLiveDB_OwnerCatalogueIncludesWhatCustomersCannotSee(t *testing.T) {
 
 func TestLiveDB_OwnerCatalogueIsScopedToTheOwner(t *testing.T) {
 	pool := ownerOrdersPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER the test function returns, so a `defer pool.Close()`
+	// would shut the pool BEFORE the row cleanups fire — and since those Execs
+	// ignore their errors, the failure is silent and the fixtures survive.
+	// Registered first, so LIFO makes it run last.
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	f := newInboxFixture(t, ctx, pool)
 
@@ -113,7 +121,11 @@ func TestLiveDB_OwnerCatalogueIsScopedToTheOwner(t *testing.T) {
 
 func TestLiveDB_OwnerCatalogueCarriesWhatIsNeededToManageIt(t *testing.T) {
 	pool := ownerOrdersPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER the test function returns, so a `defer pool.Close()`
+	// would shut the pool BEFORE the row cleanups fire — and since those Execs
+	// ignore their errors, the failure is silent and the fixtures survive.
+	// Registered first, so LIFO makes it run last.
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	f := newInboxFixture(t, ctx, pool)
 

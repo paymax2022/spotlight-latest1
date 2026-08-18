@@ -28,7 +28,11 @@ import (
 
 func TestLiveDB_ApprovalWritesAResolvableWorkspaceRoute(t *testing.T) {
 	pool := liveOnbPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER the test function returns, so a `defer pool.Close()`
+	// would shut the pool BEFORE the row cleanups fire — and since those Execs
+	// ignore their errors, the failure is silent and the fixtures survive.
+	// Registered first, so LIFO makes it run last.
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	svc := onboarding.NewService(pool)
 
@@ -133,7 +137,11 @@ func TestLiveDB_ApprovalWritesAResolvableWorkspaceRoute(t *testing.T) {
 // profile or move the workspace route, since reviewers can double-submit.
 func TestLiveDB_ApprovalIsIdempotent(t *testing.T) {
 	pool := liveOnbPool(t)
-	defer pool.Close()
+	// t.Cleanup runs AFTER the test function returns, so a `defer pool.Close()`
+	// would shut the pool BEFORE the row cleanups fire — and since those Execs
+	// ignore their errors, the failure is silent and the fixtures survive.
+	// Registered first, so LIFO makes it run last.
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	svc := onboarding.NewService(pool)
 
