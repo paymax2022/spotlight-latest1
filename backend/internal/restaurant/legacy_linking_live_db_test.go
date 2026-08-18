@@ -27,26 +27,115 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestLiveDB_EveryRestaurantOwnerHasAMerchantProfile(t *testing.T) {
+func TestLiveDB_LinkingGrandfathersAnUnlinkedOwner(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
+	svc := NewService(pool, nil)
 
-	// The linking migration's whole purpose: nobody who owns a restaurant is
-	// invisible to the merchant hub.
-	var unlinked int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(DISTINCT r.owner_id)
-		FROM restaurants r
-		WHERE r.owner_id IS NOT NULL
-		  AND NOT EXISTS (
-		    SELECT 1 FROM onb_merchant_profile p
-		    WHERE p.user_id = r.owner_id AND p.merchant_type_id = 'mt-restaurant' AND p.status = 'ACTIVE'
-		  )`).Scan(&unlinked); err != nil {
-		t.Fatalf("count unlinked owners: %v", err)
+	// Deterministic by construction. An earlier version of this test asserted the
+	// GLOBAL invariant "no restaurant owner lacks a profile", which passed alone
+	// and failed in a full run: every other test's fixtures create restaurants
+	// with fresh owners, so the suite broke its own assertion. A test whose result
+	// depends on what other tests leave behind measures the suite, not the code.
+	owner := uuid.New().String()
+	shop := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test"); err != nil {
+		t.Fatalf("seed user: %v", err)
 	}
-	if unlinked != 0 {
-		t.Errorf("%d restaurant owners still have no merchant profile — they cannot see their business in the app", unlinked)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Legacy Kitchen','1 St',TRUE)`,
+		shop, owner); err != nil {
+		t.Fatalf("seed restaurant: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, shop)
+		pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, shop)
+		pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, owner)
+	})
+
+	if _, err := svc.LinkLegacyOwners(ctx); err != nil {
+		t.Fatalf("LinkLegacyOwners: %v", err)
+	}
+
+	var profileID, route string
+	var appID *string
+	if err := pool.QueryRow(ctx,
+		`SELECT id, COALESCE(workspace_route,''), application_id FROM onb_merchant_profile
+		  WHERE user_id=$1 AND merchant_type_id='mt-restaurant' AND status='ACTIVE'`, owner).
+		Scan(&profileID, &route, &appID); err != nil {
+		t.Fatalf("the owner was not linked: %v", err)
+	}
+	// The capability card links here; a wrong route is a card that goes nowhere.
+	if route != "/merchant/restaurant" {
+		t.Errorf("workspace_route = %q, want /merchant/restaurant", route)
+	}
+	// Grandfathered must stay distinguishable from reviewed.
+	if appID != nil {
+		t.Error("a legacy profile carries an application_id — that fabricates a review")
+	}
+
+	var linked *string
+	if err := pool.QueryRow(ctx, `SELECT owner_profile_id::text FROM restaurants WHERE id=$1`, shop).Scan(&linked); err != nil {
+		t.Fatalf("read restaurant: %v", err)
+	}
+	if linked == nil || *linked != profileID {
+		t.Error("the restaurant does not point at its owner's profile")
+	}
+
+	var hasRole bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id=ur.role_id
+		               WHERE ur.user_id=$1 AND ro.slug='restaurant_merchant' AND ur.is_active)`, owner).Scan(&hasRole); err != nil {
+		t.Fatalf("check role: %v", err)
+	}
+	if !hasRole {
+		t.Error("the owner has a profile but not the role — the hub would show the business while routes refuse it")
+	}
+}
+
+func TestLiveDB_LinkingIsIdempotent(t *testing.T) {
+	pool := staffPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	svc := NewService(pool, nil)
+
+	owner := uuid.New().String()
+	shop := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test"); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Idem Legacy','1 St',TRUE)`,
+		shop, owner); err != nil {
+		t.Fatalf("seed restaurant: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, shop)
+		pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, shop)
+		pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, owner)
+	})
+
+	if _, err := svc.LinkLegacyOwners(ctx); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if _, err := svc.LinkLegacyOwners(ctx); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	// Re-running a backfill is normal — after an import, or a retried deploy. It
+	// must not duplicate a merchant's identity.
+	var profiles int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM onb_merchant_profile WHERE user_id=$1 AND merchant_type_id='mt-restaurant'`, owner).
+		Scan(&profiles); err != nil {
+		t.Fatalf("count profiles: %v", err)
+	}
+	if profiles != 1 {
+		t.Errorf("%d profiles after two runs, want exactly 1", profiles)
 	}
 }
 
