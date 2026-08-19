@@ -62,7 +62,11 @@ export function formatNaira(kobo: number): string {
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const isoAhead = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
-const aud = () => `aud_${Math.random().toString(36).slice(2, 10)}`;
+// Fixture audit id. Deliberately NOT shaped like a real one: the fixture path
+// writes no audit record, and returning `aud_7f3k9x2p` made the response look
+// like proof that one exists. If this string ever appears in a support ticket or
+// a screenshot, it should be self-evidently not an audit trail.
+const aud = () => 'fixture-no-audit-record';
 
 // The currently-acting arbitrator (mock). Used to enforce separation-of-duties:
 // an arbitrator cannot decide a dispute whose release they previously approved.
@@ -179,14 +183,14 @@ export async function arbitrateDispute(id: string, decision: ArbitrationDecision
       throw new Error('Separation-of-duties violation: you approved the underlying release for this escrow and cannot also arbitrate it. Reassign to a different arbitrator.');
     }
     if (decision === 'request_evidence') {
-      return { id, status: 'awaiting_evidence', escrow_state: 'disputed', audit_id: aud(), message: `Dispute ${id}: evidence requested from both parties. Escrow remains HELD/DISPUTED — Paymax never funds the gap (NL-6). Recorded to immutable audit (NL-12).` };
+      return { id, status: 'awaiting_evidence', escrow_state: 'disputed', audit_id: aud(), message: `Fixture — nothing was saved. Dispute ${id}: evidence requested from both parties.` };
     }
     if (decision === 'assign') {
-      return { id, status: 'in_review', escrow_state: 'disputed', audit_id: aud(), message: `Dispute ${id}: assigned to arbitrator ${CURRENT_ARBITRATOR}. Recorded to immutable audit (NL-12).` };
+      return { id, status: 'in_review', escrow_state: 'disputed', audit_id: aud(), message: `Fixture — nothing was saved. Dispute ${id}: assigned to arbitrator ${CURRENT_ARBITRATOR}.` };
     }
     const status = decision === 'release' ? 'resolved_release' : 'resolved_refund';
     const escrow_state = decision === 'release' ? 'released' : 'refunded';
-    return { id, status, escrow_state, audit_id: aud(), message: `Dispute ${id} arbitrated → ${decision.toUpperCase()}. Escrow ${escrow_state.toUpperCase()} (DISPUTED → ${escrow_state.toUpperCase()}). Holds only, never lends (NL-6). Recorded to immutable audit (NL-12).` };
+    return { id, status, escrow_state, audit_id: aud(), message: `Fixture — nothing was saved. Dispute ${id} arbitrated → ${decision.toUpperCase()}. Escrow ${escrow_state.toUpperCase()} (DISPUTED → ${escrow_state.toUpperCase()}).` };
   }
   return sendJson<ArbitrationResult>('POST', `/disputes/${id}/arbitrate`, { decision, note });
 }
@@ -222,7 +226,7 @@ export async function decideEscrowFraud(id: string, action: EscrowFraudAction, n
   if (USE_MOCK) {
     await delay();
     const status = action === 'investigate' ? 'investigating' : action === 'clear' ? 'cleared' : 'blocked';
-    return { id, status, audit_id: aud(), message: `Escrow fraud signal ${id}: ${action} applied. Recorded to immutable audit (NL-12).` };
+    return { id, status, audit_id: aud(), message: `Fixture — nothing was saved. Escrow fraud signal ${id}: ${action} applied.` };
   }
   return sendJson<EscrowFraudActionResult>('POST', `/escrow/fraud/${id}/action`, { action, note });
 }
