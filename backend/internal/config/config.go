@@ -481,7 +481,7 @@ type Config struct {
 	// ── Notification providers ────────────────────────────────────────────────
 	// Resend: email delivery. Key from resend.com dashboard.
 	ResendAPIKey    string
-	ResendFromEmail string // e.g. "Paymax <noreply@mail.paymax.ng>"
+	ResendFromEmail string // must be @spotlightng.com — the only domain verified on the Resend account
 	// Termii: SMS delivery. Key from termii.com dashboard.
 	TermiiAPIKey   string
 	TermiiSenderID string // approved sender ID
@@ -748,7 +748,7 @@ func Load() Config {
 		BillingWebhookSecret: getEnv("BILLING_WEBHOOK_SECRET", ""),
 
 		ResendAPIKey:    getEnv("RESEND_API_KEY", ""),
-		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Paymax <noreply@mail.paymax.ng>"),
+		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Spotlight <no-reply@spotlightng.com>"),
 		TermiiAPIKey:    getEnv("TERMII_API_KEY", ""),
 		TermiiSenderID:  getEnv("TERMII_SENDER_ID", "Paymax"),
 		ExpoPushToken:   getEnv("EXPO_PUSH_TOKEN", ""),

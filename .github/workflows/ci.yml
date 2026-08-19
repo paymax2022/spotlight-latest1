@@ -127,6 +127,12 @@ jobs:
       # sharing a timestamp abort `supabase start` / `db reset` partway through
       # the chain. The collision is invisible to the author — it appears on the
       # base branch only AFTER the merge — so it must be caught at PR time.
+      - name: Check the email sender is the one verified identity
+        # Spotlight's Resend account verifies exactly one domain. A sender on any
+        # other domain is rejected, and every send path swallows that failure —
+        # so a wrong sender is silent. It had drifted to three domains.
+        run: python3 scripts/ci/check-email-sender.py
+
       - name: Check admin services do not fake writes
         # A mutation whose fixture branch returns success tells the operator the
         # action was applied when nothing happened — found four times by accident
