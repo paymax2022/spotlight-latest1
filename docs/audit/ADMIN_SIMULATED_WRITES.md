@@ -82,7 +82,8 @@ Money-touching services in that list, highest concern first:
 
 - **Step 1 done** (`e4bbe2a5`) — 11 fabricated claims removed (the audit said 2), fake `audit_id` made self-evident.
 - **Step 2 done** — the four backendless mutations now refuse instead of returning success, pinned by tests.
-- Steps 3–4 outstanding.
+- **Step 3 done** — invest + crypto admin flipped live (every endpoint verified against the Go routes first), pinned by tests.
+- Step 4 (CI guard) outstanding.
 
 **Found during step 2:** creators' admin backend *does* exist, at different paths than the client calls
 (`POST /creators/payouts/:payoutId/paid` and `POST /creators/content/:contentId/moderate`, versus the client's

@@ -62,3 +62,75 @@ describe('backendless admin mutations refuse instead of faking success', () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Step 3: the two services whose backends DO exist now talk to them by default.
+ *
+ * Both were one env var away from working, and both had a mutation that reported
+ * a money outcome it had not produced: runSettlement returned 3 ("3 settlements
+ * processed"), and adminDecideWithdrawal approved a crypto withdrawal into an
+ * in-memory array.
+ */
+describe('services with real backends are live by default', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  function mockFetch(body: unknown) {
+    const fn = vi.fn(async () => ({ ok: true, status: 200, json: async () => body }));
+    vi.stubGlobal('fetch', fn);
+    return fn;
+  }
+
+  it('invest settlement run reaches the network instead of returning 3', async () => {
+    const fetchFn = mockFetch({ processed: 0 });
+    const mod = await import('@/services/investAdminService');
+    const processed = await mod.runSettlement();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(String((fetchFn.mock.calls[0] as unknown[])[0])).toContain('/admin/invest/settlement/run');
+    // The server's number, not the fixture's.
+    expect(processed).toBe(0);
+  });
+
+  it('invest settlement run carries an Idempotency-Key', async () => {
+    // It posts a settlement batch; a retry must not run it twice.
+    const fetchFn = mockFetch({ processed: 1 });
+    const mod = await import('@/services/investAdminService');
+    await mod.runSettlement();
+    const init = (fetchFn.mock.calls[0] as [string, RequestInit])[1];
+    const headers = (init.headers ?? {}) as Record<string, string>;
+    expect(Object.keys(headers).some((k) => k.toLowerCase() === 'idempotency-key')).toBe(true);
+  });
+
+  it('crypto withdrawal decisions reach the network', async () => {
+    const fetchFn = mockFetch({ withdrawal: { id: 'w1', status: 'pending' } });
+    const mod = await import('@/services/cryptoAdminService');
+    await mod.adminDecideWithdrawal('w1', { decision: 'approve', note: 'verified' } as never);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(String((fetchFn.mock.calls[0] as unknown[])[0])).toContain('/admin/crypto/withdrawals/w1/decision');
+  });
+
+  it('crypto withdrawal decisions still require an operator note', async () => {
+    // Client-side guard that predates the flip; it must survive it.
+    const fetchFn = mockFetch({});
+    const mod = await import('@/services/cryptoAdminService');
+    await expect(
+      mod.adminDecideWithdrawal('w1', { decision: 'approve', note: '  ' } as never),
+    ).rejects.toThrow(/note/i);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('both still serve fixtures when explicitly asked', async () => {
+    vi.stubEnv('NEXT_PUBLIC_INVEST_ADMIN_USE_MOCK', 'true');
+    const fetchFn = vi.fn();
+    vi.stubGlobal('fetch', fetchFn);
+    const mod = await import('@/services/investAdminService');
+    await mod.runSettlement();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+});
