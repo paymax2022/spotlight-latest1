@@ -78,6 +78,17 @@ Money-touching services in that list, highest concern first:
 
 **Do not flip the defaults in bulk.** Four of six verified findings have **no backend at all** — the fixture is load-bearing, and flipping them live turns a silent no-op into a visible 404. That is better, but it is a product decision (the console loses the control entirely), not a mechanical change.
 
+## Progress
+
+- **Step 1 done** (`e4bbe2a5`) — 11 fabricated claims removed (the audit said 2), fake `audit_id` made self-evident.
+- **Step 2 done** — the four backendless mutations now refuse instead of returning success, pinned by tests.
+- Steps 3–4 outstanding.
+
+**Found during step 2:** creators' admin backend *does* exist, at different paths than the client calls
+(`POST /creators/payouts/:payoutId/paid` and `POST /creators/content/:contentId/moderate`, versus the client's
+`/payouts/:id/decide` and `/content/:id/moderate`). So content moderation and payout marking may be reachable
+with an integration pass — different semantics, not a rename. Worth folding into step 3.
+
 ## Recommended sequence
 
 1. **Flip the two that have backends** — `investAdminService.runSettlement`, `cryptoAdminService.adminDecideWithdrawal` — and pin each with a test asserting the default reaches the network, as done in `fcfc72cb`. Small, high value: a crypto withdrawal approval is currently a no-op.

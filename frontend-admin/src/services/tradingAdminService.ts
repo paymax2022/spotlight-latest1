@@ -104,11 +104,13 @@ export async function bypassKyc(userId: string, input: TradingKycBypassRequest):
   if (!input.reason.trim()) throw new Error('A written justification is required to bypass.');
   if (!input.checker_id.trim()) throw new Error('A second approver (checker) is required.');
   if (input.ttl_days <= 0 || input.ttl_days > MAX_BYPASS_DAYS) throw new Error(`Bypass window must be 1–${MAX_BYPASS_DAYS} days.`);
-  if (USE_FIXTURES) {
-    const r = FIXTURE_QUEUE.find((x) => x.user_id === userId) ?? FIXTURE_QUEUE[0];
-    const exp = new Date(Date.now() + input.ttl_days * 86400_000).toISOString();
-    return delay({ ...r, status: 'BYPASSED', bypass_expires_at: exp, exposure_cap_kobo: input.exposure_cap_kobo ?? null, reason_code: input.reason });
-  }
+    // No endpoint exists for this action, so there is nothing this can do but
+    // say so. Returning a success value here told the operator the decision had
+    // been applied when nothing had — see docs/audit/ADMIN_SIMULATED_WRITES.md.
+    // Client-side validation above still runs, so bad input is still caught.
+    throw new Error(
+      'KYC bypass is not available in this environment — no backend endpoint exists yet. Nothing was changed.',
+    );
   const res = await fetch(`${tradingAdminBase()}/kyc/${encodeURIComponent(userId)}/bypass`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(input) });
   if (!res.ok) throw new Error(await parseErr(res, 'Bypass failed'));
   return res.json();

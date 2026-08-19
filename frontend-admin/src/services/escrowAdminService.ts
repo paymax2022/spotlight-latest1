@@ -223,10 +223,12 @@ export async function listEscrowFraud(opts?: { status?: string; kind?: string; q
   return getJson<EscrowFraudSignal[]>(`/escrow/fraud${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decideEscrowFraud(id: string, action: EscrowFraudAction, note?: string): Promise<EscrowFraudActionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const status = action === 'investigate' ? 'investigating' : action === 'clear' ? 'cleared' : 'blocked';
-    return { id, status, audit_id: aud(), message: `Fixture — nothing was saved. Escrow fraud signal ${id}: ${action} applied.` };
-  }
+    // No endpoint exists for this action, so there is nothing this can do but
+    // say so. Returning a success value here told the operator the decision had
+    // been applied when nothing had — see docs/audit/ADMIN_SIMULATED_WRITES.md.
+    // Client-side validation above still runs, so bad input is still caught.
+    throw new Error(
+      'Escrow fraud actions is not available in this environment — no backend endpoint exists yet. Nothing was changed.',
+    );
   return sendJson<EscrowFraudActionResult>('POST', `/escrow/fraud/${id}/action`, { action, note });
 }

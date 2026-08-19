@@ -250,14 +250,13 @@ export async function listCreatorPayouts(opts?: { status?: string; q?: string })
   return getJson<CreatorPayoutItem[]>(`/payouts${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decidePayout(id: string, decision: PayoutDecision, note?: string): Promise<CreatorPayoutResult> {
-  if (USE_MOCK) {
-    await delay();
-    const p = PAYOUTS.find((x) => x.id === id);
-    if (decision === 'approve' && p && !p.kyc_verified) {
-      return { id, status: 'kyc_hold', audit_id: aud(), message: `Fixture — nothing was saved. Payout blocked — creator ${id} KYC tier insufficient (NL-10).` };
-    }
-    return { id, status: decision === 'approve' ? 'approved' : 'rejected', audit_id: aud(), message: `Fixture — nothing was saved. Creator ${id} payout ${decision === 'approve' ? 'approved' : 'rejected'}.` };
-  }
+    // No endpoint exists for this action, so there is nothing this can do but
+    // say so. Returning a success value here told the operator the decision had
+    // been applied when nothing had — see docs/audit/ADMIN_SIMULATED_WRITES.md.
+    // Client-side validation above still runs, so bad input is still caught.
+    throw new Error(
+      'Creator payout decisions is not available in this environment — no backend endpoint exists yet. Nothing was changed.',
+    );
   return sendJson<CreatorPayoutResult>('POST', `/payouts/${id}/decide`, { decision, note });
 }
 
