@@ -140,7 +140,7 @@ export async function decideEvent(id: string, decision: EventApprovalDecision, n
       : decision === 'reject' ? 'draft'
       : decision === 'suspend' ? 'suspended'
       : 'submitted';
-    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Event ${id}: ${decision} applied. State machine DRAFT→SUBMITTED→APPROVED enforced. Recorded to immutable audit (NL-12).` };
+    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Event ${id}: ${decision} applied.` };
   }
   return sendJson<EventDecisionResult>('POST', `/approvals/${id}/decide`, { decision, note });
 }
@@ -281,9 +281,9 @@ export async function decideVendorPayout(id: string, decision: 'approve' | 'reje
     await delay();
     const v = VENDORS.find((x) => x.id === id);
     if (decision === 'approve' && v && !v.kyc_verified) {
-      return { id, payout_status: 'kyc_hold', audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Payout blocked — vendor ${id} KYC tier insufficient (NL-10). Payout stays fail-closed until KYC clears. Recorded to immutable audit.` };
+      return { id, payout_status: 'kyc_hold', audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Payout blocked — vendor ${id} KYC tier insufficient (NL-10). Payout stays fail-closed until KYC clears.` };
     }
-    return { id, payout_status: decision === 'approve' ? 'approved' : 'rejected', audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Vendor ${id} payout ${decision === 'approve' ? 'approved' : 'rejected'}. KYC gate (NL-10) passed. Recorded to immutable audit (NL-12).` };
+    return { id, payout_status: decision === 'approve' ? 'approved' : 'rejected', audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Vendor ${id} payout ${decision === 'approve' ? 'approved' : 'rejected'}.` };
   }
   return sendJson<VendorPayoutResult>('POST', `/vendors/${id}/payout`, { decision, note });
 }
@@ -313,7 +313,7 @@ export async function resolveSettlementBreak(id: string, action: 'investigate' |
   if (USE_MOCK) {
     await delay();
     const status = action === 'investigate' ? 'investigating' : action === 'resolve' ? 'resolved' : 'reconciled';
-    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Settlement break ${id}: ${action} applied. Ledger projection reconciled (NL-8). Recorded to immutable audit (NL-12).` };
+    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Settlement break ${id}: ${action} applied. Ledger projection reconciled (NL-8).` };
   }
   return sendJson<SettlementResolveResult>('POST', `/settlement/${id}/resolve`, { action, note });
 }
@@ -349,7 +349,7 @@ export async function decideEventFraud(id: string, action: EventFraudAction, not
   if (USE_MOCK) {
     await delay();
     const status = action === 'investigate' ? 'investigating' : action === 'clear' ? 'cleared' : 'blocked';
-    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fraud signal ${id}: ${action} applied. Recorded to immutable audit (NL-12).` };
+    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Fraud signal ${id}: ${action} applied.` };
   }
   return sendJson<EventFraudActionResult>('POST', `/fraud/${id}/action`, { action, note });
 }

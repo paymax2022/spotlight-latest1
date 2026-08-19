@@ -257,7 +257,7 @@ export async function handleDefault(id: string, action: DefaultAction, note?: st
       : action === 'dismiss' ? 'dismissed'
       : action === 'grace' ? 'grace'
       : 'make_good';
-    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Default ${id}: ${action} applied (NL-7: peer rotation — Paymax never advances credit). Recorded to immutable audit.` };
+    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Default ${id}: ${action} applied (NL-7: peer rotation — Paymax never advances credit).` };
   }
   return sendJson<DefaultActionResult>('POST', `/defaults/${id}/handle`, { action, note });
 }

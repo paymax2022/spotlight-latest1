@@ -432,7 +432,7 @@ export async function actOnTerm(id: string, action: 'approve' | 'retire'): Promi
     t.status = action === 'approve' ? 'APPROVED' : 'RETIRED';
     t.approved_by = 'you (pharmacist)';
     t.approved_at = new Date().toISOString();
-    return { ok: true, message: action === 'approve' ? `Term "${t.term}" approved — now live in user-facing symptom search. Approver + timestamp recorded to immutable audit.` : `Term "${t.term}" retired — removed from user-facing resolution. Recorded to immutable audit.` };
+    return { ok: true, message: action === 'approve' ? `Term "${t.term}" approved — now live in user-facing symptom search. Approver + timestamp recorded to immutable audit.` : `Term "${t.term}" retired — removed from user-facing resolution.` };
   }
   await postJson(URL_MAPPINGS, { entity: 'term', action, payload: { id } });
   return { ok: true, message: `Term ${action}d.` };
@@ -452,7 +452,7 @@ export async function actOnClassMap(clusterId: string, therapeuticClassId: strin
     if (!c || !m) throw new Error('Cluster→class mapping not found');
     if (action === 'retire') {
       c.class_maps = c.class_maps.filter((x) => x.therapeutic_class_id !== therapeuticClassId);
-      return { ok: true, message: `"${m.class_name}" removed from this cluster — no longer in its results. The class itself is untouched. Recorded to immutable audit.` };
+      return { ok: true, message: `Fixture — nothing was saved. "${m.class_name}" removed from this cluster — no longer in its results. The class itself is untouched.` };
     }
     if (m.status === 'RETIRED') throw new Error('Illegal transition — cannot approve a retired class (409).');
     // Status is a projection of the ONE class row — approving updates every cluster mapping it.

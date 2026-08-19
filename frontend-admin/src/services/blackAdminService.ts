@@ -148,7 +148,7 @@ export async function upsertPerk(perk: Partial<BlackPerk> & { id?: string }, not
       updated_by_masked: 'admin:you•••',
       updated_at: new Date().toISOString(),
     };
-    return { perk: merged, audit_id: aud(), message: `Perk "${merged.name}" saved. Redeemable closed-loop via single-use credential — never cash (NL-3/NL-4). Recorded to immutable audit (NL-12).` };
+    return { perk: merged, audit_id: aud(), message: `Fixture — nothing was saved. Perk "${merged.name}" saved. Redeemable closed-loop via single-use credential — never cash (NL-3/NL-4).` };
   }
   return sendJson<BlackPerkUpsertResult>(perk.id ? 'PATCH' : 'POST', perk.id ? `/perks/${perk.id}` : '/perks', { ...perk, note });
 }

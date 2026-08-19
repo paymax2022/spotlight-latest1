@@ -127,6 +127,13 @@ jobs:
       # sharing a timestamp abort `supabase start` / `db reset` partway through
       # the chain. The collision is invisible to the author — it appears on the
       # base branch only AFTER the merge — so it must be caught at PR time.
+      - name: Check admin services do not fake writes
+        # A mutation whose fixture branch returns success tells the operator the
+        # action was applied when nothing happened — found four times by accident
+        # (creator payouts, escrow fraud, KYC bypass, crypto withdrawals). Ratchets
+        # against a baseline: existing debt is recorded, additions fail.
+        run: python3 scripts/ci/check-simulated-writes.py
+
       - name: Check migration versions are unique
         run: bash scripts/ci/check-migration-versions.sh
       # Pins the module router's glob semantics, its fail-open behaviour, and its

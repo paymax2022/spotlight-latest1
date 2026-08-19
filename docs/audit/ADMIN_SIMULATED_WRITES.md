@@ -83,7 +83,11 @@ Money-touching services in that list, highest concern first:
 - **Step 1 done** (`e4bbe2a5`) — 11 fabricated claims removed (the audit said 2), fake `audit_id` made self-evident.
 - **Step 2 done** — the four backendless mutations now refuse instead of returning success, pinned by tests.
 - **Step 3 done** — invest + crypto admin flipped live (every endpoint verified against the Go routes first), pinned by tests.
-- Step 4 (CI guard) outstanding.
+- **Step 4 done** — `scripts/ci/check-simulated-writes.py` runs in the hygiene lane. Fabricated claims are a hard failure (zero remain); simulated writes ratchet against a 263-entry baseline.
+
+**Step 4 found the claims were far more widespread than step 1 fixed:** 31 more across 10 services
+(events, health lab/pharmacy/vet/triage, loyalty, savings, social, black, pharmacySymptom) — 49 lines in total,
+all now cleaned. The audit had recorded 2.
 
 **Found during step 2:** creators' admin backend *does* exist, at different paths than the client calls
 (`POST /creators/payouts/:payoutId/paid` and `POST /creators/content/:contentId/moderate`, versus the client's

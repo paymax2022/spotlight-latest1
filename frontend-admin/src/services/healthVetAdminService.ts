@@ -152,7 +152,7 @@ export async function decideVcn(id: string, decision: VcnDecision, note?: string
     await delay();
     const app = VCN_APPS.find((a) => a.id === id);
     if (decision === 'approve' && app && !app.vcn_verified) {
-      return { id, status: 'needs_info', capability_granted: false, audit_id: auditId(), message: `Approval blocked — VCN practising licence not verified (HL-2). Supply stays credential-gated and fail-closed. Recorded to immutable audit (HL-12).` };
+      return { id, status: 'needs_info', capability_granted: false, audit_id: auditId(), message: `Fixture — nothing was saved. Approval blocked — VCN practising licence not verified (HL-2). Supply stays credential-gated and fail-closed. (HL-12).` };
     }
     const status =
       decision === 'approve' ? 'approved'
@@ -160,7 +160,7 @@ export async function decideVcn(id: string, decision: VcnDecision, note?: string
       : decision === 'need_info' ? 'needs_info'
       : decision === 'suspend' ? 'suspended'
       : 'approved'; // reinstate
-    return { id, status, capability_granted: decision === 'approve', audit_id: auditId(), message: `VCN application ${id}: ${decision} applied. ${decision === 'approve' ? 'Provider vet capability idempotently granted and discoverability unlocked (HL-2). ' : ''}State machine SUBMITTED→UNDER_REVIEW→${status.toUpperCase()} enforced. Recorded to immutable audit (HL-12).` };
+    return { id, status, capability_granted: decision === 'approve', audit_id: auditId(), message: `Fixture — nothing was saved. VCN application ${id}: ${decision} applied. ${decision === 'approve' ? 'Provider vet capability idempotently granted and discoverability unlocked (HL-2). ' : ''}State machine SUBMITTED→UNDER_REVIEW→${status.toUpperCase()} enforced. (HL-12).` };
   }
   return sendJson<VcnDecisionResult>('POST', `/vcn/applications/${id}/decision`, { decision, note });
 }
@@ -199,10 +199,10 @@ export async function governService(id: string, action: VetServiceGovernanceActi
     await delay();
     const item = SERVICES.find((s) => s.id === id);
     if (action === 'approve' && item && item.platform_fee_pct > 0.1) {
-      return { id, status: 'pending', audit_id: auditId(), message: `Approval blocked — platform fee ${(item.platform_fee_pct * 100).toFixed(0)}% exceeds the governed 10% take-rate ceiling; fee policy must be corrected before listing. Recorded to immutable audit (HL-12).` };
+      return { id, status: 'pending', audit_id: auditId(), message: `Fixture — nothing was saved. Approval blocked — platform fee ${(item.platform_fee_pct * 100).toFixed(0)}% exceeds the governed 10% take-rate ceiling; fee policy must be corrected before listing. (HL-12).` };
     }
     const status = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'suspended';
-    return { id, status, audit_id: auditId(), message: `Service ${id}: ${action} applied. Service/fee governance enforced. Recorded to immutable audit (HL-12).` };
+    return { id, status, audit_id: auditId(), message: `Fixture — nothing was saved. Service ${id}: ${action} applied. Service/fee governance enforced. (HL-12).` };
   }
   return sendJson<VetServiceGovernanceResult>('POST', `/services/${id}/govern`, { action, note });
 }
@@ -328,12 +328,12 @@ export async function decidePayout(id: string, decision: VetPayoutDecision, note
     await delay();
     const p = PAYOUTS.find((x) => x.id === id);
     if (decision === 'approve' && p && !p.kyc_verified) {
-      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Payout blocked — vet ${id} KYC tier insufficient (HL-10). Payout stays fail-closed until KYC clears. Recorded to immutable audit (HL-12).` };
+      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Fixture — nothing was saved. Payout blocked — vet ${id} KYC tier insufficient (HL-10). Payout stays fail-closed until KYC clears. (HL-12).` };
     }
     if (decision === 'approve' && p?.aml_flag) {
-      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Payout held — AML flag on settlement requires clearance before release (HL-10). Recorded to immutable audit (HL-12).` };
+      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Fixture — nothing was saved. Payout held — AML flag on settlement requires clearance before release (HL-10). (HL-12).` };
     }
-    return { id, payout_status: decision === 'approve' ? 'approved' : 'rejected', audit_id: auditId(), message: `Vet ${id} payout ${decision === 'approve' ? 'approved' : 'rejected'}. KYC + AML gate (HL-10) passed. Settled funds are the escrow released on consult completion (HL-9). Recorded to immutable audit (HL-12).` };
+    return { id, payout_status: decision === 'approve' ? 'approved' : 'rejected', audit_id: auditId(), message: `Fixture — nothing was saved. Vet ${id} payout ${decision === 'approve' ? 'approved' : 'rejected'}. KYC + AML gate (HL-10) passed. Settled funds are the escrow released on consult completion (HL-9). (HL-12).` };
   }
   return sendJson<VetPayoutDecisionResult>('POST', `/payouts/${id}/decision`, { decision, note });
 }
@@ -374,7 +374,7 @@ export async function moderate(id: string, action: ModerationAction, note?: stri
       : action === 'ignore' ? 'ignored'
       : 'resolved'; // suspend_provider closes the moderation item
     const extra = action === 'suspend_provider' ? ' Provider vet capability suspended — discoverability revoked pending review (HL-2).' : '';
-    return { id, status, audit_id: auditId(), message: `Moderation ${id}: ${action.replace(/_/g, ' ')} applied.${extra} Recorded to immutable audit (HL-12).` };
+    return { id, status, audit_id: auditId(), message: `Fixture — nothing was saved. Moderation ${id}: ${action.replace(/_/g, ' ')} applied.${extra} (HL-12).` };
   }
   return sendJson<ModerationResult>('POST', `/moderation/${id}/action`, { action, note });
 }
