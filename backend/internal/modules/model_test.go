@@ -139,3 +139,85 @@ func TestActionFor(t *testing.T) {
 		t.Fatal("audit action must match the transition it records")
 	}
 }
+
+// ─── coming_soon ─────────────────────────────────────────────────────────────
+
+// TestParseStatusAcceptsComingSoon: the third state must round-trip, and near-misses
+// must still be rejected rather than coerced — silently resolving a typo to 'hidden'
+// would pull a live module off the grid.
+func TestParseStatusAcceptsComingSoon(t *testing.T) {
+	got, err := ParseStatus("coming_soon")
+	if err != nil || got != StatusComingSoon {
+		t.Fatalf("ParseStatus(coming_soon) = %v, %v; want coming_soon, nil", got, err)
+	}
+	for _, bad := range []string{"coming soon", "coming-soon", "comingSoon", "COMING_SOON", "soon", ""} {
+		if _, err := ParseStatus(bad); err == nil {
+			t.Errorf("ParseStatus(%q) was accepted; it must be rejected", bad)
+		}
+	}
+}
+
+// TestComingSoonAndVisibleAreMutuallyExclusive: a module has ONE status per
+// environment, so no module may report both. Clients apply the two key lists
+// independently and would otherwise need a precedence rule.
+func TestComingSoonAndVisibleAreMutuallyExclusive(t *testing.T) {
+	const env Environment = "production"
+	for _, st := range []Status{StatusHidden, StatusComingSoon, StatusVisible} {
+		m := Module{
+			Key:            "demo",
+			Lifecycle:      LifecycleActive,
+			EnvFlagEnabled: true,
+			Environments:   map[Environment]EnvironmentState{env: {Status: st}},
+		}
+		vis, soon := m.VisibleIn(env), m.ComingSoonIn(env)
+		if vis && soon {
+			t.Errorf("status %s reports both visible and coming-soon", st)
+		}
+		switch st {
+		case StatusVisible:
+			if !vis || soon {
+				t.Errorf("status visible: VisibleIn=%v ComingSoonIn=%v, want true/false", vis, soon)
+			}
+		case StatusComingSoon:
+			if vis || !soon {
+				t.Errorf("status coming_soon: VisibleIn=%v ComingSoonIn=%v, want false/true", vis, soon)
+			}
+		case StatusHidden:
+			if vis || soon {
+				t.Errorf("status hidden: VisibleIn=%v ComingSoonIn=%v, want false/false", vis, soon)
+			}
+		}
+	}
+}
+
+// TestComingSoonRespectsLifecycleAndFlag: an archived module, or one whose environment
+// flag is off, is ABSENT — not a teaser. Otherwise archiving a module would leave a
+// permanent dead tile on the grid.
+func TestComingSoonRespectsLifecycleAndFlag(t *testing.T) {
+	const env Environment = "production"
+	base := func() Module {
+		return Module{
+			Key:            "demo",
+			Lifecycle:      LifecycleActive,
+			EnvFlagEnabled: true,
+			Environments:   map[Environment]EnvironmentState{env: {Status: StatusComingSoon}},
+		}
+	}
+	if !base().ComingSoonIn(env) {
+		t.Fatal("baseline module should be coming-soon")
+	}
+	archived := base()
+	archived.Lifecycle = LifecycleArchived
+	if archived.ComingSoonIn(env) {
+		t.Error("an archived module must not render as coming-soon")
+	}
+	flagOff := base()
+	flagOff.EnvFlagEnabled = false
+	if flagOff.ComingSoonIn(env) {
+		t.Error("a module whose env flag is off must not render as coming-soon")
+	}
+	other := base()
+	if other.ComingSoonIn("staging") {
+		t.Error("coming-soon in production must not leak into staging")
+	}
+}

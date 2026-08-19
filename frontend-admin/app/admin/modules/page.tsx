@@ -12,9 +12,17 @@ import {
   effectiveVisibility,
   type ModuleEnvironment,
   type ModuleRegistry,
+  type ModuleStatus,
   type PlatformModule,
 } from '@/types/modules';
 import { useToasts, ToastStack, ConfirmDialog } from '@/components/rbac';
+
+/** Human copy for confirmations and toasts — 'coming_soon' reads badly in a sentence. */
+const STATUS_LABEL: Record<ModuleStatus, string> = {
+  hidden: 'hidden',
+  coming_soon: 'coming soon (visible but not usable)',
+  visible: 'live',
+};
 import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 /** A publish/hide action awaiting confirmation. */
@@ -22,7 +30,7 @@ type PendingVisibility = {
   kind: 'visibility';
   module: PlatformModule;
   environment: ModuleEnvironment;
-  next: 'visible' | 'hidden';
+  next: ModuleStatus;
 };
 type PendingLifecycle = { kind: 'lifecycle'; module: PlatformModule; next: 'active' | 'archived' };
 type Pending = PendingVisibility | PendingLifecycle;
@@ -105,7 +113,7 @@ export default function ModulesPage() {
       replaceModule(updated);
       toast.success(
         pending.kind === 'visibility'
-          ? `${module.name} is now ${pending.next} in ${pending.environment}.`
+          ? `${module.name} is now ${STATUS_LABEL[pending.next as ModuleStatus] ?? pending.next} in ${pending.environment}.`
           : `${module.name} ${pending.next === 'archived' ? 'archived' : 'restored'}.`,
       );
     } catch (e) {
@@ -247,27 +255,42 @@ export default function ModulesPage() {
 
                       {MODULE_ENVIRONMENTS.map((envName) => {
                         const st = m.environments[envName];
-                        const isVisible = st?.status === 'visible';
+                        const current: ModuleStatus = st?.status ?? 'hidden';
+                        const isVisible = current === 'visible';
                         const eff = effectiveVisibility(m, envName);
+                        // Three explicit choices rather than a cycling toggle: an
+                        // operator changing production visibility should pick the state
+                        // they want, not tap through the other two to reach it.
+                        const CHOICES: { value: ModuleStatus; label: string; hint: string }[] = [
+                          { value: 'hidden', label: 'Hidden', hint: 'not shown in the app' },
+                          { value: 'coming_soon', label: 'Coming soon', hint: 'shown, but not tappable' },
+                          { value: 'visible', label: 'Live', hint: 'shown and fully usable' },
+                        ];
                         return (
                           <td key={envName} style={tdCell}>
-                            <Button
-                              sm
-                              variant={isVisible ? 'primary' : 'outline'}
-                              disabled={rowBusy || archived}
-                              aria-label={`${isVisible ? 'Hide' : 'Publish'} ${m.name} in ${envName}`}
-                              aria-pressed={isVisible}
-                              onClick={() =>
-                                setPending({
-                                  kind: 'visibility',
-                                  module: m,
-                                  environment: envName,
-                                  next: isVisible ? 'hidden' : 'visible',
-                                })
-                              }
-                            >
-                              {isVisible ? 'Published' : 'Publish'}
-                            </Button>
+                            <div role="group" aria-label={`${m.name} in ${envName}`} style={{ display: 'flex', gap: 4 }}>
+                              {CHOICES.map((c) => (
+                                <Button
+                                  key={c.value}
+                                  sm
+                                  variant={current === c.value ? 'primary' : 'outline'}
+                                  disabled={rowBusy || archived || current === c.value}
+                                  title={c.hint}
+                                  aria-label={`Set ${m.name} to ${c.label} in ${envName}`}
+                                  aria-pressed={current === c.value}
+                                  onClick={() =>
+                                    setPending({
+                                      kind: 'visibility',
+                                      module: m,
+                                      environment: envName,
+                                      next: c.value,
+                                    })
+                                  }
+                                >
+                                  {c.label}
+                                </Button>
+                              ))}
+                            </div>
                             {/* Explains a published-but-dark row instead of leaving
                                 the operator to conclude the toggle is broken. */}
                             {isVisible && !eff.visible ? (

@@ -19,8 +19,20 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 // It returns keys only, scoped to this tier — never the full registry. A client
 // has no business knowing that a module exists but is unpublished, and leaking
 // that from a production deployment would advertise unreleased work.
+// `modules` keeps its original meaning — fully live and tappable — and coming-soon
+// keys are reported SEPARATELY rather than folded in. That choice is about how older
+// app builds degrade: a build that does not know the field ignores it and simply does
+// not render those tiles, which is the safe direction. Folding them into `modules`
+// would make an old build show a teaser as fully functional and drop the user into a
+// half-built screen.
 func (h *Handler) Visibility(c *gin.Context) {
-	keys, err := h.svc.VisibleKeys(c.Request.Context())
+	ctx := c.Request.Context()
+	keys, err := h.svc.VisibleKeys(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load module visibility"})
+		return
+	}
+	soon, err := h.svc.ComingSoonKeys(ctx)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load module visibility"})
 		return
@@ -28,6 +40,7 @@ func (h *Handler) Visibility(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
 		"environment": h.svc.Env(),
 		"modules":     keys,
+		"comingSoon":  soon,
 	}})
 }
 
