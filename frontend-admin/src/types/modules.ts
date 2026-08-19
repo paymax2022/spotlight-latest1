@@ -1,5 +1,11 @@
 export type ModuleEnvironment = 'development' | 'staging' | 'production';
-export type ModuleStatus = 'hidden' | 'visible';
+/**
+ * Per-environment module state.
+ *   hidden      — not rendered in the app
+ *   coming_soon — rendered as a teaser, but inert (not tappable)
+ *   visible     — rendered and fully functional
+ */
+export type ModuleStatus = 'hidden' | 'coming_soon' | 'visible';
 export type ModuleLifecycle = 'active' | 'archived';
 
 export const MODULE_ENVIRONMENTS: ModuleEnvironment[] = ['development', 'staging', 'production'];

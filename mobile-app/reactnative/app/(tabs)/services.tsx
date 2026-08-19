@@ -54,13 +54,23 @@ export default function ServicesScreen() {
   // an unpublished module cannot leak through a path someone forgot to update.
   // Tiles with no registry mapping are always shown (see serviceModuleKeys), and
   // an unreachable registry shows everything rather than emptying the tab.
-  const { isVisible } = useModuleVisibility();
+  // A registry 'comingSoon' module STAYS on the grid but is marked inert — that is the
+  // whole point of the state, so it must not be filtered out with the hidden ones.
+  // ModuleCard already drops onPress for comingSoon, so marking the flag is sufficient.
+  // The registry can also CLEAR a shipped comingSoon by publishing the module 'visible',
+  // which is how ops retires a placeholder without an app release.
+  const { stateOf } = useModuleVisibility();
   const visibleModules = React.useMemo(
-    () => SERVICE_MODULES.filter((m) => {
+    () => SERVICE_MODULES.flatMap((m) => {
       const key = registryKeyFor(m.id);
-      return key === null || isVisible(key);
+      if (key === null) return [m];        // unmapped tiles are always shown as built
+      switch (stateOf(key)) {
+        case 'hidden':     return [];
+        case 'comingSoon': return [{ ...m, comingSoon: true }];
+        default:           return [{ ...m, comingSoon: false }];
+      }
     }),
-    [isVisible],
+    [stateOf],
   );
 
   const searchResults = isSearch

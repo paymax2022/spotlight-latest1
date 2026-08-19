@@ -40,8 +40,12 @@ func ValidEnvironment(e Environment) bool {
 type Status string
 
 const (
-	StatusHidden  Status = "hidden"
-	StatusVisible Status = "visible"
+	StatusHidden Status = "hidden"
+	// StatusComingSoon renders the module but INERT — a teaser. The mobile ModuleCard
+	// already drops onPress for a coming-soon tile, so this state only had to become
+	// controllable per environment; the rendering predates it.
+	StatusComingSoon Status = "coming_soon"
+	StatusVisible    Status = "visible"
 )
 
 // Lifecycle is module-wide. Archiving hides a module in every environment while
@@ -121,6 +125,25 @@ func (m Module) VisibleIn(env Environment) bool {
 	return st.Status == StatusVisible
 }
 
+// ComingSoonIn reports whether the module should be RENDERED BUT INERT in env.
+//
+// It deliberately applies the same lifecycle and env-flag gates as VisibleIn: an
+// archived module, or one whose environment flag is off, is not a teaser — it is simply
+// absent. So the two are mutually exclusive, and a module is at most one of them.
+func (m Module) ComingSoonIn(env Environment) bool {
+	if m.Lifecycle != LifecycleActive {
+		return false
+	}
+	if !m.EnvFlagEnabled {
+		return false
+	}
+	st, ok := m.Environments[env]
+	if !ok {
+		return false
+	}
+	return st.Status == StatusComingSoon
+}
+
 // AssertPublishable guards the publish transition. Separated from the DB write so
 // the rule is unit-testable without a database.
 func (m Module) AssertPublishable() error {
@@ -135,6 +158,8 @@ func ParseStatus(s string) (Status, error) {
 	switch Status(s) {
 	case StatusHidden:
 		return StatusHidden, nil
+	case StatusComingSoon:
+		return StatusComingSoon, nil
 	case StatusVisible:
 		return StatusVisible, nil
 	}

@@ -11,10 +11,10 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api/client';
-import { visibilityFor, type ModuleVisibility } from './rules';
+import { visibilityFor, moduleStateFor, type ModuleState, type ModuleVisibility } from './rules';
 
-export { visibilityFor };
-export type { ModuleVisibility };
+export { visibilityFor, moduleStateFor };
+export type { ModuleVisibility, ModuleState };
 
 /** Cache lifetime. Publication changes are rare; a stale minute is acceptable. */
 const STALE_MS = 60_000;
@@ -28,6 +28,8 @@ export async function fetchModuleVisibility(): Promise<ModuleVisibility | null> 
     return {
       environment: String(d.environment ?? ''),
       modules: (d.modules as unknown[]).map(String),
+      // Absent on an older backend — treated as "no teasers", not as an error.
+      comingSoon: Array.isArray(d.comingSoon) ? (d.comingSoon as unknown[]).map(String) : [],
     };
   } catch {
     // Unreachable registry ⇒ "unknown", never "nothing". See visibilityFor.
@@ -48,5 +50,7 @@ export function useModuleVisibility() {
     degraded: isError || data === null,
     environment: data?.environment ?? '',
     isVisible: (key: string) => visibilityFor(data ?? null, key),
+    /** Full tri-state: 'visible' | 'comingSoon' | 'hidden'. */
+    stateOf: (key: string): ModuleState => moduleStateFor(data ?? null, key),
   };
 }

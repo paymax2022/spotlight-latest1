@@ -122,6 +122,23 @@ func (s *Service) VisibleKeys(ctx context.Context) ([]string, error) {
 	return keys, nil
 }
 
+// ComingSoonKeys returns the modules that should be RENDERED BUT INERT in this
+// environment. Disjoint from VisibleKeys by construction (a module has one status per
+// environment), so a client can apply them independently without ordering rules.
+func (s *Service) ComingSoonKeys(ctx context.Context) ([]string, error) {
+	all, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(all))
+	for _, m := range all {
+		if m.ComingSoonIn(s.env) {
+			keys = append(keys, m.Key)
+		}
+	}
+	return keys, nil
+}
+
 // get loads one module (with all environments) or ErrModuleNotFound.
 func (s *Service) get(ctx context.Context, key string) (Module, error) {
 	all, err := s.List(ctx)
@@ -153,7 +170,7 @@ func (s *Service) SetVisibility(ctx context.Context, key string, env Environment
 	if err != nil {
 		return Module{}, err
 	}
-	if status == StatusVisible {
+	if status == StatusVisible || status == StatusComingSoon {
 		if err := m.AssertPublishable(); err != nil {
 			return Module{}, err
 		}
