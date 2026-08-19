@@ -1508,6 +1508,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restStore.PATCH("/:id/menu/items/:itemId", restaurantHandler.AdminUpdateItem)
 		restStore.DELETE("/:id/menu/items/:itemId", restaurantHandler.AdminDeleteItem)
 
+		// Listing moderation (foodhub A6). "listings/pending" is a static sibling of
+		// the ":id" params registered elsewhere in this group, which Gin allows.
+		restAdmin.GET("/listings/pending", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminModerationQueue)
+		restAdmin.POST("/listings/:id/decision", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideListing)
+		// Shops with no identifiable merchant (foodhub §5.4).
+		restAdmin.GET("/restaurants/unclaimed", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminUnclaimedRestaurants)
 		restAdmin.GET("/riders", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminListRiders)
 		restAdmin.GET("/dispatch/queue", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminDispatchQueue)
 		restAdmin.POST("/orders/:id/assign", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminAssignRider)

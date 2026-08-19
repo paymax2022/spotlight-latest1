@@ -4,7 +4,7 @@
 |---|---|---|
 | 0 Audit | **DONE** | `AUDIT.md` (A1–A27 with evidence), `GAP_PLAN.md` (status mapping, naming deviations, risks). No code written, per §2. |
 | 1 Owner capability & legacy linking | **IN PROGRESS** | Multi-outlet owner console landed. Staff roles (A18), owner_profile linkage and legacy/unclaimed queue still to do. A17 decision made: BRIDGE (see below). |
-| 2 Restaurant ops & menu | **IN PROGRESS** | Listing review (A6) landed, flag-gated OFF. Remaining: lifecycle `status` enum (A3), the A1 storefront columns, CSV/86 board (A5), admin moderation screens (A20). |
+| 2 Restaurant ops & menu | **IN PROGRESS** | Listing review (A6) landed, flag-gated OFF. Admin screens (A20) done. Remaining: lifecycle `status` enum (A3), the A1 storefront columns, CSV/86 board (A5). |
 | 3 Restaurant-side order flow | NOT STARTED | |
 | 4 Delivery | NOT STARTED | Smallest phase; mostly already complete. |
 | 5 Merchant money | NOT STARTED | Escrow already live — no cut-over needed. |

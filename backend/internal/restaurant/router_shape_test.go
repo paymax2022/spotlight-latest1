@@ -41,6 +41,16 @@ func TestRestaurantRouteShapeRegistersWithoutConflict(t *testing.T) {
 	g.GET("/:id/orders/:orderId", noop)
 	g.POST("/orders/:orderId/accept", noop)
 
+	// Admin group: static "listings"/"restaurants" siblings beside ":id" params.
+	a := r.Group("/api/restaurant/admin")
+	a.GET("/listings/pending", noop)
+	a.POST("/listings/:id/decision", noop)
+	a.GET("/restaurants/unclaimed", noop)
+	a.GET("/onboarding", noop)
+	a.POST("/onboarding/:id/:decision", noop)
+	a.GET("/payouts", noop)
+	a.GET("/payouts/:id", noop)
+
 	if len(r.Routes()) == 0 {
 		t.Fatal("no routes registered")
 	}
