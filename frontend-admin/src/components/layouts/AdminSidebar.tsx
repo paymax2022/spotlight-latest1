@@ -358,6 +358,10 @@ const navItemsBase: NavItem[] = [
   { label: 'Payouts', href: '/admin/restaurant/payouts', section: 'Restaurant', permissions: ['restaurant.admin.payouts'] },
   { label: 'Refunds & Disputes', href: '/admin/restaurant/disputes', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.disputes'] },
   // ── Maps (MapService v2 cost/coverage + OSM contribution review) ─────────────
+  // Controls which service modules the mobile app shows, per environment
+  // (hidden / coming soon / live). Gated on the same permission the API enforces —
+  // reading the registry exposes unreleased work, so it is not a public nav entry.
+  { label: 'App Modules', href: '/admin/modules', section: 'Platform', permissions: ['platform.modules.read'] },
   { label: 'Maps Cost & Coverage', href: '/admin/maps', section: 'Platform', permissions: ['map.admin.review'] },
   { label: 'OSM Contributions', href: '/admin/maps/contributions', section: 'Platform', permissions: ['map.admin.review'] },
   // ── Fractional Real Estate (land crowd-investing) ─────────────────────────
