@@ -47,6 +47,8 @@ import (
 	"spotlight/backend/internal/invest"
 	"spotlight/backend/internal/maps"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/modules"
+	"spotlight/backend/internal/modules/modulegate"
 	"spotlight/backend/internal/notifications"
 	"spotlight/backend/internal/onboarding"
 	"spotlight/backend/internal/orchestration"
@@ -69,8 +71,8 @@ import (
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/restaurant"
 	"spotlight/backend/internal/services"
-	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/telemedicine"
+	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
 	"spotlight/backend/internal/votebridge"
 	"spotlight/backend/internal/webhooks"
@@ -300,6 +302,40 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	finance := r.Group("/api/finance")
 	finance.Use(middleware.RequireAuthContext(supabase, rbac))
 	finance.Use(requireUserID())
+
+	// --- Platform module registry (+ its server-side gate) ---
+	// The registry decides which modules an environment publishes. Its routes were
+	// written but never mounted, so GET /api/v1/modules/visibility answered 404 and
+	// every client fell back to "unknown ⇒ show everything" — publication state had no
+	// effect anywhere. Mounting it is what makes the admin console and the mobile/web
+	// gates real. Staging and production were seeded to match their pre-mount behaviour
+	// (migration 20261216000000), so this wiring is a no-op for users on deploy.
+	modRegistrySvc := modules.NewService(pool, modules.Environment(cfg.AppEnv), func(envFlag string) bool {
+		// The FEATURE_* kill switch for this process, read from the environment. It
+		// gates INDEPENDENTLY of publication: a module must be both published for the
+		// tier AND flag-enabled here to be visible.
+		return os.Getenv(envFlag) == "true"
+	})
+	modPublic := r.Group("/api/v1")
+	modAdmin := r.Group("/api/v1/admin")
+	modAdmin.Use(mapsAuth())
+	modAdmin.Use(requireUserID())
+	modules.Register(modPublic, modAdmin, pool, rbac,
+		modules.Environment(cfg.AppEnv), func(envFlag string) bool { return os.Getenv(envFlag) == "true" })
+
+	// Server-side enforcement, mounted AFTER auth so an unauthenticated caller still
+	// gets 401 rather than 503 (and cannot probe which modules exist).
+	//
+	// DEFAULTS TO OBSERVE-ONLY. With FEATURE_MODULE_GATE_ENFORCE unset it resolves the
+	// module for each request and LOGS what it would have refused, refusing nothing.
+	// The route map is hand-built from gin Group() registrations and has never met real
+	// traffic; a wrong prefix would 503 a working endpoint, so it earns enforcement by
+	// running silently first. Unmapped paths and every /admin surface are always allowed.
+	finance.Use(modulegate.New(modRegistrySvc, modulegate.Options{
+		Enabled: cfg.FeatureModuleGateEnforce,
+	}))
+	log.Printf("[modules] registry mounted (env=%s); server gate enforce=%v",
+		cfg.AppEnv, cfg.FeatureModuleGateEnforce)
 
 	// --- Transfer routes (wallet-to-wallet + wallet-to-bank) ---
 	// Routes are always mounted; the handler returns 503 per family when the
@@ -1413,7 +1449,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.GET("/:id/staff", restaurantHandler.ListStaff)
 		restGroup.POST("/:id/staff", restaurantHandler.InviteStaff)
 		restGroup.PATCH("/:id/staff/:userId", restaurantHandler.SetStaffStatus)
-		restGroup.GET("/earnings", restaurantHandler.Earnings)  // caller's food-delivery earnings
+		restGroup.GET("/earnings", restaurantHandler.Earnings) // caller's food-delivery earnings
 		restGroup.GET("/:id", restaurantHandler.GetRestaurant)
 
 		// Store management (owner only): edit profile + operational open/close.
