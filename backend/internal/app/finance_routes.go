@@ -323,6 +323,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	modules.Register(modPublic, modAdmin, pool, rbac,
 		modules.Environment(cfg.AppEnv), func(envFlag string) bool { return os.Getenv(envFlag) == "true" })
 
+	// Per-user effective access. Authenticated and user-scoped: the id comes from the
+	// validated token, never from the client. The unauthenticated /modules/visibility
+	// above stays the environment-level list.
+	finance.GET("/modules/access", modules.NewHandler(modRegistrySvc).MyAccess)
+
 	// Server-side enforcement, mounted AFTER auth so an unauthenticated caller still
 	// gets 401 rather than 503 (and cannot probe which modules exist).
 	//

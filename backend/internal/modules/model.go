@@ -100,6 +100,11 @@ type Module struct {
 	// Environments is keyed by Environment. A tier absent from the map has never
 	// been decided and is treated as hidden.
 	Environments map[Environment]EnvironmentState `json:"environments"`
+	// AccessLevel decides WHO may use the module once it is published:
+	// 'general' (any signed-in user) or 'restricted' (KYC tier >= 1, or an admin
+	// grant). It is orthogonal to publication — an unpublished module is invisible to
+	// everyone regardless of this.
+	AccessLevel AccessLevel `json:"access_level"`
 	// EnvFlagEnabled reflects the ops kill switch in THIS process. It is reported
 	// so the admin console can explain why a published module is still not
 	// visible, instead of the operator concluding the toggle is broken.

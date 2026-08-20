@@ -44,7 +44,7 @@ func (s *Service) Env() Environment { return s.env }
 
 const selectModules = `
 	SELECT m.key, m.name, m.category, COALESCE(m.env_flag,''), COALESCE(m.description,''),
-	       m.lifecycle, m.created_at,
+	       m.lifecycle, COALESCE(m.access_level,'general'), m.created_at,
 	       COALESCE(e.environment,''), COALESCE(e.status,''), COALESCE(e.note,''),
 	       e.updated_at, COALESCE(e.updated_by::text,'')
 	  FROM public.platform_modules m
@@ -64,12 +64,12 @@ func (s *Service) List(ctx context.Context) ([]Module, error) {
 	var order []string
 	for rows.Next() {
 		var (
-			key, name, category, envFlag, desc, lifecycle string
-			createdAt                                     time.Time
-			envName, status, note, updatedBy              string
-			updatedAt                                     *time.Time
+			key, name, category, envFlag, desc, lifecycle, accessLevel string
+			createdAt                                                  time.Time
+			envName, status, note, updatedBy                           string
+			updatedAt                                                  *time.Time
 		)
-		if err := rows.Scan(&key, &name, &category, &envFlag, &desc, &lifecycle, &createdAt,
+		if err := rows.Scan(&key, &name, &category, &envFlag, &desc, &lifecycle, &accessLevel, &createdAt,
 			&envName, &status, &note, &updatedAt, &updatedBy); err != nil {
 			return nil, fmt.Errorf("modules: scan: %w", err)
 		}
@@ -77,7 +77,8 @@ func (s *Service) List(ctx context.Context) ([]Module, error) {
 		if !ok {
 			m = &Module{
 				Key: key, Name: name, Category: category, EnvFlag: envFlag,
-				Description: desc, Lifecycle: Lifecycle(lifecycle), CreatedAt: createdAt,
+				Description: desc, Lifecycle: Lifecycle(lifecycle),
+				AccessLevel: AccessLevel(accessLevel), CreatedAt: createdAt,
 				Environments:   map[Environment]EnvironmentState{},
 				EnvFlagEnabled: envFlag == "" || s.flag(envFlag),
 			}

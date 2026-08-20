@@ -35,6 +35,16 @@ func Register(public, admin *gin.RouterGroup, db *pgxpool.Pool, rbac services.RB
 	mods.GET("", middleware.RequirePermission(rbac, "platform.modules.read"), h.List)
 	mods.GET("/:key/history", middleware.RequirePermission(rbac, "platform.modules.read"), h.History)
 
+	// Per-user grants. Same permission as the rest of the registry: deciding who may
+	// use an unreleased module is the same class of act as publishing it.
+	//
+	// These control MODULE ACCESS ONLY — never money. A granted Tier 0 user can open
+	// the module and still cannot transact, because finance/tiers remains the sole
+	// authority on wallet debits and never reads these rows.
+	mods.GET("/users/:userId/grants", middleware.RequirePermission(rbac, "platform.modules.read"), h.ListUserGrants)
+	mods.POST("/users/:userId/grants", middleware.RequirePermission(rbac, "platform.modules.manage"), h.GrantUserModule)
+	mods.DELETE("/users/:userId/grants/:moduleKey", middleware.RequirePermission(rbac, "platform.modules.manage"), h.RevokeUserModule)
+
 	// Writes change what every user of an environment sees.
 	mods.PATCH("/:key/visibility", middleware.RequirePermission(rbac, "platform.modules.manage"), h.SetVisibility)
 	mods.PATCH("/:key/lifecycle", middleware.RequirePermission(rbac, "platform.modules.manage"), h.SetLifecycle)

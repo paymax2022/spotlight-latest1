@@ -12,8 +12,12 @@ type AuthenticatedUser struct {
 }
 
 type LoginRequest struct {
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=8"`
+	// Email stays for existing callers. New callers may send Identifier instead,
+	// which accepts an email OR a phone number — see AuthService.LoginUser.
+	Email string `json:"email" binding:"omitempty,email"`
+	// Identifier is an email or a Nigerian phone number in any common format.
+	Identifier string `json:"identifier"`
+	Password   string `json:"password" binding:"required,min=8"`
 }
 
 type RegisterRequest struct {
