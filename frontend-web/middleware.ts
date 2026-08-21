@@ -13,6 +13,31 @@
 //     net::ERR_FAILED.
 //   • The Supabase session-cookie refresh.
 //
-// This re-export is the whole fix: it puts a middleware entry point where Next
-// looks, without moving the implementation or touching the documented path.
-export { middleware, config } from './src/middleware';
+// Re-exporting the implementation puts a middleware entry point where Next looks,
+// without moving the implementation or touching the documented path.
+export { middleware } from './src/middleware';
+
+// `config` CANNOT be re-exported alongside it. Next parses the matcher at compile
+// time, before any module is evaluated, so it has to read an object literal in
+// this file. Under Next 15's webpack builder a re-export happened to survive;
+// Next 16 builds with Turbopack, which rejects it outright:
+//
+//   Error: Next.js can't recognize the exported `config` field in route.
+//          It mustn't be reexported.
+//
+// So this literal is the ONE definition of the matcher — `src/middleware.ts`
+// deliberately does not export a `config` of its own, because two copies would
+// drift and the dead one would look authoritative. Edit the matcher here.
+export const config = {
+  matcher: [
+    /*
+     * Page routes: everything except Next.js internals, static files, and API.
+     */
+    '/((?!_next/static|_next/image|favicon|assets|icons|images|api/).*)',
+    /*
+     * API routes: matched so the CORS layer can answer preflight + attach
+     * Access-Control headers (the handler short-circuits before Supabase auth).
+     */
+    '/api/:path*',
+  ],
+};
