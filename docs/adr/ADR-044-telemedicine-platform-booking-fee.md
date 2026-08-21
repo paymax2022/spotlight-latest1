@@ -1,4 +1,4 @@
-# ADR-040 — Telemedicine platform booking fee is additive to the patient
+# ADR-044 — Telemedicine platform booking fee is additive to the patient
 
 - **Status:** Accepted
 - **Date:** 2026-08-14
@@ -163,7 +163,7 @@ fix: see "Not addressed here".
 ### 7. The fee is behind `FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED`, default OFF.
 
 The flag resolves to a *rate*, not a branch: on → `PlatformFeeBp` (500), off → 0 bp.
-A 0-bp quote is arithmetically identical to the pre-ADR-040 world — the patient
+A 0-bp quote is arithmetically identical to the pre-ADR-044 world — the patient
 pays the consultation fee, that is what gets escrowed, and `Settle` receives
 `ServiceFeeKobo: 0`, the pure 85/15 split. There is no second code path to keep
 correct.

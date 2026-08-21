@@ -31,8 +31,8 @@ set -a; # shellcheck disable=SC1090
 : "${CORS_ALLOW_ORIGINS:=http://localhost:3000,http://localhost:4030}"
 : "${REDIS_URL:=redis://localhost:6379}"
 : "${TERMII_SENDER_ID:=Paymax}"
-: "${RESEND_FROM_EMAIL:=Paymax <noreply@mail.paymax.ng>}"
-: "${EMAIL_FROM:=Spotlight <no-reply@paymax.ng>}"
+: "${RESEND_FROM_EMAIL:=Spotlight <no-reply@spotlightng.com>}"
+: "${EMAIL_FROM:=Spotlight <no-reply@spotlightng.com>}"
 : "${MAILGUN_REGION:=us}"
 
 # Derive the R2 S3 endpoint from the account id when not given explicitly.

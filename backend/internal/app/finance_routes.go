@@ -47,6 +47,8 @@ import (
 	"spotlight/backend/internal/invest"
 	"spotlight/backend/internal/maps"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/modules"
+	"spotlight/backend/internal/modules/modulegate"
 	"spotlight/backend/internal/notifications"
 	"spotlight/backend/internal/onboarding"
 	"spotlight/backend/internal/orchestration"
@@ -69,8 +71,8 @@ import (
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/restaurant"
 	"spotlight/backend/internal/services"
-	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/telemedicine"
+	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
 	"spotlight/backend/internal/votebridge"
 	"spotlight/backend/internal/webhooks"
@@ -300,6 +302,45 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	finance := r.Group("/api/finance")
 	finance.Use(middleware.RequireAuthContext(supabase, rbac))
 	finance.Use(requireUserID())
+
+	// --- Platform module registry (+ its server-side gate) ---
+	// The registry decides which modules an environment publishes. Its routes were
+	// written but never mounted, so GET /api/v1/modules/visibility answered 404 and
+	// every client fell back to "unknown ⇒ show everything" — publication state had no
+	// effect anywhere. Mounting it is what makes the admin console and the mobile/web
+	// gates real. Staging and production were seeded to match their pre-mount behaviour
+	// (migration 20261216000000), so this wiring is a no-op for users on deploy.
+	modRegistrySvc := modules.NewService(pool, modules.Environment(cfg.AppEnv), func(envFlag string) bool {
+		// The FEATURE_* kill switch for this process, read from the environment. It
+		// gates INDEPENDENTLY of publication: a module must be both published for the
+		// tier AND flag-enabled here to be visible.
+		return os.Getenv(envFlag) == "true"
+	})
+	modPublic := r.Group("/api/v1")
+	modAdmin := r.Group("/api/v1/admin")
+	modAdmin.Use(mapsAuth())
+	modAdmin.Use(requireUserID())
+	modules.Register(modPublic, modAdmin, pool, rbac,
+		modules.Environment(cfg.AppEnv), func(envFlag string) bool { return os.Getenv(envFlag) == "true" })
+
+	// Per-user effective access. Authenticated and user-scoped: the id comes from the
+	// validated token, never from the client. The unauthenticated /modules/visibility
+	// above stays the environment-level list.
+	finance.GET("/modules/access", modules.NewHandler(modRegistrySvc).MyAccess)
+
+	// Server-side enforcement, mounted AFTER auth so an unauthenticated caller still
+	// gets 401 rather than 503 (and cannot probe which modules exist).
+	//
+	// DEFAULTS TO OBSERVE-ONLY. With FEATURE_MODULE_GATE_ENFORCE unset it resolves the
+	// module for each request and LOGS what it would have refused, refusing nothing.
+	// The route map is hand-built from gin Group() registrations and has never met real
+	// traffic; a wrong prefix would 503 a working endpoint, so it earns enforcement by
+	// running silently first. Unmapped paths and every /admin surface are always allowed.
+	finance.Use(modulegate.New(modRegistrySvc, modulegate.Options{
+		Enabled: cfg.FeatureModuleGateEnforce,
+	}))
+	log.Printf("[modules] registry mounted (env=%s); server gate enforce=%v",
+		cfg.AppEnv, cfg.FeatureModuleGateEnforce)
 
 	// --- Transfer routes (wallet-to-wallet + wallet-to-bank) ---
 	// Routes are always mounted; the handler returns 503 per family when the
@@ -1403,7 +1444,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.GET("", restaurantHandler.ListRestaurants)
 		restGroup.POST("", restaurantHandler.Create)
 		restGroup.GET("/mine", restaurantHandler.MyRestaurants) // caller's own stores (static sibling of :id)
-		restGroup.GET("/earnings", restaurantHandler.Earnings)  // caller's food-delivery earnings
+		// Static sibling of :id, like /mine. Owner-scoped payout readiness — the
+		// bridge between the merchant capability and per-outlet KYB (PY-007).
+		restGroup.GET("/payout-readiness", restaurantHandler.PayoutReadiness)
+		// Staff. accept is a STATIC sibling of :id and must precede it — and it is
+		// intentionally not outlet-scoped: the token names the outlet, and the
+		// invitee is not yet staff there, so no per-outlet guard could pass.
+		restGroup.POST("/staff/accept", restaurantHandler.AcceptStaffInvite)
+		restGroup.GET("/:id/staff", restaurantHandler.ListStaff)
+		restGroup.POST("/:id/staff", restaurantHandler.InviteStaff)
+		restGroup.PATCH("/:id/staff/:userId", restaurantHandler.SetStaffStatus)
+		restGroup.GET("/earnings", restaurantHandler.Earnings) // caller's food-delivery earnings
 		restGroup.GET("/:id", restaurantHandler.GetRestaurant)
 
 		// Store management (owner only): edit profile + operational open/close.
@@ -1498,6 +1549,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restStore.PATCH("/:id/menu/items/:itemId", restaurantHandler.AdminUpdateItem)
 		restStore.DELETE("/:id/menu/items/:itemId", restaurantHandler.AdminDeleteItem)
 
+		// Listing moderation (foodhub A6). "listings/pending" is a static sibling of
+		// the ":id" params registered elsewhere in this group, which Gin allows.
+		restAdmin.GET("/listings/pending", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminModerationQueue)
+		restAdmin.POST("/listings/:id/decision", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideListing)
+		// Shops with no identifiable merchant (foodhub §5.4).
+		restAdmin.GET("/restaurants/unclaimed", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminUnclaimedRestaurants)
 		restAdmin.GET("/riders", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminListRiders)
 		restAdmin.GET("/dispatch/queue", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminDispatchQueue)
 		restAdmin.POST("/orders/:id/assign", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminAssignRider)
@@ -1562,7 +1619,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Telemedicine routes ---
 	if cfg.FeatureTelemedicineEnabled {
 		settlementSvcT := settlement.NewService(pool, ledgerSvc)
-		// Platform booking fee (ADR-040), default OFF. Off resolves to a 0-bp rate,
+		// Platform booking fee (ADR-044), default OFF. Off resolves to a 0-bp rate,
 		// which prices and escrows exactly as the module did before the fee existed.
 		platformFeeBp := 0
 		if cfg.FeatureTelemedicinePlatformFeeEnabled {

@@ -15,6 +15,8 @@ import SectionHeader from '@/components/SectionHeader';
 import ContextSwitcher from '@/components/ContextSwitcher';
 import { PROPERTY_SUBMODULES, type PropertyPillar } from '@/constants/modules';
 import { useContext as usePropertyContext } from '@/features/property/hooks';
+import { useModuleVisibility } from '@/features/modules/visibility';
+import { propertyRegistryKeyFor } from '@/features/modules/serviceModuleKeys';
 
 const PILLAR_ICON: Record<PropertyPillar, React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>> = {
   marketplace: Home,
@@ -30,9 +32,21 @@ export default function PropertyHub() {
     : undefined;
   const activeRoles = active?.roles ?? [];
 
+  // Registry gate. Applied BEFORE role ranking so an unpublished pillar cannot be
+  // floated to the top by a matching role. A pillar with no registry mapping is
+  // never gated; an unreachable registry shows everything.
+  const { isVisible } = useModuleVisibility();
+  const published = React.useMemo(
+    () => PROPERTY_SUBMODULES.filter((p) => {
+      const key = propertyRegistryKeyFor(p.id);
+      return key === null || isVisible(key);
+    }),
+    [isVisible],
+  );
+
   // Role-aware ordering: pillars whose roles intersect the active context's roles
   // float to the top, but every pillar stays visible (discovery isn't role-gated).
-  const ranked = [...PROPERTY_SUBMODULES].sort((a, b) => {
+  const ranked = [...published].sort((a, b) => {
     const aRel = a.roles?.some((r) => activeRoles.includes(r as never)) ? 0 : 1;
     const bRel = b.roles?.some((r) => activeRoles.includes(r as never)) ? 0 : 1;
     return aRel - bRel;
@@ -49,6 +63,26 @@ export default function PropertyHub() {
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Pillars */}
         <SectionHeader title="What do you need?" style={styles.section} />
+        {ranked.length === 0 ? (
+          /* Every pillar is unpublished in this environment. A hub that renders an
+             empty grid reads as broken, so say what happened and offer a way out
+             rather than leaving a dead end. */
+          <View style={styles.emptyBox}>
+            <Text style={styles.emptyTitle}>Nothing here yet</Text>
+            <Text style={styles.emptyBody}>
+              Property services aren&apos;t available on your account yet. They&apos;ll appear
+              here as soon as they go live.
+            </Text>
+            <Pressable
+              onPress={() => router.back()}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+              style={styles.emptyBtn}
+            >
+              <Text style={styles.emptyBtnText}>Go back</Text>
+            </Pressable>
+          </View>
+        ) : null}
         <View style={styles.grid}>
           {ranked.map((p) => {
             const Icon = PILLAR_ICON[p.pillar];
@@ -116,6 +150,14 @@ const styles = StyleSheet.create({
   section: { paddingHorizontal: 0, marginTop: Spacing.sm },
   pressed: { opacity: 0.8 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.md },
+  emptyBox:     { marginHorizontal: Spacing.containerMargin, padding: Spacing.lg, borderRadius: Radius.lg,
+                  backgroundColor: Colors.surfaceContainerLow, borderWidth: 1, borderColor: Colors.surfaceContainerHigh,
+                  alignItems: 'center', gap: Spacing.sm },
+  emptyTitle:   { ...Typography.titleMd, color: Colors.onSurface },
+  emptyBody:    { ...Typography.bodySm, color: Colors.onSurfaceVariant, textAlign: 'center' },
+  emptyBtn:     { marginTop: Spacing.sm, paddingHorizontal: Spacing.lg, height: 40, borderRadius: Radius.full,
+                  alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerHigh },
+  emptyBtnText: { ...Typography.labelMd, color: Colors.onSurface },
   card: {
     width: '47%',
     flexGrow: 1,

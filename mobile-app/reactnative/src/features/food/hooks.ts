@@ -3,7 +3,7 @@
 // share caching / loading / error contracts. Money mutations attach
 // Idempotency-Keys (generated here, never reused across retries by the caller).
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as food from './api';
 import { newIdempotencyKey, toFoodError } from './utils';
 import type { OrderRole, OrderStatus, PlaceOrderRequest, RateOrderRequest, LatLng } from './types';
@@ -22,6 +22,38 @@ export function useRestaurant(id?: string) {
     enabled: Boolean(id),
     staleTime: 30_000,
   });
+}
+
+/**
+ * Names for restaurants the discovery list cannot supply.
+ *
+ * Discovery is `WHERE is_open = TRUE` (ListOpenRestaurants), so a CLOSED
+ * restaurant is absent from it — 31 of 697 at the time of writing. A cart can
+ * outlive a restaurant's opening hours, so a hydrated cart holding an item from
+ * one had no way to name that section and fell back to "Restaurant N". The
+ * detail endpoint has no such filter (`WHERE id=$1`), so it can still name it.
+ *
+ * Deliberately per-id and only for ids nothing else resolved: for a cart whose
+ * restaurants are all open this issues no requests at all. Same query key as
+ * useRestaurant, so anything already fetched is served from cache.
+ */
+export function useRestaurantNames(ids: string[]): Map<string, string> {
+  const results = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: [KEY, 'restaurant', id],
+      queryFn: () => food.getRestaurant(id),
+      staleTime: 5 * 60_000,
+      // A name is cosmetic — never retry-storm checkout to get one.
+      retry: false,
+    })),
+  });
+
+  const names = new Map<string, string>();
+  results.forEach((r, i) => {
+    const name = r.data?.name?.trim();
+    if (name) names.set(ids[i], name);
+  });
+  return names;
 }
 
 /**

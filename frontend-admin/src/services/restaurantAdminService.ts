@@ -32,7 +32,15 @@ import type {
   UpdateMenuItemRequest,
 } from '@/types/restaurantAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+// LIVE by default. Set NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK=true for fixtures.
+//
+// It defaulted the other way, and the failure mode was the same silent one the
+// merchant-onboarding console had: decideApplication in mock mode mutates an
+// in-memory array and returns {ok:true}. A reviewer approved a restaurant's KYB,
+// saw success, and kyb_status never moved — while payout runs select
+// `kyb_status = 'approved'`, so the shop stayed unpayable with nothing to
+// indicate why. 709 outlets are currently in exactly that state.
+const USE_MOCK = (process.env.NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK ?? 'false').toLowerCase() === 'true';
 
 function base(): string {
   // env.apiBaseUrl already ends with /api/v1; the restaurant module is mounted
@@ -365,6 +373,52 @@ export async function listApplications(status?: OnboardingStatus | ''): Promise<
 }
 
 // Approve/reject a merchant application. Reviewer note required on reject.
+export interface PendingListing {
+  id: string;
+  name: string;
+  address: string;
+  is_open: boolean;
+  created_at: string;
+}
+
+export async function listPendingListings(): Promise<PendingListing[]> {
+  if (USE_MOCK) { await delay(); return []; }
+  const d = await reqAt<any>(`${adminBase()}/listings/pending`, { method: 'GET' });
+  return (d?.listings ?? d ?? []) as PendingListing[];
+}
+
+export async function decideListing(
+  id: string,
+  decision: 'approve' | 'reject' | 'changes',
+  reason: string,
+): Promise<{ ok: true }> {
+  // Mirrors the server: a negative decision without a reason leaves the owner
+  // nothing to act on, so it is refused here too rather than round-tripping.
+  if (decision !== 'approve' && !reason.trim()) {
+    throw new Error('A reason is required to reject or request changes.');
+  }
+  if (USE_MOCK) { await delay(); return { ok: true }; }
+  return reqAt<{ ok: true }>(`${adminBase()}/listings/${id}/decision`, {
+    method: 'POST',
+    body: JSON.stringify({ decision, reason: reason.trim() }),
+  });
+}
+
+export interface UnclaimedRestaurant {
+  id: string;
+  name: string;
+  address: string;
+  is_open: boolean;
+  created_at: string;
+  reason: string;
+}
+
+export async function listUnclaimedRestaurants(): Promise<UnclaimedRestaurant[]> {
+  if (USE_MOCK) { await delay(); return []; }
+  const d = await reqAt<any>(`${adminBase()}/restaurants/unclaimed`, { method: 'GET' });
+  return (d?.restaurants ?? d ?? []) as UnclaimedRestaurant[];
+}
+
 export async function decideApplication(
   id: string,
   decision: 'approve' | 'reject',

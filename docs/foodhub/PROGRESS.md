@@ -1,0 +1,107 @@
+# foodhub — Progress (PRD v2 §1.5)
+
+| Phase | Status | Notes |
+|---|---|---|
+| 0 Audit | **DONE** | `AUDIT.md` (A1–A27 with evidence), `GAP_PLAN.md` (status mapping, naming deviations, risks). No code written, per §2. |
+| 1 Owner capability & legacy linking | **IN PROGRESS** | Multi-outlet owner console landed. Staff roles (A18), owner_profile linkage and legacy/unclaimed queue still to do. A17 decision made: BRIDGE (see below). |
+| 2 Restaurant ops & menu | **IN PROGRESS** | Listing review (A6) landed, flag-gated OFF. Admin screens (A20) done. Remaining: lifecycle `status` enum (A3), the A1 storefront columns, CSV/86 board (A5). |
+| 3 Restaurant-side order flow | NOT STARTED | |
+| 4 Delivery | NOT STARTED | Smallest phase; mostly already complete. |
+| 5 Merchant money | NOT STARTED | Escrow already live — no cut-over needed. |
+| 6 Trust & growth | NOT STARTED | |
+| 7 Hardening & rollout | NOT STARTED | |
+
+## Phase 0 outcome
+
+Five of PRD v2's eight "likely gaps" (§2.2) are **not gaps**: hours, modifiers, disputes/refunds, promotions and settlement/payout runs all exist. Three real gaps dominate: duplicated owner-application paths (A17), hardcoded commission (A21), and no staff roles (A18).
+
+## Multi-outlet (Chowdeck-style) — done
+
+The platform was already multi-restaurant server-side: `restaurants.owner_id` is
+1:N and `ListOrders(role=restaurant)` joins on it, so the order queue always
+spanned every outlet. **The owner console was not** — Manage Store read
+`stores.data?.[0]`, so of the 61 owners who already run 2–3 outlets, each could
+manage only their first. Fixed: outlet switcher, add-outlet flow, and selection
+that survives an outlet being transferred or closed.
+
+Not needed after checking: an outlet label on order rows — `OrderListRow` already
+renders `order.restaurantName`.
+
+## A17 — decided: bridge, not merge
+
+The two systems stay separate because they answer different questions, and
+because KYB is per OUTLET while the capability is per PERSON — an owner's second
+outlet can carry different banking, so merging would break as soon as multi-outlet
+is real (it now is).
+
+What was missing was the join, and it was costing money silently:
+**1059 of 1075 outlets have no KYB row at all, and 709 are actively trading while
+not KYB-approved.** `buildPayoutRun` selects `AND res.kyb_status = 'approved'`
+(PY-007), so those outlets take orders, settle into `provider_kobo`, and are
+skipped by every payout run with nothing surfaced to owner or admin.
+
+`GET /restaurant/payout-readiness` now reports, per outlet: payable, why not, and
+how much has already settled behind the gate. Manage Store shows it as a banner,
+only when that outlet is blocked.
+
+## Staff roles (A18) — done
+
+`restaurant_staff` grants authority per (outlet, user), so a manager at Lekki has
+none at Ikeja. OWNER rows are system-managed, mirroring `restaurants.owner_id`;
+the staff API grants only MANAGER/CASHIER/KITCHEN/RIDER. 1237 owner rows
+backfilled — exactly the number of restaurants with an owner — so resolution
+returns what `assertOwner` returns and the migration alone changes no behaviour.
+
+Guard swap **done**: all 18 owner-side call sites now go through
+`AssertStaffPermission` with a per-action permission. `assertOwner` survives only
+as the parity oracle in tests.
+
+Invite/accept and the Staff screen are **done**: an owner (or a manager, for
+non-manager roles) invites by user id, hands over a one-time code, and can
+suspend, restore or remove anyone except the owner. Staff roles are now usable
+end to end.
+
+## Legacy linking (§5.4) — done
+
+Every restaurant predated the onboarding engine: 1651 restaurants, 1539 owners,
+**zero** merchant profiles. Since capabilities are read from
+`onb_merchant_profile`, every one of those owners had no capability card and
+resolved to "you don't manage a restaurant yet" — while their tooling worked if
+they knew the direct URL.
+
+20261213000000 grandfathers them in: 1539 profiles (all `application_id IS NULL`,
+so grandfathered stays distinguishable from reviewed), the RBAC role, and
+`restaurants.owner_profile_id` on all 1651 shops.
+
+**§5.4 case 2 is partly unreachable here:** `restaurants.owner_id` is NOT NULL, so
+"no owner at all" cannot exist. The reachable shape is an owner without an active
+profile, which is what the unclaimed queue detects — derived, not a stored flag,
+so it cannot go stale.
+
+**Phase 1 complete.**
+
+## Listing review (A6) — done, shipped dark
+
+A restaurant's public face went live the instant the owner saved it — no review
+of any kind. 20261214000000 adds the state, the guarded transitions, a
+`published_snapshot` so a decision refers to reviewed text, and the discovery
+gate.
+
+Verified the estate is untouched: 1788 rows discoverable before the migration,
+1788 after, 1897 of 1897 APPROVED. The gate is additionally behind
+`FEATURE_FOODHUB_MODERATION` (default OFF) per §1.4 — with it off, discovery runs
+the identical predicate it always has. Turning it on is a deliberate act: new
+restaurants start DRAFT and must be approved before they appear.
+
+## Remaining Phase 1 work
+
+**A17 — two owner-application paths.** `onb_application` grants the capability; `restaurant_kyb` gates payouts. Neither triggers the other, so today a user can hold the capability without approved KYB (can trade, cannot be paid) or the reverse.
+
+The gap plan recommends **bridging, not merging**: they answer different questions ("may this person be a restaurant merchant?" vs "may this store be paid?"). Merging would either weaken payout verification or gate the capability behind per-restaurant banking. Confirm before Phase 1 starts.
+
+## Deviations logged (§1.6)
+
+- No `fh_` tables — every one has a live equivalent (see GAP_PLAN naming table).
+- No Elasticsearch — discovery is Postgres/PostGIS; `open_now`/boost become predicates.
+- Marketplace disputes cannot be reused — ADR-023 removed them.
+- Flags follow `FEATURE_<X>_ENABLED` env convention, not dotted `foodhub.*`.

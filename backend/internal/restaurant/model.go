@@ -91,8 +91,15 @@ type Order struct {
 	// SurgeKobo is peak dynamic pricing added to the item subtotal (part of the 80/10/10
 	// settlement gross). ServiceFeeKobo is the platform service fee (a 100%-platform
 	// settlement leg). Both default to 0.
-	SurgeKobo           int64  `json:"surge_kobo"`
-	ServiceFeeKobo      int64  `json:"service_fee_kobo"`
+	SurgeKobo      int64 `json:"surge_kobo"`
+	ServiceFeeKobo int64 `json:"service_fee_kobo"`
+	// PackagingFeeKobo is what the customer paid for takeaway packs
+	// (PackageCount × the restaurant's packaging_fee_kobo, priced at order time so a
+	// later price change never reprices a placed order). It settles 100% to the
+	// restaurant via settlement.Split.ProviderFeeKobo — the restaurant buys the
+	// packs, so platform and rider take no cut.
+	PackagingFeeKobo    int64  `json:"packaging_fee_kobo"`
+	PackageCount        int    `json:"package_count"`
 	SpecialInstructions string `json:"special_instructions,omitempty"`
 	// ScheduledFor is the future slot this order was booked for, or nil for an immediate
 	// order. While set, the order waits in `pending`; ActivateScheduledOrders clears it
@@ -187,6 +194,14 @@ type PlaceOrderRequest struct {
 	// ScheduledFor, when set, places the order for a future slot (SG-001) — validated
 	// against the restaurant's hours + a lead/horizon window. Still escrowed now.
 	ScheduledFor *time.Time `json:"scheduled_for,omitempty"`
+
+	// PackageCount is how many takeaway packs the customer arranged their food into.
+	// The cart's packing rules set a floor, but adding extra packs is a customer
+	// choice, so the count cannot be derived server-side and comes from the client —
+	// then gets clamped to [1, total portions] by PackagingKobo before it prices
+	// anything. Omitted (0) means one pack: packaging is mandatory, never free by
+	// silence.
+	PackageCount int `json:"package_count,omitempty"`
 }
 
 // LatLng is a nested coordinate object accepted on delivery requests.

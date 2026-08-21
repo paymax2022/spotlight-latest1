@@ -154,7 +154,7 @@ func tierGateFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name
 	}
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,$3,'1 St',TRUE)`, restID, owner, name); err != nil {
+		`INSERT INTO restaurants (id, owner_id, name, address, is_open, packaging_fee_kobo) VALUES ($1,$2,$3,'1 St',TRUE,0)`, restID, owner, name); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 	cat, err := svc.CreateCategory(ctx, restID, owner, "Mains")

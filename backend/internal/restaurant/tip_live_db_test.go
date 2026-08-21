@@ -76,7 +76,7 @@ func TestLiveDB_OrderTipEscrowAndRiderPayout(t *testing.T) {
 	// KYC tier. Tier 3 is unlimited — this test is about the tip, not the cap.
 	seedKYCTier(t, ctx, pool, customer, 3)
 	restID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Tip Kitchen','1 St',TRUE)`, restID, owner); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open, packaging_fee_kobo) VALUES ($1,$2,'Tip Kitchen','1 St',TRUE,0)`, restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 	cat, err := svc.CreateCategory(ctx, restID, owner, "Mains")
@@ -242,7 +242,7 @@ func TestLiveDB_OrderTipRefundedOnCancel(t *testing.T) {
 	}
 	seedKYCTier(t, ctx, pool, customer, 3) // unlimited — the escrow is tier-gated
 	restID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Tip Refund Kitchen','1 St',TRUE)`, restID, owner); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open, packaging_fee_kobo) VALUES ($1,$2,'Tip Refund Kitchen','1 St',TRUE,0)`, restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 	cat, err := svc.CreateCategory(ctx, restID, owner, "Mains")
@@ -311,7 +311,7 @@ func TestLiveDB_OrderTipDroppedWhenEscrowDiverges(t *testing.T) {
 	}
 	seedKYCTier(t, ctx, pool, customer, 3) // unlimited — the escrow is tier-gated
 	restID := uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Tip Divergence Kitchen','1 St',TRUE)`, restID, owner); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open, packaging_fee_kobo) VALUES ($1,$2,'Tip Divergence Kitchen','1 St',TRUE,0)`, restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 	cat, err := svc.CreateCategory(ctx, restID, owner, "Mains")

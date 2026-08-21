@@ -50,6 +50,18 @@ jobs:
       - name: Money invariants (ledger / idempotency / limits)
         run: npm run test:money
 
+      # tests/unit/config holds contracts about how the APP ITSELF is wired —
+      # feature-flag defaults, and that the middleware sits where Next will load
+      # it. Both guard failures that are SILENT: a flag defaulting open, or
+      # middleware that never runs (which is exactly how CORS for /api/* and the
+      # Supabase session refresh stayed broken unnoticed).
+      #
+      # It needs its own step because the steps above run a hand-listed set of
+      # directories — golden-path, estate, wallet, tiers — so this directory was
+      # never executed by CI at all, in spite of a green tick.
+      - name: Config contracts (feature-flag defaults + middleware placement)
+        run: npx vitest run tests/unit/config
+
       - name: Contract check (implementation vs openapi.yaml)
         run: npm run contract:check
 

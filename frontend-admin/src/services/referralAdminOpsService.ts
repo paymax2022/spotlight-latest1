@@ -415,7 +415,13 @@ export async function listPayouts(status?: string): Promise<Payout[]> {
   return getJson<Payout[]>(`/finance/payouts${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`);
 }
 export async function approvePayout(id: string, note: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+    // No endpoint exists for this action, so there is nothing this can do but
+    // say so. Returning a success value here told the operator the decision had
+    // been applied when nothing had — see docs/audit/ADMIN_SIMULATED_WRITES.md.
+    // Client-side validation above still runs, so bad input is still caught.
+    throw new Error(
+      'Referral payout approval is not available in this environment — no backend endpoint exists yet. Nothing was changed.',
+    );
   // Money mutation: backend requires Idempotency-Key + audit event.
   return sendJson<{ ok: true }>('POST', `/finance/payouts/${id}/approve`, { note }, true);
 }

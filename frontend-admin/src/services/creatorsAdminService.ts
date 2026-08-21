@@ -62,7 +62,11 @@ export function formatNaira(kobo: number): string {
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 const isoAhead = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
-const aud = () => `aud_${Math.random().toString(36).slice(2, 10)}`;
+// Fixture audit id. Deliberately NOT shaped like a real one: the fixture path
+// writes no audit record, and returning `aud_7f3k9x2p` made the response look
+// like proof that one exists. If this string ever appears in a support ticket or
+// a screenshot, it should be self-evidently not an audit trail.
+const aud = () => 'fixture-no-audit-record';
 
 // ════════════════════════════════════════════════════════════════════════════
 // A · Dashboard
@@ -143,14 +147,14 @@ export async function decideCreator(id: string, decision: CreatorDecision, note?
     await delay();
     const v = VERIFICATIONS.find((x) => x.id === id);
     if (decision === 'approve' && v && !v.kyc_verified) {
-      return { id, status: 'in_review', audit_id: aud(), message: `Verification blocked — creator ${id} KYC tier insufficient (NL-10). Stays fail-closed until KYC & ID docs clear. Recorded to immutable audit.` };
+      return { id, status: 'in_review', audit_id: aud(), message: `Fixture — nothing was saved. Verification blocked — creator ${id} KYC tier insufficient (NL-10).` };
     }
     const status =
       decision === 'approve' ? 'approved'
       : decision === 'reject' ? 'rejected'
       : decision === 'suspend' ? 'suspended'
       : 'in_review';
-    return { id, status, audit_id: aud(), message: `Creator ${id}: ${decision.replace('_', ' ')} applied. State machine SUBMITTED→IN_REVIEW→APPROVED enforced. Recorded to immutable audit (NL-12).` };
+    return { id, status, audit_id: aud(), message: `Fixture — nothing was saved. Creator ${id}: ${decision.replace('_', ' ')} applied.` };
   }
   return sendJson<CreatorDecisionResult>('POST', `/verifications/${id}/decide`, { decision, note });
 }
@@ -189,7 +193,7 @@ export async function moderateContent(id: string, action: ContentModAction, age_
     const c = CONTENT.find((x) => x.id === id);
     const status = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'flagged';
     const rating = age_rating ?? c?.age_rating ?? 'all';
-    return { id, status, age_rating: rating, audit_id: aud(), message: `Content ${id}: ${action} applied with age rating "${rating}" (NL-11 age controls). Recorded to immutable audit (NL-12).` };
+    return { id, status, age_rating: rating, audit_id: aud(), message: `Fixture — nothing was saved. Content ${id}: ${action} applied with age rating "${rating}" (NL-11 age controls).` };
   }
   return sendJson<ContentModResult>('POST', `/content/${id}/moderate`, { action, age_rating, note });
 }
@@ -246,14 +250,13 @@ export async function listCreatorPayouts(opts?: { status?: string; q?: string })
   return getJson<CreatorPayoutItem[]>(`/payouts${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decidePayout(id: string, decision: PayoutDecision, note?: string): Promise<CreatorPayoutResult> {
-  if (USE_MOCK) {
-    await delay();
-    const p = PAYOUTS.find((x) => x.id === id);
-    if (decision === 'approve' && p && !p.kyc_verified) {
-      return { id, status: 'kyc_hold', audit_id: aud(), message: `Payout blocked — creator ${id} KYC tier insufficient (NL-10). Payout stays fail-closed until KYC clears. Recorded to immutable audit.` };
-    }
-    return { id, status: decision === 'approve' ? 'approved' : 'rejected', audit_id: aud(), message: `Creator ${id} payout ${decision === 'approve' ? 'approved' : 'rejected'}. KYC gate (NL-10) passed. Recorded to immutable audit (NL-12).` };
-  }
+    // No endpoint exists for this action, so there is nothing this can do but
+    // say so. Returning a success value here told the operator the decision had
+    // been applied when nothing had — see docs/audit/ADMIN_SIMULATED_WRITES.md.
+    // Client-side validation above still runs, so bad input is still caught.
+    throw new Error(
+      'Creator payout decisions is not available in this environment — no backend endpoint exists yet. Nothing was changed.',
+    );
   return sendJson<CreatorPayoutResult>('POST', `/payouts/${id}/decide`, { decision, note });
 }
 
@@ -279,7 +282,7 @@ export async function updateFeeConfig(patch: Partial<CreatorFeeConfig>, note?: s
   if (USE_MOCK) {
     await delay();
     FEE_CONFIG = { ...FEE_CONFIG, ...patch, updated_by_masked: 'admin:you•••', updated_at: new Date().toISOString(), generated_at: new Date().toISOString() };
-    return { config: { ...FEE_CONFIG }, audit_id: aud(), message: `Fee config updated. Perks-not-returns (NL-5) preserved — fees apply to tips/subs/gated content only, never a financial return. Recorded to immutable audit (NL-12).` };
+    return { config: { ...FEE_CONFIG }, audit_id: aud(), message: `Fixture — nothing was saved. Fee config updated.` };
   }
   return sendJson<CreatorFeeConfigResult>('PATCH', '/fees', { ...patch, note });
 }
@@ -315,7 +318,7 @@ export async function decideCreatorFraud(id: string, action: CreatorFraudAction,
   if (USE_MOCK) {
     await delay();
     const status = action === 'investigate' ? 'investigating' : action === 'clear' ? 'cleared' : 'blocked';
-    return { id, status, audit_id: aud(), message: `Fraud signal ${id}: ${action} applied. Recorded to immutable audit (NL-12).` };
+    return { id, status, audit_id: aud(), message: `Fixture — nothing was saved. Fraud signal ${id}: ${action} applied.` };
   }
   return sendJson<CreatorFraudActionResult>('POST', `/fraud/${id}/action`, { action, note });
 }

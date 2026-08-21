@@ -77,7 +77,7 @@ func newPromoOrderFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		}
 	}
 	f.restID = uuid.New().String()
-	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,$3,'1 St',TRUE)`, f.restID, f.owner, name); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open, packaging_fee_kobo) VALUES ($1,$2,$3,'1 St',TRUE,0)`, f.restID, f.owner, name); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
 	}
 	cat, err := svc.CreateCategory(ctx, f.restID, f.owner, "Mains")

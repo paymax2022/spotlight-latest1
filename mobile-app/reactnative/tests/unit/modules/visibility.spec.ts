@@ -1,0 +1,346 @@
+// Pure-logic tests for the module-visibility gate on the services grid.
+// Run: npm run test:modules
+//
+// The gate decides which service tiles a user sees. Two failure directions:
+//   • too strict → a mapping typo silently hides a shipped module forever;
+//   • too loose  → an unpublished module leaks into production.
+// The tests below pin both.
+
+import { test, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import { visibilityFor, type ModuleVisibility } from '@/features/modules/rules';
+import {
+  SERVICE_MODULE_REGISTRY_KEY,
+  registryKeyFor,
+  PROPERTY_SUBMODULE_REGISTRY_KEY,
+  propertyRegistryKeyFor,
+  QUICK_ACTION_REGISTRY_KEY,
+  quickActionRegistryKeyFor,
+  FEATURED_REGISTRY_KEY,
+  featuredRegistryKeyFor,
+} from '@/features/modules/serviceModuleKeys';
+import {
+  moduleKeyForSegments,
+  guardAppliesTo,
+  MODULE_LABELS,
+} from '@/features/modules/routeModuleKeys';
+import {
+  SERVICE_MODULES,
+  PROPERTY_SUBMODULES,
+  QUICK_ACTIONS,
+  FEATURED_SERVICES,
+} from '@/constants/modules';
+
+const list = (...modules: string[]): ModuleVisibility => ({ environment: 'production', modules });
+
+describe('visibilityFor', () => {
+  test('shows a published module and hides an unpublished one', () => {
+    assert.equal(visibilityFor(list('telemedicine', 'wallet'), 'telemedicine'), true);
+    assert.equal(visibilityFor(list('telemedicine', 'wallet'), 'restaurant'), false);
+  });
+
+  test('an empty published list hides everything registry-gated', () => {
+    // Distinct from "unreachable" below: the server answered, and the answer is
+    // that nothing is published here.
+    assert.equal(visibilityFor(list(), 'telemedicine'), false);
+  });
+
+  test('an unreachable registry shows the module rather than blanking the app', () => {
+    // Deliberate fail-OPEN. The registry decides what to render, not what to
+    // authorise — the API still refuses anything genuinely gated. Failing closed
+    // here would empty the services tab on a flaky network.
+    assert.equal(visibilityFor(null, 'telemedicine'), true);
+    assert.equal(visibilityFor(undefined, 'telemedicine'), true);
+  });
+
+  test('matching is exact — no prefix or case coercion', () => {
+    // 'health' must not satisfy 'healthLab'; a loose match would publish three
+    // modules when an admin published one.
+    assert.equal(visibilityFor(list('health'), 'healthLab'), false);
+    assert.equal(visibilityFor(list('Telemedicine'), 'telemedicine'), false);
+  });
+});
+
+describe('service-grid mapping', () => {
+  test('every mapped id is a real tile in the grid', () => {
+    // A mapping whose id no longer exists is dead weight that hides nothing and
+    // misleads the next reader.
+    const ids = new Set<string>(SERVICE_MODULES.map((m) => m.id));
+    for (const id of Object.keys(SERVICE_MODULE_REGISTRY_KEY)) {
+      assert.ok(ids.has(id), `mapped id '${id}' is not in SERVICE_MODULES`);
+    }
+  });
+
+  test('unmapped tiles are never registry-gated', () => {
+    // The safe direction: no mapping ⇒ always render. Returning a key here would
+    // gate a tile against a module the registry has never heard of, hiding it
+    // permanently.
+    assert.equal(registryKeyFor('academy'), null);
+    assert.equal(registryKeyFor('definitely-not-a-module'), null);
+  });
+
+  test('the whole bill-payment family maps to one registry module', () => {
+    for (const id of ['bills', 'airtime', 'data', 'electricity', 'cable-tv']) {
+      assert.equal(registryKeyFor(id), 'utilityPayments', `${id} should follow utilityPayments`);
+    }
+  });
+
+  test('health sub-modules map to their own keys, not the umbrella', () => {
+    // Publishing pharmacy must not publish the lab.
+    assert.equal(registryKeyFor('pharmacy'), 'healthPharmacy');
+    assert.equal(registryKeyFor('laboratory'), 'healthLab');
+    assert.equal(registryKeyFor('veterinary'), 'healthVet');
+  });
+});
+
+describe('the gate applied to the grid', () => {
+  const gate = (published: ModuleVisibility | null) =>
+    SERVICE_MODULES.filter((m) => {
+      const key = registryKeyFor(m.id);
+      return key === null || visibilityFor(published, key);
+    });
+
+  test('hiding one module removes exactly its tiles', () => {
+    const all = gate(null).map((m) => m.id);
+    // Publish everything except restaurant.
+    const keys = new Set(Object.values(SERVICE_MODULE_REGISTRY_KEY));
+    keys.delete('restaurant');
+    const withoutFood = gate(list(...keys)).map((m) => m.id);
+
+    assert.ok(all.includes('food'), 'precondition: food is in the grid');
+    assert.ok(!withoutFood.includes('food'), 'unpublishing restaurant must remove the food tile');
+    // And nothing else moved.
+    const removed = all.filter((id) => !withoutFood.includes(id));
+    assert.deepEqual(removed.sort(), ['food', 'food-ride'].filter((id) => all.includes(id)).sort());
+  });
+
+  test('unmapped tiles survive an empty published list', () => {
+    const survivors = gate(list()).map((m) => m.id);
+    assert.ok(survivors.includes('academy'), 'an unmapped tile must not be hidden by the registry');
+    assert.ok(!survivors.includes('telemedicine'), 'a mapped tile must be hidden when unpublished');
+  });
+});
+
+// ── Property hub ─────────────────────────────────────────────────────────────
+
+describe('property hub gate', () => {
+  const gate = (published: ModuleVisibility | null) =>
+    PROPERTY_SUBMODULES.filter((p) => {
+      const key = propertyRegistryKeyFor(p.id);
+      return key === null || visibilityFor(published, key);
+    });
+
+  test('every mapped pillar id is a real pillar', () => {
+    const ids = new Set<string>(PROPERTY_SUBMODULES.map((p) => p.id));
+    for (const id of Object.keys(PROPERTY_SUBMODULE_REGISTRY_KEY)) {
+      assert.ok(ids.has(id), `mapped pillar '${id}' is not in PROPERTY_SUBMODULES`);
+    }
+  });
+
+  test("the two id-spaces do not share a table", () => {
+    // 'marketplace' means the lifestyle shopping tile in one space and the
+    // property buy/rent marketplace in the other. One shared table would gate the
+    // shopping tile on the realtor module — the reason these maps are separate.
+    assert.equal(registryKeyFor('marketplace'), null);
+    assert.equal(propertyRegistryKeyFor('marketplace'), 'realtor');
+  });
+
+  test('unpublishing realtor hides both listings and leases', () => {
+    // Deliberate: FEATURE_REALTOR_ENABLED covers listings AND leases, so both
+    // pillars follow it.
+    const left = gate(list('stays', 'estate')).map((p) => p.id);
+    assert.deepEqual(left.sort(), ['estate', 'stays']);
+  });
+
+  test('publishing only stays leaves exactly one pillar', () => {
+    assert.deepEqual(gate(list('stays')).map((p) => p.id), ['stays']);
+  });
+
+  test('all pillars unpublished yields an empty hub, not a partial one', () => {
+    // The screen renders a real empty state for this; the gate must actually
+    // produce zero rather than silently falling back to "show everything".
+    assert.equal(gate(list()).length, 0);
+  });
+
+  test('an unreachable registry shows every pillar', () => {
+    assert.equal(gate(null).length, PROPERTY_SUBMODULES.length);
+  });
+});
+
+// ── The mapped VALUES must be real registry keys ─────────────────────────────
+// Mirrors the keys seeded into platform_modules (supabase migration
+// 20261210000000, generated from frontend-web/src/lib/feature-flags.ts). Keep in
+// step: a mapping pointing at a key the registry does not have gates the tile on
+// a module that can never be published, hiding it forever with no error anywhere.
+const REGISTRY_KEYS = new Set([
+  'aiCare', 'association', 'beneficiaries', 'checkoutTopupTier0', 'creators', 'crowdfunding',
+  'disputes', 'estate', 'events', 'fintechAdmin', 'fx', 'groups', 'health', 'healthLab',
+  'healthPharmacy', 'healthVet', 'insurance', 'kyc', 'loyalty', 'ratings', 'realtor',
+  'referrals', 'restaurant', 'savings', 'socialPay', 'stays', 'telemedicine', 'tierLimits',
+  'transport', 'utilityPayments', 'virtualAccounts', 'voteBridge', 'votesBridge', 'wallet',
+  'walletBankTransfers', 'walletTransfers',
+]);
+
+describe('mapped values are real registry modules', () => {
+  test('every services-grid mapping targets a registered module', () => {
+    for (const [id, key] of Object.entries(SERVICE_MODULE_REGISTRY_KEY)) {
+      assert.ok(REGISTRY_KEYS.has(key), `'${id}' maps to '${key}', which is not a registered module`);
+    }
+  });
+
+  test('every property-hub mapping targets a registered module', () => {
+    for (const [id, key] of Object.entries(PROPERTY_SUBMODULE_REGISTRY_KEY)) {
+      assert.ok(REGISTRY_KEYS.has(key), `'${id}' maps to '${key}', which is not a registered module`);
+    }
+  });
+});
+
+// ── Home tab: quick actions, featured cards, category groups ─────────────────
+
+describe('home tab gates', () => {
+  test('every mapped quick-action and featured id is real', () => {
+    const qaIds = new Set<string>(QUICK_ACTIONS.map((q) => q.id));
+    for (const id of Object.keys(QUICK_ACTION_REGISTRY_KEY)) {
+      assert.ok(qaIds.has(id), `quick action '${id}' does not exist`);
+    }
+    const fIds = new Set<string>(FEATURED_SERVICES.map((f) => f.id));
+    for (const id of Object.keys(FEATURED_REGISTRY_KEY)) {
+      assert.ok(fIds.has(id), `featured card '${id}' does not exist`);
+    }
+  });
+
+  test('quick-action and featured mappings target registered modules', () => {
+    for (const [id, key] of Object.entries(QUICK_ACTION_REGISTRY_KEY)) {
+      assert.ok(REGISTRY_KEYS.has(key), `quick action '${id}' -> unknown module '${key}'`);
+    }
+    for (const [id, key] of Object.entries(FEATURED_REGISTRY_KEY)) {
+      assert.ok(REGISTRY_KEYS.has(key), `featured '${id}' -> unknown module '${key}'`);
+    }
+  });
+
+  test('ids that are NOT service tiles resolve only in their own space', () => {
+    // 'withdraw' and 'exchange' were dropped from the services map because no such
+    // tile exists; they are quick actions. 'food-ride' is a featured card only.
+    // Each must resolve in exactly one table.
+    assert.equal(registryKeyFor('withdraw'), null);
+    assert.equal(quickActionRegistryKeyFor('withdraw'), 'walletBankTransfers');
+    assert.equal(registryKeyFor('exchange'), null);
+    assert.equal(quickActionRegistryKeyFor('exchange'), 'fx');
+    assert.equal(registryKeyFor('food-ride'), null);
+    assert.equal(featuredRegistryKeyFor('food-ride'), 'restaurant');
+  });
+
+  test('unpublishing a wallet sub-module removes only its quick action', () => {
+    const gateQA = (published: ModuleVisibility | null) =>
+      QUICK_ACTIONS.filter((q) => {
+        const k = quickActionRegistryKeyFor(q.id);
+        return k === null || visibilityFor(published, k);
+      }).map((q) => q.id);
+
+    // Everything except walletTransfers: 'send' goes, the rest stay.
+    const left = gateQA(list('wallet', 'walletBankTransfers', 'fx'));
+    assert.ok(!left.includes('send'), 'send must follow walletTransfers');
+    assert.deepEqual(left.sort(), ['add', 'exchange', 'withdraw']);
+  });
+
+  test('a category group that gates to empty is dropped entirely', () => {
+    // The Explore card renders a label + grid per group. A group filtered to zero
+    // must disappear, not render a label above an empty grid.
+    const groups = [
+      { label: 'Financial', modules: SERVICE_MODULES.filter((m) => m.category === 'financial') },
+      { label: 'Learn', modules: SERVICE_MODULES.filter((m) => m.id === 'academy') },
+    ];
+    const gated = groups
+      .map((g) => ({ ...g, modules: g.modules.filter((m) => {
+        const k = registryKeyFor(m.id);
+        return k === null || visibilityFor(list(), k);
+      }) }))
+      .filter((g) => g.modules.length > 0);
+
+    // Financial is entirely registry-mapped, so an empty published list clears it.
+    assert.ok(!gated.some((g) => g.label === 'Financial'), 'empty Financial group must be dropped');
+    // Learn is 'academy', which has no registry mapping, so it survives.
+    assert.ok(gated.some((g) => g.label === 'Learn'), 'ungated group must survive');
+  });
+});
+
+// ── Deep links: route → module ───────────────────────────────────────────────
+
+describe('route guard', () => {
+  test('a nested route beats its parent', () => {
+    // The whole reason for longest-first matching. If ['health'] won, publishing
+    // the health umbrella would silently publish pharmacy, lab and vet too.
+    assert.equal(moduleKeyForSegments(['health', 'lab']), 'healthLab');
+    assert.equal(moduleKeyForSegments(['health', 'pharmacy']), 'healthPharmacy');
+    assert.equal(moduleKeyForSegments(['health', 'vet']), 'healthVet');
+  });
+
+  test('every screen beneath a mapped route inherits the gate', () => {
+    // Prefix matching is what keeps this to one map instead of 36 entries.
+    assert.equal(
+      moduleKeyForSegments(['services', 'telemedicine', 'book', 'confirm']),
+      'telemedicine',
+    );
+    assert.equal(moduleKeyForSegments(['health', 'lab', 'checkout']), 'healthLab');
+    assert.equal(moduleKeyForSegments(['wallet', 'send', 'review']), 'wallet');
+  });
+
+  test('hubs and navigation are never gated', () => {
+    // '/services' is the tab hub; gating it would lock the user out of the very
+    // screen that lists what IS available.
+    assert.equal(moduleKeyForSegments(['services']), null);
+    assert.equal(moduleKeyForSegments(['(tabs)', 'home']), null);
+    assert.equal(moduleKeyForSegments(['profile']), null);
+  });
+
+  test('ambiguous and unregistered routes are left ungated', () => {
+    // Conservative on purpose: gating a route wrongly locks users out of a
+    // working screen, which is worse than leaving one merely undiscoverable.
+    for (const seg of [['voting'], ['arena'], ['academy'], ['crypto'], ['dues'], ['properties']]) {
+      assert.equal(moduleKeyForSegments(seg), null, `${seg[0]} should not be gated`);
+    }
+  });
+
+  test('every route mapping targets a registered module', () => {
+    for (const seg of [
+      ['health', 'lab'], ['health', 'pharmacy'], ['health', 'vet'],
+      ['services', 'telemedicine'], ['services', 'bills'], ['services', 'cards'],
+      ['wallet'], ['savings'], ['stays'], ['mobility'], ['food'], ['realtor'],
+      ['association'], ['events'], ['fractionalre'], ['referral'], ['social'],
+    ]) {
+      const key = moduleKeyForSegments(seg);
+      assert.ok(key && REGISTRY_KEYS.has(key), `/${seg.join('/')} -> '${key}' is not a registered module`);
+    }
+  });
+
+  test('the guard never runs on itself, or on the auth stack', () => {
+    // Redirecting the unavailable screen to itself is an infinite loop; fighting
+    // the auth guard over navigation is the other way to trap a user.
+    assert.equal(guardAppliesTo(['module-unavailable']), false);
+    assert.equal(guardAppliesTo(['(auth)', 'login']), false);
+    assert.equal(guardAppliesTo(['onboarding']), false);
+    assert.equal(guardAppliesTo([]), false);
+    // …but it does run on real module routes.
+    assert.equal(guardAppliesTo(['services', 'telemedicine']), true);
+  });
+
+  test('a hidden module blocks its deep link, a published one does not', () => {
+    const blocked = (segs: string[], published: ModuleVisibility | null) => {
+      if (!guardAppliesTo(segs)) return false;
+      const key = moduleKeyForSegments(segs);
+      if (!key) return false;
+      return !visibilityFor(published, key);
+    };
+    const deep = ['services', 'telemedicine', 'book', 'confirm'];
+    assert.equal(blocked(deep, list('wallet')), true, 'unpublished module must block');
+    assert.equal(blocked(deep, list('telemedicine')), false, 'published module must pass');
+    // Fail open while the registry is unknown.
+    assert.equal(blocked(deep, null), false, 'unknown registry must not block');
+  });
+
+  test('every label maps to a registered module', () => {
+    for (const key of Object.keys(MODULE_LABELS)) {
+      assert.ok(REGISTRY_KEYS.has(key), `label for '${key}' is not a registered module`);
+    }
+  });
+});

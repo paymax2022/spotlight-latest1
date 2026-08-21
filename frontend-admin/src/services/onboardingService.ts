@@ -23,12 +23,19 @@ function authHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
 
-// Toggle to true to render against fixtures while the live API is being wired.
-// When the backend endpoints are deployed, set USE_FIXTURES = false (or remove).
-// Mock by default; flip with NEXT_PUBLIC_ONBOARDING_ADMIN_USE_MOCK=false once the
-// live Go admin endpoints (/api/admin/onboarding/*) are deployed. Matches the
-// fx/mobility/realtor/invest admin-service convention.
-const USE_FIXTURES = (process.env.NEXT_PUBLIC_ONBOARDING_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+// LIVE by default against the Go admin endpoints (/api/admin/onboarding/*).
+// Set NEXT_PUBLIC_ONBOARDING_ADMIN_USE_MOCK=true to render fixtures instead.
+//
+// It used to default the OTHER way, and the failure mode was quiet and severe:
+// in fixture mode postAction SIMULATES a decision — 350ms of latency, then an
+// application echoing APPROVED. The reviewer saw success and nothing happened
+// server-side. No role granted, no merchant profile activated, no workspace
+// route written; the real application sat in SUBMITTED forever.
+//
+// That was survivable while the mobile wizard was also mocked. It stopped being
+// survivable when the wizard went live, because real applications then arrived
+// in the Go engine while reviewers worked a fixture queue.
+const USE_FIXTURES = (process.env.NEXT_PUBLIC_ONBOARDING_ADMIN_USE_MOCK ?? 'false').toLowerCase() === 'true';
 
 function toQuery(filters: OnboardingQueueFilters): string {
   const params = new URLSearchParams();

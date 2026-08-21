@@ -34,6 +34,22 @@ const nextConfig = {
         destination: '/',
         permanent: true,
       },
+      // Canonical host: www.spotlightng.com. The apex 301s to it so users, SEO and
+      // cookies see a single origin (SPOTLIGHT_DOMAIN_ROUTING §4).
+      //
+      // Host-conditional, so it is inert until the apex actually resolves to this
+      // service: localhost, preview and *.up.railway.app never match. While the
+      // apex still points at the cPanel host it is served by that host, not here,
+      // so landing this ahead of the DNS cutover changes nothing.
+      //
+      // NOTE: `has.host` matches the Host header exactly. It deliberately does NOT
+      // cover a bare-IP or preview host — those are not canonical-facing.
+      {
+        source: '/:path*',
+        has: [{ type: 'host', value: 'spotlightng.com' }],
+        destination: 'https://www.spotlightng.com/:path*',
+        permanent: true,
+      },
     ];
   },
 

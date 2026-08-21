@@ -80,7 +80,7 @@ func (s *Service) loadHolidayForDate(ctx context.Context, restaurantID string, t
 // SetHoliday upserts a holiday override for a restaurant (owner only). An open holiday
 // requires a valid [open,close) window; a closed holiday ignores the window.
 func (s *Service) SetHoliday(ctx context.Context, restaurantID, userID string, h HolidayHour) error {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageStore); err != nil {
 		return err
 	}
 	if _, err := time.Parse("2006-01-02", h.Date); err != nil {
@@ -106,7 +106,7 @@ func (s *Service) SetHoliday(ctx context.Context, restaurantID, userID string, h
 
 // DeleteHoliday removes a holiday override (owner only).
 func (s *Service) DeleteHoliday(ctx context.Context, restaurantID, userID, date string) error {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageStore); err != nil {
 		return err
 	}
 	_, err := s.db.Exec(ctx, `DELETE FROM restaurant_holiday_hours WHERE restaurant_id=$1 AND holiday_date=$2`, restaurantID, date)

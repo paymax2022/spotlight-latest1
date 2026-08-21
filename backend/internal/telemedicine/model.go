@@ -35,7 +35,7 @@ type Doctor struct {
 	// Booking is the server-computed price breakdown for consulting this doctor
 	// (consultation fee + platform booking fee). It is derived from
 	// ConsultFeeKobo, never stored, and is what the app renders on the confirm
-	// screen — the app holds no fee rate of its own. See ADR-040.
+	// screen — the app holds no fee rate of its own. See ADR-044.
 	Booking         *BookingQuote   `json:"booking,omitempty"`
 	AvatarURL       *string         `json:"avatar_url,omitempty"`
 	IsAvailable     bool            `json:"is_available"`
@@ -98,7 +98,7 @@ type Appointment struct {
 	FeeKobo int64 `json:"fee_kobo"`
 	// PlatformFeeKobo is the platform booking fee charged on top of the
 	// consultation fee. Settled as a 100%-platform leg, so it does not dilute the
-	// doctor's 85%. Zero for appointments booked before ADR-040.
+	// doctor's 85%. Zero for appointments booked before ADR-044.
 	PlatformFeeKobo int64 `json:"platform_fee_kobo"`
 	// TotalKobo is what was actually escrowed and what the patient paid
 	// (FeeKobo + PlatformFeeKobo). A cancellation refunds this in full.
@@ -219,7 +219,7 @@ type BookAppointmentRequest struct {
 	// this server escrows anything, so a stale quote would put the charged and
 	// escrowed amounts out of step — when this disagrees with the server's own
 	// computation the booking is rejected before any money moves. Zero means the
-	// client did not quote a total and skips the check (ADR-040).
+	// client did not quote a total and skips the check (ADR-044).
 	ExpectedTotalKobo int64 `json:"expected_total_kobo"`
 }
 

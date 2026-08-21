@@ -80,6 +80,6 @@ async function fireMilestones(contestId: string, contestantId: string): Promise<
     currentRank,
     totalVotes,
     votesToNextRank,
-    shareUrl: `${process.env.NEXT_PUBLIC_SITE_URL ?? 'https://spotlightng.com'}/vote/${contestSlug}/${contestantId}`,
+    shareUrl: `${process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com'}/vote/${contestSlug}/${contestantId}`,
   });
 }

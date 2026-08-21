@@ -1,4 +1,4 @@
--- Telemedicine platform booking fee (ADR-040).
+-- Telemedicine platform booking fee (ADR-044).
 -- Additive-only — no DROP, no RENAME, no type narrowing.
 --
 -- The 5% platform booking fee becomes server-authoritative and is ADDITIVE to the
@@ -41,8 +41,8 @@ UPDATE appointments
    AND fee_kobo > 0;
 
 COMMENT ON COLUMN appointments.fee_kobo IS
-    'Doctor consultation fee in kobo (excludes the platform booking fee). Doctor earnings are 85% of this. NOT a patient-facing total — see total_kobo (ADR-040).';
+    'Doctor consultation fee in kobo (excludes the platform booking fee). Doctor earnings are 85% of this. NOT a patient-facing total — see total_kobo (ADR-044).';
 COMMENT ON COLUMN appointments.platform_fee_kobo IS
-    'Platform booking fee in kobo, computed server-side as consult_fee_kobo * 500 / 10000 (floored). Settled as a 100%-platform leg via settlement.Split.ServiceFeeKobo. 0 for pre-ADR-040 rows.';
+    'Platform booking fee in kobo, computed server-side as consult_fee_kobo * 500 / 10000 (floored). Settled as a 100%-platform leg via settlement.Split.ServiceFeeKobo. 0 for pre-ADR-044 rows.';
 COMMENT ON COLUMN appointments.total_kobo IS
-    'Amount actually escrowed = fee_kobo + platform_fee_kobo. What the patient paid, and what a cancellation refunds in full (ADR-040).';
+    'Amount actually escrowed = fee_kobo + platform_fee_kobo. What the patient paid, and what a cancellation refunds in full (ADR-044).';

@@ -19,7 +19,7 @@ type Service struct {
 	// platformFeeBp is the booking fee rate in basis points, resolved from
 	// FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED at wiring time. Zero (the default)
 	// means the flag is off and consultations price exactly as they did before
-	// ADR-040 — the patient pays the consultation fee alone.
+	// ADR-044 — the patient pays the consultation fee alone.
 	platformFeeBp int
 }
 
@@ -35,7 +35,7 @@ func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
 // points (telemedicine.PlatformFeeBp = 500 = 5%). Pass 0 to disable — that is the
 // rollback path, and it needs no redeploy of the app: the client renders whatever
 // quote the server returns, so the fee row drops to ₦0 and the escrow drops to the
-// consultation fee on the next request. See ADR-040.
+// consultation fee on the next request. See ADR-044.
 func (s *Service) WithPlatformFeeBp(bp int) *Service {
 	if bp < 0 {
 		bp = 0
@@ -393,7 +393,7 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 	// Price the booking SERVER-SIDE from the doctor's own consultation fee. The
 	// client sends no amount it can be charged on: the platform fee is derived here
 	// from PlatformFeeBp, so the figure displayed to the patient, the figure charged
-	// and the figure escrowed are all the same number by construction (ADR-040).
+	// and the figure escrowed are all the same number by construction (ADR-044).
 	quote := s.quote(doctor.ConsultFeeKobo)
 	if !quote.Priceable() {
 		// Fail closed. A doctor whose stored fee is non-positive or absurd cannot be
@@ -553,7 +553,7 @@ func (s *Service) CompleteAppointment(ctx context.Context, appointmentID, doctor
 	//	platform = base×0.15 + serviceFee   = 0.15·consult + fee
 	//	provider = total − platform         = 0.85·consult   ← unchanged
 	//
-	// Appointments escrowed before ADR-040 carry platform_fee_kobo = 0, which
+	// Appointments escrowed before ADR-044 carry platform_fee_kobo = 0, which
 	// reproduces the old pure 85/15 split exactly — they settle unchanged.
 	split := settlement.Split{
 		ProviderID:     doctorUserID,
@@ -766,7 +766,7 @@ func scanDoctors(rows pgRows, platformFeeBp int) ([]Doctor, error) {
 			d.Education = []Education{}
 		}
 		// Attach the server-computed booking breakdown so the app renders our
-		// numbers instead of applying a fee rate of its own (ADR-040).
+		// numbers instead of applying a fee rate of its own (ADR-044).
 		q := QuoteAt(d.ConsultFeeKobo, platformFeeBp)
 		d.Booking = &q
 		out = append(out, d)

@@ -55,7 +55,7 @@ func editableKYB(st KYBStatus) bool {
 // once the record is submitted/under review/approved — the owner must wait for the
 // reviewer (or a needs_more_info bounce) before changing it.
 func (s *Service) SaveKYB(ctx context.Context, restaurantID, userID string, in KYB) (*KYB, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageBanking); err != nil {
 		return nil, err
 	}
 	cur, _, err := s.loadKYB(ctx, restaurantID)
@@ -88,7 +88,7 @@ func (s *Service) SaveKYB(ctx context.Context, restaurantID, userID string, in K
 // storage (owner only). It stores the type + file URL, not the file. One document per
 // (restaurant, type) — re-adding a type replaces it.
 func (s *Service) AddKYBDocument(ctx context.Context, restaurantID, userID, docType, fileURL, fileName string) error {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageBanking); err != nil {
 		return err
 	}
 	if docType == "" || fileURL == "" {
@@ -107,7 +107,7 @@ func (s *Service) AddKYBDocument(ctx context.Context, restaurantID, userID, docT
 // fields are missing. Idempotent-safe: a resubmit from needs_more_info/rejected is a
 // legal transition.
 func (s *Service) SubmitKYB(ctx context.Context, restaurantID, userID string) (*KYB, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageBanking); err != nil {
 		return nil, err
 	}
 	k, exists, err := s.loadKYB(ctx, restaurantID)
@@ -139,7 +139,7 @@ func (s *Service) SubmitKYB(ctx context.Context, restaurantID, userID string) (*
 
 // GetKYB returns the owner's KYB record + uploaded document types (owner only).
 func (s *Service) GetKYB(ctx context.Context, restaurantID, userID string) (*KYB, []string, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageBanking); err != nil {
 		return nil, nil, err
 	}
 	k, _, err := s.loadKYB(ctx, restaurantID)

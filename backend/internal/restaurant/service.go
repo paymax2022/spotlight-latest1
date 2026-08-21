@@ -95,6 +95,10 @@ type Service struct {
 	commission  CommissionRecorder  // optional; nil ⇒ realized-profit recording is a no-op
 	tiers       TierLimiter         // REQUIRED; fail-closed gate on order escrow + withdrawal debit
 	withdrawalsOn bool              // FEATURE_RESTAURANT_WITHDRAWALS_ENABLED
+	// moderationOn gates the listing-review requirement in discovery
+	// (FEATURE_FOODHUB_MODERATION). OFF by default: with it off, discovery serves
+	// exactly what it served before listing review existed (PRD §1.4).
+	moderationOn bool
 	disburser   WithdrawalDisburser // optional; nil ⇒ NoopDisburser (default sandbox)
 }
 
@@ -136,6 +140,17 @@ func (s *Service) WithDistancer(d RouteDistancer) *Service {
 // without it PlaceOrder and RequestWithdrawal both refuse with ErrTierGateUnwired.
 func (s *Service) WithTiers(t TierLimiter) *Service {
 	s.tiers = t
+	return s
+}
+
+// WithModeration enables the listing-review gate in discovery.
+//
+// Off by default and deliberately so: every existing restaurant is backfilled
+// APPROVED, so turning it on changes nothing for them, but a NEW restaurant
+// starts DRAFT and stays out of discovery until a reviewer approves it. That is
+// the intended behaviour and the reason it ships dark.
+func (s *Service) WithModeration(enabled bool) *Service {
+	s.moderationOn = enabled
 	return s
 }
 
@@ -311,10 +326,13 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	// Read here, at order time, so the order is priced by the config in force when it
 	// was placed — a later ops change must never reprice an order retroactively.
 	var pricingCfg PricingConfig
+	// Per-pack takeaway packaging price, owner-set. Read at order time with the rest
+	// of the pricing config, so a later change never reprices a placed order.
+	var packagingFeePerPackKobo int64
 	if err := s.db.QueryRow(ctx,
-		`SELECT is_open, owner_id, geo_lat, geo_lng, COALESCE(service_fee_bp,0), COALESCE(surge_bp,0) FROM restaurants WHERE id=$1`,
+		`SELECT is_open, owner_id, geo_lat, geo_lng, COALESCE(service_fee_bp,0), COALESCE(surge_bp,0), COALESCE(packaging_fee_kobo,0) FROM restaurants WHERE id=$1`,
 		primaryRestaurantID).
-		Scan(&isOpen, &ownerID, &rLat, &rLng, &pricingCfg.ServiceFeeBp, &pricingCfg.SurgeBp); err != nil {
+		Scan(&isOpen, &ownerID, &rLat, &rLng, &pricingCfg.ServiceFeeBp, &pricingCfg.SurgeBp, &packagingFeePerPackKobo); err != nil {
 		return nil, fmt.Errorf("restaurant: primary restaurant not found")
 	}
 
@@ -517,10 +535,26 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		promoID, promoFunder = &pid, &funder
 	}
 
+	// Mandatory takeaway packaging: one fee per pack the customer arranged their food
+	// into. The pack count is a customer choice (they may add packs beyond what the
+	// packing rules require), so it arrives from the client and PackagingKobo clamps
+	// it to [1, total portions] before it can price anything — a client number never
+	// reaches the escrow debit unbounded.
+	//
+	// Checkout has ALWAYS shown this line and added it to the total it displays, but
+	// nothing server-side ever charged it, so the customer was shown one number and
+	// billed another. Pricing it here closes that gap.
+	totalPortions := 0
+	for _, it := range itemsWithRest {
+		totalPortions += it.item.Quantity
+	}
+	packageCount, packagingKobo := PackagingKobo(req.PackageCount, totalPortions, packagingFeePerPackKobo)
+
 	// What the customer actually pays and what is escrowed: the discounted gross plus the
-	// two fixed legs that ride on top of the percentages. settlement.Settle reverses
-	// exactly this at release (base = total − tip − serviceFee; gross = base + discount).
-	total := grossKobo - discountKobo + serviceFeeKobo + tipKobo
+	// three fixed legs that ride on top of the percentages. settlement.Settle reverses
+	// exactly this at release (base = total − tip − serviceFee − providerFee;
+	// gross = base + discount).
+	total := grossKobo - discountKobo + serviceFeeKobo + tipKobo + packagingKobo
 	orderID := uuid.New().String()
 	ref := "order:" + orderID
 
@@ -632,6 +666,8 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		DeliveryKobo:      deliveryKobo,
 		SurgeKobo:         surgeKobo,
 		ServiceFeeKobo:    serviceFeeKobo,
+		PackagingFeeKobo:  packagingKobo,
+		PackageCount:      packageCount,
 		TipKobo:           tipKobo,
 		DiscountKobo:      discountKobo,
 		PromoID:           promoID,
@@ -662,8 +698,8 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	}
 
 	const insertOrder = `
-		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, promo_id, promo_funder, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, special_instructions, scheduled_for)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20)
+		INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, delivery_kobo, surge_kobo, service_fee_kobo, tip_kobo, discount_kobo, promo_id, promo_funder, total_kobo, status, idempotency_key, settlement_id, delivery_address, distance_meters, eta_minutes, delivery_breakdown, special_instructions, scheduled_for, packaging_fee_kobo, package_count)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	tag, err := tx.Exec(ctx, insertOrder,
 		order.ID, order.CustomerID, primaryRestaurantID,
@@ -672,6 +708,7 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 		order.IdempotencyKey, order.SettlementID, order.DeliveryAddress,
 		order.DistanceMeters, order.EtaMinutes, breakdownJSON,
 		nullIfEmpty(order.SpecialInstructions), order.ScheduledFor,
+		order.PackagingFeeKobo, order.PackageCount,
 	)
 	if err != nil {
 		s.releasePromoReservationSafe(ctx, promoID, orderID)
@@ -1018,12 +1055,12 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settlementID string) error {
 	var riderID *string
 	var promoFunder *string
-	var tipKobo, discountKobo, serviceFeeKobo, orderTotal int64
+	var tipKobo, discountKobo, serviceFeeKobo, packagingKobo, orderTotal int64
 	// Fail closed on a read error: a silent scan failure would settle the order as
 	// rider-less (90/10, no rider payout) on what may be a perfectly good delivery.
 	if err := s.db.QueryRow(ctx,
-		`SELECT rider_id, COALESCE(tip_kobo,0), COALESCE(discount_kobo,0), COALESCE(service_fee_kobo,0), promo_funder, total_kobo FROM orders WHERE id=$1`, orderID).
-		Scan(&riderID, &tipKobo, &discountKobo, &serviceFeeKobo, &promoFunder, &orderTotal); err != nil {
+		`SELECT rider_id, COALESCE(tip_kobo,0), COALESCE(discount_kobo,0), COALESCE(service_fee_kobo,0), COALESCE(packaging_fee_kobo,0), promo_funder, total_kobo FROM orders WHERE id=$1`, orderID).
+		Scan(&riderID, &tipKobo, &discountKobo, &serviceFeeKobo, &packagingKobo, &promoFunder, &orderTotal); err != nil {
 		return fmt.Errorf("restaurant: load order for settlement: %w", err)
 	}
 	// The tip and the discount are both properties of the ESCROW, but they are read off
@@ -1040,7 +1077,7 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 	// percentages. That is always fully releasable (gross == base == the escrowed total,
 	// no leg can go negative) — value is conserved, it is simply apportioned as if the
 	// order carried neither.
-	if tipKobo > 0 || discountKobo > 0 || serviceFeeKobo > 0 {
+	if tipKobo > 0 || discountKobo > 0 || serviceFeeKobo > 0 || packagingKobo > 0 {
 		var escrowedKobo int64
 		if err := s.db.QueryRow(ctx,
 			`SELECT total_kobo FROM settlements WHERE id=$1`, settlementID).Scan(&escrowedKobo); err != nil {
@@ -1052,6 +1089,7 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 			tipKobo = 0
 			discountKobo = 0
 			serviceFeeKobo = 0
+			packagingKobo = 0
 		}
 	}
 	var ownerID string
@@ -1074,6 +1112,11 @@ func (s *Service) settleOrder(ctx context.Context, orderID, restaurantID, settle
 		// who paid for an order that already settled its terms.
 		DiscountKobo:             discountKobo,
 		DiscountFundedByPlatform: promoFunder != nil && *promoFunder == string(FunderPlatform),
+		// Takeaway packaging was escrowed on top of the gross at placement and is paid
+		// 100% to the RESTAURANT — the provider-side mirror of the tip and the service
+		// fee. The restaurant buys the packs, so it is a pass-through cost and neither
+		// the platform nor the rider takes a cut of it.
+		ProviderFeeKobo: packagingKobo,
 		// The platform service fee was escrowed on top of the gross at placement and is
 		// paid 100% to the platform — the mirror of the tip. Like the tip it sits OUTSIDE
 		// the percentages, so neither the restaurant nor the rider takes a cut of it, and

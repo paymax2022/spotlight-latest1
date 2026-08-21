@@ -16,8 +16,12 @@
 //   DELETE /restaurant/:id/menu/items/:itemId
 
 import { api } from '@/api/client';
+import { buildUpdateStoreBody } from './packagingPrice';
 import type {
   MerchantStore,
+  OutletPayoutReadiness,
+  StaffMember,
+  StaffInvite,
   MerchantStoreDetail,
   MerchantMenuCategory,
   MerchantMenuItem,
@@ -43,6 +47,9 @@ function mapStore(r: any): MerchantStore {
     logoUrl: r.logo_url ?? null,
     isOpen: !!r.is_open,
     createdAt: r.created_at,
+    // Left undefined when the server omits it, so the UI can tell "not loaded"
+    // from a genuine ₦0 and never shows a price the owner did not set.
+    packagingFeeKobo: typeof r.packaging_fee_kobo === 'number' ? r.packaging_fee_kobo : undefined,
   };
 }
 function mapItem(i: any): MerchantMenuItem {
@@ -64,6 +71,7 @@ function mapCategory(c: any): MerchantMenuCategory {
 // ── Offline stub (only when USE_MOCK) ─────────────────────────────────────────
 let mockStore: MerchantStore = {
   id: 'r-demo', name: 'My Kitchen', description: '', address: '1 Demo Street, Lagos', isOpen: false,
+  packagingFeeKobo: 20000, // the platform default, ₦200
 };
 let mockCats: MerchantMenuCategory[] = [];
 let seq = 0;
@@ -101,15 +109,81 @@ export async function updateStore(id: string, patch: UpdateStoreInput): Promise<
       description: patch.description ?? mockStore.description,
       address: patch.address ?? mockStore.address,
       logoUrl: patch.logoUrl ?? mockStore.logoUrl,
+      packagingFeeKobo: patch.packagingFeeKobo ?? mockStore.packagingFeeKobo,
     };
     return mockStore;
   }
-  const body: Record<string, unknown> = {};
-  if (patch.name !== undefined) body.name = patch.name;
-  if (patch.description !== undefined) body.description = patch.description;
-  if (patch.address !== undefined) body.address = patch.address;
-  if (patch.logoUrl !== undefined) body.logo_url = patch.logoUrl;
+  const body = buildUpdateStoreBody(patch);
   return mapStore(unwrap<any>(await api.patch(`${BASE}/${enc(id)}`, body)));
+}
+
+/**
+ * Per-outlet payout readiness. Server-scoped by ownership — no id is sent.
+ *
+ * Mock mode reports every outlet payable: the offline demo has no KYB flow, and
+ * an unexplained "you cannot be paid" banner there would be noise, not a warning.
+ */
+export async function getPayoutReadiness(): Promise<OutletPayoutReadiness[]> {
+  if (USE_MOCK) {
+    await delay();
+    return [{ restaurantId: mockStore.id, name: mockStore.name, kybStatus: 'approved', payable: true, unpaidKobo: 0 }];
+  }
+  const raw = unwrap<any>(await api.get(`${BASE}/payout-readiness`));
+  const rows = Array.isArray(raw) ? raw : (raw?.outlets ?? []);
+  return rows.map((r: any) => ({
+    restaurantId: r.restaurant_id,
+    name: r.name,
+    kybStatus: r.kyb_status ?? 'none',
+    // `=== true`, never truthiness: an absent field must read as NOT payable, so a
+    // shape change can never silently tell an owner their money is on its way.
+    payable: r.payable === true,
+    reason: r.reason || undefined,
+    unpaidKobo: typeof r.unpaid_kobo === 'number' ? r.unpaid_kobo : 0,
+  }));
+}
+
+// ── Staff ────────────────────────────────────────────────────────────────────
+
+export async function listStaff(restaurantId: string): Promise<StaffMember[]> {
+  if (USE_MOCK) {
+    await delay();
+    return [{ userId: 'u-owner', email: 'owner@demo.test', role: 'OWNER', status: 'ACTIVE' }];
+  }
+  const raw = unwrap<any>(await api.get(`${BASE}/${enc(restaurantId)}/staff`));
+  const rows = Array.isArray(raw) ? raw : (raw?.staff ?? []);
+  return rows.map((r: any) => ({
+    userId: r.user_id,
+    email: r.email || undefined,
+    role: r.role,
+    status: r.status,
+    acceptedAt: r.accepted_at ?? null,
+    createdAt: r.created_at,
+  }));
+}
+
+/** Returns the one-time token; the server keeps only its hash. */
+export async function inviteStaff(
+  restaurantId: string, userId: string, role: StaffMember['role'],
+): Promise<StaffInvite> {
+  if (USE_MOCK) {
+    await delay();
+    return { userId, role, token: 'demo-token-not-real' };
+  }
+  const raw = unwrap<any>(await api.post(`${BASE}/${enc(restaurantId)}/staff`, { user_id: userId, role }));
+  const inv = raw?.invite ?? raw;
+  return { userId: inv.user_id, role: inv.role, token: inv.token };
+}
+
+export async function setStaffStatus(
+  restaurantId: string, userId: string, status: StaffMember['status'],
+): Promise<void> {
+  if (USE_MOCK) { await delay(); return; }
+  await api.patch(`${BASE}/${enc(restaurantId)}/staff/${enc(userId)}`, { status });
+}
+
+export async function acceptStaffInvite(token: string): Promise<void> {
+  if (USE_MOCK) { await delay(); return; }
+  await api.post(`${BASE}/staff/accept`, { token });
 }
 
 export async function setAvailability(id: string, isOpen: boolean): Promise<MerchantStore> {

@@ -245,7 +245,7 @@ export async function governContent(id: string, action: GovernanceAction): Promi
     await delay();
     const item = CONTENT.find((c) => c.id === id);
     if (action === 'publish' && item && !item.reviewer_id) {
-      return { id, state: item.state, version: item.version, audit_id: auditId(), message: `Publish blocked — clinical content requires a licensed-clinician sign-off before publish (SC-6). Move it through CLINICAL_REVIEW → APPROVED first. Recorded to immutable audit (SC-12).` };
+      return { id, state: item.state, version: item.version, audit_id: auditId(), message: `Fixture — nothing was saved. Publish blocked — clinical content requires a licensed-clinician sign-off before publish (SC-6). Move it through CLINICAL_REVIEW → APPROVED first. (SC-12).` };
     }
     const next: GovernanceState =
       action === 'submit' ? 'clinical_review'
@@ -253,7 +253,7 @@ export async function governContent(id: string, action: GovernanceAction): Promi
       : action === 'publish' ? 'published'
       : 'deprecated';
     const signNote = action === 'approve' ? ' Clinician sign-off recorded (SC-6).' : '';
-    return { id, state: next, version: item ? item.version + (action === 'publish' ? 1 : 0) : 1, audit_id: auditId(), message: `Content ${id}: ${action} applied → ${next.toUpperCase()}.${signNote} Versioned & auditable (SC-6). Recorded to immutable audit (SC-12).` };
+    return { id, state: next, version: item ? item.version + (action === 'publish' ? 1 : 0) : 1, audit_id: auditId(), message: `Fixture — nothing was saved. Content ${id}: ${action} applied → ${next.toUpperCase()}.${signNote} Versioned & auditable (SC-6). (SC-12).` };
   }
   return sendJson<GovernanceResult>('POST', `/content/${id}/${action}`, {});
 }
@@ -304,7 +304,7 @@ export async function governRedFlagRule(id: string, action: GovernanceAction): P
     await delay();
     const item = RULES.find((r) => r.id === id);
     if (action === 'publish' && item && !item.reviewer_id) {
-      return { id, state: item.state, version: item.version, audit_id: auditId(), message: `Publish blocked — a red-flag rule requires a licensed-clinician sign-off before publish (SC-6). Move it through CLINICAL_REVIEW → APPROVED first. Recorded to immutable audit (SC-12).` };
+      return { id, state: item.state, version: item.version, audit_id: auditId(), message: `Fixture — nothing was saved. Publish blocked — a red-flag rule requires a licensed-clinician sign-off before publish (SC-6). Move it through CLINICAL_REVIEW → APPROVED first. (SC-12).` };
     }
     const next: GovernanceState =
       action === 'submit' ? 'clinical_review'
@@ -312,7 +312,7 @@ export async function governRedFlagRule(id: string, action: GovernanceAction): P
       : action === 'publish' ? 'published'
       : 'deprecated';
     const signNote = action === 'approve' ? ' Clinician sign-off recorded (SC-6).' : '';
-    return { id, state: next, version: item ? item.version + (action === 'publish' ? 1 : 0) : 1, audit_id: auditId(), message: `Red-flag rule ${id}: ${action} applied → ${next.toUpperCase()}.${signNote} Rules can only RAISE urgency (SC-2); versioned & auditable (SC-6). Recorded to immutable audit (SC-12).` };
+    return { id, state: next, version: item ? item.version + (action === 'publish' ? 1 : 0) : 1, audit_id: auditId(), message: `Fixture — nothing was saved. Red-flag rule ${id}: ${action} applied → ${next.toUpperCase()}.${signNote} Rules can only RAISE urgency (SC-2); versioned & auditable (SC-6). (SC-12).` };
   }
   return sendJson<GovernanceResult>('POST', `/red-flag-rules/${id}/${action}`, {});
 }

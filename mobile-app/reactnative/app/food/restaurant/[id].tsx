@@ -186,8 +186,15 @@ export default function RestaurantDetailScreen() {
                   <Text style={s.dot}>·</Text>
                   <Icons.Clock size={12} color={Colors.onSurfaceVariant} strokeWidth={2} />
                   <Text style={s.meta}>{restaurant.etaLabel}</Text>
-                  <Text style={s.dot}>·</Text>
-                  <Text style={s.meta}>Delivery {formatNairaWhole(restaurant.deliveryFeeKobo)}</Text>
+                  {/* Only when a flat fee is actually known. The live DTO has no
+                      such field, so this used to read "Delivery ₦0" — free
+                      delivery, for a fee that is quoted by distance at checkout. */}
+                  {typeof restaurant.deliveryFeeKobo === 'number' ? (
+                    <>
+                      <Text style={s.dot}>·</Text>
+                      <Text style={s.meta}>Delivery {formatNairaWhole(restaurant.deliveryFeeKobo)}</Text>
+                    </>
+                  ) : null}
                 </View>
                 {restaurant.address ? <Text style={s.address}>{restaurant.address}</Text> : null}
               </View>

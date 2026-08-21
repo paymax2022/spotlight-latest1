@@ -3,6 +3,7 @@ package healthpharmacy
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -92,6 +93,21 @@ func (h *Handler) UpsertProduct(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "product": out})
+}
+
+// MyProducts — GET /products/mine
+//
+// The owner's own shelf, including lines customers cannot see (deactivated, or
+// pending NAFDAC). Scoped by ownership server-side.
+//
+// Registered BEFORE /products/:id so Gin does not read "mine" as an id.
+func (h *Handler) MyProducts(c *gin.Context) {
+	list, err := h.svc.ListProductsForOwner(c.Request.Context(), uid(c))
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "products": list})
 }
 
 // CreateOrder — POST /orders  (patient, payment HELD, HL-9)
@@ -228,6 +244,50 @@ func (h *Handler) Get(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "order": o})
+}
+
+// ListMine — GET /orders?state=&limit=&offset=
+//
+// The pharmacist's inbox: orders belonging to the pharmacies the CALLER owns.
+// Scoping is derived server-side from ownership — the caller never names a
+// pharmacy — so there is no id to tamper with, and a user who owns none gets an
+// empty list.
+//
+// Registered BEFORE /orders/:id so Gin does not treat "orders" as an :id.
+func (h *Handler) ListMine(c *gin.Context) {
+	orders, err := h.svc.ListForOwner(
+		c.Request.Context(), uid(c), c.Query("state"),
+		parseIntDefault(c.Query("limit"), 0), parseIntDefault(c.Query("offset"), 0),
+	)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "orders": orders})
+}
+
+// parseIntDefault reads a non-negative integer query param, falling back to def
+// for anything absent or malformed. The service clamps the range; a bad string is
+// not worth a 400 on a list read.
+func parseIntDefault(raw string, def int) int {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n < 0 {
+		return def
+	}
+	return n
+}
+
+// Earnings — GET /earnings
+//
+// What the caller's pharmacies have been paid, and what is still held for them.
+// Scoped by ownership server-side; an owner of nothing sees zeros.
+func (h *Handler) Earnings(c *gin.Context) {
+	e, err := h.svc.EarningsForOwner(c.Request.Context(), uid(c))
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "earnings": e})
 }
 
 // ─── Multi-pharmacy discovery + ratings (HL-2 gated) ─────────────────────────

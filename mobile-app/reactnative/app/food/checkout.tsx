@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -7,7 +7,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import AddressAutocompleteInput, { type SelectedAddress } from '@/components/AddressAutocompleteInput';
 import { withPlusCode } from '@/lib/addressLookup';
-import type { CartPackage, LatLng } from '@/features/food/types';
+import type { LatLng } from '@/features/food/types';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
@@ -18,8 +18,10 @@ import {
   useCartStore, cartSubtotalKobo, cartItemCount, cartPackageCount, cartPackagingKobo,
   aggregateCartLines, cartPackagesPayload, MAX_SAME_FOOD_PER_PACKAGE,
 } from '@/features/food/cartStore';
+import { resolveRestaurantName, groupPackagesByRestaurant, UNKNOWN_RESTAURANT_ID } from '@/features/food/restaurantName';
 import { formatNaira } from '@/features/food/utils';
-import { useRestaurant } from '@/features/food/hooks';
+import { resolveDeliveryFee } from '@/features/food/deliveryFee';
+import { useRestaurant, useRestaurants, useRestaurantNames } from '@/features/food/hooks';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { CartNutritionSummary } from '@/features/nutrition';
 
@@ -44,6 +46,46 @@ function SubLine({ label, value, strong }: { label: string; value: string; stron
 export default function CheckoutScreen() {
   const { packages, restaurantId, restaurantName, clear, addItem, decrementItem, addPackage, removePackage } = useCartStore();
   const { data: restaurant } = useRestaurant(restaurantId ?? undefined);
+
+  // Names for the OTHER restaurants in a multi-restaurant cart. Lines added in
+  // this session carry their own name; this covers carts hydrated from storage
+  // or the server, whose lines predate that field. Already cached by the food
+  // screens (staleTime 30s), so it costs no extra round-trip in practice.
+  const { data: allRestaurants } = useRestaurants();
+  const restaurantNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of allRestaurants ?? []) if (r.id && r.name) m.set(r.id, r.name);
+    // The cart's primary restaurant is known to the store even when discovery
+    // does not list it (e.g. it has since closed).
+    if (restaurantId && restaurantName && !m.has(restaurantId)) m.set(restaurantId, restaurantName);
+    return m;
+  }, [allRestaurants, restaurantId, restaurantName]);
+
+  // The cart's restaurant groups, in render order. Lifted out of the JSX so the
+  // unresolved ids below can be computed before rendering.
+  const restaurantGroups = useMemo(() => groupPackagesByRestaurant(packages, restaurantId), [packages, restaurantId]);
+
+  // Ids that NEITHER a captured line name NOR discovery can name. Discovery is
+  // `WHERE is_open = TRUE`, so a closed restaurant is missing from it entirely —
+  // and a cart outlives opening hours. These are fetched by id, which has no
+  // such filter. Usually empty, in which case no request is made.
+  const unresolvedRestaurantIds = useMemo(
+    () =>
+      restaurantGroups
+        .filter(({ rid, packages: ps }) => {
+          if (!rid || rid === UNKNOWN_RESTAURANT_ID) return false; // nothing to fetch
+          if (restaurantNameById.has(rid)) return false;
+          return !ps.some((p) => p.lines.some((l) => l.restaurantName?.trim()));
+        })
+        .map(({ rid }) => rid),
+    [restaurantGroups, restaurantNameById],
+  );
+  const fetchedNames = useRestaurantNames(unresolvedRestaurantIds);
+
+  const lookupRestaurantName = useCallback(
+    (id: string) => restaurantNameById.get(id) ?? fetchedNames.get(id),
+    [restaurantNameById, fetchedNames],
+  );
   const placeOrder = usePlaceOrder();
   // Two-option checkout modal: Pay with Wallet, or Pay with Card/Transfer (Paystack gateway).
   const pay = usePurchasePayment<Awaited<ReturnType<typeof placeOrder.mutateAsync>>>();
@@ -60,12 +102,18 @@ export default function CheckoutScreen() {
   // authoritative on placeOrder — this only drives the pre-payment estimate.
   const quoteQ = useDeliveryQuote(restaurantId ?? undefined, addressLocation);
   const quote = quoteQ.data;
-  // Use the quoted fee once we have a confident (non-fallback) quote; otherwise
-  // fall back to the restaurant's flat fee and label it as an estimate.
-  const flatFee = restaurant?.deliveryFeeKobo ?? 0;
-  const haveQuote = Boolean(addressLocation) && Boolean(quote) && !quote!.flat_fallback;
-  const deliveryFee = haveQuote ? quote!.delivery_fee_kobo : flatFee;
-  const deliveryEstimated = !haveQuote;
+  // A quote is a SERVER price and is always used; flat_fallback only means it is
+  // not distance-based. The old rule discarded a flat-fallback quote in favour of
+  // restaurant.deliveryFeeKobo — a field with no column and no DTO behind it —
+  // so the fee rendered as ₦0 for every restaurant without coordinates while
+  // PlaceOrder still charged the real one.
+  const deliveryQuoteView = resolveDeliveryFee(quote);
+  const deliveryFee = deliveryQuoteView.feeKobo;
+  const deliveryKnown = deliveryQuoteView.known;
+  const deliveryEstimated = deliveryQuoteView.estimated;
+  const deliveryCalculating = Boolean(addressLocation) && quoteQ.isPending && !quote;
+  // Only a distance-based quote carries a breakdown worth showing.
+  const haveQuote = deliveryKnown && !deliveryEstimated;
   // Service fee shown as an estimate; the SERVER computes the authoritative total.
   const serviceFee = Math.round(subtotal * 0.05);
   // Mandatory take-away packaging — one pack fee PER takeaway package the customer
@@ -185,25 +233,21 @@ export default function CheckoutScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
         {/* Group items by restaurant and display */}
         {(() => {
-          // Create a map of restaurant -> packages
-          const byRestaurant = new Map<string, CartPackage[]>();
-          for (const pkg of packages) {
-            if (pkg.lines.length === 0) continue;
-            // Get the restaurant ID from the first item in the package
-            const rid = pkg.lines[0]?.restaurantId || restaurantId || 'unknown';
-            if (!byRestaurant.has(rid)) byRestaurant.set(rid, []);
-            byRestaurant.get(rid)!.push(pkg);
-          }
-
-          const restaurants = Array.from(byRestaurant.entries());
-          return restaurants.length === 0 ? null : (
+          // Grouping is memoized above (restaurantGroups) so the screen can
+          // resolve names for closed/unlisted restaurants before rendering.
+          return restaurantGroups.length === 0 ? null : (
             <View>
-              {restaurants.map(([rid, rPackages], restIndex) => (
+              {restaurantGroups.map(({ rid, packages: rPackages }, restIndex) => (
                 <View key={rid} style={restIndex > 0 && { marginTop: Spacing.lg }}>
                   {/* Restaurant name header */}
                   <View style={s.restaurantSection}>
                     <Text style={s.restaurantSectionTitle}>
-                      {restaurantName && rid === restaurantId ? restaurantName : `Restaurant ${restIndex + 1}`}
+                      {resolveRestaurantName(
+                        rPackages.flatMap((p) => p.lines),
+                        rid,
+                        restIndex,
+                        lookupRestaurantName,
+                      )}
                     </Text>
                   </View>
 
@@ -293,14 +337,20 @@ export default function CheckoutScreen() {
           <Line label={`Subtotal (${count} item${count > 1 ? 's' : ''})`} value={formatNaira(subtotal)} />
           <Line
             label={
-              deliveryEstimated
-                ? 'Delivery fee (estimated — add your address)'
-                : 'Delivery fee'
+              !deliveryKnown
+                ? 'Delivery fee (add your address)'
+                : deliveryEstimated
+                  ? 'Delivery fee (estimated)'
+                  : 'Delivery fee'
             }
             value={
-              addressLocation && quoteQ.isPending && !quote
+              deliveryCalculating
                 ? 'Calculating…'
-                : formatNaira(deliveryFee)
+                : // Never render ₦0 for a fee nobody has quoted: the customer
+                  // would read "free delivery" and then be charged at checkout.
+                  deliveryKnown
+                  ? formatNaira(deliveryFee)
+                  : '—'
             }
           />
           {/* Distance/time delivery breakdown — only when we have a real quote.

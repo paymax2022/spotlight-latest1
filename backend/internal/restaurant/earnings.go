@@ -31,7 +31,7 @@ type EarningsStatement struct {
 // (owner only). Derived from the immutable settled `settlements` — a read, it moves no
 // money. Totals are summed server-side so the exported figures are authoritative.
 func (s *Service) EarningsStatement(ctx context.Context, restaurantID, userID string, from, to time.Time) (*EarningsStatement, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermViewEarnings); err != nil {
 		return nil, err
 	}
 	if to.Before(from) {
