@@ -128,16 +128,8 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
-export const config = {
-  matcher: [
-    /*
-     * Page routes: everything except Next.js internals, static files, and API.
-     */
-    '/((?!_next/static|_next/image|favicon|assets|icons|images|api/).*)',
-    /*
-     * API routes: matched so the CORS layer can answer preflight + attach
-     * Access-Control headers (the handler short-circuits before Supabase auth).
-     */
-    '/api/:path*',
-  ],
-};
+// NOTE: no `config` is exported from here on purpose. Next parses the matcher at
+// compile time and only reads an object literal in the entry point Next actually
+// loads, which is the root `middleware.ts` (Next 16/Turbopack rejects a
+// re-exported `config` outright). The matcher lives there, as the single
+// definition; a second copy here would drift and look authoritative.

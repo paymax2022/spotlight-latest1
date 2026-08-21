@@ -70,3 +70,22 @@ jobs:
 
       - name: Lint (ESLint via next lint)
         run: npm run lint
+
+      # The production build, LAST because it is the slowest step — everything
+      # cheap has already failed by here.
+      #
+      # This lane ran tsc + lint + tests and called that "verified", but none of
+      # them build. `tsc --noEmit` type-checks modules in isolation; `next build`
+      # additionally compiles the route graph, and Turbopack statically parses
+      # things type-checking never looks at. That gap shipped a broken deploy:
+      # the Next 15 -> 16 upgrade turned the root middleware's re-exported
+      # `config` into a hard build error, every check here stayed green, and the
+      # first thing to actually run `next build` was Railway — in the deploy.
+      #
+      # It costs a few minutes per run. A deploy that fails after ~21 upstream
+      # jobs costs more.
+      - name: Production build (next build)
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          NODE_OPTIONS: --max-old-space-size=3072
