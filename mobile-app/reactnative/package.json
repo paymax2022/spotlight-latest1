@@ -29,7 +29,10 @@
     "test:outlets": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/outlets/*.spec.ts\"",
     "test:pharmacymerchant": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/pharmacymerchant/*.spec.ts\"",
     "check:env-mocks": "node scripts/check-env-mocks.mjs",
-    "check:env-mocks:staging": "node scripts/check-env-mocks.mjs .env.staging"
+    "check:env-mocks:staging": "node scripts/check-env-mocks.mjs .env.staging",
+    "env:staging": "node scripts/use-env.mjs staging",
+    "env:develop": "node scripts/use-env.mjs development",
+    "env:which": "node scripts/use-env.mjs --which"
   },
   "dependencies": {
     "@expo-google-fonts/plus-jakarta-sans": "^0.4.2",
