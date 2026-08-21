@@ -10,7 +10,7 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { SERVICE_MODULES } from '@/constants/modules';
-import { useModuleVisibility } from '@/features/modules/visibility';
+import { useUserModuleState } from '@/features/modules/visibility';
 import { registryKeyFor } from '@/features/modules/serviceModuleKeys';
 
 const CATEGORIES = [
@@ -59,7 +59,10 @@ export default function ServicesScreen() {
   // ModuleCard already drops onPress for comingSoon, so marking the flag is sufficient.
   // The registry can also CLEAR a shipped comingSoon by publishing the module 'visible',
   // which is how ops retires a placeholder without an app release.
-  const { stateOf } = useModuleVisibility();
+  // Per-USER state: the environment gate intersected with this user's entitlements,
+  // so a module published for the tier but not granted to this (unverified) user is
+  // hidden rather than shown-and-broken.
+  const { stateOf } = useUserModuleState();
   const visibleModules = React.useMemo(
     () => SERVICE_MODULES.flatMap((m) => {
       const key = registryKeyFor(m.id);

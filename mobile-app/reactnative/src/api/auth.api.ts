@@ -1,4 +1,5 @@
 import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
+import { api } from '@/api/client';
 import { createSupabaseClient } from '@/lib/supabase';
 import { getSecureItem } from '@/lib/secureStorage';
 import { AuthResult, User } from '@/types/auth';
@@ -96,13 +97,37 @@ async function restoreSessionFromStoredTokens() {
   }
 }
 
-export async function login(payload: { email: string; password: string }): Promise<AuthResult> {
-  const supabase = createSupabaseClient();
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email: payload.email.trim().toLowerCase(),
-    password: payload.password,
-  });
+/**
+ * Sign in with an email OR a phone number.
+ *
+ * This goes through the BACKEND login proxy rather than calling Supabase directly,
+ * and that indirection is the point: the phone→account lookup happens server-side and
+ * the account email is never returned. A client-side "resolve my phone to an email"
+ * call would be an enumeration oracle — anyone could walk a range of numbers and
+ * harvest the address behind each. Here an unknown phone is indistinguishable from a
+ * wrong password.
+ *
+ * The proxy returns a real Supabase session, which is handed to the client so every
+ * other screen (all of which read the Supabase session) keeps working unchanged.
+ */
+export async function login(payload: { identifier: string; password: string }): Promise<AuthResult> {
+  const identifier = payload.identifier.trim();
+  const res = await api.post('/api/auth/login', { identifier, password: payload.password });
 
+  const session = (res?.data as { session?: Record<string, unknown> })?.session;
+  const accessToken = typeof session?.access_token === 'string' ? session.access_token : '';
+  const refreshToken = typeof session?.refresh_token === 'string' ? session.refresh_token : '';
+  if (!accessToken || !refreshToken) {
+    throw new Error('Sign in failed. Please try again.');
+  }
+
+  // Adopt the session into the Supabase client so the rest of the app — which reads
+  // the session for its bearer token — is unaffected by where sign-in happened.
+  const supabase = createSupabaseClient();
+  const { data, error } = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  });
   if (error) throw readableAuthError(error, 'Sign in failed. Please try again.');
   return mapSession(data.session, data.user);
 }

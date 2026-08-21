@@ -91,3 +91,49 @@ export function setModuleLifecycle(
 export function getModuleHistory(key: string): Promise<ModuleAuditEntry[]> {
   return request<ModuleAuditEntry[]>(`/${encodeURIComponent(key)}/history`);
 }
+
+// ─── Per-user module grants ──────────────────────────────────────────────────
+//
+// A grant opens a RESTRICTED module for one user who has not completed KYC. It does
+// NOT lift money limits: wallet debits, transfers and escrow still obey the user's KYC
+// tier server-side, so this is safe to delegate to support staff. Wording in the UI
+// should keep saying so — an operator who believes this unlocks payments will grant it
+// for the wrong reason.
+
+export interface UserModuleGrant {
+  module_key: string;
+  active: boolean;
+  expires_at?: string | null;
+  revoked_at?: string | null;
+  granted_by?: string | null;
+  note?: string;
+  created_at: string;
+}
+
+export function listUserGrants(userId: string): Promise<{ grants: UserModuleGrant[] }> {
+  return request<{ grants: UserModuleGrant[] }>(`/users/${encodeURIComponent(userId)}/grants`);
+}
+
+export function grantUserModule(
+  userId: string,
+  moduleKey: string,
+  opts?: { note?: string; expiresAt?: string | null },
+): Promise<{ granted: string }> {
+  return request<{ granted: string }>(`/users/${encodeURIComponent(userId)}/grants`, {
+    method: 'POST',
+    body: JSON.stringify({
+      module_key: moduleKey,
+      note: opts?.note,
+      // Omitted entirely when absent — the API treats a missing expiry as permanent,
+      // and sending null would be indistinguishable from "clear the expiry".
+      ...(opts?.expiresAt ? { expires_at: opts.expiresAt } : {}),
+    }),
+  });
+}
+
+export function revokeUserModule(userId: string, moduleKey: string): Promise<{ revoked: string }> {
+  return request<{ revoked: string }>(
+    `/users/${encodeURIComponent(userId)}/grants/${encodeURIComponent(moduleKey)}`,
+    { method: 'DELETE' },
+  );
+}

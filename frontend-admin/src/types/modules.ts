@@ -19,6 +19,8 @@ export interface ModuleEnvironmentState {
 }
 
 export interface PlatformModule {
+  /** 'general' = any signed-in user; 'restricted' = needs KYC tier >= 1 or a grant. */
+  access_level?: 'general' | 'restricted';
   key: string;
   name: string;
   category: string;

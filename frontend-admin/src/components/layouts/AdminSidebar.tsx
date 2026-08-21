@@ -362,6 +362,9 @@ const navItemsBase: NavItem[] = [
   // (hidden / coming soon / live). Gated on the same permission the API enforces —
   // reading the registry exposes unreleased work, so it is not a public nav entry.
   { label: 'App Modules', href: '/admin/modules', section: 'Platform', permissions: ['platform.modules.read'] },
+  // Opens a restricted module for one unverified user. Same permission as the registry:
+  // deciding who may use an unreleased module is the same class of act as publishing it.
+  { label: 'Module Grants', href: '/admin/modules/grants', section: 'Platform', permissions: ['platform.modules.read'] },
   { label: 'Maps Cost & Coverage', href: '/admin/maps', section: 'Platform', permissions: ['map.admin.review'] },
   { label: 'OSM Contributions', href: '/admin/maps/contributions', section: 'Platform', permissions: ['map.admin.review'] },
   // ── Fractional Real Estate (land crowd-investing) ─────────────────────────
