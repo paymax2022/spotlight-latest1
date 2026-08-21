@@ -45,14 +45,14 @@ go live. A missing or misspelled flag silently ships mock data.
 ```bash
 cd mobile-app/reactnative
 cp .env.production.example .env.production     # then fill CHANGE_ME values
-node scripts/check-estate-mocks.mjs .env.production   # deploy gate — must pass
+node scripts/check-env-mocks.mjs .env.production   # deploy gate — must pass (all 69 flags)
 
 # Export / build (do NOT run as part of this config task):
 npx expo export --platform all        # or:
 eas build --profile production --platform all
 ```
 
-`scripts/check-estate-mocks.mjs` fails the build if any **estate** flag is
+`scripts/check-env-mocks.mjs` derives every `*_USE_MOCK` flag from the source tree and fails the build if any is
 missing or not exactly `"false"`. Extend that list if you want to gate more
 domains.
 
