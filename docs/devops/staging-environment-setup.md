@@ -1,52 +1,57 @@
 # Staging environment — setup runbook
 
-Status: **blocked on one paid decision.** Everything that does not cost money is
-already wired and committed; the steps below are what remains.
+## Decided topology
 
-## The blocker
+The Supabase org `spotlight` (`wqawduvaaclevmuhgzhy`) is on the **free** plan,
+which allows 2 active projects. Rather than upgrade to Pro for a third, the
+existing `spotlight` project was **re-purposed as staging** and renamed, so the
+two slots now map cleanly onto the two environments:
 
-The Supabase organisation `spotlight` (`wqawduvaaclevmuhgzhy`) is on the **free**
-plan, which allows **2 active projects**, and both slots are in use:
+| Role | Project | Ref | Region | Migrations applied |
+|---|---|---|---|---|
+| **Staging** | `spotlight-staging` | `wnicsubiznmishkmunsv` | eu-west-1 (Ireland) | 420 |
+| **Production** | `spotlight-prod` | `nmseefdlliejmdbxytej` | eu-north-1 (Stockholm) | 418 |
 
-| Project | Ref | Region | Migrations applied |
-|---|---|---|---|
-| `spotlight-prod` | `nmseefdlliejmdbxytej` | eu-north-1 | 418 |
-| `spotlight` | `wnicsubiznmishkmunsv` | eu-west-1 | 420 |
+Local `supabase/migrations/` holds **429** files, so staging is 9 behind and
+production is 11 behind. The `db-migrate.yml` jobs below close both gaps.
 
-Local `supabase/migrations/` holds **429** files, so *both* remotes are behind.
-Neither is a spare: both are `ACTIVE_HEALTHY` and carry a near-complete chain.
+### Why this was safe
 
-A third project therefore requires upgrading the org to **Pro (~$25/month)**.
-That is a purchase, so it is not something automation should do on its own —
-it needs an explicit human decision.
+The swap was verified against live data before it was made — **neither database
+held any production data**:
 
-### Options
+| | users | profiles | ledger_entries | orders |
+|---|---|---|---|---|
+| `spotlight-staging` | 6 | 6 | 0 | 0 |
+| `spotlight-prod` | 1 | 1 | 0 | 0 |
 
-1. **Upgrade to Pro and create a third project** — the clean split
-   (dev / staging / production). Also unlocks Supabase Branching, PITR and
-   larger compute. Recommended if staging is going to be permanent.
-2. **Re-purpose `spotlight` as staging** and treat `spotlight-prod` as the only
-   production database. Free, but it removes the shared dev database — local
-   `.env` currently points at `spotlight`, so every developer would then be
-   pointing at staging.
-3. **Stay on two projects** and accept that "staging" is just the `develop`
-   deploy against `spotlight`. Free, but it is not an isolated environment and
-   staging tests would share data with dev.
+Zero ledger entries and zero orders on both sides means no money had ever moved
+through either database, so re-labelling one of them cost nothing. **This
+reasoning expires the moment real users transact.** After that, re-pointing an
+environment is a data migration, not a rename — re-run those counts before ever
+doing this again.
 
-## Creating the project (after the plan decision)
+### Consequence to be aware of
+
+The root `.env` points at `wnicsubiznmishkmunsv`, which is now **staging**. That
+is the intended outcome of this choice — local development and staging share one
+database. There is no longer a separate dev database; treat staging data as
+shared and disposable. (That `.env` also still carries a reference to the retired
+project `ptczqwfokydsdafpscex` — unrelated leftover, safe to delete.)
+
+## Creating a project (only if a third environment is ever added)
+
+Requires a Pro upgrade (~$25/mo) — the free plan is at its 2-project limit.
 
 ```bash
-supabase projects create spotlight-staging \
+supabase projects create spotlight-<env> \
   --org-id wqawduvaaclevmuhgzhy \
   --region eu-west-1 \
   --db-password "$(openssl rand -base64 32)"
 ```
 
-Capture that password — it is shown once and is needed as a secret below. Do not
-commit it, and do not paste it into a terminal that is being transcribed.
-
-Region `eu-west-1` matches `spotlight`; use `eu-north-1` to match production
-latency instead. Either is defensible — pick one and record it here.
+Capture that password — it is shown once. Do not commit it, and do not paste it
+into a terminal that is being transcribed.
 
 ## Wiring (already committed — no action needed in the repo)
 
@@ -71,18 +76,56 @@ dry run, so credentials can be verified before anything is applied.
 
 ## Remaining manual steps
 
-1. Create the GitHub environment **`staging`** (Settings → Environments).
-2. Add to that environment:
-   - `SUPABASE_STAGING_PROJECT_ID` — the new project ref
-   - `SUPABASE_STAGING_DB_PASSWORD` — the password from project creation
-   - `SUPABASE_ACCESS_TOKEN` — the account token (same value as production; it
-     is an account token, not per-project)
-3. Add the repo **variable** `DB_MIGRATE_STAGING_ENABLED = true`.
-4. Dry-run first: Actions → *DB Migrate* → Run workflow → target `staging`,
-   dry run **checked**. Confirm it links and lists pending migrations.
-5. Re-run with dry run unchecked to apply the chain.
-6. Bring the `staging` branch up to date — it is **53 commits and 9 migrations**
-   behind `develop`.
+### 1. Re-point the PRODUCTION secret first — before anything else
+
+`SUPABASE_PROJECT_ID` was set when `wnicsubiznmishkmunsv` was the only project,
+so it most likely still points at it — and that project **is now staging**. Left
+as-is, a push to `main` would apply *production* migrations to the *staging*
+database while production received nothing.
+
+Check and correct it before enabling either job:
+
+- `SUPABASE_PROJECT_ID` (environment `production`) must be
+  **`nmseefdlliejmdbxytej`**
+- `SUPABASE_DB_PASSWORD` must be the **`spotlight-prod`** password, not the old
+  one — these two must be changed together or the link will simply fail.
+
+The `apply-staging` job refuses to run when its ref equals `SUPABASE_PROJECT_ID`,
+so if the production secret is still the old value, staging fails loudly rather
+than pushing to the wrong database. That guard is a backstop, not a substitute
+for fixing the secret.
+
+### 2. Create the `staging` GitHub environment
+
+Settings → Environments → New environment → `staging`, then add:
+
+- `SUPABASE_STAGING_PROJECT_ID` = `wnicsubiznmishkmunsv`
+- `SUPABASE_STAGING_DB_PASSWORD` = the `spotlight-staging` database password
+- `SUPABASE_ACCESS_TOKEN` = the account token (same value as production; it is
+  an account token, not per-project)
+
+Note: the `spotlight-staging` database password is known to be **stale** — the
+CLI and Management API work against it, but direct `psql`/pgx connections fail
+with `28P01`. Reset it in Dashboard → Settings → Database before adding the
+secret, or `db push` will fail at the link step.
+
+### 3. Enable the jobs
+
+Add repo **variables**:
+
+- `DB_MIGRATE_STAGING_ENABLED = true`
+- `DB_MIGRATE_ENABLED = true` (only once step 1 is confirmed correct)
+
+### 4. Dry-run, then apply
+
+Actions → *DB Migrate* → Run workflow → target `staging`, dry run **checked**.
+Confirm it links and lists the 9 pending migrations, then re-run with dry run
+unchecked. Repeat with target `production` for its 11 pending.
+
+### 5. Promote the branch
+
+`staging` is **53 commits and 9 migrations** behind `develop`, so it cannot
+exercise anything current until it is brought forward.
 
 ## Mobile: no mock data on staging
 
