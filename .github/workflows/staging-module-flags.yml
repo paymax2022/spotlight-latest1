@@ -147,7 +147,7 @@ jobs:
               process.exit(1);
             }
             if (vars.APP_ENV !== "staging") {
-              console.error(`APP_ENV is ${vars.APP_ENV === undefined ? "NOT SET" : "not \"staging\""} - the registry would read the wrong environment's rows.`);
+              console.error("APP_ENV is not set to staging - the registry would read the wrong environment rows. Refusing.");
               process.exit(1);
             }
             console.log("  OK   APP_ENV = staging");
