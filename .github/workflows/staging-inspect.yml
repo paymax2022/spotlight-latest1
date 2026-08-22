@@ -1,0 +1,102 @@
+name: Staging inspect
+
+# READ-ONLY diagnostics for the staging environment. Writes nothing, deploys
+# nothing, and never prints a variable's VALUE.
+#
+# Answers the three things that cannot be determined from the repo:
+#   1. the public domains (needed for EXPO_PUBLIC_API_BASE_URL — the mobile app
+#      talks to frontend-web, which proxies to Go, NOT to the backend directly)
+#   2. whether frontend-web has the variables its Go proxy needs
+#   3. what the module gate is actually refusing, from the backend's own logs
+#
+# ── ON PRINTING ──────────────────────────────────────────────────────────────
+# `railway variable list --kv` prints RAW VALUES and leaked ADMIN_API_KEY into a
+# job log once already (run 32545670584). This workflow uses --json and reports
+# only NAMES and boolean shape checks. Nothing here echoes a value, and the
+# parse-failure path refuses to print the unparsed input.
+#
+# Log output is filtered to modulegate lines rather than dumped, so application
+# logs cannot spill arbitrary content into a job log either.
+
+on:
+  workflow_dispatch:
+    inputs:
+      log_lines:
+        description: 'How many recent backend log lines to scan for gate refusals'
+        type: string
+        default: '500'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-inspect
+  cancel-in-progress: true
+
+jobs:
+  inspect:
+    name: inspect staging (read-only)
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      ENVIRONMENT: staging
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      - name: Public domains
+        run: |
+          set -uo pipefail
+          for svc in frontend-web backend frontend-admin; do
+            echo "--- $svc ---"
+            railway domain list --service "$svc" --environment "$ENVIRONMENT" \
+              --project "$PROJECT" 2>&1 | sed 's/^/    /' || echo "    (no domains, or the service has none generated)"
+          done
+
+      # Names only. A missing GO_BACKEND_URL is the failure that makes every API
+      # call fail while looking like an app bug: the Next proxy falls back to
+      # http://localhost:8080, which resolves to nothing on Railway.
+      - name: frontend-web variables (names + shape checks, never values)
+        run: |
+          set -uo pipefail
+          railway variable list --service frontend-web --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > fw.json || true
+          node -e '
+            let v;
+            try { v = JSON.parse(require("fs").readFileSync("fw.json","utf8")); }
+            catch { console.error("Unparseable output - refusing to print it (it would contain values)."); process.exit(1); }
+            console.log("  variable NAMES set on frontend-web:");
+            for (const k of Object.keys(v).sort()) console.log(`    ${k}`);
+            const shape = (k, test) => {
+              const raw = v[k];
+              if (raw === undefined) return `${k}: NOT SET`;
+              return `${k}: set, ${test(String(raw)) ? "looks right" : "SET BUT LOOKS WRONG"}`;
+            };
+            console.log("\n  shape checks (values not printed):");
+            console.log("    " + shape("GO_BACKEND_URL", (s) => /^https?:\/\//.test(s) && !/localhost|127\.0\.0\.1/.test(s)));
+            console.log("    " + shape("NEXT_PUBLIC_SUPABASE_URL", (s) => /^https:\/\/[a-z0-9]{20}\.supabase\.co/.test(s)));
+            console.log("    " + shape("SUPABASE_SERVICE_ROLE_KEY", (s) => s.length > 20));
+            for (const k of ["GO_API_BASE_URL","GO_BACKEND_WS_URL","NEXT_PUBLIC_API_URL"]) {
+              console.log(`    ${k}: ${v[k] === undefined ? "NOT SET" : "set"}`);
+            }
+          '
+
+      # The observe-only question from before enforcement went on, and the
+      # "is anything 503ing now" question after. Filtered to modulegate lines so
+      # arbitrary application log content cannot land in this job log.
+      - name: Module gate activity in the backend logs
+        run: |
+          set -uo pipefail
+          railway logs --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --lines "${{ inputs.log_lines }}" > be.log 2>&1 || true
+          echo "  scanned $(wc -l < be.log) log lines"
+          echo "  --- modulegate lines ---"
+          grep -aiE "modulegate|WOULD refuse|not available yet" be.log | tail -40 | sed 's/^/    /' || true
+          echo "  --- counts ---"
+          echo "    WOULD refuse (observe-only, refused nothing): $(grep -aic 'WOULD refuse' be.log || true)"
+          echo "    startup lines mentioning the gate:            $(grep -aic 'modulegate' be.log || true)"
