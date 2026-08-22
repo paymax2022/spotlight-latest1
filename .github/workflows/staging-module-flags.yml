@@ -1,0 +1,286 @@
+name: Staging module flags
+
+# Sets the FEATURE_*_ENABLED variables the module registry reads on the STAGING
+# backend, and (separately, on purpose) the module gate's enforcement switch.
+#
+# ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
+# `modules.NewService` resolves a module's kill switch with a RAW environment
+# read that accepts one exact string:
+#
+#     func(envFlag string) bool { return os.Getenv(envFlag) == "true" }
+#
+# It does not go through `getEnvBool`, so "1" and "yes" — truthy everywhere else
+# in the config — leave the module flag-DISABLED here. And every one of these
+# flags defaults to false. A module is only in `VisibleKeys` when its flag is
+# exactly "true" AND lifecycle is active AND it is published for the tier.
+#
+# That matters because turning on FEATURE_MODULE_GATE_ENFORCE makes any request
+# to a mapped path whose module is not in `VisibleKeys` return 503. With the
+# flags unset, flipping enforce would 503 EVERY gated route — wallet, transfers,
+# restaurant, transport, FX, telemedicine, the lot. So the flags go first, they
+# get verified, and enforcement is a separate deliberate run.
+#
+# ── SAFETY ───────────────────────────────────────────────────────────────────
+# workflow_dispatch ONLY (never on push), staging service only, and it requires
+# typing SET to confirm — mirroring the deploy jobs in ci.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type SET to confirm writing variables to the staging backend'
+        required: true
+        type: string
+      enforce:
+        description: 'Also set FEATURE_MODULE_GATE_ENFORCE=true (leave OFF until the flags verify)'
+        type: boolean
+        default: false
+      fix_proxy:
+        description: 'Repoint frontend-web GO_BACKEND_URL and REBUILD it'
+        type: boolean
+        default: false
+      proxy_target:
+        description: 'Which backend address frontend-web should proxy to'
+        type: choice
+        options: [private, public]
+        default: private
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-module-flags
+  cancel-in-progress: false
+
+jobs:
+  set-flags:
+    name: set staging FEATURE_* flags
+    if: ${{ inputs.confirm == 'SET' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      SERVICE: backend
+      ENVIRONMENT: staging
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'
+
+      # Pinned to the same version ci.yml deploys with, so the CLI that writes
+      # configuration and the CLI that ships code cannot disagree.
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      # One `variable set` call with every pair, and --skip-deploys, because
+      # Railway redeploys the service on each variable write by default: setting
+      # 24 flags one at a time would queue 24 rolling restarts of the staging
+      # backend. A single deploy is triggered at the end instead.
+      # APP_ENV is set here, not separately, because it decides WHICH environment's
+      # publication rows the registry reads. The staging backend was reporting
+      # "environment":"development" on /api/v1/modules/visibility, so it served
+      # DEVELOPMENT's published set: curating staging rows changed nothing there,
+      # and enforcement was evaluating against the wrong tier entirely.
+      - name: Set APP_ENV and the 24 module flags
+        run: |
+          set -euo pipefail
+          railway variable set \
+            APP_ENV=staging \
+            FEATURE_WALLET_ENABLED=true \
+            FEATURE_WALLET_TRANSFERS_ENABLED=true \
+            FEATURE_VIRTUAL_ACCOUNTS_ENABLED=true \
+            FEATURE_FX_ENABLED=true \
+            FEATURE_SAVINGS_ENABLED=true \
+            FEATURE_KYC_ENABLED=true \
+            FEATURE_REFERRALS_ENABLED=true \
+            FEATURE_INSURANCE_ENABLED=true \
+            FEATURE_SOCIAL_PAY_ENABLED=true \
+            FEATURE_LOYALTY_ENABLED=true \
+            FEATURE_RESTAURANT_ENABLED=true \
+            FEATURE_TRANSPORT_ENABLED=true \
+            FEATURE_TELEMEDICINE_ENABLED=true \
+            FEATURE_HEALTH_PHARMACY_ENABLED=true \
+            FEATURE_STAYS_ENABLED=true \
+            FEATURE_ESTATE_ENABLED=true \
+            FEATURE_REALTOR_ENABLED=true \
+            FEATURE_CROWDFUNDING_ENABLED=true \
+            FEATURE_ASSOCIATION_ENABLED=true \
+            FEATURE_GROUPS_ENABLED=true \
+            FEATURE_EVENTS_ENABLED=true \
+            FEATURE_CREATORS_ENABLED=true \
+            FEATURE_DISPUTES_ENABLED=true \
+            FEATURE_RATINGS_ENABLED=true \
+            --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
+            --skip-deploys
+
+      # Enforcement is its own step behind its own input. Setting it in the same
+      # run as the flags is allowed but not the default: the point of the
+      # observe-only period is to confirm the map is right BEFORE a mistake can
+      # return 503 to real traffic.
+      - name: Set FEATURE_MODULE_GATE_ENFORCE
+        if: ${{ inputs.enforce }}
+        run: |
+          set -euo pipefail
+          railway variable set FEATURE_MODULE_GATE_ENFORCE=true \
+            --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
+            --skip-deploys
+
+      # Read the variables BACK and assert each is exactly "true". Without this
+      # the job would report success for a write that silently landed on the
+      # wrong service or environment.
+      #
+      # `--json` ONLY, never `--kv`. The two do not combine: --kv wins and, as
+      # its own help says, "prints raw values" - the entire staging variable set
+      # as KEY=VALUE text, secrets included. That is worse than a parse failure:
+      # a crash on such input quotes the offending line into the Actions log,
+      # which is exactly how ADMIN_API_KEY leaked on run 32545670584 and had to
+      # be rotated. A variable's VALUE must never be printed, echoed, or
+      # interpolated into an error here - only its NAME and a true/false verdict.
+      - name: Verify every flag reads back as exactly "true"
+        run: |
+          set -euo pipefail
+          railway variable list --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > vars.json
+          node -e '
+            const want = [
+              "WALLET","WALLET_TRANSFERS","VIRTUAL_ACCOUNTS","FX","SAVINGS","KYC","REFERRALS",
+              "INSURANCE","SOCIAL_PAY","LOYALTY","RESTAURANT","TRANSPORT","TELEMEDICINE",
+              "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
+              "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
+            ].map((s) => `FEATURE_${s}_ENABLED`);
+            let vars;
+            try {
+              vars = JSON.parse(require("fs").readFileSync("vars.json", "utf8"));
+            } catch {
+              console.error("Could not parse the variable list as JSON. Refusing to print it - it holds every staging variable in the clear.");
+              process.exit(1);
+            }
+            if (vars.APP_ENV !== "staging") {
+              console.error("APP_ENV is not set to staging - the registry would read the wrong environment rows. Refusing.");
+              process.exit(1);
+            }
+            console.log("  OK   APP_ENV = staging");
+            const ok = (k) => vars[k] === "true";
+            for (const k of want) console.log(`  ${ok(k) ? "OK  " : "BAD "} ${k}`);
+            const bad = want.filter((k) => !ok(k));
+            const enforcing = vars.FEATURE_MODULE_GATE_ENFORCE === "true";
+            console.log(`\n  FEATURE_MODULE_GATE_ENFORCE is ${enforcing ? "ON" : "OFF"}`);
+            if (bad.length) {
+              console.error(`\n${bad.length} flag(s) are not exactly "true": ${bad.join(", ")}`);
+              console.error("The registry requires that literal string - 1 and yes do NOT count.");
+              process.exit(1);
+            }
+            console.log(enforcing
+              ? "Enforcement ON: a mapped route whose module is not published returns 503."
+              : "Enforcement OFF (observe-only): the gate logs WOULD refuse and refuses nothing.");
+          '
+
+      # A single redeploy picks up every variable at once. Without this the flags
+      # sit in Railway's config unread — the process only sees them on restart.
+      - name: Redeploy so the new variables take effect
+        run: |
+          set -euo pipefail
+          railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --yes
+
+  fix-proxy:
+    name: repoint frontend-web at the private network
+    if: ${{ inputs.confirm == 'SET' && inputs.fix_proxy }}
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      ENVIRONMENT: staging
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      # GO_BACKEND_URL was the backend PUBLIC domain. frontend-web runs inside
+      # Railway, so every server-side proxy call left the platform, hit the public
+      # edge, and came back to a service in its own project. That round trip HANGS
+      # rather than erroring: /api/v1/kyc and the module endpoints all returned no
+      # response at all, while a nonexistent /api path still 404d correctly - which
+      # is how we know the middleware and the routes were never at fault.
+      #
+      # The private address does not leave the platform. Port 8080 because the Go
+      # server binds :$APP_PORT and APP_PORT is unset, so it takes the 8080 default.
+      - name: Point GO_BACKEND_URL at the chosen backend address
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.proxy_target }}" = "public" ]; then
+            TARGET=https://backend-staging-d9bb.up.railway.app
+          else
+            TARGET=http://backend.railway.internal:8080
+          fi
+          echo "TARGET=$TARGET" >> "$GITHUB_ENV"
+          echo "  proxying frontend-web to: $TARGET"
+          railway variable set "GO_BACKEND_URL=$TARGET" \
+            --service frontend-web --environment "$ENVIRONMENT" --project "$PROJECT" \
+            --skip-deploys
+
+      - name: Verify it reads back as the private address
+        run: |
+          set -euo pipefail
+          railway variable list --service frontend-web --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > fw.json
+          node -e '
+            let v; try { v = JSON.parse(require("fs").readFileSync("fw.json","utf8")); }
+            catch { console.error("Unparseable - refusing to print."); process.exit(1); }
+            const want = process.env.TARGET;
+            if (v.GO_BACKEND_URL !== want) {
+              console.error("GO_BACKEND_URL did not take. Expected: " + want);
+              process.exit(1);
+            }
+            console.log("  OK   GO_BACKEND_URL = " + want);
+          '
+
+      # --from-source, i.e. REBUILD, not a plain redeploy. GO_BACKEND_URL is read
+      # in TWO places with different lifetimes:
+      #
+      #   * route handlers read process.env at runtime  -> a restart is enough
+      #   * next.config.mjs rewrites() is evaluated at BUILD time and the
+      #     destination is baked into the routes manifest -> only a rebuild moves it
+      #
+      # The fallback rewrite (/api/v1/:path* and /api/finance/:path* -> the Go
+      # backend) is what serves every path with no Next route of its own, which is
+      # most of the proxied surface. A plain `railway redeploy` re-runs the existing
+      # image, so that rewrite would keep pointing at the OLD public URL and those
+      # paths would keep hanging while the handler-backed ones looked fixed.
+      - name: Rebuild frontend-web so the baked-in rewrite target moves too
+        run: |
+          set -euo pipefail
+          railway redeploy --service frontend-web --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --from-source --yes
+
+      # `railway redeploy` returns as soon as the build is TRIGGERED. Without this
+      # wait the job goes green while the build is still running - or has failed -
+      # and since next.config bakes GO_BACKEND_URL at BUILD time, a failed build
+      # leaves the OLD proxy target live while the run reports success. Waiting
+      # here is what makes this job green mean the new image is actually serving.
+      - name: Wait for the rebuild to reach SUCCESS
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 40); do
+            st=$(railway deployment list --service frontend-web --environment "$ENVIRONMENT" \
+                   --project "$PROJECT" --limit 1 --json 2>/dev/null \
+                 | node -e '
+                     let d = "";
+                     process.stdin.on("data", (c) => (d += c));
+                     process.stdin.on("end", () => {
+                       try { const r = JSON.parse(d); console.log((r[0] && r[0].status) || "UNKNOWN"); }
+                       catch { console.log("UNKNOWN"); }
+                     });
+                   ')
+            echo "  attempt $i: newest frontend-web deployment = $st"
+            case "$st" in
+              SUCCESS) echo "  build is live"; exit 0 ;;
+              FAILED|CRASHED|REMOVED) echo "::error::rebuild ended $st"; exit 1 ;;
+            esac
+            sleep 20
+          done
+          echo "::error::timed out waiting for the rebuild"
+          exit 1
