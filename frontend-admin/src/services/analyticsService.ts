@@ -3,8 +3,6 @@ import type { Analytics } from '@/types/analytics';
 
 export async function getAnalyticsSummary(): Promise<Analytics | null> {
   const headers: Record<string, string> = {};
-  const adminKey = process.env.NEXT_PUBLIC_ADMIN_API_KEY || '';
-  if (adminKey) headers['x-admin-api-key'] = adminKey;
 
   try {
     const res = await fetch(`${env.apiBaseUrl}/admin/analytics/summary`, {

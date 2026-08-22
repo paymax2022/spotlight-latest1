@@ -3,8 +3,6 @@ import type { HandoffRow } from '@/types/handoff';
 
 function adminHeaders() {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const adminKey = process.env.NEXT_PUBLIC_ADMIN_API_KEY || '';
-  if (adminKey) headers['x-admin-api-key'] = adminKey;
   return headers;
 }
 

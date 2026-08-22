@@ -6,8 +6,6 @@ export async function listChatSessions(limit = 100): Promise<ChatSession[]> {
   url.searchParams.set('limit', String(limit));
 
   const headers: Record<string, string> = {};
-  const adminKey = process.env.NEXT_PUBLIC_ADMIN_API_KEY || '';
-  if (adminKey) headers['x-admin-api-key'] = adminKey;
 
   const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'include', headers });
   const payload = await res.json();
@@ -17,8 +15,6 @@ export async function listChatSessions(limit = 100): Promise<ChatSession[]> {
 
 export async function getChatSessionDetail(sessionId: string): Promise<ChatSessionDetail> {
   const headers: Record<string, string> = {};
-  const adminKey = process.env.NEXT_PUBLIC_ADMIN_API_KEY || '';
-  if (adminKey) headers['x-admin-api-key'] = adminKey;
 
   const res = await fetch(`${env.apiBaseUrl}/admin/chatbot/sessions/${encodeURIComponent(sessionId)}`, {
     cache: 'no-store',

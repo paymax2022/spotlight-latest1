@@ -7,8 +7,6 @@ export async function listLeads(limit = 200, sessionId = ''): Promise<Lead[]> {
   if (sessionId.trim()) url.searchParams.set('sessionId', sessionId.trim());
 
   const headers: Record<string, string> = {};
-  const adminKey = process.env.NEXT_PUBLIC_ADMIN_API_KEY || '';
-  if (adminKey) headers['x-admin-api-key'] = adminKey;
 
   const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'include', headers });
   const payload = await res.json();
@@ -18,8 +16,6 @@ export async function listLeads(limit = 200, sessionId = ''): Promise<Lead[]> {
 
 export async function updateLeadStatus(id: string, status: string): Promise<boolean> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const adminKey = process.env.NEXT_PUBLIC_ADMIN_API_KEY || '';
-  if (adminKey) headers['x-admin-api-key'] = adminKey;
 
   const res = await fetch(`${env.apiBaseUrl}/admin/leads/${encodeURIComponent(id)}`, {
     method: 'PATCH',
