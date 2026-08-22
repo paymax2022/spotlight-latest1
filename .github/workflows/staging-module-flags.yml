@@ -35,6 +35,10 @@ on:
         description: 'Also set FEATURE_MODULE_GATE_ENFORCE=true (leave OFF until the flags verify)'
         type: boolean
         default: false
+      fix_proxy:
+        description: 'Repoint frontend-web GO_BACKEND_URL at the private network and redeploy it'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -172,4 +176,58 @@ jobs:
         run: |
           set -euo pipefail
           railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --yes
+
+  fix-proxy:
+    name: repoint frontend-web at the private network
+    if: ${{ inputs.confirm == 'SET' && inputs.fix_proxy }}
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      ENVIRONMENT: staging
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      # GO_BACKEND_URL was the backend PUBLIC domain. frontend-web runs inside
+      # Railway, so every server-side proxy call left the platform, hit the public
+      # edge, and came back to a service in its own project. That round trip HANGS
+      # rather than erroring: /api/v1/kyc and the module endpoints all returned no
+      # response at all, while a nonexistent /api path still 404d correctly - which
+      # is how we know the middleware and the routes were never at fault.
+      #
+      # The private address does not leave the platform. Port 8080 because the Go
+      # server binds :$APP_PORT and APP_PORT is unset, so it takes the 8080 default.
+      - name: Point GO_BACKEND_URL at backend.railway.internal
+        run: |
+          set -euo pipefail
+          railway variable set GO_BACKEND_URL=http://backend.railway.internal:8080 \
+            --service frontend-web --environment "$ENVIRONMENT" --project "$PROJECT" \
+            --skip-deploys
+
+      - name: Verify it reads back as the private address
+        run: |
+          set -euo pipefail
+          railway variable list --service frontend-web --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > fw.json
+          node -e '
+            let v; try { v = JSON.parse(require("fs").readFileSync("fw.json","utf8")); }
+            catch { console.error("Unparseable - refusing to print."); process.exit(1); }
+            const want = "http://backend.railway.internal:8080";
+            if (v.GO_BACKEND_URL !== want) {
+              console.error("GO_BACKEND_URL did not take. Expected the private address.");
+              process.exit(1);
+            }
+            console.log("  OK   GO_BACKEND_URL = " + want);
+          '
+
+      - name: Redeploy frontend-web
+        run: |
+          set -euo pipefail
+          railway redeploy --service frontend-web --environment "$ENVIRONMENT" \
             --project "$PROJECT" --yes
