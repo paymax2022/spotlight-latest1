@@ -357,12 +357,27 @@ jobs:
 
       # Retire the public variable. Left in place it would keep being inlined into
       # any future build and keep looking authoritative.
+      # No --yes: `variable delete` does not accept it, and the first version of
+      # this step passed it. The CLI failed with a usage error, which the
+      # `|| echo "already absent"` then SWALLOWED and reported as success. The
+      # variable survived while the log claimed otherwise.
+      #
+      # Deleting only when it is actually present distinguishes "nothing to do"
+      # from "the delete failed", so a real error can no longer masquerade as the
+      # benign case.
       - name: Remove the public NEXT_PUBLIC_ADMIN_API_KEY
         run: |
-          set -uo pipefail
-          railway variable delete NEXT_PUBLIC_ADMIN_API_KEY --yes \
-            --service frontend-admin --environment "$ENVIRONMENT" --project "$PROJECT" \
-            && echo "  removed" || echo "  already absent"
+          set -euo pipefail
+          present=$(railway variable list --service frontend-admin \
+            --environment "$ENVIRONMENT" --project "$PROJECT" --json \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{console.log(JSON.parse(d).NEXT_PUBLIC_ADMIN_API_KEY===undefined?"no":"yes")}catch{console.log("unknown")}})')
+          if [ "$present" = "no" ]; then
+            echo "  not set - nothing to remove"
+          else
+            railway variable delete NEXT_PUBLIC_ADMIN_API_KEY \
+              --service frontend-admin --environment "$ENVIRONMENT" --project "$PROJECT"
+            echo "  removed"
+          fi
 
       - name: Confirm both services carry the SAME key, and the public one is gone
         run: |
@@ -400,6 +415,27 @@ jobs:
           railway up frontend-admin --path-as-root --no-gitignore \
             --service frontend-admin --environment "$ENVIRONMENT" \
             --project "$PROJECT" --detach --message "$(git rev-parse HEAD)"
+
+      # --detach returns when the UPLOAD is accepted, not when the build lands.
+      # Without this the job goes green while the console is still serving the old
+      # bundle - which is what happened on the first successful run: every variable
+      # was correct, the step was green, and /api/admin-proxy still 404d. Green has
+      # to mean deployed, the same way it does in the fix-proxy job.
+      - name: Wait for the admin console build to reach SUCCESS
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 40); do
+            st=$(railway deployment list --service frontend-admin --environment "$ENVIRONMENT" \
+                   --project "$PROJECT" --limit 1 --json 2>/dev/null \
+                 | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{const r=JSON.parse(d);console.log((r[0]&&r[0].status)||"UNKNOWN")}catch{console.log("UNKNOWN")}})')
+            echo "  attempt $i: frontend-admin deployment = $st"
+            case "$st" in
+              SUCCESS) echo "  admin console is live with the server-side key"; exit 0 ;;
+              FAILED|CRASHED|REMOVED) echo "::error::admin console build ended $st"; exit 1 ;;
+            esac
+            sleep 20
+          done
+          echo "::error::timed out waiting for the admin console build"; exit 1
 
       # The backend only reads ADMIN_API_KEY at startup, so it needs a restart -
       # a plain redeploy is enough, no rebuild required.

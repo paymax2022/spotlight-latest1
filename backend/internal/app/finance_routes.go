@@ -1858,7 +1858,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		adminTr := r.Group("/api/finance/admin/transport")
 		adminTr.Use(mapsAuth())
 		adminTr.Use(requireUserID())
-		adminTr.Use(middleware.RequireAdmin(cfg.AdminAPIKey))
+		adminTr.Use(middleware.RequireAdmin(cfg.AdminAPIKey, cfg.AppEnv))
 		adminTr.GET("/dashboard", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.Dashboard)
 		adminTr.GET("/drivers", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.ListDrivers)
 		adminTr.GET("/drivers/:id", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.DriverDetail)
