@@ -85,6 +85,7 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	// --- Member routes (/api/finance/health/pharmacy) — HEALTH-BUILD §6 ---
 	pg := member.Group("/health/pharmacy")
 	pg.GET("/products", h.ListProducts)                         // NAFDAC-gated, Rx flag (HL-5)
+	pg.GET("/products/mine", h.MyProducts)                      // owner shelf incl. off-sale (before :id)
 	pg.GET("/products/:id", h.GetProduct)                       // single product + owning pharmacy
 	pg.POST("/products", h.UpsertProduct)                       // pharmacy owner, HL-5 write-gate
 	pg.POST("/prescriptions/:id/verify", h.VerifyPrescription)  // pharmacist, HL-3
@@ -93,6 +94,11 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	pg.GET("/pharmacies/:id/reviews", h.ListPharmacyReviews)    // public rating feed
 	pg.POST("/pharmacies/:id/profile", h.UpsertPharmacyProfile) // verified owner storefront settings (HL-2)
 	pg.POST("/orders", h.CreateOrder)                           // patient, payment HELD (HL-9)
+	// The pharmacist's inbox — orders for the pharmacies the caller OWNS. Declared
+	// BEFORE /orders/:id so Gin routes the literal path rather than binding "orders"
+	// as an :id.
+	pg.GET("/orders", h.ListMine)                               // owner-scoped fulfilment queue
+	pg.GET("/earnings", h.Earnings)                             // owner-scoped money view
 	pg.GET("/orders/:id", h.Get)                                // object-level authZ
 	pg.POST("/orders/:id/confirm", h.Confirm)                   // HL-3 verified e-Rx gate
 	pg.POST("/orders/:id/dispense", h.Dispense)                 // pharmacist (HL-1/HL-3)

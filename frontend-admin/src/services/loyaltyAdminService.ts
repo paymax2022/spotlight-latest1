@@ -140,7 +140,7 @@ export async function updateEarnRule(id: string, patch: EarnRuleUpdate): Promise
   if (USE_MOCK) {
     await delay();
     const cur = EARN_RULES.find((r) => r.id === id);
-    return { id, config_version: (cur?.config_version ?? 1) + 1, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Earn rule ${id} updated — new versioned config saved. Points are NON-CASH (NL-4). Recorded to immutable audit (NL-12).` };
+    return { id, config_version: (cur?.config_version ?? 1) + 1, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Earn rule ${id} updated — new versioned config saved. Points are NON-CASH (NL-4).` };
   }
   return sendJson<EarnRuleResult>('PATCH', `/earn-rules/${id}`, patch);
 }
@@ -161,7 +161,7 @@ export async function updateTier(id: string, patch: TierUpdate): Promise<TierRes
   if (USE_MOCK) {
     await delay();
     const cur = TIERS.find((t) => t.id === id);
-    return { id, config_version: (cur?.config_version ?? 1) + 1, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Tier ${id} config updated. Members re-evaluated on next earn. Recorded to immutable audit (NL-12).` };
+    return { id, config_version: (cur?.config_version ?? 1) + 1, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Tier ${id} config updated. Members re-evaluated on next earn.` };
   }
   return sendJson<TierResult>('PATCH', `/tiers/${id}`, patch);
 }
@@ -199,7 +199,7 @@ export async function upsertCatalogItem(item: CatalogUpsert): Promise<CatalogRes
   if (USE_MOCK) {
     await delay();
     const id = item.id ?? `cat_${Math.random().toString(36).slice(2, 8)}`;
-    return { id, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Catalog item ${id} ${item.id ? 'updated' : 'created'}. Redeems to non-cash value only (NL-4). Recorded to immutable audit (NL-12).` };
+    return { id, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Catalog item ${id} ${item.id ? 'updated' : 'created'}. Redeems to non-cash value only (NL-4).` };
   }
   return sendJson<CatalogResult>(item.id ? 'PATCH' : 'POST', item.id ? `/catalog/${item.id}` : '/catalog', item);
 }

@@ -37,6 +37,7 @@ import {
   mockConfirmHandoff,
   mockRedispatch,
 } from './mock';
+import { mapRestaurants, mapRestaurantDetail } from './normalize';
 import { computeDeliveryFeeMock, type DeliveryQuote } from './deliveryFee';
 export type { DeliveryQuote, DeliveryFeeBreakdown } from './deliveryFee';
 
@@ -75,11 +76,15 @@ export async function listRestaurants(): Promise<Restaurant[]> {
   // The Go discovery handler answers `{"restaurants": [...]}` (handler_delivery.go
   // ListRestaurants) and the Next proxy forwards the body VERBATIM, so `unwrap`
   // — which only peels a `data` envelope — hands back that OBJECT rather than an
-  // array. Every caller then does .filter/.map on it and throws. Peel the
-  // `restaurants` key here, tolerating a bare array in case the handler is ever
-  // flattened.
-  const raw = unwrap<Restaurant[] | { restaurants?: Restaurant[] }>(await api.get(`${BASE}`));
-  return Array.isArray(raw) ? raw : raw?.restaurants ?? [];
+  // array. mapRestaurants peels the `restaurants` key, tolerating a bare array in
+  // case the handler is ever flattened.
+  //
+  // It also NORMALIZES each row. The rows were previously cast straight to
+  // `Restaurant`, but the server sends neither `tags` nor `etaLabel` nor the icon
+  // triple — those only existed in mock.ts. A cast is compile-time only, so the
+  // fields simply arrived undefined and RestaurantCard crashed on
+  // `item.tags.map` as soon as the list loaded for real.
+  return mapRestaurants(unwrap<unknown>(await api.get(`${BASE}`)));
 }
 
 export async function getRestaurant(id: string): Promise<RestaurantDetail> {
@@ -87,7 +92,11 @@ export async function getRestaurant(id: string): Promise<RestaurantDetail> {
     await delay(280);
     return mockRestaurantDetail(id);
   }
-  return unwrap<RestaurantDetail>(await api.get(`${BASE}/${encodeURIComponent(id)}`));
+  // Same normalization, plus a shape change: Go answers
+  // `{restaurant: {...}, categories: [...]}` while every screen here expects a
+  // FLAT Restaurant carrying `menu`. The old cast left name/rating undefined and
+  // `menu` missing outright, so the store page crashed the same way the list did.
+  return mapRestaurantDetail(unwrap<unknown>(await api.get(`${BASE}/${encodeURIComponent(id)}`)));
 }
 
 // ─── Delivery quote ─────────────────────────────────────────────────────────

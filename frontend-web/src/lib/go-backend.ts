@@ -12,6 +12,19 @@ import { NextResponse } from 'next/server';
 
 export const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 
+/**
+ * Upper bound on a single upstream call.
+ *
+ * Must stay BELOW the platform edge timeout, and that is the whole point of the
+ * number. At 30s it tied with Railway, whose clock starts when the request
+ * arrives rather than when this handler runs - so the edge returned its own
+ * plain-text 500 first and this handler never got to answer or log. The symptom
+ * was a proxy that looked completely silent while working exactly as written.
+ *
+ * Read at RUNTIME so it can be tuned with a restart instead of a rebuild.
+ */
+const PROXY_TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS ?? 20_000);
+
 export async function proxyToGoBackend(
   request: Request,
   goPath: string,
@@ -65,7 +78,36 @@ export async function proxyToGoBackend(
     }
   }
 
-  const upstream = await fetch(targetUrl, { method, headers, body });
+  // A bounded wait, because the alternative is an unbounded one. When the target
+  // is unreachable this fetch otherwise hangs forever: the caller sees no status,
+  // no body and no log line, which is precisely how a mis-baked GO_BACKEND_URL
+  // stayed invisible on staging. A 504 with a message is greppable; a hang is not.
+  let upstream: Response;
+  try {
+    upstream = await fetch(targetUrl, {
+      method,
+      headers,
+      body,
+      signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const timedOut = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
+    // Log the TARGET, not the whole request: this is the single most useful fact
+    // when the proxy misbehaves, and it is the one nobody can see from outside.
+    console.error(
+      `[go-backend] ${method} ${goPath} -> ${GO_BACKEND_URL} ${timedOut ? 'TIMED OUT' : 'FAILED'}:`,
+      err instanceof Error ? err.message : err,
+    );
+    return NextResponse.json(
+      {
+        success: false,
+        error: timedOut
+          ? 'The upstream service did not respond in time.'
+          : 'The upstream service could not be reached.',
+      },
+      { status: 504 },
+    );
+  }
 
   // Forward the upstream response verbatim (status + body). Return a NextResponse
   // (not a bare Response) so the Next.js middleware's CORS headers are merged onto

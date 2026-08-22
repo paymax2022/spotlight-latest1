@@ -6,7 +6,7 @@ package arenaquiz_test
 // *pgxpool.Pool and the real arena_quiz_question / arena_quiz_attempt tables
 // created by supabase/migrations/20260921000000_arena_quiz_bank.sql.
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset (same pattern as
+// SKIPPED whenever TEST_DATABASE_URL is unset (same pattern as
 // backend/tests/crypto/live_db_integration_test.go). The skip is NOT a stub —
 // every step below drives the real repository against real tables, so it can be
 // un-skipped the moment infra is available.
@@ -15,8 +15,8 @@ package arenaquiz_test
 //  1. Apply the arena migrations, including the quiz bank migration:
 //       supabase db reset   # local, port 54322 — replays all migrations
 //     Confirm the tables landed:
-//       psql "$DATABASE_URL" -c "\d arena_quiz_question"
-//       psql "$DATABASE_URL" -c "\d arena_quiz_attempt"
+//       psql "$TEST_DATABASE_URL" -c "\d arena_quiz_question"
+//       psql "$TEST_DATABASE_URL" -c "\d arena_quiz_attempt"
 //  2. Set a DISPOSABLE database URL (never production):
 //       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  3. Run:
@@ -51,10 +51,7 @@ func liveDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB arena quiz integration test; see bring-up note in live_db_integration_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB arena quiz integration test; see bring-up note in live_db_integration_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

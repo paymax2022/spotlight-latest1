@@ -47,6 +47,8 @@ import (
 	"spotlight/backend/internal/invest"
 	"spotlight/backend/internal/maps"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/modules"
+	"spotlight/backend/internal/modules/modulegate"
 	"spotlight/backend/internal/notifications"
 	"spotlight/backend/internal/onboarding"
 	"spotlight/backend/internal/orchestration"
@@ -70,6 +72,7 @@ import (
 	"spotlight/backend/internal/restaurant"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/telemedicine"
+	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
 	"spotlight/backend/internal/votebridge"
 	"spotlight/backend/internal/webhooks"
@@ -176,7 +179,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// guarded (fail-closed when the token is unset). Additive — reuses ledgerSvc only.
 	RegisterInternalLedgerAPI(r, cfg, ledgerSvc)
 
-	tiersSvc := tiers.NewService(pool)
+	// The Tier-0 checkout allowance (ADR-043) rides on this shared service, so the
+	// consumer-purchase gate in restaurant / estate / doctor is enabled by the SAME
+	// flag as the top-up that funds it. Enabling one half alone would charge a
+	// customer for a purchase that is then refused at escrow.
+	// It changes only EnforceCheckoutDebitLimit — withdrawals and transfers keep
+	// EnforceWalletDebitLimit and are never relaxed.
+	tiersSvc := tiers.NewService(pool).WithCheckoutAllowance(cfg.FeatureCheckoutTopupTier0)
+	log.Printf("[tiers] Tier-0 checkout allowance: %t (FEATURE_CHECKOUT_TOPUP_TIER0)", cfg.FeatureCheckoutTopupTier0)
 	walletSvc := wallet.NewService(ledgerSvc, tiersSvc)
 	kycSvc := kyc.NewService(pool)
 	referralSvc := referrals.NewService(pool, ledgerSvc)
@@ -247,8 +257,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	kycSvc.WithVAProvisioner(vaSvc)
 
 	var fxHandler *fx.Handler
+	var fxMarkupHandler *fx.MarkupHandler
 	if mapleradClient != nil {
 		fxSvc := fx.NewService(pool, ledgerSvc, mapleradClient, redisClient)
+		// Operator-tunable Paymax FX markup (ADR-030). Maplerad returns no fee —
+		// it prices its margin into the rate — so the customer-facing fee is ours,
+		// and it lives in fx_markup_rates where an admin can change it at runtime
+		// (no restart, no cache: resolved per quote). Seeded at 1%.
+		fxMarkupStore := fx.NewMarkupStore(pool)
+		fxSvc.SetMarkup(fxMarkupStore)
+		fxMarkupHandler = fx.NewMarkupHandler(fxMarkupStore)
 		// Central Commission & Profit recording (§ profit registry). Nil-safe, gated on
 		// the flag, built WITHOUT a ledger (no double-post — the conversion's own legs
 		// already move money). Records under Finance/Currency Exchange. RATE NOTE: this
@@ -284,6 +302,45 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	finance := r.Group("/api/finance")
 	finance.Use(middleware.RequireAuthContext(supabase, rbac))
 	finance.Use(requireUserID())
+
+	// --- Platform module registry (+ its server-side gate) ---
+	// The registry decides which modules an environment publishes. Its routes were
+	// written but never mounted, so GET /api/v1/modules/visibility answered 404 and
+	// every client fell back to "unknown ⇒ show everything" — publication state had no
+	// effect anywhere. Mounting it is what makes the admin console and the mobile/web
+	// gates real. Staging and production were seeded to match their pre-mount behaviour
+	// (migration 20261216000000), so this wiring is a no-op for users on deploy.
+	modRegistrySvc := modules.NewService(pool, modules.Environment(cfg.AppEnv), func(envFlag string) bool {
+		// The FEATURE_* kill switch for this process, read from the environment. It
+		// gates INDEPENDENTLY of publication: a module must be both published for the
+		// tier AND flag-enabled here to be visible.
+		return os.Getenv(envFlag) == "true"
+	})
+	modPublic := r.Group("/api/v1")
+	modAdmin := r.Group("/api/v1/admin")
+	modAdmin.Use(mapsAuth())
+	modAdmin.Use(requireUserID())
+	modules.Register(modPublic, modAdmin, pool, rbac,
+		modules.Environment(cfg.AppEnv), func(envFlag string) bool { return os.Getenv(envFlag) == "true" })
+
+	// Per-user effective access. Authenticated and user-scoped: the id comes from the
+	// validated token, never from the client. The unauthenticated /modules/visibility
+	// above stays the environment-level list.
+	finance.GET("/modules/access", modules.NewHandler(modRegistrySvc).MyAccess)
+
+	// Server-side enforcement, mounted AFTER auth so an unauthenticated caller still
+	// gets 401 rather than 503 (and cannot probe which modules exist).
+	//
+	// DEFAULTS TO OBSERVE-ONLY. With FEATURE_MODULE_GATE_ENFORCE unset it resolves the
+	// module for each request and LOGS what it would have refused, refusing nothing.
+	// The route map is hand-built from gin Group() registrations and has never met real
+	// traffic; a wrong prefix would 503 a working endpoint, so it earns enforcement by
+	// running silently first. Unmapped paths and every /admin surface are always allowed.
+	finance.Use(modulegate.New(modRegistrySvc, modulegate.Options{
+		Enabled: cfg.FeatureModuleGateEnforce,
+	}))
+	log.Printf("[modules] registry mounted (env=%s); server gate enforce=%v",
+		cfg.AppEnv, cfg.FeatureModuleGateEnforce)
 
 	// --- Transfer routes (wallet-to-wallet + wallet-to-bank) ---
 	// Routes are always mounted; the handler returns 503 per family when the
@@ -437,6 +494,27 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// latent double-mount and should get the same fix when social goes live.
 		RegisterSavings(finance, adminGroupTop5(r, "/api/savings/admin"), cfg, pool, rbac)
 	}
+	// AI-trading fund (Module-KYC + fund wallet). Mounted at the paths the module
+	// documents and the clients call:
+	//   member /api/v1/trading/*        — mobile src/features/aitrading/api.ts
+	//   admin  /api/v1/admin/trading/*  — frontend-admin tradingAdminService.ts
+	// Both groups need RequireAuthContext BEFORE requireUserID: the former mirrors
+	// user_id into the gin context, and without it requireUserID 401s every call
+	// even with a valid token (the same trap the base finance group documents).
+	// cfg.FeatureAITradingEnabled is the stricter SECOND gate, passed through to
+	// expose /evaluate + the promotion-ladder admin routes.
+	if cfg.FeatureTradingEnabled && pool != nil {
+		tMember := r.Group("/api/v1/trading")
+		tMember.Use(mapsAuth())
+		tMember.Use(requireUserID())
+		tAdmin := r.Group("/api/v1/admin/trading")
+		tAdmin.Use(mapsAuth())
+		tAdmin.Use(requireUserID())
+		trading.Register(tMember, tAdmin, pool, rbac, ledgerSvc,
+			int64(cfg.TradingFeeBps), int64(cfg.TradingHurdleBps), cfg.FeatureAITradingEnabled)
+		log.Printf("[trading] mounted /api/v1/trading + /api/v1/admin/trading (fee %dbps, hurdle %dbps, ai=%v)",
+			cfg.TradingFeeBps, cfg.TradingHurdleBps, cfg.FeatureAITradingEnabled)
+	}
 	if cfg.FeatureSocialPayEnabled && pool != nil {
 		RegisterSocialPay(finance.Group("/social"), adminGroupTop5(r, "/api/social/admin"), pool, rbac)
 	}
@@ -550,6 +628,21 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		fxGroup.GET("/wallets/:currency", fxHandler.GetWallet)
 	}
 
+	// --- Admin FX markup console (RBAC finance.admin.fx_markup) ---
+	// Mounted on the root engine with mapsAuth() so the permission middleware can
+	// read the caller, matching the transfers/KYC admin consoles. Deliberately a
+	// SEPARATE grant from finance.admin.transfers: changing what every customer
+	// pays on FX has a wider blast radius than working a queue. Registered
+	// independently of FeatureFXEnabled so the rate stays readable and correctable
+	// even while the customer-facing FX surface is switched off.
+	if fxMarkupHandler != nil {
+		fxAdmin := r.Group("/api/finance/admin/fx")
+		fxAdmin.Use(mapsAuth()) // RequireAuthContext + mirror user_id
+		fxAdmin.GET("/markup", middleware.RequirePermission(rbac, "finance.admin.fx_markup"), fxMarkupHandler.ListRates)
+		fxAdmin.PUT("/markup", middleware.RequirePermission(rbac, "finance.admin.fx_markup"), fxMarkupHandler.SetRate)
+		fxAdmin.GET("/markup/audit", middleware.RequirePermission(rbac, "finance.admin.fx_markup"), fxMarkupHandler.ListAudit)
+	}
+
 	// --- FX Orchestration (normalized, provider-agnostic /v1 API) ---
 	// Smart order routing across Eversend + Maplerad, spread engine, treasury,
 	// unified multi-currency ledger, quote->lock->execute with idempotency.
@@ -583,11 +676,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			evsProvider,
 			mplProvider,
 		}
-		spreadEngine := orchestration.NewSpreadEngine(105,
+		// Spread rule card comes from public.fx_markup_rates — the SAME table the
+		// legacy wallet FX service prices from — so one admin change at
+		// PUT /api/finance/admin/fx/markup moves BOTH FX surfaces (ADR-032).
+		// Reloaded once per quote, so a change is live with no restart.
+		//
+		// The in-code rules below are only the bootstrap value used before the first
+		// refresh; they are the same rows the migration seeds, so the two agree even
+		// in that window. The DB is authoritative from the first quote onward.
+		spreadEngine := orchestration.NewSpreadEngine(fx.DefaultMarkupBPS,
 			orchestration.SpreadRule{Corridor: "USD-NGN", Tier: "business", BPS: 75, MinBPS: 50, MaxBPS: 150},
 			orchestration.SpreadRule{Corridor: "USD-NGN", BPS: 120, MinBPS: 80, MaxBPS: 200},
 			orchestration.SpreadRule{Corridor: "USD-XAF", BPS: 150, MinBPS: 100, MaxBPS: 250},
-		)
+		).WithSource(orchestration.NewSQLSpreadSource(pool))
 		treasury := orchestration.NewTreasury([]orchestration.FloatBucket{
 			{Provider: "eversend", Currency: "USD", BalanceMinor: 820_000_00, LowWaterMinor: 200_000_00, HighWaterMinor: 1_000_000_00, ExposureLimitMinor: 5_000_000_00},
 			{Provider: "eversend", Currency: "NGN", BalanceMinor: 1_800_000_000_00, LowWaterMinor: 250_000_000_00, HighWaterMinor: 9_000_000_000_00, ExposureLimitMinor: 50_000_000_000_00},
@@ -1278,7 +1379,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Restaurant & Delivery routes ---
 	if cfg.FeatureRestaurantEnabled {
 		settlementSvcR := settlement.NewService(pool, ledgerSvc)
-		restaurantSvc := restaurant.NewService(pool, settlementSvcR).WithLedger(ledgerSvc)
+		// WithTiers is NOT optional here: both restaurant money paths (the customer
+		// order escrow in PlaceOrder and the merchant withdrawal reserve) refuse with
+		// ErrTierGateUnwired when no gate is attached, so an unwired deployment serves
+		// 503 on every order rather than escrowing past the KYC daily cap (ADR-033).
+		restaurantSvc := restaurant.NewService(pool, settlementSvcR).
+			WithLedger(ledgerSvc).
+			WithTiers(tiersSvc)
 
 		// ── Central Commission & Profit recording (§ profit registry) ──
 		// When the commission feature is on, inject a nil-safe recorder so realized
@@ -1336,8 +1443,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Reads / discovery.
 		restGroup.GET("", restaurantHandler.ListRestaurants)
 		restGroup.POST("", restaurantHandler.Create)
-		restGroup.GET("/mine", restaurantHandler.MyRestaurants)      // caller's own stores (static sibling of :id)
-		restGroup.GET("/earnings", restaurantHandler.Earnings)       // caller's food-delivery earnings
+		restGroup.GET("/mine", restaurantHandler.MyRestaurants) // caller's own stores (static sibling of :id)
+		// Static sibling of :id, like /mine. Owner-scoped payout readiness — the
+		// bridge between the merchant capability and per-outlet KYB (PY-007).
+		restGroup.GET("/payout-readiness", restaurantHandler.PayoutReadiness)
+		// Staff. accept is a STATIC sibling of :id and must precede it — and it is
+		// intentionally not outlet-scoped: the token names the outlet, and the
+		// invitee is not yet staff there, so no per-outlet guard could pass.
+		restGroup.POST("/staff/accept", restaurantHandler.AcceptStaffInvite)
+		restGroup.GET("/:id/staff", restaurantHandler.ListStaff)
+		restGroup.POST("/:id/staff", restaurantHandler.InviteStaff)
+		restGroup.PATCH("/:id/staff/:userId", restaurantHandler.SetStaffStatus)
+		restGroup.GET("/earnings", restaurantHandler.Earnings) // caller's food-delivery earnings
 		restGroup.GET("/:id", restaurantHandler.GetRestaurant)
 
 		// Store management (owner only): edit profile + operational open/close.
@@ -1432,6 +1549,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restStore.PATCH("/:id/menu/items/:itemId", restaurantHandler.AdminUpdateItem)
 		restStore.DELETE("/:id/menu/items/:itemId", restaurantHandler.AdminDeleteItem)
 
+		// Listing moderation (foodhub A6). "listings/pending" is a static sibling of
+		// the ":id" params registered elsewhere in this group, which Gin allows.
+		restAdmin.GET("/listings/pending", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminModerationQueue)
+		restAdmin.POST("/listings/:id/decision", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideListing)
+		// Shops with no identifiable merchant (foodhub §5.4).
+		restAdmin.GET("/restaurants/unclaimed", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminUnclaimedRestaurants)
 		restAdmin.GET("/riders", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminListRiders)
 		restAdmin.GET("/dispatch/queue", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminDispatchQueue)
 		restAdmin.POST("/orders/:id/assign", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminAssignRider)
@@ -1465,6 +1588,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			time.Duration(envInt("FOOD_RECONCILE_INTERVAL_MINUTES", 5))*time.Minute,
 			time.Duration(envInt("FOOD_SETTLE_GRACE_MINUTES", 10))*time.Minute,
 		)
+
+		// Scheduled-order activation. A scheduled order is escrowed at placement and
+		// then waits `pending` with scheduled_for set — nothing in the live flow touches
+		// it, so this sweep is the ONLY thing that can release it into the kitchen queue
+		// at its slot or cancel-and-refund it when the restaurant is closed. Without it
+		// a scheduled order's escrow has no automated path out. Idempotent +
+		// multi-instance safe (guarded UPDATE; the refund is guarded on the settlement
+		// status). Cadence 1m by default so a slot is never released long after its time.
+		restaurant.StartScheduledOrderSweeper(
+			ctx, restaurantSvc,
+			time.Duration(envInt("FOOD_SCHEDULED_SWEEP_INTERVAL_MINUTES", 1))*time.Minute,
+		)
 	}
 
 	// --- Nutrition Resolution Engine (NRE) routes ---
@@ -1484,7 +1619,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Telemedicine routes ---
 	if cfg.FeatureTelemedicineEnabled {
 		settlementSvcT := settlement.NewService(pool, ledgerSvc)
-		telemedSvc := telemedicine.NewService(pool, settlementSvcT)
+		// Platform booking fee (ADR-044), default OFF. Off resolves to a 0-bp rate,
+		// which prices and escrows exactly as the module did before the fee existed.
+		platformFeeBp := 0
+		if cfg.FeatureTelemedicinePlatformFeeEnabled {
+			platformFeeBp = telemedicine.PlatformFeeBp
+		}
+		log.Printf("[telemedicine] platform booking fee: %d bp (FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED=%t)",
+			platformFeeBp, cfg.FeatureTelemedicinePlatformFeeEnabled)
+		telemedSvc := telemedicine.NewService(pool, settlementSvcT).
+			WithPlatformFeeBp(platformFeeBp)
 		telemedHandler := telemedicine.NewHandler(telemedSvc)
 
 		// Legacy /api/finance/telemedicine/... (kept for backward compat)
@@ -1578,7 +1722,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 				"Production boot is blocked by the IsProd() guard above.", cfg.AppEnv)
 		}
 		settlementSvcTr := settlement.NewService(pool, ledgerSvc)
-		transportSvc := transport.NewService(pool, settlementSvcTr)
+		// Share the flag-configured tier gate so a rider fare — a consumer purchase —
+		// honours the Tier-0 checkout allowance instead of the strict gate transport
+		// would otherwise build for itself (ADR-043).
+		transportSvc := transport.NewService(pool, settlementSvcTr).WithTiers(tiersSvc)
 		// Bridge transport dispatch/estimation onto the provider-agnostic
 		// MapService (OpenStack/OSRM by default) instead of the ad-hoc maps stub.
 		if mapSvc != nil {

@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: Realtor CI
 
 # Verifies the realtor module on a full Node + network runner:
@@ -7,19 +13,29 @@ name: Realtor CI
 # (The authoring sandbox cannot complete a full project tsc nor run Postgres.)
 
 on:
-  push:
-    paths:
-      - 'mobile-app/reactnative/src/features/realtor/**'
-      - 'mobile-app/reactnative/app/realtor/**'
-      - 'frontend-web/app/api/v1/realtor/**'
-      - 'frontend-admin/app/admin/realtor/**'
-      - 'frontend-admin/src/services/realtorAdminService.ts'
-      - 'supabase/migrations/*realtor*.sql'
-      - '.github/workflows/realtor-ci.yml'
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
+  backend:
+    name: Go build / vet (realtor)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+      - name: Build (whole backend — catches wiring/import breaks)
+        run: go build ./...
+      - name: Vet (realtor)
+        run: go vet ./internal/realtor/...
+      # backend/internal/realtor has no _test.go files yet. When it gains tests,
+      # add: go test ./internal/realtor/... -count=1
+
   mobile-typecheck:
     runs-on: ubuntu-latest
     defaults:
@@ -32,36 +48,6 @@ jobs:
       - run: npm ci
       - name: Typecheck realtor module (scoped)
         run: npx tsc --noEmit -p tsconfig.realtorcheck.json
-      - name: Typecheck whole app (belt-and-braces)
-        run: npx tsc --noEmit -p tsconfig.json
-
-  frontend-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Type-check (covers /api/v1/realtor/ai/{listing-copy,assist})
-        run: npx tsc --noEmit
-      - name: Lint
-        run: npm run lint
-
-  admin-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Type-check realtor admin console
-        run: npx tsc --noEmit
 
   migration-guard:
     runs-on: ubuntu-latest

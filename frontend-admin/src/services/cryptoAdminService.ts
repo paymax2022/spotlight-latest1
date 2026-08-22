@@ -17,7 +17,17 @@ import type {
   CryptoReconRow, CryptoReconSummary,
 } from '@/types/cryptoAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+// LIVE by default. Set NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK=true for fixtures.
+//
+// Verified before flipping: every path this service calls exists at
+// /api/v1/admin/crypto (internal/crypto/routes.go) with matching methods —
+// GET addresses/assets/orders/reconciliation/swaps/withdrawals, POST assets,
+// POST withdrawals/:id/decision, POST addresses/:id/decision.
+//
+// It mattered most for adminDecideWithdrawal: approving a crypto withdrawal
+// mutated an in-memory array and reported success, so the operator believed a
+// payout had been released.
+const USE_MOCK = (process.env.NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK ?? 'false').toLowerCase() === 'true';
 
 function base(): string {
   // env.apiBaseUrl already ends with /api/v1; crypto admin is mounted directly

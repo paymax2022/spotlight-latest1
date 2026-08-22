@@ -60,16 +60,23 @@ func (m *MapleradLive) ExecuteConversion(ctx context.Context, q *orch.Quote, ide
 	if m.client == nil {
 		return m.fallback.ExecuteConversion(ctx, q, idempotencyKey)
 	}
-	// Re-quote at execution and convert against the provider quote id (within our
-	// already-locked tolerance), then normalize the result.
-	pq, err := m.client.GetFXQuote(ctx, maplerad.FXQuoteRequest{SourceCurrency: q.Source.Currency, TargetCurrency: q.Destination.Currency, AmountKobo: q.Source.AmountMinor})
+	// Book a FIRM provider quote and exchange against its reference. Pricing uses
+	// the /fx/rates board (cheap, side-effect free), but the board issues no quote
+	// id, so execution has to mint one here — CreateFXQuote is the only endpoint
+	// that returns a reference POST /fx will accept.
+	//
+	// The reference is single-use at the provider, which is the backstop against a
+	// double exchange; the orchestrator's own idempotency key still guards the
+	// ledger, because Maplerad's exchange endpoint accepts no client reference.
+	pq, err := m.client.CreateFXQuote(ctx, maplerad.FXQuoteRequest{
+		SourceCurrency: q.Source.Currency,
+		TargetCurrency: q.Destination.Currency,
+		AmountKobo:     q.Source.AmountMinor,
+	})
 	if err != nil {
 		return nil, err
 	}
-	cr, err := m.client.ConvertFX(ctx, maplerad.ConvertFXRequest{
-		QuoteID: pq.QuoteID, SourceCurrency: q.Source.Currency, TargetCurrency: q.Destination.Currency,
-		AmountKobo: q.Source.AmountMinor, Reference: idempotencyKey,
-	})
+	cr, err := m.client.ConvertFX(ctx, maplerad.ConvertFXRequest{QuoteID: pq.QuoteID})
 	if err != nil {
 		return nil, err
 	}

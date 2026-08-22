@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: FX CI
 
 # Runs the two environment-blocked verification steps automatically in a
@@ -5,15 +11,7 @@ name: FX CI
 # type-checks. (Authoring sandbox had no Go toolchain and no network.)
 
 on:
-  push:
-    paths:
-      - 'backend/**'
-      - 'mobile-app/reactnative/src/features/fx/**'
-      - 'mobile-app/reactnative/app/fx/**'
-      - 'frontend-admin/app/admin/fx/**'
-      - 'contracts/openapi.yaml'
-      - '.github/workflows/fx-ci.yml'
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -57,16 +55,3 @@ jobs:
       - run: npm ci
       - name: Typecheck FX module
         run: npx tsc --noEmit -p tsconfig.fxcheck.json
-
-  admin-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Typecheck
-        run: npx tsc --noEmit

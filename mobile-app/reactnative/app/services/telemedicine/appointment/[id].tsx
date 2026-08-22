@@ -78,6 +78,10 @@ export default function AppointmentDetailScreen() {
   const TypeIcon = TYPE_META[appt.consultType].Icon;
   const dateLabel = new Date(`${appt.slotDate}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const isUpcoming = ['upcoming', 'confirmed', 'in_progress'].includes(appt.status);
+  // What the patient actually paid = what was escrowed, and what a cancellation
+  // refunds. Bookings made before ADR-040 have no platform fee, so their total is
+  // the consultation fee alone.
+  const paidKobo = appt.totalKobo ?? appt.feeKobo + (appt.platformFeeKobo ?? 0);
   const isCompleted = appt.status === 'completed';
   // Consult is unreachable until intake is SUBMITTED (PRD §1 structural gate).
   const canJoin = ['confirmed', 'in_progress'].includes(appt.status) && intakeReady;
@@ -107,7 +111,14 @@ export default function AppointmentDetailScreen() {
               <Text style={styles.typeText}>{TYPE_META[appt.consultType].label}</Text>
             </View>
           </View>
-          <Row label="Fee paid" value={formatKobo(appt.feeKobo)} last />
+          {/* Consultation fee and platform fee are separate legs (ADR-040). Showing
+              only the consultation fee here misreported what a card payer was
+              actually charged. */}
+          <Row label="Consultation fee" value={formatKobo(appt.feeKobo)} />
+          {(appt.platformFeeKobo ?? 0) > 0 ? (
+            <Row label="Platform fee" value={formatKobo(appt.platformFeeKobo ?? 0)} />
+          ) : null}
+          <Row label="Total paid" value={formatKobo(paidKobo)} last />
         </View>
 
         {/* M1 — Pre-Consult intake status card */}
@@ -203,9 +214,12 @@ export default function AppointmentDetailScreen() {
               <>
                 <View style={styles.policyCard}>
                   <Text style={styles.policyTitle}>Refund preview</Text>
-                  <Row label="Fee paid" value={formatKobo(appt.feeKobo)} />
+                  {/* Cancellation refunds the whole escrowed total, platform fee
+                      included — quoting the consultation fee alone under-promised
+                      the refund a card payer was owed. */}
+                  <Row label="Total paid" value={formatKobo(paidKobo)} />
                   <Row label="Cancellation penalty" value={formatKobo(0)} />
-                  <Row label="Refund to wallet" value={formatKobo(appt.feeKobo)} highlight last />
+                  <Row label="Refund to wallet" value={formatKobo(paidKobo)} highlight last />
                   <Text style={styles.policyNote}>Free cancellation up to 1 hour before your appointment. Refunds post to your wallet instantly.</Text>
                 </View>
                 {cancelErr ? <Text style={styles.errorText}>{getErrorMessage(cancelErr)}</Text> : null}

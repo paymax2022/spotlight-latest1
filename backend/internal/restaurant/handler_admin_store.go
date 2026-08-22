@@ -62,6 +62,67 @@ func (h *Handler) AdminUpdateRestaurant(c *gin.Context) {
 	c.JSON(http.StatusOK, r)
 }
 
+// AdminModerationQueue → GET /admin/restaurant/listings/pending
+//
+// Listings awaiting review, oldest first — a moderation queue is worked in the
+// order people have been waiting.
+func (h *Handler) AdminModerationQueue(c *gin.Context) {
+	list, err := h.svc.PendingListings(adminCtx(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"listings": list, "count": len(list)})
+}
+
+// AdminDecideListing → POST /admin/restaurant/listings/:id/decision
+//
+// Body {decision: approve|reject|changes, reason}. Rejecting or requesting
+// changes without a reason is refused by the service — the owner needs something
+// to act on.
+func (h *Handler) AdminDecideListing(c *gin.Context) {
+	var body struct {
+		Decision string `json:"decision" binding:"required"`
+		Reason   string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	var to ListingReviewStatus
+	switch body.Decision {
+	case "approve":
+		to = ListingApproved
+	case "reject":
+		to = ListingRejected
+	case "changes":
+		to = ListingChangesRequested
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "decision must be approve|reject|changes"})
+		return
+	}
+	if err := h.svc.DecideListing(adminCtx(c), c.Param("id"), c.GetString("user_id"), to, body.Reason); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// AdminUnclaimedRestaurants → GET /admin/restaurants/unclaimed
+//
+// Shops with no identifiable merchant: no owner, or an owner with no active
+// merchant profile. Empty today (the linking migration resolved all 1539 legacy
+// owners); it exists so an imported or admin-seeded row cannot sit unmanaged and
+// unnoticed.
+func (h *Handler) AdminUnclaimedRestaurants(c *gin.Context) {
+	list, err := h.svc.UnclaimedRestaurants(adminCtx(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"restaurants": list, "count": len(list)})
+}
+
 // AdminSetAvailability → PATCH /api/restaurant/admin/restaurants/:id/availability
 // (restaurant.manage). Operator force-open / force-close, e.g. suspending a store
 // that is accepting orders it cannot fulfil.

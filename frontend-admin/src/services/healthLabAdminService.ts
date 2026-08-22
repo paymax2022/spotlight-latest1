@@ -161,7 +161,7 @@ export async function decideMlscn(id: string, decision: MlscnDecision, note?: st
     await delay();
     const app = MLSCN_APPS.find((a) => a.id === id);
     if (decision === 'approve' && app && (!app.lab_verified || !app.scientist_verified)) {
-      return { id, status: 'needs_info', capability_granted: false, audit_id: auditId(), message: `Approval blocked — MLSCN facility or medical-laboratory-scientist licence not verified (HL-2). Supply stays credential-gated and fail-closed. Recorded to immutable audit (HL-12).` };
+      return { id, status: 'needs_info', capability_granted: false, audit_id: auditId(), message: `Fixture — nothing was saved. Approval blocked — MLSCN facility or medical-laboratory-scientist licence not verified (HL-2). Supply stays credential-gated and fail-closed. (HL-12).` };
     }
     const status =
       decision === 'approve' ? 'approved'
@@ -169,7 +169,7 @@ export async function decideMlscn(id: string, decision: MlscnDecision, note?: st
       : decision === 'need_info' ? 'needs_info'
       : decision === 'suspend' ? 'suspended'
       : 'approved'; // reinstate
-    return { id, status, capability_granted: decision === 'approve', audit_id: auditId(), message: `MLSCN application ${id}: ${decision} applied. ${decision === 'approve' ? 'Provider lab capability idempotently granted and discoverability unlocked (HL-2). ' : ''}State machine SUBMITTED→UNDER_REVIEW→${status.toUpperCase()} enforced. Recorded to immutable audit (HL-12).` };
+    return { id, status, capability_granted: decision === 'approve', audit_id: auditId(), message: `Fixture — nothing was saved. MLSCN application ${id}: ${decision} applied. ${decision === 'approve' ? 'Provider lab capability idempotently granted and discoverability unlocked (HL-2). ' : ''}State machine SUBMITTED→UNDER_REVIEW→${status.toUpperCase()} enforced. (HL-12).` };
   }
   return sendJson<MlscnDecisionResult>('POST', `/mlscn/applications/${id}/decision`, { decision, note });
 }
@@ -209,10 +209,10 @@ export async function governTest(id: string, action: LabCatalogGovernanceAction,
     await delay();
     const item = CATALOG.find((c) => c.id === id);
     if (action === 'approve' && item && !item.loinc_code) {
-      return { id, status: 'pending', audit_id: auditId(), message: `Approval blocked — test has no LOINC mapping; a governed test definition is required before listing. Recorded to immutable audit (HL-12).` };
+      return { id, status: 'pending', audit_id: auditId(), message: `Fixture — nothing was saved. Approval blocked — test has no LOINC mapping; a governed test definition is required before listing. (HL-12).` };
     }
     const status = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'suspended';
-    return { id, status, audit_id: auditId(), message: `Test catalog item ${id}: ${action} applied. Test-definition governance enforced. Recorded to immutable audit (HL-12).` };
+    return { id, status, audit_id: auditId(), message: `Fixture — nothing was saved. Test catalog item ${id}: ${action} applied. Test-definition governance enforced. (HL-12).` };
   }
   return sendJson<LabCatalogGovernanceResult>('POST', `/catalog/${id}/govern`, { action, note });
 }
@@ -270,7 +270,7 @@ export async function getCustodyChain(id: string): Promise<CustodyChain> {
 export async function flagCustodyBreak(id: string, reason: string): Promise<CustodyBreakResult> {
   if (USE_MOCK) {
     await delay();
-    return { id, status: 'breached', chain_intact: false, recollect_order_ref: `recollect_${Math.random().toString(36).slice(2, 7)}`, audit_id: auditId(), message: `Custody break flagged on sample ${id}: ${reason}. Chain marked BROKEN → recollection mandated; no result will release on this sample (HL-6). Recorded to immutable audit (HL-12).` };
+    return { id, status: 'breached', chain_intact: false, recollect_order_ref: `recollect_${Math.random().toString(36).slice(2, 7)}`, audit_id: auditId(), message: `Fixture — nothing was saved. Custody break flagged on sample ${id}: ${reason}. Chain marked BROKEN → recollection mandated; no result will release on this sample (HL-6). (HL-12).` };
   }
   return sendJson<CustodyBreakResult>('POST', `/custody/${id}/break`, { reason });
 }
@@ -308,19 +308,19 @@ export async function releaseResult(id: string, action: ResultReleaseAction, not
     await delay();
     const r = RESULTS.find((x) => x.id === id);
     if (action === 'release' && r && !r.chain_intact) {
-      return { id, status: 'processing', audit_id: auditId(), message: `Release blocked — chain-of-custody is broken on this sample; no result may be released without an unbroken chain (HL-6). Recollection required. Recorded to immutable audit (HL-12).` };
+      return { id, status: 'processing', audit_id: auditId(), message: `Fixture — nothing was saved. Release blocked — chain-of-custody is broken on this sample; no result may be released without an unbroken chain (HL-6). Recollection required. (HL-12).` };
     }
     if (action === 'release' && r && !r.signed_off) {
-      return { id, status: 'result_ready', audit_id: auditId(), message: `Release blocked — result not yet signed off by a registered medical laboratory scientist. Recorded to immutable audit (HL-12).` };
+      return { id, status: 'result_ready', audit_id: auditId(), message: `Fixture — nothing was saved. Release blocked — result not yet signed off by a registered medical laboratory scientist. (HL-12).` };
     }
     if (action === 'release' && r && !r.consent_on_file) {
-      return { id, status: 'result_ready', audit_id: auditId(), message: `Release blocked — NDPA consent not on file; health data may not be released to the patient vault without explicit consent (HL-8). Recorded to immutable audit (HL-12).` };
+      return { id, status: 'result_ready', audit_id: auditId(), message: `Fixture — nothing was saved. Release blocked — NDPA consent not on file; health data may not be released to the patient vault without explicit consent (HL-8). (HL-12).` };
     }
     if (action === 'release' && r && r.abnormal_flag === 'critical' && r.status !== 'escalated') {
-      return { id, status: 'escalated', audit_id: auditId(), message: `Release routed through escalation — a critical value must complete the human escalation path before release; it is never released silently (HL-7). Recorded to immutable audit (HL-12).` };
+      return { id, status: 'escalated', audit_id: auditId(), message: `Fixture — nothing was saved. Release routed through escalation — a critical value must complete the human escalation path before release; it is never released silently (HL-7). (HL-12).` };
     }
     const status = action === 'release' ? 'released' : action === 'amend' ? 'amended' : 'processing';
-    return { id, status, audit_id: auditId(), message: `Result ${id}: ${action} applied. Chain-of-custody (HL-6), scientist sign-off and NDPA consent (HL-8) gates passed. Recorded to immutable audit (HL-12).` };
+    return { id, status, audit_id: auditId(), message: `Fixture — nothing was saved. Result ${id}: ${action} applied. Chain-of-custody (HL-6), scientist sign-off and NDPA consent (HL-8) gates passed. (HL-12).` };
   }
   return sendJson<ResultReleaseResult>('POST', `/results/${id}/release`, { action, note });
 }
@@ -356,7 +356,7 @@ export async function resolveEscalation(id: string, action: EscalationResolveAct
   if (USE_MOCK) {
     await delay();
     const status = action === 'acknowledge' ? 'acknowledged' : action === 'resolve' ? 'resolved' : 'closed';
-    return { id, status, audit_id: auditId(), message: `Critical-result escalation ${id}: ${action} applied by a named human owner — the escalation path is never closed silently (HL-7). Recorded to immutable audit (HL-12).` };
+    return { id, status, audit_id: auditId(), message: `Fixture — nothing was saved. Critical-result escalation ${id}: ${action} applied by a named human owner — the escalation path is never closed silently (HL-7). (HL-12).` };
   }
   return sendJson<EscalationResolveResult>('POST', `/escalations/${id}/resolve`, { action, note });
 }
@@ -419,12 +419,12 @@ export async function decidePayout(id: string, decision: LabPayoutDecision, note
     await delay();
     const p = PAYOUTS.find((x) => x.id === id);
     if (decision === 'approve' && p && !p.kyc_verified) {
-      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Payout blocked — lab ${id} KYC tier insufficient (HL-10). Payout stays fail-closed until KYC clears. Recorded to immutable audit (HL-12).` };
+      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Fixture — nothing was saved. Payout blocked — lab ${id} KYC tier insufficient (HL-10). Payout stays fail-closed until KYC clears. (HL-12).` };
     }
     if (decision === 'approve' && p?.aml_flag) {
-      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Payout held — AML flag on settlement requires clearance before release (HL-10). Recorded to immutable audit (HL-12).` };
+      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Fixture — nothing was saved. Payout held — AML flag on settlement requires clearance before release (HL-10). (HL-12).` };
     }
-    return { id, payout_status: decision === 'approve' ? 'approved' : 'rejected', audit_id: auditId(), message: `Lab ${id} payout ${decision === 'approve' ? 'approved' : 'rejected'}. KYC + AML gate (HL-10) passed. Recorded to immutable audit (HL-12).` };
+    return { id, payout_status: decision === 'approve' ? 'approved' : 'rejected', audit_id: auditId(), message: `Fixture — nothing was saved. Lab ${id} payout ${decision === 'approve' ? 'approved' : 'rejected'}. KYC + AML gate (HL-10) passed. (HL-12).` };
   }
   return sendJson<LabPayoutDecisionResult>('POST', `/payouts/${id}/decision`, { decision, note });
 }

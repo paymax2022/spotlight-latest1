@@ -4,7 +4,7 @@ package restaurant
 // LIVE-DB integration test for merchant KYB onboarding (Phase 8): the owner
 // save→document→submit flow (with validation), the admin decision driving the KYB
 // state machine + go-live, and the needs_more_info bounce. Skipped unless
-// TEST_DATABASE_URL/DATABASE_URL is set. Requires the restaurant + KYB migrations.
+// TEST_DATABASE_URL is set. Requires the restaurant + KYB migrations.
 // ---------------------------------------------------------------------------
 
 import (
@@ -21,10 +21,7 @@ func kybLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB KYB test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB KYB test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

@@ -1801,6 +1801,8 @@ components:
                  mental_health, womens_health, neurology, eye_care, nutrition, dentistry,
                  oncology, orthopedic]
         consult_fee_kobo: { type: integer, format: int64 }
+        booking:
+          $ref: '#/components/schemas/BookingQuote'
         is_available: { type: boolean }
         is_online: { type: boolean }
         is_hmo_verified: { type: boolean }
@@ -2293,8 +2295,47 @@ components:
         starts_at: { type: string, format: date-time, nullable: true }
         status: { type: string, enum: [booked, confirmed, completed, cancelled] }
         notes: { type: string }
-        fee_kobo: { type: integer, format: int64 }
+        fee_kobo:
+          type: integer
+          format: int64
+          description: >-
+            The doctor's CONSULTATION fee only, excluding the platform booking
+            fee. Doctor earnings are 85% of this. Not a patient-facing total —
+            use total_kobo for what the patient paid (ADR-040).
+        platform_fee_kobo:
+          type: integer
+          format: int64
+          description: >-
+            Platform booking fee charged on top of the consultation fee, computed
+            server-side. 0 for appointments booked before ADR-040.
+        total_kobo:
+          type: integer
+          format: int64
+          description: >-
+            What was escrowed and what the patient paid = fee_kobo +
+            platform_fee_kobo. Also the amount refunded on cancellation.
         created_at: { type: string, format: date-time }
+
+    BookingQuote:
+      type: object
+      description: >-
+        Server-computed price breakdown for booking a consultation with this
+        doctor. The client renders these values and must never compute the rate
+        itself — see ADR-040.
+      properties:
+        consult_fee_kobo: { type: integer, format: int64 }
+        platform_fee_bp:
+          type: integer
+          description: Platform booking fee rate in basis points (500 = 5%).
+        platform_fee_kobo:
+          type: integer
+          format: int64
+          description: >-
+            consult_fee_kobo x platform_fee_bp / 10000, floored to whole kobo.
+        total_kobo:
+          type: integer
+          format: int64
+          description: consult_fee_kobo + platform_fee_kobo.
 
     Slot:
       type: object
@@ -5836,7 +5877,21 @@ paths:
       security: [{ bearerAuth: [] }]
       responses:
         '200':
-          description: Balances array
+          description: Balances array (WalletBalance shape, minor units)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [currency, available, ledger]
+                      properties:
+                        currency: { type: string, description: ISO-4217 }
+                        available: { type: integer, format: int64, description: spendable minor units }
+                        ledger: { type: integer, format: int64, description: posted minor units }
     post:
       operationId: fxAddWallet
       summary: Open (provision) a zero-balance wallet for a currency (no ledger)
@@ -6443,6 +6498,58 @@ paths:
                   verified_at: { type: string, format: date-time, nullable: true }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /me/tier:
+    get:
+      operationId: getMyTierAllowance
+      summary: Get the caller's KYC tier and today's remaining wallet-debit allowance
+      description: >-
+        Reports the caller's tier alongside TODAY's wallet-debit allowance, read from
+        the same finance/tiers usage the fail-closed debit gate is derived from — so a
+        client pre-check agrees with what the server will actually enforce.
+
+
+        Clients use this to decline a spend BEFORE taking payment: the mobile checkout
+        will not open the card gateway for an amount the server is going to refuse,
+        which would otherwise charge the customer for an order they cannot receive.
+
+
+        The allowance fields (dailyLimitKobo, dailyUsedKobo, remainingKobo,
+        walletDisabled) are OMITTED together when the server cannot compute usage. A
+        client MUST treat their absence as "unknown" and defer to the server, never as
+        "no allowance".
+      tags: [KYC]
+      responses:
+        '200':
+          description: Tier status and today's allowance
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [tier]
+                    properties:
+                      tier: { $ref: '#/components/schemas/KycTier' }
+                      label: { type: string }
+                      status: { $ref: '#/components/schemas/KycStatus' }
+                      dailyLimitKobo:
+                        type: integer
+                        format: int64
+                        description: Daily wallet-debit cap in kobo. 0 means unlimited (Tier 3) OR disabled (Tier 0) — read walletDisabled to disambiguate.
+                      dailyUsedKobo:
+                        type: integer
+                        format: int64
+                        description: Wallet debits already posted today, in kobo.
+                      remainingKobo:
+                        type: integer
+                        format: int64
+                        description: Allowance left today, in kobo. -1 means unlimited.
+                      walletDisabled:
+                        type: boolean
+                        description: True for Tier 0 — the wallet cannot be debited at all until KYC completes.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /kyc/initiate:
     post:
       operationId: initiateKyc
@@ -6554,6 +6661,18 @@ paths:
                   format: int64
                   minimum: 10000
                   description: Amount to top up in kobo (min ₦100)
+                purpose:
+                  type: string
+                  enum: [wallet, checkout]
+                  default: wallet
+                  description: >-
+                    What this top-up is for, which selects the KYC gate (ADR-042).
+                    `wallet` — standalone funding; requires KYC Tier 1.
+                    `checkout` — funds a purchase being completed right now via the
+                    card rail (ADR-041); may be permitted below Tier 1 under a
+                    capped rolling allowance when FEATURE_CHECKOUT_TOPUP_TIER0 is
+                    on. Any unrecognised value is treated as `wallet`, so the
+                    weaker gate can only be reached by asking for it explicitly.
       responses:
         '200':
           description: Paystack payment initialized
@@ -7791,12 +7910,30 @@ paths:
                 scheduled_at: { type: string, format: date-time }
                 notes: { type: string }
                 idempotency_key: { type: string }
+                expected_total_kobo:
+                  type: integer
+                  format: int64
+                  description: >-
+                    The total the client quoted the patient (from the doctor's
+                    `booking` quote). When non-zero and it disagrees with the
+                    server's own computation, the booking is rejected before any
+                    money moves — this bounds the card rail, which charges the
+                    client-side amount at the PSP before the server escrows.
+                    Omit or send 0 to skip the check (ADR-040).
       responses:
         '201':
           description: Appointment booked
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Appointment' }
+        '409':
+          description: >-
+            Stale quote — either expected_total_kobo disagrees with the
+            server-computed total, or this Idempotency-Key was already escrowed at
+            a different price. No appointment was created and nothing was escrowed
+            on this call; re-read the doctor's booking quote and start a new
+            booking. NOTE: on the client-side card rail the PSP charge has already
+            completed by this point (see ADR-040, "Not addressed here").
 
   /telemedicine/appointments/{id}/complete:
     post:

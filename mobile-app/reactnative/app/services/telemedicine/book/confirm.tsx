@@ -19,8 +19,12 @@ import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { submitApptIntake } from '@/features/health/api';
 import { CONSENT_VERSION } from '@/features/health/api/preconsult.mock';
 import { getIntakeDraft, clearIntakeDraft } from '@/features/health/intakeDraftStore';
+import { slotToISO } from '@/features/telemedicine/pricing';
 
-const SERVICE_FEE_KOBO = 0; // platform booking fee (demo: free)
+// NOTE: this screen deliberately holds NO fee rate. The platform booking fee is
+// computed by the Go backend and arrives on `doctor.booking` — displaying a fee
+// this app worked out for itself is exactly how the amount shown and the amount
+// escrowed drifted apart (ADR-040).
 
 const TYPE_META: Record<ConsultType, { label: string; Icon: typeof Video }> = {
   video: { label: 'Video consultation', Icon: Video },
@@ -47,17 +51,27 @@ export default function ConfirmBookingScreen() {
 
   const { data: wallet } = useQuery({ queryKey: ['wallet'], queryFn: getWallet });
 
-  const feeKobo = doctor?.feeKobo ?? 0;
-  const totalKobo = feeKobo + SERVICE_FEE_KOBO;
+  // The server's price breakdown. Every figure on this screen — the rows, the
+  // balance check, the Pay button, the amount handed to the payment sheet —
+  // derives from it, so what the patient is shown is what the backend escrows.
+  const quote = doctor?.booking;
+  const feeKobo = quote?.consultFeeKobo ?? 0;
+  const serviceFeeKobo = quote?.platformFeeKobo ?? 0;
+  const totalKobo = quote?.totalKobo ?? 0;
+  const serviceFeeLabel = `Platform fee (${(quote?.platformFeeBp ?? 0) / 100}%)`;
+  // Fail closed. Without a server quote we do not know the price, and neither
+  // guessing it nor charging the consultation fee alone is acceptable on a money
+  // path — both re-create the display-vs-charge divergence ADR-040 removed.
+  const priced = !!quote && totalKobo > 0;
   const balanceKobo = Math.round((wallet?.balance ?? 0) * 100);
-  const insufficient = balanceKobo < totalKobo;
+  const insufficient = priced && balanceKobo < totalKobo;
 
   const { mutateAsync: bookAppointmentAsync, isPending } = useMutation({
     mutationFn: bookAppointment,
   });
 
   const onConfirm = () => {
-    if (!doctor || isPending) return;
+    if (!doctor || isPending || !priced) return;
     if (!/^\d{4}$/.test(pin)) { setPinError('Enter your 4-digit transaction PIN.'); return; }
     setPinError('');
     idemKeyRef.current = generateIdempotencyKey();
@@ -68,9 +82,14 @@ export default function ConfirmBookingScreen() {
         bookAppointmentAsync({
           doctorId: doctor.id,
           slotId: String(params.slotId),
+          scheduledAt: slotToISO(params.slotDate, params.slotTime),
           consultType: params.consultType,
           reason: String(params.reason ?? ''),
           feeKobo,
+          // The total we quoted the patient. The card rail has already charged
+          // this at the PSP by the time the server escrows, so the server rejects
+          // the booking (409) rather than escrow a different amount.
+          expectedTotalKobo: totalKobo,
           idempotencyKey: idemKeyRef.current,
         }),
       onPaid: async (result) => {
@@ -131,10 +150,19 @@ export default function ConfirmBookingScreen() {
         <View style={[styles.card, shadow1]}>
           <Text style={styles.cardTitle}>Payment</Text>
           <View style={styles.divider} />
-          <Row label="Consultation fee" value={formatKobo(feeKobo)} />
-          <Row label="Service fee" value={formatKobo(SERVICE_FEE_KOBO)} />
-          <View style={styles.divider} />
-          <Row label="Total" value={formatKobo(totalKobo)} highlight />
+          {priced ? (
+            <>
+              <Row label="Consultation fee" value={formatKobo(feeKobo)} />
+              <Row label={serviceFeeLabel} value={formatKobo(serviceFeeKobo)} />
+              <View style={styles.divider} />
+              <Row label="Total" value={formatKobo(totalKobo)} highlight />
+            </>
+          ) : (
+            <Text style={styles.errorText}>
+              Pricing is unavailable right now. Please try again shortly — we will not
+              charge you an amount we cannot confirm.
+            </Text>
+          )}
 
           <View style={styles.walletRow}>
             <View style={styles.walletLeft}>
@@ -169,9 +197,10 @@ export default function ConfirmBookingScreen() {
 
       <View style={styles.footer}>
         <PrimaryButton
-          label={`Pay ${formatKobo(totalKobo)}`}
+          label={priced ? `Pay ${formatKobo(totalKobo)}` : 'Pricing unavailable'}
           onPress={onConfirm}
           loading={isPending}
+          disabled={!priced}
         />
       </View>
       <PaymentSheet controller={checkout} />

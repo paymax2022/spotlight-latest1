@@ -150,7 +150,7 @@ export async function decidePcn(id: string, decision: PcnDecision, note?: string
     await delay();
     const app = PCN_APPS.find((a) => a.id === id);
     if (decision === 'approve' && app && (!app.premises_verified || !app.pharmacist_verified)) {
-      return { id, status: 'needs_info', capability_granted: false, audit_id: auditId(), message: `Approval blocked — PCN premises or superintendent-pharmacist licence not verified (HL-2). Supply stays credential-gated and fail-closed. Recorded to immutable audit (HL-12).` };
+      return { id, status: 'needs_info', capability_granted: false, audit_id: auditId(), message: `Fixture — nothing was saved. Approval blocked — PCN premises or superintendent-pharmacist licence not verified (HL-2). Supply stays credential-gated and fail-closed. (HL-12).` };
     }
     const status =
       decision === 'approve' ? 'approved'
@@ -158,7 +158,7 @@ export async function decidePcn(id: string, decision: PcnDecision, note?: string
       : decision === 'need_info' ? 'needs_info'
       : decision === 'suspend' ? 'suspended'
       : 'approved'; // reinstate
-    return { id, status, capability_granted: decision === 'approve', audit_id: auditId(), message: `PCN application ${id}: ${decision} applied. ${decision === 'approve' ? 'Provider pharmacy capability idempotently granted and discoverability unlocked (HL-2). ' : ''}State machine SUBMITTED→UNDER_REVIEW→${status.toUpperCase()} enforced. Recorded to immutable audit (HL-12).` };
+    return { id, status, capability_granted: decision === 'approve', audit_id: auditId(), message: `Fixture — nothing was saved. PCN application ${id}: ${decision} applied. ${decision === 'approve' ? 'Provider pharmacy capability idempotently granted and discoverability unlocked (HL-2). ' : ''}State machine SUBMITTED→UNDER_REVIEW→${status.toUpperCase()} enforced. (HL-12).` };
   }
   return sendJson<PcnDecisionResult>('POST', `/pcn/applications/${id}/decision`, { decision, note });
 }
@@ -198,13 +198,13 @@ export async function governCatalogItem(id: string, action: CatalogGovernanceAct
     await delay();
     const item = CATALOG.find((c) => c.id === id);
     if (action === 'approve' && item && (!item.nafdac_valid || !item.nafdac_reg_no)) {
-      return { id, status: 'rejected', audit_id: auditId(), message: `Approval blocked — product has no valid NAFDAC registration (HL-5). Unregistered items are rejected at write, not merely hidden. Recorded to immutable audit (HL-12).` };
+      return { id, status: 'rejected', audit_id: auditId(), message: `Fixture — nothing was saved. Approval blocked — product has no valid NAFDAC registration (HL-5). Unregistered items are rejected at write, not merely hidden. (HL-12).` };
     }
     if (action === 'approve' && item?.controlled) {
-      return { id, status: 'rejected', audit_id: auditId(), message: `Approval blocked — controlled substance excluded at MVP (HL-4). Recorded to immutable audit (HL-12).` };
+      return { id, status: 'rejected', audit_id: auditId(), message: `Fixture — nothing was saved. Approval blocked — controlled substance excluded at MVP (HL-4). (HL-12).` };
     }
     const status = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'suspended';
-    return { id, status, audit_id: auditId(), message: `Catalog item ${id}: ${action} applied. NAFDAC governance (HL-5) enforced. Recorded to immutable audit (HL-12).` };
+    return { id, status, audit_id: auditId(), message: `Fixture — nothing was saved. Catalog item ${id}: ${action} applied. NAFDAC governance (HL-5) enforced. (HL-12).` };
   }
   return sendJson<CatalogGovernanceResult>('POST', `/catalog/${id}/govern`, { action, note });
 }
@@ -346,7 +346,7 @@ export async function listRecalls(opts?: { status?: string; severity?: string; q
 export async function createRecall(input: CreateRecallInput): Promise<CreateRecallResult> {
   if (USE_MOCK) {
     await delay();
-    return { id: `rcl_${Math.random().toString(36).slice(2, 8)}`, status: 'open', audit_id: auditId(), message: `Recall opened for "${input.product_name}" batch ${input.batch_no} (${input.severity}). Affected batch quarantined; patient notification dispatched. Recorded to immutable audit (HL-12).` };
+    return { id: `rcl_${Math.random().toString(36).slice(2, 8)}`, status: 'open', audit_id: auditId(), message: `Fixture — nothing was saved. Recall opened for "${input.product_name}" batch ${input.batch_no} (${input.severity}). Affected batch quarantined; patient notification dispatched. (HL-12).` };
   }
   return sendJson<CreateRecallResult>('POST', '/recalls', input);
 }
@@ -381,12 +381,12 @@ export async function decidePayout(id: string, decision: PayoutDecision, note?: 
     await delay();
     const p = PAYOUTS.find((x) => x.id === id);
     if (decision === 'approve' && p && !p.kyc_verified) {
-      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Payout blocked — pharmacy ${id} KYC tier insufficient (HL-10). Payout stays fail-closed until KYC clears. Recorded to immutable audit (HL-12).` };
+      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Fixture — nothing was saved. Payout blocked — pharmacy ${id} KYC tier insufficient (HL-10). Payout stays fail-closed until KYC clears. (HL-12).` };
     }
     if (decision === 'approve' && p?.aml_flag) {
-      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Payout held — AML flag on settlement requires clearance before release (HL-10). Recorded to immutable audit (HL-12).` };
+      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Fixture — nothing was saved. Payout held — AML flag on settlement requires clearance before release (HL-10). (HL-12).` };
     }
-    return { id, payout_status: decision === 'approve' ? 'approved' : 'rejected', audit_id: auditId(), message: `Pharmacy ${id} payout ${decision === 'approve' ? 'approved' : 'rejected'}. KYC + AML gate (HL-10) passed. Recorded to immutable audit (HL-12).` };
+    return { id, payout_status: decision === 'approve' ? 'approved' : 'rejected', audit_id: auditId(), message: `Fixture — nothing was saved. Pharmacy ${id} payout ${decision === 'approve' ? 'approved' : 'rejected'}. KYC + AML gate (HL-10) passed. (HL-12).` };
   }
   return sendJson<PayoutDecisionResult>('POST', `/payouts/${id}/decision`, { decision, note });
 }

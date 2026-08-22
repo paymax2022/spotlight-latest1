@@ -99,7 +99,10 @@ export const useCartStore = create<CartState>((set) => ({
   addItem: (restaurantId, restaurantName, item, packageId, opts) => {
     const autoOverflow = opts?.autoOverflow === true;
     const isProtein = item.foodType === 'protein';
-    const newLine = (): CartLine => ({ itemId: item.id, name: item.name, priceKobo: item.priceKobo, qty: 1, isProtein, restaurantId });
+    // restaurantName is recorded per line, not just once on the store: the
+    // top-level field keeps the FIRST restaurant only, so a multi-restaurant
+    // cart could not name its other sections.
+    const newLine = (): CartLine => ({ itemId: item.id, name: item.name, priceKobo: item.priceKobo, qty: 1, isProtein, restaurantId, restaurantName });
     let result: AddItemResult = { ok: true };
 
     set((st) => {
@@ -223,11 +226,12 @@ export function aggregateCartLines(packages: CartPackage[]): CartLine[] {
     for (const l of p.lines) {
       const cur = byId.get(l.itemId);
       if (cur) cur.qty += l.qty;
-      else byId.set(l.itemId, { ...l, restaurantId: l.restaurantId });
+      else byId.set(l.itemId, { ...l, restaurantId: l.restaurantId, restaurantName: l.restaurantName });
     }
   }
   return Array.from(byId.values());
 }
+
 
 /** Per-package payload (non-empty packages only) for the order request. */
 export function cartPackagesPayload(packages: CartPackage[]): { items: { itemId: string; qty: number }[] }[] {

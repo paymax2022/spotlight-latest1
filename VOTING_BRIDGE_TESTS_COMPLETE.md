@@ -25,8 +25,8 @@
 - `bridge_outbox` table (async events, 3-retry max)
 
 **2 Architecture Docs** (480 lines)
-- `ADR-001` — TOCTOU mitigation strategy
-- `ADR-002` — Production migration plan
+- `ADR-037` — TOCTOU mitigation strategy
+- `ADR-038` — Production migration plan
 
 ---
 
@@ -433,8 +433,8 @@ supabase/migrations/                          (110 lines)
 └── 20260811000101_vote_bridge_outbox.sql
 
 docs/adr/                                     (480 lines)
-├── ADR-001-vote-bridge-idempotency.md        (280 lines)
-└── ADR-002-vote-engine-deprecation.md        (200 lines)
+├── ADR-037-vote-bridge-idempotency.md        (280 lines)
+└── ADR-038-vote-engine-deprecation.md        (200 lines)
 ```
 
 ### Tests (1,618 lines)

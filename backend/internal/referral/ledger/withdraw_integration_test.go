@@ -7,10 +7,14 @@ package ledger
 //   (3) State machine — eligible rows move to paid; remaining eligible = 0.
 //   (4) Fail-closed KYC gate — tier below MinWithdrawTier is rejected.
 //
-// SKIPPED whenever DATABASE_URL / TEST_DATABASE_URL is unset (same pattern as the
-// other live-DB tests). Bring-up: point DATABASE_URL at a disposable, migrated
-// Postgres — never production. It creates only rows keyed by fresh UUIDs and does
-// not truncate tables, so it is safe to run repeatedly.
+// SKIPPED whenever TEST_DATABASE_URL is unset, and it does NOT fall back to
+// DATABASE_URL: the root .env points DATABASE_URL at the PRODUCTION Supabase
+// pooler and this test moves money. Bring-up: point TEST_DATABASE_URL at a
+// disposable, migrated Postgres. It creates only rows keyed by fresh UUIDs and
+// does not truncate tables, so it is safe to run repeatedly.
+//
+//	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
+//	  go test ./internal/referral/ledger/ -v
 
 import (
 	"context"
@@ -25,12 +29,9 @@ import (
 
 func liveDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
+	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("TEST_DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("DATABASE_URL/TEST_DATABASE_URL not set — skipping live-DB withdraw test")
+		t.Skip("TEST_DATABASE_URL not set — skipping live-DB withdraw test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

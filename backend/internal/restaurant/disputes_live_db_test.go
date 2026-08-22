@@ -4,7 +4,7 @@ package restaurant
 // LIVE-DB integration test for food-order disputes (Phase 9): party-only raise on a
 // delivered order, the one-active-dispute guard, and admin resolution with a
 // PLATFORM-FUNDED refund (debit paymax_revenue → credit customer wallet), including
-// idempotency. Skipped unless TEST_DATABASE_URL/DATABASE_URL is set. Requires the
+// idempotency. Skipped unless TEST_DATABASE_URL is set. Requires the
 // restaurant, disputes, ledger, and restaurant-disputes migrations.
 // ---------------------------------------------------------------------------
 
@@ -25,10 +25,7 @@ func disputesLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB disputes test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB disputes test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

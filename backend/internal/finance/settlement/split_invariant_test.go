@@ -42,18 +42,18 @@ import (
 // discount. This helper is the single source of truth the assertions below check; if
 // service.go ever changes its formula, this must change with it (and the mismatch is
 // the bug the ledger-auditor should catch).
+// It now DELEGATES to settlement.ComputeLegs — the same function Service.Settle
+// moves money by — instead of re-implementing the formula. The local copy this
+// replaces could only ever prove that the copy matched itself: change the
+// production expression and every test below still passed.
 func splitLegsKobo(total int64, sp settlement.Split) (providerKobo, platformKobo, riderKobo int64) {
-	base := total - sp.TipKobo - sp.ServiceFeeKobo
-	gross := base + sp.DiscountKobo
-	platformKobo = int64(float64(gross)*sp.PlatformPct) + sp.ServiceFeeKobo
-	if sp.DiscountFundedByPlatform {
-		platformKobo -= sp.DiscountKobo
+	legs, err := settlement.ComputeLegs(total, sp)
+	if err != nil {
+		// These invariant cases are all well-formed; a rejection here is a real
+		// failure, surfaced as zero legs so the caller's assertions report it.
+		return 0, 0, 0
 	}
-	if sp.RiderID != nil {
-		riderKobo = int64(float64(gross)*sp.RiderPct) + sp.TipKobo
-	}
-	providerKobo = total - platformKobo - riderKobo
-	return
+	return legs.ProviderKobo, legs.PlatformKobo, legs.RiderKobo
 }
 
 // TestSettleServiceFeeGoesToPlatform proves the service fee is a fixed platform leg

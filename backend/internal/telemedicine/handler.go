@@ -1,6 +1,7 @@
 package telemedicine
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -129,6 +130,13 @@ func (h *Handler) BookAppointment(c *gin.Context) {
 	}
 	appt, err := h.svc.BookAppointment(c.Request.Context(), userID, req)
 	if err != nil {
+		// A stale client quote is a conflict, not a server fault: no money moved,
+		// and the fix is to re-read the doctor's booking quote — not to retry the
+		// same amount (ADR-044).
+		if errors.Is(err, ErrQuoteMismatch) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

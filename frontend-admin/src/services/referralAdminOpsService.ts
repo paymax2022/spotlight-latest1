@@ -415,7 +415,13 @@ export async function listPayouts(status?: string): Promise<Payout[]> {
   return getJson<Payout[]>(`/finance/payouts${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`);
 }
 export async function approvePayout(id: string, note: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+    // No endpoint exists for this action, so there is nothing this can do but
+    // say so. Returning a success value here told the operator the decision had
+    // been applied when nothing had — see docs/audit/ADMIN_SIMULATED_WRITES.md.
+    // Client-side validation above still runs, so bad input is still caught.
+    throw new Error(
+      'Referral payout approval is not available in this environment — no backend endpoint exists yet. Nothing was changed.',
+    );
   // Money mutation: backend requires Idempotency-Key + audit event.
   return sendJson<{ ok: true }>('POST', `/finance/payouts/${id}/approve`, { note }, true);
 }
@@ -666,4 +672,105 @@ export async function setAmbassadorStatus(id: string, status: AmbassadorDecision
     body: JSON.stringify({ status }),
   });
   if (!res.ok) throw new Error(await readAmbErr(res));
+}
+
+
+// ── Override policies (live) ─────────────────────────────────────────────────
+// GET /api/referral/admin/network/override-policies  (referral.network.view)
+//
+// The older getOverridePolicy() above targets /ambassadors/override-policy,
+// which no backend route serves, and its shape carries policy-level flags
+// (activity_based_only, max_depth, recruitment_earnings_blocked,
+// house_excluded_from_overrides) that no endpoint returns — they were mock
+// inventions. They are NOT reproduced here: rendering an unsourced
+// "Recruitment earnings: Blocked" tile asserts a compliance property the
+// system never actually reported.
+
+export interface OverridePolicyRow {
+  id: string;
+  tier: string;
+  /** Override rate in basis points; 200 bps = 2%. */
+  overrideBps: number;
+  perMemberCapKobo: number;
+  monthlyCapKobo: number;
+  isActive: boolean;
+}
+
+interface BackendOverridePolicy {
+  id: string;
+  tier: string;
+  override_bps: number;
+  per_member_cap_kobo: number;
+  monthly_cap_kobo: number;
+  is_active: boolean;
+}
+
+export async function listOverridePolicies(): Promise<OverridePolicyRow[]> {
+  const res = await fetch(`${adminBase()}/network/override-policies`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await readAmbErr(res));
+  const body = await res.json();
+  const rows = (body?.policies ?? body?.data?.policies ?? []) as BackendOverridePolicy[];
+  return rows
+    .map((p) => ({
+      id: p.id,
+      tier: p.tier,
+      overrideBps: p.override_bps ?? 0,
+      perMemberCapKobo: p.per_member_cap_kobo ?? 0,
+      monthlyCapKobo: p.monthly_cap_kobo ?? 0,
+      isActive: !!p.is_active,
+    }))
+    // The API returns tiers alphabetically (bronze, gold, platinum, silver),
+    // which reads as arbitrary in a ladder. Order by rate so the table climbs
+    // in tier order without hardcoding tier names the backend may add to.
+    .sort((a, b) => a.overrideBps - b.overrideBps);
+}
+
+
+// ── Agent networks (live) ────────────────────────────────────────────────────
+// GET /api/referral/admin/network/networks  (referral.amb.view)
+//
+// The older listNetworks() above targets /ambassadors/networks, which no
+// backend route served — the admin endpoint did not exist until it was added
+// alongside this. Its shape also carried depth / max_depth_cap /
+// verified_activity_kobo / override_paid_kobo, none of which the API returns.
+
+export interface AgentNetworkRow {
+  id: string;
+  leadUserId: string;
+  name: string;
+  networkType: string;
+  status: string;
+  memberCount: number;
+  /** Members excluded from override chains (house-attributed, §7A.2). */
+  houseAttributedCount: number;
+  createdAt: string;
+}
+
+interface BackendNetworkSummary {
+  id: string;
+  lead_user_id: string;
+  name: string;
+  network_type: string;
+  status: string;
+  created_at: string;
+  member_count: number;
+  house_attributed_count: number;
+}
+
+export async function listAgentNetworks(status?: string): Promise<AgentNetworkRow[]> {
+  const qs = status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : '';
+  const res = await fetch(`${adminBase()}/network/networks${qs}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await readAmbErr(res));
+  const body = await res.json();
+  const rows = (body?.networks ?? body?.data?.networks ?? []) as BackendNetworkSummary[];
+  return rows.map((n) => ({
+    id: n.id,
+    leadUserId: n.lead_user_id,
+    name: n.name,
+    networkType: n.network_type,
+    status: n.status,
+    memberCount: n.member_count ?? 0,
+    houseAttributedCount: n.house_attributed_count ?? 0,
+    createdAt: n.created_at,
+  }));
 }

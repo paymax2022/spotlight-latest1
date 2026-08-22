@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: Top5 CI
 
 # Verification gate for the Top-5 expansion (Savings, Social/Escrow, Events/
@@ -7,27 +13,7 @@ name: Top5 CI
 # vet/test, mobile + admin + web typecheck, additive-only migration guard.
 
 on:
-  push:
-    paths:
-      - 'backend/internal/{scheduler,escrow,cashtag,savings,social,credential,points,top5events,loyalty,creators,p2pmarket,spray}/**'
-      - 'backend/internal/app/top5_*.go'
-      - 'backend/internal/app/finance_routes.go'
-      - 'backend/internal/config/config.go'
-      - 'supabase/migrations/*top5*.sql'
-      - 'supabase/migrations/*_savings.sql'
-      - 'supabase/migrations/*_social.sql'
-      - 'supabase/migrations/*_creators.sql'
-      - 'supabase/migrations/*loyalty*.sql'
-      - 'frontend-admin/app/admin/{savings,social,events,loyalty,creators,social-escrow,loyalty-black}/**'
-      - 'frontend-admin/src/services/{savings,social,events,loyalty,creators,escrow,black}AdminService.ts'
-      - 'frontend-admin/src/components/layouts/AdminSidebar.tsx'
-      - 'frontend-web/app/api/v1/{savings,social,events,loyalty,creators,p2p,spray}/**'
-      - 'frontend-web/src/lib/feature-flags.ts'
-      - 'mobile-app/reactnative/app/{savings,social,events,loyalty,creators}/**'
-      - 'mobile-app/reactnative/src/features/{savings,social,events,loyalty,creators}/**'
-      - 'mobile-app/reactnative/src/constants/modules.ts'
-      - '.github/workflows/top5-ci.yml'
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -50,42 +36,6 @@ jobs:
         run: go test ./internal/{scheduler,escrow,cashtag,savings,social,credential,points,top5events,loyalty,creators,p2pmarket,spray}/... -count=1 -v
       - name: Test (all — regression)
         run: go test ./... -count=1
-
-  admin-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - run: npm run type-check
-
-  web-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - run: npx tsc --noEmit
-
-  mobile-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mobile-app/reactnative
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - run: npx tsc --noEmit -p tsconfig.json
 
   migration-guard:
     runs-on: ubuntu-latest

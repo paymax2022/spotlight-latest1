@@ -16,12 +16,12 @@ package fx_test
 //
 // The issuer is nil here (no provider calls) — this isolates the ledger money path.
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset (reuses liveDBPool from
+// SKIPPED whenever TEST_DATABASE_URL is unset (reuses liveDBPool from
 // convert_live_db_test.go), so `go test ./...` without a DB stays green.
 //
 // Bring-up: apply migrations incl. 20260621000000_fx_orchestration.sql and
 // 20261003000000_fx_cards_collections.sql, then:
-//   export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//   export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //   cd backend && go test ./tests/fx/... -run CardFunding -v
 // ---------------------------------------------------------------------------
 
@@ -85,7 +85,9 @@ func cardTxnCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cust, c
 func TestCardFunding_LiveDB(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t) // skips when no DB
-	defer pool.Close()
+	t.Cleanup(pool.Close) // registered first => closes LAST, after the row cleanup below.
+	// `defer pool.Close()` would run BEFORE any t.Cleanup and leave
+	// this test's rows stranded in the money tables.
 
 	cust := "fxcardtest_" + uuid.NewString()
 	const cur = "USD"

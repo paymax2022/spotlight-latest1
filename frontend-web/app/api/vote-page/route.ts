@@ -107,7 +107,7 @@ export async function GET(request: Request) {
     // 4. Parallel: packages, totals, share link, remaining votes
     const ip = getIp(request);
     const userId = await tryGetUserId(request);
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://spotlightng.com';
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
 
     const [packages, totals, shareLink, remaining, visibility] = await Promise.all([
       getActiveVotePackages(contestId),

@@ -147,7 +147,7 @@ export async function listReversals(opts?: { status?: string; q?: string }): Pro
 export async function reverseTxn(id: string, reason: string): Promise<ReverseTxnResult> {
   if (USE_MOCK) {
     await delay();
-    return { id, status: 'reversed', reversing_entry_id: `led_${Math.random().toString(36).slice(2, 10)}`, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Reversal ${id} posted as a balanced reversing ledger entry (NL-8: no balance is mutated directly). Recorded to immutable audit.` };
+    return { id, status: 'reversed', reversing_entry_id: `led_${Math.random().toString(36).slice(2, 10)}`, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Reversal ${id} posted as a balanced reversing ledger entry (NL-8: no balance is mutated directly).` };
   }
   return sendJson<ReverseTxnResult>('POST', `/reversals/${id}/reverse`, { reason });
 }
@@ -214,7 +214,7 @@ export async function reviewCashtag(id: string, decision: CashtagDecision, note?
       : decision === 'release_handle' ? 'reserved'
       : decision === 'verify' ? 'verified'
       : 'active';
-    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Cashtag ${id}: ${decision} applied. Impersonation guard enforced. Recorded to immutable audit.` };
+    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Cashtag ${id}: ${decision} applied. Impersonation guard enforced.` };
   }
   return sendJson<CashtagReviewResult>('POST', `/cashtags/${id}/review`, { decision, note });
 }

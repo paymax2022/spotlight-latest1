@@ -10,7 +10,17 @@ import type {
   ReconResult, Dividend, CorporateAction, ProviderHealth,
 } from '@/types/investAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_INVEST_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+// LIVE by default. Set NEXT_PUBLIC_INVEST_ADMIN_USE_MOCK=true for fixtures.
+//
+// Verified before flipping: every endpoint this service calls is registered at
+// /api/v1/admin/invest (internal/invest/routes.go) with matching methods —
+// GET assets/audit/corporate-actions/dividends/fees/orders/overview/providers,
+// POST assets, PATCH assets/:id, PUT fees, POST dividends, POST
+// corporate-actions, POST settlement/run.
+//
+// It mattered most for runSettlement, whose fixture branch returned 3 — rendered
+// to the operator as "3 settlements processed" while nothing ran.
+const USE_MOCK = (process.env.NEXT_PUBLIC_INVEST_ADMIN_USE_MOCK ?? 'false').toLowerCase() === 'true';
 
 function base(): string {
   // env.apiBaseUrl already ends with /api/v1

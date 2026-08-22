@@ -1213,3 +1213,151 @@ func generatePickupCode() string {
 	}
 	return string(b)
 }
+
+// ─── Owner order inbox ──────────────────────────────────────────────────────
+
+// maxOwnerOrderPage bounds a client-supplied page size. Without it, `limit` is a
+// lever for pulling the whole order table in one request.
+const maxOwnerOrderPage = 100
+const defaultOwnerOrderPage = 50
+
+// ListForOwner returns orders belonging to the pharmacies this user OWNS, newest
+// first, optionally narrowed to one state.
+//
+// This is the pharmacist's inbox, and until it existed a pharmacy could take
+// money (CreateOrder holds the payment) and complete a fulfilment lifecycle —
+// confirm → dispense → dispatch → complete — with no way to discover WHICH orders
+// were waiting: the only reads were GET /orders/:id, which needs an id you
+// already have, and an admin-only list.
+//
+// Scoping is by ownership, resolved server-side from health_providers; the caller
+// never names a pharmacy. An owner with no pharmacies gets an empty list, not
+// everyone's orders.
+//
+// pickup_code is deliberately NOT selected. Service.Get strips it for every
+// reader who is not the patient, because it is the credential the patient
+// presents at the counter — returning it here would hand the pharmacy the very
+// token it is meant to check against.
+func (s *Service) ListForOwner(ctx context.Context, ownerID, state string, limit, offset int) ([]Order, error) {
+	if limit <= 0 {
+		limit = defaultOwnerOrderPage
+	}
+	if limit > maxOwnerOrderPage {
+		limit = maxOwnerOrderPage
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	// State is bound as a parameter and compared only when non-empty, so an
+	// unknown value yields an empty page rather than an error or a wildcard.
+	const q = `
+		SELECT o.id, o.patient_id, o.pharmacy_provider_id, o.prescription_id, o.state,
+		       o.fulfilment_method, o.total_kobo, o.escrow_id, o.delivery_ref,
+		       o.idempotency_key, o.created_at
+		FROM pharmacy_orders o
+		JOIN health_providers hp ON hp.id = o.pharmacy_provider_id
+		WHERE hp.owner_user_id = $1
+		  AND ($2 = '' OR o.state = $2)
+		ORDER BY o.created_at DESC
+		LIMIT $3 OFFSET $4`
+
+	rows, err := s.db.Query(ctx, q, ownerID, state, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Non-nil so the handler serialises [] rather than null for an empty inbox.
+	out := []Order{}
+	for rows.Next() {
+		var o Order
+		var st, method string
+		if err := rows.Scan(&o.ID, &o.PatientID, &o.PharmacyProviderID, &o.PrescriptionID, &st,
+			&method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.IdempotencyKey, &o.CreatedAt); err != nil {
+			return nil, err
+		}
+		o.State = OrderState(st)
+		o.FulfilmentMethod = FulfilmentMethod(method)
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// EarningsForOwner totals what this owner's pharmacies have been paid and what is
+// still held for them.
+//
+// A pharmacy is paid by escrow RELEASE on completion, straight to the owner's
+// wallet — there is no payout-run batching as there is for restaurants. That made
+// the money invisible as a BUSINESS figure: the owner saw undifferentiated wallet
+// credits with no attribution to orders, and no idea how much was still held.
+//
+// Amounts come from escrow_holds rather than pharmacy_orders.total_kobo, because
+// the hold is the money record: it knows whether funds were released, refunded or
+// are still held, which the order's workflow state only implies.
+//
+// Scoped by ownership, resolved server-side. An owner with no pharmacies gets
+// zeros, not the platform's totals.
+func (s *Service) EarningsForOwner(ctx context.Context, ownerID string) (*PharmacyEarnings, error) {
+	const q = `
+		SELECT
+		  COALESCE(SUM(eh.amount_kobo) FILTER (WHERE eh.state = 'RELEASED'), 0),
+		  COALESCE(SUM(eh.amount_kobo) FILTER (WHERE eh.state = 'HELD'), 0),
+		  COUNT(*) FILTER (WHERE eh.state = 'RELEASED')
+		FROM pharmacy_orders o
+		JOIN health_providers hp ON hp.id = o.pharmacy_provider_id
+		JOIN escrow_holds     eh ON eh.id = o.escrow_id
+		WHERE hp.owner_user_id = $1`
+
+	var out PharmacyEarnings
+	if err := s.db.QueryRow(ctx, q, ownerID).
+		Scan(&out.ReleasedKobo, &out.HeldKobo, &out.OrdersPaid); err != nil {
+		return nil, fmt.Errorf("pharmacy: earnings: %w", err)
+	}
+	return &out, nil
+}
+
+// ListProductsForOwner returns every product belonging to the pharmacies this
+// user OWNS — including the ones customers cannot see.
+//
+// ListProducts is the CUSTOMER catalogue: it filters to
+// `active = true AND nafdac_status = 'REGISTERED'`, which is right for a shopper
+// and useless for a merchant. Under it an owner could write a product but never
+// read it back once it stopped being sellable: a line taken off sale vanished
+// from their own view, with no way to reprice, restock, or reactivate it, and a
+// product still awaiting NAFDAC verification was invisible to the person meant to
+// chase it.
+//
+// Managing stock means seeing all of it, so this deliberately applies NO status
+// filter. Scoped by ownership, resolved server-side — a rival's pricing and stock
+// levels are commercially sensitive, and an owner of nothing gets nothing.
+func (s *Service) ListProductsForOwner(ctx context.Context, ownerID string) ([]Product, error) {
+	const q = `
+		SELECT pr.id, pr.pharmacy_provider_id, COALESCE(hp.display_name, ''), pr.name, pr.nafdac_ref,
+		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty,
+		       pr.active, pr.created_at
+		FROM pharmacy_products pr
+		JOIN health_providers hp ON hp.id = pr.pharmacy_provider_id
+		WHERE hp.owner_user_id = $1
+		ORDER BY pr.active DESC, pr.name ASC
+		LIMIT 500`
+
+	rows, err := s.db.Query(ctx, q, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Non-nil so the handler serialises [] rather than null for an empty shelf.
+	out := []Product{}
+	for rows.Next() {
+		var p Product
+		if err := rows.Scan(&p.ID, &p.PharmacyProviderID, &p.PharmacyName, &p.Name, &p.NAFDACRef,
+			&p.NAFDACStatus, &p.RxRequired, &p.IsControlled, &p.PriceKobo, &p.StockQty,
+			&p.Active, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

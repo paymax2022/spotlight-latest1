@@ -73,7 +73,7 @@ export default function DisclosureTerms() {
               <Text style={styles.already}>You accepted these terms previously.</Text>
             ) : null}
 
-            <Pressable style={styles.checkRow} onPress={() => setAccepted((v) => !v)} accessibilityRole="checkbox" accessibilityState={{ checked: accepted }}>
+            <Pressable style={styles.checkRow} onPress={() => setAccepted((v) => !v)} accessibilityRole="checkbox" accessibilityState={{ checked: accepted }} aria-checked={accepted}>
               <View style={[styles.checkbox, accepted && styles.checkboxOn]}>{accepted && <Check size={14} color={Colors.onPrimary} strokeWidth={3} />}</View>
               <Text style={styles.checkLabel}>I have read and accept the fair-earning terms.</Text>
             </Pressable>

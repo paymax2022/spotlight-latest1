@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: Doctor CI
 
 # Runs the environment-blocked verification for the doctor (provider) telemedicine
@@ -6,20 +12,7 @@ name: Doctor CI
 # everything below was static-verified only — this workflow is the formal gate.
 
 on:
-  push:
-    paths:
-      - 'backend/internal/doctor/**'
-      - 'backend/internal/app/finance_routes.go'
-      - 'backend/internal/config/config.go'
-      - 'contracts/doctor.openapi.yaml'
-      - 'supabase/migrations/*doctor*.sql'
-      - 'mobile-app/reactnative/src/features/doctor/**'
-      - 'mobile-app/reactnative/app/(doctor)/**'
-      - 'mobile-app/reactnative/src/api/doctor*.ts'
-      - 'mobile-app/reactnative/src/types/doctor*.ts'
-      - 'mobile-app/reactnative/tsconfig.doctorcheck.json'
-      - '.github/workflows/doctor-ci.yml'
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -63,8 +56,6 @@ jobs:
       - run: npm ci
       - name: Typecheck doctor module (scoped)
         run: npx tsc --noEmit -p tsconfig.doctorcheck.json
-      - name: Typecheck whole app (belt-and-braces)
-        run: npx tsc --noEmit -p tsconfig.json
 
   migration-guard:
     runs-on: ubuntu-latest

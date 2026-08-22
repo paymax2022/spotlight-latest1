@@ -158,11 +158,16 @@ type Config struct {
 	FeatureEstateEnabled          bool
 	FeatureCrowdfundingEnabled    bool
 	FeatureRestaurantEnabled      bool
-	FeatureNutritionEnabled       bool // Nutrition Resolution Engine (NRE)
-	FeatureTelemedicineEnabled    bool
-	FeatureVoteBridgeEnabled      bool
-	FeatureTransportEnabled       bool
-	FeatureTransportModesEnabled  bool // parcel/bus/towing/movers/car-hire expansion
+	// FeatureModuleGateEnforce turns the server-side module gate from observe-only
+	// (logs what it would refuse) into enforcing (503s unpublished modules). Default
+	// false: the gate's route map is hand-built and must be validated against real
+	// traffic before it can refuse anything.
+	FeatureModuleGateEnforce     bool
+	FeatureNutritionEnabled      bool // Nutrition Resolution Engine (NRE)
+	FeatureTelemedicineEnabled   bool
+	FeatureVoteBridgeEnabled     bool
+	FeatureTransportEnabled      bool
+	FeatureTransportModesEnabled bool // parcel/bus/towing/movers/car-hire expansion
 	// Transport Trip Scheduling: schedule a future logistics movement (ride/parcel/
 	// airport/bus) that the transport-scheduler worker materializes + escrows at a
 	// lead time before pickup. DEFAULT OFF. Gates the member /api/finance/mobility/
@@ -182,7 +187,22 @@ type Config struct {
 	FeaturePharmacySymptomSearchEnabled bool
 	FeatureOnboardingEnabled            bool
 	FeatureInvestEnabled                bool // stock-trading (Paymax Invest) module
-	FeatureInvestPINDevBypass           bool // dev only: accept any well-formed PIN
+
+	// AI-trading fund (backend/internal/trading). Two gates, matching the
+	// module's own contract:
+	//   FeatureTradingEnabled   – mounts Module-KYC + fund wallet (subscribe/redeem).
+	//   FeatureAITradingEnabled – ALSO exposes the decision pipeline (/evaluate)
+	//                             and the promotion-ladder admin routes.
+	// Neither executes a real venue order in this build; cash moves only through
+	// the finance ledger.
+	FeatureTradingEnabled   bool
+	FeatureAITradingEnabled bool
+
+	// Performance-fee terms for the fund, in basis points. TradingFeeBps must be
+	// in (0,10000] or PerformanceFee fails closed and charges nothing.
+	TradingFeeBps             int  // e.g. 2000 = 20% performance fee
+	TradingHurdleBps          int  // 0 = pure high-water-mark, no hurdle
+	FeatureInvestPINDevBypass bool // dev only: accept any well-formed PIN
 	// Invest provider adapters — when a base URL is set the real HTTP adapter is
 	// used; otherwise the deterministic mock is used (mock-first, real last).
 	InvestMarketDataBaseURL   string
@@ -222,6 +242,20 @@ type Config struct {
 	// Crypto buy/sell module. DEFAULT OFF. Gates the /api/v1/crypto[/admin] surface
 	// (internal/crypto): mock-first price feed, reuses the finance ledger.
 	FeatureCryptoEnabled bool
+
+	// FeatureTelemedicinePlatformFeeEnabled turns on the platform booking fee
+	// charged on top of a doctor's consultation fee (ADR-044). Default OFF: it is a
+	// patient-visible price increase, so it is opt-in, and switching it off is the
+	// rollback — the app renders whatever quote the server returns, so no client
+	// release is needed either way.
+	FeatureTelemedicinePlatformFeeEnabled bool
+
+	// FeatureCheckoutTopupTier0 lets an UNVERIFIED (Tier 0) account pay for a
+	// purchase under a capped allowance (ADR-042 funds it, ADR-043 lets it be
+	// spent). This MUST be the same value as frontend-web's
+	// FEATURE_CHECKOUT_TOPUP_TIER0: enabling only the funding half charges a
+	// customer for a purchase that is then refused at escrow. Default OFF.
+	FeatureCheckoutTopupTier0 bool
 
 	// ── Business Registry (CAC business-name verification + registration) ─────
 	// Gates the member /api/finance/business/* + admin /api/business/admin/*
@@ -294,12 +328,18 @@ type Config struct {
 	// Top-5 expansion modules (no-new-licence; ride existing wallet/ledger rails).
 	// DEFAULT OFF. Each gates /api/finance/<mod> + /api/<mod>/admin (internal/<mod>).
 	// (FeatureEventsEnabled is declared once above with the other module flags.)
-	FeatureSocialPayEnabled  bool // Social Payments & P2P Escrow
-	FeatureP2PMarketEnabled  bool // P2P Marketplace
-	FeatureSavingsEnabled    bool // Group & Goal Savings (Ajo/Esusu)
-	FeatureCreatorsEnabled   bool // Creator & Talent Monetisation
-	FeatureLoyaltyEnabled    bool // Unified Loyalty & Paymax Black
-	FeatureCommissionEnabled bool // Central Commission & Profit management
+	FeatureSocialPayEnabled bool // Social Payments & P2P Escrow
+	FeatureP2PMarketEnabled bool // P2P Marketplace
+	FeatureSavingsEnabled   bool // Group & Goal Savings (Ajo/Esusu)
+
+	// SavingsEarlyBreakPenaltyBps is the fee for breaking a LOCK vault before
+	// maturity, in basis points (1000 = 10%). MUST stay server-side: it used to
+	// be read from the request body, so a member could break a lock for free by
+	// sending 0.
+	SavingsEarlyBreakPenaltyBps int
+	FeatureCreatorsEnabled      bool // Creator & Talent Monetisation
+	FeatureLoyaltyEnabled       bool // Unified Loyalty & Paymax Black
+	FeatureCommissionEnabled    bool // Central Commission & Profit management
 
 	// Health verticals (marketplace; licensed partners deliver care). DEFAULT OFF.
 	// FeatureHealthEnabled gates the shared platform (internal/health/*); the
@@ -446,7 +486,7 @@ type Config struct {
 	// ── Notification providers ────────────────────────────────────────────────
 	// Resend: email delivery. Key from resend.com dashboard.
 	ResendAPIKey    string
-	ResendFromEmail string // e.g. "Paymax <noreply@mail.paymax.ng>"
+	ResendFromEmail string // must be @spotlightng.com — the only domain verified on the Resend account
 	// Termii: SMS delivery. Key from termii.com dashboard.
 	TermiiAPIKey   string
 	TermiiSenderID string // approved sender ID
@@ -580,6 +620,7 @@ func Load() Config {
 		FeatureEstateEnabled:                  getEnvBool("FEATURE_ESTATE_ENABLED", false),
 		FeatureCrowdfundingEnabled:            getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:              getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
+		FeatureModuleGateEnforce:              getEnvBool("FEATURE_MODULE_GATE_ENFORCE", false),
 		FeatureNutritionEnabled:               getEnvBool("FEATURE_NUTRITION_ENABLED", false),
 		FeatureTelemedicineEnabled:            getEnvBool("FEATURE_TELEMEDICINE_ENABLED", false),
 		FeatureVoteBridgeEnabled:              getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
@@ -618,6 +659,8 @@ func Load() Config {
 		FeaturePropertySuiteEnabled:           getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
 		FeatureFractionalREEnabled:            getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
 		FeatureCryptoEnabled:                  getEnvBool("FEATURE_CRYPTO_ENABLED", false),
+		FeatureTelemedicinePlatformFeeEnabled: getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
+		FeatureCheckoutTopupTier0:             getEnvBool("FEATURE_CHECKOUT_TOPUP_TIER0", false),
 		FeatureBusinessRegistryEnabled:        getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
 		CACVASBaseURL:                         getEnv("CAC_VAS_BASE_URL", ""),
 		CACVASApiKey:                          getEnv("CAC_VAS_API_KEY", ""),
@@ -636,6 +679,11 @@ func Load() Config {
 		FeatureSocialPayEnabled:               getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
 		FeatureP2PMarketEnabled:               getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
 		FeatureSavingsEnabled:                 getEnvBool("FEATURE_SAVINGS_ENABLED", false),
+		FeatureTradingEnabled:                 getEnvBool("FEATURE_TRADING_ENABLED", false),
+		FeatureAITradingEnabled:               getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
+		TradingFeeBps:                         getEnvInt("TRADING_FEE_BPS", 2000),
+		TradingHurdleBps:                      getEnvInt("TRADING_HURDLE_BPS", 0),
+		SavingsEarlyBreakPenaltyBps:           getEnvInt("SAVINGS_EARLY_BREAK_PENALTY_BPS", 1000),
 		FeatureCreatorsEnabled:                getEnvBool("FEATURE_CREATORS_ENABLED", false),
 		FeatureLoyaltyEnabled:                 getEnvBool("FEATURE_LOYALTY_ENABLED", false),
 		FeatureCommissionEnabled:              getEnvBool("FEATURE_COMMISSION_ENABLED", false),
@@ -706,7 +754,7 @@ func Load() Config {
 		BillingWebhookSecret: getEnv("BILLING_WEBHOOK_SECRET", ""),
 
 		ResendAPIKey:    getEnv("RESEND_API_KEY", ""),
-		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Paymax <noreply@mail.paymax.ng>"),
+		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Spotlight <no-reply@spotlightng.com>"),
 		TermiiAPIKey:    getEnv("TERMII_API_KEY", ""),
 		TermiiSenderID:  getEnv("TERMII_SENDER_ID", "Paymax"),
 		ExpoPushToken:   getEnv("EXPO_PUSH_TOKEN", ""),

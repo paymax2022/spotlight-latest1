@@ -14,9 +14,12 @@ import { Spacing } from '@/constants/spacing';
 import { useAuthStore } from '@/store/authStore';
 import { getErrorMessage } from '@/utils/errorMapper';
 
+// Sign in with EITHER an email or a phone number. The field is validated loosely on
+// purpose: the server decides what resolves to an account, and a strict client-side
+// phone regex would reject valid formats users type (+234…, 0803…, spaces, dashes).
 const schema = z.object({
-  email:    z.string().email('Enter a valid email'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  identifier: z.string().trim().min(3, 'Enter your email or phone number'),
+  password:   z.string().min(6, 'Password must be at least 6 characters'),
 });
 type Form = z.infer<typeof schema>;
 
@@ -32,7 +35,7 @@ export default function LoginScreen() {
   const onSubmit = async (values: Form) => {
     setApiError('');
     try {
-      await login(values.email, values.password);
+      await login(values.identifier, values.password);
       // Navigate to the originating module screen, or the home grid as fallback.
       // Validate returnTo starts with "/" to prevent open-redirect.
       const dest = (typeof returnTo === 'string' && returnTo.startsWith('/'))
@@ -47,16 +50,19 @@ export default function LoginScreen() {
   return (
     <AuthScreenWrapper title="Welcome back" subtitle="Sign in to continue to your Paymax account.">
       <Controller
-        name="email"
+        name="identifier"
         control={control}
         render={({ field }) => (
           <TextInputField
-            label="Email address"
-            placeholder="you@example.com"
+            label="Email or phone number"
+            placeholder="you@example.com or 0803 000 0000"
+            // 'email-address' rather than a numeric pad: this one field takes either,
+            // and a numeric keyboard would make the email case unusable.
             keyboardType="email-address"
             autoCapitalize="none"
+            autoCorrect={false}
             leftIcon={<Mail size={18} color={Colors.outline} strokeWidth={1.8} />}
-            error={errors.email?.message}
+            error={errors.identifier?.message}
             value={field.value}
             onChangeText={field.onChange}
           />

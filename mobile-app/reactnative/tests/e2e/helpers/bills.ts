@@ -63,6 +63,19 @@ async function requestJson(route: Route) {
 }
 
 export async function mockBillsCatalog(page: Page, captured = createCapturedRequests()) {
+  // Provider logos are fetched by every /services/* screen. getProviderLogos()
+  // swallows its own errors, but the axios interceptor in src/api/client.ts runs
+  // FIRST and signs the user out on any 401 — so leaving this unmocked bounced
+  // the whole bills suite to /login mid-flow. Serving an empty list is enough:
+  // the screens fall back to their built-in provider art.
+  await page.route('**/api/v1/utility/logos**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ data: { services: [] } }),
+    });
+  });
+
   await page.route('**/rest/v1/utility_billers**', async (route) => {
     const url = route.request().url();
     if (url.includes('code=eq.MTN')) return fulfillRaw(route, { id: 'net-mtn' });
@@ -364,6 +377,37 @@ export async function mockTransactions(page: Page) {
       supportMessage: 'Your transaction is pending provider confirmation.',
       createdAt: '2026-06-14T09:20:00.000Z',
     },
+    // Terminal-failure + in-flight rows for the retry/polling states. The detail
+    // screen reads via Supabase (getTransactionById → rest/v1/utility_transactions),
+    // NOT the REST transactions route, so a row has to exist here or `.single()`
+    // resolves to nothing and the screen falls back to empty defaults.
+    'tx-provider-failed': {
+      transactionId: 'tx-provider-failed',
+      reference: 'PMX-FAILED-001',
+      status: 'FAILED',
+      serviceType: 'AIRTIME',
+      amount: 500,
+      charges: 0,
+      totalAmount: 500,
+      customerIdentifier: validIdentifiers.phone,
+      providerName: 'MTN',
+      productName: 'Airtime',
+      supportMessage: 'The provider could not complete this transaction.',
+      createdAt: '2026-06-14T09:30:00.000Z',
+    },
+    'tx-processing': {
+      transactionId: 'tx-processing',
+      reference: 'PMX-PROCESSING-001',
+      status: 'PROCESSING',
+      serviceType: 'AIRTIME',
+      amount: 500,
+      charges: 0,
+      totalAmount: 500,
+      customerIdentifier: validIdentifiers.phone,
+      providerName: 'MTN',
+      productName: 'Airtime',
+      createdAt: '2026-06-14T09:35:00.000Z',
+    },
   };
 
   await page.route('**/transactions', async (route) => {
@@ -484,12 +528,16 @@ export async function completeDataPurchase(page: Page) {
   await page.goto('/services/data');
   await page.getByText('MTN').first().click();
   await page.getByPlaceholder('0801 234 5678').fill(validIdentifiers.phone);
-  await page.getByText('3GB Weekly').first().click();
+  // Plans live behind a SelectField ("Choose Plan"), not an inline list — open it
+  // first, then pick the option. Its label is "<name> · <allowance> · <validity> — ₦<price>",
+  // so match on the plan name rather than the whole string.
+  await page.getByText('Select a data plan').click();
+  await page.getByText(/3GB Weekly/).first().click();
   await page.getByText('Review Purchase').click();
   await expect(page.getByText('Confirm Purchase')).toBeVisible();
   await page.getByPlaceholder('Enter 4-digit PIN').fill('1234');
   await page.mouse.wheel(0, 900);
-  await page.getByText('Confirm & Pay').click();
+  await page.getByText('Confirm & Pay').last().click();
 }
 
 export async function validateElectricityMeter(page: Page, type: 'Prepaid' | 'Postpaid' = 'Prepaid') {

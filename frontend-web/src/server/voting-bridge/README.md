@@ -9,7 +9,7 @@ The vote bridge solves two critical race conditions in the legacy voting system:
 1. **Free Vote TOCTOU** — Concurrent duplicate votes from identical requests
 2. **Paid Vote Double-Credit** — Webhook + browser redirect both crediting the same vote
 
-See `docs/adr/ADR-001-vote-bridge-idempotency.md` for detailed architecture.
+See `docs/adr/ADR-037-vote-bridge-idempotency.md` for detailed architecture.
 
 ## Architecture
 
@@ -384,8 +384,8 @@ No data loss; `votes` table is retained as audit trail.
 
 ## Related Documentation
 
-- `docs/adr/ADR-001-vote-bridge-idempotency.md` — Architecture & TOCTOU mitigation
-- `docs/adr/ADR-002-vote-engine-deprecation.md` — Production engine status
+- `docs/adr/ADR-037-vote-bridge-idempotency.md` — Architecture & TOCTOU mitigation
+- `docs/adr/ADR-038-vote-engine-deprecation.md` — Production engine status
 - `CONTEST_API_INTEGRATION.md` — Mobile/web API integration guide
 - `MOBILE_WEB_ADMIN_SYNC.md` — Multi-platform voting sync
 

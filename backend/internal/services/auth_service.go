@@ -69,8 +69,70 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) error {
 	return nil
 }
 
+// resolveLoginEmail turns a client-supplied identifier into the account email.
+//
+// A phone is resolved SERVER-SIDE and the email is never returned to the caller. A
+// public "phone -> email" endpoint would be an enumeration oracle: anyone could walk a
+// range of numbers and harvest the address behind each. Resolving inside the login call
+// means a wrong phone is indistinguishable from a wrong password.
+//
+// Stored phones are not normalised, so the match is on the last 10 digits (see
+// NormalizePhone and the user_profiles_phone_nsn_idx functional index).
+func (s *authService) resolveLoginEmail(identifier, fallbackEmail string) string {
+	id := strings.TrimSpace(identifier)
+	if id == "" {
+		return strings.TrimSpace(strings.ToLower(fallbackEmail))
+	}
+	if LooksLikeEmail(id) {
+		return strings.ToLower(id)
+	}
+	nsn := NormalizePhone(id)
+	if nsn == "" {
+		return "" // not an email, not a usable phone — no match
+	}
+	return s.phoneToEmail(nsn)
+}
+
+// phoneToEmail finds the account email behind a normalised 10-digit national number.
+//
+// PostgREST cannot express "last 10 digits of a de-punctuated column", so the match is
+// done here: fetch the candidate rows whose stored phone ENDS in those digits (a
+// `like` PostgREST can index-assist), then confirm with the same normalisation the
+// caller used. Returns "" on no match or ambiguity — two accounts sharing a number is
+// a data problem, and guessing between them would sign somebody into the wrong account.
+func (s *authService) phoneToEmail(nsn string) string {
+	var rows []map[string]any
+	if err := s.supabase.REST(http.MethodGet, "user_profiles", map[string]string{
+		"phone":  "like.*" + nsn,
+		"select": "email,phone",
+		"limit":  "5",
+	}, nil, &rows); err != nil {
+		return ""
+	}
+	var found string
+	for _, r := range rows {
+		if NormalizePhone(asString(r["phone"])) != nsn {
+			continue
+		}
+		email := strings.ToLower(strings.TrimSpace(asString(r["email"])))
+		if email == "" {
+			continue
+		}
+		if found != "" && found != email {
+			return "" // ambiguous — refuse rather than pick
+		}
+		found = email
+	}
+	return found
+}
+
 func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) {
-	email := strings.TrimSpace(strings.ToLower(in.Email))
+	email := s.resolveLoginEmail(in.Identifier, in.Email)
+	if email == "" {
+		// Same error the wrong-password path returns, deliberately: a distinct
+		// "no such account" would leak which phone numbers are registered.
+		return nil, fmt.Errorf("invalid credentials")
+	}
 	user, err := s.findPlatformUserByEmail(email)
 	if err == nil && user != nil {
 		if err := s.validateLoginStatus(user); err != nil {

@@ -71,11 +71,19 @@ func (s *Service) Escrow(ctx context.Context, payerID, reference, idempotencyKey
 	if _, err = s.db.Exec(ctx, insert, sett.ID, sett.Reference, sett.ModuleType, sett.PayerID, sett.TotalKobo, sett.EscrowedAt, sett.IdempotencyKey); err != nil {
 		return nil, fmt.Errorf("settlement: insert escrow row: %w", err)
 	}
-	// Resolve the authoritative id/status (handles the retry case where the row was
-	// inserted by a prior attempt).
+	// Resolve the authoritative id/status/total (handles the retry case where the
+	// row was inserted by a prior attempt).
+	//
+	// total_kobo is re-read, NOT echoed from the argument: on a replay the existing
+	// row wins, and it may have been escrowed for a DIFFERENT amount than this
+	// attempt computed (e.g. a marketplace price changed between attempts). Callers
+	// persist their own copy of the amount, so handing them the argument they passed
+	// would let their record diverge from the money actually held in escrow. Compare
+	// the returned TotalKobo against what you intended to charge and fail closed on a
+	// mismatch.
 	if err = s.db.QueryRow(ctx,
-		`SELECT id, status FROM settlements WHERE idempotency_key=$1`, idempotencyKey,
-	).Scan(&sett.ID, &sett.Status); err != nil {
+		`SELECT id, status, total_kobo FROM settlements WHERE idempotency_key=$1`, idempotencyKey,
+	).Scan(&sett.ID, &sett.Status, &sett.TotalKobo); err != nil {
 		return nil, fmt.Errorf("settlement: resolve escrow row: %w", err)
 	}
 	return sett, nil
@@ -106,43 +114,15 @@ func (s *Service) Settle(ctx context.Context, settlementID string, split Split) 
 	if sett.Status != StatusEscrowed {
 		return fmt.Errorf("settlement: cannot settle — current status is %s", sett.Status)
 	}
-	// A tip larger than what was escrowed would drive the non-tip base (and thus the
-	// provider remainder) negative. Fail closed — the tip can never exceed the total.
-	if split.TipKobo+split.ServiceFeeKobo > sett.TotalKobo {
-		return fmt.Errorf("settlement: tip %d + service fee %d exceed escrowed total %d", split.TipKobo, split.ServiceFeeKobo, sett.TotalKobo)
+	// The split arithmetic — including every fail-closed bound (fixed legs may not
+	// exceed the escrowed total; no leg may go negative) — lives in ComputeLegs, so
+	// that the tests exercise the same expression this moves money by rather than a
+	// copy of it. See settlement/model.go.
+	legs, err := ComputeLegs(sett.TotalKobo, split)
+	if err != nil {
+		return err
 	}
-
-	// Compute splits. The percentages apply to the pre-discount GROSS (the item+delivery
-	// value before any promo), NOT to the escrowed total. Two amounts already sit inside
-	// the escrowed total: a tip (a fixed rider leg on top) and a promo discount (already
-	// deducted from what the payer paid). Reconstructing the gross:
-	//
-	//	base  = total − tip            (escrow beyond the tip = gross − discount)
-	//	gross = base + discount        (pre-discount base+delivery the percentages price)
-	//
-	// The discount is borne by exactly one party: platform-funded → subtracted from the
-	// platform leg; otherwise it falls out of the provider remainder. The rider never
-	// funds it and always gets its gross share + the full tip. With tip == 0 AND
-	// discount == 0, gross == base == total and this is the pure percentage split —
-	// unchanged for every caller that sets neither.
-	base := sett.TotalKobo - split.TipKobo - split.ServiceFeeKobo
-	gross := base + split.DiscountKobo
-	platformKobo := int64(float64(gross)*split.PlatformPct) + split.ServiceFeeKobo
-	if split.DiscountFundedByPlatform {
-		platformKobo -= split.DiscountKobo
-	}
-	riderKobo := int64(0)
-	if split.RiderID != nil {
-		riderKobo = int64(float64(gross)*split.RiderPct) + split.TipKobo
-	}
-	providerKobo := sett.TotalKobo - platformKobo - riderKobo
-
-	// Fail closed if any leg would go negative — a discount larger than the funder's
-	// gross share must never silently invert a payout (platform-funded drives the
-	// platform leg negative; provider-funded drives the provider remainder negative).
-	if platformKobo < 0 || riderKobo < 0 || providerKobo < 0 {
-		return fmt.Errorf("settlement: split produced a negative leg (provider=%d platform=%d rider=%d) — discount too large for the funder", providerKobo, platformKobo, riderKobo)
-	}
+	providerKobo, platformKobo, riderKobo := legs.ProviderKobo, legs.PlatformKobo, legs.RiderKobo
 
 	// ATOMICITY FIX (money invariant): previously the provider/rider credits went
 	// through s.ledger.Credit (which posts on the ledger's OWN connection), while the

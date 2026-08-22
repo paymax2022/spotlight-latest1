@@ -22,8 +22,17 @@ export interface Restaurant {
   etaLabel: string;
   /** Minimum order in kobo. */
   minOrderKobo: Kobo;
-  /** Delivery fee in kobo (server-supplied; never computed in the app). */
-  deliveryFeeKobo: Kobo;
+  /**
+   * Flat delivery fee in kobo, when one is known.
+   *
+   * OPTIONAL because the live discovery DTO has no such field and `restaurants`
+   * has no such column — the real fee is distance-based and comes from the
+   * delivery-quote endpoint. Only the mock sets it. It was previously required,
+   * so every live restaurant read `undefined ?? 0` and the UI rendered a
+   * confident ₦0 for a fee nobody had quoted. Treat absent as UNKNOWN, never as
+   * free.
+   */
+  deliveryFeeKobo?: Kobo;
   /**
    * Price of one mandatory take-away pack, in kobo. The customer pays for one
    * pack per food item so the restaurant can package the order; charged on
@@ -79,6 +88,18 @@ export interface CartLine {
   isProtein?: boolean;
   /** Restaurant ID for this item (enables multi-restaurant orders). */
   restaurantId?: string;
+  /**
+   * Restaurant name, captured when the item was added.
+   *
+   * The cart already groups by `restaurantId`, but the store keeps only ONE
+   * `restaurantName` — the first restaurant added — so checkout could name a
+   * single section and fell back to "Restaurant 2/3/4" for the rest. The name
+   * is available at add time, so recording it per line removes the guess.
+   *
+   * Optional because carts hydrated from storage or the server predate this
+   * field; checkout resolves those from the discovery list instead.
+   */
+  restaurantName?: string;
 }
 
 /**

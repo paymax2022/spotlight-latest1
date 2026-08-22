@@ -18,18 +18,36 @@ name: DB Migrate (Supabase db push)
 #   3. (Recommended) Configure the `production` environment with required
 #      reviewers so each apply needs a human approval.
 #
+# ── STAGING ──────────────────────────────────────────────────────────────────
+# The staging apply is the same shape, gated on its own secrets/variable so it
+# can go live independently of production:
+#        SUPABASE_STAGING_PROJECT_ID    the staging project ref
+#        SUPABASE_STAGING_DB_PASSWORD   the staging database password
+#      repo variable:  DB_MIGRATE_STAGING_ENABLED = true
+#      GitHub environment: `staging`
+# SUPABASE_ACCESS_TOKEN is shared (it is an account token, not per-project).
+#
+# Staging and production are two JOBS in THIS workflow, not two workflows, so a
+# push still costs one workflow run. Each job selects itself by branch:
+# main → production, staging → staging.
+#
 # Until DB_MIGRATE_ENABLED == 'true', the apply job is SKIPPED on push (never
 # red). `workflow_dispatch` can always be used to dry-run (list pending) for
 # testing the credentials/link before enabling.
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
     paths:
       - 'supabase/migrations/**'
       - '.github/workflows/db-migrate.yml'
   workflow_dispatch:
     inputs:
+      target:
+        description: 'Which database to act on'
+        type: choice
+        options: [staging, production]
+        default: staging
       dry_run:
         description: 'List pending migrations only — do not apply'
         type: boolean
@@ -54,7 +72,9 @@ jobs:
     needs: guard
     # Dormant on push until explicitly enabled; workflow_dispatch always allowed
     # (for credential/link dry-runs).
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.DB_MIGRATE_ENABLED == 'true' }}
+    if: >-
+      ${{ (github.event_name == 'workflow_dispatch' && inputs.target == 'production')
+       || (github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DB_MIGRATE_ENABLED == 'true') }}
     runs-on: ubuntu-latest
     environment: production # holds the secrets; add required reviewers to gate applies
     env:
@@ -64,9 +84,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # PINNED ON PURPOSE — do not "modernise" this back to `latest`.
+      # The step below runs `supabase db push --linked` against PRODUCTION. With
+      # `latest` the CLI that touches the production database is whatever Supabase
+      # shipped that morning, so an unreviewed upstream release could change apply
+      # semantics on a run nobody chose to take. Pinning makes the production
+      # migration path reproducible and puts CLI upgrades behind a reviewed commit.
+      # Keep this in step with the pin in maps-ci.yml so local replays and the
+      # production push cannot disagree about how a migration applies.
+      # Bump deliberately: raise the version, let maps-ci's PostGIS job replay the
+      # whole chain green, then merge.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.114.0
 
       - name: Check required secrets are present
         run: |
@@ -82,6 +112,62 @@ jobs:
 
       - name: Apply migrations (db push)
         # Skip the apply on a workflow_dispatch dry-run; always apply on push.
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        run: supabase db push --linked
+
+      - name: Dry-run notice
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: echo "Dry-run only - listed pending migrations, nothing applied."
+
+  apply-staging:
+    name: supabase db push (staging)
+    needs: guard
+    # Selects itself by branch, so a push to main can never reach the staging
+    # database and a push to staging can never reach production.
+    if: >-
+      ${{ (github.event_name == 'workflow_dispatch' && inputs.target == 'staging')
+       || (github.event_name == 'push' && github.ref == 'refs/heads/staging' && vars.DB_MIGRATE_STAGING_ENABLED == 'true') }}
+    runs-on: ubuntu-latest
+    environment: staging # holds the staging secrets
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_STAGING_DB_PASSWORD }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_STAGING_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # PINNED, and deliberately the SAME pin as the production job above: if the
+      # two jobs could disagree about how a migration applies, a chain that went
+      # green on staging would prove nothing about production. Bump both together.
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.114.0
+
+      - name: Check required secrets are present
+        run: |
+          : "${SUPABASE_ACCESS_TOKEN:?missing secret SUPABASE_ACCESS_TOKEN}"
+          : "${SUPABASE_PROJECT_ID:?missing secret SUPABASE_STAGING_PROJECT_ID}"
+          : "${SUPABASE_DB_PASSWORD:?missing secret SUPABASE_STAGING_DB_PASSWORD}"
+
+      - name: Refuse to run against a production project
+        # A copy-pasted secret is the realistic way staging ends up pointed at
+        # production, and `db push` would then apply to it unnoticed. Fail loudly.
+        env:
+          PROD_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+        run: |
+          if [ -n "$PROD_ID" ] && [ "$SUPABASE_PROJECT_ID" = "$PROD_ID" ]; then
+            echo "::error::SUPABASE_STAGING_PROJECT_ID equals the production project ref — refusing to push."
+            exit 1
+          fi
+          echo "Staging project ref is distinct from production."
+
+      - name: Link project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+
+      - name: Show pending migrations (informational)
+        run: supabase migration list --linked || true
+
+      - name: Apply migrations (db push)
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         run: supabase db push --linked
 

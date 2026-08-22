@@ -198,7 +198,7 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
       if (!amountValue || amountValue < 100) {
         throw new Error('Enter an amount of at least ₦100.');
       }
-      return initiateFunding({ amount: Math.round(amountValue * 100) });
+      return initiateFunding({ amountKobo: Math.round(amountValue * 100) });
     },
     onSuccess: async (result) => {
       if (!result.authorizationUrl) {

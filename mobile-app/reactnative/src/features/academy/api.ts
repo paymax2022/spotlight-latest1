@@ -26,6 +26,9 @@ import type {
   Question,
   PracticeSubmission,
   PracticeResult,
+  PlacementQuiz,
+  PlacementResult,
+  PlacementSubjectScore,
   MasterySnapshot,
   ExamArena,
   ExamBlueprint,
@@ -656,6 +659,122 @@ export async function submitPractice(sub: PracticeSubmission): Promise<PracticeR
   }
   const { data } = await api.post<PracticeResult>(`${B}/practice/submit`, sub);
   return data;
+}
+
+// ── Onboarding placement quiz ─────────────────────────────────────────────────
+// Curriculum-grounded diagnostic. Live: GET/POST ${B}/placement (the Go engine
+// assembles per-subject questions from the NERDC question bank and scores them).
+// Mock: a compact curriculum-flavoured bank mirroring the backend seed so the
+// onboarding flow is demoable offline (USE_MOCK default true).
+
+type MockPQ = {
+  id: string;
+  stem: string;
+  options: { id: string; text: string }[];
+  correct: string[];
+  subjectCode: string;
+  subjectName: string;
+};
+
+const MOCK_PLACEMENT_GENERIC: MockPQ[] = [
+  { id: 'pl-gen-eng', subjectCode: 'ENG', subjectName: 'English', correct: ['b'],
+    stem: 'Which word is a verb in: "The girl reads a book"?',
+    options: [{ id: 'a', text: 'girl' }, { id: 'b', text: 'reads' }, { id: 'c', text: 'book' }, { id: 'd', text: 'the' }] },
+  { id: 'pl-gen-mth', subjectCode: 'MTH', subjectName: 'Mathematics', correct: ['c'],
+    stem: 'What is 8 + 7?',
+    options: [{ id: 'a', text: '13' }, { id: 'b', text: '14' }, { id: 'c', text: '15' }, { id: 'd', text: '16' }] },
+];
+
+const MOCK_PLACEMENT_BANK: Record<string, MockPQ[]> = {
+  P4: [
+    { id: 'pl-p4-eng', subjectCode: 'ENG', subjectName: 'English Studies', correct: ['b'],
+      stem: 'Which word is the VERB in: "The boy runs fast"?',
+      options: [{ id: 'a', text: 'boy' }, { id: 'b', text: 'runs' }, { id: 'c', text: 'fast' }, { id: 'd', text: 'the' }] },
+    { id: 'pl-p4-mth', subjectCode: 'MTH', subjectName: 'Mathematics', correct: ['a'],
+      stem: 'What is 1/4 + 1/4?',
+      options: [{ id: 'a', text: '1/2' }, { id: 'b', text: '1/8' }, { id: 'c', text: '2/16' }, { id: 'd', text: '1/4' }] },
+    { id: 'pl-p4-sci', subjectCode: 'BST', subjectName: 'Basic Science & Tech', correct: ['c'],
+      stem: 'Which of these is a GAS at room temperature?',
+      options: [{ id: 'a', text: 'water' }, { id: 'b', text: 'ice' }, { id: 'c', text: 'oxygen' }, { id: 'd', text: 'stone' }] },
+  ],
+  JSS1: [
+    { id: 'pl-jss1-eng', subjectCode: 'ENG', subjectName: 'English Language', correct: ['a'],
+      stem: 'A good paragraph is built around one main idea called the:',
+      options: [{ id: 'a', text: 'topic sentence' }, { id: 'b', text: 'heading' }, { id: 'c', text: 'caption' }, { id: 'd', text: 'footnote' }] },
+    { id: 'pl-jss1-mth', subjectCode: 'MTH', subjectName: 'Mathematics', correct: ['a'],
+      stem: 'What is (-3) + 5?',
+      options: [{ id: 'a', text: '2' }, { id: 'b', text: '-2' }, { id: 'c', text: '8' }, { id: 'd', text: '-8' }] },
+    { id: 'pl-jss1-sci', subjectCode: 'BSC', subjectName: 'Basic Science', correct: ['a'],
+      stem: 'Which part of the cell controls its activities?',
+      options: [{ id: 'a', text: 'nucleus' }, { id: 'b', text: 'cell wall' }, { id: 'c', text: 'vacuole' }, { id: 'd', text: 'cytoplasm' }] },
+  ],
+  SSS1: [
+    { id: 'pl-sss1-eng', subjectCode: 'ENG', subjectName: 'English Language', correct: ['a'],
+      stem: 'The best summary of a passage keeps only the:',
+      options: [{ id: 'a', text: 'main points' }, { id: 'b', text: 'examples' }, { id: 'c', text: 'dialogue' }, { id: 'd', text: 'adjectives' }] },
+    { id: 'pl-sss1-mth', subjectCode: 'MTH', subjectName: 'Mathematics', correct: ['a'],
+      stem: 'Solve:  x² − 5x + 6 = 0',
+      options: [{ id: 'a', text: 'x = 2 or 3' }, { id: 'b', text: 'x = 1 or 6' }, { id: 'c', text: 'x = -2 or -3' }, { id: 'd', text: 'x = 5 or 6' }] },
+    { id: 'pl-sss1-phy', subjectCode: 'PHY', subjectName: 'Physics', correct: ['a'],
+      stem: 'Which of these is a VECTOR quantity?',
+      options: [{ id: 'a', text: 'velocity' }, { id: 'b', text: 'speed' }, { id: 'c', text: 'distance' }, { id: 'd', text: 'mass' }] },
+  ],
+};
+
+const mockBankFor = (classCode: string): MockPQ[] => MOCK_PLACEMENT_BANK[classCode] ?? MOCK_PLACEMENT_GENERIC;
+const placementLevel = (pct: number): PlacementSubjectScore['level'] =>
+  pct < 0.4 ? 'below_track' : pct >= 0.75 ? 'above_track' : 'on_track';
+
+export async function getPlacementQuiz(classCode: string): Promise<PlacementQuiz> {
+  if (USE_MOCK) {
+    await delay();
+    return {
+      classCode,
+      questions: mockBankFor(classCode).map((q) => ({
+        id: q.id, type: 'mcq' as const, stem: q.stem, options: q.options,
+        subjectCode: q.subjectCode, subjectName: q.subjectName,
+      })),
+    };
+  }
+  const { data } = await api.get(`${B}/placement`, { params: { class: classCode } });
+  return ((data as { data?: PlacementQuiz })?.data ?? data) as PlacementQuiz;
+}
+
+export async function submitPlacement(
+  classCode: string,
+  answers: { questionId: string; selected: string[] }[],
+): Promise<PlacementResult> {
+  if (USE_MOCK) {
+    await delay(400);
+    const bank = mockBankFor(classCode);
+    const bySubject: Record<string, { name: string; correct: number; total: number }> = {};
+    for (const a of answers) {
+      const q = bank.find((x) => x.id === a.questionId);
+      if (!q) continue;
+      const agg = bySubject[q.subjectCode] ?? (bySubject[q.subjectCode] = { name: q.subjectName, correct: 0, total: 0 });
+      agg.total += 1;
+      if (setsEqual(a.selected, q.correct)) agg.correct += 1;
+    }
+    const subjects: PlacementSubjectScore[] = Object.entries(bySubject)
+      .map(([code, s]) => {
+        const pct = s.total ? s.correct / s.total : 0;
+        return { code, name: s.name, correct: s.correct, total: s.total, scorePct: pct, level: placementLevel(pct) };
+      })
+      .sort((a, b) => a.code.localeCompare(b.code));
+    const totC = subjects.reduce((n, x) => n + x.correct, 0);
+    const totT = subjects.reduce((n, x) => n + x.total, 0);
+    // The placement quiz IS the curriculum-grounded diagnostic (see the type
+    // header and this section's comment), so it emits the taxonomy's existing
+    // Activation event rather than a second name for the same transition — a
+    // 'placement_completed' alongside it would split the activation funnel in two.
+    track('diagnostic_completed', { class: classCode, score: totT ? totC / totT : 0 });
+    return { classCode, overallPct: totT ? totC / totT : 0, subjects };
+  }
+  const { data } = await api.post(`${B}/placement/submit`, {
+    class_code: classCode,
+    answers: answers.map((a) => ({ question_id: a.questionId, selected: a.selected })),
+  });
+  return ((data as { data?: PlacementResult })?.data ?? data) as PlacementResult;
 }
 
 export async function getMastery(): Promise<MasterySnapshot[]> {

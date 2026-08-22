@@ -10,6 +10,8 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { SERVICE_MODULES } from '@/constants/modules';
+import { useUserModuleState } from '@/features/modules/visibility';
+import { registryKeyFor } from '@/features/modules/serviceModuleKeys';
 
 const CATEGORIES = [
   { key: 'all',        label: 'All' },
@@ -48,17 +50,43 @@ export default function ServicesScreen() {
 
   const isSearch = search.trim().length > 0;
 
+  // Registry gate. One filter here covers every band, chip and search result, so
+  // an unpublished module cannot leak through a path someone forgot to update.
+  // Tiles with no registry mapping are always shown (see serviceModuleKeys), and
+  // an unreachable registry shows everything rather than emptying the tab.
+  // A registry 'comingSoon' module STAYS on the grid but is marked inert — that is the
+  // whole point of the state, so it must not be filtered out with the hidden ones.
+  // ModuleCard already drops onPress for comingSoon, so marking the flag is sufficient.
+  // The registry can also CLEAR a shipped comingSoon by publishing the module 'visible',
+  // which is how ops retires a placeholder without an app release.
+  // Per-USER state: the environment gate intersected with this user's entitlements,
+  // so a module published for the tier but not granted to this (unverified) user is
+  // hidden rather than shown-and-broken.
+  const { stateOf } = useUserModuleState();
+  const visibleModules = React.useMemo(
+    () => SERVICE_MODULES.flatMap((m) => {
+      const key = registryKeyFor(m.id);
+      if (key === null) return [m];        // unmapped tiles are always shown as built
+      switch (stateOf(key)) {
+        case 'hidden':     return [];
+        case 'comingSoon': return [{ ...m, comingSoon: true }];
+        default:           return [{ ...m, comingSoon: false }];
+      }
+    }),
+    [stateOf],
+  );
+
   const searchResults = isSearch
-    ? SERVICE_MODULES.filter((m) => m.label.toLowerCase().includes(search.toLowerCase()))
+    ? visibleModules.filter((m) => m.label.toLowerCase().includes(search.toLowerCase()))
     : [];
 
   const bandsWithModules = BANDS.map((b) => ({
     ...b,
-    modules: SERVICE_MODULES.filter((m) => m.category === b.key),
+    modules: visibleModules.filter((m) => m.category === b.key),
   })).filter((b) => b.modules.length > 0);
 
   const singleCatModules = activeCat !== 'all'
-    ? SERVICE_MODULES.filter((m) => m.category === activeCat)
+    ? visibleModules.filter((m) => m.category === activeCat)
     : [];
 
   const activeBandLabel = BANDS.find((b) => b.key === activeCat)?.label;

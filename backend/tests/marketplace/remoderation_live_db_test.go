@@ -5,8 +5,8 @@ package marketplace_test
 // backbone: LM-002 / MOD-010 / EC-010). Per the test plan §0.4, a trust/moderation
 // case requires an EXECUTED assertion — so this drives the real Service against a
 // live Postgres (the first wired marketplace live-DB test; the older sequence_flow
-// tests only skip). Skipped unless MARKETPLACE_TEST_DATABASE_URL / TEST_DATABASE_URL
-// / DATABASE_URL is set.
+// tests only skip). Skipped unless MARKETPLACE_TEST_DATABASE_URL or
+// TEST_DATABASE_URL is set — never DATABASE_URL, which is the production pooler.
 // ---------------------------------------------------------------------------
 
 import (
@@ -26,13 +26,11 @@ import (
 func liveMktService(t *testing.T) (*mkt.Service, *pgxpool.Pool) {
 	t.Helper()
 	dsn := os.Getenv("MARKETPLACE_TEST_DATABASE_URL")
-	for _, k := range []string{"TEST_DATABASE_URL", "DATABASE_URL"} {
-		if dsn == "" {
-			dsn = os.Getenv(k)
-		}
+	if dsn == "" {
+		dsn = os.Getenv("TEST_DATABASE_URL")
 	}
 	if dsn == "" {
-		t.Skip("no MARKETPLACE_TEST_DATABASE_URL/TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB marketplace test")
+		t.Skip("no MARKETPLACE_TEST_DATABASE_URL/TEST_DATABASE_URL set — skipping live-DB marketplace test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

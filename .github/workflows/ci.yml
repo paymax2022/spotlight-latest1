@@ -1,9 +1,16 @@
 name: CI — CLAUDE.md gates
+# Deployment-trigger commit: this workflow change intentionally starts a fresh Development CI run.
 
-# Single PR gate that runs every quality gate required by CLAUDE.md.
-# Per-module workflows (doctor-ci.yml, connect-ci.yml, …) remain as scoped,
-# path-filtered fast lanes; this workflow is the repo-wide always-on gate that
-# blocks merges to any branch.
+# The single pipeline. One push or PR starts THIS workflow and nothing else:
+# the per-module lanes (doctor-ci.yml, connect-ci.yml, …) no longer carry their
+# own push/pull_request triggers. They are reusable workflows called from the
+# jobs below, gated on which modules the change actually touched, so their jobs
+# report inside this one run instead of queueing fifteen rival pipelines.
+#
+# Module paths live in ONE place — .github/module-filters.json — read by
+# scripts/ci/changed-modules.py. Before, each lane repeated its path list under
+# both `push:` and `pull_request:`, two hand-synced copies per lane with nothing
+# checking them for drift.
 #
 # Gates enforced (see CLAUDE.md "Commands you should know"):
 #   - frontend-web: golden-path regression (test:regression), money invariants
@@ -13,18 +20,21 @@ name: CI — CLAUDE.md gates
 #   - OpenAPI: YAML validity for every contract in contracts/
 #   - migrations: additive-only guard (no DROP / RENAME / type-narrowing)
 #
-# This workflow only verifies. It never deploys, never runs `supabase db push`,
-# never touches live secrets. Deploy lives in deploy-cpanel.yml and is gated
-# separately (push to main only, after this is green).
+# Pushes run CI checks only. Railway deployment is an explicit manual release
+# action, and is locked to the matching promotion branch/environment pair.
 
 on:
   # CI runs only on the deployable promotion branches. Railway performs native
   # GitHub deployments from these branches after its per-environment branch mapping
   # is configured: develop -> Development, staging -> Staging, prod -> Production.
-  # Docs-only changes are skipped to conserve private-repository Actions minutes.
-  # NOTE: if ci.yml is ever made a REQUIRED status check, drop the pull_request
-  # paths-ignore — GitHub reports a path-skipped required check as perpetually
-  # pending, which would block docs-only PRs from merging.
+  # Docs-only PUSHES are skipped to conserve private-repository Actions minutes.
+  #
+  # `pull_request` deliberately has NO paths-ignore. This workflow's jobs are
+  # required status checks on develop (.github/required-checks.txt), and GitHub
+  # reports a path-SKIPPED required check as perpetually "Expected — waiting for
+  # status", not as passed. With a paths-ignore here, a docs-only PR would never
+  # start this workflow and could never merge. Docs-only PRs are cheap now: the
+  # router skips every module lane, leaving only the core gates.
   push:
     branches: [develop, staging, prod]
     paths-ignore:
@@ -32,10 +42,20 @@ on:
       - 'docs/**'
   pull_request:
     branches: [develop, staging, prod]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
   workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: 'Railway environment to deploy'
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      confirm_deploy:
+        description: 'Type DEPLOY to confirm the selected release'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -45,6 +65,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The three whole-app gates below run ONCE, here, unconditionally. Module lanes
+  # must not repeat them: a whole-app check cannot say anything module-specific,
+  # so N copies just report the same failure N times (eight lanes once died on
+  # the same two lines of one telemedicine screen). Lanes keep only work that is
+  # actually theirs — scoped tsconfigs, module Go tests, module migration guards.
   frontend-web:
     name: frontend-web (regression + money + contract + tsc + lint)
     uses: ./.github/workflows/_reusable-frontend-web.yml
@@ -55,6 +80,20 @@ jobs:
     with:
       working-directory: frontend-admin
       typecheck-command: npm run type-check
+
+  # The mobile app's whole-app tsc, ONCE. Ten module lanes each ran this same
+  # `tsc --noEmit -p tsconfig.json` over the entire RN app, so a single broken
+  # file failed all ten identically — two missing style keys in one telemedicine
+  # screen turned into eight red lanes on 415c0710, saying nothing extra after
+  # the first. The lanes keep their SCOPED tsconfigs, which do say something
+  # per-module. Unconditional, like the frontend-web and frontend-admin gates
+  # above: a change anywhere in the app can break a whole-app typecheck.
+  mobile-typecheck:
+    name: mobile (whole-app tsc)
+    uses: ./.github/workflows/_reusable-node-typecheck.yml
+    with:
+      working-directory: mobile-app/reactnative
+      typecheck-command: npx tsc --noEmit -p tsconfig.json
 
   backend:
     name: backend (go build + vet)
@@ -68,24 +107,243 @@ jobs:
     name: migrations (additive-only guard)
     uses: ./.github/workflows/_reusable-migration-guard.yml
 
+  # Cheap repo-wide gates share one runner: each is sub-second, and a separate
+  # job per gate would cost a full runner start for no benefit (see the
+  # paths-ignore note above on conserving private-repo Actions minutes).
+  # The job id stays `secret-hygiene` — it is internal, and the deploy jobs below
+  # reference it in `needs:`.
   secret-hygiene:
-    name: secrets (no client-exposed secrets)
+    name: hygiene (client secrets + live-DB test gate + migration versions)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Check for secrets in client bundles
         run: bash scripts/check-client-secrets.sh
+      # No Go test may read DATABASE_URL — it is the production pooler, and the
+      # live-DB suites insert fixtures and move money.
+      - name: Check live-DB tests gate on TEST_DATABASE_URL only
+        run: bash scripts/ci/check-live-db-gate.sh
+      # schema_migrations is keyed on the version alone, so two migrations
+      # sharing a timestamp abort `supabase start` / `db reset` partway through
+      # the chain. The collision is invisible to the author — it appears on the
+      # base branch only AFTER the merge — so it must be caught at PR time.
+      - name: Check the email sender is the one verified identity
+        # Spotlight's Resend account verifies exactly one domain. A sender on any
+        # other domain is rejected, and every send path swallows that failure —
+        # so a wrong sender is silent. It had drifted to three domains.
+        run: python3 scripts/ci/check-email-sender.py
 
-  # Railway deployment is deliberately opt-in. Set the repository variable
-  # RAILWAY_DEPLOY_ENABLED=true only after the corresponding Railway service
-  # variables have been configured and reviewed.
+      - name: Check admin services do not fake writes
+        # A mutation whose fixture branch returns success tells the operator the
+        # action was applied when nothing happened — found four times by accident
+        # (creator payouts, escrow fraud, KYC bypass, crypto withdrawals). Ratchets
+        # against a baseline: existing debt is recorded, additions fail.
+        run: python3 scripts/ci/check-simulated-writes.py
+
+      - name: Check migration versions are unique
+        run: bash scripts/ci/check-migration-versions.sh
+      # Pins the module router's glob semantics, its fail-open behaviour, and its
+      # rejection of brace patterns. Sub-second, so it shares this runner.
+      - name: Test the module router
+        run: python3 scripts/ci/test-changed-modules.py
+
+  # Which module lanes does this change need? One shared filter file
+  # (.github/module-filters.json) drives the gating below, so a module's paths
+  # are written once instead of once per trigger per workflow.
+  # Fail-open: if the diff cannot be established, every lane is selected.
+  changes:
+    name: which modules changed
+    runs-on: ubuntu-latest
+    outputs:
+      association: ${{ steps.route.outputs.association }}
+      connect: ${{ steps.route.outputs.connect }}
+      crowdfunding: ${{ steps.route.outputs.crowdfunding }}
+      crypto_backend: ${{ steps.route.outputs.crypto_backend }}
+      doctor: ${{ steps.route.outputs.doctor }}
+      fx: ${{ steps.route.outputs.fx }}
+      health: ${{ steps.route.outputs.health }}
+      insurance: ${{ steps.route.outputs.insurance }}
+      maps: ${{ steps.route.outputs.maps }}
+      realtor: ${{ steps.route.outputs.realtor }}
+      referral: ${{ steps.route.outputs.referral }}
+      stays: ${{ steps.route.outputs.stays }}
+      top5: ${{ steps.route.outputs.top5 }}
+      visitor_election: ${{ steps.route.outputs.visitor_election }}
+    steps:
+      # Full history: the PR diff is taken against the merge base, and a push
+      # diff needs the previous tip, which a shallow clone would not contain.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Route
+        id: route
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          python3 scripts/ci/changed-modules.py \
+            --event "$EVENT" \
+            --before "$BEFORE" \
+            --sha "$GITHUB_SHA" \
+            --base "$BASE"
+
+  # The module lanes, called as reusable workflows so their jobs report inside
+  # THIS run. One push = one pipeline, instead of fourteen queued in parallel.
+  # NOTE: GitHub allows at most 20 unique reusable workflows per caller. This
+  # file uses 19 (5 shared + 14 module) — ONE slot left. The router test asserts
+  # the count so a 21st addition fails loudly here instead of breaking the run.
+  association:
+    name: Association CI
+    needs: changes
+    if: needs.changes.outputs.association == 'true'
+    uses: ./.github/workflows/association-ci.yml
+
+  connect:
+    name: Connect CI
+    needs: changes
+    if: needs.changes.outputs.connect == 'true'
+    uses: ./.github/workflows/connect-ci.yml
+
+  crowdfunding:
+    name: Crowdfunding CI
+    needs: changes
+    if: needs.changes.outputs.crowdfunding == 'true'
+    uses: ./.github/workflows/crowdfunding-ci.yml
+
+  crypto-backend:
+    name: Crypto Backend CI
+    needs: changes
+    if: needs.changes.outputs.crypto_backend == 'true'
+    uses: ./.github/workflows/crypto-backend-ci.yml
+
+  doctor:
+    name: Doctor CI
+    needs: changes
+    if: needs.changes.outputs.doctor == 'true'
+    uses: ./.github/workflows/doctor-ci.yml
+
+  fx:
+    name: FX CI
+    needs: changes
+    if: needs.changes.outputs.fx == 'true'
+    uses: ./.github/workflows/fx-ci.yml
+
+  health:
+    name: Health CI
+    needs: changes
+    if: needs.changes.outputs.health == 'true'
+    uses: ./.github/workflows/health-ci.yml
+
+  insurance:
+    name: Insurance CI
+    needs: changes
+    if: needs.changes.outputs.insurance == 'true'
+    uses: ./.github/workflows/insurance-ci.yml
+
+  maps:
+    name: Maps CI
+    needs: changes
+    if: needs.changes.outputs.maps == 'true'
+    uses: ./.github/workflows/maps-ci.yml
+
+  realtor:
+    name: Realtor CI
+    needs: changes
+    if: needs.changes.outputs.realtor == 'true'
+    uses: ./.github/workflows/realtor-ci.yml
+
+  referral:
+    name: Referral CI
+    needs: changes
+    if: needs.changes.outputs.referral == 'true'
+    uses: ./.github/workflows/referral-ci.yml
+
+  stays:
+    name: Stays CI
+    needs: changes
+    if: needs.changes.outputs.stays == 'true'
+    uses: ./.github/workflows/stays-ci.yml
+
+  top5:
+    name: Top5 CI
+    needs: changes
+    if: needs.changes.outputs.top5 == 'true'
+    uses: ./.github/workflows/top5-ci.yml
+
+  visitor-election:
+    name: Visitor & Election CI
+    needs: changes
+    if: needs.changes.outputs.visitor_election == 'true'
+    uses: ./.github/workflows/visitor-election-ci.yml
+
+  # Catches workflow-level startup failures — a run that dies before any job
+  # exists, so it reports no annotation and no check-run and looks like an
+  # unexplained red X. deploy-web.yml failed this way 198 times in 11 days
+  # (invalid `matrix` context in a workflow-level `concurrency.group`) before
+  # anyone traced it. actionlint validates context availability statically.
+  workflow-lint:
+    name: workflows (actionlint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      # Pinned version, built from source — no curl|bash installer.
+      - name: Install actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      # shellcheck/pyflakes integration is off: this gate is scoped to workflow
+      # validity (context availability, expression syntax, action versions),
+      # which is the class that produces a jobless red run. Linting the `run:`
+      # shell of all 27 workflows is a separate, larger cleanup — enable by
+      # dropping the two empty flags once that backlog is clear.
+      - name: Lint workflows
+        run: actionlint -no-color -oneline -shellcheck= -pyflakes=
+
+  # Railway deployment is deliberately manual. The repository variable remains
+  # an emergency kill switch, while the inputs and branch tests prevent an
+  # environment from being deployed from the wrong promotion branch.
   deploy-development:
     name: deploy Development (${{ matrix.service }})
+    # The module lanes are CONDITIONAL (`if: needs.changes.outputs.X == 'true'`),
+    # and GitHub skips a job whose dependency was skipped — so a plain `needs:`
+    # on them would skip every deploy, since most lanes sit out any given change.
+    # `!cancelled()` opts out of that implicit gating; the two `contains` tests
+    # then re-impose the part we actually want — no dependency may be red.
+    # Without them, `!cancelled()` would deploy straight through a failed gate.
     if: >-
-      github.event_name == 'push' &&
+      !cancelled() &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled') &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy_environment == 'development' &&
+      inputs.confirm_deploy == 'DEPLOY' &&
       github.ref == 'refs/heads/develop' &&
       vars.RAILWAY_DEPLOY_ENABLED == 'true'
-    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene]
+    needs:
+      - frontend-web
+      - frontend-admin
+      - backend
+      - openapi
+      - migration-guard
+      - secret-hygiene
+      - workflow-lint
+      - changes
+      - association
+      - connect
+      - crowdfunding
+      - crypto-backend
+      - doctor
+      - fx
+      - health
+      - insurance
+      - maps
+      - realtor
+      - referral
+      - stays
+      - top5
+      - visitor-election
     runs-on: ubuntu-latest
     environment: development
     strategy:
@@ -104,25 +362,63 @@ jobs:
         with:
           node-version: '20'
       - name: Install Railway CLI
-        run: npm install --global @railway/cli@5.35.0
+        run: npm install --global @railway/cli@5.40.1
       - name: Deploy ${{ matrix.service }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
-        run: >-
-          railway up ${{ matrix.path }} --path-as-root
-          --service ${{ matrix.service }}
-          --environment development
-          --project e7dca861-3667-4d9a-8090-6d2f4d179ec2
-          --ci
-          --message "${{ github.sha }}"
+        run: |
+          railway up ${{ matrix.path }} --path-as-root --no-gitignore \
+            --service ${{ matrix.service }} \
+            --environment development \
+            --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
+            --detach \
+            --message "${{ github.sha }}"
+          for attempt in {1..40}; do
+            status="$(railway deployment list --service ${{ matrix.service }} --environment development --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 10 --json | jq -r --arg message "${{ github.sha }}" '[.[] | select(.meta.cliMessage == $message)] | first | .status // empty')"
+            case "$status" in
+              SUCCESS) exit 0 ;;
+              FAILED|CRASHED|REMOVED) echo "Railway deployment ended with $status"; exit 1 ;;
+              *) echo "Waiting for Railway deployment (attempt $attempt/40; status: ${status:-not-found})"; sleep 15 ;;
+            esac
+          done
+          echo "Timed out waiting for Railway deployment"
+          exit 1
 
   deploy-staging:
     name: deploy Staging (${{ matrix.service }})
+    # See deploy-development for why `!cancelled()` + the `contains` tests.
     if: >-
-      github.event_name == 'push' &&
+      !cancelled() &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled') &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy_environment == 'staging' &&
+      inputs.confirm_deploy == 'DEPLOY' &&
       github.ref == 'refs/heads/staging' &&
       vars.RAILWAY_DEPLOY_ENABLED == 'true'
-    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene]
+    needs:
+      - frontend-web
+      - frontend-admin
+      - backend
+      - openapi
+      - migration-guard
+      - secret-hygiene
+      - workflow-lint
+      - changes
+      - association
+      - connect
+      - crowdfunding
+      - crypto-backend
+      - doctor
+      - fx
+      - health
+      - insurance
+      - maps
+      - realtor
+      - referral
+      - stays
+      - top5
+      - visitor-election
     runs-on: ubuntu-latest
     environment: staging
     strategy:
@@ -141,25 +437,63 @@ jobs:
         with:
           node-version: '20'
       - name: Install Railway CLI
-        run: npm install --global @railway/cli@5.35.0
+        run: npm install --global @railway/cli@5.40.1
       - name: Deploy ${{ matrix.service }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
-        run: >-
-          railway up ${{ matrix.path }} --path-as-root
-          --service ${{ matrix.service }}
-          --environment staging
-          --project e7dca861-3667-4d9a-8090-6d2f4d179ec2
-          --ci
-          --message "${{ github.sha }}"
+        run: |
+          railway up ${{ matrix.path }} --path-as-root --no-gitignore \
+            --service ${{ matrix.service }} \
+            --environment staging \
+            --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
+            --detach \
+            --message "${{ github.sha }}"
+          for attempt in {1..40}; do
+            status="$(railway deployment list --service ${{ matrix.service }} --environment staging --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 10 --json | jq -r --arg message "${{ github.sha }}" '[.[] | select(.meta.cliMessage == $message)] | first | .status // empty')"
+            case "$status" in
+              SUCCESS) exit 0 ;;
+              FAILED|CRASHED|REMOVED) echo "Railway deployment ended with $status"; exit 1 ;;
+              *) echo "Waiting for Railway deployment (attempt $attempt/40; status: ${status:-not-found})"; sleep 15 ;;
+            esac
+          done
+          echo "Timed out waiting for Railway deployment"
+          exit 1
 
   deploy-production:
     name: deploy Production (${{ matrix.service }})
+    # See deploy-development for why `!cancelled()` + the `contains` tests.
     if: >-
-      github.event_name == 'push' &&
+      !cancelled() &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled') &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy_environment == 'production' &&
+      inputs.confirm_deploy == 'DEPLOY' &&
       github.ref == 'refs/heads/prod' &&
       vars.RAILWAY_DEPLOY_ENABLED == 'true'
-    needs: [frontend-web, frontend-admin, backend, openapi, migration-guard, secret-hygiene]
+    needs:
+      - frontend-web
+      - frontend-admin
+      - backend
+      - openapi
+      - migration-guard
+      - secret-hygiene
+      - workflow-lint
+      - changes
+      - association
+      - connect
+      - crowdfunding
+      - crypto-backend
+      - doctor
+      - fx
+      - health
+      - insurance
+      - maps
+      - realtor
+      - referral
+      - stays
+      - top5
+      - visitor-election
     runs-on: ubuntu-latest
     environment: production
     strategy:
@@ -178,14 +512,24 @@ jobs:
         with:
           node-version: '20'
       - name: Install Railway CLI
-        run: npm install --global @railway/cli@5.35.0
+        run: npm install --global @railway/cli@5.40.1
       - name: Deploy ${{ matrix.service }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}
-        run: >-
-          railway up ${{ matrix.path }} --path-as-root
-          --service ${{ matrix.service }}
-          --environment production
-          --project e7dca861-3667-4d9a-8090-6d2f4d179ec2
-          --ci
-          --message "${{ github.sha }}"
+        run: |
+          railway up ${{ matrix.path }} --path-as-root --no-gitignore \
+            --service ${{ matrix.service }} \
+            --environment production \
+            --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
+            --detach \
+            --message "${{ github.sha }}"
+          for attempt in {1..40}; do
+            status="$(railway deployment list --service ${{ matrix.service }} --environment production --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 10 --json | jq -r --arg message "${{ github.sha }}" '[.[] | select(.meta.cliMessage == $message)] | first | .status // empty')"
+            case "$status" in
+              SUCCESS) exit 0 ;;
+              FAILED|CRASHED|REMOVED) echo "Railway deployment ended with $status"; exit 1 ;;
+              *) echo "Waiting for Railway deployment (attempt $attempt/40; status: ${status:-not-found})"; sleep 15 ;;
+            esac
+          done
+          echo "Timed out waiting for Railway deployment"
+          exit 1

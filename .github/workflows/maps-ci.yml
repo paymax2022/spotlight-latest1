@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: Maps CI
 
 # Verification gate for the provider-agnostic MapService layer.
@@ -6,28 +12,7 @@ name: Maps CI
 # See backend/internal/maps/README.md and docs/adr/ADR-007-maps-abstraction.md.
 
 on:
-  push:
-    paths:
-      - 'backend/internal/maps/**'
-      - 'backend/internal/transport/maps_bridge.go'
-      - 'backend/internal/transport/ws_tracking.go'
-      - 'backend/internal/transport/handler.go'
-      - 'backend/internal/restaurant/service.go'
-      - 'backend/internal/estate/service.go'
-      - 'backend/internal/app/finance_routes.go'
-      - 'backend/internal/app/router.go'
-      - 'backend/internal/config/config.go'
-      - 'supabase/migrations/2026062600*.sql'
-      - 'supabase/migrations/*maps*.sql'
-      - 'supabase/migrations/*merchant_locations*.sql'
-      - 'contracts/openapi.yaml'
-      - 'frontend-web/src/components/map/**'
-      - 'frontend-web/src/services/mapsClient.ts'
-      - 'mobile-app/reactnative/src/features/mobility/**'
-      - 'mobile-app/reactnative/app/maps/**'
-      - 'mobile-app/reactnative/tsconfig.mapscheck.json'
-      - '.github/workflows/maps-ci.yml'
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -63,9 +48,21 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: backend/go.sum
+      # PINNED ON PURPOSE — do not "modernise" this back to `latest`.
+      # `supabase start` below replays the ENTIRE migration chain, so this job is
+      # the repo's fresh-replay gate. On `latest` that gate silently re-baselines
+      # itself against whatever Supabase shipped that morning: a red run could mean
+      # our migrations broke, or merely that the CLI changed, and the two are
+      # indistinguishable from the log (setup-cli does not print the version it
+      # installed). That ambiguity is not hypothetical — it cost an hour of
+      # misdiagnosis on 2026-08-14, when a genuine duplicate migration version was
+      # first blamed on an unpinned CLI bump that had not actually happened.
+      # A pinned CLI makes this job answer exactly one question: did OUR chain break?
+      # Keep in step with the pin in db-migrate.yml, which applies to production.
+      # Bump deliberately: raise the version, confirm this job stays green, merge.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.114.0
       - name: Start Supabase (applies all migrations incl. 20260626* maps)
         run: supabase start
       - name: Run maps integration tests against PostGIS
@@ -78,21 +75,6 @@ jobs:
         run: supabase stop || true
 
   # ── 3. Web typecheck (MapView / AddressEntry / LiveTrackingMap + client) ─────
-  web-typecheck:
-    name: Web tsc --noEmit
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Typecheck web (whole app)
-        run: npx tsc --noEmit
-
-  # ── 4. Mobile typecheck (scoped to the maps/mobility slice) ──────────────────
   mobile-typecheck:
     name: Mobile tsc (scoped)
     runs-on: ubuntu-latest

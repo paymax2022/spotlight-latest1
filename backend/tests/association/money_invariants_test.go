@@ -17,7 +17,7 @@ package association_test
 //
 // Live-DB tests that actually call *association.Service against a migrated
 // Postgres live in live_db_integration_test.go (skip-gated on
-// DATABASE_URL/TEST_DATABASE_URL — see that file's bring-up note).
+// TEST_DATABASE_URL — see that file's bring-up note).
 // ---------------------------------------------------------------------------
 
 import (
@@ -638,5 +638,5 @@ func TestAiNoteStatus_NoAuthorizationGate_DocumentsKnownGap(t *testing.T) {
 	if !hasAuthorizationCheckInSetAiNoteStatus {
 		t.Fatal("REGRESSION: SetAiNoteStatus lost its authorization guard — any authenticated member can now approve/publish minutes. Restore requireAssocAdmin(ctx, adminID) as the first statement.")
 	}
-	t.Log("SetAiNoteStatus enforces requireAssocAdmin — non-admins cannot approve/publish minutes. Live positive/negative round-trip covered by live_db_integration_test.go (skip-gated on DATABASE_URL).")
+	t.Log("SetAiNoteStatus enforces requireAssocAdmin — non-admins cannot approve/publish minutes. Live positive/negative round-trip covered by live_db_integration_test.go (skip-gated on TEST_DATABASE_URL).")
 }

@@ -31,7 +31,10 @@ test.describe('Payment routes - Add Money (wallet/add)', () => {
     await page.goto('/wallet/add');
 
     await page.getByText('₦2,500').first().click();
-    await expect(page.locator('input[inputmode="numeric"], input[type="number"]').first()).toHaveValue(/2500/);
+    // react-native-web renders TextInput without inputmode/type=number, so the
+    // old attribute selector matched nothing. Target the amount field by its
+    // placeholder instead.
+    await expect(page.getByPlaceholder('₦0.00')).toHaveValue(/2500/);
   });
 
   test('calls POST /api/v1/wallet/topup with amount_kobo and an idempotency key', async ({ page }) => {
@@ -72,8 +75,7 @@ test.describe('Payment routes - Add Money (wallet/add)', () => {
     });
 
     await page.goto('/wallet/add');
-    const input = page.locator('input[inputmode="numeric"], input[type="number"]').first();
-    await input.fill('50');
+    await page.getByPlaceholder('₦0.00').fill('50');
     await page.getByText('Continue to Paystack').click();
 
     await expect.poll(() => captured.length, { timeout: 1_000 }).toBe(0);
@@ -91,7 +93,10 @@ test.describe('Payment routes - Send Money (wallet/send)', () => {
     await expect(page.getByText('Send Money').first()).toBeVisible();
     await expect(page.getByText('Prepare a wallet transfer to another Spotlight account.')).toBeVisible();
     await expect(page.getByPlaceholder(/phone number|email|Spotlight ID/i).first()).toBeVisible();
-    await expect(page.getByText('Save Transfer Draft')).toBeVisible();
+    // The CTA is step-dependent (PaymentActionScreen.primaryLabel): the form step
+    // reads 'Preview Transfer'. The static config value 'Save Transfer Draft' is
+    // never rendered for the transfer kind.
+    await expect(page.getByText('Preview Transfer')).toBeVisible();
   });
 
   test('security panel is displayed on the send screen', async ({ page }) => {
@@ -111,9 +116,16 @@ test.describe('Payment routes - Withdraw (wallet/withdraw)', () => {
 
     await expect(page.getByText('Withdraw').first()).toBeVisible();
     await expect(page.getByText('Set up a withdrawal request from your wallet balance.')).toBeVisible();
-    await expect(page.getByPlaceholder('Select bank').first()).toBeVisible();
+
+    // Withdraw opens on the beneficiary picker; the bank / account-number form
+    // is the 'manual' step behind "New bank account". (There is no
+    // 'Save Withdrawal Draft' CTA — primaryLabel() renders '' on the pick step.)
+    await expect(page.getByText('Send to Bank')).toBeVisible();
+    await page.getByText('New bank account').click();
+
+    // BankPicker is a custom button, not an <input> — it has no placeholder attr.
+    await expect(page.getByText('Select bank')).toBeVisible();
     await expect(page.getByPlaceholder('0123456789').first()).toBeVisible();
-    await expect(page.getByText('Save Withdrawal Draft')).toBeVisible();
   });
 });
 
@@ -149,19 +161,30 @@ test.describe('Payment routes - Cards & Methods (services/cards)', () => {
 test.describe('Payment routes - FX Exchange (services/fx)', () => {
   test.beforeEach(async ({ page }) => { await setup(page); });
 
-  test('renders heading, from/to currency fields, and preview CTA', async ({ page }) => {
+  // /services/fx is now a redirect: FX moved to its own module at /fx, and the
+  // old "preview only" placeholder (Preview Exchange / Protected payment flow)
+  // no longer exists. These cover the legacy deep link still landing on the
+  // real module.
+  test('legacy /services/fx redirects to the FX module and renders it', async ({ page }) => {
     await page.goto('/services/fx');
 
     await expect(page.getByText('FX Exchange').first()).toBeVisible();
-    await expect(page.getByText('Preview currency exchange support for your wallet.')).toBeVisible();
-    await expect(page.locator('input[value="NGN Wallet"]')).toBeVisible();
-    await expect(page.getByPlaceholder('USD Wallet')).toBeVisible();
-    await expect(page.getByText('Preview Exchange')).toBeVisible();
+    await expect(page.getByText('Multi-currency wallet')).toBeVisible();
+    await expect(page.getByText('Total Balance')).toBeVisible();
   });
 
-  test('security panel is displayed on the FX screen', async ({ page }) => {
+  test('FX module offers the convert / send / receive actions', async ({ page }) => {
     await page.goto('/services/fx');
 
-    await expect(page.getByText('Protected payment flow')).toBeVisible();
+    await expect(page.getByText('Convert', { exact: true })).toBeVisible();
+    await expect(page.getByText('Receive', { exact: true })).toBeVisible();
+  });
+
+  test('unverified account is gated before it can convert, send or hold money', async ({ page }) => {
+    await page.goto('/services/fx');
+
+    // KYC gate replaced the old static "security panel" copy.
+    await expect(page.getByText('Verify your account').first()).toBeVisible();
+    await expect(page.getByText('Required before you can convert, send or hold money.')).toBeVisible();
   });
 });

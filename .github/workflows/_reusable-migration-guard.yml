@@ -34,6 +34,42 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Two migration files sharing a 14-digit version prefix break the repo two
+      # different ways, both silent until they are expensive:
+      #   * `supabase start` / fresh replay dies with
+      #     `duplicate key value violates unique constraint "schema_migrations_pkey"`,
+      #     which reds every downstream lane on every branch (2026-08-14: PR #100
+      #     landed 20261205000000_orch_ledger_conservation_backfill.sql beside the
+      #     existing 20261205000000_restaurant_dispute_tip_clawback.sql and broke
+      #     Maps CI repo-wide for an hour).
+      #   * `supabase db push` keys on the version alone, so it applies ONE of the
+      #     pair, records the version, and SKIPS the other with no error at all —
+      #     a migration silently missing from production.
+      #
+      # Deliberately scans the whole tree, not the changed-file set below: a
+      # collision is between a new file and an existing one, so a diff-scoped
+      # check cannot see it. On pull_request events the checkout is the merge
+      # result, which is exactly the tree that has to be collision-free.
+      - name: Reject duplicate migration versions
+        run: |
+          set -euo pipefail
+          DUPES=$(ls supabase/migrations/*.sql 2>/dev/null \
+                    | sed -E 's|.*/||; s/^([0-9]{14}).*/\1/' \
+                    | sort | uniq -d || true)
+
+          if [ -z "$DUPES" ]; then
+            echo "No duplicate migration versions."
+            exit 0
+          fi
+
+          echo "$DUPES" | while read -r v; do
+            [ -n "$v" ] || continue
+            echo "::error::Duplicate migration version $v shared by:"
+            ls supabase/migrations/"$v"*.sql | sed 's|^|    |'
+          done
+          echo "::error::Renumber the NEWER file (bump the version, keep the name) so every version is unique."
+          exit 1
+
       - name: Determine changed migration files
         id: changed
         run: |

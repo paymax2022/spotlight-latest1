@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: Crowdfunding CI
 
 # Runs the environment-blocked verification for the crowdfunding module on a
@@ -8,20 +14,7 @@ name: Crowdfunding CI
 # typecheck, and an additive-only migration guard.
 
 on:
-  push:
-    paths:
-      - 'backend/internal/crowdfunding/**'
-      - 'backend/internal/app/finance_routes.go'
-      - 'supabase/migrations/*crowdfunding*.sql'
-      - 'frontend-web/app/api/v1/crowdfunding/**'
-      - 'mobile-app/reactnative/src/features/crowdfunding/**'
-      - 'mobile-app/reactnative/app/crowdfunding/**'
-      - 'mobile-app/reactnative/tsconfig.crowdfunding.json'
-      - 'frontend-admin/src/services/crowdfundingAdminService.ts'
-      - 'frontend-admin/src/types/crowdfunding.ts'
-      - 'frontend-admin/app/admin/crowdfunding/**'
-      - '.github/workflows/crowdfunding-ci.yml'
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -58,20 +51,6 @@ jobs:
       - run: npm ci || npm install
       - name: Typecheck crowdfunding screens + feature
         run: npx tsc -p tsconfig.crowdfunding.json
-
-  admin-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: npm ci || npm install
-      - name: Typecheck admin
-        run: npx tsc --noEmit
 
   migration-guard:
     runs-on: ubuntu-latest
