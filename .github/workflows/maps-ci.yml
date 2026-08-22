@@ -60,7 +60,7 @@ jobs:
       # A pinned CLI makes this job answer exactly one question: did OUR chain break?
       # Keep in step with the pin in db-migrate.yml, which applies to production.
       # Bump deliberately: raise the version, confirm this job stays green, merge.
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@v3
         with:
           version: 2.114.0
       - name: Start Supabase (applies all migrations incl. 20260626* maps)
