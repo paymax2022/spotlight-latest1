@@ -21,6 +21,11 @@ name: Staging inspect
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: 'Which Railway environment to inspect (READ-ONLY either way)'
+        type: choice
+        options: [staging, production]
+        default: staging
       log_lines:
         description: 'How many recent backend log lines to scan for gate refusals'
         type: string
@@ -39,9 +44,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: staging
     env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+      # Same Railway project for both; only the environment and token differ.
+      RAILWAY_TOKEN: ${{ inputs.environment == 'production' && secrets.RAILWAY_TOKEN_PRODUCTION || secrets.RAILWAY_TOKEN_STAGING }}
       PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
-      ENVIRONMENT: staging
+      ENVIRONMENT: ${{ inputs.environment }}
     steps:
       - name: Check the Railway token is present
         run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'
@@ -104,6 +110,16 @@ jobs:
           node -e '
             let v; try { v = JSON.parse(require("fs").readFileSync("be.json","utf8")); }
             catch { console.error("Unparseable - refusing to print."); process.exit(1); }
+            // RequireAdmin now FAILS CLOSED: an unset ADMIN_API_KEY refuses admin
+            // routes unless APP_ENV is exactly "development". Presence + APP_ENV is
+            // all that is needed to predict that, and the value is never printed.
+            const keySet = v.ADMIN_API_KEY !== undefined && String(v.ADMIN_API_KEY).length > 0;
+            const env = v.APP_ENV ?? "NOT SET";
+            console.log("  ADMIN_API_KEY = " + (keySet ? "set" : "NOT SET"));
+            console.log("  APP_ENV       = " + env);
+            if (keySet) console.log("  -> admin routes ENFORCE the key.");
+            else if (env === "development") console.log("  -> admin routes are UNGATED (development exception).");
+            else console.log("  -> admin routes will return 503 after the next deploy (fail-closed).");
             console.log("  APP_PORT   = " + (v.APP_PORT ?? "NOT SET (Go binds :8080 by default)"));
             console.log("  PORT       = " + (v.PORT ?? "NOT SET"));
             console.log("  APP_ENV    = " + (v.APP_ENV ?? "NOT SET"));
