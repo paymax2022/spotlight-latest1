@@ -254,11 +254,28 @@ jobs:
       # most of the proxied surface. A plain `railway redeploy` re-runs the existing
       # image, so that rewrite would keep pointing at the OLD public URL and those
       # paths would keep hanging while the handler-backed ones looked fixed.
-      - name: Rebuild frontend-web so the baked-in rewrite target moves too
+      # UPLOAD the staging tree, do not `redeploy --from-source`.
+      #
+      # --from-source re-deployed the SAME pinned commit every time: frontend-web
+      # sat on cf6ce324 through five separate "successful" rebuilds, so the
+      # catch-all handler and the timeout change never shipped at all. Every
+      # symptom followed from that - no [go-backend] log line because the code was
+      # not there, and a 30s stall that ignored PROXY_TIMEOUT_MS because it was the
+      # OLD build's rewrite hitting an infrastructure timeout.
+      #
+      # `railway up` uploads the checked-out tree, which is what ci.yml already
+      # does to deploy this service, so it is the mechanism known to actually ship.
+      - name: Check out the staging branch
+        uses: actions/checkout@v4
+        with:
+          ref: staging
+
+      - name: Upload and deploy frontend-web from the staging tree
         run: |
           set -euo pipefail
-          railway redeploy --service frontend-web --environment "$ENVIRONMENT" \
-            --project "$PROJECT" --from-source --yes
+          railway up frontend-web --path-as-root --no-gitignore \
+            --service frontend-web --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --detach --message "$(git rev-parse HEAD)"
 
       # `railway redeploy` returns as soon as the build is TRIGGERED. Without this
       # wait the job goes green while the build is still running - or has failed -
