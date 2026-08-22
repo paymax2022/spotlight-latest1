@@ -1,0 +1,151 @@
+name: Staging module flags
+
+# Sets the FEATURE_*_ENABLED variables the module registry reads on the STAGING
+# backend, and (separately, on purpose) the module gate's enforcement switch.
+#
+# ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
+# `modules.NewService` resolves a module's kill switch with a RAW environment
+# read that accepts one exact string:
+#
+#     func(envFlag string) bool { return os.Getenv(envFlag) == "true" }
+#
+# It does not go through `getEnvBool`, so "1" and "yes" — truthy everywhere else
+# in the config — leave the module flag-DISABLED here. And every one of these
+# flags defaults to false. A module is only in `VisibleKeys` when its flag is
+# exactly "true" AND lifecycle is active AND it is published for the tier.
+#
+# That matters because turning on FEATURE_MODULE_GATE_ENFORCE makes any request
+# to a mapped path whose module is not in `VisibleKeys` return 503. With the
+# flags unset, flipping enforce would 503 EVERY gated route — wallet, transfers,
+# restaurant, transport, FX, telemedicine, the lot. So the flags go first, they
+# get verified, and enforcement is a separate deliberate run.
+#
+# ── SAFETY ───────────────────────────────────────────────────────────────────
+# workflow_dispatch ONLY (never on push), staging service only, and it requires
+# typing SET to confirm — mirroring the deploy jobs in ci.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type SET to confirm writing variables to the staging backend'
+        required: true
+        type: string
+      enforce:
+        description: 'Also set FEATURE_MODULE_GATE_ENFORCE=true (leave OFF until the flags verify)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-module-flags
+  cancel-in-progress: false
+
+jobs:
+  set-flags:
+    name: set staging FEATURE_* flags
+    if: ${{ inputs.confirm == 'SET' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      SERVICE: backend
+      ENVIRONMENT: staging
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'
+
+      # Pinned to the same version ci.yml deploys with, so the CLI that writes
+      # configuration and the CLI that ships code cannot disagree.
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      # One `variable set` call with every pair, and --skip-deploys, because
+      # Railway redeploys the service on each variable write by default: setting
+      # 24 flags one at a time would queue 24 rolling restarts of the staging
+      # backend. A single deploy is triggered at the end instead.
+      - name: Set the 24 module flags
+        run: |
+          set -euo pipefail
+          railway variable set \
+            FEATURE_WALLET_ENABLED=true \
+            FEATURE_WALLET_TRANSFERS_ENABLED=true \
+            FEATURE_VIRTUAL_ACCOUNTS_ENABLED=true \
+            FEATURE_FX_ENABLED=true \
+            FEATURE_SAVINGS_ENABLED=true \
+            FEATURE_KYC_ENABLED=true \
+            FEATURE_REFERRALS_ENABLED=true \
+            FEATURE_INSURANCE_ENABLED=true \
+            FEATURE_SOCIAL_PAY_ENABLED=true \
+            FEATURE_LOYALTY_ENABLED=true \
+            FEATURE_RESTAURANT_ENABLED=true \
+            FEATURE_TRANSPORT_ENABLED=true \
+            FEATURE_TELEMEDICINE_ENABLED=true \
+            FEATURE_HEALTH_PHARMACY_ENABLED=true \
+            FEATURE_STAYS_ENABLED=true \
+            FEATURE_ESTATE_ENABLED=true \
+            FEATURE_REALTOR_ENABLED=true \
+            FEATURE_CROWDFUNDING_ENABLED=true \
+            FEATURE_ASSOCIATION_ENABLED=true \
+            FEATURE_GROUPS_ENABLED=true \
+            FEATURE_EVENTS_ENABLED=true \
+            FEATURE_CREATORS_ENABLED=true \
+            FEATURE_DISPUTES_ENABLED=true \
+            FEATURE_RATINGS_ENABLED=true \
+            --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
+            --skip-deploys
+
+      # Enforcement is its own step behind its own input. Setting it in the same
+      # run as the flags is allowed but not the default: the point of the
+      # observe-only period is to confirm the map is right BEFORE a mistake can
+      # return 503 to real traffic.
+      - name: Set FEATURE_MODULE_GATE_ENFORCE
+        if: ${{ inputs.enforce }}
+        run: |
+          set -euo pipefail
+          railway variable set FEATURE_MODULE_GATE_ENFORCE=true \
+            --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
+            --skip-deploys
+
+      # Read the variables BACK and assert each is exactly "true". Without this
+      # the job would report success for a write that silently landed on the
+      # wrong service or environment — and the failure mode of that is a staging
+      # backend that 503s every gated route once enforce is on.
+      - name: Verify every flag reads back as exactly "true"
+        run: |
+          set -euo pipefail
+          railway variable list --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --kv --json > vars.json
+          node -e '
+            const want = [
+              "WALLET","WALLET_TRANSFERS","VIRTUAL_ACCOUNTS","FX","SAVINGS","KYC","REFERRALS",
+              "INSURANCE","SOCIAL_PAY","LOYALTY","RESTAURANT","TRANSPORT","TELEMEDICINE",
+              "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
+              "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
+            ].map((s) => `FEATURE_${s}_ENABLED`);
+            const vars = JSON.parse(require("fs").readFileSync("vars.json", "utf8"));
+            const bad = want.filter((k) => vars[k] !== "true");
+            for (const k of want) console.log(`  ${vars[k] === "true" ? "OK  " : "BAD "} ${k} = ${vars[k] ?? "(unset)"}`);
+            const enforce = vars.FEATURE_MODULE_GATE_ENFORCE ?? "(unset)";
+            console.log(`\n  FEATURE_MODULE_GATE_ENFORCE = ${enforce}`);
+            if (bad.length) {
+              console.error(`\n${bad.length} flag(s) are not exactly "true" — the registry requires that literal string.`);
+              process.exit(1);
+            }
+            if (enforce === "true") {
+              console.log("Enforcement is ON: a mapped route whose module is not published now returns 503.");
+            } else {
+              console.log("Enforcement is OFF (observe-only): the gate logs `WOULD refuse` and refuses nothing.");
+            }
+          '
+
+      # A single redeploy picks up every variable at once. Without this the flags
+      # sit in Railway's config unread — the process only sees them on restart.
+      - name: Redeploy so the new variables take effect
+        run: |
+          set -euo pipefail
+          railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --yes
