@@ -67,10 +67,16 @@ jobs:
       # Railway redeploys the service on each variable write by default: setting
       # 24 flags one at a time would queue 24 rolling restarts of the staging
       # backend. A single deploy is triggered at the end instead.
-      - name: Set the 24 module flags
+      # APP_ENV is set here, not separately, because it decides WHICH environment's
+      # publication rows the registry reads. The staging backend was reporting
+      # "environment":"development" on /api/v1/modules/visibility, so it served
+      # DEVELOPMENT's published set: curating staging rows changed nothing there,
+      # and enforcement was evaluating against the wrong tier entirely.
+      - name: Set APP_ENV and the 24 module flags
         run: |
           set -euo pipefail
           railway variable set \
+            APP_ENV=staging \
             FEATURE_WALLET_ENABLED=true \
             FEATURE_WALLET_TRANSFERS_ENABLED=true \
             FEATURE_VIRTUAL_ACCOUNTS_ENABLED=true \
@@ -140,6 +146,11 @@ jobs:
               console.error("Could not parse the variable list as JSON. Refusing to print it - it holds every staging variable in the clear.");
               process.exit(1);
             }
+            if (vars.APP_ENV !== "staging") {
+              console.error(`APP_ENV is ${vars.APP_ENV === undefined ? "NOT SET" : "not \"staging\""} - the registry would read the wrong environment's rows.`);
+              process.exit(1);
+            }
+            console.log("  OK   APP_ENV = staging");
             const ok = (k) => vars[k] === "true";
             for (const k of want) console.log(`  ${ok(k) ? "OK  " : "BAD "} ${k}`);
             const bad = want.filter((k) => !ok(k));
