@@ -357,12 +357,27 @@ jobs:
 
       # Retire the public variable. Left in place it would keep being inlined into
       # any future build and keep looking authoritative.
+      # No --yes: `variable delete` does not accept it, and the first version of
+      # this step passed it. The CLI failed with a usage error, which the
+      # `|| echo "already absent"` then SWALLOWED and reported as success. The
+      # variable survived while the log claimed otherwise.
+      #
+      # Deleting only when it is actually present distinguishes "nothing to do"
+      # from "the delete failed", so a real error can no longer masquerade as the
+      # benign case.
       - name: Remove the public NEXT_PUBLIC_ADMIN_API_KEY
         run: |
-          set -uo pipefail
-          railway variable delete NEXT_PUBLIC_ADMIN_API_KEY --yes \
-            --service frontend-admin --environment "$ENVIRONMENT" --project "$PROJECT" \
-            && echo "  removed" || echo "  already absent"
+          set -euo pipefail
+          present=$(railway variable list --service frontend-admin \
+            --environment "$ENVIRONMENT" --project "$PROJECT" --json \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{console.log(JSON.parse(d).NEXT_PUBLIC_ADMIN_API_KEY===undefined?"no":"yes")}catch{console.log("unknown")}})')
+          if [ "$present" = "no" ]; then
+            echo "  not set - nothing to remove"
+          else
+            railway variable delete NEXT_PUBLIC_ADMIN_API_KEY \
+              --service frontend-admin --environment "$ENVIRONMENT" --project "$PROJECT"
+            echo "  removed"
+          fi
 
       - name: Confirm both services carry the SAME key, and the public one is gone
         run: |
