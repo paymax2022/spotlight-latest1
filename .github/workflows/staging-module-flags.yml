@@ -332,20 +332,39 @@ jobs:
       # RequireAdmin FAILS OPEN on an empty key: a window where the backend has no
       # value is a window where admin endpoints are wide open, so the value is
       # always set, never cleared.
+      # Generated here, piped via --stdin so it never reaches a command line, a
+      # process list or set -x, and never echoed.
+      #
+      # BOTH sides now use the SERVER-ONLY name ADMIN_API_KEY. frontend-admin used
+      # NEXT_PUBLIC_ADMIN_API_KEY, which Next inlines into the client bundle - the
+      # admin key was readable by anyone who loaded the console, so rotating it
+      # only changed which value was public. The console now calls its own
+      # /api/admin-proxy, which attaches the header server-side.
       - name: Generate and set the new key on both services
         run: |
           set -euo pipefail
           KEY="$(openssl rand -hex 32)"
           printf '%s' "$KEY" | railway variable set ADMIN_API_KEY --stdin \
             --service backend --environment "$ENVIRONMENT" --project "$PROJECT" --skip-deploys
-          printf '%s' "$KEY" | railway variable set NEXT_PUBLIC_ADMIN_API_KEY --stdin \
+          printf '%s' "$KEY" | railway variable set ADMIN_API_KEY --stdin \
             --service frontend-admin --environment "$ENVIRONMENT" --project "$PROJECT" --skip-deploys
           unset KEY
-          echo "  new key written to backend and frontend-admin (value never printed)"
+          # The proxy needs to know where Go is. Private network, same address the
+          # frontend-web proxy uses and which is proven to work.
+          railway variable set ADMIN_API_BASE_URL=http://backend.railway.internal:8080/api/v1 \
+            --service frontend-admin --environment "$ENVIRONMENT" --project "$PROJECT" --skip-deploys
+          echo "  key written to backend and frontend-admin (value never printed)"
 
-      # Proves the two match WITHOUT revealing either: compare a short SHA-256
-      # prefix. Equal prefixes mean equal values; the prefix alone is not usable.
-      - name: Confirm both services carry the SAME key
+      # Retire the public variable. Left in place it would keep being inlined into
+      # any future build and keep looking authoritative.
+      - name: Remove the public NEXT_PUBLIC_ADMIN_API_KEY
+        run: |
+          set -uo pipefail
+          railway variable delete NEXT_PUBLIC_ADMIN_API_KEY --yes \
+            --service frontend-admin --environment "$ENVIRONMENT" --project "$PROJECT" \
+            && echo "  removed" || echo "  already absent"
+
+      - name: Confirm both services carry the SAME key, and the public one is gone
         run: |
           set -euo pipefail
           railway variable list --service backend --environment "$ENVIRONMENT" \
@@ -353,39 +372,34 @@ jobs:
           railway variable list --service frontend-admin --environment "$ENVIRONMENT" \
             --project "$PROJECT" --json > fa.json
           node -e '
-            const crypto = require("crypto");
-            const fs = require("fs");
+            const crypto = require("crypto"), fs = require("fs");
             const rd = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return null; } };
             const be = rd("be.json"), fa = rd("fa.json");
             if (!be || !fa) { console.error("Unparseable variable list - refusing to print it."); process.exit(1); }
             const h = (x) => (x === undefined ? null : crypto.createHash("sha256").update(String(x)).digest("hex").slice(0, 8));
-            const a = h(be.ADMIN_API_KEY), b = h(fa.NEXT_PUBLIC_ADMIN_API_KEY);
-            console.log("  backend        ADMIN_API_KEY            sha256[0:8] = " + (a ?? "NOT SET"));
-            console.log("  frontend-admin NEXT_PUBLIC_ADMIN_API_KEY sha256[0:8] = " + (b ?? "NOT SET"));
+            const a = h(be.ADMIN_API_KEY), b = h(fa.ADMIN_API_KEY);
+            console.log("  backend        ADMIN_API_KEY sha256[0:8] = " + (a ?? "NOT SET"));
+            console.log("  frontend-admin ADMIN_API_KEY sha256[0:8] = " + (b ?? "NOT SET"));
+            console.log("  frontend-admin NEXT_PUBLIC_ADMIN_API_KEY = " + (fa.NEXT_PUBLIC_ADMIN_API_KEY === undefined ? "GONE" : "STILL PRESENT"));
             if (!a || !b) { console.error("One side is unset. RequireAdmin fails OPEN on an empty backend key - refusing."); process.exit(1); }
-            if (a !== b) { console.error("The two values differ. The admin console would be refused by the backend."); process.exit(1); }
-            console.log("  MATCH - the console and the backend agree on the new key.");
+            if (a !== b) { console.error("The two values differ. The console would be refused by the backend."); process.exit(1); }
+            if (fa.NEXT_PUBLIC_ADMIN_API_KEY !== undefined) { console.error("The public variable still exists and would be inlined into the bundle."); process.exit(1); }
+            console.log("  MATCH, and the key is no longer client-visible.");
           '
 
-      # frontend-admin must REBUILD: NEXT_PUBLIC_* is inlined at build time, so a
-      # restart alone would keep shipping the old bundle.
-      - name: Rebuild frontend-admin and wait for it
+      # UPLOAD the tree. `redeploy --from-source` re-deploys the same pinned commit
+      # and would ship none of the proxy code.
+      - name: Check out the staging branch
+        uses: actions/checkout@v4
+        with:
+          ref: staging
+
+      - name: Deploy frontend-admin from the staging tree
         run: |
-          set -uo pipefail
-          railway redeploy --service frontend-admin --environment "$ENVIRONMENT" \
-            --project "$PROJECT" --from-source --yes
-          for i in $(seq 1 40); do
-            st=$(railway deployment list --service frontend-admin --environment "$ENVIRONMENT" \
-                   --project "$PROJECT" --limit 1 --json 2>/dev/null \
-                 | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{const r=JSON.parse(d);console.log((r[0]&&r[0].status)||"UNKNOWN")}catch{console.log("UNKNOWN")}})')
-            echo "  attempt $i: frontend-admin deployment = $st"
-            case "$st" in
-              SUCCESS) echo "  admin console rebuilt with the new key"; exit 0 ;;
-              FAILED|CRASHED|REMOVED) echo "::error::rebuild ended $st"; exit 1 ;;
-            esac
-            sleep 20
-          done
-          echo "::error::timed out waiting for the admin rebuild"; exit 1
+          set -euo pipefail
+          railway up frontend-admin --path-as-root --no-gitignore \
+            --service frontend-admin --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --detach --message "$(git rev-parse HEAD)"
 
       # The backend only reads ADMIN_API_KEY at startup, so it needs a restart -
       # a plain redeploy is enough, no rebuild required.
