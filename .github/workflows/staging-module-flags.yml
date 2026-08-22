@@ -226,8 +226,20 @@ jobs:
             console.log("  OK   GO_BACKEND_URL = " + want);
           '
 
-      - name: Redeploy frontend-web
+      # --from-source, i.e. REBUILD, not a plain redeploy. GO_BACKEND_URL is read
+      # in TWO places with different lifetimes:
+      #
+      #   * route handlers read process.env at runtime  -> a restart is enough
+      #   * next.config.mjs rewrites() is evaluated at BUILD time and the
+      #     destination is baked into the routes manifest -> only a rebuild moves it
+      #
+      # The fallback rewrite (/api/v1/:path* and /api/finance/:path* -> the Go
+      # backend) is what serves every path with no Next route of its own, which is
+      # most of the proxied surface. A plain `railway redeploy` re-runs the existing
+      # image, so that rewrite would keep pointing at the OLD public URL and those
+      # paths would keep hanging while the handler-backed ones looked fixed.
+      - name: Rebuild frontend-web so the baked-in rewrite target moves too
         run: |
           set -euo pipefail
           railway redeploy --service frontend-web --environment "$ENVIRONMENT" \
-            --project "$PROJECT" --yes
+            --project "$PROJECT" --from-source --yes
