@@ -154,11 +154,13 @@ jobs:
       - name: frontend-web logs - proxy/network errors only
         run: |
           set -uo pipefail
-          railway logs --service frontend-web --environment "$ENVIRONMENT" \
+          railway logs --deployment --service frontend-web --environment "$ENVIRONMENT" \
             --project "$PROJECT" --lines "${{ inputs.log_lines }}" > fw.log 2>&1 || true
+          railway logs --network --service frontend-web --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --lines 100 >> fw.log 2>&1 || true
           echo "  scanned $(wc -l < fw.log) log lines"
           echo "  --- network / proxy error lines ---"
-          grep -aiE "ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|fetch failed|socket hang up|railway\.internal|upstream|AggregateError|UND_ERR" fw.log \
+          grep -aiE "go-backend|TIMED OUT|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|fetch failed|socket hang up|railway\.internal|upstream|AggregateError|UND_ERR" fw.log \
             | tail -40 | sed 's/^/    /' || echo "    (none found)"
           echo "  --- counts by signature ---"
           for sig in ENOTFOUND EAI_AGAIN ETIMEDOUT ECONNREFUSED "fetch failed" "railway.internal"; do
@@ -171,7 +173,7 @@ jobs:
       - name: Module gate activity in the backend logs
         run: |
           set -uo pipefail
-          railway logs --service backend --environment "$ENVIRONMENT" \
+          railway logs --deployment --service backend --environment "$ENVIRONMENT" \
             --project "$PROJECT" --lines "${{ inputs.log_lines }}" > be.log 2>&1 || true
           echo "  scanned $(wc -l < be.log) log lines"
           echo "  --- modulegate lines ---"
