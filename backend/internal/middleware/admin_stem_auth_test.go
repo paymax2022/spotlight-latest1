@@ -11,7 +11,7 @@ import (
 func TestRequireAdmin_MissingAPIKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(RequireAdmin("secret-key"))
+	r.Use(RequireAdmin("secret-key", "production"))
 	r.GET("/admin/stem/overview", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/stem/overview", nil)
@@ -28,7 +28,7 @@ func TestRequireAdmin_AndStemRole_MissingStemRole(t *testing.T) {
 	r := gin.New()
 
 	admin := r.Group("/admin")
-	admin.Use(RequireAdmin("secret-key"))
+	admin.Use(RequireAdmin("secret-key", "production"))
 
 	stemRead := admin.Group("/stem")
 	stemRead.Use(RequireStemRoles("SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER", "JUDGE"))
@@ -49,7 +49,7 @@ func TestRequireAdmin_AndStemRole_DisallowedStemRole(t *testing.T) {
 	r := gin.New()
 
 	admin := r.Group("/admin")
-	admin.Use(RequireAdmin("secret-key"))
+	admin.Use(RequireAdmin("secret-key", "production"))
 
 	stemManage := admin.Group("/stem")
 	stemManage.Use(RequireStemRoles("SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER"))
@@ -71,7 +71,7 @@ func TestRequireAdmin_AndStemRole_AllowedManageRole(t *testing.T) {
 	r := gin.New()
 
 	admin := r.Group("/admin")
-	admin.Use(RequireAdmin("secret-key"))
+	admin.Use(RequireAdmin("secret-key", "production"))
 
 	stemManage := admin.Group("/stem")
 	stemManage.Use(RequireStemRoles("SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER"))

@@ -190,7 +190,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		reports.GET("/buckets", stem.ReportBuckets)
 
 		adminGroup := v1.Group("/admin")
-		adminGroup.Use(middleware.RequireAdmin(cfg.AdminAPIKey))
+		adminGroup.Use(middleware.RequireAdmin(cfg.AdminAPIKey, cfg.AppEnv))
 		adminGroup.GET("/menu-counts", admin.MenuCounts)
 		adminGroup.GET("/leads", leads.List)
 		adminGroup.PATCH("/leads/:id", leads.UpdateStatus)

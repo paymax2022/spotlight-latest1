@@ -7,20 +7,14 @@ WORKDIR /app
 # during `next build`; Railway still injects the runtime values separately.
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
-# Sent as the x-admin-api-key header by the admin console. NEXT_PUBLIC_* is
-# inlined at BUILD time, so without this ARG the bundle ships an empty string and
-# the console sends no key at all - and RequireAdmin FAILS OPEN when the backend
-# key is empty, so the combination silently leaves admin endpoints ungated.
-#
-# NOTE: being NEXT_PUBLIC_ this value reaches every browser that loads the admin
-# app, so it is not a secret in any meaningful sense. Declaring the ARG restores
-# the gate that was intended; moving the call server-side is the real fix and is
-# tracked separately.
-ARG NEXT_PUBLIC_ADMIN_API_KEY
+# NOTE: the admin key is deliberately NOT a build arg. It used to be
+# NEXT_PUBLIC_ADMIN_API_KEY, which Next inlines into the client bundle - so it
+# shipped to every browser that loaded the console and was never a secret.
+# It is now read at RUNTIME by app/api/admin-proxy as ADMIN_API_KEY (no
+# NEXT_PUBLIC_ prefix, so Next cannot inline it) and rotating it is a restart.
 ARG SUPABASE_SERVICE_ROLE_KEY
 ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
-ENV NEXT_PUBLIC_ADMIN_API_KEY=${NEXT_PUBLIC_ADMIN_API_KEY}
 ENV SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
 
 # Install dependencies from the lockfile first so this layer caches across
