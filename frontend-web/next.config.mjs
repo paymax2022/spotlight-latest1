@@ -53,49 +53,28 @@ const nextConfig = {
     ];
   },
 
-  // Proxy the Go financial backend (Paymax v2) through the Next.js gateway so the
-  // mobile app and web reach /api/finance/* and the mobile-aligned /api/v1/* surface
-  // (connect, crypto, invest, stocks, telemedicine, learn, spotlight, investai,
-  // ai/invest, mobility, …) via their single base URL. Set GO_BACKEND_URL to the
-  // backend's address (default APP_PORT 8080).
+  // The Go financial backend (Paymax v2) is reached through the Next gateway so
+  // mobile and web share one base URL for /api/finance/* and the mobile-aligned
+  // /api/v1/* surface (connect, crypto, invest, stocks, telemedicine, learn,
+  // spotlight, investai, ai/invest, mobility, …). Set GO_BACKEND_URL to the
+  // backend address (the Go server binds APP_PORT, default 8080).
   //
-  // IMPORTANT: use the `fallback` phase, NOT the array (afterFiles) form. An
-  // afterFiles rewrite overrides catch-all ([...path]) route handlers such as
-  // app/api/v1/fx/[...path]/route.ts, sending those requests straight to Go and
-  // bypassing both the handlers' auth guards AND the CORS headers that the Next
-  // middleware attaches to handler responses (external rewrites are opaque — Next
-  // does not decorate them with middleware/`headers()` CORS, and does not forward
-  // the upstream response's CORS headers, so cross-origin browser calls fail with
-  // net::ERR_FAILED). `fallback` runs only AFTER filesystem + dynamic routes, so
-  // any existing route handler serves its own path (and gets CORS), while only
-  // genuinely unhandled paths fall through to the Go backend.
-  async rewrites() {
-    // Loud on purpose. If this falls back during a container build, every
-    // fallback-rewrite path is compiled to point inside the container and hangs
-    // at runtime with no error and no log line - the failure gives you nothing
-    // to grep for. Say so while the build output is still being read.
-    if (!process.env.GO_BACKEND_URL) {
-      console.warn(
-        '[next.config] GO_BACKEND_URL is UNSET at build time. The /api/v1/* and ' +
-          '/api/finance/* fallback rewrites will be baked as http://localhost:8080 ' +
-          'and will hang in any container. Declare `ARG GO_BACKEND_URL` in the ' +
-          'Dockerfile builder stage so the platform can pass it in.',
-      );
-    }
-    const goBackend = process.env.GO_BACKEND_URL || 'http://localhost:8080';
-    return {
-      fallback: [
-        {
-          source: '/api/finance/:path*',
-          destination: `${goBackend}/api/finance/:path*`,
-        },
-        {
-          source: '/api/v1/:path*',
-          destination: `${goBackend}/api/v1/:path*`,
-        },
-      ],
-    };
-  },
+  // NO rewrites. The /api/v1/:path* and /api/finance/:path* fallback rewrites
+  // that used to live here are replaced by real catch-all route handlers
+  // (app/api/v1/[...path]/route.ts, app/api/finance/[...path]/route.ts).
+  //
+  // They were removed because they did not work, for two independent reasons:
+  //   1. rewrites() is evaluated at BUILD time, so the destination was baked from
+  //      an env var the Docker build never received - it compiled to
+  //      http://localhost:8080 and hung. (Fixed by ARG GO_BACKEND_URL, but:)
+  //   2. even correctly baked, the external rewrite still never reached the
+  //      network. Proven on staging with a full rebuild per arm - the private
+  //      address and the public one hung identically.
+  //
+  // A route handler also fixes the problem the old comment here described: an
+  // external rewrite is opaque to Next, so middleware never decorates it and
+  // cross-origin callers lose their CORS headers. A handler response does pass
+  // through middleware.
 
   typescript: {
     // Disable type errors during build to unblock CI while merged code is being integrated.
