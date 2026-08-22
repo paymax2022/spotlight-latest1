@@ -109,6 +109,35 @@ jobs:
             console.log("  APP_ENV    = " + (v.APP_ENV ?? "NOT SET"));
           '
 
+      # Deployment STATE first. `railway redeploy` returns once a build is
+      # TRIGGERED, not once it succeeds, so a job can go green while the build
+      # that followed it failed - leaving the previous image serving. That
+      # matters doubly here because next.config rewrites() bakes GO_BACKEND_URL
+      # at BUILD time: if the rebuild failed, the old proxy target is still live
+      # and every fix looks like it did nothing.
+      #
+      # It also explains an empty log fetch: `railway logs` targets the most
+      # recent deployment, which may be a failed build with almost no output.
+      - name: Deployment status per service
+        run: |
+          set -uo pipefail
+          for svc in frontend-web backend; do
+            echo "--- $svc ---"
+            railway deployment list --service "$svc" --environment "$ENVIRONMENT" \
+              --project "$PROJECT" --limit 5 --json 2>/dev/null \
+              | node -e '
+                let d = "";
+                process.stdin.on("data", (c) => (d += c));
+                process.stdin.on("end", () => {
+                  let rows;
+                  try { rows = JSON.parse(d); } catch { console.log("    (unreadable)"); return; }
+                  for (const r of rows.slice(0, 5)) {
+                    console.log(`    ${r.status ?? "?"}  ${r.createdAt ?? ""}  ${(r.meta && r.meta.cliMessage) ? String(r.meta.cliMessage).slice(0, 20) : ""}`);
+                  }
+                });
+              ' || echo "    (could not list)"
+          done
+
       # frontend-web runtime logs, filtered to the signatures that identify WHY the
       # proxy to Go hangs. The distinction matters and each error names a different
       # cause:
