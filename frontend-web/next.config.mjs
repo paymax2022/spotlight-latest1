@@ -70,6 +70,18 @@ const nextConfig = {
   // any existing route handler serves its own path (and gets CORS), while only
   // genuinely unhandled paths fall through to the Go backend.
   async rewrites() {
+    // Loud on purpose. If this falls back during a container build, every
+    // fallback-rewrite path is compiled to point inside the container and hangs
+    // at runtime with no error and no log line - the failure gives you nothing
+    // to grep for. Say so while the build output is still being read.
+    if (!process.env.GO_BACKEND_URL) {
+      console.warn(
+        '[next.config] GO_BACKEND_URL is UNSET at build time. The /api/v1/* and ' +
+          '/api/finance/* fallback rewrites will be baked as http://localhost:8080 ' +
+          'and will hang in any container. Declare `ARG GO_BACKEND_URL` in the ' +
+          'Dockerfile builder stage so the platform can pass it in.',
+      );
+    }
     const goBackend = process.env.GO_BACKEND_URL || 'http://localhost:8080';
     return {
       fallback: [
