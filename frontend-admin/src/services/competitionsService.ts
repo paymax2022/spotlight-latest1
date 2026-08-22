@@ -3,8 +3,6 @@ import type { CompetitionOverview, OpenMicCompetition } from '@/types/competitio
 
 export async function getCompetitionOverview(): Promise<CompetitionOverview | null> {
   const headers: Record<string, string> = {};
-  const adminKey = process.env.NEXT_PUBLIC_ADMIN_API_KEY || '';
-  if (adminKey) headers['x-admin-api-key'] = adminKey;
 
   try {
     const res = await fetch(`${env.apiBaseUrl}/admin/competitions/overview`, {
@@ -38,8 +36,6 @@ export async function getCompetitionOverview(): Promise<CompetitionOverview | nu
 
 export async function listOpenMicCompetitions(limit = 100): Promise<OpenMicCompetition[]> {
   const headers: Record<string, string> = {};
-  const adminKey = process.env.NEXT_PUBLIC_ADMIN_API_KEY || '';
-  if (adminKey) headers['x-admin-api-key'] = adminKey;
 
   const url = new URL(`${env.apiBaseUrl}/admin/competitions/open-mic`);
   url.searchParams.set('limit', String(limit));
@@ -69,8 +65,6 @@ export async function createOpenMicCompetition(input: {
   eligibility_text?: string;
 }): Promise<OpenMicCompetition | null> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const adminKey = process.env.NEXT_PUBLIC_ADMIN_API_KEY || '';
-  if (adminKey) headers['x-admin-api-key'] = adminKey;
 
   const res = await fetch(`${env.apiBaseUrl}/admin/competitions/open-mic`, {
     method: 'POST',

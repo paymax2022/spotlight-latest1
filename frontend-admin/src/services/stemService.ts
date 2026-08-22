@@ -33,8 +33,6 @@ import type {
 
 function adminHeaders() {
   const headers: Record<string, string> = {};
-  const adminKey = process.env.NEXT_PUBLIC_ADMIN_API_KEY || '';
-  if (adminKey) headers['x-admin-api-key'] = adminKey;
   headers['x-stem-role'] = process.env.NEXT_PUBLIC_STEM_ROLE || 'ADMIN';
   return headers;
 }
