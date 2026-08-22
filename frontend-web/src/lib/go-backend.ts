@@ -12,8 +12,18 @@ import { NextResponse } from 'next/server';
 
 export const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 
-/** Upper bound on a single upstream call. Long enough for slow money paths. */
-const PROXY_TIMEOUT_MS = 30_000;
+/**
+ * Upper bound on a single upstream call.
+ *
+ * Must stay BELOW the platform edge timeout, and that is the whole point of the
+ * number. At 30s it tied with Railway, whose clock starts when the request
+ * arrives rather than when this handler runs - so the edge returned its own
+ * plain-text 500 first and this handler never got to answer or log. The symptom
+ * was a proxy that looked completely silent while working exactly as written.
+ *
+ * Read at RUNTIME so it can be tuned with a restart instead of a rebuild.
+ */
+const PROXY_TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS ?? 20_000);
 
 export async function proxyToGoBackend(
   request: Request,
