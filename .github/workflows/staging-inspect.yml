@@ -77,6 +77,16 @@ jobs:
               if (raw === undefined) return `${k}: NOT SET`;
               return `${k}: set, ${test(String(raw)) ? "looks right" : "SET BUT LOOKS WRONG"}`;
             };
+            // GO_BACKEND_URL host+port ONLY. An internal Railway hostname is not a
+            // credential, and the port is the whole diagnosis: the Go server binds
+            // :$APP_PORT (default 8080), so a private URL naming any other port
+            // hangs rather than errors. userinfo/path/query are dropped in case a
+            // credential was ever embedded.
+            try {
+              const u = new URL(String(v.GO_BACKEND_URL));
+              console.log(`\n  GO_BACKEND_URL target: ${u.protocol}//${u.hostname}:${u.port || "(default)"}`);
+            } catch { console.log("\n  GO_BACKEND_URL: unset or unparseable"); }
+            console.log("  backend APP_PORT is checked separately below.");
             console.log("\n  shape checks (values not printed):");
             console.log("    " + shape("GO_BACKEND_URL", (s) => /^https?:\/\//.test(s) && !/localhost|127\.0\.0\.1/.test(s)));
             console.log("    " + shape("NEXT_PUBLIC_SUPABASE_URL", (s) => /^https:\/\/[a-z0-9]{20}\.supabase\.co/.test(s)));
@@ -84,6 +94,19 @@ jobs:
             for (const k of ["GO_API_BASE_URL","GO_BACKEND_WS_URL","NEXT_PUBLIC_API_URL"]) {
               console.log(`    ${k}: ${v[k] === undefined ? "NOT SET" : "set"}`);
             }
+          '
+
+      - name: backend APP_PORT (name + value; a port is not a secret)
+        run: |
+          set -uo pipefail
+          railway variable list --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > be.json || true
+          node -e '
+            let v; try { v = JSON.parse(require("fs").readFileSync("be.json","utf8")); }
+            catch { console.error("Unparseable - refusing to print."); process.exit(1); }
+            console.log("  APP_PORT   = " + (v.APP_PORT ?? "NOT SET (Go binds :8080 by default)"));
+            console.log("  PORT       = " + (v.PORT ?? "NOT SET"));
+            console.log("  APP_ENV    = " + (v.APP_ENV ?? "NOT SET"));
           '
 
       # The observe-only question from before enforcement went on, and the
