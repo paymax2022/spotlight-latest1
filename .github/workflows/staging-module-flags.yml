@@ -112,13 +112,20 @@ jobs:
 
       # Read the variables BACK and assert each is exactly "true". Without this
       # the job would report success for a write that silently landed on the
-      # wrong service or environment — and the failure mode of that is a staging
-      # backend that 503s every gated route once enforce is on.
+      # wrong service or environment.
+      #
+      # `--json` ONLY, never `--kv`. The two do not combine: --kv wins and, as
+      # its own help says, "prints raw values" - the entire staging variable set
+      # as KEY=VALUE text, secrets included. That is worse than a parse failure:
+      # a crash on such input quotes the offending line into the Actions log,
+      # which is exactly how ADMIN_API_KEY leaked on run 32545670584 and had to
+      # be rotated. A variable's VALUE must never be printed, echoed, or
+      # interpolated into an error here - only its NAME and a true/false verdict.
       - name: Verify every flag reads back as exactly "true"
         run: |
           set -euo pipefail
           railway variable list --service "$SERVICE" --environment "$ENVIRONMENT" \
-            --project "$PROJECT" --kv --json > vars.json
+            --project "$PROJECT" --json > vars.json
           node -e '
             const want = [
               "WALLET","WALLET_TRANSFERS","VIRTUAL_ACCOUNTS","FX","SAVINGS","KYC","REFERRALS",
@@ -126,20 +133,26 @@ jobs:
               "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
             ].map((s) => `FEATURE_${s}_ENABLED`);
-            const vars = JSON.parse(require("fs").readFileSync("vars.json", "utf8"));
-            const bad = want.filter((k) => vars[k] !== "true");
-            for (const k of want) console.log(`  ${vars[k] === "true" ? "OK  " : "BAD "} ${k} = ${vars[k] ?? "(unset)"}`);
-            const enforce = vars.FEATURE_MODULE_GATE_ENFORCE ?? "(unset)";
-            console.log(`\n  FEATURE_MODULE_GATE_ENFORCE = ${enforce}`);
-            if (bad.length) {
-              console.error(`\n${bad.length} flag(s) are not exactly "true" — the registry requires that literal string.`);
+            let vars;
+            try {
+              vars = JSON.parse(require("fs").readFileSync("vars.json", "utf8"));
+            } catch {
+              console.error("Could not parse the variable list as JSON. Refusing to print it - it holds every staging variable in the clear.");
               process.exit(1);
             }
-            if (enforce === "true") {
-              console.log("Enforcement is ON: a mapped route whose module is not published now returns 503.");
-            } else {
-              console.log("Enforcement is OFF (observe-only): the gate logs `WOULD refuse` and refuses nothing.");
+            const ok = (k) => vars[k] === "true";
+            for (const k of want) console.log(`  ${ok(k) ? "OK  " : "BAD "} ${k}`);
+            const bad = want.filter((k) => !ok(k));
+            const enforcing = vars.FEATURE_MODULE_GATE_ENFORCE === "true";
+            console.log(`\n  FEATURE_MODULE_GATE_ENFORCE is ${enforcing ? "ON" : "OFF"}`);
+            if (bad.length) {
+              console.error(`\n${bad.length} flag(s) are not exactly "true": ${bad.join(", ")}`);
+              console.error("The registry requires that literal string - 1 and yes do NOT count.");
+              process.exit(1);
             }
+            console.log(enforcing
+              ? "Enforcement ON: a mapped route whose module is not published returns 503."
+              : "Enforcement OFF (observe-only): the gate logs WOULD refuse and refuses nothing.");
           '
 
       # A single redeploy picks up every variable at once. Without this the flags
