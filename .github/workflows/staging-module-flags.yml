@@ -85,7 +85,13 @@ jobs:
       # "environment":"development" on /api/v1/modules/visibility, so it served
       # DEVELOPMENT's published set: curating staging rows changed nothing there,
       # and enforcement was evaluating against the wrong tier entirely.
-      - name: Set APP_ENV and the 24 module flags
+      # 29, not 24. The first pass derived the list from the backend ROUTE MAP
+      # (modulegate/routes.go), but the mobile app gates its tiles on a DIFFERENT
+      # set - serviceModuleKeys.ts - and five of those keys are not route-gated:
+      # utilityPayments, healthLab, healthVet, aiCare, walletBankTransfers. Their
+      # flags stayed unset, so those tiles silently vanished from the app while
+      # every check reported success. The list must be the UNION of both maps.
+      - name: Set APP_ENV and the module flags
         run: |
           set -euo pipefail
           railway variable set \
@@ -114,6 +120,11 @@ jobs:
             FEATURE_CREATORS_ENABLED=true \
             FEATURE_DISPUTES_ENABLED=true \
             FEATURE_RATINGS_ENABLED=true \
+            FEATURE_UTILITY_PAYMENTS_ENABLED=true \
+            FEATURE_HEALTH_LAB_ENABLED=true \
+            FEATURE_HEALTH_VET_ENABLED=true \
+            FEATURE_AICARE_ENABLED=true \
+            FEATURE_BANK_TRANSFERS_ENABLED=true \
             --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
             --skip-deploys
 
@@ -151,6 +162,7 @@ jobs:
               "INSURANCE","SOCIAL_PAY","LOYALTY","RESTAURANT","TRANSPORT","TELEMEDICINE",
               "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
+              "UTILITY_PAYMENTS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",
             ].map((s) => `FEATURE_${s}_ENABLED`);
             let vars;
             try {
