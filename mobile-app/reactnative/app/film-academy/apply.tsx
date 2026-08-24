@@ -64,10 +64,17 @@ export default function FilmAcademyApplyScreen() {
   // The SERVER recomputes this total from the same admin-managed rows when the
   // application is submitted, so it is a display convenience and cannot be used
   // to pay less.
-  const areasFee = interestAreas
+  // TUITION for the chosen areas — payable on ACCEPTANCE and refundable. It is
+  // shown so the applicant knows the commitment, but it is NOT collected here:
+  // charging it at submit would take hundreds of thousands of naira, before
+  // anyone had read the application, under a fee the settings mark
+  // non-refundable.
+  const tuitionTotal = interestAreas
     .filter((a) => areas.includes(a.slug))
     .reduce((sum, a) => sum + Number(a.fee_ngn ?? 0), 0);
-  const applicationFee = baseFee + areasFee;
+
+  // The only amount charged at submit. Non-refundable.
+  const applicationFee = baseFee;
 
   const toggleArea = (a: string) =>
     setAreas((prev) => (prev.includes(a) ? prev.filter((x) => x !== a) : [...prev, a]));
@@ -175,6 +182,9 @@ export default function FilmAcademyApplyScreen() {
                keyboardType="phone-pad" />
 
         <Text style={styles.label}>Areas of interest</Text>
+        <Text style={styles.totalNote}>
+          Amounts shown are tuition, payable only if you are offered a place.
+        </Text>
         {interestAreas.length === 0 ? (
           <Text style={styles.noticeText}>
             No areas are available to choose right now. Please try again later.
@@ -191,12 +201,14 @@ export default function FilmAcademyApplyScreen() {
                   style={[styles.chip, on && styles.chipOn]}
                   accessibilityRole="checkbox"
                   accessibilityState={{ checked: on }}
-                  accessibilityLabel={fee > 0 ? `${a.label}, ₦${fee.toLocaleString('en-NG')}` : `${a.label}, free`}
+                  accessibilityLabel={fee > 0 ? `${a.label}, tuition ₦${fee.toLocaleString('en-NG')}` : `${a.label}, no tuition`}
                 >
                   {on && <Check size={13} color={Colors.primary} />}
                   <Text style={[styles.chipText, on && styles.chipTextOn]}>{a.label}</Text>
+                  {/* No '+' prefix: this is TUITION if accepted, not an amount
+                      added to today's payment. */}
                   <Text style={[styles.chipFee, on && styles.chipTextOn]}>
-                    {fee > 0 ? `+₦${fee.toLocaleString('en-NG')}` : 'Free'}
+                    {fee > 0 ? `₦${fee.toLocaleString('en-NG')}` : 'No tuition'}
                   </Text>
                 </Pressable>
               );
@@ -205,30 +217,38 @@ export default function FilmAcademyApplyScreen() {
         )}
 
         {/* Running total. Tapping a chip adds or removes its line immediately. */}
-        {feeRequired && (
-          <View style={styles.totalBox}>
-            <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>Application fee</Text>
-              <Text style={styles.totalValue}>₦{baseFee.toLocaleString('en-NG')}</Text>
-            </View>
-            {interestAreas
-              .filter((a) => areas.includes(a.slug) && Number(a.fee_ngn ?? 0) > 0)
-              .map((a) => (
-                <View key={a.slug} style={styles.totalRow}>
-                  <Text style={styles.totalLabel}>{a.label}</Text>
-                  <Text style={styles.totalValue}>
-                    ₦{Number(a.fee_ngn).toLocaleString('en-NG')}
-                  </Text>
-                </View>
-              ))}
-            <View style={[styles.totalRow, styles.totalRowGrand]}>
-              <Text style={styles.totalGrandLabel}>Total to pay</Text>
-              <Text style={styles.totalGrandValue}>
-                ₦{applicationFee.toLocaleString('en-NG')}
-              </Text>
-            </View>
+        <View style={styles.totalBox}>
+          <View style={[styles.totalRow, styles.totalRowGrand, { borderTopWidth: 0, marginTop: 0, paddingTop: 0 }]}>
+            <Text style={styles.totalGrandLabel}>Pay now</Text>
+            <Text style={styles.totalGrandValue}>₦{baseFee.toLocaleString('en-NG')}</Text>
           </View>
-        )}
+          <Text style={styles.totalNote}>
+            Application fee. Non-refundable, and charged whether or not you are offered a place.
+          </Text>
+
+          {tuitionTotal > 0 && (
+            <>
+              <View style={[styles.totalRow, styles.totalRowGrand]}>
+                <Text style={styles.totalLabel}>Tuition if accepted</Text>
+                <Text style={styles.totalValue}>₦{tuitionTotal.toLocaleString('en-NG')}</Text>
+              </View>
+              {interestAreas
+                .filter((a) => areas.includes(a.slug) && Number(a.fee_ngn ?? 0) > 0)
+                .map((a) => (
+                  <View key={a.slug} style={styles.totalRow}>
+                    <Text style={styles.totalSubLabel}>{a.label}</Text>
+                    <Text style={styles.totalSubValue}>
+                      ₦{Number(a.fee_ngn).toLocaleString('en-NG')}
+                    </Text>
+                  </View>
+                ))}
+              <Text style={styles.totalNote}>
+                Payable only if you are offered a place, and refundable. Nothing for
+                tuition is taken today.
+              </Text>
+            </>
+          )}
+        </View>
 
         <Field label="Why do you want to join?" value={motivation} onChange={setMotivation}
                placeholder="A few sentences" multiline />
@@ -316,6 +336,9 @@ const styles = StyleSheet.create({
   totalValue:  { ...Typography.bodyMd, color: Colors.onSurface },
   totalGrandLabel: { ...Typography.labelLg, color: Colors.onSurface },
   totalGrandValue: { ...Typography.titleMd, color: Colors.onSurface },
+  totalSubLabel: { ...Typography.caption, color: Colors.onSurfaceVariant, paddingLeft: 10 },
+  totalSubValue: { ...Typography.caption, color: Colors.onSurfaceVariant },
+  totalNote:     { ...Typography.caption, color: Colors.onSurfaceVariant, marginTop: 2 },
   error:       { ...Typography.bodyMd, color: Colors.error },
   noticeBox:   { backgroundColor: Colors.iconBgGold, borderRadius: Radius.lg, padding: Spacing.lg, gap: 4 },
   noticeTitle: { ...Typography.labelLg, color: Colors.onSurface },
