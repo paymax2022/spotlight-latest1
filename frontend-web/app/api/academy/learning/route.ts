@@ -26,7 +26,7 @@ export async function GET(request: Request) {
     const [modulesRes, progressRes] = await Promise.all([
       supabase
         .from('academy_modules')
-        .select('id, title, description, order_index, academy_lessons(id, title, description, video_url, resource_url, resource_label, order_index, estimated_minutes, is_required, is_published)')
+        .select('id, title, description, order_index, academy_lessons(id, title, description, content_markdown, video_url, resource_url, resource_label, order_index, estimated_minutes, is_required, is_published)')
         .eq('program_id', learner.programId)
         .eq('is_published', true)
         .order('order_index', { ascending: true }),

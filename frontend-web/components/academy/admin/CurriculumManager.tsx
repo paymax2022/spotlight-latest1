@@ -31,6 +31,8 @@ export default function CurriculumManager() {
   const [moduleForm, setModuleForm] = useState({ program_id: '', title: '', description: '' });
   const [lessonForm, setLessonForm] = useState({ module_id: '', title: '', description: '', video_url: '', resource_url: '', resource_label: '', estimated_minutes: '30' });
   const [assignForm, setAssignForm] = useState({ program_id: '', title: '', description: '', due_date: '', max_score: '100', rubric: '' });
+  const [seedProgram, setSeedProgram] = useState('');
+  const [seedResult, setSeedResult] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -120,6 +122,38 @@ export default function CurriculumManager() {
       () => setAssignForm({ ...assignForm, title: '', description: '', due_date: '', rubric: '' }),
     );
 
+  // Installing the authored pathway is idempotent, so re-running after a content
+  // fix updates in place rather than duplicating the curriculum.
+  const installPathway = async () => {
+    if (!seedProgram) return;
+    setBusy(true);
+    setSeedResult(null);
+    setError(null);
+    try {
+      const res = await fetch('/api/admin/academy/curriculum/seed', {
+        method: 'POST',
+        headers: await adminAuthHeaders(true),
+        body: JSON.stringify({ programId: seedProgram }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) { setError(body?.error || 'Could not install the pathway.'); return; }
+      const r = (body?.data ?? body)?.report;
+      setSeedResult(
+        r
+          ? `Installed into ${(body?.data ?? body)?.programme}: ` +
+            `${r.modules.created + r.modules.updated} modules, ` +
+            `${r.lessons.created + r.lessons.updated} lessons, ` +
+            `${r.quizzes.created + r.quizzes.updated} quizzes, ` +
+            `${r.questions.created + r.questions.updated} questions, ` +
+            `${r.assignments.created + r.assignments.updated} assignments.`
+          : 'Installed.',
+      );
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const input = 'w-full bg-transparent border border-foreground/20 rounded px-3 py-2 text-sm';
   const label = 'block text-xs text-foreground/50 mb-1';
 
@@ -137,6 +171,29 @@ export default function CurriculumManager() {
           create a batch first, then a programme, before adding lessons.
         </div>
       )}
+
+      {/* ── install the authored pathway ──────────────────────────────── */}
+      <section className="rounded border border-amber-500/40 bg-amber-500/5 p-4">
+        <h3 className="text-foreground font-medium mb-1">Install the Film Craft Pathway</h3>
+        <p className="text-sm text-foreground/50 mb-3">
+          26 modules across 5 tiers, each with lecture material, a quiz and a practical
+          assignment, plus an assessment gating each tier. Safe to re-run — it updates in
+          place rather than creating a second copy.
+        </p>
+        <div className="flex gap-3 items-end">
+          <label className="flex-1">
+            <span className={label}>Install into programme</span>
+            <select value={seedProgram} onChange={(e) => setSeedProgram(e.target.value)} className={input}>
+              <option value="">Choose…</option>
+              {tree.programs.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
+            </select>
+          </label>
+          <button onClick={installPathway} disabled={busy || !seedProgram} className="btn-primary py-2 px-4 text-sm">
+            {busy ? 'Installing…' : 'Install pathway'}
+          </button>
+        </div>
+        {seedResult && <p className="text-sm text-emerald-400 mt-3">{seedResult}</p>}
+      </section>
 
       {/* ── existing tree ─────────────────────────────────────────────── */}
       <section>

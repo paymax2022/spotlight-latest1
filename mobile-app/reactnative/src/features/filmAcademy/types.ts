@@ -137,6 +137,8 @@ export interface FilmAcademyLesson {
   id: string;
   title: string;
   description: string | null;
+  /** The lecture itself, in markdown. Rendered by <Lecture />. */
+  content_markdown: string | null;
   video_url: string | null;
   resource_url: string | null;
   resource_label: string | null;

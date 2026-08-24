@@ -15,6 +15,7 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { getCurriculum, setLessonProgress, FILM_ACADEMY_LEARN_KEY } from '@/features/filmAcademy/api';
+import { Lecture } from '@/features/filmAcademy/Lecture';
 import { getErrorMessage } from '@/utils/errorMapper';
 
 export default function FilmAcademyLessonScreen() {
@@ -89,6 +90,14 @@ export default function FilmAcademyLessonScreen() {
 
             {!!lesson.description && <Text style={styles.body}>{lesson.description}</Text>}
 
+            {/* The lecture itself. Rendered above the video links, because the
+                reading is the lesson and the video supports it. */}
+            {!!lesson.content_markdown && (
+              <View style={styles.lecture}>
+                <Lecture markdown={lesson.content_markdown} />
+              </View>
+            )}
+
             {!!lesson.video_url && (
               <Pressable onPress={() => openLink(lesson.video_url!)} style={styles.resourceBtn}>
                 <Play size={18} color={Colors.black} />
@@ -150,6 +159,7 @@ const styles = StyleSheet.create({
   metaRow:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
   meta:        { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   body:        { ...Typography.bodyMd, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
+  lecture:     { marginTop: Spacing.sm, marginBottom: Spacing.sm },
 
   resourceBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm,
                  backgroundColor: Colors.gold, borderRadius: Radius.md, paddingVertical: Spacing.md,
