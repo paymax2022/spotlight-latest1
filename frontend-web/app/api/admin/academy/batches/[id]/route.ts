@@ -18,7 +18,8 @@ function getBatchFeeFields(body: Record<string, unknown>) {
   return extra;
 }
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
     const supabase = createAdminClient();
@@ -34,7 +35,8 @@ export async function GET(request: Request, { params }: { params: { id: string }
   }
 }
 
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
+export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
     const body = (await request.json()) as AcademyBatchMutationInput & Record<string, unknown>;
@@ -60,7 +62,8 @@ export async function PATCH(request: Request, { params }: { params: { id: string
   }
 }
 
-export async function DELETE(request: Request, { params }: { params: { id: string } }) {
+export async function DELETE(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
     const supabase = createAdminClient();

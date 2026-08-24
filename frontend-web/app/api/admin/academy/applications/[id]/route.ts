@@ -5,7 +5,8 @@ import { autoCreateInstallmentPlan } from '@/src/server/services/academy/install
 import { createAdminClient } from '@/lib/supabase/server';
 import type { AcademyReviewUpdateInput } from '@/src/lib/validation/academy';
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'applications:review');
     const supabase = createAdminClient();
@@ -21,7 +22,8 @@ export async function GET(request: Request, { params }: { params: { id: string }
   }
 }
 
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
+export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const identity = await assertAdminPermission(request, 'applications:review');
     const body = (await request.json()) as AcademyReviewUpdateInput;

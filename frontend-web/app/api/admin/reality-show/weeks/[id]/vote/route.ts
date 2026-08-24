@@ -13,7 +13,8 @@ async function getVoterName(userId: string): Promise<string> {
   }
 }
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'dashboard:view');
     const week = getWeek(params.id);
@@ -31,7 +32,8 @@ export async function GET(request: Request, { params }: { params: { id: string }
   }
 }
 
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const identity = await assertAdminPermission(request, 'programs:manage');
     const week = getWeek(params.id);

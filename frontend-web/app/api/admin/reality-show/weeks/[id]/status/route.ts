@@ -2,7 +2,8 @@ import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/re
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { getWeek, updateWeek, openVoting, closeVoting } from '@/src/server/services/reality-show/store';
 
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
+export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
     const week = getWeek(params.id);

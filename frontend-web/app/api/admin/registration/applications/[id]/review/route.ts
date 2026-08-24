@@ -4,7 +4,8 @@ import type { RegistrationReviewInput } from '@/src/features/registration/types'
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { addAuditEvent } from '@/src/server/admin/audit';
 
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const identity = await assertAdminPermission(request, 'applications:review');
     const body = (await request.json()) as RegistrationReviewInput;

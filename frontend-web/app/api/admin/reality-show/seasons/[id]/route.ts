@@ -6,7 +6,8 @@ import {
   getEvictionsForSeason,
 } from '@/src/server/services/reality-show/store';
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'dashboard:view');
     const season = getSeason(params.id);
@@ -22,7 +23,8 @@ export async function GET(request: Request, { params }: { params: { id: string }
   }
 }
 
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
+export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
     const season = getSeason(params.id);

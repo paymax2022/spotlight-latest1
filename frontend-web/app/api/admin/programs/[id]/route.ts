@@ -3,7 +3,8 @@ import { addAuditEvent } from '@/src/server/admin/audit';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { getProgram, updateProgram } from '@/src/server/admin/programs';
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
     const program = getProgram(params.id);
@@ -14,7 +15,8 @@ export async function GET(request: Request, { params }: { params: { id: string }
   }
 }
 
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
+export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const identity = await assertAdminPermission(request, 'programs:manage');
     const body = await request.json();
