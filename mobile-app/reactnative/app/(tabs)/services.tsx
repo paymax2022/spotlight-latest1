@@ -21,6 +21,7 @@ const CATEGORIES = [
   { key: 'health',     label: 'Health' },
   { key: 'lifestyle',  label: 'Lifestyle' },
   { key: 'contest',    label: 'Contest' },
+  { key: 'academy',    label: 'Academy' },
   { key: 'property',   label: 'Property' },
   { key: 'community',  label: 'Community' },
 ] as const;
@@ -34,6 +35,7 @@ const BANDS: { key: Exclude<Cat, 'all'>; label: string; desc: string }[] = [
   { key: 'health',     label: 'Health',                  desc: 'Telemedicine, veterinary, pharmacy & lab' },
   { key: 'lifestyle',  label: 'Lifestyle & Marketplace', desc: 'Food, ride, shopping & more' },
   { key: 'contest',    label: 'Contest',                 desc: 'Enter contests, vote & apply to compete' },
+  { key: 'academy',    label: 'Academy',                 desc: 'Film Academy, StudyHub & structured learning' },
   { key: 'property',   label: 'Property Management',     desc: 'Realtor, estate, visitor access & more' },
   { key: 'community',  label: 'Community & Business',    desc: 'Associations, crowdfunding, events & more' },
 ];

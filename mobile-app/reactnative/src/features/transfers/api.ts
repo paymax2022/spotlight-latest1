@@ -71,12 +71,25 @@ export async function getPinStatus(): Promise<{ hasPin: boolean }> {
   if (USE_MOCK) return transfersMock.getPinStatus();
   const res = await api.get('/api/v1/transfers/pin/status');
   const data = unwrap(res);
-  return { hasPin: Boolean(data.hasPin ?? data.has_pin ?? false) };
+  // The Go handler returns `pin_set`, NOT hasPin/has_pin. Reading only the two
+  // camel/snake spellings meant this ALWAYS resolved to false, so the app never
+  // knew a PIN existed: it offered "create" forever, sent a bare {pin}, and the
+  // server — which did know — demanded current_pin and answered 403. Every other
+  // PIN symptom was downstream of this one missing key.
+  return { hasPin: Boolean(data.pin_set ?? data.hasPin ?? data.has_pin ?? false) };
 }
 
-export async function createPin(pin: string): Promise<void> {
+/**
+ * Set or CHANGE the transaction PIN.
+ *
+ * `currentPin` is required by the backend whenever a PIN already exists: SetPin
+ * verifies it before overwriting. Omitting it does not merely fail — the empty
+ * string is evaluated as a WRONG GUESS and counts toward the 5-failure lockout,
+ * so a client that forgets it can lock the user out of transfers.
+ */
+export async function createPin(pin: string, currentPin?: string): Promise<void> {
   if (USE_MOCK) return transfersMock.createPin(pin);
-  await api.post('/api/v1/transfers/pin', { pin });
+  await api.post('/api/v1/transfers/pin', currentPin ? { pin, current_pin: currentPin } : { pin });
 }
 
 export async function verifyPin(pin: string): Promise<void> {
