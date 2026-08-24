@@ -24,6 +24,7 @@ const DESTINATIONS = [
   { label: 'Batches',      path: '/admin/film-academy',              desc: 'Cohorts, training fee, instalment plan and schedule.' },
   { label: 'Applications', path: '/admin/film-academy/applications', desc: 'Review, score and decide on applicants.' },
   { label: 'New batch',    path: '/admin/film-academy/batches/new',  desc: 'Open a new cohort for applications.' },
+  { label: 'Areas & fees', path: '/admin/film-academy/interest-areas', desc: 'Areas of interest an applicant can choose, and the fee each one adds.' },
   { label: 'Settings',     path: '/admin/film-academy/settings',     desc: 'Programme-wide configuration and fee defaults.' },
 ];
 

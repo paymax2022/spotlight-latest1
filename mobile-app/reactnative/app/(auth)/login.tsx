@@ -43,7 +43,11 @@ export default function LoginScreen() {
         : '/(tabs)/home';
       router.replace(dest as never);
     } catch (err) {
-      setApiError(getErrorMessage(err));
+      // authAttempt: a 401 HERE means the credentials were rejected. Without it
+      // the shared mapper returns 'Your session has expired. Please sign in
+      // again.' — which is what a lapsed token means, and is nonsense on the
+      // sign-in screen where there is no session yet.
+      setApiError(getErrorMessage(err, { authAttempt: true }));
     }
   };
 
