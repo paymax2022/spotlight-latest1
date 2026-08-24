@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { adminAuthHeaders } from '@/src/lib/auth/client';
+import InterestAreasManager from '../_components/InterestAreasManager';
 
 type AcademySettings = {
   id: string | null;
@@ -263,6 +264,11 @@ export default function AcademySettingsPage() {
           </Link>
         </div>
       </form>
+
+      {/* Areas of interest live here rather than on a page of their own: each
+          one ADDS to the application fee set above, so the two are read and
+          edited together. It manages its own loading and saving. */}
+      <InterestAreasManager />
     </div>
   );
 }
