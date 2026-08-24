@@ -70,3 +70,52 @@ export interface FilmAcademyApplicationInput {
    */
   application_fee_reference?: string;
 }
+
+/** One entry in the applicant-visible progress timeline. */
+export interface FilmAcademyTimelineEntry {
+  id: string;
+  old_status: string | null;
+  new_status: string | null;
+  change_reason: string | null;
+  created_at: string | null;
+}
+
+/** Something the applicant has to do next. Derived server-side, never guessed here. */
+export interface FilmAcademyAction {
+  key: string;
+  label: string;
+  detail: string;
+  amountNgn?: number;
+  dueDate?: string | null;
+}
+
+/** One tuition instalment. `amount_ngn` is NAIRA. */
+export interface FilmAcademyInstalment {
+  id: string;
+  installment_number: number;
+  amount_ngn: number;
+  due_date: string | null;
+  paid_at: string | null;
+  status: string | null;
+}
+
+export interface FilmAcademyApplicationStatus {
+  application: {
+    id: string;
+    status: string | null;
+    payment_status: string | null;
+    /** NUMERIC — the naira amount collected, not a boolean flag. */
+    application_fee_paid: number | null;
+    /** Naira. The sum of the priced areas chosen at application time. */
+    tuition_total_ngn: number | null;
+    full_name: string | null;
+    email: string | null;
+    batch_id: string | null;
+    created_at: string | null;
+    academy_batches?: { batch_name?: string | null; start_date?: string | null } | null;
+  } | null;
+  timeline: FilmAcademyTimelineEntry[];
+  plan: { id: string; total_amount_ngn: number; discounted_amount_ngn: number | null; installments_count: number } | null;
+  payments: FilmAcademyInstalment[];
+  actions: FilmAcademyAction[];
+}

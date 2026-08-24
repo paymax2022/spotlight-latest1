@@ -30,7 +30,7 @@ export async function autoCreateInstallmentPlan(
       .maybeSingle(),
     supabase
       .from('academy_applications')
-      .select('id, payment_preference')
+      .select('id, payment_preference, tuition_total_ngn')
       .eq('id', applicationId)
       .maybeSingle(),
   ]);
@@ -40,7 +40,14 @@ export async function autoCreateInstallmentPlan(
   const batch = batchRes.data as any;
   const app   = appRes.data   as any;
 
-  const tuitionFee = Number(batch.training_fee_ngn ?? 0);
+  // The applicant's tuition is the sum of the priced interest areas they chose at
+  // application time (`tuition_total_ngn`). The batch's flat `training_fee_ngn` is the
+  // fallback for batches that predate per-area pricing, or that price the whole
+  // programme as one number. Billing the batch fee to someone who selected areas would
+  // charge them a figure they were never shown.
+  const areaTuition  = Number(app?.tuition_total_ngn ?? 0);
+  const batchTuition = Number(batch.training_fee_ngn ?? 0);
+  const tuitionFee   = areaTuition > 0 ? areaTuition : batchTuition;
   if (tuitionFee <= 0) return; // free batch — no plan needed
 
   // 2. Guard: plan already exists

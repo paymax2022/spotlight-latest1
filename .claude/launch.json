@@ -4,7 +4,10 @@
     {
       "name": "web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "cwd": "frontend-web",
       "port": 3000,
       "description": "Main app + dashboard"
@@ -12,7 +15,10 @@
     {
       "name": "admin",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "cwd": "frontend-admin",
       "port": 3001,
       "description": "Admin portal"
@@ -20,14 +26,23 @@
     {
       "name": "mobile",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "web"],
+      "runtimeArgs": [
+        "run",
+        "web"
+      ],
       "cwd": "mobile-app/reactnative",
       "port": 8083
     },
     {
       "name": "expo-web-fx",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["expo", "start", "--web", "--port", "8085"],
+      "runtimeArgs": [
+        "expo",
+        "start",
+        "--web",
+        "--port",
+        "8085"
+      ],
       "cwd": "mobile-app/reactnative",
       "port": 8085,
       "description": "Mobile web on a side port for FX QA"
@@ -35,10 +50,31 @@
     {
       "name": "mobile-staging",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["expo", "start", "--web", "--port", "8083", "-c"],
+      "runtimeArgs": [
+        "expo",
+        "start",
+        "--web",
+        "--port",
+        "8083",
+        "-c"
+      ],
       "cwd": "mobile-app/reactnative",
       "port": 8083,
       "description": "Expo web against STAGING. -c clears the cache: EXPO_PUBLIC_* is baked into the bundle, so without it a running Metro keeps serving the previous environment."
+    },
+    {
+      "name": "web-worktree",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "3010"
+      ],
+      "cwd": "frontend-web",
+      "port": 3010,
+      "description": "Same app on a side port so a worktree can be verified without stopping the main checkout's :3000 server."
     }
   ]
 }

@@ -12,6 +12,7 @@ import { api } from '@/api/client';
 import type {
   FilmAcademyOverview,
   FilmAcademyApplicationInput,
+  FilmAcademyApplicationStatus,
 } from './types';
 
 type Envelope = { data?: unknown };
@@ -55,4 +56,38 @@ export async function applyToBatch(input: FilmAcademyApplicationInput): Promise<
 export async function getInstallments(): Promise<unknown> {
   const res = await api.get('/api/academy/installments');
   return unwrap(res);
+}
+
+/** Shared so the status and tuition screens read and invalidate the same cache. */
+export const FILM_ACADEMY_STATUS_KEY = ['film-academy', 'application-status'];
+
+/**
+ * The signed-in user's own application: status, timeline, tuition plan, and the
+ * actions still outstanding. Returns `application: null` when they have not
+ * applied — that is not an error, and the screen renders an empty state.
+ */
+export async function getApplicationStatus(): Promise<FilmAcademyApplicationStatus> {
+  const res = await api.get('/api/academy/application');
+  const body = unwrap<Partial<FilmAcademyApplicationStatus>>(res);
+  return {
+    application: body?.application ?? null,
+    timeline: body?.timeline ?? [],
+    plan: body?.plan ?? null,
+    payments: body?.payments ?? [],
+    actions: body?.actions ?? [],
+  };
+}
+
+/**
+ * Confirm a tuition instalment against a verified Paystack reference.
+ * The server re-verifies the reference AND the amount with Paystack, so nothing
+ * sent from here is trusted — this only tells the server which instalment the
+ * reference belongs to.
+ */
+export async function payInstalment(input: {
+  planId: string;
+  paymentId: string;
+  reference: string;
+}): Promise<void> {
+  await api.post('/api/academy/installments/pay', input);
 }

@@ -11,7 +11,7 @@ import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, Clapperboard, CalendarDays, Clock } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, Clapperboard, CalendarDays, Clock, FileText } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -148,6 +148,22 @@ export default function FilmAcademyScreen() {
           </View>
         )}
 
+        {/* Applicants land back here from the service tile, so the way into their
+            own application has to be on this screen. Shown only once they have
+            actually applied — an empty tracker is worse than no tracker. */}
+        {applied.size > 0 && (
+          <Pressable onPress={() => router.push('/film-academy/status')} style={styles.trackRow}>
+            <View style={styles.trackIcon}>
+              <FileText size={18} color={Colors.gold} />
+            </View>
+            <View style={styles.trackBody}>
+              <Text style={styles.trackLabel}>My application</Text>
+              <Text style={styles.trackMeta}>Track status, next steps and tuition</Text>
+            </View>
+            <ChevronRight size={18} color={Colors.onSurfaceVariant} />
+          </Pressable>
+        )}
+
         {batches.map((b) => (
           <BatchCard
             key={b.id}
@@ -173,6 +189,13 @@ const styles = StyleSheet.create({
                  alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.xs },
   heroTitle:   { ...Typography.headlineMd, color: Colors.onSurface },
   heroSub:     { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
+  trackRow:    { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+                 backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.lg },
+  trackIcon:   { width: 32, height: 32, borderRadius: Radius.sm, alignItems: 'center',
+                 justifyContent: 'center', backgroundColor: Colors.iconBgGold },
+  trackBody:   { flex: 1, gap: 2 },
+  trackLabel:  { ...Typography.labelLg, color: Colors.onSurface },
+  trackMeta:   { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   card:        { backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.lg, gap: Spacing.xs },
   cardHead:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   cardTitle:   { ...Typography.titleMd, color: Colors.onSurface, flexShrink: 1 },

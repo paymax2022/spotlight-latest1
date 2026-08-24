@@ -45,6 +45,23 @@ export async function POST(request: Request) {
       return errorResponse('Payment not confirmed by Paystack', 402);
     }
 
+    // The reference alone only proves SOME payment succeeded — not that it was for
+    // this instalment. Without this check an applicant could initialise a ₦100 charge
+    // and pass its reference here to settle a ₦255,000 instalment.
+    //
+    // Money note: academy amounts are NAIRA (these tables predate the kobo convention)
+    // while Paystack reports kobo, hence the ×100.
+    const expectedKobo = Math.round(Number((payment as any).amount_ngn ?? 0) * 100);
+    if (result.currency !== 'NGN' || result.amountKobo < expectedKobo) {
+      console.error('[academy/installments/pay] amount mismatch', {
+        paymentId: body.paymentId,
+        expectedKobo,
+        paidKobo: result.amountKobo,
+        currency: result.currency,
+      });
+      return errorResponse('Payment amount does not match this installment', 402);
+    }
+
     // Guard: reference reuse
     const { data: existing } = await supabase
       .from('academy_installment_payments')
