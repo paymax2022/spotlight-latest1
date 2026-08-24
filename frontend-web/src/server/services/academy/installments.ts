@@ -35,7 +35,14 @@ export async function autoCreateInstallmentPlan(
       .maybeSingle(),
   ]);
 
-  if (batchRes.error || !batchRes.data) return;
+  if (batchRes.error || !batchRes.data) {
+    // Silent returns here are how an approved applicant ends up with no tuition
+    // plan and nobody notices. Every abort now says why.
+    console.error('[academy/installments] batch lookup failed', {
+      applicationId, batchId, error: batchRes.error?.message ?? 'batch not found',
+    });
+    return;
+  }
 
   const batch = batchRes.data as any;
   const app   = appRes.data   as any;
@@ -48,7 +55,10 @@ export async function autoCreateInstallmentPlan(
   const areaTuition  = Number(app?.tuition_total_ngn ?? 0);
   const batchTuition = Number(batch.training_fee_ngn ?? 0);
   const tuitionFee   = areaTuition > 0 ? areaTuition : batchTuition;
-  if (tuitionFee <= 0) return; // free batch — no plan needed
+  if (tuitionFee <= 0) {
+    console.info('[academy/installments] no tuition owed — no plan created', { applicationId });
+    return; // genuinely free batch
+  }
 
   // 2. Guard: plan already exists
   const { data: existing } = await supabase
@@ -56,15 +66,34 @@ export async function autoCreateInstallmentPlan(
     .select('id')
     .eq('application_id', applicationId)
     .maybeSingle();
-  if (existing) return;
+  if (existing) {
+    console.info('[academy/installments] plan already exists', { applicationId });
+    return;
+  }
 
   const preference: 'one_off' | 'installment' = app?.payment_preference === 'one_off' ? 'one_off' : 'installment';
   const discountPct = preference === 'one_off' ? Number(batch.one_off_discount_pct ?? 0) : 0;
   const discountedAmount = Math.round(tuitionFee * (1 - discountPct / 100) * 100) / 100;
 
-  const count     = preference === 'one_off' ? 1 : Math.max(1, Number(batch.installments_count ?? 1));
-  const frequency = preference === 'one_off' ? 'upfront' : String(batch.fee_frequency ?? 'monthly');
-  const offset    = Number(batch.fee_start_offset_days ?? 0);
+  // academy_installment_plans.frequency is CONSTRAINED to weekly|biweekly|monthly.
+  // "Upfront" is not a cadence — it is a single payment, expressed as
+  // installments_count = 1. Writing 'upfront' into the cadence column violates
+  // academy_installment_plans_frequency_check, so a one-off plan could never be
+  // created at all, nor any plan for a batch whose fee_frequency is 'upfront'.
+  const PLAN_CADENCES = new Set(['weekly', 'biweekly', 'monthly']);
+  const batchCadence  = String(batch.fee_frequency ?? 'monthly');
+  const payUpfront    = preference === 'one_off' || !PLAN_CADENCES.has(batchCadence);
+
+  const frequency = payUpfront ? 'monthly' : batchCadence;
+  // A single instalment on any cadence falls due on the start date, so the stored
+  // cadence is immaterial for an upfront plan — only the count is.
+  //
+  // installments_count is CONSTRAINED to 1..12; an unclamped batch value would
+  // fail the insert the same silent way the cadence did.
+  const count = payUpfront
+    ? 1
+    : Math.min(12, Math.max(1, Number(batch.installments_count ?? 1)));
+  const offset = Number(batch.fee_start_offset_days ?? 0);
 
   // 3. Create the plan
   const { data: plan, error: planErr } = await supabase
@@ -83,7 +112,12 @@ export async function autoCreateInstallmentPlan(
     .select('id')
     .single();
 
-  if (planErr || !plan) return;
+  if (planErr || !plan) {
+    console.error('[academy/installments] plan insert failed', {
+      applicationId, batchId, tuitionFee, error: planErr?.message, code: (planErr as { code?: string } | null)?.code,
+    });
+    return;
+  }
 
   // 4. Generate installment rows
   const base = new Date(approvedAt ?? Date.now());
@@ -101,5 +135,15 @@ export async function autoCreateInstallmentPlan(
     status: 'pending',
   }));
 
-  await supabase.from('academy_installment_payments').insert(payments);
+  const { error: paymentsErr } = await supabase
+    .from('academy_installment_payments')
+    .insert(payments);
+
+  if (paymentsErr) {
+    // A plan with no instalments is worse than no plan: the applicant sees a
+    // tuition total with nothing payable against it.
+    console.error('[academy/installments] instalment rows failed — plan has no payments', {
+      applicationId, planId: (plan as { id: string }).id, error: paymentsErr.message,
+    });
+  }
 }

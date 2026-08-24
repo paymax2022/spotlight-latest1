@@ -133,6 +133,54 @@ describe('autoCreateInstallmentPlan — what the applicant is billed', () => {
     expect(Math.round(total * 100) / 100).toBe(100000);
   });
 
+  // The plan table constrains `frequency` to weekly|biweekly|monthly and
+  // `installments_count` to 1..12. Violating either makes the insert fail, and the
+  // caller swallows that — so an approved applicant silently gets no plan.
+  const LEGAL_CADENCES = ['weekly', 'biweekly', 'monthly'];
+
+  it('never writes "upfront" as a cadence — it is not a legal frequency', async () => {
+    // A one-off plan wrote frequency:'upfront', which the check constraint rejects.
+    // No one-off plan could ever be created.
+    const { inserts, done } = runWith(
+      { id: 'app-1', payment_preference: 'one_off', tuition_total_ngn: 50000 },
+      { id: 'batch-1', training_fee_ngn: 0, installments_count: 1, fee_frequency: 'upfront', one_off_discount_pct: 0 },
+    );
+    await done;
+
+    const plan = inserts.academy_installment_plans?.[0] as any;
+    expect(plan).toBeDefined();
+    expect(LEGAL_CADENCES).toContain(plan.frequency);
+    expect(plan.installments_count).toBe(1); // upfront is a COUNT, not a cadence
+  });
+
+  it('normalises a batch whose own fee_frequency is "upfront"', async () => {
+    // Batch A is configured this way, so no plan could be created for it at all.
+    const { inserts, done } = runWith(
+      { id: 'app-1', payment_preference: 'installment', tuition_total_ngn: 50000 },
+      { id: 'batch-1', training_fee_ngn: 0, installments_count: 1, fee_frequency: 'upfront' },
+    );
+    await done;
+
+    const plan = inserts.academy_installment_plans?.[0] as any;
+    expect(LEGAL_CADENCES).toContain(plan.frequency);
+    expect(inserts.academy_installment_payments).toHaveLength(1);
+  });
+
+  it('clamps installments_count to the 1..12 the constraint allows', async () => {
+    const { inserts, done } = runWith(
+      { id: 'app-1', payment_preference: 'installment', tuition_total_ngn: 120000 },
+      { id: 'batch-1', training_fee_ngn: 0, installments_count: 24, fee_frequency: 'monthly' },
+    );
+    await done;
+
+    const plan = inserts.academy_installment_plans?.[0] as any;
+    expect(plan.installments_count).toBeLessThanOrEqual(12);
+    expect(inserts.academy_installment_payments).toHaveLength(plan.installments_count);
+    // and the split still conserves the total
+    const total = (inserts.academy_installment_payments as any[]).reduce((s, p) => s + Number(p.amount_ngn), 0);
+    expect(Math.round(total * 100) / 100).toBe(120000);
+  });
+
   it('creates no plan at all when tuition is zero on both sources', async () => {
     const { inserts, done } = runWith(
       { id: 'app-1', payment_preference: 'one_off', tuition_total_ngn: 0 },

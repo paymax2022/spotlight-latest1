@@ -62,8 +62,27 @@ export async function ensureEnrollment(
       .academy_installment_payments) ?? [];
     const anyPaid = payments.some((p) => p.status === 'paid' || p.status === 'waived');
     if (!anyPaid) return { enrolled: false, reason: 'tuition_unpaid' };
+  } else {
+    // A missing plan is NOT proof that nothing is owed — plan creation can fail,
+    // and it silently did. Treating "no plan" as "free batch" enrolled an
+    // applicant who owed ₦50,000, for nothing. Only a genuinely zero tuition
+    // earns an enrolment without payment.
+    let owed = Number(app.tuition_total_ngn ?? 0);
+    if (owed <= 0 && app.batch_id) {
+      const { data: batch } = await supabase
+        .from('academy_batches')
+        .select('training_fee_ngn')
+        .eq('id', app.batch_id)
+        .maybeSingle();
+      owed = Number((batch as { training_fee_ngn: number | null } | null)?.training_fee_ngn ?? 0);
+    }
+    if (owed > 0) {
+      console.error('[academy/enrollment] tuition owed but no plan exists — refusing to enrol', {
+        applicationId, owed,
+      });
+      return { enrolled: false, reason: 'tuition_unpaid' };
+    }
   }
-  // No plan at all = nothing to pay (a free batch), so approval is enough.
 
   // A batch carries one published programme; the enrolment hangs off it so the
   // learner's modules and lessons can be resolved without another lookup.

@@ -295,3 +295,62 @@ describe('ensureEnrollment — the row it writes', () => {
     expect(writes[0].current_stage).toBe('enrolled');
   });
 });
+
+describe('ensureEnrollment — a missing plan is not proof that nothing is owed', () => {
+  /** Stubs the tables ensureEnrollment reads, with no plan present. */
+  function db(app: Record<string, unknown>, batch: Record<string, unknown> | null) {
+    const writes: Array<Record<string, unknown>> = [];
+    const api: any = {
+      writes,
+      from: (table: string) => {
+        const rows =
+          table === 'academy_applications' ? app :
+          table === 'academy_batches' ? batch :
+          table === 'academy_programs' ? { id: 'prog-1' } : null;
+        const chain: any = {
+          select: () => chain,
+          eq: () => chain,
+          order: () => chain,
+          limit: () => chain,
+          maybeSingle: async () => ({ data: rows, error: null }),
+          insert: (payload: Record<string, unknown>) => {
+            writes.push(payload);
+            const done: any = { select: () => done, single: async () => ({ data: { id: 'enr-1', program_id: 'prog-1' }, error: null }) };
+            return done;
+          },
+        };
+        return chain;
+      },
+    };
+    return api;
+  }
+
+  const APPROVED = { id: 'app-1', user_id: 'u1', batch_id: 'b1', status: 'approved' };
+
+  it('refuses to enrol an approved applicant who owes tuition but has no plan', async () => {
+    // Plan creation CAN fail — it silently did, because 'upfront' is not a legal
+    // cadence. Treating "no plan" as "free batch" enrolled someone owing ₦50,000.
+    const d = db({ ...APPROVED, tuition_total_ngn: 50000 }, { training_fee_ngn: 0 });
+    const { ensureEnrollment } = await import('@/src/server/services/academy/enrollment');
+    const gate = await ensureEnrollment(d, 'app-1');
+
+    expect(gate).toEqual({ enrolled: false, reason: 'tuition_unpaid' });
+    expect(d.writes).toHaveLength(0);
+  });
+
+  it('also refuses when the debt is on the batch rather than the chosen areas', async () => {
+    const d = db({ ...APPROVED, tuition_total_ngn: 0 }, { training_fee_ngn: 150000 });
+    const { ensureEnrollment } = await import('@/src/server/services/academy/enrollment');
+    const gate = await ensureEnrollment(d, 'app-1');
+    expect(gate).toEqual({ enrolled: false, reason: 'tuition_unpaid' });
+    expect(d.writes).toHaveLength(0);
+  });
+
+  it('enrols on approval when the batch is genuinely free', async () => {
+    const d = db({ ...APPROVED, tuition_total_ngn: 0 }, { training_fee_ngn: 0 });
+    const { ensureEnrollment } = await import('@/src/server/services/academy/enrollment');
+    const gate = await ensureEnrollment(d, 'app-1');
+    expect(gate.enrolled).toBe(true);
+    expect(d.writes).toHaveLength(1);
+  });
+});
