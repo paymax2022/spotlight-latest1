@@ -71,7 +71,12 @@ export async function getPinStatus(): Promise<{ hasPin: boolean }> {
   if (USE_MOCK) return transfersMock.getPinStatus();
   const res = await api.get('/api/v1/transfers/pin/status');
   const data = unwrap(res);
-  return { hasPin: Boolean(data.hasPin ?? data.has_pin ?? false) };
+  // The Go handler returns `pin_set`, NOT hasPin/has_pin. Reading only the two
+  // camel/snake spellings meant this ALWAYS resolved to false, so the app never
+  // knew a PIN existed: it offered "create" forever, sent a bare {pin}, and the
+  // server — which did know — demanded current_pin and answered 403. Every other
+  // PIN symptom was downstream of this one missing key.
+  return { hasPin: Boolean(data.pin_set ?? data.hasPin ?? data.has_pin ?? false) };
 }
 
 /**
