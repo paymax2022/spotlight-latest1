@@ -14,12 +14,6 @@
 
 import { Colors } from './colors';
 
-// Film Academy lives in frontend-web. EXPO_PUBLIC_API_BASE_URL is that origin
-// (the mobile app already proxies its API calls through it), so deriving the
-// link from it keeps dev, staging and production correct without a second env
-// var to forget. The fallback matches the local web dev server.
-const FILM_ACADEMY_URL =
-  `${(process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:3000').replace(/\/+$/, '')}/film-academy`;
 
 export type ServiceCategory =
   | 'financial'
@@ -145,13 +139,11 @@ export const SERVICE_MODULES: ServiceModule[] = [
   // application + selection cycle) rather than what it IS. Learning now has its
   // own band, shared with StudyHub, which moved here out of Investment.
   //
-  // Film Academy is LIVE and opens the web experience. Its screens, application
-  // flow and Paystack payment all live in frontend-web (/film-academy/*), and
-  // there is no native equivalent — ModuleGrid opens an absolute URL externally
-  // rather than pushing a route. Derived from EXPO_PUBLIC_API_BASE_URL, which is
-  // the frontend-web origin, so it follows dev/staging/prod without edits.
-  // Replace with an app route if a native screen is ever built.
-  { id: 'film-academy',    label: 'Film Academy',    icon: 'Clapperboard',    iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: FILM_ACADEMY_URL,        category: 'academy', badge: 'New' },
+  // Film Academy is a NATIVE screen. The app and the web app are separate
+  // interfaces: a tile must never hand the user off to a browser. The screen
+  // calls the same academy endpoints the web uses (/api/academy/*) — sharing an
+  // API is fine, sharing an interface is not.
+  { id: 'film-academy',    label: 'Film Academy',    icon: 'Clapperboard',    iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/film-academy',         category: 'academy', badge: 'New' },
   { id: 'academy',         label: 'StudyHub',        icon: 'BookOpenText',    iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/learn/academy',        category: 'academy', badge: 'New' },
 
   // ── Property Management (super-module) ────────────────────────────────────────
