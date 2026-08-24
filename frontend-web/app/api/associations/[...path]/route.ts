@@ -16,7 +16,7 @@ const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 
 async function proxy(
   request: Request,
-  { params }: { params: { path: string[] } },
+  ctx: { params: Promise<{ path: string[] }> },
 ): Promise<Response> {
   if (!featureFlags.association()) {
     return errorResponse('Association module is not available.', 503);
@@ -24,6 +24,7 @@ async function proxy(
   try {
     await requireRequestUser(request);
 
+    const params = await ctx.params;
     const suffix = params.path.join('/');
     const url = new URL(request.url);
     const targetUrl = `${GO_BACKEND_URL}/api/v1/finance/associations/${suffix}${url.search}`;

@@ -2,7 +2,8 @@ import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/re
 import { createUtilityDispute } from '@/src/server/utility/service';
 import { requireUtilityUser, utilityRateLimit, utilityUnavailableResponse } from '../../../_utils';
 
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   const unavailable = utilityUnavailableResponse();
   if (unavailable) return unavailable;
 

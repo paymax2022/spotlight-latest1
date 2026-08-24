@@ -12,8 +12,9 @@ import { saveBeneficiary, removeBeneficiary } from '@/src/server/transfers/benef
 
 export async function PATCH(
   request: Request,
-  { params }: { params: { id: string } },
+  ctx: { params: Promise<{ id: string }> },
 ) {
+  const params = await ctx.params;
   try {
     requireFeature('beneficiaries');
     const user = await requireRequestUser(request);
@@ -32,8 +33,9 @@ export async function PATCH(
 
 export async function DELETE(
   request: Request,
-  { params }: { params: { id: string } },
+  ctx: { params: Promise<{ id: string }> },
 ) {
+  const params = await ctx.params;
   try {
     requireFeature('beneficiaries');
     const user = await requireRequestUser(request);

@@ -2,7 +2,8 @@ import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/re
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { getSeason, listWeeks, createWeek } from '@/src/server/services/reality-show/store';
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'dashboard:view');
     if (!getSeason(params.id)) return errorResponse('Season not found', 404);
@@ -12,7 +13,8 @@ export async function GET(request: Request, { params }: { params: { id: string }
   }
 }
 
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const identity = await assertAdminPermission(request, 'programs:manage');
     if (!getSeason(params.id)) return errorResponse('Season not found', 404);

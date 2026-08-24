@@ -100,7 +100,8 @@ function normalizeContestPayload(body: Record<string, unknown>): Partial<Contest
   return normalized;
 }
 
-export async function GET(request: Request, { params }: { params: { slug: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ slug: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
     const contest = getRegistrationContestBySlug(params.slug);
@@ -111,7 +112,8 @@ export async function GET(request: Request, { params }: { params: { slug: string
   }
 }
 
-export async function PATCH(request: Request, { params }: { params: { slug: string } }) {
+export async function PATCH(request: Request, ctx: { params: Promise<{ slug: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
@@ -128,7 +130,8 @@ export async function PATCH(request: Request, { params }: { params: { slug: stri
   }
 }
 
-export async function DELETE(request: Request, { params }: { params: { slug: string } }) {
+export async function DELETE(request: Request, ctx: { params: Promise<{ slug: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
     deleteRegistrationContest(params.slug);

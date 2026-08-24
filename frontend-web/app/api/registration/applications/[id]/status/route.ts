@@ -2,7 +2,8 @@ import { successResponse, handleApiError, errorResponse } from '@/src/lib/api/re
 import { getRegistrationDraft, getRegistrationStatusTimeline } from '@/src/server/registration/supabase-store';
 import { requireUser } from '@/src/lib/auth/server';
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const { user } = await requireUser(request);
     const draft = await getRegistrationDraft(params.id);

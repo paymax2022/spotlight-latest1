@@ -225,7 +225,7 @@ describe('utility admin routes', () => {
     const response = await updateAdminCategory(makeRequest('/api/admin/utility/categories/airtime', {
       method: 'PATCH',
       body: { enabled: false, availability_message: 'Maintenance' },
-    }), { params: { category: 'airtime' } });
+    }), { params: Promise.resolve({ category: 'airtime' }) });
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -244,7 +244,7 @@ describe('utility admin routes', () => {
 
     const response = await reverseAdminTransaction(makeRequest('/api/admin/utility/transactions/tx-001/reverse', {
       body: { reason: 'Provider failure confirmed' },
-    }), { params: { id: 'tx-001' } });
+    }), { params: Promise.resolve({ id: 'tx-001' }) });
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -322,7 +322,7 @@ describe('utility admin routes', () => {
     const response = await rotateProviderCredentials(makeRequest('/api/admin/utility/providers/provider-001/credentials', {
       method: 'PUT',
       body: { credentials: { apiKey: 'raw-secret' } },
-    }), { params: { id: 'provider-001' } });
+    }), { params: Promise.resolve({ id: 'provider-001' }) });
     const body = await response.json();
 
     expect(response.status).toBe(200);
