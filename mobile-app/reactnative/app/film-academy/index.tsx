@@ -33,7 +33,16 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-function BatchCard({ batch, applied }: { batch: FilmAcademyBatch; applied: boolean }) {
+function BatchCard({ batch, applied, fallbackFee }: {
+  batch: FilmAcademyBatch; applied: boolean; fallbackFee: number | null;
+}) {
+  // A batch may carry no fee of its own — every cohort on staging has
+  // training_fee_ngn = 0 while the real tuition sits in settings.tuition_fee.
+  // Rendering the batch value verbatim showed "Training fee ₦0", which is worse
+  // than showing nothing because it reads as free.
+  const fee = batch.training_fee_ngn && batch.training_fee_ngn > 0
+    ? batch.training_fee_ngn
+    : fallbackFee;
   return (
     <View style={styles.card}>
       <View style={styles.cardHead}>
@@ -62,7 +71,7 @@ function BatchCard({ batch, applied }: { batch: FilmAcademyBatch; applied: boole
 
       <View style={styles.feeRow}>
         <Text style={styles.feeLabel}>Training fee</Text>
-        <Text style={styles.feeValue}>{formatNaira(batch.training_fee_ngn)}</Text>
+        <Text style={styles.feeValue}>{formatNaira(fee)}</Text>
       </View>
       {!!batch.installments_count && batch.installments_count > 1 && (
         <Text style={styles.feeNote}>
@@ -140,7 +149,12 @@ export default function FilmAcademyScreen() {
         )}
 
         {batches.map((b) => (
-          <BatchCard key={b.id} batch={b} applied={applied.has(b.id)} />
+          <BatchCard
+            key={b.id}
+            batch={b}
+            applied={applied.has(b.id)}
+            fallbackFee={typeof data?.settings?.tuition_fee === 'number' ? data.settings.tuition_fee : null}
+          />
         ))}
       </ScrollView>
     </SafeAreaView>

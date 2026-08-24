@@ -30,6 +30,16 @@ export default function FilmAcademyApplyScreen() {
   const { data } = useQuery({ queryKey: FILM_ACADEMY_KEY, queryFn: getOverview });
   const batch = data?.batches.find((b) => b.id === batchId);
 
+  // When the programme charges an application fee, the server requires a
+  // verified Paystack reference that this form cannot yet produce — the submit
+  // would be rejected. Say so BEFORE the user fills anything in, rather than
+  // failing them at the end. Staging currently has registration_type 'paid'
+  // with a NGN 5,000 fee, so this is the live path, not a hypothetical one.
+  const feeRequired =
+    String(data?.settings?.registration_type ?? '').toLowerCase() === 'paid' &&
+    Number(data?.settings?.application_fee ?? 0) > 0;
+  const applicationFee = Number(data?.settings?.application_fee ?? 0);
+
   const [fullName, setFullName]     = React.useState('');
   const [email, setEmail]           = React.useState('');
   const [phone, setPhone]           = React.useState('');
@@ -46,6 +56,11 @@ export default function FilmAcademyApplyScreen() {
   const onSubmit = async () => {
     setError(null);
     // Mirror the server's required fields rather than discovering them via a 400.
+    if (feeRequired) {
+      return setError(
+        'This programme charges an application fee, which cannot be paid in the app yet.',
+      );
+    }
     if (!batchId)            return setError('No cohort selected.');
     if (!fullName.trim())    return setError('Enter your full name.');
     if (!email.trim())       return setError('Enter your email address.');
@@ -87,6 +102,17 @@ export default function FilmAcademyApplyScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        {feeRequired && (
+          <View style={styles.noticeBox}>
+            <Text style={styles.noticeTitle}>Application fee required</Text>
+            <Text style={styles.noticeText}>
+              This programme charges a ₦{applicationFee.toLocaleString('en-NG')} application
+              fee, which cannot be paid in the app yet. Applications are submitted from the
+              Spotlight website until in-app payment is available.
+            </Text>
+          </View>
+        )}
+
         {!!batch && (
           <View style={styles.batchBox}>
             <Text style={styles.batchLabel}>Applying to</Text>
@@ -184,6 +210,9 @@ const styles = StyleSheet.create({
   chipText:    { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   chipTextOn:  { color: Colors.primary },
   error:       { ...Typography.bodyMd, color: Colors.error },
+  noticeBox:   { backgroundColor: Colors.iconBgGold, borderRadius: Radius.lg, padding: Spacing.lg, gap: 4 },
+  noticeTitle: { ...Typography.labelLg, color: Colors.onSurface },
+  noticeText:  { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
   submit:      { backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 14,
                  alignItems: 'center', marginTop: Spacing.sm },
   submitBusy:  { opacity: 0.7 },

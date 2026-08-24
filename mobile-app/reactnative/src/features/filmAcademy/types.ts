@@ -20,8 +20,12 @@ export interface FilmAcademyBatch {
 }
 
 export interface FilmAcademySettings {
+  /** 'paid' means an application fee is charged before an application is accepted. */
   registration_type?: string;
+  /** Naira. Charged at APPLICATION time, separate from tuition. */
   application_fee?: number;
+  /** Naira. The programme-wide tuition, used when a batch carries no fee of its own. */
+  tuition_fee?: number;
   [key: string]: unknown;
 }
 
