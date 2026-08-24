@@ -45,4 +45,11 @@ export interface FilmAcademyApplicationInput {
   motivation: string;
   experience?: string;
   payment_preference: 'one_off' | 'installment';
+  /**
+   * Paystack transaction reference for the APPLICATION fee, required when
+   * settings.registration_type is 'paid'. The server re-verifies it with
+   * Paystack (status success, NGN, amount >= application_fee) — the client is
+   * never trusted for the amount, so a client-initialised transaction is fine.
+   */
+  application_fee_reference?: string;
 }
