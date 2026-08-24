@@ -36,6 +36,28 @@ function slugify(v: string): string {
   return v.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
+
+/**
+ * Log the underlying Postgres error, return a clean message to the client.
+ *
+ * These handlers used to answer a bare 500 and discard the cause. When the
+ * table was missing from a local database the response said only "Failed to
+ * create the area of interest" — true, useless, and it cost three probes to
+ * find that Postgres had plainly said `relation ... does not exist`.
+ *
+ * The detail goes to the SERVER log, not the response: a Postgres error can
+ * name columns and constraints, which is not something to hand an HTTP caller.
+ */
+function logDbError(where: string, error: unknown): void {
+  const e = error as { message?: string; code?: string; details?: string; hint?: string } | null;
+  console.error(`[admin/academy/interest-areas] ${where} failed`, {
+    code: e?.code,
+    message: e?.message,
+    details: e?.details,
+    hint: e?.hint,
+  });
+}
+
 export async function GET(request: Request) {
   try {
     await assertAdminPermission(request, PERMISSION);
@@ -46,7 +68,10 @@ export async function GET(request: Request) {
       .from('academy_interest_areas')
       .select('id, slug, label, description, fee_ngn, is_active, sort_order, updated_at')
       .order('sort_order', { ascending: true });
-    if (error) return errorResponse('Failed to load areas of interest', 500);
+    if (error) {
+      logDbError('GET', error);
+      return errorResponse('Failed to load areas of interest', 500);
+    }
     return successResponse({ success: true, areas: data ?? [] });
   } catch (error) {
     return handleApiError(error, 'Failed to load areas of interest');
@@ -85,6 +110,7 @@ export async function POST(request: Request) {
       if ((error as { code?: string }).code === '23505') {
         return errorResponse(`An area with the slug "${slug}" already exists`, 409);
       }
+      logDbError('POST', error);
       return errorResponse('Failed to create the area of interest', 500);
     }
     return successResponse({ success: true, area: data });
@@ -124,7 +150,10 @@ export async function PUT(request: Request) {
       .eq('id', id)
       .select()
       .maybeSingle();
-    if (error) return errorResponse('Failed to update the area of interest', 500);
+    if (error) {
+      logDbError('PUT', error);
+      return errorResponse('Failed to update the area of interest', 500);
+    }
     if (!data) return errorResponse('Area of interest not found', 404);
     return successResponse({ success: true, area: data });
   } catch (error) {

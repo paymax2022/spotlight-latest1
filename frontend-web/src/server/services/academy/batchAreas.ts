@@ -50,10 +50,34 @@ export async function replaceBatchAreas(
     .in('slug', wanted.length ? wanted : ['__none__']);
   const valid = new Set((known ?? []).map((r: { slug: string }) => String(r.slug)));
 
-  await supabase.from('academy_batch_interest_areas').delete().eq('batch_id', batchId);
+  const { error: delError } = await supabase
+    .from('academy_batch_interest_areas')
+    .delete()
+    .eq('batch_id', batchId);
+  if (delError) {
+    logAreaError('clearing the previous selection', delError);
+    throw new Error('Could not update the areas this batch offers');
+  }
 
   const rows = wanted.filter((s) => valid.has(s)).map((slug) => ({ batch_id: batchId, area_slug: slug }));
   if (rows.length > 0) {
-    await supabase.from('academy_batch_interest_areas').insert(rows);
+    const { error: insError } = await supabase
+      .from('academy_batch_interest_areas')
+      .insert(rows);
+    // The delete has already run. Swallowing this would leave the batch with NO
+    // rows — which MEANS UNRESTRICTED — so a failed save would silently widen
+    // what the batch offers instead of failing. Surface it.
+    if (insError) {
+      logAreaError('saving the new selection', insError);
+      throw new Error('Could not save the areas this batch offers');
+    }
   }
+}
+
+/** Detail to the server log; the thrown message is what the caller shows. */
+function logAreaError(where: string, error: unknown): void {
+  const e = error as { message?: string; code?: string; details?: string } | null;
+  console.error(`[batchAreas] ${where} failed`, {
+    code: e?.code, message: e?.message, details: e?.details,
+  });
 }
