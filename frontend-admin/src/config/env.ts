@@ -25,6 +25,13 @@ export const env = {
   supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL || '',
   supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
   legacyAdminBaseUrl: process.env.NEXT_PUBLIC_LEGACY_ADMIN_BASE_URL || 'http://localhost:4028',
+  /**
+   * frontend-web's origin. Distinct from legacyAdminBaseUrl: some consoles
+   * (Film Academy) live in the PUBLIC web app rather than the retired legacy
+   * admin, so the generic /admin/[...slug] bridge sends people to the wrong
+   * host for them. Set NEXT_PUBLIC_WEB_APP_BASE_URL per environment.
+   */
+  webAppBaseUrl: (process.env.NEXT_PUBLIC_WEB_APP_BASE_URL || 'http://localhost:3000').replace(/\/+$/, ''),
 };
 
 export const hasSupabaseConfig = Boolean(env.supabaseUrl && env.supabaseAnonKey);

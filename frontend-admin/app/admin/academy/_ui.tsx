@@ -161,6 +161,10 @@ export function AcademyTabs({ active }: { active: string }) {
     { href: '/admin/academy/schools', label: 'Schools', key: 'schools' },
     { href: '/admin/academy/tutors', label: 'Tutor Ops', key: 'tutors' },
     { href: '/admin/academy/analytics', label: 'Analytics & BI', key: 'analytics' },
+    // Film Academy is a separate programme from the EdTech academy above; it is
+    // grouped here because both are 'Academy' to an operator, not because they
+    // share a backend.
+    { href: '/admin/academy/film', label: 'Film Academy', key: 'film' },
   ]} />;
 }
 

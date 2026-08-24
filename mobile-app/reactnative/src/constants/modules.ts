@@ -14,6 +14,7 @@
 
 import { Colors } from './colors';
 
+
 export type ServiceCategory =
   | 'financial'
   | 'investment'
@@ -138,11 +139,11 @@ export const SERVICE_MODULES: ServiceModule[] = [
   // application + selection cycle) rather than what it IS. Learning now has its
   // own band, shared with StudyHub, which moved here out of Investment.
   //
-  // Film Academy is comingSoon on mobile ON PURPOSE: the experience exists only in
-  // frontend-web (/film-academy/*). ModuleCard drops onPress for comingSoon, so the
-  // tile renders and is inert rather than routing into a screen this app does not
-  // have. Give it a real route and clear the flag once a native screen ships.
-  { id: 'film-academy',    label: 'Film Academy',    icon: 'Clapperboard',    iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/film-academy',         category: 'academy', comingSoon: true },
+  // Film Academy is a NATIVE screen. The app and the web app are separate
+  // interfaces: a tile must never hand the user off to a browser. The screen
+  // calls the same academy endpoints the web uses (/api/academy/*) — sharing an
+  // API is fine, sharing an interface is not.
+  { id: 'film-academy',    label: 'Film Academy',    icon: 'Clapperboard',    iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/film-academy',         category: 'academy', badge: 'New' },
   { id: 'academy',         label: 'StudyHub',        icon: 'BookOpenText',    iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/learn/academy',        category: 'academy', badge: 'New' },
 
   // ── Property Management (super-module) ────────────────────────────────────────
