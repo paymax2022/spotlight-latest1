@@ -35,7 +35,13 @@ export default function FilmAcademyApplyScreen() {
     String(data?.settings?.registration_type ?? '').toLowerCase() === 'paid' &&
     Number(data?.settings?.application_fee ?? 0) > 0;
   const baseFee = Number(data?.settings?.application_fee ?? 0);
-  const interestAreas = data?.interestAreas ?? [];
+  // Only the areas this batch offers. An empty or missing entry means the batch
+  // is unrestricted, so it falls back to the full active list rather than
+  // showing nothing — which is what batches created before this feature do.
+  const offeredSlugs = (batchId && data?.batchAreas?.[batchId]) || [];
+  const interestAreas = offeredSlugs.length > 0
+    ? (data?.interestAreas ?? []).filter((a) => offeredSlugs.includes(a.slug))
+    : (data?.interestAreas ?? []);
 
   const gateway = usePaystackGateway();
   // Without a publishable key the gateway cannot open at all, so say that
@@ -185,15 +191,13 @@ export default function FilmAcademyApplyScreen() {
                   style={[styles.chip, on && styles.chipOn]}
                   accessibilityRole="checkbox"
                   accessibilityState={{ checked: on }}
-                  accessibilityLabel={fee > 0 ? `${a.label}, ₦${fee.toLocaleString('en-NG')}` : a.label}
+                  accessibilityLabel={fee > 0 ? `${a.label}, ₦${fee.toLocaleString('en-NG')}` : `${a.label}, free`}
                 >
                   {on && <Check size={13} color={Colors.primary} />}
                   <Text style={[styles.chipText, on && styles.chipTextOn]}>{a.label}</Text>
-                  {fee > 0 && (
-                    <Text style={[styles.chipFee, on && styles.chipTextOn]}>
-                      +₦{fee.toLocaleString('en-NG')}
-                    </Text>
-                  )}
+                  <Text style={[styles.chipFee, on && styles.chipTextOn]}>
+                    {fee > 0 ? `+₦${fee.toLocaleString('en-NG')}` : 'Free'}
+                  </Text>
                 </Pressable>
               );
             })}

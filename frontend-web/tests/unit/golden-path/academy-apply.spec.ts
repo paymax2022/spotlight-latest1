@@ -359,6 +359,30 @@ describe('POST /api/academy/apply', () => {
     expect(body.error).toContain('7,000');
   });
 
+
+  it('rejects an area the chosen batch does not offer', async () => {
+    const { mock } = setupPaidMock(5000, [{ slug: 'acting', fee_ngn: 2000 }]);
+    paystackPaid(7000);
+    // This batch offers only cinematography. Scope the stub to THAT TABLE:
+    // overriding `.eq` wholesale also captures the settings and batch lookups,
+    // which chain through eq and then maybeSingle — doing so returned 500.
+    const passthrough = mock as unknown as { from: (t: string) => unknown };
+    passthrough.from = vi.fn((table: string) =>
+      table === 'academy_batch_interest_areas'
+        ? { select: () => ({ eq: () => Promise.resolve({ data: [{ area_slug: 'cinematography' }], error: null }) }) }
+        : mock,
+    ) as never;
+
+    const res = await POST(makeRequest('/api/academy/apply', {
+      body: makeApplyBody({ application_fee_reference: 'ref-not-offered' }),
+    }));
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/does not offer/i);
+    expect(body.error).toContain('acting');
+  });
+
   it('should return 400 when areas_of_interest is empty', async () => {
     setupHappyPathMock();
 

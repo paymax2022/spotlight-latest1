@@ -41,6 +41,8 @@ export async function getOverview(): Promise<FilmAcademyOverview> {
     // and inventing client-side ones is exactly how the app came to offer
     // 'Screenwriting' while the database held 'script_writing'.
     interestAreas: body?.interestAreas ?? [],
+    // Absent = every batch unrestricted, which is the pre-feature behaviour.
+    batchAreas: body?.batchAreas ?? {},
   };
 }
 
