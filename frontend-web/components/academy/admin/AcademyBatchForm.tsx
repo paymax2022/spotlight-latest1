@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { adminAuthHeaders } from '@/src/lib/auth/client';
@@ -52,6 +52,12 @@ type BatchFormState = {
   installments_count: number;
   fee_frequency: string;
   fee_start_offset_days: number;
+  /**
+   * Areas this batch offers. EMPTY MEANS UNRESTRICTED — every active area is
+   * offered — so leaving it untouched keeps a batch behaving exactly as batches
+   * did before this existed.
+   */
+  interest_area_slugs: string[];
 };
 
 type BatchFormProps = {
@@ -86,13 +92,49 @@ function getInitialForm(initialBatch?: Record<string, any>): BatchFormState {
     installments_count: Number(initialBatch?.installments_count ?? 3),
     fee_frequency: String(initialBatch?.fee_frequency ?? 'monthly'),
     fee_start_offset_days: Number(initialBatch?.fee_start_offset_days ?? 0),
+    interest_area_slugs: Array.isArray(initialBatch?.interest_area_slugs)
+      ? (initialBatch!.interest_area_slugs as string[])
+      : [],
   };
 }
+
+/** The catalogue an admin picks from. Prices live here, not on the batch. */
+type CatalogueArea = { slug: string; label: string; fee_ngn: number; is_active: boolean };
 
 export default function AcademyBatchForm({ mode, batchId, initialBatch }: BatchFormProps) {
   const router = useRouter();
   const [form, setForm] = useState<BatchFormState>(() => getInitialForm(initialBatch));
   const [saving, setSaving] = useState(false);
+  // The catalogue is loaded, never hardcoded: it is admin-managed on the
+  // settings page, and a second copy here would drift the moment one changed.
+  const [catalogue, setCatalogue] = useState<CatalogueArea[]>([]);
+  const [catalogueError, setCatalogueError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/admin/academy/interest-areas', {
+          headers: await adminAuthHeaders(),
+          cache: 'no-store',
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error('failed');
+        if (!cancelled) setCatalogue((json.areas ?? json.data?.areas ?? []) as CatalogueArea[]);
+      } catch {
+        if (!cancelled) setCatalogueError(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const toggleArea = (slug: string) =>
+    setForm((prev) => ({
+      ...prev,
+      interest_area_slugs: prev.interest_area_slugs.includes(slug)
+        ? prev.interest_area_slugs.filter((s) => s !== slug)
+        : [...prev.interest_area_slugs, slug],
+    }));
   const [error, setError] = useState('');
 
   function set(key: keyof BatchFormState, value: unknown) {
@@ -192,6 +234,54 @@ export default function AcademyBatchForm({ mode, batchId, initialBatch }: BatchF
         <div>
           <label style={label}>Benefits (one per line)</label>
           <textarea style={{ ...input, minHeight: 80, resize: 'vertical' }} value={form.benefits} onChange={(event) => set('benefits', event.target.value)} placeholder={'Certificate of completion\nHands-on production experience\nIndustry mentorship'} />
+        </div>
+
+        <div>
+          <label style={label}>Areas of Interest offered</label>
+          <p style={{ fontSize: 13, opacity: 0.7, margin: '0 0 10px' }}>
+            Applicants to this batch choose from the areas ticked here, and each one
+            adds its fee to the application fee. Prices are set once on the Academy
+            Settings page, not per batch.{' '}
+            <strong>Tick none to offer every active area.</strong>
+          </p>
+
+          {catalogueError ? (
+            <p style={{ fontSize: 13, opacity: 0.7 }}>
+              Could not load the areas. Saving now leaves this batch offering all of
+              them, which is the existing behaviour.
+            </p>
+          ) : catalogue.length === 0 ? (
+            <p style={{ fontSize: 13, opacity: 0.7 }}>
+              No areas defined yet — add them on Academy Settings.
+            </p>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
+              {catalogue.filter((a) => a.is_active).map((a) => {
+                const on = form.interest_area_slugs.includes(a.slug);
+                return (
+                  <label
+                    key={a.slug}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+                      border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer',
+                    }}
+                  >
+                    <input type="checkbox" checked={on} onChange={() => toggleArea(a.slug)} />
+                    <span style={{ flex: 1 }}>{a.label}</span>
+                    <span style={{ fontSize: 13, opacity: 0.75 }}>
+                      ₦{Number(a.fee_ngn || 0).toLocaleString('en-NG')}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+
+          <p style={{ fontSize: 12, opacity: 0.6, marginTop: 8 }}>
+            {form.interest_area_slugs.length === 0
+              ? 'Offering all active areas.'
+              : `Offering ${form.interest_area_slugs.length} of ${catalogue.filter((a) => a.is_active).length} areas.`}
+          </p>
         </div>
 
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 20 }}>

@@ -4,6 +4,7 @@
 import { ApiError, errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
+import { getBatchAreaSlugs } from '@/src/server/services/academy/batchAreas';
 import { getOrCreateUserProfile } from '@/src/server/user/profile';
 import { verifyPaystackTransaction } from '@/src/lib/payments/paystack';
 
@@ -186,6 +187,20 @@ export async function POST(request: Request) {
       const known = new Set(activeAreas.map((a) => String((a as { slug: string }).slug)));
       const bad = areasOfInterest.filter((a) => !known.has(a));
       return errorResponse(`Unknown area of interest: ${bad.join(', ')}`, 400);
+    }
+
+    // A batch may offer only a subset. Selecting one it does not offer is
+    // rejected here rather than quietly charged — the client filters the list,
+    // but the client is not what decides.
+    const offered = await getBatchAreaSlugs(supabase, batchId);
+    if (offered.length > 0) {
+      const notOffered = areasOfInterest.filter((a) => !offered.includes(a));
+      if (notOffered.length > 0) {
+        return errorResponse(
+          `This batch does not offer: ${notOffered.join(', ')}`,
+          400,
+        );
+      }
     }
 
     const areasFeeTotal = activeAreas.reduce(
@@ -407,6 +422,19 @@ export async function GET(request: Request) {
       .eq('is_active', true)
       .order('sort_order', { ascending: true });
 
+    // Which areas each batch offers. NO ROWS = unrestricted, so a batch absent
+    // from this map offers everything — that is how batches created before the
+    // feature keep working.
+    const { data: batchAreaRows } = await supabase
+      .from('academy_batch_interest_areas')
+      .select('batch_id, area_slug')
+      .in('batch_id', batches.map((b) => b.id));
+
+    const batchAreas: Record<string, string[]> = {};
+    for (const row of (batchAreaRows ?? []) as Array<{ batch_id: string; area_slug: string }>) {
+      (batchAreas[row.batch_id] ??= []).push(row.area_slug);
+    }
+
     const interestAreas = (areaRows ?? []).map((a) => ({
       slug: String((a as { slug: string }).slug),
       label: String((a as { label: string }).label),
@@ -414,7 +442,7 @@ export async function GET(request: Request) {
       fee_ngn: Number((a as { fee_ngn: number | null }).fee_ngn ?? 0),
     }));
 
-    return successResponse({ success: true, batches, appliedBatchIds, settings, interestAreas });
+    return successResponse({ success: true, batches, appliedBatchIds, settings, interestAreas, batchAreas });
   } catch (error) {
     return handleApiError(error, 'Failed to load batches');
   }
