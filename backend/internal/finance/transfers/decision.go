@@ -33,6 +33,17 @@ var (
 	ErrPinInvalid = errors.New("transfers: invalid transaction PIN")
 	// ErrPinLocked — too many failed PIN attempts (403).
 	ErrPinLocked = errors.New("transfers: transaction PIN locked — try again later")
+
+	// ErrPinCurrentRequired is returned when a PIN already exists and the caller
+	// asked to set a new one WITHOUT supplying the current PIN.
+	//
+	// It exists so this case never reaches pinStore.Verify. An absent current PIN
+	// is a malformed request, not a wrong guess: verifying "" fails, and the
+	// failure counts toward the 5-attempt lockout. A client that forgets the
+	// field can therefore lock a user out of transfers entirely — which is
+	// exactly what a mobile PIN screen did, five taps at a time, while never
+	// asking for the PIN it was being scored against.
+	ErrPinCurrentRequired = errors.New("transfers: current transaction PIN is required to change it")
 	// ErrProviderUnavailable — no disbursement provider configured / all failed (502).
 	ErrProviderUnavailable = errors.New("transfers: no disbursement provider available")
 )
@@ -73,6 +84,8 @@ func HTTPStatusForError(err error) int {
 		return http.StatusForbidden // 403
 	case errors.Is(err, ErrPinInvalid):
 		return http.StatusForbidden // 403
+	case errors.Is(err, ErrPinCurrentRequired):
+		return http.StatusBadRequest // 400 — malformed request, NOT a failed guess
 	case errors.Is(err, ErrPinLocked):
 		return http.StatusForbidden // 403
 	case errors.Is(err, ErrProviderUnavailable):
@@ -105,6 +118,8 @@ func ErrorCode(err error) string {
 		return "pin_not_set"
 	case errors.Is(err, ErrPinInvalid):
 		return "pin_invalid"
+	case errors.Is(err, ErrPinCurrentRequired):
+		return "pin_current_required"
 	case errors.Is(err, ErrPinLocked):
 		return "pin_locked"
 	case errors.Is(err, ErrProviderUnavailable):

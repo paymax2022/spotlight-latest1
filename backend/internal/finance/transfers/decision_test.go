@@ -41,6 +41,10 @@ func TestHTTPStatusForError(t *testing.T) {
 		{"missing idempotency key", transfers.ErrMissingIdempotencyKey, http.StatusBadRequest},
 		{"wrapped insufficient", fmt.Errorf("transfers: %w", ledger.ErrInsufficientFunds), http.StatusPaymentRequired},
 		{"wrapped tier0", fmt.Errorf("tiers: enforce (fail closed): %w", tiers.ErrWalletDisabled), http.StatusForbidden},
+		// 400, NOT 403. A missing current PIN is a malformed request; scoring it
+		// as a wrong guess is what let a client lock users out of transfers.
+		{"missing current pin", transfers.ErrPinCurrentRequired, http.StatusBadRequest},
+		{"wrong pin is still a guess", transfers.ErrPinInvalid, http.StatusForbidden},
 		{"unknown internal error", errors.New("db exploded"), http.StatusInternalServerError},
 	}
 	for _, tc := range cases {
