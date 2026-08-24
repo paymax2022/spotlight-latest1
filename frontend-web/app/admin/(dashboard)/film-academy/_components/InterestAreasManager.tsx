@@ -13,7 +13,6 @@
 // Retiring uses the Active toggle rather than deletion, for the same reason —
 // a deleted area would leave old applications pointing at nothing.
 
-import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { adminAuthHeaders } from '@/src/lib/auth/client';
 
@@ -37,7 +36,7 @@ function naira(n: number) {
   return `₦${Number(n || 0).toLocaleString('en-NG')}`;
 }
 
-export default function InterestAreasAdminPage() {
+export default function InterestAreasManager() {
   const [areas, setAreas]     = useState<Area[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
@@ -114,17 +113,14 @@ export default function InterestAreasAdminPage() {
   const activeTotal = areas.filter((a) => a.is_active).reduce((s, a) => s + Number(a.fee_ngn || 0), 0);
 
   return (
-    <div style={{ padding: 24, maxWidth: 980 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <h1 className="font-display text-3xl text-foreground">Areas of interest</h1>
-        <Link href="/admin/film-academy" className="btn-outline py-2 px-4 text-sm">
-          Back to Film Academy
-        </Link>
-      </div>
+    <section className="glass-card rounded-md p-6" style={{ marginTop: 24 }}>
+      <h2 className="font-display text-xl text-foreground" style={{ marginBottom: 6 }}>
+        Areas of interest
+      </h2>
       <p style={{ opacity: 0.75, marginBottom: 20 }}>
-        Each area adds its fee to the base application fee. Someone selecting three
-        areas pays the application fee plus those three. Changes apply to the next
-        application submitted.
+        Applicants choose from these. Each one ADDS its fee to the application fee
+        above, so someone selecting three areas pays the application fee plus those
+        three. Changes apply to the next application submitted.
       </p>
 
       {error &&  <div style={{ color: 'var(--destructive)', marginBottom: 12 }}>{error}</div>}
@@ -180,7 +176,7 @@ export default function InterestAreasAdminPage() {
         Selecting every active area would add {naira(activeTotal)} on top of the base
         application fee.
       </p>
-    </div>
+    </section>
   );
 }
 
