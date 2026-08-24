@@ -17,6 +17,7 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { getOverview, applyToBatch } from '@/features/filmAcademy/api';
+import { usePaystackGateway, PAYSTACK_PUBLIC_KEY } from '@/features/payments';
 import { FILM_ACADEMY_KEY } from './index';
 
 const AREAS = [
@@ -39,6 +40,10 @@ export default function FilmAcademyApplyScreen() {
     String(data?.settings?.registration_type ?? '').toLowerCase() === 'paid' &&
     Number(data?.settings?.application_fee ?? 0) > 0;
   const applicationFee = Number(data?.settings?.application_fee ?? 0);
+  const gateway = usePaystackGateway();
+  // Without a publishable key the gateway cannot open at all, so say that
+  // rather than letting the user tap Pay into a dead sheet.
+  const payReady = Boolean(PAYSTACK_PUBLIC_KEY);
 
   const [fullName, setFullName]     = React.useState('');
   const [email, setEmail]           = React.useState('');
@@ -53,25 +58,15 @@ export default function FilmAcademyApplyScreen() {
   const toggleArea = (a: string) =>
     setAreas((prev) => (prev.includes(a) ? prev.filter((x) => x !== a) : [...prev, a]));
 
-  const onSubmit = async () => {
-    setError(null);
-    // Mirror the server's required fields rather than discovering them via a 400.
-    if (feeRequired) {
-      return setError(
-        'This programme charges an application fee, which cannot be paid in the app yet.',
-      );
-    }
-    if (!batchId)            return setError('No cohort selected.');
-    if (!fullName.trim())    return setError('Enter your full name.');
-    if (!email.trim())       return setError('Enter your email address.');
-    if (!phone.trim())       return setError('Enter your phone number.');
-    if (areas.length === 0)  return setError('Choose at least one area of interest.');
-    if (!motivation.trim())  return setError('Tell us why you want to join.');
-
+  /**
+   * Posts the application. `reference` is the paid application-fee reference,
+   * supplied only when the programme charges one.
+   */
+  const submitApplication = async (reference?: string) => {
     setBusy(true);
     try {
       await applyToBatch({
-        batch_id: batchId,
+        batch_id: batchId!,
         full_name: fullName.trim(),
         email: email.trim(),
         phone: phone.trim(),
@@ -79,6 +74,7 @@ export default function FilmAcademyApplyScreen() {
         motivation: motivation.trim(),
         experience: experience.trim() || undefined,
         payment_preference: pref,
+        application_fee_reference: reference,
       });
       await qc.invalidateQueries({ queryKey: FILM_ACADEMY_KEY });
       Alert.alert('Application submitted', 'We will be in touch about next steps.');
@@ -89,6 +85,42 @@ export default function FilmAcademyApplyScreen() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const onSubmit = async () => {
+    setError(null);
+    // Mirror the server's required fields rather than discovering them via a 400.
+    if (!batchId)            return setError('No cohort selected.');
+    if (!fullName.trim())    return setError('Enter your full name.');
+    if (!email.trim())       return setError('Enter your email address.');
+    if (!phone.trim())       return setError('Enter your phone number.');
+    if (areas.length === 0)  return setError('Choose at least one area of interest.');
+    if (!motivation.trim())  return setError('Tell us why you want to join.');
+
+    // No fee due — submit straight away.
+    if (!feeRequired) return submitApplication();
+
+    if (!payReady) {
+      return setError('Card payment is unavailable right now. Please try again later.');
+    }
+
+    // Fee due: collect it FIRST, then submit with the reference. The server
+    // re-verifies the reference against Paystack, so nothing here is trusted.
+    // application_fee is in NAIRA (the server compares payment.amountKobo / 100
+    // against it), hence the x100 to reach kobo.
+    setBusy(true);
+    gateway.open({
+      email: email.trim(),
+      amountKobo: Math.round(applicationFee * 100),
+      domain: 'academy_application',
+      metadataFields: [
+        { display_name: 'Purpose',  variable_name: 'purpose',  value: 'Film Academy application fee' },
+        { display_name: 'Cohort',   variable_name: 'batch_id', value: String(batchId) },
+      ],
+      onSuccess: (reference) => { void submitApplication(reference); },
+      onCancel: () => { setBusy(false); setError('Payment cancelled — your application was not submitted.'); },
+      onError: (m) => { setBusy(false); setError(m || 'Payment failed. Please try again.'); },
+    });
   };
 
   return (
@@ -104,11 +136,13 @@ export default function FilmAcademyApplyScreen() {
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         {feeRequired && (
           <View style={styles.noticeBox}>
-            <Text style={styles.noticeTitle}>Application fee required</Text>
+            <Text style={styles.noticeTitle}>
+              ₦{applicationFee.toLocaleString('en-NG')} application fee
+            </Text>
             <Text style={styles.noticeText}>
-              This programme charges a ₦{applicationFee.toLocaleString('en-NG')} application
-              fee, which cannot be paid in the app yet. Applications are submitted from the
-              Spotlight website until in-app payment is available.
+              {payReady
+                ? 'Payable by card when you submit. Your application is only sent once the payment succeeds.'
+                : 'Card payment is unavailable right now, so this application cannot be submitted yet.'}
             </Text>
           </View>
         )}
@@ -159,8 +193,15 @@ export default function FilmAcademyApplyScreen() {
 
         <Pressable style={[styles.submit, busy && styles.submitBusy]} onPress={onSubmit} disabled={busy}>
           {busy ? <ActivityIndicator color="#FFFFFF" />
-                : <Text style={styles.submitText}>Submit application</Text>}
+                : <Text style={styles.submitText}>
+                    {feeRequired
+                      ? `Pay ₦${applicationFee.toLocaleString('en-NG')} & submit`
+                      : 'Submit application'}
+                  </Text>}
         </Pressable>
+
+        {/* Hosts the Paystack checkout WebView on native; renders nothing on web. */}
+        <gateway.Sheet />
       </ScrollView>
     </SafeAreaView>
   );
