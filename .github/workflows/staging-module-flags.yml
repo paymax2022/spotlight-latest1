@@ -48,6 +48,10 @@ on:
         description: 'Rotate ADMIN_API_KEY on backend + frontend-admin (retires the leaked value)'
         type: boolean
         default: false
+      set_web_base_url:
+        description: 'Set NEXT_PUBLIC_WEB_APP_BASE_URL on frontend-admin and REBUILD it'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -456,3 +460,78 @@ jobs:
           set -euo pipefail
           railway redeploy --service backend --environment "$ENVIRONMENT" \
             --project "$PROJECT" --yes
+
+  set-web-base-url:
+    name: set NEXT_PUBLIC_WEB_APP_BASE_URL on frontend-admin
+    if: ${{ inputs.confirm == 'SET' && inputs.set_web_base_url }}
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      ENVIRONMENT: staging
+      # frontend-web's public staging origin. The admin console links out to the
+      # Film Academy pages that live there.
+      WEB_BASE: https://frontend-web-staging-ec46.up.railway.app
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      # --skip-deploys: the rebuild below is what actually matters, and a
+      # variable write would otherwise queue a redeploy that races it.
+      - name: Set the variable
+        run: |
+          set -euo pipefail
+          railway variable set "NEXT_PUBLIC_WEB_APP_BASE_URL=$WEB_BASE" \
+            --service frontend-admin --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --skip-deploys
+
+      # A URL is not a secret, so printing it is safe and makes a wrong value
+      # obvious. Never do this for a key - see the --kv leak in the header.
+      - name: Verify it reads back
+        run: |
+          set -euo pipefail
+          railway variable list --service frontend-admin --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > fa.json
+          node -e '
+            const v = JSON.parse(require("fs").readFileSync("fa.json","utf8"));
+            const got = v.NEXT_PUBLIC_WEB_APP_BASE_URL;
+            console.log("  NEXT_PUBLIC_WEB_APP_BASE_URL =", got ?? "NOT SET");
+            if (!got) { console.error("not set"); process.exit(1); }
+            if (/localhost/.test(String(got))) { console.error("still localhost"); process.exit(1); }
+          '
+
+      # NEXT_PUBLIC_* is inlined at BUILD time and the Dockerfile now declares a
+      # matching ARG. Setting the variable alone changes nothing already built,
+      # so the service MUST be rebuilt from source for the value to reach the
+      # bundle - this is the trap that shipped a localhost fallback twice.
+      - name: Check out the staging branch
+        uses: actions/checkout@v4
+        with:
+          ref: staging
+
+      - name: Rebuild frontend-admin so the value is baked in
+        run: |
+          set -euo pipefail
+          railway up frontend-admin --path-as-root --no-gitignore \
+            --service frontend-admin --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --detach --message "$(git rev-parse HEAD)"
+
+      - name: Wait for the build to reach SUCCESS
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 40); do
+            st=$(railway deployment list --service frontend-admin --environment "$ENVIRONMENT" \
+                  --project "$PROJECT" --limit 5 --json 2>/dev/null \
+                  | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{const r=JSON.parse(d);console.log((r[0]&&r[0].status)||"")}catch{console.log("")}})')
+            echo "  attempt $i: ${st:-unknown}"
+            case "$st" in
+              SUCCESS) echo "  admin rebuilt with the baked-in web base URL"; exit 0 ;;
+              FAILED|CRASHED|REMOVED) echo "  build ended $st"; exit 1 ;;
+            esac
+            sleep 15
+          done
+          echo "  timed out waiting for the rebuild"; exit 1
