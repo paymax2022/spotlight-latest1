@@ -401,6 +401,10 @@ const navItemsBase: NavItem[] = [
   { label: 'Schools', href: '/admin/academy/schools', section: 'Academy', permissions: ['academy.schools'] },
   { label: 'Tutor Ops', href: '/admin/academy/tutors', section: 'Academy', permissions: ['academy.tutor'] },
   { label: 'Analytics & BI', href: '/admin/academy/analytics', section: 'Academy', permissions: ['academy.analyst'] },
+  // Film Academy — a distinct programme (cohorts, applications, training fees)
+  // whose console lives in frontend-web. Grouped under Academy because that is
+  // where an operator looks for it; the page itself is a bridge.
+  { label: 'Film Academy', href: '/admin/academy/film', section: 'Academy', permissions: ['academy.admin'] },
   // ── EdTech School-Fees console (SC-29 … SC-40; RBAC academy.fees.*; school-scoped) ──
   { label: 'Fees · Setup Wizard', href: '/admin/academy/fees/setup-wizard', section: 'Academy', permissions: ['academy.fees.setup'] },
   { label: 'Fees · Bulk Onboarding', href: '/admin/academy/fees/onboarding', section: 'Academy', permissions: ['academy.fees.onboarding'] },

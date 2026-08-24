@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, Linking } from 'react-native';
 import ModuleCard from './ModuleCard';
 import { ServiceModule } from '@/constants/modules';
 import { Spacing } from '@/constants/spacing';
@@ -30,9 +30,16 @@ export default function ModuleGrid({ modules, columns = 4 }: Props) {
                 badge={mod.badge}
                 comingSoon={mod.comingSoon}
                 onPress={() => {
-                  if (!mod.comingSoon) {
-                    router.push(mod.route as never);
+                  if (mod.comingSoon) return;
+                  // A module whose experience only exists on the web carries an
+                  // absolute URL instead of an app route. Opening it externally
+                  // keeps one implementation of flows that involve payment,
+                  // rather than a native copy that has to be kept in step.
+                  if (/^https?:\/\//.test(mod.route)) {
+                    void Linking.openURL(mod.route);
+                    return;
                   }
+                  router.push(mod.route as never);
                 }}
               />
             </View>
