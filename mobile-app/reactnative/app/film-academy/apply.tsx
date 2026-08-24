@@ -37,13 +37,6 @@ export default function FilmAcademyApplyScreen() {
   const baseFee = Number(data?.settings?.application_fee ?? 0);
   const interestAreas = data?.interestAreas ?? [];
 
-  // The total the applicant sees. The SERVER recomputes this from the same
-  // admin-managed rows when the application is submitted, so this is a display
-  // convenience — it cannot be used to pay less.
-  const areasFee = interestAreas
-    .filter((a) => areas.includes(a.slug))
-    .reduce((sum, a) => sum + Number(a.fee_ngn ?? 0), 0);
-  const applicationFee = baseFee + areasFee;
   const gateway = usePaystackGateway();
   // Without a publishable key the gateway cannot open at all, so say that
   // rather than letting the user tap Pay into a dead sheet.
@@ -58,6 +51,17 @@ export default function FilmAcademyApplyScreen() {
   const [pref, setPref]             = React.useState<'one_off' | 'installment'>('installment');
   const [busy, setBusy]             = React.useState(false);
   const [error, setError]           = React.useState<string | null>(null);
+
+  // Declared AFTER `areas`: this reads it, and a const is in its temporal dead
+  // zone until its declaration runs — computing the total above the useState
+  // threw "Cannot access 'areas' before initialization" on every render.
+  // The SERVER recomputes this total from the same admin-managed rows when the
+  // application is submitted, so it is a display convenience and cannot be used
+  // to pay less.
+  const areasFee = interestAreas
+    .filter((a) => areas.includes(a.slug))
+    .reduce((sum, a) => sum + Number(a.fee_ngn ?? 0), 0);
+  const applicationFee = baseFee + areasFee;
 
   const toggleArea = (a: string) =>
     setAreas((prev) => (prev.includes(a) ? prev.filter((x) => x !== a) : [...prev, a]));
