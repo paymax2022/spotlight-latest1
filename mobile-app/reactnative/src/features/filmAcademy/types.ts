@@ -115,6 +115,12 @@ export interface FilmAcademyApplicationStatus {
     academy_batches?: { batch_name?: string | null; start_date?: string | null } | null;
   } | null;
   timeline: FilmAcademyTimelineEntry[];
+  /**
+   * True once the learner holds an enrolment — which the server grants on the
+   * FIRST settled instalment, not on full settlement. Someone on a three-month
+   * plan starts learning immediately after their first payment.
+   */
+  enrolled: boolean;
   plan: { id: string; total_amount_ngn: number; discounted_amount_ngn: number | null; installments_count: number } | null;
   payments: FilmAcademyInstalment[];
   actions: FilmAcademyAction[];

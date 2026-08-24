@@ -14,7 +14,7 @@ import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, CircleCheck, Clock, Lock } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, CircleCheck, Clock, Lock, GraduationCap } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -57,6 +57,10 @@ export default function FilmAcademyTuitionScreen() {
   const plan = data?.plan ?? null;
   const payments = data?.payments ?? [];
   const approved = application?.status === 'approved';
+  // Enrolment — not full settlement — is what opens the course. The server grants
+  // it on the first settled instalment, so someone paying monthly starts now
+  // rather than after the last payment.
+  const enrolled = data?.enrolled ?? false;
 
   // Instalments are settled in order. Letting someone pay #3 while #1 is
   // outstanding would leave the plan in a state the reminder logic cannot read.
@@ -218,6 +222,33 @@ export default function FilmAcademyTuitionScreen() {
                 )}
               </Pressable>
             )}
+
+            {/* The way into the course, once the learner has actually earned a
+                place. Gated on `enrolled` rather than on allPaid: paying the
+                first instalment is what secures it, and gating on the flag also
+                means a payment that settled but failed to enrol never offers a
+                button that lands on a locked screen. */}
+            {enrolled && (
+              <Pressable
+                onPress={() => router.push('/film-academy/learn' as never)}
+                style={[styles.learnBtn, allPaid ? styles.learnBtnPrimary : styles.learnBtnSecondary]}
+              >
+                <GraduationCap size={18} color={allPaid ? Colors.black : Colors.gold} />
+                <Text style={[styles.learnBtnText, { color: allPaid ? Colors.black : Colors.gold }]}>
+                  {allPaid ? 'Go to my course' : 'Continue to my course'}
+                </Text>
+                <ChevronRight size={18} color={allPaid ? Colors.black : Colors.gold} />
+              </Pressable>
+            )}
+
+            {allPaid && !enrolled && (
+              // Paid but not enrolled should be impossible; saying so beats a
+              // dead end, and it tells support exactly what to look for.
+              <Text style={styles.cardMeta}>
+                Your payment is recorded but your place is still being set up. Pull to
+                refresh in a moment, or contact support if this persists.
+              </Text>
+            )}
           </>
         )}
       </ScrollView>
@@ -264,6 +295,12 @@ const styles = StyleSheet.create({
                  alignItems: 'center', justifyContent: 'center' },
   payBtnDisabled: { opacity: 0.5 },
   payBtnText:  { ...Typography.labelLg, color: Colors.black },
+
+  learnBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                 gap: Spacing.sm, borderRadius: Radius.md, paddingVertical: Spacing.md },
+  learnBtnPrimary:   { backgroundColor: Colors.gold },
+  learnBtnSecondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: Colors.gold },
+  learnBtnText: { ...Typography.labelLg },
 
   doneBox:     { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
                  backgroundColor: Colors.iconBgGreen, borderRadius: Radius.lg, padding: Spacing.lg },

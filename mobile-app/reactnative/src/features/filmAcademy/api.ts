@@ -74,6 +74,7 @@ export async function getApplicationStatus(): Promise<FilmAcademyApplicationStat
   return {
     application: body?.application ?? null,
     timeline: body?.timeline ?? [],
+    enrolled: body?.enrolled ?? false,
     plan: body?.plan ?? null,
     payments: body?.payments ?? [],
     actions: body?.actions ?? [],
