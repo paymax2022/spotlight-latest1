@@ -29,11 +29,23 @@ export interface FilmAcademySettings {
   [key: string]: unknown;
 }
 
+
+/** An admin-managed area of interest. `fee_ngn` is NAIRA and is added to the base fee. */
+export interface FilmAcademyInterestArea {
+  /** Written to academy_applications.areas_of_interest; stable once in use. */
+  slug: string;
+  label: string;
+  description: string | null;
+  fee_ngn: number;
+}
+
 export interface FilmAcademyOverview {
   batches: FilmAcademyBatch[];
   /** Batch ids this user has already applied to; drives the Applied state. */
   appliedBatchIds: string[];
   settings: FilmAcademySettings;
+  /** Active areas with their fees, in admin display order. */
+  interestAreas: FilmAcademyInterestArea[];
 }
 
 export interface FilmAcademyApplicationInput {

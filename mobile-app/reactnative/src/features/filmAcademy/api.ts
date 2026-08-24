@@ -37,6 +37,10 @@ export async function getOverview(): Promise<FilmAcademyOverview> {
     batches: body?.batches ?? [],
     appliedBatchIds: body?.appliedBatchIds ?? [],
     settings: body?.settings ?? {},
+    // Empty rather than a hardcoded fallback list: the areas are admin-owned,
+    // and inventing client-side ones is exactly how the app came to offer
+    // 'Screenwriting' while the database held 'script_writing'.
+    interestAreas: body?.interestAreas ?? [],
   };
 }
 
