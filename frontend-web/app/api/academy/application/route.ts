@@ -31,7 +31,9 @@ const APPLICATION_SELECT = [
   'batch_id',
   'talent_category',
   'created_at',
-  'academy_batches(batch_name, start_date, end_date)',
+  // academy_batches has no end_date column — asking for one makes PostgREST reject
+  // the whole select, which surfaced as a bare 500 on the applicant's status screen.
+  'academy_batches(batch_name, start_date)',
 ].join(', ');
 
 /**
@@ -51,7 +53,10 @@ async function findMyApplication(
     .limit(1)
     .maybeSingle();
 
-  if (byUserError) throw byUserError;
+  if (byUserError) {
+    console.error('[academy/application] lookup by user failed', byUserError);
+    throw byUserError;
+  }
   if (byUser) return byUser as unknown as Record<string, unknown>;
 
   if (!user.email) return null;
@@ -64,7 +69,10 @@ async function findMyApplication(
     .limit(1)
     .maybeSingle();
 
-  if (byEmailError) throw byEmailError;
+  if (byEmailError) {
+    console.error('[academy/application] lookup by email failed', byEmailError);
+    throw byEmailError;
+  }
   if (!byEmail) return null;
 
   await supabase

@@ -87,7 +87,11 @@ export async function ensureEnrollment(
       user_id: app.user_id,
       batch_id: app.batch_id,
       program_id: programId,
-      current_stage: 'online',
+      // academy_candidate_stage is an ENUM: applied, approved, enrolled,
+      // online_in_progress, … 'online' is not one of its labels, and because the
+      // callers swallow enrolment errors so a payment never fails, an invalid
+      // value here would have meant nobody ever enrolled — silently.
+      current_stage: 'enrolled',
     })
     .select('id, program_id')
     .single();

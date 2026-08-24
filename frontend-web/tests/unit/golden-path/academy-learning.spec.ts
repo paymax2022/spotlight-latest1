@@ -243,3 +243,55 @@ describe('PATCH /api/admin/academy/submissions — grading', () => {
     expect(res.status).toBe(400);
   });
 });
+
+// ── Enrolment: the values written must be ones the database accepts ──────────
+
+describe('ensureEnrollment — the row it writes', () => {
+  it('stages a new enrolment as "enrolled", a real academy_candidate_stage label', async () => {
+    // current_stage is a Postgres ENUM. An invalid label makes the insert fail, and
+    // both callers swallow that failure so a payment never fails — so a wrong value
+    // here means nobody ever enrols and learning never opens, silently. A mock
+    // cannot check the enum, but it can pin the literal against drift.
+    const VALID_STAGES = [
+      'applied', 'approved', 'enrolled', 'online_in_progress', 'online_completed',
+      'exam_eligible', 'exam_taken', 'exam_passed', 'exam_failed',
+      'practical_invited', 'practical_confirmed', 'practical_completed',
+    ];
+
+    const writes: Array<Record<string, unknown>> = [];
+    const supabase: any = {
+      from: (table: string) => {
+        const rows: Record<string, unknown> | null =
+          table === 'academy_applications'
+            ? { id: 'app-1', user_id: 'u1', batch_id: 'b1', status: 'approved', tuition_total_ngn: 0 }
+            : table === 'academy_programs'
+              ? { id: 'prog-1' }
+              : null;
+        const chain: any = {
+          select: () => chain,
+          eq: () => chain,
+          order: () => chain,
+          limit: () => chain,
+          maybeSingle: async () => ({ data: rows, error: null }),
+          insert: (payload: Record<string, unknown>) => {
+            writes.push(payload);
+            const done: any = {
+              select: () => done,
+              single: async () => ({ data: { id: 'enr-1', program_id: 'prog-1' }, error: null }),
+            };
+            return done;
+          },
+        };
+        return chain;
+      },
+    };
+
+    const { ensureEnrollment } = await import('@/src/server/services/academy/enrollment');
+    const result = await ensureEnrollment(supabase, 'app-1');
+
+    expect(result.enrolled).toBe(true);
+    expect(writes).toHaveLength(1);
+    expect(VALID_STAGES).toContain(writes[0].current_stage);
+    expect(writes[0].current_stage).toBe('enrolled');
+  });
+});

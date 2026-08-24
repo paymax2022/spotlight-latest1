@@ -106,9 +106,11 @@ export async function POST(request: Request) {
             submission_format: String(body.submission_format ?? 'link'),
             max_score: maxScore,
             rubric: String(body.rubric ?? '') || null,
-            // Published straight away: a draft is invisible to learners, and the
-            // console has no draft workflow to move it out of that state.
-            status: 'open',
+            // 'published' is the column's own default, so an assignment created
+            // by any other path lands in the same state this one does. Publishing
+            // straight away is deliberate: a draft is invisible to learners and
+            // the console has no workflow to move it out of that state.
+            status: 'published',
             created_by: identity.actorId,
           })
           .select('*')
