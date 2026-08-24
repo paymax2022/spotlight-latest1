@@ -11,7 +11,7 @@ import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Clapperboard, CalendarDays, Clock, FileText } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, Clapperboard, CalendarDays, Clock, FileText, GraduationCap, ClipboardList } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -162,6 +162,35 @@ export default function FilmAcademyScreen() {
             </View>
             <ChevronRight size={18} color={Colors.onSurfaceVariant} />
           </Pressable>
+        )}
+
+        {/* Both open for anyone who has applied. Each screen resolves its own
+            locked state from the server and explains what is still outstanding,
+            which beats hiding the tile and leaving the learner guessing. */}
+        {applied.size > 0 && (
+          <>
+            <Pressable onPress={() => router.push('/film-academy/learn')} style={styles.trackRow}>
+              <View style={styles.trackIcon}>
+                <GraduationCap size={18} color={Colors.gold} />
+              </View>
+              <View style={styles.trackBody}>
+                <Text style={styles.trackLabel}>My course</Text>
+                <Text style={styles.trackMeta}>Lessons, modules and your progress</Text>
+              </View>
+              <ChevronRight size={18} color={Colors.onSurfaceVariant} />
+            </Pressable>
+
+            <Pressable onPress={() => router.push('/film-academy/assignments')} style={styles.trackRow}>
+              <View style={styles.trackIcon}>
+                <ClipboardList size={18} color={Colors.gold} />
+              </View>
+              <View style={styles.trackBody}>
+                <Text style={styles.trackLabel}>Assignments</Text>
+                <Text style={styles.trackMeta}>Submit your work and see your grades</Text>
+              </View>
+              <ChevronRight size={18} color={Colors.onSurfaceVariant} />
+            </Pressable>
+          </>
         )}
 
         {batches.map((b) => (

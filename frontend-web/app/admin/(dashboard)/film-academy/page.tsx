@@ -39,6 +39,9 @@ export default async function FilmAcademyAdminPage() {
           <p className="text-foreground/50 mt-1">Manage batches, applications, and training fees</p>
         </div>
         <div className="flex gap-2">
+          <Link href="/admin/film-academy/submissions" className="btn-outline py-2 px-4 text-sm">
+            Submissions
+          </Link>
           <Link href="/admin/film-academy/settings" className="btn-outline py-2 px-4 text-sm">
             Academy Settings
           </Link>

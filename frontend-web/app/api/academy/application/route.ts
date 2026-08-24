@@ -78,6 +78,7 @@ async function findMyApplication(
 function buildActions(
   application: Record<string, any>,
   payments: Array<Record<string, any>>,
+  enrolled: boolean,
 ): RequiredAction[] {
   const actions: RequiredAction[] = [];
   const status = String(application.status ?? 'pending');
@@ -121,15 +122,22 @@ function buildActions(
           outstanding.length === 1
             ? 'Pay your tuition'
             : `Pay tuition instalment ${next.installment_number} of ${payments.length}`,
-        detail: 'Your application was approved. Pay to secure your place and start learning.',
+        detail: enrolled
+          ? 'Keep your instalments up to date to stay enrolled.'
+          : 'Your application was approved. Pay to secure your place and start learning.',
         amountNgn: Number(next.amount_ngn ?? 0),
         dueDate: (next.due_date as string) ?? null,
       });
-    } else if (payments.length > 0) {
+    }
+
+    // Learning opens on ENROLMENT, not on the plan being fully settled. A learner on
+    // a three-month plan would otherwise be locked out until the course was nearly
+    // over, despite having paid to secure the place.
+    if (enrolled) {
       actions.push({
         key: 'start_learning',
-        label: 'Start learning',
-        detail: 'Your tuition is fully paid. Your classes are ready.',
+        label: outstanding.length > 0 ? 'Continue learning' : 'Start learning',
+        detail: 'Your place is secured. Your lessons and assignments are ready.',
       });
     }
   }
@@ -164,7 +172,7 @@ export async function GET(request: Request) {
 
     const applicationId = application.id as string;
 
-    const [historyRes, planRes] = await Promise.all([
+    const [historyRes, planRes, enrolRes] = await Promise.all([
       supabase
         .from('academy_application_status_history')
         .select('id, old_status, new_status, change_reason, created_at')
@@ -176,6 +184,11 @@ export async function GET(request: Request) {
         .eq('application_id', applicationId)
         .order('created_at', { ascending: false })
         .limit(1)
+        .maybeSingle(),
+      supabase
+        .from('academy_enrollments')
+        .select('id')
+        .eq('application_id', applicationId)
         .maybeSingle(),
     ]);
 
@@ -213,7 +226,8 @@ export async function GET(request: Request) {
       timeline,
       plan,
       payments,
-      actions: buildActions(application as Record<string, any>, payments),
+      enrolled: Boolean(enrolRes.data),
+      actions: buildActions(application as Record<string, any>, payments, Boolean(enrolRes.data)),
     });
   } catch (error) {
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {

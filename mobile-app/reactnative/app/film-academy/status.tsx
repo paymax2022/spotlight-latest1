@@ -57,6 +57,7 @@ function statusPresentation(status: string | null): { label: string; color: stri
 const ACTION_ROUTES: Record<string, string> = {
   pay_application_fee: '/film-academy',
   pay_tuition: '/film-academy/tuition',
+  start_learning: '/film-academy/learn',
 };
 
 function ActionCard({ action }: { action: FilmAcademyAction }) {

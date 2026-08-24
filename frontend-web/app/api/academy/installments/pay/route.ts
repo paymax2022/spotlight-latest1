@@ -4,6 +4,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { verifyPaystackPayment } from '@/src/server/voting/payment/paystack';
 import { sendTransactionalEmail } from '@/src/lib/email/transactional';
+import { ensureEnrollment } from '@/src/server/services/academy/enrollment';
 
 export async function POST(request: Request) {
   try {
@@ -84,6 +85,17 @@ export async function POST(request: Request) {
       .eq('id', body.paymentId);
 
     if (updateErr) return errorResponse(updateErr.message, 500);
+
+    // The first settled instalment secures the place, so this is where learning
+    // opens up. Idempotent — a later instalment simply finds the existing enrolment.
+    const applicationId = plan?.application_id as string | undefined;
+    if (applicationId) {
+      await ensureEnrollment(supabase, applicationId).catch((e) => {
+        // The payment IS recorded; failing the response here would invite a second
+        // charge for an instalment that is already paid.
+        console.error('[academy/installments/pay] enrolment failed after payment', e);
+      });
+    }
 
     // Send confirmation email
     if (app?.email) {

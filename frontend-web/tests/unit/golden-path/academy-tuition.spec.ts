@@ -238,12 +238,13 @@ describe('POST /api/academy/installments/pay — amount verification', () => {
 
 describe('GET /api/academy/application — required actions', () => {
   /** Stubs the three tables the route reads, keyed by table name. */
-  function statusDb(application: Rows | null, history: Rows[], plan: Rows | null) {
+  function statusDb(application: Rows | null, history: Rows[], plan: Rows | null, enrolment: Rows | null = null) {
     return {
       from: (table: string) => {
         const data =
           table === 'academy_applications' ? application :
-          table === 'academy_installment_plans' ? plan : null;
+          table === 'academy_installment_plans' ? plan :
+          table === 'academy_enrollments' ? enrolment : null;
         const chain: any = {
           select: () => chain,
           eq: () => chain,
@@ -272,8 +273,8 @@ describe('GET /api/academy/application — required actions', () => {
     created_at: '2026-08-01T00:00:00Z',
   };
 
-  async function actionsFor(app: Rows, plan: Rows | null = null) {
-    vi.mocked(createAdminClient).mockReturnValue(statusDb(app, [], plan));
+  async function actionsFor(app: Rows, plan: Rows | null = null, enrolment: Rows | null = null) {
+    vi.mocked(createAdminClient).mockReturnValue(statusDb(app, [], plan, enrolment));
     const res = await STATUS(
       makeRequest('/api/academy/application', { method: 'GET', headers: withAuth() }),
     );
@@ -315,7 +316,7 @@ describe('GET /api/academy/application — required actions', () => {
     expect(payAction.amountNgn).toBe(50000);
   });
 
-  it('switches to start-learning once every instalment is paid', async () => {
+  it('opens learning once every instalment is paid', async () => {
     const plan = {
       id: 'plan-1',
       total_amount_ngn: 50000,
@@ -323,9 +324,42 @@ describe('GET /api/academy/application — required actions', () => {
         { id: 'p1', installment_number: 1, amount_ngn: 50000, status: 'paid', paid_at: '2026-09-02' },
       ],
     };
-    const { keys } = await actionsFor({ ...BASE, status: 'approved' }, plan);
+    const { keys } = await actionsFor({ ...BASE, status: 'approved' }, plan, { id: 'enr-1' });
     expect(keys).toContain('start_learning');
     expect(keys).not.toContain('pay_tuition');
+  });
+
+  it('opens learning mid-plan — an enrolled learner is not locked out until the last instalment', async () => {
+    // A three-month plan would otherwise keep a paying learner out until the course
+    // was nearly over. Enrolment, not full settlement, is the gate.
+    const plan = {
+      id: 'plan-1',
+      total_amount_ngn: 90000,
+      academy_installment_payments: [
+        { id: 'p1', installment_number: 1, amount_ngn: 30000, status: 'paid', paid_at: '2026-09-02' },
+        { id: 'p2', installment_number: 2, amount_ngn: 30000, status: 'pending', due_date: '2026-10-01' },
+        { id: 'p3', installment_number: 3, amount_ngn: 30000, status: 'pending', due_date: '2026-11-01' },
+      ],
+    };
+    const { keys, body } = await actionsFor({ ...BASE, status: 'approved' }, plan, { id: 'enr-1' });
+    expect(keys).toContain('start_learning');
+    expect(keys).toContain('pay_tuition'); // still owes instalment 2
+
+    const pay = (body.data ?? body).actions.find((a: any) => a.key === 'pay_tuition');
+    expect(pay.amountNgn).toBe(30000); // the NEXT one, not the balance
+  });
+
+  it('does not open learning for an approved applicant who has paid no tuition', async () => {
+    const plan = {
+      id: 'plan-1',
+      total_amount_ngn: 50000,
+      academy_installment_payments: [
+        { id: 'p1', installment_number: 1, amount_ngn: 50000, status: 'pending', due_date: '2026-09-01' },
+      ],
+    };
+    const { keys } = await actionsFor({ ...BASE, status: 'approved' }, plan, null);
+    expect(keys).not.toContain('start_learning');
+    expect(keys).toContain('pay_tuition');
   });
 
   it('returns an empty result rather than failing when the user never applied', async () => {
