@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/server';
 import { requireAdmin } from '@/src/lib/auth/server';
 import ApplicationReviewRow from '@/components/academy/admin/ApplicationReviewRow';
+import { summariseAcademyRevenue, formatNaira } from '@/src/features/academy/revenue';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,6 +52,8 @@ export default async function AcademyApplicationsPage({ searchParams }: PageProp
     rejected: applications.filter((a) => a.status === 'rejected').length,
     paid: applications.filter((a) => a.payment_status === 'paid').length,
   };
+  // application_fee_paid was already being fetched here and never shown.
+  const feesNgn = summariseAcademyRevenue(applications, []).applicationFeesNgn;
 
   function filterHref(nextStatus?: string) {
     const params = new URLSearchParams();
@@ -96,17 +99,18 @@ export default async function AcademyApplicationsPage({ searchParams }: PageProp
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
         {[
           { label: 'Total', value: stats.total, color: '#6366f1' },
           { label: 'Pending', value: stats.pending, color: '#f59e0b' },
           { label: 'Approved', value: stats.approved, color: '#10b981' },
           { label: 'Rejected', value: stats.rejected, color: '#ef4444' },
           { label: 'Paid', value: stats.paid, color: '#10b981' },
+          { label: 'Fees Collected', value: formatNaira(feesNgn), color: '#10b981' },
         ].map(({ label, value, color }) => (
           <div key={label} className="glass-card rounded-md p-4">
             <p className="text-xs text-foreground/50 mb-1">{label}</p>
-            <p className="text-2xl font-bold" style={{ color }}>{value}</p>
+            <p className="text-2xl font-bold truncate" style={{ color }}>{value}</p>
           </div>
         ))}
       </div>

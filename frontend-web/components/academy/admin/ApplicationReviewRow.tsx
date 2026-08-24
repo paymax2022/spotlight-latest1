@@ -1,4 +1,5 @@
 'use client';
+import { formatNaira } from '@/src/features/academy/revenue';
 
 import { useState } from 'react';
 import Link from 'next/link';
@@ -66,14 +67,28 @@ export default function ApplicationReviewRow({
           color: STATUS_TEXT[status] ?? '#64748b',
         }}>{status}</span>
 
-        {/* Payment status */}
-        <span style={{
-          fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
-          background: application.payment_status === 'paid' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
-          color: application.payment_status === 'paid' ? '#10b981' : '#ef4444',
-        }}>
-          {application.payment_status === 'paid' ? '✓ Fee Paid' : 'Fee Pending'}
-        </span>
+        {/* Payment status.
+            Three states, not two: the apply route writes 'not_required' when no
+            application fee is configured, and the old two-way test coloured those
+            a red "Fee Pending" that could never be cleared.
+            The amount is shown because application_fee_paid is NUMERIC NAIRA — the
+            sum collected — not a boolean, and "paid" without a figure hides it. */}
+        {(() => {
+          const paid = application.payment_status === 'paid';
+          const waived = application.payment_status === 'not_required';
+          const amount = Number(application.application_fee_paid ?? 0);
+          return (
+            <span style={{
+              fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
+              background: paid ? 'rgba(16,185,129,0.1)' : waived ? 'rgba(100,116,139,0.15)' : 'rgba(239,68,68,0.1)',
+              color: paid ? '#10b981' : waived ? '#64748b' : '#ef4444',
+            }}>
+              {paid
+                ? `✓ Fee Paid${amount > 0 ? ` ${formatNaira(amount)}` : ''}`
+                : waived ? 'No Fee Required' : 'Fee Pending'}
+            </span>
+          );
+        })()}
 
         {/* Review actions */}
         {status === 'pending' && (
