@@ -183,7 +183,7 @@ describe('POST /api/registration/applications/[id]/submit', () => {
 
     const res = await submitPost(
       makeRequest('/api/registration/applications/draft-id-001/submit', {}),
-      { params: { id: 'draft-id-001' } },
+      { params: Promise.resolve({ id: 'draft-id-001' }) },
     );
     const body = await res.json();
 
@@ -198,7 +198,7 @@ describe('POST /api/registration/applications/[id]/submit', () => {
 
     const res = await submitPost(
       makeRequest('/api/registration/applications/unknown-id/submit', {}),
-      { params: { id: 'unknown-id' } },
+      { params: Promise.resolve({ id: 'unknown-id' }) },
     );
     const body = await res.json();
 
@@ -212,7 +212,7 @@ describe('POST /api/registration/applications/[id]/submit', () => {
 
     const res = await submitPost(
       makeRequest('/api/registration/applications/draft-id-001/submit', {}),
-      { params: { id: 'draft-id-001' } },
+      { params: Promise.resolve({ id: 'draft-id-001' }) },
     );
     const body = await res.json();
 
@@ -225,7 +225,7 @@ describe('POST /api/registration/applications/[id]/submit', () => {
 
     const res = await submitPost(
       makeRequest('/api/registration/applications/draft-id-001/submit', {}),
-      { params: { id: 'draft-id-001' } },
+      { params: Promise.resolve({ id: 'draft-id-001' }) },
     );
     const body = await res.json();
 
@@ -244,7 +244,7 @@ describe('POST /api/registration/applications/[id]/submit', () => {
 
     const res = await submitPost(
       makeRequest('/api/registration/applications/draft-id-001/submit', {}),
-      { params: { id: 'draft-id-001' } },
+      { params: Promise.resolve({ id: 'draft-id-001' }) },
     );
     const body = await res.json();
 

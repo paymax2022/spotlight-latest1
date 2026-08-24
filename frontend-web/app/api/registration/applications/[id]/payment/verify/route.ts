@@ -15,7 +15,8 @@ import {
 // Idempotent: an already-completed intent (or a re-check while still
 // pending) returns its settled status without re-charging or re-verifying
 // Paystack unnecessarily.
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const { user } = await requireUser(request);
 

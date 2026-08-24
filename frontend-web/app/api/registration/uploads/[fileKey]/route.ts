@@ -15,7 +15,8 @@ function decodeFileKey(raw: string): string | null {
   }
 }
 
-export async function GET(request: Request, { params }: { params: { fileKey: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ fileKey: string }> }) {
+  const params = await ctx.params;
   let user;
   try {
     ({ user } = await requireUser(request));

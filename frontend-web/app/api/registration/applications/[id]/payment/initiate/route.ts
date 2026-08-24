@@ -24,7 +24,8 @@ function reference() {
   return `SPT-REG-${crypto.randomUUID().replace(/-/g, '').slice(0, 18).toUpperCase()}`;
 }
 
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   const idempotencyKey = request.headers.get('Idempotency-Key');
   if (!idempotencyKey) return errorResponse('Idempotency-Key header is required for registration payments.', 400);
 

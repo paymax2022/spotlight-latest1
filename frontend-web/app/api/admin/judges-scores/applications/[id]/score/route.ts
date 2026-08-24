@@ -19,7 +19,8 @@ async function getJudgeName(userId: string): Promise<string> {
 }
 
 // GET — fetch all scorecards for an application
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'scores:manage');
 
@@ -37,7 +38,8 @@ export async function GET(request: Request, { params }: { params: { id: string }
 }
 
 // POST — create or update this judge's scorecard
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const identity = await assertAdminPermission(request, 'scores:manage');
 

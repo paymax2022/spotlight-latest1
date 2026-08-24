@@ -2,7 +2,8 @@ import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/re
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { getWeek, finalizeEviction } from '@/src/server/services/reality-show/store';
 
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const identity = await assertAdminPermission(request, 'programs:manage');
     const week = getWeek(params.id);

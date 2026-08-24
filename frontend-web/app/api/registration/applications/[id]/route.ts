@@ -4,7 +4,8 @@ import { getRegistrationDraft, saveRegistrationStep } from '@/src/server/registr
 import type { RegistrationStepKey } from '@/src/features/registration/types';
 import { requireUser } from '@/src/lib/auth/server';
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     // Validate param
     if (!params?.id || typeof params.id !== 'string') {
@@ -37,7 +38,8 @@ export async function GET(request: Request, { params }: { params: { id: string }
   }
 }
 
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
+export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     // Validate param
     if (!params?.id || typeof params.id !== 'string') {
