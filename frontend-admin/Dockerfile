@@ -13,9 +13,16 @@ ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
 # It is now read at RUNTIME by app/api/admin-proxy as ADMIN_API_KEY (no
 # NEXT_PUBLIC_ prefix, so Next cannot inline it) and rotating it is a restart.
 ARG SUPABASE_SERVICE_ROLE_KEY
+# frontend-web's origin, used by the Film Academy bridge under /admin/academy.
+# It MUST be a build arg: Next inlines NEXT_PUBLIC_* at build time, so a value
+# set only as a Railway service variable never reaches the bundle and silently
+# becomes the localhost fallback - a dead link from any other machine, which
+# reads as an application bug rather than a missing ARG.
+ARG NEXT_PUBLIC_WEB_APP_BASE_URL
 ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
 ENV SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+ENV NEXT_PUBLIC_WEB_APP_BASE_URL=${NEXT_PUBLIC_WEB_APP_BASE_URL}
 
 # Install dependencies from the lockfile first so this layer caches across
 # source-only changes.
