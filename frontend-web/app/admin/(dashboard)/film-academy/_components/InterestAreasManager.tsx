@@ -36,7 +36,12 @@ function naira(n: number) {
   return `₦${Number(n || 0).toLocaleString('en-NG')}`;
 }
 
-export default function InterestAreasManager() {
+export default function InterestAreasManager({ onChange, note }: {
+  /** Called after a successful create or save, so an embedding page can refresh. */
+  onChange?: () => void;
+  /** Replaces the default blurb — the batch form needs to say prices are global. */
+  note?: string;
+} = {}) {
   const [areas, setAreas]     = useState<Area[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
@@ -78,6 +83,7 @@ export default function InterestAreasManager() {
       if (!res.ok) throw new Error(body?.error || 'Failed to save');
       setNotice('Saved. This applies to the next application submitted.');
       await load();
+      onChange?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save');
     } finally {
@@ -103,6 +109,7 @@ export default function InterestAreasManager() {
       setNewLabel(''); setNewFee('0');
       setNotice('Area created.');
       await load();
+      onChange?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create');
     } finally {
@@ -118,9 +125,8 @@ export default function InterestAreasManager() {
         Areas of interest
       </h2>
       <p style={{ opacity: 0.75, marginBottom: 20 }}>
-        Applicants choose from these. Each one ADDS its fee to the application fee
-        above, so someone selecting three areas pays the application fee plus those
-        three. Changes apply to the next application submitted.
+        {note ??
+          'Applicants choose from these. Each one ADDS its fee to the application fee above, so someone selecting three areas pays the application fee plus those three. Changes apply to the next application submitted.'}
       </p>
 
       {error &&  <div style={{ color: 'var(--destructive)', marginBottom: 12 }}>{error}</div>}

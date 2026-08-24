@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { adminAuthHeaders } from '@/src/lib/auth/client';
+import InterestAreasManager from '@/app/admin/(dashboard)/film-academy/_components/InterestAreasManager';
 
 const SCHEDULES = [
   { value: 'weekdays', label: 'Weekdays (Mon-Fri)' },
@@ -110,23 +111,24 @@ export default function AcademyBatchForm({ mode, batchId, initialBatch }: BatchF
   const [catalogue, setCatalogue] = useState<CatalogueArea[]>([]);
   const [catalogueError, setCatalogueError] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/admin/academy/interest-areas', {
-          headers: await adminAuthHeaders(),
-          cache: 'no-store',
-        });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error('failed');
-        if (!cancelled) setCatalogue((json.areas ?? json.data?.areas ?? []) as CatalogueArea[]);
-      } catch {
-        if (!cancelled) setCatalogueError(true);
-      }
-    })();
-    return () => { cancelled = true; };
+  // Named so the embedded manager can re-run it: adding an area below must make
+  // it tickable above without a page reload, or the two lists disagree.
+  const loadCatalogue = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/academy/interest-areas', {
+        headers: await adminAuthHeaders(),
+        cache: 'no-store',
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error('failed');
+      setCatalogue((json.areas ?? json.data?.areas ?? []) as CatalogueArea[]);
+      setCatalogueError(false);
+    } catch {
+      setCatalogueError(true);
+    }
   }, []);
+
+  useEffect(() => { void loadCatalogue(); }, [loadCatalogue]);
 
   const toggleArea = (slug: string) =>
     setForm((prev) => ({
@@ -282,6 +284,17 @@ export default function AcademyBatchForm({ mode, batchId, initialBatch }: BatchF
               ? 'Offering all active areas.'
               : `Offering ${form.interest_area_slugs.length} of ${catalogue.filter((a) => a.is_active).length} areas.`}
           </p>
+
+          {/* Add or reprice areas without leaving the batch. Prices are GLOBAL —
+              the same component as Academy Settings, editing the same catalogue —
+              so the note says so plainly; otherwise an admin would reasonably
+              read a price box on a batch form as a price for THIS batch.
+              onChange re-fetches the catalogue so a new area is immediately
+              tickable above. */}
+          <InterestAreasManager
+            onChange={() => { void loadCatalogue(); }}
+            note={'Add or reprice areas here. Prices are shared across every batch — changing one changes it everywhere, not just for this batch. Tick above to choose which of them this batch offers.'}
+          />
         </div>
 
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 20 }}>
