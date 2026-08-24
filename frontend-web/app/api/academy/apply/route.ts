@@ -157,11 +157,6 @@ export async function POST(request: Request) {
     const experience = getString(body.experience);
     const now = new Date().toISOString();
     const settings = await getActiveAcademySettings();
-    const registrationFeeRequired =
-      settings.registration_type === 'paid' && settings.application_fee > 0;
-    let paidRegistrationFee = 0;
-    let registrationFeeReference = '';
-
     if (!fullName) return errorResponse('Full name is required', 400);
     if (!email) return errorResponse('Email is required', 400);
     if (!phone) return errorResponse('Phone number is required', 400);
@@ -170,6 +165,40 @@ export async function POST(request: Request) {
       return errorResponse('At least one area of interest is required', 400);
     }
     if (!motivation) return errorResponse('Motivation is required', 400);
+
+    // The fee is the BASE application fee plus the fee of every area the
+    // applicant selected. Computed HERE from the admin-managed rows: the client
+    // renders a running total for the user's benefit, but it could claim any
+    // number, so nothing it sends is used in this sum.
+    const { data: areaRows, error: areaError } = await supabase
+      .from('academy_interest_areas')
+      .select('slug, fee_ngn, is_active')
+      .in('slug', areasOfInterest);
+    if (areaError) throw areaError;
+
+    const activeAreas = (areaRows ?? []).filter(
+      (a) => (a as { is_active: boolean }).is_active,
+    );
+
+    // An unknown or retired slug must not silently price at zero — that would
+    // let a crafted request buy a cheaper application. Reject it instead.
+    if (activeAreas.length !== areasOfInterest.length) {
+      const known = new Set(activeAreas.map((a) => String((a as { slug: string }).slug)));
+      const bad = areasOfInterest.filter((a) => !known.has(a));
+      return errorResponse(`Unknown area of interest: ${bad.join(', ')}`, 400);
+    }
+
+    const areasFeeTotal = activeAreas.reduce(
+      (sum, a) => sum + Number((a as { fee_ngn: number | null }).fee_ngn ?? 0),
+      0,
+    );
+    const baseApplicationFee = Number(settings.application_fee ?? 0);
+    const requiredFee = baseApplicationFee + areasFeeTotal;
+
+    const registrationFeeRequired =
+      settings.registration_type === 'paid' && requiredFee > 0;
+    let paidRegistrationFee = 0;
+    let registrationFeeReference = '';
 
     const { data: batch, error: batchError } = await supabase
       .from('academy_batches')
@@ -224,8 +253,11 @@ export async function POST(request: Request) {
         return errorResponse('Registration fee payment must be made in NGN.', 400);
       }
 
-      if (paidRegistrationFee < settings.application_fee) {
-        return errorResponse('Registration fee payment is lower than the required amount.', 400);
+      if (paidRegistrationFee < requiredFee) {
+        return errorResponse(
+          `Registration fee payment is lower than the required amount (₦${requiredFee.toLocaleString('en-NG')}).`,
+          400,
+        );
       }
 
       if (payment.customerEmail && email && payment.customerEmail.toLowerCase() !== email.toLowerCase()) {
@@ -365,7 +397,24 @@ export async function GET(request: Request) {
 
     const settings = await getActiveAcademySettings();
 
-    return successResponse({ success: true, batches, appliedBatchIds, settings });
+    // Admin-managed areas of interest, each carrying a NAIRA fee added to the
+    // base application_fee. Returned so the client can show a running total —
+    // but the total it shows is never trusted; POST recomputes it from these
+    // same rows.
+    const { data: areaRows } = await supabase
+      .from('academy_interest_areas')
+      .select('slug, label, description, fee_ngn')
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true });
+
+    const interestAreas = (areaRows ?? []).map((a) => ({
+      slug: String((a as { slug: string }).slug),
+      label: String((a as { label: string }).label),
+      description: (a as { description: string | null }).description ?? null,
+      fee_ngn: Number((a as { fee_ngn: number | null }).fee_ngn ?? 0),
+    }));
+
+    return successResponse({ success: true, batches, appliedBatchIds, settings, interestAreas });
   } catch (error) {
     return handleApiError(error, 'Failed to load batches');
   }

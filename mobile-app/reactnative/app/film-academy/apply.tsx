@@ -20,11 +20,6 @@ import { getOverview, applyToBatch } from '@/features/filmAcademy/api';
 import { usePaystackGateway, PAYSTACK_PUBLIC_KEY } from '@/features/payments';
 import { FILM_ACADEMY_KEY } from './index';
 
-const AREAS = [
-  'Directing', 'Screenwriting', 'Cinematography', 'Editing',
-  'Sound', 'Producing', 'Production design', 'Acting',
-];
-
 export default function FilmAcademyApplyScreen() {
   const { batchId } = useLocalSearchParams<{ batchId?: string }>();
   const qc = useQueryClient();
@@ -39,7 +34,16 @@ export default function FilmAcademyApplyScreen() {
   const feeRequired =
     String(data?.settings?.registration_type ?? '').toLowerCase() === 'paid' &&
     Number(data?.settings?.application_fee ?? 0) > 0;
-  const applicationFee = Number(data?.settings?.application_fee ?? 0);
+  const baseFee = Number(data?.settings?.application_fee ?? 0);
+  const interestAreas = data?.interestAreas ?? [];
+
+  // The total the applicant sees. The SERVER recomputes this from the same
+  // admin-managed rows when the application is submitted, so this is a display
+  // convenience — it cannot be used to pay less.
+  const areasFee = interestAreas
+    .filter((a) => areas.includes(a.slug))
+    .reduce((sum, a) => sum + Number(a.fee_ngn ?? 0), 0);
+  const applicationFee = baseFee + areasFee;
   const gateway = usePaystackGateway();
   // Without a publishable key the gateway cannot open at all, so say that
   // rather than letting the user tap Pay into a dead sheet.
@@ -161,17 +165,62 @@ export default function FilmAcademyApplyScreen() {
                keyboardType="phone-pad" />
 
         <Text style={styles.label}>Areas of interest</Text>
-        <View style={styles.chips}>
-          {AREAS.map((a) => {
-            const on = areas.includes(a);
-            return (
-              <Pressable key={a} onPress={() => toggleArea(a)} style={[styles.chip, on && styles.chipOn]}>
-                {on && <Check size={13} color={Colors.primary} />}
-                <Text style={[styles.chipText, on && styles.chipTextOn]}>{a}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        {interestAreas.length === 0 ? (
+          <Text style={styles.noticeText}>
+            No areas are available to choose right now. Please try again later.
+          </Text>
+        ) : (
+          <View style={styles.chips}>
+            {interestAreas.map((a) => {
+              const on = areas.includes(a.slug);
+              const fee = Number(a.fee_ngn ?? 0);
+              return (
+                <Pressable
+                  key={a.slug}
+                  onPress={() => toggleArea(a.slug)}
+                  style={[styles.chip, on && styles.chipOn]}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: on }}
+                  accessibilityLabel={fee > 0 ? `${a.label}, ₦${fee.toLocaleString('en-NG')}` : a.label}
+                >
+                  {on && <Check size={13} color={Colors.primary} />}
+                  <Text style={[styles.chipText, on && styles.chipTextOn]}>{a.label}</Text>
+                  {fee > 0 && (
+                    <Text style={[styles.chipFee, on && styles.chipTextOn]}>
+                      +₦{fee.toLocaleString('en-NG')}
+                    </Text>
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+
+        {/* Running total. Tapping a chip adds or removes its line immediately. */}
+        {feeRequired && (
+          <View style={styles.totalBox}>
+            <View style={styles.totalRow}>
+              <Text style={styles.totalLabel}>Application fee</Text>
+              <Text style={styles.totalValue}>₦{baseFee.toLocaleString('en-NG')}</Text>
+            </View>
+            {interestAreas
+              .filter((a) => areas.includes(a.slug) && Number(a.fee_ngn ?? 0) > 0)
+              .map((a) => (
+                <View key={a.slug} style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>{a.label}</Text>
+                  <Text style={styles.totalValue}>
+                    ₦{Number(a.fee_ngn).toLocaleString('en-NG')}
+                  </Text>
+                </View>
+              ))}
+            <View style={[styles.totalRow, styles.totalRowGrand]}>
+              <Text style={styles.totalGrandLabel}>Total to pay</Text>
+              <Text style={styles.totalGrandValue}>
+                ₦{applicationFee.toLocaleString('en-NG')}
+              </Text>
+            </View>
+          </View>
+        )}
 
         <Field label="Why do you want to join?" value={motivation} onChange={setMotivation}
                placeholder="A few sentences" multiline />
@@ -250,6 +299,15 @@ const styles = StyleSheet.create({
   chipOn:      { backgroundColor: Colors.iconBgPurple },
   chipText:    { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   chipTextOn:  { color: Colors.primary },
+  chipFee:     { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  totalBox:    { backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.lg, gap: 6 },
+  totalRow:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  totalRowGrand: { borderTopWidth: 1, borderTopColor: Colors.surfaceContainerHigh,
+                   paddingTop: 8, marginTop: 4 },
+  totalLabel:  { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
+  totalValue:  { ...Typography.bodyMd, color: Colors.onSurface },
+  totalGrandLabel: { ...Typography.labelLg, color: Colors.onSurface },
+  totalGrandValue: { ...Typography.titleMd, color: Colors.onSurface },
   error:       { ...Typography.bodyMd, color: Colors.error },
   noticeBox:   { backgroundColor: Colors.iconBgGold, borderRadius: Radius.lg, padding: Spacing.lg, gap: 4 },
   noticeTitle: { ...Typography.labelLg, color: Colors.onSurface },
