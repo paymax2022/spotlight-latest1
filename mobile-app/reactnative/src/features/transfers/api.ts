@@ -74,9 +74,17 @@ export async function getPinStatus(): Promise<{ hasPin: boolean }> {
   return { hasPin: Boolean(data.hasPin ?? data.has_pin ?? false) };
 }
 
-export async function createPin(pin: string): Promise<void> {
+/**
+ * Set or CHANGE the transaction PIN.
+ *
+ * `currentPin` is required by the backend whenever a PIN already exists: SetPin
+ * verifies it before overwriting. Omitting it does not merely fail — the empty
+ * string is evaluated as a WRONG GUESS and counts toward the 5-failure lockout,
+ * so a client that forgets it can lock the user out of transfers.
+ */
+export async function createPin(pin: string, currentPin?: string): Promise<void> {
   if (USE_MOCK) return transfersMock.createPin(pin);
-  await api.post('/api/v1/transfers/pin', { pin });
+  await api.post('/api/v1/transfers/pin', currentPin ? { pin, current_pin: currentPin } : { pin });
 }
 
 export async function verifyPin(pin: string): Promise<void> {
