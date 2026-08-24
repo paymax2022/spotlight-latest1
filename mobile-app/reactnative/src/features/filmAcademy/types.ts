@@ -46,6 +46,11 @@ export interface FilmAcademyOverview {
   settings: FilmAcademySettings;
   /** Active areas with their fees, in admin display order. */
   interestAreas: FilmAcademyInterestArea[];
+  /**
+   * Slugs each batch offers, keyed by batch id. A batch ABSENT from this map —
+   * or present with an empty list — offers every active area.
+   */
+  batchAreas: Record<string, string[]>;
 }
 
 export interface FilmAcademyApplicationInput {
