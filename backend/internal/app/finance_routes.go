@@ -478,7 +478,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		placementMember := finance // member.Group("/placement") is created inside RegisterPlacement
 		placementAdmin := r.Group("/api/placement/admin")
 		placementAdmin.Use(requireUserID())
-		placementPublic := r.Group("/api/finance/placement") // unauthenticated landing/events
+		// BARE /api/finance, not /api/finance/placement: RegisterPlacement adds the
+		// "/placement" segment itself (placement_routes.go, `public.Group`), so
+		// passing it here mounted the public routes at
+		// /api/finance/placement/placement/landing. The frontend proxy calls
+		// /api/finance/placement/landing, so every request 404'd — invisibly,
+		// because the module is flag-gated off by default and the routes were
+		// never registered to be noticed. Same double-mount the savings comment
+		// below warns about.
+		placementPublic := r.Group("/api/finance") // unauthenticated landing/events
 		RegisterPlacement(placementMember, placementAdmin, placementPublic, pool, rbac, ledgerSvc, walletSvc, tiersSvc)
 	}
 

@@ -203,12 +203,22 @@ export async function POST(request: Request) {
       }
     }
 
-    const areasFeeTotal = activeAreas.reduce(
+    // TUITION, not an application fee. academy_interest_areas.fee_ngn is the
+    // cost of TAKING that area — payable on acceptance and refundable. It is
+    // recorded against the application for later billing and is deliberately
+    // NOT part of what is charged now.
+    //
+    // This was previously added to the amount collected at submit, which would
+    // have taken ~₦255,000 up front, non-refundably, for a Film Directing
+    // application nobody had reviewed yet.
+    const tuitionTotal = activeAreas.reduce(
       (sum, a) => sum + Number((a as { fee_ngn: number | null }).fee_ngn ?? 0),
       0,
     );
-    const baseApplicationFee = Number(settings.application_fee ?? 0);
-    const requiredFee = baseApplicationFee + areasFeeTotal;
+
+    // The only thing payable at APPLICATION time. Non-refundable per
+    // academy_settings.application_fee_refundable.
+    const requiredFee = Number(settings.application_fee ?? 0);
 
     const registrationFeeRequired =
       settings.registration_type === 'paid' && requiredFee > 0;
@@ -270,7 +280,7 @@ export async function POST(request: Request) {
 
       if (paidRegistrationFee < requiredFee) {
         return errorResponse(
-          `Registration fee payment is lower than the required amount (₦${requiredFee.toLocaleString('en-NG')}).`,
+          `Application fee payment is lower than the required ₦${requiredFee.toLocaleString('en-NG')}.`,
           400,
         );
       }
@@ -327,6 +337,9 @@ export async function POST(request: Request) {
       has_prior_experience: Boolean(relevantTraining),
       experience_description: relevantTraining || null,
       career_goals: careerGoals,
+      // Frozen at application time: repricing an area later must not change what
+      // a past applicant appears to owe.
+      tuition_total_ngn: tuitionTotal,
       terms_accepted: true,
       terms_accepted_at: now,
     };
