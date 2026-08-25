@@ -197,8 +197,20 @@ func (s *authService) RequestPasswordReset(email string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
+
+	// A 4xx is EXPECTED and must stay quiet: Supabase answers this way for an
+	// address with no account, and the endpoint deliberately does not disclose
+	// whether one exists. Reporting it would turn the reset form into an account
+	// enumeration oracle.
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 		return nil
+	}
+	// A 5xx is NOT expected. It previously returned nil too, so an outage looked
+	// exactly like success: the user was told to check their email and no email
+	// was ever going to arrive. The caller still answers the user identically —
+	// this exists so the failure reaches the logs instead of vanishing.
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("password reset upstream returned %d", resp.StatusCode)
 	}
 	return nil
 }

@@ -485,6 +485,10 @@ type Config struct {
 
 	// ── Notification providers ────────────────────────────────────────────────
 	// Resend: email delivery. Key from resend.com dashboard.
+	// Per-IP, per-route auth throttles. See middleware.AuthRateLimit.
+	AuthRateLimitPerMin       int
+	AuthResetRateLimitPerHour int
+
 	ResendAPIKey    string
 	ResendFromEmail string // must be @spotlightng.com — the only domain verified on the Resend account
 	// Termii: SMS delivery. Key from termii.com dashboard.
@@ -752,6 +756,12 @@ func Load() Config {
 		BillingBaseURL:       getEnv("BILLING_BASE_URL", ""),
 		BillingAPIKey:        getEnv("BILLING_API_KEY", ""),
 		BillingWebhookSecret: getEnv("BILLING_WEBHOOK_SECRET", ""),
+
+		// Auth throttling. Login/register/password-reset had no limit at all; these
+		// are per-IP-per-route budgets. Deliberately tight — a real person signs in a
+		// handful of times a minute, a credential-stuffer does not.
+		AuthRateLimitPerMin:          getEnvInt("AUTH_RATE_LIMIT_PER_MIN", 10),
+		AuthResetRateLimitPerHour:    getEnvInt("AUTH_RESET_RATE_LIMIT_PER_HOUR", 5),
 
 		ResendAPIKey:    getEnv("RESEND_API_KEY", ""),
 		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Spotlight <no-reply@spotlightng.com>"),
