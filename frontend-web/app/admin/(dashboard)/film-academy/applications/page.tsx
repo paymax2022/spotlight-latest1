@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/server';
 import { requireAdmin } from '@/src/lib/auth/server';
 import ApplicationReviewRow from '@/components/academy/admin/ApplicationReviewRow';
+import { summariseAcademyRevenue, formatNaira, tuitionByApplicant } from '@/src/features/academy/revenue';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,11 +35,19 @@ export default async function AcademyApplicationsPage({ searchParams }: PageProp
   if (batchId) applicationsQuery = applicationsQuery.eq('batch_id', batchId);
   if (status) applicationsQuery = applicationsQuery.eq('status', status);
 
-  const [applicationsRes, batchRes] = await Promise.all([
+  const [applicationsRes, batchRes, plansRes] = await Promise.all([
     applicationsQuery,
     batchId
       ? supabase.from('academy_batches').select('id, batch_name, start_date, training_schedule, duration_weeks').eq('id', batchId).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
+    // Tuition lives on the instalment plan, not on the application, so the list
+    // could not show who had paid their training fee without this join.
+    (batchId
+      ? supabase.from('academy_installment_plans')
+          .select('application_id, status, academy_installment_payments(amount_ngn, status, due_date)')
+          .eq('batch_id', batchId)
+      : supabase.from('academy_installment_plans')
+          .select('application_id, status, academy_installment_payments(amount_ngn, status, due_date)')),
   ]);
 
   const applications = (applicationsRes.data ?? []) as any[];
@@ -51,6 +60,9 @@ export default async function AcademyApplicationsPage({ searchParams }: PageProp
     rejected: applications.filter((a) => a.status === 'rejected').length,
     paid: applications.filter((a) => a.payment_status === 'paid').length,
   };
+  // application_fee_paid was already being fetched here and never shown.
+  const feesNgn = summariseAcademyRevenue(applications, []).applicationFeesNgn;
+  const tuition = tuitionByApplicant((plansRes.data ?? []) as any[]);
 
   function filterHref(nextStatus?: string) {
     const params = new URLSearchParams();
@@ -96,17 +108,18 @@ export default async function AcademyApplicationsPage({ searchParams }: PageProp
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
         {[
           { label: 'Total', value: stats.total, color: '#6366f1' },
           { label: 'Pending', value: stats.pending, color: '#f59e0b' },
           { label: 'Approved', value: stats.approved, color: '#10b981' },
           { label: 'Rejected', value: stats.rejected, color: '#ef4444' },
           { label: 'Paid', value: stats.paid, color: '#10b981' },
+          { label: 'Fees Collected', value: formatNaira(feesNgn), color: '#10b981' },
         ].map(({ label, value, color }) => (
           <div key={label} className="glass-card rounded-md p-4">
             <p className="text-xs text-foreground/50 mb-1">{label}</p>
-            <p className="text-2xl font-bold" style={{ color }}>{value}</p>
+            <p className="text-2xl font-bold truncate" style={{ color }}>{value}</p>
           </div>
         ))}
       </div>
@@ -144,6 +157,7 @@ export default async function AcademyApplicationsPage({ searchParams }: PageProp
                 key={application.id}
                 application={application}
                 batchId={application.batch_id || batchId}
+                tuition={tuition.get(application.id)}
               />
             ))}
           </div>
