@@ -70,14 +70,22 @@ export default function LoginPage() {
     setBusy(true);
     setError('');
     try {
-      const { error: e } = await supabase.auth.signUp({
-        email: email.trim().toLowerCase(),
+      const normalized = email.trim().toLowerCase();
+      const { data, error: e } = await supabase.auth.signUp({
+        email: normalized,
         password,
         options: { data: { full_name: name.trim() || email } },
       });
       if (e) throw e;
-      setInfo('Account created! Please check your email to confirm, then sign in.');
-      setTab('signin');
+
+      // Confirmation is required on both cloud projects, so there is no session
+      // here and the old advice — "confirm, then sign in" — was a dead end:
+      // signing in before confirming fails. Send them to enter the code instead.
+      if (data?.session?.access_token) {
+        router.replace(next);
+        return;
+      }
+      router.push(`/verify-email?email=${encodeURIComponent(normalized)}&next=${encodeURIComponent(next)}`);
     } catch (err) {
       setError(toReadableAuthError(err, 'Sign up failed. Please try again.'));
     } finally {

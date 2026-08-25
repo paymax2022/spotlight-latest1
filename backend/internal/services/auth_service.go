@@ -18,8 +18,6 @@ import (
 type AuthService interface {
 	RegisterUser(in domain.RegisterRequest) error
 	LoginUser(in domain.LoginRequest) (map[string]any, error)
-	VerifyEmailToken(token string) error
-	ResendVerificationLink(email string) error
 	RequestPasswordReset(email string) error
 	ResetPassword(token, password string) error
 	ChangePassword(accessToken, currentPassword, newPassword string) error
@@ -210,21 +208,6 @@ func (s *authService) ResetPassword(token, password string) error {
 		return fmt.Errorf("invalid reset payload")
 	}
 	// Supabase reset completion is client-token based; backend keeps this endpoint for contract compatibility.
-	return nil
-}
-
-func (s *authService) VerifyEmailToken(token string) error {
-	if strings.TrimSpace(token) == "" {
-		return fmt.Errorf("token is required")
-	}
-	return nil
-}
-
-func (s *authService) ResendVerificationLink(email string) error {
-	if strings.TrimSpace(email) == "" {
-		return fmt.Errorf("email is required")
-	}
-	// Supabase handles re-sending verification links by signup/recovery configurations.
 	return nil
 }
 

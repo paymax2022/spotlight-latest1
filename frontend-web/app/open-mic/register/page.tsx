@@ -63,8 +63,11 @@ export default function OpenMicRegisterPage() {
         return;
       }
 
-      setSuccess('Account created. Please sign in to continue.');
-      router.push(`/open-mic/login?next=${encodeURIComponent(next)}&email=${encodeURIComponent(normalizedEmail)}&registered=1`);
+      // No session means confirmation is pending. Sending them to sign in cannot
+      // work — an unconfirmed account is refused — so route to code entry and
+      // carry `next` through so they land where they were originally going.
+      setSuccess('Account created. Enter the code we emailed you to continue.');
+      router.push(`/verify-email?email=${encodeURIComponent(normalizedEmail)}&next=${encodeURIComponent(next)}`);
     } catch (err) {
       setError(toReadableAuthError(err, 'Sign up failed'));
     } finally {
