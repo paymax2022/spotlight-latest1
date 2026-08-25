@@ -232,11 +232,6 @@ func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *t
 	if err != nil {
 		t.Fatalf("provider balance before: %v", err)
 	}
-	settleBalBefore, err := balanceOf(ctx, pool, settleAcc.ID)
-	if err != nil {
-		t.Fatalf("settlement account balance before: %v", err)
-	}
-
 	key := newIdemKey(t, "rpayout-process")
 	paid, err := svc.ProcessRun(ctx, run.ID, key)
 	if err != nil {
@@ -261,12 +256,8 @@ func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *t
 	if providerBalAfter-providerBalBefore != wantNet {
 		t.Errorf("provider wallet credited %d, want exactly %d (net)", providerBalAfter-providerBalBefore, wantNet)
 	}
-	settleBalAfter, err := balanceOf(ctx, pool, settleAcc.ID)
-	if err != nil {
-		t.Fatalf("settlement account balance after: %v", err)
-	}
-	if settleBalBefore-settleBalAfter != wantNet {
-		t.Errorf("settlement account debited %d, want exactly %d (net) — debit must equal credit (balanced)", settleBalBefore-settleBalAfter, wantNet)
+	if debited := -netPostedForReference(t, ctx, pool, settleAcc.ID, "rpayout:"+run.ID); debited != wantNet {
+		t.Errorf("settlement account debited %d, want exactly %d (net) — debit must equal credit (balanced)", debited, wantNet)
 	}
 
 	// ── ProcessRun REPLAY (same key) — no double-pay ─────────────────────────
@@ -320,19 +311,3 @@ func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *t
 	}
 }
 
-// balanceOf projects an account's balance directly from ledger_entries the same
-// way the ledger repo does (CREDIT − DEBIT, reversals included), so the test can
-// assert the settlement STANDING account's movement without a wallet helper.
-func balanceOf(ctx context.Context, pool *pgxpool.Pool, accountID string) (int64, error) {
-	// Mirror ledger.Repository.balanceProjectionSQL EXACTLY: CREDIT + REVERSAL_DEBIT
-	// count as +balance; everything else (DEBIT, REVERSAL_CREDIT) as −balance.
-	const q = `
-		SELECT COALESCE(SUM(
-			CASE WHEN type IN ('CREDIT','REVERSAL_DEBIT') THEN amount_kobo
-			     ELSE -amount_kobo END
-		), 0)
-		FROM ledger_entries WHERE account_id = $1`
-	var bal int64
-	err := pool.QueryRow(ctx, q, accountID).Scan(&bal)
-	return bal, err
-}

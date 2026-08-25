@@ -122,6 +122,34 @@ func signedLedgerSum(t *testing.T, ctx context.Context, pool *pgxpool.Pool, refe
 	return sum
 }
 
+// netPostedForReference returns the SIGNED amount posted to ONE account by the
+// balanced pair carrying reference.
+//
+// Prefer this over a before/after balance delta on any standing account.
+// Standing accounts are singletons keyed by type (finance/ledger/service.go):
+// settlement and the failed-transfer suspense account are shared by the entire
+// database, and `go test ./...` runs packages in parallel with nine live-DB
+// suites posting to settlement. A delta measured across a call therefore also
+// measures whatever every other suite did in that window — which is exactly how
+// tests/edtechfees came to report "settlement account rose by -4900000 on apply,
+// want 100000" while the transfer under test was perfectly correct.
+//
+// Scoping to this operation's own reference is exact and cannot be perturbed by
+// concurrent work.
+func netPostedForReference(t *testing.T, ctx context.Context, pool *pgxpool.Pool, accountID, reference string) int64 {
+	t.Helper()
+	const q = `
+		SELECT COALESCE(SUM(
+			CASE WHEN type IN ('CREDIT','REVERSAL_DEBIT') THEN amount_kobo ELSE -amount_kobo END
+		), 0)
+		FROM ledger_entries WHERE account_id = $1 AND reference = $2`
+	var amt int64
+	if err := pool.QueryRow(ctx, q, accountID, reference).Scan(&amt); err != nil {
+		t.Fatalf("net posted to %s for reference %q: %v", accountID, reference, err)
+	}
+	return amt
+}
+
 func withdrawalRowCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ownerID string) int {
 	t.Helper()
 	var n int
@@ -159,10 +187,6 @@ func TestLiveDB_Withdrawal_RequestPostsOneBalancedReserve_NoopExecutesNothing(t 
 	suspAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountFailedTransferSusp)
 	if err != nil {
 		t.Fatalf("resolve suspense account: %v", err)
-	}
-	suspBefore, err := balanceOf(ctx, pool, suspAcc.ID)
-	if err != nil {
-		t.Fatalf("suspense balance before: %v", err)
 	}
 
 	const amount = int64(4_000_00) // ₦4,000
@@ -202,12 +226,8 @@ func TestLiveDB_Withdrawal_RequestPostsOneBalancedReserve_NoopExecutesNothing(t 
 	if balBefore-balAfter != amount {
 		t.Errorf("wallet debited %d, want exactly %d", balBefore-balAfter, amount)
 	}
-	suspAfter, err := balanceOf(ctx, pool, suspAcc.ID)
-	if err != nil {
-		t.Fatalf("suspense balance after: %v", err)
-	}
-	if suspAfter-suspBefore != amount {
-		t.Errorf("suspense credited %d, want exactly %d (funds reserved, not sent)", suspAfter-suspBefore, amount)
+	if got := netPostedForReference(t, ctx, pool, suspAcc.ID, *w.LedgerRef); got != amount {
+		t.Errorf("suspense credited %d, want exactly %d (funds reserved, not sent)", got, amount)
 	}
 }
 
