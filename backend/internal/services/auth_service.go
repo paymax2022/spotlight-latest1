@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -34,14 +36,46 @@ func NewAuthService(supabase *integrations.SupabaseRestClient, rbac RBACService,
 	return &authService{supabase: supabase, rbac: rbac, cfg: cfg}
 }
 
+// extractSignupUserID pulls the new user's id out of a Supabase signup response.
+//
+// The shape depends on whether email confirmation is required: with it OFF the
+// body is {access_token, user:{id}}, with it ON there is no session and the user
+// object IS the body, {id, email, confirmation_sent_at}. Both clouds require
+// confirmation and local now does too, but handling only one shape would break
+// silently the moment that setting differs between environments.
+func extractSignupUserID(body []byte) string {
+	var parsed struct {
+		ID   string `json:"id"`
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return ""
+	}
+	if strings.TrimSpace(parsed.User.ID) != "" {
+		return parsed.User.ID
+	}
+	return strings.TrimSpace(parsed.ID)
+}
+
 func (s *authService) RegisterUser(in domain.RegisterRequest) error {
 	if in.Password != in.ConfirmPassword {
 		return fmt.Errorf("password confirmation mismatch")
 	}
+
+	// full_name is what the on_auth_user_created trigger (handle_new_user) copies
+	// into user_profiles: COALESCE(raw_user_meta_data->>'full_name', ''). This path
+	// sent only first_name/last_name, so every account registered through it got a
+	// profile with an EMPTY name — verified against the live database. first_name
+	// and last_name stay for callers that read them.
+	fullName := strings.TrimSpace(strings.TrimSpace(in.FirstName) + " " + strings.TrimSpace(in.LastName))
+
 	payload := map[string]any{
 		"email":    strings.TrimSpace(strings.ToLower(in.Email)),
 		"password": in.Password,
 		"data": map[string]any{
+			"full_name":  fullName,
 			"first_name": in.FirstName,
 			"last_name":  in.LastName,
 			"user_type":  in.UserType,
@@ -61,8 +95,25 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) error {
 		return err
 	}
 	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
+		// The status is deliberately not echoed to the caller by the handler: a
+		// distinguishable "already registered" would be an enumeration oracle.
 		return fmt.Errorf("registration failed: %d", resp.StatusCode)
+	}
+
+	// The trigger does not copy phone, so it needs an explicit write — the web and
+	// mobile paths both do the same upsert. Best-effort: the ACCOUNT EXISTS at this
+	// point, and failing the request here would invite the user to register again
+	// and hit "already registered" on an account that is genuinely theirs.
+	if phone := strings.TrimSpace(in.Phone); phone != "" {
+		if userID := extractSignupUserID(respBody); userID != "" {
+			if err := s.supabase.REST(http.MethodPatch, "user_profiles",
+				map[string]string{"id": "eq." + userID},
+				map[string]any{"phone": phone}, nil); err != nil {
+				log.Printf("[auth] register: profile phone update failed for %s: %v", userID, err)
+			}
+		}
 	}
 	return nil
 }

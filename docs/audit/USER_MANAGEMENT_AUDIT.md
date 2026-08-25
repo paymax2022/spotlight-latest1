@@ -98,6 +98,14 @@ treatment** and currently has three implementations:
 | mobile `auth.api.ts register` | `supabase.auth.signUp` **from the client** | no | no |
 | Go `POST /api/auth/register` | `RegisterUser` + audit events | yes | n/a |
 
+**Update:** the Go path had one tracked caller — `apps/mobile-starter` (note that
+CLAUDE.md's "no `apps/` directory" is wrong; it exists and is tracked). That path
+sent only `first_name`/`last_name`, while the `on_auth_user_created` trigger copies
+`raw_user_meta_data->>'full_name'`, so every account it created had an EMPTY
+profile name and no phone — reproduced against the live database, now fixed. Full
+consolidation onto Go still requires Go to return a session and attribute
+referrals, neither of which it does yet.
+
 Two verification paradigms coexist: **OTP codes** (Next `verify-otp`/`resend-otp`,
 mobile screen) versus **verification links** (Go `verify-email`,
 `resend-verification-link`). They are not interchangeable and no product decision

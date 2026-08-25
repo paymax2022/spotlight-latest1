@@ -79,7 +79,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 	h.audit.LogAction("", "", "register.success", "auth", "user", "", nil, map[string]any{"email": in.Email, "userType": in.UserType}, c.ClientIP(), c.Request.UserAgent(), "info")
-	c.JSON(http.StatusCreated, gin.H{"success": true, "message": "Registration successful. Verify your email link."})
+	c.JSON(http.StatusCreated, gin.H{"success": true, "message": "Registration successful. Enter the code we emailed you to verify your account."})
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
