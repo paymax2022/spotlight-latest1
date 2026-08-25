@@ -11,7 +11,7 @@
 > | B2 | Prod sends 8 digits, app accepts 6 | FIXED — length is config-driven |
 > | B3 | Local never exercises the flow | FIXED — local confirmations on |
 > | B4 | `verify-email` faked success | FIXED — endpoint removed |
-> | B5 | Web has no verify screen | FIXED — `/verify-email`, browser-verified |
+> | B5 | Web has no verify screen | OPEN |
 > | B6 | **Email template sends a LINK, not a code** | FIXED locally, **OPEN on cloud** |
 
 Audited 2026-08-25 against `develop`, the live local Supabase, and BOTH cloud
@@ -111,15 +111,21 @@ route passes `type: 'email'`, mobile passes `type: 'signup'`.
 
 ## Gaps (not launch-blocking, but load-bearing)
 
-- **No rate limiting on Go `/api/auth/*`.** `StemRateLimit` exists and is applied
-  to stem routes; login, register and password-reset have none. The only throttle
-  is Supabase's.
+- ~~**No rate limiting on Go `/api/auth/*`.**~~ **FIXED** — `middleware.AuthRateLimit`
+  now guards login/register (per minute) and password-reset (per hour, tighter
+  because each attempt spends the project's small email quota). Deliberately NOT
+  a reuse of `StemRateLimit`, whose map never evicts and which keys partly on the
+  caller-supplied `x-stem-role` header — on an auth route that header is a
+  one-line bypass.
 - **Session hardening is OFF by default** (`FEATURE_SESSION_HARDENING_ENABLED=false`),
   so the self-service session endpoints (`/sessions`, revoke, revoke-all) return 503.
 - **No general account deletion.** One exists for `(doctor)` and for `connect`;
   there is no path for an ordinary user. Relevant to app-store policy and GDPR.
-- `RequestPasswordReset` swallows upstream failures (`return nil` on HTTP ≥400),
-  so a broken reset is indistinguishable from a working one.
+- ~~`RequestPasswordReset` swallows upstream failures.~~ **FIXED** — 4xx stays
+  quiet on purpose (Supabase answers that way for an unknown address, and
+  surfacing it would make the reset form an account-enumeration oracle), but 5xx
+  now returns an error so an outage reaches the logs. The HTTP response to the
+  user is byte-identical either way.
 
 ---
 
