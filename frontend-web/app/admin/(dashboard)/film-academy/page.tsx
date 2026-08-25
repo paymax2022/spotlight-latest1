@@ -2,25 +2,45 @@ import Link from 'next/link';
 import { createAdminClient } from '@/lib/supabase/server';
 import { requireAdmin } from '@/src/lib/auth/server';
 import { redirect } from 'next/navigation';
+import { summariseAcademyRevenue, formatNaira } from '@/src/features/academy/revenue';
 
 export const dynamic = 'force-dynamic';
 
 async function getData() {
   const supabase = createAdminClient();
-  const [batchesRes, appsRes] = await Promise.all([
+  const [batchesRes, appsRes, paymentsRes] = await Promise.all([
     supabase.from('academy_batches').select('*').order('created_at', { ascending: false }),
-    supabase.from('academy_applications').select('id, status, payment_status, batch_id'),
+    // application_fee_paid is the NAIRA amount collected at application time — it is
+    // money, and it was being dropped from this page entirely.
+    supabase.from('academy_applications').select('id, status, payment_status, batch_id, application_fee_paid'),
+    // The plan's status rides along because a cancelled plan's schedule is not owed.
+    supabase
+      .from('academy_installment_payments')
+      .select('id, amount_ngn, status, due_date, paid_at, installment_number, payment_reference, academy_installment_plans(status, academy_applications(full_name))')
+      .order('paid_at', { ascending: false, nullsFirst: false }),
   ]);
   return {
     batches: (batchesRes.data ?? []) as any[],
     applications: (appsRes.data ?? []) as any[],
+    payments: (paymentsRes.data ?? []) as any[],
   };
 }
 
 export default async function FilmAcademyAdminPage() {
   try { await requireAdmin(); } catch { redirect('/login?next=/admin/film-academy'); }
 
-  const { batches, applications } = await getData();
+  const { batches, applications, payments } = await getData();
+
+  const revenue = summariseAcademyRevenue(
+    applications,
+    payments.map((p) => ({
+      amount_ngn: p.amount_ngn,
+      status: p.status,
+      due_date: p.due_date,
+      planStatus: p.academy_installment_plans?.status ?? null,
+    })),
+  );
+  const settled = payments.filter((p) => p.status === 'paid').slice(0, 8);
 
   const stats = {
     totalBatches: batches.length,
@@ -39,6 +59,12 @@ export default async function FilmAcademyAdminPage() {
           <p className="text-foreground/50 mt-1">Manage batches, applications, and training fees</p>
         </div>
         <div className="flex gap-2">
+          <Link href="/admin/film-academy/curriculum" className="btn-outline py-2 px-4 text-sm">
+            Curriculum
+          </Link>
+          <Link href="/admin/film-academy/submissions" className="btn-outline py-2 px-4 text-sm">
+            Submissions
+          </Link>
           <Link href="/admin/film-academy/settings" className="btn-outline py-2 px-4 text-sm">
             Academy Settings
           </Link>
@@ -56,13 +82,86 @@ export default async function FilmAcademyAdminPage() {
           { label: 'Applications',     value: stats.totalApplications, color: '#f59e0b' },
           { label: 'Pending Review',   value: stats.pending,           color: '#f97316' },
           { label: 'Approved',         value: stats.approved,          color: '#10b981' },
-          { label: 'Awaiting Payment', value: stats.pendingPayment,    color: '#ef4444' },
+          // This counts payment_status, which is the APPLICATION FEE — not tuition.
+          // Labelled "Awaiting Payment" it read as unpaid training fees, which live on
+          // the instalment plan and are in the money tiles below.
+          { label: 'App Fee Due',     value: stats.pendingPayment,    color: '#ef4444' },
         ].map(({ label, value, color }) => (
           <div key={label} className="glass-card rounded-md p-4">
             <p className="text-xs text-foreground/50 mb-1">{label}</p>
             <p className="text-2xl font-bold" style={{ color }}>{value}</p>
           </div>
         ))}
+      </div>
+
+      {/* Money. The page has always promised "training fees"; until now it showed none. */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8">
+        {[
+          {
+            label: 'Fees Collected',
+            value: formatNaira(revenue.collectedNgn),
+            note: `${formatNaira(revenue.applicationFeesNgn)} application · ${formatNaira(revenue.instalmentsPaidNgn)} training`,
+            color: '#10b981',
+          },
+          {
+            label: 'Outstanding',
+            value: formatNaira(revenue.outstandingNgn),
+            note: 'scheduled, not yet settled',
+            color: revenue.outstandingNgn > 0 ? '#f59e0b' : '#64748b',
+          },
+          {
+            label: 'Overdue',
+            value: formatNaira(revenue.overdueNgn),
+            note: 'past its due date',
+            color: revenue.overdueNgn > 0 ? '#ef4444' : '#64748b',
+          },
+        ].map(({ label, value, note, color }) => (
+          <div key={label} className="glass-card rounded-md p-4">
+            <p className="text-xs text-foreground/50 mb-1">{label}</p>
+            <p className="text-2xl font-bold" style={{ color }}>{value}</p>
+            <p className="text-[11px] text-foreground/40 mt-1">{note}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Recent payments */}
+      <div className="glass-card rounded-md overflow-hidden mb-6">
+        <div className="flex items-center justify-between p-4 border-b border-border">
+          <h2 className="font-semibold text-foreground">Recent Payments</h2>
+          <span className="text-xs text-foreground/40">{payments.filter((p) => p.status === 'paid').length} settled</span>
+        </div>
+        {settled.length === 0 ? (
+          <p className="p-6 text-center text-sm text-foreground/50">No training-fee payments settled yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-bg/50">
+                  <th className="text-left px-4 py-3 text-foreground/50 font-medium">Applicant</th>
+                  <th className="text-left px-4 py-3 text-foreground/50 font-medium">Instalment</th>
+                  <th className="text-right px-4 py-3 text-foreground/50 font-medium">Amount</th>
+                  <th className="text-left px-4 py-3 text-foreground/50 font-medium">Paid</th>
+                  <th className="text-left px-4 py-3 text-foreground/50 font-medium">Reference</th>
+                </tr>
+              </thead>
+              <tbody>
+                {settled.map((p) => (
+                  <tr key={p.id} className="border-b border-border hover:bg-bg/30 transition-colors">
+                    <td className="px-4 py-3 font-medium text-foreground">
+                      {p.academy_installment_plans?.academy_applications?.full_name ?? '—'}
+                    </td>
+                    <td className="px-4 py-3 text-foreground/70">#{p.installment_number}</td>
+                    <td className="px-4 py-3 text-right font-medium text-foreground">{formatNaira(Number(p.amount_ngn ?? 0))}</td>
+                    <td className="px-4 py-3 text-foreground/70">
+                      {p.paid_at ? new Date(p.paid_at).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-foreground/50 text-xs font-mono">{p.payment_reference ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Batch list */}
