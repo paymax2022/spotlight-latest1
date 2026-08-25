@@ -1,5 +1,19 @@
 # User Management & OTP — go-live audit
 
+> **Decision (2026-08-25): OTP CODES, not links.** Progress against this audit is
+> tracked in the status column below. B4 and the paradigm split are resolved;
+> B2/B3 are fixed in code; **B1 and the new B6 are configuration and remain open —
+> both need dashboard access to the two cloud projects.**
+>
+> | ID | Blocker | Status |
+> |----|---------|--------|
+> | B1 | No SMTP on either cloud project | **OPEN** — needs Resend DNS, then dashboard |
+> | B2 | Prod sends 8 digits, app accepts 6 | FIXED — length is config-driven |
+> | B3 | Local never exercises the flow | FIXED — local confirmations on |
+> | B4 | `verify-email` faked success | FIXED — endpoint removed |
+> | B5 | Web has no verify screen | OPEN |
+> | B6 | **Email template sends a LINK, not a code** | FIXED locally, **OPEN on cloud** |
+
 Audited 2026-08-25 against `develop`, the live local Supabase, and BOTH cloud
 projects via the Management API (`spotlight-staging` `wnicsubiznmishkmunsv`,
 `spotlight-prod` `nmseefdlliejmdbxytej`).
@@ -54,6 +68,20 @@ but on the security boundary rather than an admin screen.
 `frontend-web/app/register` exists; there is no verify-otp page. Only mobile has
 one. With confirmations required in cloud, a web sign-up completes, receives no
 session, and lands nowhere.
+
+### B6 — the confirmation email sends a link, not a code *(found by testing, not reading)*
+Supabase's default confirmation template body is `{{ .ConfirmationURL }}`. Choosing
+codes does not change that by itself: the app renders a code-entry screen while the
+email contains no code to enter. Confirmed against local Supabase — the mail carried
+only a URL, and the digits that could be scraped out of the token failed with
+`otp_expired`, because they were never a code.
+
+The template must emit `{{ .Token }}`. `supabase/templates/confirmation.html` now
+does this for local, and the full loop is verified end to end: sign up → no session
+→ six-digit code in the mail → `type: 'signup'` verify → session issued.
+
+**Each cloud project holds its own copy of this template** and still sends links
+until changed in the dashboard (Authentication → Email Templates → Confirm signup).
 
 ---
 

@@ -162,27 +162,6 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Password reset successful"})
 }
 
-func (h *AuthHandler) VerifyEmail(c *gin.Context) {
-	token := c.Query("token")
-	if err := h.auth.VerifyEmailToken(token); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Email verified"})
-}
-
-func (h *AuthHandler) ResendVerificationLink(c *gin.Context) {
-	var in struct {
-		Email string `json:"email" binding:"required,email"`
-	}
-	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid payload"})
-		return
-	}
-	_ = h.auth.ResendVerificationLink(in.Email)
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Verification link sent if account exists"})
-}
-
 func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	u, ok := middleware.GetAuthenticatedUser(c)
 	if !ok {

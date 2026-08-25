@@ -73,8 +73,10 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		apiAuth.POST("/logout", authHandler.Logout)
 		apiAuth.POST("/request-password-reset", authHandler.RequestPasswordReset)
 		apiAuth.POST("/reset-password", authHandler.ResetPassword)
-		apiAuth.GET("/verify-email", authHandler.VerifyEmail)
-		apiAuth.POST("/resend-verification-link", authHandler.ResendVerificationLink)
+		// Email verification is OTP CODES, not links (decided 2026-08-25). The former
+		// GET /verify-email and POST /resend-verification-link were removed: both were
+		// backed by no-op service methods that reported success without verifying
+		// anything, and neither had a single caller in web, mobile, or the contract.
 		apiAuthProtected := apiAuth.Group("")
 		apiAuthProtected.Use(middleware.RequireAuthContextWithSessions(supabase, rbacService, sessionService, cfg.FeatureSessionHardeningEnabled))
 		apiAuthProtected.GET("/me", authHandler.Me)
