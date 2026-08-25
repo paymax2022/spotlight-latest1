@@ -1,5 +1,5 @@
 'use client';
-import { formatNaira } from '@/src/features/academy/revenue';
+import { formatNaira, type TuitionForApplicant } from '@/src/features/academy/revenue';
 
 import { useState } from 'react';
 import Link from 'next/link';
@@ -19,7 +19,7 @@ const STATUS_TEXT: Record<string, string> = {
 };
 
 export default function ApplicationReviewRow({
-  application, batchId,
+  application, batchId, tuition,
 }: {
   application: {
     id: string; full_name: string; email: string; phone?: string;
@@ -27,6 +27,8 @@ export default function ApplicationReviewRow({
     areas_of_interest?: string[]; created_at: string;
   };
   batchId: string;
+  /** Undefined when the applicant has no instalment plan — deliberately not zeroes. */
+  tuition?: TuitionForApplicant;
 }) {
   const [status, setStatus] = useState(application.status);
   const [busy, setBusy] = useState(false);
@@ -89,6 +91,31 @@ export default function ApplicationReviewRow({
             </span>
           );
         })()}
+
+        {/* Tuition. Distinct from the application fee above: this is the training
+            fee, which lives on the instalment plan. Absent means no plan exists
+            yet, which is not the same as a plan with nothing paid. */}
+        {tuition ? (
+          <span
+            title={tuition.overdueNgn > 0 ? `${formatNaira(tuition.overdueNgn)} past due` : undefined}
+            style={{
+              fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
+              background: tuition.overdueNgn > 0 ? 'rgba(239,68,68,0.1)'
+                : tuition.outstandingNgn > 0 ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)',
+              color: tuition.overdueNgn > 0 ? '#ef4444'
+                : tuition.outstandingNgn > 0 ? '#f59e0b' : '#10b981',
+            }}
+          >
+            {tuition.outstandingNgn > 0
+              ? `Tuition ${formatNaira(tuition.paidNgn)} paid · ${formatNaira(tuition.outstandingNgn)} due`
+              : `✓ Tuition ${formatNaira(tuition.paidNgn)}`}
+          </span>
+        ) : (
+          <span style={{
+            fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
+            background: 'rgba(100,116,139,0.15)', color: '#64748b',
+          }}>No tuition plan</span>
+        )}
 
         {/* Review actions */}
         {status === 'pending' && (

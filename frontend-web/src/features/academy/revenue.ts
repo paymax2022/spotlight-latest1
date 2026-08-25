@@ -96,3 +96,57 @@ export function formatNaira(amountNgn: number): string {
     style: 'currency', currency: 'NGN', minimumFractionDigits: 0, maximumFractionDigits: 0,
   }).format(amountNgn);
 }
+
+/** A plan as the admin console fetches it, with its schedule nested. */
+export type PlanRow = {
+  application_id: string | null;
+  status?: string | null;
+  academy_installment_payments?: InstalmentRow[] | null;
+};
+
+export type TuitionForApplicant = {
+  hasPlan: boolean;
+  paidNgn: number;
+  outstandingNgn: number;
+  overdueNgn: number;
+};
+
+/**
+ * Tuition per applicant, for the applications list.
+ *
+ * The batch page manages plans one batch at a time; the applications list spans
+ * every batch and showed no tuition at all, so an admin could not tell who had
+ * paid their training fee without opening each batch in turn.
+ *
+ * An applicant with no plan is absent from the map — "no plan yet" and "a plan
+ * with nothing paid" are different facts and must not render alike.
+ */
+export function tuitionByApplicant(
+  plans: PlanRow[],
+  now: Date = new Date(),
+): Map<string, TuitionForApplicant> {
+  const out = new Map<string, TuitionForApplicant>();
+
+  for (const plan of plans) {
+    const appId = plan.application_id;
+    if (!appId) continue;
+
+    const schedule = (plan.academy_installment_payments ?? []).map((i) => ({
+      ...i,
+      planStatus: plan.status ?? null,
+    }));
+    const r = summariseAcademyRevenue([], schedule, now);
+
+    // An applicant can hold more than one plan (a cancelled attempt, then a live
+    // one), so accumulate rather than overwrite.
+    const prev = out.get(appId);
+    out.set(appId, {
+      hasPlan: true,
+      paidNgn: (prev?.paidNgn ?? 0) + r.instalmentsPaidNgn,
+      outstandingNgn: (prev?.outstandingNgn ?? 0) + r.outstandingNgn,
+      overdueNgn: (prev?.overdueNgn ?? 0) + r.overdueNgn,
+    });
+  }
+
+  return out;
+}

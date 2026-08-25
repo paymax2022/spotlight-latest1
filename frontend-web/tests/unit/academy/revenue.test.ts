@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { summariseAcademyRevenue, formatNaira } from '@/src/features/academy/revenue';
+import { summariseAcademyRevenue, formatNaira, tuitionByApplicant } from '@/src/features/academy/revenue';
 
 // The live row that exposed the gap: Patrick Chig, ₦5,000 application fee plus a
 // settled ₦50,000 instalment. Both correct in the database, neither visible in the
@@ -77,5 +77,41 @@ describe('formatNaira', () => {
   it('renders whole naira', () => {
     expect(formatNaira(55000).replace(/ /g, ' ')).toMatch(/55,000/);
     expect(formatNaira(55000)).not.toMatch(/\.00/);
+  });
+});
+
+describe('tuitionByApplicant', () => {
+  const NOW2 = new Date('2026-08-25T00:00:00Z');
+
+  it('rolls a plan up to its applicant', () => {
+    const m = tuitionByApplicant([{
+      application_id: 'app-1',
+      status: 'active',
+      academy_installment_payments: [
+        { amount_ngn: 50000, status: 'paid' },
+        { amount_ngn: 50000, status: 'pending', due_date: '2026-09-30' },
+      ],
+    }], NOW2);
+    expect(m.get('app-1')).toEqual({ hasPlan: true, paidNgn: 50000, outstandingNgn: 50000, overdueNgn: 0 });
+  });
+
+  it('leaves an applicant with no plan absent, not zeroed', () => {
+    const m = tuitionByApplicant([], NOW2);
+    // "no plan yet" must be distinguishable from "a plan with nothing paid".
+    expect(m.get('app-1')).toBeUndefined();
+  });
+
+  it('accumulates across multiple plans instead of overwriting', () => {
+    const m = tuitionByApplicant([
+      { application_id: 'app-1', status: 'cancelled', academy_installment_payments: [{ amount_ngn: 10000, status: 'pending' }] },
+      { application_id: 'app-1', status: 'active',    academy_installment_payments: [{ amount_ngn: 30000, status: 'paid' }] },
+    ], NOW2);
+    // The cancelled plan contributes no debt; the live one contributes its payment.
+    expect(m.get('app-1')).toEqual({ hasPlan: true, paidNgn: 30000, outstandingNgn: 0, overdueNgn: 0 });
+  });
+
+  it('skips a plan with no application', () => {
+    const m = tuitionByApplicant([{ application_id: null, academy_installment_payments: [{ amount_ngn: 1, status: 'paid' }] }], NOW2);
+    expect(m.size).toBe(0);
   });
 });

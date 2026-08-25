@@ -82,7 +82,10 @@ export default async function FilmAcademyAdminPage() {
           { label: 'Applications',     value: stats.totalApplications, color: '#f59e0b' },
           { label: 'Pending Review',   value: stats.pending,           color: '#f97316' },
           { label: 'Approved',         value: stats.approved,          color: '#10b981' },
-          { label: 'Awaiting Payment', value: stats.pendingPayment,    color: '#ef4444' },
+          // This counts payment_status, which is the APPLICATION FEE — not tuition.
+          // Labelled "Awaiting Payment" it read as unpaid training fees, which live on
+          // the instalment plan and are in the money tiles below.
+          { label: 'App Fee Due',     value: stats.pendingPayment,    color: '#ef4444' },
         ].map(({ label, value, color }) => (
           <div key={label} className="glass-card rounded-md p-4">
             <p className="text-xs text-foreground/50 mb-1">{label}</p>
