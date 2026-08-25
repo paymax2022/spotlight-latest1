@@ -223,7 +223,12 @@ enable_signup = true
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
-enable_confirmations = false
+# Both cloud projects set mailer_autoconfirm = false, i.e. they REQUIRE email
+# confirmation. Leaving this false locally meant every local sign-up auto-confirmed
+# and skipped the verify screen entirely — dev exercised the one path production
+# never uses, so the OTP flow was untested by construction.
+# Codes land in the local mail catcher (Inbucket, http://localhost:54324).
+enable_confirmations = true
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
@@ -242,6 +247,14 @@ otp_expiry = 3600
 # pass = "env(SENDGRID_API_KEY)"
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
+
+# Sign-up confirmation sends an OTP CODE, not a link. Supabase's default body is
+# {{ .ConfirmationURL }}; with codes chosen, that default sends mail containing no
+# code for the app's entry screen to accept. See docs/audit/USER_MANAGEMENT_AUDIT.md.
+# NOTE: this configures LOCAL only — each cloud project holds its own template.
+[auth.email.template.confirmation]
+subject = "Your Spotlight verification code"
+content_path = "./supabase/templates/confirmation.html"
 
 # Uncomment to customize email template
 # [auth.email.template.invite]

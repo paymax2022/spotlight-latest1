@@ -11,8 +11,12 @@ import * as authApi from '@/api/auth.api';
 import { setSecureItem } from '@/lib/secureStorage';
 import { useAuthStore } from '@/store/authStore';
 import { getErrorMessage } from '@/utils/errorMapper';
+import { otpLength, distributeOtpInput, nextOtpFocus } from '@/features/auth/otp';
 
-const OTP_LENGTH = 6;
+// Was hardcoded 6 while PRODUCTION issues 8-digit codes, so a production user
+// could not enter the code they were sent. Must match the project's
+// mailer_otp_length; see docs/audit/USER_MANAGEMENT_AUDIT.md B2.
+const OTP_LENGTH = otpLength();
 
 export default function VerifyOtpScreen() {
   const { email } = useLocalSearchParams<{ email: string }>();
@@ -25,10 +29,12 @@ export default function VerifyOtpScreen() {
   const inputs = useRef<(TextInput | null)[]>([]);
 
   const handleChange = (text: string, index: number) => {
-    const next = [...otp];
-    next[index] = text.slice(-1);
+    // Autofill and paste deliver the WHOLE code into one box; the old
+    // `text.slice(-1)` kept only its last character, so the code looked entered
+    // and verification failed with nothing on screen to explain why.
+    const next = distributeOtpInput(otp, index, text);
     setOtp(next);
-    if (text && index < OTP_LENGTH - 1) inputs.current[index + 1]?.focus();
+    if (text) inputs.current[nextOtpFocus(next, index)]?.focus();
   };
 
   const handleKeyPress = (key: string, index: number) => {
@@ -39,7 +45,7 @@ export default function VerifyOtpScreen() {
 
   const handleVerify = async () => {
     const code = otp.join('');
-    if (code.length < OTP_LENGTH) { setApiError('Enter all 6 digits.'); return; }
+    if (code.length < OTP_LENGTH) { setApiError(`Enter all ${OTP_LENGTH} digits.`); return; }
     setApiError(''); setLoading(true);
     try {
       await authApi.verifyOtp({ email: email ?? '', otp: code });
@@ -77,7 +83,7 @@ export default function VerifyOtpScreen() {
             onChangeText={(t) => handleChange(t, i)}
             onKeyPress={({ nativeEvent }) => handleKeyPress(nativeEvent.key, i)}
             keyboardType="number-pad"
-            maxLength={1}
+            maxLength={OTP_LENGTH}
             selectTextOnFocus
           />
         ))}

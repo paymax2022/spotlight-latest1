@@ -167,12 +167,10 @@ func TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice(t *test
 		t.Fatalf("new vault status = %s, want active", v.Status)
 	}
 
-	// Balance of the segregated vault standing account BEFORE any contribution.
 	vaultAcct, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountType(feesvault.AccountEdtechFeesVault))
 	if err != nil {
 		t.Fatalf("resolve segregated vault account: %v", err)
 	}
-	segBefore := accountBalance(t, ctx, pool, vaultAcct.ID)
 	walletBefore, err := led.GetBalance(ctx, guardianID)
 	if err != nil {
 		t.Fatalf("GetBalance before contribute: %v", err)
@@ -194,8 +192,8 @@ func TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice(t *test
 
 	// SF-5: the money landed in the SEGREGATED vault account (its balance rose by
 	// the contribution), and the guardian wallet fell by the same amount.
-	if got := accountBalance(t, ctx, pool, vaultAcct.ID) - segBefore; got != target {
-		t.Errorf("segregated vault account balance rose by %d, want %d (SF-5)", got, target)
+	if got := netPostedForKey(t, ctx, pool, vaultAcct.ID, contribKey); got != target {
+		t.Errorf("segregated vault account received %d for the contribution, want %d (SF-5)", got, target)
 	}
 	walletAfter, err := led.GetBalance(ctx, guardianID)
 	if err != nil {
@@ -216,8 +214,8 @@ func TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice(t *test
 	if n := countContributions(t, ctx, pool, v.ID); n != 1 {
 		t.Errorf("academy_pot_contributions rows = %d, want exactly 1 (replay must not append)", n)
 	}
-	if got := accountBalance(t, ctx, pool, vaultAcct.ID) - segBefore; got != target {
-		t.Errorf("segregated account balance after replay rose by %d, want still %d (no double debit)", got, target)
+	if got := netPostedForKey(t, ctx, pool, vaultAcct.ID, contribKey); got != target {
+		t.Errorf("segregated account received %d for the contribution key after replay, want still %d (no double debit)", got, target)
 	}
 
 	// ── Issue an invoice to apply the vault against ─────────────────────────
@@ -233,8 +231,6 @@ func TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice(t *test
 	if err != nil {
 		t.Fatalf("resolve settlement account: %v", err)
 	}
-	segBeforeApply := accountBalance(t, ctx, pool, vaultAcct.ID)
-	settleBeforeApply := accountBalance(t, ctx, pool, settlementAcct.ID)
 
 	// ── ApplyToInvoice: one balanced transfer vault → settlement + payment ──
 	applyKey := newIdemKey(t, "vault-apply")
@@ -247,11 +243,11 @@ func TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice(t *test
 	}
 
 	// Exactly ONE balanced ledger move: segregated vault debited, settlement credited.
-	if drop := segBeforeApply - accountBalance(t, ctx, pool, vaultAcct.ID); drop != target {
-		t.Errorf("segregated vault account fell by %d on apply, want %d (one clean release)", drop, target)
+	if drop := -netPostedForKey(t, ctx, pool, vaultAcct.ID, applyKey); drop != target {
+		t.Errorf("segregated vault account released %d on apply, want %d (one clean release)", drop, target)
 	}
-	if rise := accountBalance(t, ctx, pool, settlementAcct.ID) - settleBeforeApply; rise != target {
-		t.Errorf("settlement account rose by %d on apply, want %d", rise, target)
+	if rise := netPostedForKey(t, ctx, pool, settlementAcct.ID, applyKey); rise != target {
+		t.Errorf("settlement account received %d on apply, want %d", rise, target)
 	}
 	// The vault→settlement transfer is exactly ONE balanced pair (2 ledger legs).
 	if n := ledgerEntriesForKey(t, ctx, pool, applyKey); n != 2 {
@@ -263,18 +259,22 @@ func TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice(t *test
 	}
 
 	// ── Replay ApplyToInvoice: no double transfer (terminal-state guard) ────
-	segAfterApply := accountBalance(t, ctx, pool, vaultAcct.ID)
-	settleAfterApply := accountBalance(t, ctx, pool, settlementAcct.ID)
+	// Captured per idempotency key rather than as account balances: a replay must
+	// post nothing MORE UNDER THIS KEY, which is what "no double transfer" means.
+	// Asserting the shared account's balance is unchanged would instead fail
+	// whenever any other suite posts to settlement during the replay.
+	segAfterApply := netPostedForKey(t, ctx, pool, vaultAcct.ID, applyKey)
+	settleAfterApply := netPostedForKey(t, ctx, pool, settlementAcct.ID, applyKey)
 	if _, err := vaultSvc.ApplyToInvoice(ctx, guardianID, v.ID, inv.ID, applyKey); err == nil {
 		// A benign no-op error is acceptable and expected (vault already terminal);
 		// what MUST hold is that no second transfer occurred. Fall through to assert balances.
 		t.Log("second ApplyToInvoice returned nil — asserting balances are unchanged")
 	}
-	if accountBalance(t, ctx, pool, vaultAcct.ID) != segAfterApply {
-		t.Error("segregated vault balance changed on ApplyToInvoice replay — double transfer!")
+	if got := netPostedForKey(t, ctx, pool, vaultAcct.ID, applyKey); got != segAfterApply {
+		t.Errorf("vault postings for the apply key changed on replay (%d → %d) — double transfer!", segAfterApply, got)
 	}
-	if accountBalance(t, ctx, pool, settlementAcct.ID) != settleAfterApply {
-		t.Error("settlement balance changed on ApplyToInvoice replay — double transfer!")
+	if got := netPostedForKey(t, ctx, pool, settlementAcct.ID, applyKey); got != settleAfterApply {
+		t.Errorf("settlement postings for the apply key changed on replay (%d → %d) — double transfer!", settleAfterApply, got)
 	}
 	if n := ledgerEntriesForKey(t, ctx, pool, applyKey); n != 2 {
 		t.Errorf("ledger legs for the apply key after replay = %d, want still 2 (no double post)", n)
@@ -318,12 +318,29 @@ func countContributions(t *testing.T, ctx context.Context, pool *pgxpool.Pool, v
 	return n
 }
 
-// accountBalance sums the signed ledger entries for a ledger account (CREDIT +,
-// DEBIT −, and their reversal counterparts), matching the ledger's own balance
-// semantics — used to prove the segregated-account movements directly.
-func accountBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, accountID string) int64 {
+// ledgerEntriesForKey counts the ledger legs a PostJournal wrote for baseKey. The
+// ledger suffixes each leg's idempotency_key with ":debit"/":credit" internally
+// (see finance/ledger/repository.go PostJournal), so a single balanced transfer
+// posted under baseKey stores exactly two rows keyed baseKey:debit and
+// baseKey:credit — matched here by prefix.
+// netPostedForKey returns the SIGNED amount posted to one account by the balanced
+// pair carrying baseKey.
+//
+// Prefer this over a before/after balance delta on any standing account. Standing
+// accounts are singletons keyed by type (finance/ledger/service.go), so settlement
+// and the segregated vault account are shared by the entire database — and
+// `go test ./...` runs packages in parallel, with nine live-DB suites posting to
+// settlement. A delta measured across a call therefore also measures whatever
+// every other suite did in that window, which is how this test came to report
+// "settlement account rose by -4900000 on apply, want 100000": the transfer under
+// test was correct, and roughly ₦49,000 of unrelated traffic landed between the
+// two reads.
+//
+// Scoping to this transfer's own idempotency key is exact and cannot be perturbed
+// by concurrent work.
+func netPostedForKey(t *testing.T, ctx context.Context, pool *pgxpool.Pool, accountID, baseKey string) int64 {
 	t.Helper()
-	var bal int64
+	var amt int64
 	const q = `
 		SELECT COALESCE(SUM(
 		  CASE
@@ -331,18 +348,14 @@ func accountBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, accou
 		    WHEN type IN ('DEBIT','REVERSAL_CREDIT') THEN -amount_kobo
 		    ELSE 0
 		  END), 0)
-		FROM ledger_entries WHERE account_id=$1`
-	if err := pool.QueryRow(ctx, q, accountID).Scan(&bal); err != nil {
-		t.Fatalf("account balance %s: %v", accountID, err)
+		FROM ledger_entries
+		WHERE account_id = $1 AND idempotency_key LIKE $2`
+	if err := pool.QueryRow(ctx, q, accountID, baseKey+":%").Scan(&amt); err != nil {
+		t.Fatalf("net posted to %s for key %s: %v", accountID, baseKey, err)
 	}
-	return bal
+	return amt
 }
 
-// ledgerEntriesForKey counts the ledger legs a PostJournal wrote for baseKey. The
-// ledger suffixes each leg's idempotency_key with ":debit"/":credit" internally
-// (see finance/ledger/repository.go PostJournal), so a single balanced transfer
-// posted under baseKey stores exactly two rows keyed baseKey:debit and
-// baseKey:credit — matched here by prefix.
 func ledgerEntriesForKey(t *testing.T, ctx context.Context, pool *pgxpool.Pool, baseKey string) int {
 	t.Helper()
 	var n int
