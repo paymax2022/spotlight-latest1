@@ -11,7 +11,7 @@
 > | B2 | Prod sends 8 digits, app accepts 6 | FIXED — length is config-driven |
 > | B3 | Local never exercises the flow | FIXED — local confirmations on |
 > | B4 | `verify-email` faked success | FIXED — endpoint removed |
-> | B5 | Web has no verify screen | OPEN |
+> | B5 | Web has no verify screen | FIXED — `/verify-email`, browser-verified |
 > | B6 | **Email template sends a LINK, not a code** | FIXED locally, **OPEN on cloud** |
 
 Audited 2026-08-25 against `develop`, the live local Supabase, and BOTH cloud
