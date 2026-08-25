@@ -142,6 +142,15 @@ jobs:
 
       - name: Check migration versions are unique
         run: bash scripts/ci/check-migration-versions.sh
+      - name: Check staging sets every backend module flag
+        # A module is invisible unless its env flag is set, and the flags default
+        # off — so a module missing from the staging workflow fails SILENTLY, with
+        # every layer reporting success. That has happened twice: once when the
+        # list was derived from the route map and missed five mobile-grid keys,
+        # and again when the three health VERTICALS were enabled but not their
+        # PARENT, so staging showed pharmacy/lab/vet tiles against a backend that
+        # never mounted a health route.
+        run: node .github/scripts/check-staging-module-flags.mjs
       # Pins the module router's glob semantics, its fail-open behaviour, and its
       # rejection of brace patterns. Sub-second, so it shares this runner.
       - name: Test the module router
