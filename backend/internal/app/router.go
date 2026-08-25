@@ -68,11 +68,21 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		auth.GET("/health", health.GenericHealth)
 
 		apiAuth := r.Group("/api/auth")
-		apiAuth.POST("/register", authHandler.Register)
-		apiAuth.POST("/login", authHandler.Login)
+
+		// These endpoints are unauthenticated and internet-facing, and had NO
+		// throttle: account lockout defends one account being guessed at, but does
+		// nothing about a client sweeping many accounts. Password reset gets a
+		// tighter, hourly budget because each attempt spends from the project's
+		// small verification-email quota, so flooding it is a denial of service
+		// against everyone else's sign-up.
+		loginLimiter := middleware.NewAuthRateLimiter(cfg.AuthRateLimitPerMin, time.Minute)
+		resetLimiter := middleware.NewAuthRateLimiter(cfg.AuthResetRateLimitPerHour, time.Hour)
+
+		apiAuth.POST("/register", loginLimiter.Middleware(), authHandler.Register)
+		apiAuth.POST("/login", loginLimiter.Middleware(), authHandler.Login)
 		apiAuth.POST("/logout", authHandler.Logout)
-		apiAuth.POST("/request-password-reset", authHandler.RequestPasswordReset)
-		apiAuth.POST("/reset-password", authHandler.ResetPassword)
+		apiAuth.POST("/request-password-reset", resetLimiter.Middleware(), authHandler.RequestPasswordReset)
+		apiAuth.POST("/reset-password", resetLimiter.Middleware(), authHandler.ResetPassword)
 		// Email verification is OTP CODES, not links (decided 2026-08-25). The former
 		// GET /verify-email and POST /resend-verification-link were removed: both were
 		// backed by no-op service methods that reported success without verifying

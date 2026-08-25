@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -141,8 +142,14 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 		Email string `json:"email" binding:"required,email"`
 	}
 	if err := c.ShouldBindJSON(&in); err == nil {
-		_ = h.auth.RequestPasswordReset(in.Email)
+		if err := h.auth.RequestPasswordReset(in.Email); err != nil {
+			// Log the address NEVER — only that the upstream failed. The response
+			// below is byte-identical either way, because varying it would reveal
+			// which addresses have accounts.
+			log.Printf("[auth] password reset upstream failed: %v", err)
+		}
 	}
+	// Always the same answer, whether or not the account exists.
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "If your email exists, reset instructions were sent."})
 }
 
