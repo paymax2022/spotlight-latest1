@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import {
   View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal,
   ActivityIndicator, TextInput, Linking,
@@ -262,14 +263,7 @@ export default function AirtimeScreen() {
             name="phoneNumber"
             control={control}
             render={({ field }) => (
-              <TextInputField
-                label="Phone Number"
-                placeholder="0801 234 5678"
-                keyboardType="phone-pad"
-                error={errors.phoneNumber?.message}
-                value={field.value}
-                onChangeText={field.onChange}
-              />
+              <PhoneNumberInput label="Phone Number" value={field.value} onChange={({ e164, nsn }) => (field.onChange)(e164 || nsn)} error={errors.phoneNumber?.message} />
             )}
           />
 

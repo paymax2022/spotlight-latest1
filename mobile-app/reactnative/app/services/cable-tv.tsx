@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import {
   View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator, Linking,
 } from 'react-native';
@@ -297,14 +298,7 @@ export default function CableTvScreen() {
               name="customerPhone"
               control={control}
               render={({ field }) => (
-                <TextInputField
-                  label="Customer Phone Number"
-                  placeholder="0801 234 5678"
-                  keyboardType="phone-pad"
-                  error={errors.customerPhone?.message}
-                  value={field.value}
-                  onChangeText={field.onChange}
-                />
+                <PhoneNumberInput label="Customer Phone Number" value={field.value} onChange={({ e164, nsn }) => (field.onChange)(e164 || nsn)} error={errors.customerPhone?.message} />
               )}
             />
           </View>

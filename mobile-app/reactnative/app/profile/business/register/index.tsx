@@ -1,4 +1,5 @@
 import React from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import {
   View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView, Pressable, ActivityIndicator, Linking,
 } from 'react-native';
@@ -502,7 +503,7 @@ export default function RegisterBusinessScreen() {
                     name={`proprietors.${index}.phone`}
                     control={propForm.control}
                     render={({ field }) => (
-                      <TextInputField label="Phone (optional)" placeholder="08012345678" keyboardType="phone-pad" value={field.value ?? ''} onChangeText={field.onChange} />
+                      <PhoneNumberInput label="Phone (optional)" value={field.value ?? ''} onChange={({ e164, nsn }) => (field.onChange)(e164 || nsn)} />
                     )}
                   />
                   <Controller

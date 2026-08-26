@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { ScrollView, View, Text, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -27,7 +28,7 @@ export default function ProfileSettings() {
           </View>
 
           <TextInputField label="Full name" value={name} onChangeText={setName} />
-          <TextInputField label="Phone number" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+          <PhoneNumberInput label="Phone number" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
           <TextInputField label="Email address" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
         </ScrollView>
         <View style={styles.footer}>

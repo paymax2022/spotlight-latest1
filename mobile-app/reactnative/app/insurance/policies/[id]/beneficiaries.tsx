@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -94,7 +95,7 @@ export default function Beneficiaries() {
               </View>
               <TextInputField label="Full name" value={b.fullName} placeholder="Full name" onChangeText={(v) => update(idx, { fullName: v })} />
               <TextInputField label="Relationship" value={b.relationship} placeholder="e.g. Spouse, Child" onChangeText={(v) => update(idx, { relationship: v })} />
-              <TextInputField label="Phone (optional)" value={b.phone ?? ''} placeholder="+234…" keyboardType="phone-pad" onChangeText={(v) => update(idx, { phone: v })} />
+              <PhoneNumberInput label="Phone (optional)" value={b.phone ?? ''} onChange={({ e164, nsn }) => ((v) => update(idx, { phone: v }))(e164 || nsn)} />
               <TextInputField label="Share %" value={b.sharePercent ? String(b.sharePercent) : ''} placeholder="0" keyboardType="numeric" onChangeText={(v) => update(idx, { sharePercent: Number(v) || 0 })} />
             </View>
           ))
