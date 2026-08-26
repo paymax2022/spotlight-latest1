@@ -6868,7 +6868,20 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
-          description: No Paymax user found for this identifier
+          description: |
+            No Paymax user found for this identifier. Phone identifiers are matched on the
+            10-digit national significant number, so "08159491618", "8159491618" and
+            "+2348159491618" all resolve to the same account; a 404 means no account carries
+            that number, not that the caller used the wrong format.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: |
+            More than one account carries this phone number, so the recipient is ambiguous
+            (code `ambiguous_recipient`). The transfer is refused rather than resolved to an
+            arbitrary account — a wallet credit cannot be clawed back. Requires operator
+            intervention to de-duplicate the accounts.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -6929,7 +6942,17 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
-          description: Recipient not found
+          description: |
+            Recipient not found. Phone identifiers are matched on the 10-digit national
+            significant number, so every spelling of one number resolves to one account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: |
+            More than one account carries this phone number (code `ambiguous_recipient`).
+            The transfer is refused before any debit — no money moves, and no ledger entry
+            is posted. Paying an arbitrary one of the matching accounts is unrecoverable.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
