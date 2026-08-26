@@ -16,6 +16,7 @@ import { useContestantProfile } from '@/features/voting/hooks/useContestantProfi
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import { useFreeVoteAllocation, useCastFreeVotes } from '@/features/voting/hooks/useVote';
 import { useVotePackages } from '@/features/voting/hooks/useVotePackages';
+import { getVotingWindow } from '@/features/voting/utils/votingWindow';
 import RankBadge from '@/features/voting/components/RankBadge';
 import RankMovementBadge from '@/features/voting/components/RankMovementBadge';
 import FreeVoteBadge from '@/features/voting/components/FreeVoteBadge';
@@ -58,6 +59,9 @@ export default function ContestantProfileScreen() {
 
   const { data: contestant, isLoading } = useContestantProfile(contestantId ?? '');
   const { data: parentContest } = useContestDetails(contestId ?? '');
+  // Deadline-aware, not status-only: nothing flips a contest to 'ended' when its
+  // end date passes, so a finished contest still reports LIVE.
+  const votingWindow = getVotingWindow(parentContest);
   const { data: freeVotes }  = useFreeVoteAllocation(contestId ?? '', contestantId ?? '');
   const { data: packages }   = useVotePackages(contestId);
 
@@ -239,18 +243,30 @@ export default function ContestantProfileScreen() {
           {/* Stats */}
           <ContestantStatsCard contestant={contestant} />
 
-          {/* Vote CTA */}
+          {/* Vote CTA — gated on the SAME window the server enforces, so a closed
+              contest never offers an action that is going to be refused. Users
+              used to tap through and meet "Voting is closed" on the next screen. */}
           <View style={styles.ctaBlock}>
+            {!votingWindow.open && (
+              <Text style={styles.votingClosedNote}>{votingWindow.message}</Text>
+            )}
             <PrimaryButton
-              label={`Vote for ${contestant.stageName ?? contestant.name}`}
-              onPress={() => setVoteOpen(true)}
+              label={
+                votingWindow.open
+                  ? `Vote for ${contestant.stageName ?? contestant.name}`
+                  : 'Voting closed'
+              }
+              onPress={() => votingWindow.open && setVoteOpen(true)}
+              disabled={!votingWindow.open}
               style={styles.voteBtn}
             />
-            <PrimaryButton
-              label="Buy Vote Packages"
-              onPress={() => router.push(`/voting/buy-votes?contestantId=${contestant.id}&contestId=${contestId}`)}
-              variant="secondary"
-            />
+            {votingWindow.open && (
+              <PrimaryButton
+                label="Buy Vote Packages"
+                onPress={() => router.push(`/voting/buy-votes?contestantId=${contestant.id}&contestId=${contestId}`)}
+                variant="secondary"
+              />
+            )}
           </View>
         </View>
       </ScrollView>
@@ -312,5 +328,6 @@ const styles = StyleSheet.create({
   sampleHost:  { ...Typography.bodyMd, color: Colors.primary, flex: 1 },
   sampleHint:  { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   ctaBlock:    { gap: Spacing.sm },
+  votingClosedNote: { ...Typography.caption, color: Colors.onSurfaceVariant, textAlign: 'center' },
   voteBtn:     {},
 });

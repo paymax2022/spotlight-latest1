@@ -10,6 +10,7 @@ import { Radius } from '@/constants/radius';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useVotePackages } from '@/features/voting/hooks/useVotePackages';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
+import { getVotingWindow } from '@/features/voting/utils/votingWindow';
 import VotePackageCard from '@/features/voting/components/VotePackageCard';
 import { formatAmount } from '@/features/voting/utils/voteFormatters';
 import type { VotePackage } from '@/features/voting/types/voting.types';
@@ -21,10 +22,11 @@ export default function BuyVotesScreen() {
   const [selected, setSelected] = useState<VotePackage | null>(null);
 
   const pkgs = packages ?? [];
-  // Only gate on a known non-live status so a pending contest query doesn't
-  // wrongly block a voter before the data lands.
-  const votingClosed =
-    !!contest && (contest.status !== 'LIVE' || contest.paidVotingEnabled === false);
+  // Deadline-aware and shared with the screen that links here, so the two cannot
+  // disagree. Status alone let an expired contest through — getVotingWindow
+  // treats an unloaded contest as open, so a pending query still does not block.
+  const votingWindow = getVotingWindow(contest);
+  const votingClosed = !votingWindow.open || (!!contest && contest.paidVotingEnabled === false);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -42,7 +44,7 @@ export default function BuyVotesScreen() {
         {votingClosed && (
           <View style={styles.closedBanner}>
             <Lock size={16} color={Colors.error} strokeWidth={2} />
-            <Text style={styles.closedText}>Voting is closed for this contest.</Text>
+            <Text style={styles.closedText}>{votingWindow.message ?? 'Paid voting is unavailable for this contest.'}</Text>
           </View>
         )}
 

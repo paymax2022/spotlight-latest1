@@ -11,6 +11,7 @@ import { shadow1 } from '@/constants/shadows';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useInitiatePaidVote } from '@/features/voting/hooks/useVote';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
+import { getVotingWindow } from '@/features/voting/utils/votingWindow';
 import { formatAmount } from '@/features/voting/utils/voteFormatters';
 import type { VotePaidInitiateResult } from '@/features/voting/types/voting.types';
 import { useAuthStore } from '@/store/authStore';
@@ -27,11 +28,13 @@ export default function PaymentMethodScreen() {
   const totalAmount = Number(amount ?? 0);
   const totalVotes  = Number(votes ?? 0);
 
-  // Block purchases when the contest is not actively accepting votes. We only
-  // gate on a *known* non-live status so a slow/absent contest query doesn't
-  // wrongly lock out a paying voter.
-  const votingClosed =
-    !!contest && (contest.status !== 'LIVE' || contest.paidVotingEnabled === false);
+  // Block purchases when the contest is not actively accepting votes. Shares the
+  // deadline-aware window with the rest of the voting flow — a status-only check
+  // let a contest past its end date take a payment the server would then refuse,
+  // which is the worst place to discover it. An unloaded contest still counts as
+  // open, so a slow query does not lock out a paying voter.
+  const votingWindow = getVotingWindow(contest);
+  const votingClosed = !votingWindow.open || (!!contest && contest.paidVotingEnabled === false);
 
   const goToProcessing = (result: VotePaidInitiateResult) => {
     const params = `transactionId=${encodeURIComponent(result.transactionId)}&reference=${encodeURIComponent(result.reference)}&contestantId=${contestantId}&contestId=${contestId}&votes=${votes}`;
@@ -102,7 +105,7 @@ export default function PaymentMethodScreen() {
           <View style={styles.closedBanner}>
             <Lock size={16} color={Colors.error} strokeWidth={2} />
             <Text style={styles.closedText}>
-              Voting is closed for this contest. Payments are temporarily unavailable.
+              {votingWindow.message ?? 'Paid voting is unavailable for this contest.'} Payments are unavailable.
             </Text>
           </View>
         )}
