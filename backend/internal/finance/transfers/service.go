@@ -144,45 +144,96 @@ func (s *Service) ResolvePaymaxUser(ctx context.Context, phone string) (*WalletT
 	}, nil
 }
 
-// InitiateWalletToWallet executes a wallet-to-wallet transfer atomically via
-// the transfer_wallet_atomic() Supabase RPC (mirrors block-10 logic).
-func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, req WalletTransferRequest) (*WalletTransfer, error) {
+// walletPreflight is the pre-flight sequence of a wallet-to-wallet transfer,
+// expressed with explicit seams so its ORDER can be tested without a database.
+// The order is the invariant, not an implementation detail — see run.
+type walletPreflight struct {
+	// findReplay returns the transfer already recorded under this idempotency
+	// key, or (nil, nil) when the key is new.
+	findReplay func(ctx context.Context, key string) (*WalletTransfer, error)
+	// resolve turns the recipient phone into an account.
+	resolve func(ctx context.Context, phone string) (*WalletTransferResolveResponse, error)
+	// enforceTier applies the fail-closed tier / daily-limit guard.
+	enforceTier func(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// run executes the pre-flight and returns EITHER a prior transfer to replay, OR
+// the resolved recipient to proceed with. Exactly one is non-nil on success.
+//
+// The replay lookup runs FIRST, before resolution and before the tier guard.
+// Once a transfer has completed, re-running those gates can only refuse a
+// request that already succeeded: the daily cap now counts the very transfer
+// being replayed, and a recipient whose number has since become ambiguous
+// answers 409. Neither can double-spend — wallet_transfers.idempotency_key is
+// UNIQUE — but telling a caller its completed transfer failed invites them to
+// send it again under a fresh key, which is a real second debit.
+func (p walletPreflight) run(ctx context.Context, senderID string, req WalletTransferRequest) (*WalletTransfer, *WalletTransferResolveResponse, error) {
 	// DB-free pre-flight: Idempotency-Key required, positive kobo amount, phone present.
 	if err := ValidateWalletTransferRequest(req); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	// Resolve recipient (returns ErrRecipientNotFound → 404 on miss).
-	recipient, err := s.ResolvePaymaxUser(ctx, req.RecipientPhone)
+	// Idempotency replay: same key already processed → hand back the prior
+	// result, no second debit/credit and no later gate that could refuse it.
+	prior, err := p.findReplay(ctx, req.IdempotencyKey)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	if prior != nil {
+		return prior, nil, nil
+	}
+
+	// Resolve recipient (ErrRecipientNotFound → 404, ErrAmbiguousRecipient → 409).
+	recipient, err := p.resolve(ctx, req.RecipientPhone)
+	if err != nil {
+		return nil, nil, err
 	}
 	if recipient.UserID == senderID {
-		return nil, ErrSelfTransfer // → 422
+		return nil, nil, ErrSelfTransfer // → 422
 	}
 
 	// Tier guard (fail-closed): Tier 0 → ErrWalletDisabled (403),
 	// over daily cap → ErrDailyLimitExceeded (403).
-	if err := s.tiers.EnforceWalletDebitLimit(ctx, senderID, req.AmountKobo); err != nil {
+	if err := p.enforceTier(ctx, senderID, req.AmountKobo); err != nil {
+		return nil, nil, err
+	}
+	return nil, recipient, nil
+}
+
+// findWalletTransferByKey returns the transfer previously recorded under this
+// idempotency key, or (nil, nil) when the key is new.
+//
+// A lookup failure is deliberately read as "new key" rather than surfaced: it
+// preserves the prior behaviour, and wallet_transfers.idempotency_key is UNIQUE,
+// so a genuine duplicate still cannot insert a second time.
+func (s *Service) findWalletTransferByKey(ctx context.Context, key string) (*WalletTransfer, error) {
+	var existingID string
+	const checkDup = `SELECT id FROM wallet_transfers WHERE idempotency_key = $1 LIMIT 1`
+	_ = s.db.QueryRow(ctx, checkDup, key).Scan(&existingID)
+	if existingID == "" {
+		return nil, nil
+	}
+	return s.getWalletTransfer(ctx, existingID)
+}
+
+// InitiateWalletToWallet executes a wallet-to-wallet transfer atomically via
+// the transfer_wallet_atomic() Supabase RPC (mirrors block-10 logic).
+func (s *Service) InitiateWalletToWallet(ctx context.Context, senderID string, req WalletTransferRequest) (*WalletTransfer, error) {
+	prior, recipient, err := walletPreflight{
+		findReplay:  s.findWalletTransferByKey,
+		resolve:     s.ResolvePaymaxUser,
+		enforceTier: s.tiers.EnforceWalletDebitLimit,
+	}.run(ctx, senderID, req)
+	if err != nil {
 		return nil, err
+	}
+	if prior != nil {
+		prior.AlreadyProcessed = true
+		return prior, nil
 	}
 
 	fee := WalletTransferFee(req.AmountKobo)
 	reference := "ww-" + uuid.New().String()
-
-	// Idempotency replay: same key already processed → return the prior result
-	// flagged AlreadyProcessed, no second debit/credit.
-	var existingID string
-	const checkDup = `SELECT id FROM wallet_transfers WHERE idempotency_key = $1 LIMIT 1`
-	_ = s.db.QueryRow(ctx, checkDup, req.IdempotencyKey).Scan(&existingID)
-	if existingID != "" {
-		wt, err := s.getWalletTransfer(ctx, existingID)
-		if err != nil {
-			return nil, err
-		}
-		wt.AlreadyProcessed = true
-		return wt, nil
-	}
 
 	// Use pgx transaction + advisory lock (mirrors transfer_wallet_atomic RPC).
 	tx, err := s.db.Begin(ctx)
