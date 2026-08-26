@@ -239,7 +239,7 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
         setPhase('initializing');
         let topup: { authorizationUrl: string; reference: string };
         try {
-          topup = await startCardTopup(req.amountKobo);
+          topup = await startCardTopup(req.amountKobo, req.domain);
         } catch (e) {
           setPhase('error');
           setError(e instanceof Error ? e.message : 'Could not start the card payment.');

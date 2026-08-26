@@ -6673,6 +6673,22 @@ paths:
                     capped rolling allowance when FEATURE_CHECKOUT_TOPUP_TIER0 is
                     on. Any unrecognised value is treated as `wallet`, so the
                     weaker gate can only be reached by asking for it explicitly.
+                checkout_domain:
+                  type: string
+                  pattern: '^[a-z][a-z0-9_]*$'
+                  maxLength: 48
+                  example: vote_purchase
+                  description: >-
+                    What the checkout is buying — `vote_purchase`, `food_order`,
+                    `ride`, and so on. Because the card rail funds the wallet and
+                    then spends it (ADR-041), without this every module checkout
+                    is recorded as an indistinguishable wallet top-up: it is
+                    persisted on the intent, sent to the PSP, and written onto the
+                    ledger entry's description so a statement can say what the
+                    money bought. Ignored unless `purpose` is `checkout`, since
+                    standalone funding is not buying anything. Not an enum — the
+                    set grows with every module, and a value outside the pattern
+                    is dropped as unlabelled rather than failing the payment.
       responses:
         '200':
           description: Paystack payment initialized

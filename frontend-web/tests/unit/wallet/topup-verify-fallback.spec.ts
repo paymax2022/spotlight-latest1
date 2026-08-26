@@ -67,6 +67,7 @@ function paystackReplies(body: unknown, ok = true) {
 
 const pendingIntent = {
   id: INTENT_ID, user_id: USER, amount_kobo: KOBO, status: 'pending',
+  checkout_domain: 'vote_purchase',
 };
 
 const success = {
@@ -96,6 +97,29 @@ describe('verifyAndSettleTopup', () => {
     // The SAME key the webhook builds — this is what makes the paths safe to race.
     expect(input.idempotencyKey).toBe(`topup:${INTENT_ID}:CREDIT`);
     expect(updates.at(-1)).toMatchObject({ status: 'completed' });
+  });
+
+  it('records WHAT the money bought, not just that a wallet was topped up', async () => {
+    paystackReplies(success);
+
+    await verifyAndSettleTopup(REF, USER);
+
+    const [, input] = mockCredit.mock.calls[0];
+    // The card rail funds the wallet and then spends it, so without this every
+    // module checkout reads as an indistinguishable top-up on the statement.
+    expect(input.description).toBe('Wallet funding for vote purchase');
+    expect(input.metadata).toMatchObject({ checkout_domain: 'vote_purchase' });
+  });
+
+  it('leaves a standalone top-up described as a top-up', async () => {
+    mockAdmin.mockReturnValue(makeSupabase({ ...pendingIntent, checkout_domain: null }));
+    paystackReplies(success);
+
+    await verifyAndSettleTopup(REF, USER);
+
+    const [, input] = mockCredit.mock.calls[0];
+    expect(input.description).toBe('Wallet top-up via Paystack');
+    expect(input.metadata).toMatchObject({ checkout_domain: null });
   });
 
   it('does not credit when Paystack reports anything other than success', async () => {

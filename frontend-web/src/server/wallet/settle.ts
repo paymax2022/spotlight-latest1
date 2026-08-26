@@ -1,6 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/server';
 import { creditWallet } from './service';
 import { buildIdempotencyKey } from './ledger';
+import { topupDescription } from './checkout-domain';
 
 /**
  * The one place a wallet top-up is settled.
@@ -21,6 +22,8 @@ export interface TopupIntent {
   user_id: string;
   amount_kobo: number;
   status: string;
+  /** What the checkout was buying; NULL for standalone wallet funding. */
+  checkout_domain?: string | null;
 }
 
 export interface SettlementResult {
@@ -34,7 +37,7 @@ export async function findTopupIntent(reference: string): Promise<TopupIntent | 
   const supabase = createAdminClient();
   const { data } = await supabase
     .from('wallet_topup_intents')
-    .select('id, user_id, amount_kobo, status')
+    .select('id, user_id, amount_kobo, status, checkout_domain')
     .eq('payment_reference', reference)
     .maybeSingle();
   return (data as TopupIntent | null) ?? null;
@@ -75,9 +78,18 @@ export async function settleTopupIntent(
     await creditWallet(intent.user_id, {
       amountKobo: intentKobo,
       reference: `TOPUP:${reference}`,
+      // MUST stay exactly this. The key is the only thing preventing a webhook
+      // and a verify from crediting the same payment twice, and changing its
+      // shape would make every in-flight retry look like a new credit.
       idempotencyKey: buildIdempotencyKey('topup', intent.id, 'CREDIT'),
-      description: 'Wallet top-up via Paystack',
-      metadata: { payment_reference: reference, topup_intent_id: intent.id },
+      // Says what the money bought, so a statement can tell a vote purchase from
+      // a food order from a plain top-up.
+      description: topupDescription(intent.checkout_domain),
+      metadata: {
+        payment_reference: reference,
+        topup_intent_id: intent.id,
+        checkout_domain: intent.checkout_domain ?? null,
+      },
     });
 
     await markIntent(intent.id, { status: 'completed' });
