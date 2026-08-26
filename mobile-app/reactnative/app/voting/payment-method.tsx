@@ -12,7 +12,9 @@ import { shadow1 } from '@/constants/shadows';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useInitiatePaidVote } from '@/features/voting/hooks/useVote';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
+import { useVotePackages } from '@/features/voting/hooks/useVotePackages';
 import { getVotingWindow } from '@/features/voting/utils/votingWindow';
+import { getPaidVotingAvailability } from '@/features/voting/utils/paidVoting';
 import { formatAmount } from '@/features/voting/utils/voteFormatters';
 import type { VotePaidInitiateResult } from '@/features/voting/types/voting.types';
 import { useAuthStore } from '@/store/authStore';
@@ -25,6 +27,7 @@ export default function PaymentMethodScreen() {
   const checkout = usePurchasePayment<VotePaidInitiateResult>();
   const user = useAuthStore((s) => s.user);
   const { data: contest } = useContestDetails(contestId ?? '');
+  const { data: packages } = useVotePackages(contestId);
 
   const totalAmount = Number(amount ?? 0);
   const totalVotes  = Number(votes ?? 0);
@@ -35,7 +38,11 @@ export default function PaymentMethodScreen() {
   // which is the worst place to discover it. An unloaded contest still counts as
   // open, so a slow query does not lock out a paying voter.
   const votingWindow = getVotingWindow(contest);
-  const votingClosed = !votingWindow.open || (!!contest && contest.paidVotingEnabled === false);
+  // Same predicate as buy-votes: a contest that sells only packages has no
+  // per-vote price, and gating on contest.paidVotingEnabled alone refused a
+  // payment for the very package the voter had just picked.
+  const paidVoting = getPaidVotingAvailability(contest, packages);
+  const votingClosed = !votingWindow.open || paidVoting.available === false;
 
   const goToProcessing = (result: VotePaidInitiateResult) => {
     const params = `transactionId=${encodeURIComponent(result.transactionId)}&reference=${encodeURIComponent(result.reference)}&contestantId=${contestantId}&contestId=${contestId}&votes=${votes}`;
@@ -106,7 +113,7 @@ export default function PaymentMethodScreen() {
           <View style={styles.closedBanner}>
             <Lock size={16} color={Colors.error} strokeWidth={2} />
             <Text style={styles.closedText}>
-              {votingWindow.message ?? 'Paid voting is unavailable for this contest.'} Payments are unavailable.
+              {votingWindow.message ?? 'No vote packages are on sale for this contest yet.'} Payments are unavailable.
             </Text>
           </View>
         )}
