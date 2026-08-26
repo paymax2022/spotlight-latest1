@@ -22,6 +22,7 @@
     "test:crowdfunding": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/crowdfunding/*.spec.ts\"",
     "test:auth": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/auth/*.spec.ts\"",
     "test:account": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/account/*.spec.ts\"",
+    "test:connect": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/connect/*.spec.ts\"",
     "test:savings": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/savings/*.spec.ts\"",
     "test:telemedicine": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/telemedicine/*.spec.ts\"",
     "test:payments": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/payments/*.spec.ts\"",
