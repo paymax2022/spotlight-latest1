@@ -7,6 +7,7 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
+	"spotlight/backend/internal/services"
 )
 
 // ---------------------------------------------------------------------------
@@ -21,6 +22,10 @@ var (
 	ErrSelfTransfer = errors.New("transfers: self-transfer not allowed")
 	// ErrRecipientNotFound — no Paymax user for the supplied phone (404).
 	ErrRecipientNotFound = errors.New("transfers: recipient not found")
+	// ErrAmbiguousRecipient — two or more accounts carry the same number (409).
+	// Refusing is mandatory: a wallet credit cannot be clawed back, so guessing
+	// between them risks paying a stranger permanently.
+	ErrAmbiguousRecipient = errors.New("transfers: more than one account uses this phone number")
 	// ErrInvalidAccount — bank account/code failed resolution (404).
 	ErrInvalidAccount = errors.New("transfers: invalid bank account")
 	// ErrMissingIdempotencyKey — money mutation without an Idempotency-Key (400).
@@ -74,6 +79,8 @@ func HTTPStatusForError(err error) int {
 		return http.StatusForbidden // 403
 	case errors.Is(err, ErrRecipientNotFound):
 		return http.StatusNotFound // 404
+	case errors.Is(err, ErrAmbiguousRecipient):
+		return http.StatusConflict // 409 — refuse, do not guess
 	case errors.Is(err, ErrInvalidAccount):
 		return http.StatusNotFound // 404
 	case errors.Is(err, ErrMissingIdempotencyKey):
@@ -108,6 +115,8 @@ func ErrorCode(err error) string {
 		return "daily_limit_exceeded"
 	case errors.Is(err, ErrRecipientNotFound):
 		return "recipient_not_found"
+	case errors.Is(err, ErrAmbiguousRecipient):
+		return "ambiguous_recipient"
 	case errors.Is(err, ErrInvalidAccount):
 		return "invalid_account"
 	case errors.Is(err, ErrMissingIdempotencyKey):
@@ -182,6 +191,68 @@ func MaskPhone(phone string) string {
 		return "****"
 	}
 	return strings.Repeat("*", len(phone)-4) + phone[len(phone)-4:]
+}
+
+// ---------------------------------------------------------------------------
+// Recipient resolution.
+//
+// Stored phones are NOT normalised — the same subscriber appears as
+// "8159491618", "08159491618" or "+2348159491618" depending on which signup
+// path wrote the row. Matching the raw string meant a recipient simply could
+// not be found unless the sender happened to type the stored spelling.
+// ---------------------------------------------------------------------------
+
+// RecipientCandidate is one user_profiles row the NSN lookup returned. Phone is
+// the value as STORED, so the masked echo shows the recipient the number they
+// actually registered.
+type RecipientCandidate struct {
+	UserID   string
+	FullName string
+	Phone    string
+}
+
+// NormalizeRecipientPhone reduces a phone number to its 10-digit national
+// significant number, so every spelling of one number resolves to one account.
+//
+// Deliberately delegates to services.NormalizePhone — the same function the
+// phone SIGN-IN path uses. A second copy would drift, and the two paths
+// disagreeing about which account owns a number is exactly the class of bug
+// that pays the wrong person. Returns "" for anything that cannot be a Nigerian
+// mobile; callers MUST treat that as "no match" and never as a looser probe.
+func NormalizeRecipientPhone(raw string) string {
+	return services.NormalizePhone(strings.TrimSpace(raw))
+}
+
+// ChooseRecipient picks the single account behind a normalised NSN.
+//
+// Re-normalises every row in Go rather than trusting the SQL filter. The index
+// expression is right(digits,10), which will happily take the last ten digits
+// of a fourteen-digit foreign number; NormalizeRecipientPhone rejects that
+// shape. Go is authoritative, so a row it cannot normalise back to the
+// requested NSN was never a real candidate and is discarded.
+//
+// Returns ErrAmbiguousRecipient — and a ZERO candidate — when two distinct
+// accounts survive that check. Two accounts sharing a number is a data defect;
+// resolving it by picking one would move money to a stranger irreversibly.
+func ChooseRecipient(nsn string, rows []RecipientCandidate) (RecipientCandidate, error) {
+	if nsn == "" {
+		return RecipientCandidate{}, ErrRecipientNotFound
+	}
+	var match RecipientCandidate
+	found := false
+	for _, r := range rows {
+		if NormalizeRecipientPhone(r.Phone) != nsn {
+			continue // SQL matched more loosely than we do — not a candidate
+		}
+		if found && r.UserID != match.UserID {
+			return RecipientCandidate{}, ErrAmbiguousRecipient
+		}
+		match, found = r, true
+	}
+	if !found {
+		return RecipientCandidate{}, ErrRecipientNotFound
+	}
+	return match, nil
 }
 
 // ReversalEntry is the balanced pair that restores a user's wallet when a bank

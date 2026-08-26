@@ -81,21 +81,66 @@ func NewService(db *pgxpool.Pool, ledgerSvc *ledger.Service, tiersSvc *tiers.Ser
 }
 
 // ResolvePaymaxUser returns masked identity for a phone number (wallet-to-wallet recipient lookup).
-// Returns ErrRecipientNotFound (→404) when no Paymax user matches the phone.
+// Returns ErrRecipientNotFound (→404) when no Paymax user matches the phone, and
+// ErrAmbiguousRecipient (→409) when more than one account carries the number.
+//
+// Matches on the 10-digit NSN, not the raw string. Stored phones were never
+// normalised (a row may hold "8159491618", "08159491618" or "+2348159491618"),
+// so the previous `WHERE phone = $1` missed the recipient unless the sender
+// typed the exact stored spelling.
 func (s *Service) ResolvePaymaxUser(ctx context.Context, phone string) (*WalletTransferResolveResponse, error) {
-	if strings.TrimSpace(phone) == "" {
+	nsn := NormalizeRecipientPhone(phone)
+	if nsn == "" {
+		// Not a usable Nigerian mobile — no match, and never a looser probe.
 		return nil, ErrRecipientNotFound
 	}
-	const q = `SELECT id, full_name, phone FROM user_profiles WHERE phone = $1 LIMIT 1`
-	var id, fullName, rawPhone string
-	if err := s.db.QueryRow(ctx, q, phone).Scan(&id, &fullName, &rawPhone); err != nil {
-		// No row (or any lookup failure) → recipient not found, fail closed.
+
+	// The filter mirrors user_profiles_phone_nsn_idx EXACTLY: both the
+	// right(regexp_replace(COALESCE(phone,''),...),10) expression and the
+	// partial `phone IS NOT NULL AND phone <> ''` predicate. Verified with
+	// EXPLAIN: drop the COALESCE and the index degrades to a filter; drop the
+	// partial predicate and Postgres cannot prove the index applies at all and
+	// falls back to a sequential scan of every profile.
+	//
+	// LIMIT 5, not 1: one row cannot reveal that a second account shares the
+	// number, and silently taking the first would pay whichever row the planner
+	// happened to return.
+	const q = `SELECT id, full_name, phone
+	             FROM user_profiles
+	            WHERE phone IS NOT NULL AND phone <> ''
+	              AND right(regexp_replace(COALESCE(phone,''), '\D', '', 'g'), 10) = $1
+	            LIMIT 5`
+
+	rows, err := s.db.Query(ctx, q, nsn)
+	if err != nil {
+		// Fail closed, but do not let an outage look like an empty database.
+		log.Printf("[transfers] recipient lookup failed: %v", err)
 		return nil, ErrRecipientNotFound
+	}
+	defer rows.Close()
+
+	var candidates []RecipientCandidate
+	for rows.Next() {
+		var c RecipientCandidate
+		if err := rows.Scan(&c.UserID, &c.FullName, &c.Phone); err != nil {
+			log.Printf("[transfers] recipient scan failed: %v", err)
+			return nil, ErrRecipientNotFound
+		}
+		candidates = append(candidates, c)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[transfers] recipient lookup iteration failed: %v", err)
+		return nil, ErrRecipientNotFound
+	}
+
+	match, err := ChooseRecipient(nsn, candidates)
+	if err != nil {
+		return nil, err
 	}
 	return &WalletTransferResolveResponse{
-		UserID:      id,
-		FullName:    fullName,
-		MaskedPhone: MaskPhone(rawPhone),
+		UserID:      match.UserID,
+		FullName:    match.FullName,
+		MaskedPhone: MaskPhone(match.Phone),
 	}, nil
 }
 
