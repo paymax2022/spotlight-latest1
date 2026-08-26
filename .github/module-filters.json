@@ -3,7 +3,7 @@
     "backend/internal/association/**",
     "contracts/associations.openapi.yaml",
     "supabase/migrations/*assoc*.sql",
-    "frontend-web/src/app/api/associations/**",
+    "frontend-web/app/api/finance/associations/**",
     "mobile-app/reactnative/src/features/association/**",
     "mobile-app/reactnative/tsconfig.associationcheck.json"
   ],
