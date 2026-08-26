@@ -76,12 +76,22 @@ export async function persistContestDefinition(
       slug: def.slug,
       description: '',
       category: categoryLabel(def.contestCategory),
-      // DRAFT, not active. Creating a contest and making it live are separate
-      // decisions: this used to publish straight to 'active', which the
-      // contests -> connect_contests mirror maps to 'open', so a newly saved
-      // contest appeared on the phone as LIVE the moment an admin hit save.
-      // An admin now opens it deliberately from the voting console.
-      status: 'draft',
+      // UPCOMING, not active — and not 'draft' either.
+      //
+      // 'active' was wrong: the contests -> connect_contests mirror maps it to
+      // 'open', so a newly saved contest appeared on the phone as LIVE the moment
+      // an admin hit save. Creating a contest and opening voting on it are
+      // separate decisions.
+      //
+      // 'draft' replaced it and overcorrected: /api/v1/contests filters
+      // status in (active, upcoming) and Go's ListContests filters (open, closed),
+      // so a draft contest was invisible on BOTH planes — and nothing in the repo
+      // could move it out of draft, which stranded every contest an admin created.
+      //
+      // 'upcoming' keeps both intents: the contest is visible on the web list
+      // immediately, while the mirror maps upcoming -> draft so it stays off the
+      // phone until an admin sets it active from the status control.
+      status: 'upcoming',
       contest_type: def.contestType,
       location_scope: def.regionScope,
       entry_fee_ngn: def.isPaid ? Math.max(0, Math.round(def.registrationFeeNgn ?? 0)) : 0,
@@ -125,23 +135,35 @@ export async function getPersistedContestBySlug(slug: string): Promise<Persisted
 export type PersistedContest = ContestRegistrationDefinition & {
   /** public.contests.id — the key every per-contest admin route is addressed by. */
   id?: string;
+  /** public.contests.status — drives visibility on the web and mobile planes. */
+  status?: ContestStatus;
 };
+
+/** The public.contests.status enum, in publication order. */
+export const CONTEST_STATUSES = ['draft', 'upcoming', 'active', 'ended'] as const;
+export type ContestStatus = (typeof CONTEST_STATUSES)[number];
+
+export function isContestStatus(value: unknown): value is ContestStatus {
+  return typeof value === 'string' && (CONTEST_STATUSES as readonly string[]).includes(value);
+}
 
 export async function listPersistedContests(): Promise<PersistedContest[]> {
   const { data, error } = await getSupabase()
     .from('contests')
-    .select('id, slug, name, category, contest_type, location_scope, entry_fee_ngn, season_name, voting_enabled, contest_config, created_at')
+    .select('id, slug, name, status, category, contest_type, location_scope, entry_fee_ngn, season_name, voting_enabled, contest_config, created_at')
     .order('created_at', { ascending: false });
   if (error) throw new Error(`Failed to list contests: ${error.message}`);
 
   return (data ?? []).map((row) => {
     const id = row.id as string | undefined;
+    const status = (isContestStatus(row.status) ? row.status : undefined) as ContestStatus | undefined;
     const cfg = (row.contest_config ?? null) as ContestRegistrationDefinition | null;
     // The id lives on the row, never in contest_config — carry it onto the
     // definition so the admin table can link to per-contest routes.
-    if (cfg && typeof cfg === 'object' && cfg.slug) return { ...cfg, id };
+    if (cfg && typeof cfg === 'object' && cfg.slug) return { ...cfg, id, status };
     return {
       id,
+      status,
       slug: String(row.slug ?? ''),
       title: String(row.name ?? ''),
       contestCategory: 'other',

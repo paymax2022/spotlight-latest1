@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { authHeaders } from '@/src/lib/auth/client';
 import { DEFAULT_APPLICANT_CATEGORIES, NIGERIA_STATES } from '@/src/features/registration/config';
 import {
   FIELD_CATALOG,
@@ -109,7 +110,8 @@ const defaultForm = {
 };
 
 export default function RegistrationContestManager() {
-  const [contests, setContests] = useState<Array<ContestRegistrationDefinition & { id?: string }>>([]);
+  const [contests, setContests] = useState<Array<ContestRegistrationDefinition & { id?: string; status?: string }>>([]);
+  const [statusBusy, setStatusBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -249,6 +251,34 @@ export default function RegistrationContestManager() {
         applicantCategories: exists ? prev.applicantCategories.filter((item) => item !== category) : [...prev.applicantCategories, category],
       };
     });
+  };
+
+  // Publish / unpublish. Until this existed a contest could not be moved out of
+  // the status it was created with, so an admin-created contest never reached
+  // either the web list or the phone.
+  const changeStatus = async (slug: string, status: string) => {
+    setStatusBusy(slug);
+    setMessage('');
+    setError('');
+    try {
+      const res = await fetch(`/api/admin/contests/${encodeURIComponent(slug)}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+        body: JSON.stringify({ status }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload?.success) throw new Error(payload?.error || 'Failed to update status.');
+      setMessage(
+        status === 'active'
+          ? 'Contest is live — it now appears in the mobile voting list.'
+          : `Contest status set to ${status}.`,
+      );
+      await loadContests();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update status.');
+    } finally {
+      setStatusBusy(null);
+    }
   };
 
   const submit = async () => {
@@ -481,6 +511,7 @@ export default function RegistrationContestManager() {
                   <th className="py-3 px-3">Type</th>
                   <th className="py-3 px-3">Fee</th>
                   <th className="py-3 px-3">Auditions</th>
+                  <th className="py-3 px-3">Visibility</th>
                   <th className="py-3 px-3">Manage</th>
                 </tr>
               </thead>
@@ -496,6 +527,24 @@ export default function RegistrationContestManager() {
                       {contest.supportsAuditionScheduling
                         ? `${(contest.auditionStates || []).slice(0, 3).join(', ')}${(contest.auditionStates || []).length > 3 ? '…' : ''}`
                         : <span className="text-foreground-dim">Not required</span>}
+                    </td>
+                    <td className="py-2.5 px-3">
+                      {contest.id ? (
+                        <select
+                          className="form-input py-1 text-[12px]"
+                          value={contest.status ?? 'upcoming'}
+                          disabled={statusBusy === contest.slug}
+                          onChange={(e) => changeStatus(contest.slug, e.target.value)}
+                          aria-label={`Visibility for ${contest.title}`}
+                        >
+                          <option value="draft">Draft — hidden everywhere</option>
+                          <option value="upcoming">Upcoming — web only</option>
+                          <option value="active">Active — live on mobile</option>
+                          <option value="ended">Ended — closed</option>
+                        </select>
+                      ) : (
+                        <span className="text-[12px] text-foreground-dim">{contest.status ?? '—'}</span>
+                      )}
                     </td>
                     <td className="py-2.5 px-3">
                       <div className="flex items-center gap-2 flex-wrap">

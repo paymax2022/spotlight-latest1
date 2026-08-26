@@ -78,10 +78,13 @@ export async function publishContestToVotingPlane(
     category: def.contestCategory,
     contest_type: def.contestType,
     description: def.seasonOrEdition ? `${def.title} — ${def.seasonOrEdition}` : def.title,
-    // Published as DRAFT, never live. Creating a contest and opening voting on it
-    // are different decisions; the admin opens it deliberately from the voting
-    // console. The mirror maps draft -> draft, so it stays hidden on mobile.
-    status: 'draft' as const,
+    // UPCOMING, never live. Creating a contest and opening voting on it are
+    // different decisions, so this must not publish straight to 'active' — the
+    // mirror maps upcoming -> draft, keeping it off the phone until an admin sets
+    // it active. 'draft' was too strict: it also hides the contest from the WEB
+    // list (/api/v1/contests filters active|upcoming), which stranded contests
+    // with no way back. Only ever applies on insert; see the update branch below.
+    status: 'upcoming' as const,
     voting_enabled: true,
     // Paid voting OFF. A vote price is a commercial decision an admin makes
     // explicitly; inventing one here would put a price in front of voters that
