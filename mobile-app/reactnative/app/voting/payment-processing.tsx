@@ -57,8 +57,19 @@ export default function PaymentProcessingScreen() {
       if (result.status === 'SUCCESSFUL') { goSuccess(); return true; }
       if (result.status === 'FAILED')     { goFailed(); return true; }
       return false; // PENDING / PROCESSING → keep polling
-    } catch {
-      // Transient/network error — treat as non-terminal so backoff can retry.
+    } catch (err) {
+      // A 4xx is the server's VERDICT, not a hiccup: "This payment was not
+      // successful", a missing transactionId, an unknown reference. Treating
+      // every thrown error as transient meant a definitively failed payment was
+      // polled to exhaustion — the voter watched a spinner while the console
+      // filled with 400s, and never reached the failure screen that explains it.
+      // Only 5xx and genuine network faults deserve a retry.
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (typeof status === 'number' && status >= 400 && status < 500) {
+        const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+        goFailed(message);
+        return true;
+      }
       return false;
     }
   }, [verify, transactionId, reference, goSuccess, goFailed]);

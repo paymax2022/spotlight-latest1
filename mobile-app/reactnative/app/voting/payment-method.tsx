@@ -68,13 +68,24 @@ export default function PaymentMethodScreen() {
       amountKobo: totalAmount,
       title: `${totalVotes} votes`,
       domain: 'vote_purchase',
-      charge: (method) => initiate.mutateAsync({
+      // BOTH rails spend the wallet. The card rail does not charge the card for
+      // this purchase: it opens a wallet TOP-UP, waits for the webhook to credit
+      // it, and only then calls charge() — so by the time we get here the money
+      // is already in the wallet (same shape as ADR-041's card rail).
+      //
+      // This used to pass 'CARD', which opened a SECOND Paystack transaction that
+      // nobody ever paid — no authorizationUrl is opened anywhere in the app — and
+      // then sent the voter to payment-processing to poll it. Paystack reported it
+      // unpaid, the row went payment_status='failed', and /votes/paid/verify
+      // answered 400 "This payment was not successful". The voter had paid, their
+      // wallet was funded, and they got no votes.
+      charge: () => initiate.mutateAsync({
         contestantId: contestantId ?? '',
         contestId: contestId ?? '',
         votes: totalVotes,
         amount: totalAmount,
         packageId: packageId || undefined,
-        paymentMethod: method === 'wallet' ? 'WALLET' : 'CARD',
+        paymentMethod: 'WALLET',
         voterEmail: user?.email ?? '',
         voterName:  user?.fullName ?? '',
       }),
