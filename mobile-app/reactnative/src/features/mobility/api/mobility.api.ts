@@ -8,6 +8,7 @@
 //  • every money mutation (request/accept-counter/rate) carries an Idempotency-Key;
 //  • fare floors/ceilings/commission come from the SERVER — never computed here.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   MobilityHome,
@@ -49,7 +50,7 @@ import {
 
 // ─── Feature flag: mock by default; flip to hit the Go backend ─────────────────
 const USE_MOCK =
-  (process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK, true);
 
 // Go backend mounts the mobility + driver route groups directly under
 // /api/finance (siblings of the legacy /transport group). The frontend-web Next

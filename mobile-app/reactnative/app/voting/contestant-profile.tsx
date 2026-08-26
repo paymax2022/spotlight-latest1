@@ -25,7 +25,6 @@ import VoteConfirmationSheet from '@/features/voting/components/VoteConfirmation
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
 import { formatVoteCount } from '@/features/voting/utils/voteFormatters';
 import type { VotePackage } from '@/features/voting/types/voting.types';
-import { MOCK_FREE_VOTE_ALLOCATION, MOCK_VOTE_PACKAGES } from '@/features/voting/api/voting.mock';
 
 /**
  * The sample link is contestant-submitted registration data, so it is untrusted
@@ -110,8 +109,22 @@ export default function ContestantProfileScreen() {
     );
   }
 
-  const displayFreeVotes = freeVotes ?? MOCK_FREE_VOTE_ALLOCATION;
-  const displayPackages  = packages  ?? MOCK_VOTE_PACKAGES;
+  // NO MOCK FALLBACK. These previously read `?? MOCK_…`, which meant a live
+  // response that was missing, empty or still loading silently rendered invented
+  // vote packages — regardless of EXPO_PUBLIC_VOTING_USE_MOCK.
+  //
+  // That was not merely cosmetic: handlePaidVote builds the payment URL from
+  // `pkg.amount` and `pkg.id`, so a tap on a fabricated package sent a real voter
+  // into checkout with a price and a package id the server has never heard of.
+  //
+  // Absent data now reads as absent. Free-vote state falls back to a ZERO
+  // allowance (never a generous invented one), and paid packages simply are not
+  // offered until the server says what they are.
+  // `freeVotes` stays possibly-undefined on purpose: "we do not know yet" and
+  // "you have none left" are different facts, and the reset countdown below is
+  // only truthful for the second one. Substituting a zero allowance would show a
+  // countdown to a date the server never sent.
+  const displayPackages: VotePackage[] = packages ?? [];
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -181,16 +194,19 @@ export default function ContestantProfileScreen() {
             <Text style={styles.voteCount}>{showVoteCount ? formatVoteCount(contestant.votes ?? 0) : '—'}</Text>
             <Text style={styles.voteLabel}>Total Votes</Text>
             <View style={styles.stripDivider} />
-            {displayFreeVotes.remaining === 0 ? (
+            {!freeVotes ? (
+              // Unknown, not zero — say nothing rather than assert an allowance.
+              <Text style={styles.voteLabel}>—</Text>
+            ) : freeVotes.remaining === 0 ? (
               <FreeVoteResetCountdown
-                resetAt={displayFreeVotes.resetsAt}
+                resetAt={freeVotes.resetsAt}
                 size="sm"
                 onReset={() =>
                   qc.invalidateQueries({ queryKey: ['voting', 'free-votes', contestId] })
                 }
               />
             ) : (
-              <FreeVoteBadge remaining={displayFreeVotes.remaining} total={displayFreeVotes.total} />
+              <FreeVoteBadge remaining={freeVotes.remaining} total={freeVotes.total} />
             )}
           </View>
 
@@ -243,7 +259,10 @@ export default function ContestantProfileScreen() {
         visible={voteOpen}
         onClose={() => setVoteOpen(false)}
         contestant={contestant}
-        freeVotes={displayFreeVotes}
+        // In the sheet an unknown allowance is treated as none: offering a free
+        // vote the server has not authorised produces a failed cast and a
+        // confusing error, which is worse than not offering it.
+        freeVotes={freeVotes ?? { total: 0, used: 0, remaining: 0, resetsAt: '' }}
         packages={displayPackages}
         onConfirmFree={handleFreeVote}
         onConfirmPaid={handlePaidVote}

@@ -1,3 +1,4 @@
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   Contest,
@@ -29,9 +30,17 @@ import {
   MOCK_VOTING_NOTIFICATIONS,
 } from './voting.mock';
 
-// ─── Feature flag: flip to false once real endpoints are ready ─────────────────
-// Mock by default; set EXPO_PUBLIC_VOTING_USE_MOCK=false to hit the live backend.
-const USE_MOCK = (process.env.EXPO_PUBLIC_VOTING_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+// ─── Mock data: OPT-IN ONLY ───────────────────────────────────────────────────
+// This used to default to MOCK, so any environment that forgot the flag served
+// invented contests, contestants and vote packages while looking entirely normal.
+// Fake data that shows up silently is worse than an empty screen or an error:
+// nobody goes looking for a bug they cannot see.
+//
+// The default is now LIVE. Mock is only used when someone explicitly asks for it
+// with EXPO_PUBLIC_VOTING_USE_MOCK=true — so forgetting the flag now produces a
+// visible failure against the real backend rather than a convincing fiction.
+// Live by default, and NEVER mock on staging or production — see mockPolicy.ts.
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_VOTING_USE_MOCK, false);
 
 // Live voting is served by the Go backend's Connect module. Contests,
 // contestants and free votes all come from here; the roster is the same ranked

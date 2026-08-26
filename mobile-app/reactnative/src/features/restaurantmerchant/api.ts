@@ -15,6 +15,7 @@
 //   PATCH  /restaurant/:id/menu/items/:itemId        → price/availability
 //   DELETE /restaurant/:id/menu/items/:itemId
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { buildUpdateStoreBody } from './packagingPrice';
 import type {
@@ -31,7 +32,7 @@ import type {
 } from './types';
 
 export const USE_MOCK =
-  (process.env.EXPO_PUBLIC_RESTAURANT_MERCHANT_USE_MOCK ?? 'false').toLowerCase() === 'true';
+  mockAllowed(process.env.EXPO_PUBLIC_RESTAURANT_MERCHANT_USE_MOCK, false);
 
 const BASE = '/api/v1/restaurant';
 const enc = encodeURIComponent;

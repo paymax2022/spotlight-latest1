@@ -3,10 +3,11 @@
 // EXPO_PUBLIC_INSURANCE_USE_MOCK=false) once the live Go-backend insurance
 // endpoints are reachable via the frontend-web proxy.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 import type { KycTier, ProductLineGroup } from '../types';
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_INSURANCE_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_INSURANCE_USE_MOCK, true);
 
 // Insurance REST namespace (frontend-web proxy → Go /api/finance/insurance/*).
 export const INSURANCE_API_BASE = '/api/v1/insurance';

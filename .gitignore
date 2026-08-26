@@ -79,6 +79,9 @@ launch/master.env
 # Previously committed (54MB + 17MB) and a major cause of repo bloat.
 /backend/server
 /backend/marketplace-cron
+# `go build -o bin/server` puts a ~74MB binary here. Not ignored until now:
+# a stashed snapshot was carrying one, one `git add -A` from being committed.
+/backend/bin/
 
 # Python bytecode (scripts/ci/*.py are run directly by CI)
 __pycache__/
