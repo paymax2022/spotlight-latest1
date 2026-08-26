@@ -1375,7 +1375,21 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		cfcsr.Register(cfGroup, pool)
 
 		// Admin review group (matches the admin web client's /api/crowdfunding/admin base).
+		//
+		// RequireAuthContext validates the bearer token and SETS user_id; requireUserID
+		// then fail-closes if it is missing. Without the first, user_id is never set
+		// and every route here answered 401 even with a valid token — so the admin
+		// review console could never load a real campaign and fell back to fixtures.
+		// This is the identical omission already fixed for the finance group above.
+		//
+		// NOTE: authentication only. Any signed-in user can currently reach these
+		// endpoints, including POST /campaigns/:id/decision, which approves, rejects
+		// or freezes a campaign. A permission gate belongs here, but no role in this
+		// database holds any *.admin.* permission yet, so adding one now would 403
+		// every operator and take the console from wrong to unusable. Tracked in the
+		// response to this change rather than shipped half-done.
 		cfAdmin := r.Group("/api/crowdfunding/admin")
+		cfAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
 		cfAdmin.Use(requireUserID())
 		cfAdmin.GET("/stats", cfHandler.AdminStats)
 		cfAdmin.GET("/campaigns", cfHandler.AdminListPending)

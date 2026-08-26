@@ -6,6 +6,7 @@
 
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   CfReviewCampaign,
   CfReviewDecision,
@@ -29,7 +30,12 @@ import type {
 
 // Mock is the default. Set NEXT_PUBLIC_CF_USE_MOCK=false to hit the live Go backend
 // at /api/crowdfunding/admin/* (campaign review queue, decision, stats).
-const USE_MOCK = process.env.NEXT_PUBLIC_CF_USE_MOCK !== 'false';
+// Migrated to resolveUseMock now that the Go endpoints are confirmed live:
+// GET /api/crowdfunding/admin/campaigns returns real PENDING_REVIEW campaigns.
+// The old inline check defaulted to MOCK unless someone set the flag, which is
+// why a campaign submitted from the app never appeared in this console — the
+// page was showing fixtures and there was nothing to indicate it.
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_CF_USE_MOCK);
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/crowdfunding/admin');
