@@ -260,10 +260,44 @@ function movementFromTrend(
 
 // ─── Vote Packages ─────────────────────────────────────────────────────────────
 
+/**
+ * Paid vote packages for a contest.
+ *
+ * The path used to be '/voting/packages', which does not exist and returned 404
+ * on every call. Nothing noticed because the mock branch above short-circuited
+ * before the request was ever made — the endpoint had never actually run.
+ *
+ * The real route returns { id, votes, bonusVotes, priceKobo, label, popular },
+ * which is not the client's VotePackage shape, so it is mapped here rather than
+ * cast. `amount` is KOBO on this side: payment-method.tsx passes it straight to
+ * the gateway as amountKobo.
+ *
+ * No packages is a legitimate answer — a contest with paid voting off has none —
+ * so an empty array is returned rather than treated as an error.
+ */
 export async function getVotePackages(contestId?: string): Promise<VotePackage[]> {
   if (USE_MOCK) return MOCK_VOTE_PACKAGES;
-  const res = await api.get('/voting/packages', { params: { contestId } });
-  return (res.data?.data ?? res.data) as VotePackage[];
+  if (!contestId) return [];
+
+  const res = await api.get(`/api/v1/contests/${contestId}/vote-packages`);
+  const rows = (res.data?.data ?? res.data ?? []) as Array<{
+    id: string;
+    votes: number;
+    bonusVotes?: number;
+    priceKobo: number;
+    label?: string;
+    popular?: boolean;
+  }>;
+
+  return rows.map((r) => ({
+    id: r.id,
+    votes: Number(r.votes ?? 0),
+    amount: Number(r.priceKobo ?? 0),
+    currency: 'NGN' as const,
+    label: r.label,
+    bonusVotes: r.bonusVotes ? Number(r.bonusVotes) : undefined,
+    isPopular: Boolean(r.popular),
+  }));
 }
 
 // ─── Free Vote Allocation (PER CONTESTANT) ──────────────────────────────────────
